@@ -21,10 +21,10 @@ from fastapi import HTTPException, Request, status
 from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
-from flip.db.models.user_models import Role, UserRole
-from flip.domain.schemas.users import CognitoUser, Disabled, IRole, IUser
-from flip.utils.logger import logger
-from flip.utils.paging_utils import PagingInfo
+from flip_api.db.models.user_models import Role, UserRole
+from flip_api.domain.schemas.users import CognitoUser, Disabled, IRole, IUser
+from flip_api.utils.logger import logger
+from flip_api.utils.paging_utils import PagingInfo
 
 boto3.set_stream_logger("boto3.resources", logging.INFO)
 

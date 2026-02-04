@@ -32,7 +32,7 @@ from flip_api.db.models.main_models import (
     Trust,
     XNATProjectStatus,
 )
-from flip.domain.interfaces.project import (
+from flip_api.domain.interfaces.project import (
     IApprovedTrust,
     IModelsInfoResponse,
     IProjectApproval,
@@ -41,19 +41,19 @@ from flip.domain.interfaces.project import (
     IProjectResponse,
     IReimportQuery,
 )
-from flip.domain.schemas.actions import ProjectAuditAction
-from flip.domain.schemas.projects import (
+from flip_api.domain.schemas.actions import ProjectAuditAction
+from flip_api.domain.schemas.projects import (
     ProjectDetails,
     UserAccessInfo,
 )
-from flip.domain.schemas.status import (
+from flip_api.domain.schemas.status import (
     ProjectStatus,
     XNATImageStatus,
 )
-from flip.model_services.services.model_service import delete_models
-from flip.project_services.utils.audit_helper import audit_project_action
-from flip.utils.logger import logger
-from flip.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
+from flip_api.model_services.services.model_service import delete_models
+from flip_api.project_services.utils.audit_helper import audit_project_action
+from flip_api.utils.logger import logger
+from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
 
 
 def update_project_user_access(project_id: UUID, user_ids: List[UUID], session: Session) -> None:

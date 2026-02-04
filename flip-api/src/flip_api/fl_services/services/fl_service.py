@@ -20,9 +20,9 @@ from fastapi import Request
 from sqlmodel import Session, select
 
 from flip_api.config import get_settings
-from flip.db.database import engine
-from flip.db.models.main_models import FLJob
-from flip.domain.interfaces.fl import (
+from flip_api.db.database import engine
+from flip_api.db.models.main_models import FLJob
+from flip_api.domain.interfaces.fl import (
     AggregationWeights,
     FLAggregators,
     IClientStatus,
@@ -33,14 +33,14 @@ from flip.domain.interfaces.fl import (
     JobRequiredFiles,
     JobTypes,
 )
-from flip.domain.interfaces.shared import TrainingRound
-from flip.domain.schemas.fl import ClientInfoModel
-from flip.domain.schemas.status import ClientStatus, NVFlareTargets
-from flip.model_services.services.model_service import add_log
-from flip.utils.encryption import encrypt
-from flip.utils.http import http_delete, http_get, http_post
-from flip.utils.logger import logger
-from flip.utils.s3_client import S3Client
+from flip_api.domain.interfaces.shared import TrainingRound
+from flip_api.domain.schemas.fl import ClientInfoModel
+from flip_api.domain.schemas.status import ClientStatus, NVFlareTargets
+from flip_api.model_services.services.model_service import add_log
+from flip_api.utils.encryption import encrypt
+from flip_api.utils.http import http_delete, http_get, http_post
+from flip_api.utils.logger import logger
+from flip_api.utils.s3_client import S3Client
 
 
 class UnknownJobTypeError(Exception):
@@ -361,7 +361,7 @@ def start_training(
     Raises:
         ValueError: If the NVFlare job ID is not returned in the response.
     """
-    from flip.fl_services.services import fl_scheduler_service
+    from flip_api.fl_services.services import fl_scheduler_service
 
     required_info = fl_scheduler_service.get_required_training_details(model_id, session)
     encrypted_project_id = encrypt(required_info.project_id)
@@ -705,7 +705,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     logger.debug(f"Checking if model {model_id} is currently running...")
 
     try:
-        from flip.fl_services.services import fl_scheduler_service
+        from flip_api.fl_services.services import fl_scheduler_service
 
         # Always try to remove the job from queue
         fl_scheduler_service.remove_job_from_queue(model_id, session)
@@ -795,8 +795,8 @@ def keep_fl_api_session_alive() -> None:
     This is useful to prevent the session from going idle or being shut down by the server.
     See https://github.com/NVIDIA/NVFlare/discussions/3526#discussioncomment-13574644
     """
-    from flip.fl_services.get_status import fetch_server_status
-    from flip.fl_services.services import fl_scheduler_service
+    from flip_api.fl_services.get_status import fetch_server_status
+    from flip_api.fl_services.services import fl_scheduler_service
 
     logger.info("🛟 Keeping FL API NVFLARE session alive ...")
 

@@ -20,24 +20,24 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
 from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
-from flip.auth.dependencies import verify_token
-from flip.config import get_settings
-from flip.db.database import get_session
-from flip.db.models.main_models import XNATImageStatus
-from flip.db.models.user_models import PermissionRef
-from flip.domain.interfaces.trust import (
+from flip_api.auth.dependencies import verify_token
+from flip_api.config import get_settings
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import XNATImageStatus
+from flip_api.db.models.user_models import PermissionRef
+from flip_api.domain.interfaces.trust import (
     ICreatedImagingProject,
     ICreatedImagingUser,
     ICreateImagingProject,
     ISesTemplateData,
     ITrust,
 )
-from flip.private_services.project_images_helpers import insert_status
-from flip.project_services.services.project_services import get_project, get_users_with_access
-from flip.utils.cognito_helpers import get_cognito_users, get_user_pool_id
-from flip.utils.constants import IMAGING_CREDENTIALS_TEMPLATE_NAME
-from flip.utils.encryption import decrypt
-from flip.utils.logger import logger
+from flip_api.private_services.project_images_helpers import insert_status
+from flip_api.project_services.services.project_services import get_project, get_users_with_access
+from flip_api.utils.cognito_helpers import get_cognito_users, get_user_pool_id
+from flip_api.utils.constants import IMAGING_CREDENTIALS_TEMPLATE_NAME
+from flip_api.utils.encryption import decrypt
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
 

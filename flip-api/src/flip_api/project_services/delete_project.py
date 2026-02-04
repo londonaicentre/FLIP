@@ -16,12 +16,12 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import can_access_project
-from flip.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.fl_services.services.fl_service import abort_model_training
-from flip.project_services.services.image_service import delete_imaging_project, get_imaging_projects
-from flip.project_services.services.project_services import delete_project, get_project_models_service
-from flip.utils.logger import logger
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
+from flip_api.fl_services.services.fl_service import abort_model_training
+from flip_api.project_services.services.image_service import delete_imaging_project, get_imaging_projects
+from flip_api.project_services.services.project_services import delete_project, get_project_models_service
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/projects", tags=["project_services"])
 

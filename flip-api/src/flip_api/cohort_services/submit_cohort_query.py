@@ -23,16 +23,16 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.main_models import Trust
-from flip.domain.schemas.cohort import (
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import Trust
+from flip_api.domain.schemas.cohort import (
     SubmitCohortQuery,
     SubmitCohortQueryBody,
     SubmitCohortQueryOutput,
     TrustDetails,
 )
-from flip.utils.encryption import encrypt
-from flip.utils.logger import logger
+from flip_api.utils.encryption import encrypt
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/cohort", tags=["cohort_services"])
 

@@ -18,7 +18,7 @@ import boto3
 from botocore.exceptions import ClientError, EndpointConnectionError
 
 from flip_api.config import get_settings
-from flip.utils.logger import logger
+from flip_api.utils.logger import logger
 
 
 def parse_s3_path(s3_path: str) -> Tuple[str, str]:

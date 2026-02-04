@@ -17,12 +17,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.domain.schemas.private import ProjectApprovalBody
-from flip.domain.schemas.projects import ApproveProjectBodyPayload
-from flip.project_services.approve_project import approve_project_endpoint
-from flip.trusts_services.start_project_imaging_creation import start_project_imaging_creation
-from flip.utils.logger import logger
+from flip_api.db.database import get_session
+from flip_api.domain.schemas.private import ProjectApprovalBody
+from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
+from flip_api.project_services.approve_project import approve_project_endpoint
+from flip_api.trusts_services.start_project_imaging_creation import start_project_imaging_creation
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/step", tags=["step_functions_services"])
 

@@ -16,21 +16,21 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import can_access_project
-from flip.auth.dependencies import verify_token
-from flip.config import get_settings
-from flip.db.database import get_session
-from flip.domain.interfaces.project import IReturnedProject
-from flip.domain.schemas.status import ProjectStatus
-from flip.project_services.services.project_services import (
+from flip_api.auth.dependencies import verify_token
+from flip_api.config import get_settings
+from flip_api.db.database import get_session
+from flip_api.domain.interfaces.project import IReturnedProject
+from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.project_services.services.project_services import (
     get_project,
     get_project_query,
     get_trusts_approval_status_for_project,
     get_users_with_access,
 )
-from flip.utils.cognito_helpers import (
+from flip_api.utils.cognito_helpers import (
     get_user_by_email_or_id,
 )
-from flip.utils.logger import logger
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/projects", tags=["project_services"])
 
