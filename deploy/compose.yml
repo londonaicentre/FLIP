@@ -1,0 +1,146 @@
+# # Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# This is a sample compose file that can be used for local development, to test that the FL base, server and client
+# images build correctly and can communicate with each other. It is not intended for production use.
+#
+# Provisioned secrets (e.g. certificates in local, startup dirs) are mounted from workspace/ (gitignored).
+services:
+  fl-base:
+    image: fl-base:dev
+    env_file:
+      - ../.env.development
+    build:
+      context: ../
+      dockerfile: fl_services/fl-base/Dockerfile
+      args:
+        LOCAL_DEV: ${LOCAL_DEV:-false}
+    profiles: ["build-only"]
+
+  fl-server:
+    # NOTE container_name is mandatory here in order for FL clients to resolve the server hostname (e.g. address
+    # fl-server-net-1:8002 from within the client containers)
+    container_name: fl-server-net-${NET_NUMBER}
+    image: fl-server:dev
+    build:
+      context: ../fl_services/fl-server
+      dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+        UNAME: ${UNAME:-flip}
+        BASE_REF: ${BASE_REF:-fl-base:dev}
+    environment:
+      - NET_ID=net-${NET_NUMBER}
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=1
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=fake-s3-bucket
+      # - LOG_LEVEL=DEBUG
+    volumes:
+      # Provisioned secrets from workspace/ (gitignored)
+      - ../workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/fl-server/local:/app/local
+      - ../workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/fl-server/startup:/app/startup
+      - ../workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/fl-server/transfer:/app/transfer
+    command: ["/bin/bash", "/app/entrypoint.sh"]
+
+  flip-fl-api:
+    container_name: flip-fl-api-net-${NET_NUMBER}
+    image: flip-fl-api:dev
+    build:
+      context: ../fl_services/fl-api-base
+      dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+        UNAME: ${UNAME:-flip}
+      target: development
+    environment:
+      - FL_ADMIN_DIRECTORY=/app/admin
+      - DEBUG=${DEBUG}
+      # - LOG_LEVEL=DEBUG
+    ports:
+      - "${FL_API_PORT}:8000"
+      - "5679:5679"
+    volumes:
+      # Provisioned secrets from workspace/ (gitignored)
+      - ../workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/admin/local:/app/admin/local
+      - ../workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/admin/startup:/app/admin/startup
+      # Static code from fl_services/ (tracked in git)
+      - ../fl_services/fl-api-base/fl_api:/app/fl_api
+      - ../fl_services/fl-api-base/tests:/app/tests
+      # NOTE the transfer dir in the new provisioning is not straightforward to configure - for now, we keep "transfer"
+      # as both the download_dir and upload_dir in fed_admin.json
+      # - ../flip-fl-api/transfer_upload:/app/admin/transfer_upload:rw
+      - ../fl_services/fl-api-base/.vscode:/app/.vscode
+      # AWS SSO credentials for accessing S3 buckets
+      - ~/.aws/config:/root/.aws/config:ro
+      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+    command: ["/bin/bash", "/app/entrypoint.sh"]
+
+  fl-client-1:
+    container_name: fl-client-1-net-${NET_NUMBER}
+    image: fl-client:dev
+    build:
+      context: ../fl_services/fl-client
+      dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+        UNAME: ${UNAME:-flip}
+        BASE_REF: ${BASE_REF:-fl-base:dev}
+    environment:
+      - NET_ID=net-${NET_NUMBER}
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=1
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=fake-s3-bucket
+      # - NUM_AVAILABLE_GPUS=1
+      # - MEMORY_PER_GPU_IN_GIB=16
+      # - LOG_LEVEL=DEBUG
+    volumes:
+      # Provisioned secrets from workspace/ (gitignored)
+      - ../workspace/net-${NET_NUMBER}/services/Trust_1/fl-client/local:/app/local
+      - ../workspace/net-${NET_NUMBER}/services/Trust_1/fl-client/startup:/app/startup
+      - ../workspace/net-${NET_NUMBER}/services/Trust_1/fl-client/transfer:/app/transfer
+    command: ["/bin/bash", "/app/entrypoint.sh"]
+    shm_size: "32gb"
+    gpus: all
+
+  fl-client-2:
+    container_name: fl-client-2-net-${NET_NUMBER}
+    image: fl-client:dev
+    build:
+      context: ../fl_services/fl-client
+      dockerfile: Dockerfile
+      args:
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
+        UNAME: ${UNAME:-flip}
+        BASE_REF: ${BASE_REF:-fl-base:dev}
+    environment:
+      - NET_ID=net-${NET_NUMBER}
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=1
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=fake-s3-bucket
+      # - NUM_AVAILABLE_GPUS=1
+      # - MEMORY_PER_GPU_IN_GIB=16
+      # - LOG_LEVEL=DEBUG
+    volumes:
+      # Provisioned secrets from workspace/ (gitignored)
+      - ../workspace/net-${NET_NUMBER}/services/Trust_2/fl-client/local:/app/local
+      - ../workspace/net-${NET_NUMBER}/services/Trust_2/fl-client/startup:/app/startup
+      - ../workspace/net-${NET_NUMBER}/services/Trust_2/fl-client/transfer:/app/transfer
+    command: ["/bin/bash", "/app/entrypoint.sh"]
+    shm_size: "32gb"
+    gpus: all

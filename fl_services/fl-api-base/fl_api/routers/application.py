@@ -1,0 +1,55 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Application: upload, monitor
+
+from fastapi import APIRouter, Depends, HTTPException, status
+
+from fl_api.core.dependencies import get_session
+from fl_api.utils.flip_session import FLIP_Session
+from fl_api.utils.logger import logger
+from fl_api.utils.schemas import UploadAppRequest
+from fl_api.utils.upload import upload_application
+
+router = APIRouter()
+
+
+@router.post("/upload_app/{model_id}", status_code=status.HTTP_200_OK)
+def upload_app(
+    model_id: str, body: UploadAppRequest, session: FLIP_Session = Depends(get_session)
+) -> dict[str, str]:
+    try:
+        response = upload_application(model_id, body, upload_dir=session.upload_dir)
+        return response
+    except FileNotFoundError as err:
+        error_message = f"File not found error uploading application: {err}"
+        logger.error(error_message)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_message)
+    except Exception as err:
+        error_message = f"Error uploading application: {err}"
+        logger.error(error_message)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+
+
+@router.get("/get_available_apps_to_upload")
+def get_available_apps_to_upload(session: FLIP_Session = Depends(get_session)) -> list[str]:
+    """Get list of available apps to upload (list the contents of the upload directory that are directories).
+
+    Returns:
+        list[str]: list of available directories to upload.
+    """
+    try:
+        return session.get_available_apps_to_upload()
+    except Exception as err:
+        error_message = f"Error getting available apps to upload: {err}"
+        logger.error(error_message)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)

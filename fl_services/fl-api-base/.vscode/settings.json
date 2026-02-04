@@ -1,0 +1,67 @@
+/*
+ * Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+{
+    "[jsonc]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "cSpell.autoFormatConfigFile": true,
+    "cSpell.words": [
+        "flip",
+        "nvflare"
+    ],
+    "editor.codeActionsOnSave": {
+        "source.fixAll": "explicit",
+        "source.organizeImports": "explicit"
+    },
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.inlineSuggest.enabled": true,
+    "editor.inlineSuggest.showToolbar": "always",
+    "editor.rulers": [
+        120
+    ],
+    "files.autoSave": "afterDelay",
+    "git.autofetch": true,
+    "git.confirmSync": false,
+    "interactiveWindow.executeWithShiftEnter": true,
+    "makefile.configureOnOpen": true,
+    "problems.showCurrentInStatus": true,
+    "python.analysis.autoFormatStrings": true,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}"
+    ],
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    "python.envFile": "${workspaceFolder}/.env.development",
+    "python.terminal.activateEnvInCurrentTerminal": true,
+    "python.terminal.shellIntegration.enabled": true,
+    "python.testing.autoTestDiscoverOnSaveEnabled": true,
+    "python.testing.autoTestDiscoverOnSavePattern": "**/*.py",
+    "python.testing.pytestArgs": [
+        "tests",
+    ],
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "remote.autoForwardPortsSource": "hybrid",
+    "ruff.configuration": "${workspaceFolder}/pyproject.toml",
+    "ruff.format.preview": true,
+    "terminal.integrated.accessibleViewPreserveCursorPosition": true,
+    "terminal.integrated.allowChords": false,
+    "terminal.integrated.env.linux": {
+        "PATH": "${workspaceFolder}/.venv/bin:${env:PATH}",
+        "VIRTUAL_ENV": "${workspaceFolder}/.venv"
+    },
+    // deactivate pylance error checking
+    "python.analysis.typeCheckingMode": "off",
+    // deactivate mypy missing library stubs errors
+}

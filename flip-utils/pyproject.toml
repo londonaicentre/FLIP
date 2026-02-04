@@ -1,0 +1,85 @@
+# # Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+[project]
+name = "flip-base-application"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "boto3>=1.38.31",
+    "einops==0.8.1",
+    "gdown==5.2.0",
+    "lpips==0.1.4",
+    "monai>=1.5.1",
+    "nibabel>=5.3.2",
+    "nvflare==2.7.1",
+    "pandas>=2.3.0",
+    "pydantic>=2.11.7",
+    "pydantic-settings>=2.10.1",
+    "pydicom>=3.0.1",
+]
+
+[dependency-groups]
+dev = [
+    "matplotlib>=3.10.7",
+    "mypy>=1.18.2",
+    "pyqt5>=5.15.11",
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.14.2",
+    "types-requests>=2.32.4.20260107",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+preview = true
+select = ['I', 'F', 'E', 'W', 'PT']
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+# Exclude subdirectories that have their own pyproject.toml and dependencies
+norecursedirs = ["fl_services", "fl-base", ".venv", "workspace", ".test_*"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+
+# Exclude patterns to avoid duplicate module issues
+exclude = [
+    "^tests/",
+    "^fl_services/",
+    "^workspace/",
+    "^\\.test_",
+    "^\\.venv/",
+]
+
+# Each app has its own 'custom' module, so we need to treat them separately
+# by using explicit-package-bases with the namespace_packages option
+explicit_package_bases = true
+namespace_packages = true
+
+# Ignore duplicate module errors for these specific patterns
+[[tool.mypy.overrides]]
+module = [
+    "custom",
+    "custom.*",
+    "utils",
+    "utils.*",
+]
+ignore_errors = true

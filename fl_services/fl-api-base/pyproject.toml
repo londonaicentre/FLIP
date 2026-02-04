@@ -1,0 +1,57 @@
+# # Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+[project]
+name = "flip-fl-api"
+version = "0.1.0"
+description = "Wrapper API for NVFLARE FL Admin API."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi[standard]>=0.115.11",
+    "nvflare==2.7.1",
+    "pydantic-settings>=2.11.0",
+]
+
+[dependency-groups]
+dev = [
+    "coverage>=7.7.1",
+    "mypy>=1.15.0",
+    "pytest-cov>=6.0.0",
+    "pytest>=8.3.5",
+    "ruff>=0.11.0",
+    "types-requests>=2.32.0.20250515",
+    "debugpy>=1.8.14",
+]
+
+[tool.coverage.report]
+exclude_lines = ["if __name__ == .__main__.:"]
+omit = ["*.venv/*", "*/tests/*", "*/__init__.py"]
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py", "*_test.py"]
+addopts = []
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
+
+[tool.pytest.ini_options_debug]
+python_files = ["test_*.py", "*_test.py"]
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
+
+[tool.ruff]
+line-length = 120
+ 
+[tool.ruff.lint]
+preview = true
+select = ['I', 'F', 'E', 'W', 'PT']
+
+[tool.mypy]
+exclude = '^transfer_upload/'

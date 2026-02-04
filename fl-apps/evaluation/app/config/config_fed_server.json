@@ -1,0 +1,71 @@
+{
+  "format_version": 2,
+  "model_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "python_path": [".", "custom"],
+  "global_rounds": 3,
+  "min_clients": 1,
+  "server": {
+    "heart_beat_timeout": 600
+  },
+  "task_data_filters": [],
+  "task_result_filters": [],
+  "components": [
+    {
+      "id": "persistor",
+      "path": "nvflare.app_opt.pt.file_model_persistor.PTFileModelPersistor",
+      "args": {
+      }
+    },
+    {
+      "id": "shareable_generator",
+      "path": "nvflare.app_common.shareablegenerators.full_model_shareable_generator.FullModelShareableGenerator",
+      "args": {}
+    },
+    {
+      "id": "model_locator",
+      "path": "pt_model_locator.PTModelLocator",
+      "args": {}
+    },
+    {
+      "id": "json_generator",
+      "path": "evaluation_json_generator.EvaluationJsonGenerator",
+      "args": {}
+    },
+    {
+      "id": "flip_server_event_handler",
+      "path": "flip_server_event_handler.ServerEventHandler",
+      "args": {
+        "model_id": "{model_id}"
+      }
+    },
+    {
+      "id": "persist_and_cleanup",
+      "path": "persist_and_cleanup.PersistToS3AndCleanup",
+      "args": {
+        "model_id": "{model_id}",
+        "persistor_id": "persistor"
+      }
+    }
+  ],
+  "workflows": [
+    {
+      "id": "init_evaluation",
+      "path": "init_evaluation.InitEvaluation",
+      "args": {
+        "model_id": "{model_id}",
+        "min_clients": "{min_clients}"
+      }
+    },
+    {
+      "id": "site_validate",
+      "name": "ModelEval",
+      "path": "fed_evaluation.ModelEval",
+      "args": {
+        "model_locator_id": "model_locator",
+        "participating_clients": "{participating_clients}",
+        "validation_timeout": 12000,
+        "model_id": "{model_id}"
+      }
+    }
+  ]
+}
