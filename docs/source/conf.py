@@ -68,7 +68,7 @@ autoapi_type = "python"
 
 # autoapi
 autoapi_dirs = [
-    "../../flip/src",
+    "../../flip-api/src",
     "../../trust/data-access-api",
     "../../trust/imaging-api",
     "../../trust/trust-api",
@@ -77,7 +77,6 @@ autoapi_ignore = [
     "*/.venv/*",
     "*/tests/*",
     "*/conftest.py",
-    "*/flipapi/transfer/*",
 ]
 
 # Optional:
