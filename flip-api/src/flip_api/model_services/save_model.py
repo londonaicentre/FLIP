@@ -17,15 +17,15 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
 from flip_api.auth.access_manager import can_access_project
-from flip.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.main_models import Model, ModelTrustIntersect, ProjectTrustIntersect
-from flip.domain.interfaces.model import ISaveModel
-from flip.domain.interfaces.shared import IId
-from flip.domain.schemas.status import ModelStatus, ProjectStatus, TrustIntersectStatus
-from flip.fl_services.services.pull_required_files import pull_required_files_json_to_assets
-from flip.utils.logger import logger
-from flip.utils.project_manager import get_project_by_id
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import Model, ModelTrustIntersect, ProjectTrustIntersect
+from flip_api.domain.interfaces.model import ISaveModel
+from flip_api.domain.interfaces.shared import IId
+from flip_api.domain.schemas.status import ModelStatus, ProjectStatus, TrustIntersectStatus
+from flip_api.fl_services.services.pull_required_files import pull_required_files_json_to_assets
+from flip_api.utils.logger import logger
+from flip_api.utils.project_manager import get_project_by_id
 
 router = APIRouter(prefix="/model", tags=["model_services"])
 

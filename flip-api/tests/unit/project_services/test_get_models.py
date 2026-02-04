@@ -19,13 +19,13 @@ from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.domain.interfaces.project import (
+from flip_api.db.database import get_session
+from flip_api.domain.interfaces.project import (
     IModelsInfoResponse,
     ModelStatus,
 )
-from flip.project_services.get_models import router as get_models_router
-from flip.utils.paging_utils import IPagedResponse
+from flip_api.project_services.get_models import router as get_models_router
+from flip_api.utils.paging_utils import IPagedResponse
 
 
 @pytest.fixture
@@ -92,12 +92,12 @@ def test_get_models_success(client: TestClient, app_fixture: FastAPI):
     app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
 
     with (
-        patch("flip.project_services.get_models.can_access_project", return_value=True) as mock_can_access,
+        patch("flip_api.project_services.get_models.can_access_project", return_value=True) as mock_can_access,
         patch(
-            "flip.project_services.get_models.get_project", return_value=mock_project_instance
+            "flip_api.project_services.get_models.get_project", return_value=mock_project_instance
         ) as mock_get_project,
         patch(
-            "flip.project_services.get_models.get_project_models_service",
+            "flip_api.project_services.get_models.get_project_models_service",
             return_value=mock_get_models_service_response,
         ) as mock_get_project_models,
     ):
@@ -120,9 +120,9 @@ def test_get_models_access_denied(client: TestClient, app_fixture: FastAPI):
     app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
 
     with (
-        patch("flip.project_services.get_models.can_access_project", return_value=False) as mock_can_access,
-        patch("flip.project_services.get_models.get_project") as mock_get_project,
-        patch("flip.project_services.get_models.get_project_models_service") as mock_get_project_models,
+        patch("flip_api.project_services.get_models.can_access_project", return_value=False) as mock_can_access,
+        patch("flip_api.project_services.get_models.get_project") as mock_get_project,
+        patch("flip_api.project_services.get_models.get_project_models_service") as mock_get_project_models,
     ):
         response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/models")
 
@@ -141,9 +141,9 @@ def test_get_models_project_not_found(client: TestClient, app_fixture: FastAPI):
     app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
 
     with (
-        patch("flip.project_services.get_models.can_access_project", return_value=True) as mock_can_access,
-        patch("flip.project_services.get_models.get_project", return_value=None) as mock_get_project,
-        patch("flip.project_services.get_models.get_project_models_service") as mock_get_project_models,
+        patch("flip_api.project_services.get_models.can_access_project", return_value=True) as mock_can_access,
+        patch("flip_api.project_services.get_models.get_project", return_value=None) as mock_get_project,
+        patch("flip_api.project_services.get_models.get_project_models_service") as mock_get_project_models,
     ):
         response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/models")
 
@@ -163,12 +163,12 @@ def test_get_models_no_models_found_for_project(client: TestClient, app_fixture:
     app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
 
     with (
-        patch("flip.project_services.get_models.can_access_project", return_value=True) as mock_can_access,
+        patch("flip_api.project_services.get_models.can_access_project", return_value=True) as mock_can_access,
         patch(
-            "flip.project_services.get_models.get_project", return_value=mock_project_instance
+            "flip_api.project_services.get_models.get_project", return_value=mock_project_instance
         ) as mock_get_project,
         patch(
-            "flip.project_services.get_models.get_project_models_service",
+            "flip_api.project_services.get_models.get_project_models_service",
             return_value=mock_get_models_service_empty_response,
         ) as mock_get_project_models,
     ):

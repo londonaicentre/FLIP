@@ -20,15 +20,15 @@ from pydantic import ValidationError
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import check_authorization_token
-from flip.domain.schemas.private import TrainingMetrics
-from flip.main import app
-from flip.private_services.services.private_service import save_training_metrics
+from flip_api.domain.schemas.private import TrainingMetrics
+from flip_api.main import app
+from flip_api.private_services.services.private_service import save_training_metrics
 
 # Path for mocking ModelIdSchema if it's a custom validator like in add_log.py
 # If ModelIdSchema is not used, this can be removed.
-# MOCKED_MODEL_ID_SCHEMA_VALIDATE_PATH = "flip.private_services.save_training_metrics.ModelIdSchema.validate"
-# MOCKED_IS_TRUST_ASSOCIATED_PATH = "flip.private_services.save_training_metrics.validate_trusts"
-# MOCKED_STORE_METRICS_PATH = "flip.private_services.save_training_metrics._store_training_metrics_in_db"
+# MOCKED_MODEL_ID_SCHEMA_VALIDATE_PATH = "flip_api.private_services.save_training_metrics.ModelIdSchema.validate"
+# MOCKED_IS_TRUST_ASSOCIATED_PATH = "flip_api.private_services.save_training_metrics.validate_trusts"
+# MOCKED_STORE_METRICS_PATH = "flip_api.private_services.save_training_metrics._store_training_metrics_in_db"
 
 # Test client to test the endpoint
 client = TestClient(app)
@@ -122,8 +122,8 @@ class TestSaveTrainingMetricsEndpoint:
     def teardown_class(cls):
         app.dependency_overrides = {}
 
-    @patch("flip.private_services.save_training_metrics.save_training_metrics")
-    @patch("flip.private_services.save_training_metrics.validate_trusts")
+    @patch("flip_api.private_services.save_training_metrics.save_training_metrics")
+    @patch("flip_api.private_services.save_training_metrics.validate_trusts")
     def test_save_metrics_success(self, mock_validate_trusts, mock_save_metrics, sample_metrics_payload_dict):
         mock_validate_trusts.return_value = True
         mock_save_metrics.return_value = None
@@ -133,7 +133,7 @@ class TestSaveTrainingMetricsEndpoint:
         assert response.status_code == 204
         mock_save_metrics.assert_called_once()
 
-    @patch("flip.private_services.save_training_metrics.validate_trusts")
+    @patch("flip_api.private_services.save_training_metrics.validate_trusts")
     def test_save_metrics_invalid_trust(self, mock_validate_trusts, sample_metrics_payload_dict):
         mock_validate_trusts.return_value = False
 
@@ -142,8 +142,8 @@ class TestSaveTrainingMetricsEndpoint:
         assert response.status_code == 400
         assert "trust" in response.json()["detail"].lower()
 
-    @patch("flip.private_services.save_training_metrics.save_training_metrics")
-    @patch("flip.private_services.save_training_metrics.validate_trusts")
+    @patch("flip_api.private_services.save_training_metrics.save_training_metrics")
+    @patch("flip_api.private_services.save_training_metrics.validate_trusts")
     def test_save_metrics_internal_error(self, mock_validate_trusts, mock_save_metrics, sample_metrics_payload_dict):
         mock_validate_trusts.return_value = True
         mock_save_metrics.side_effect = Exception("Simulated DB failure")

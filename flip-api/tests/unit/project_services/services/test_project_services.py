@@ -26,19 +26,19 @@ from flip_api.db.models.main_models import (
     Trust,
     XNATProjectStatus,
 )
-from flip.domain.interfaces.project import (
+from flip_api.domain.interfaces.project import (
     IProjectApproval,
     IProjectDetails,
     IProjectQuery,
     IProjectResponse,
     IReimportQuery,
 )
-from flip.domain.schemas.projects import ProjectDetails
-from flip.domain.schemas.status import (
+from flip_api.domain.schemas.projects import ProjectDetails
+from flip_api.domain.schemas.status import (
     ProjectStatus,
     XNATImageStatus,
 )
-from flip.project_services.services.project_services import (
+from flip_api.project_services.services.project_services import (
     approve_project,
     create_project,
     delete_project,
@@ -52,9 +52,9 @@ from flip.project_services.services.project_services import (
     unstage_project_service,
     update_project_status,
 )
-from flip.utils.project_manager import get_project_by_id
+from flip_api.utils.project_manager import get_project_by_id
 
-MOCK_SERVICE_PATH = "flip.project_services.services.project_services"
+MOCK_SERVICE_PATH = "flip_api.project_services.services.project_services"
 
 
 @pytest.fixture

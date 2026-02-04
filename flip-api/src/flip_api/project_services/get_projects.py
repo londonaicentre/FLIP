@@ -17,13 +17,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session, and_, desc, func, or_, select
 
 from flip_api.auth.auth_utils import has_permissions
-from flip.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.main_models import Projects, ProjectUserAccess
-from flip.db.models.user_models import PermissionRef
-from flip.domain.interfaces.project import IProject
-from flip.utils.logger import logger
-from flip.utils.paging_utils import (
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import Projects, ProjectUserAccess
+from flip_api.db.models.user_models import PermissionRef
+from flip_api.domain.interfaces.project import IProject
+from flip_api.utils.logger import logger
+from flip_api.utils.paging_utils import (
     FilterInfo,
     IPagedData,
     IPagedResponse,

@@ -16,16 +16,16 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
-from flip.cohort_services.save_cohort_query import save_cohort_query
-from flip.cohort_services.submit_cohort_query import submit_cohort_query
-from flip.db.database import get_session
-from flip.domain.schemas.cohort import (
+from flip_api.cohort_services.save_cohort_query import save_cohort_query
+from flip_api.cohort_services.submit_cohort_query import submit_cohort_query
+from flip_api.db.database import get_session
+from flip_api.domain.schemas.cohort import (
     CohortQueryInput,
     SubmitCohortQuery,
     SubmitCohortQueryOutput,
 )
-from flip.utils.logger import logger
-from flip.utils.project_manager import get_project_by_id
+from flip_api.utils.logger import logger
+from flip_api.utils.project_manager import get_project_by_id
 
 router = APIRouter(prefix="/step", tags=["step_functions_services"])
 

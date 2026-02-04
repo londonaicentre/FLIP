@@ -17,12 +17,12 @@ import pytest
 from fastapi import HTTPException
 
 from flip_api.domain.interfaces.fl import IJobResponse
-from flip.fl_services.run_jobs import run_jobs
+from flip_api.fl_services.run_jobs import run_jobs
 
 
 @pytest.fixture
 def mock_db():
-    with patch("flip.fl_services.run_jobs.get_session") as mock_get_session:
+    with patch("flip_api.fl_services.run_jobs.get_session") as mock_get_session:
         mock_db = MagicMock()
         mock_get_session.return_value = mock_db
         yield mock_db
@@ -30,7 +30,7 @@ def mock_db():
 
 @pytest.fixture
 def mock_check_for_available_net():
-    with patch("flip.fl_services.run_jobs.check_for_available_net") as mock_check:
+    with patch("flip_api.fl_services.run_jobs.check_for_available_net") as mock_check:
         scheduler = MagicMock(id="sched-id", netId="net-123")
         mock_check.return_value = scheduler
         yield mock_check
@@ -38,7 +38,7 @@ def mock_check_for_available_net():
 
 @pytest.fixture
 def mock_check_for_queued_jobs():
-    with patch("flip.fl_services.run_jobs.check_for_queued_jobs") as mock_check:
+    with patch("flip_api.fl_services.run_jobs.check_for_queued_jobs") as mock_check:
         job = IJobResponse(id=uuid4(), model_id=uuid4(), clients=["client1"])
         mock_check.return_value = job
         yield mock_check
@@ -51,7 +51,7 @@ def model_id():
 
 def test_run_jobs_success(mock_db, mock_check_for_available_net, mock_check_for_queued_jobs, caplog):
     with (
-        patch("flip.fl_services.run_jobs.prepare_and_start_training") as mock_prepare,
+        patch("flip_api.fl_services.run_jobs.prepare_and_start_training") as mock_prepare,
     ):
         response = run_jobs(mock_db)
 
@@ -83,7 +83,7 @@ def test_run_jobs_no_queued_job(mock_db, mock_check_for_available_net, mock_chec
 
 def test_run_jobs_failure(mock_db, mock_check_for_available_net, mock_check_for_queued_jobs):
     with (
-        patch("flip.fl_services.run_jobs.prepare_and_start_training", side_effect=Exception("start error")),
+        patch("flip_api.fl_services.run_jobs.prepare_and_start_training", side_effect=Exception("start error")),
     ):
         with pytest.raises(HTTPException) as exc_info:
             run_jobs(mock_db)

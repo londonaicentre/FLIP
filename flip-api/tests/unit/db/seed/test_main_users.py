@@ -16,8 +16,8 @@ import pytest
 from sqlmodel import Session
 
 from flip_api.db.models.user_models import RoleRef
-from flip.db.seed.main_users import seed_main_users
-from flip.utils.constants import ADMIN_EMAIL, RESEARCHER_EMAIL
+from flip_api.db.seed.main_users import seed_main_users
+from flip_api.utils.constants import ADMIN_EMAIL, RESEARCHER_EMAIL
 
 
 @pytest.fixture
@@ -25,8 +25,8 @@ def mock_session():
     return MagicMock(spec=Session)
 
 
-@patch("flip.db.seed.main_users.ensure_user_and_role")
-@patch("flip.db.seed.main_users.logger")
+@patch("flip_api.db.seed.main_users.ensure_user_and_role")
+@patch("flip_api.db.seed.main_users.logger")
 def test_seed_main_users_calls_ensure_user_and_role(mock_logger, mock_ensure_user_and_role, mock_session):
     """Test that seed_main_users calls ensure_user_and_role for admin and researcher."""
     seed_main_users(mock_session)
@@ -42,8 +42,8 @@ def test_seed_main_users_calls_ensure_user_and_role(mock_logger, mock_ensure_use
     mock_logger.info.assert_called_with("✅ Finished seeding main users.")
 
 
-@patch("flip.db.seed.main_users.ensure_user_and_role")
-@patch("flip.db.seed.main_users.logger")
+@patch("flip_api.db.seed.main_users.ensure_user_and_role")
+@patch("flip_api.db.seed.main_users.logger")
 def test_seed_main_users_propagates_errors(mock_logger, mock_ensure_user_and_role, mock_session):
     """Test that errors in ensure_user_and_role propagate up."""
     mock_ensure_user_and_role.side_effect = Exception("Cognito failure")
@@ -55,8 +55,8 @@ def test_seed_main_users_propagates_errors(mock_logger, mock_ensure_user_and_rol
     mock_ensure_user_and_role.assert_called_once_with(ADMIN_EMAIL, RoleRef.ADMIN, mock_session)
 
 
-@patch("flip.db.seed.main_users.ensure_user_and_role")
-@patch("flip.db.seed.main_users.logger")
+@patch("flip_api.db.seed.main_users.ensure_user_and_role")
+@patch("flip_api.db.seed.main_users.logger")
 def test_seed_main_users_runs_both_even_if_first_succeeds(mock_logger, mock_ensure_user_and_role, mock_session):
     """Test that both users are seeded when ensure_user_and_role succeeds."""
     mock_ensure_user_and_role.return_value = None

@@ -17,9 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.main_models import Trust
-from flip.domain.interfaces.trust import IBasicTrust
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import Trust
+from flip_api.domain.interfaces.trust import IBasicTrust
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
 

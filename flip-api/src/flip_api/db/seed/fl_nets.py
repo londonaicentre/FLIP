@@ -16,9 +16,9 @@ from typing import Dict, List
 from sqlmodel import Session, select
 
 from flip_api.db.database import engine
-from flip.db.models.main_models import FLNets
-from flip.utils.get_secrets import get_secret
-from flip.utils.logger import logger
+from flip_api.db.models.main_models import FLNets
+from flip_api.utils.get_secrets import get_secret
+from flip_api.utils.logger import logger
 
 
 def seed_fl_nets(session: Session) -> List[FLNets]:

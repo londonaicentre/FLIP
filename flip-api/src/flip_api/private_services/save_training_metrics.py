@@ -16,11 +16,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import check_authorization_token
-from flip.db.database import get_session
-from flip.domain.schemas.private import TrainingMetrics
-from flip.model_services.services.model_service import validate_trusts
-from flip.private_services.services.private_service import save_training_metrics
-from flip.utils.logger import logger
+from flip_api.db.database import get_session
+from flip_api.domain.schemas.private import TrainingMetrics
+from flip_api.model_services.services.model_service import validate_trusts
+from flip_api.private_services.services.private_service import save_training_metrics
+from flip_api.utils.logger import logger
 
 router = APIRouter(tags=["private_services"])
 
@@ -68,7 +68,7 @@ def save_training_metrics_endpoint(
     # If ModelIdSchema is not used or validation is different, this block should be adjusted/removed.
     # For now, it's commented out to rely on path param typing and specific checks if needed.
     # ---
-    # from flip.domain.schemas.model import ModelIdSchema # Hypothetical import
+    # from flip_api.domain.schemas.model import ModelIdSchema # Hypothetical import
     # model_id_error = ModelIdSchema.validate(model_id)
     # if model_id_error:
     #     logger.error(f"Invalid model_id '{model_id}' in {endpoint_path}: {model_id_error}")

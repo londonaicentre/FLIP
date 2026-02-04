@@ -27,7 +27,7 @@ from flip_api.domain.schemas.private import (
     Results,
     TrustSpecificData,
 )
-from flip.private_services.receive_cohort_results import (
+from flip_api.private_services.receive_cohort_results import (
     _aggregate_and_save_results,
     _save_individual_result,
 )

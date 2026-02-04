@@ -17,9 +17,9 @@ from unittest.mock import MagicMock
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import Projects
-from flip.domain.schemas.status import ProjectStatus
-from flip.project_services.get_projects import get_projects_paginated_orm
-from flip.utils.paging_utils import get_filter_details, get_paging_details
+from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.project_services.get_projects import get_projects_paginated_orm
+from flip_api.utils.paging_utils import get_filter_details, get_paging_details
 
 paging_details = get_paging_details()
 

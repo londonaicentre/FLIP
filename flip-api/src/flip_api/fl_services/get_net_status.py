@@ -17,12 +17,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.domain.interfaces.fl import IClientStatus, INetStatus
-from flip.fl_services.get_status import fetch_client_status
-from flip.fl_services.services.fl_scheduler_service import get_net_by_name
-from flip.trusts_services.services.trust import get_trusts
-from flip.utils.logger import logger
+from flip_api.db.database import get_session
+from flip_api.domain.interfaces.fl import IClientStatus, INetStatus
+from flip_api.fl_services.get_status import fetch_client_status
+from flip_api.fl_services.services.fl_scheduler_service import get_net_by_name
+from flip_api.trusts_services.services.trust import get_trusts
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/fl", tags=["fl_services"])
 

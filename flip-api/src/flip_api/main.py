@@ -22,7 +22,7 @@ from flip_api.cohort_services import (
     save_cohort_query,
     submit_cohort_query,
 )
-from flip.file_services import (
+from flip_api.file_services import (
     delete_file,
     download_file,
     get_model_files_list,
@@ -32,14 +32,14 @@ from flip.file_services import (
     retrieve_uploaded_file_info,
     uploaded_file,
 )
-from flip.fl_services import (
+from flip_api.fl_services import (
     get_net_status,
     get_status,
     initiate_training,
     run_jobs,
     stop_training,
 )
-from flip.model_services import (
+from flip_api.model_services import (
     delete_model,
     edit_model,
     get_job_types,
@@ -50,13 +50,13 @@ from flip.model_services import (
     save_model,
     update_model_status,
 )
-from flip.private_services import (
+from flip_api.private_services import (
     add_log,
     invoke_model_status_update,
     receive_cohort_results,
     save_training_metrics,
 )
-from flip.project_services import (
+from flip_api.project_services import (
     approve_project,
     create_project,
     delete_project,
@@ -69,21 +69,21 @@ from flip.project_services import (
     stage_project,
     unstage_project,
 )
-from flip.role_services import get_roles
-from flip.scheduler.apscheduler_runner import start_scheduler
-from flip.site_services import details
-from flip.step_functions_services import (
+from flip_api.role_services import get_roles
+from flip_api.scheduler.apscheduler_runner import start_scheduler
+from flip_api.site_services import details
+from flip_api.step_functions_services import (
     approve_project_step_function,
     cohort_query_step_function,
     register_user_step_function,
     retrieve_model_step_function,
 )
-from flip.trusts_services import (
+from flip_api.trusts_services import (
     get_trusts,
     trusts_health_check,
     update_trust_status,
 )
-from flip.user_services import (
+from flip_api.user_services import (
     access_request,
     delete_user,
     get_user,
@@ -203,7 +203,7 @@ def health_check():
 
 def main():
     """Entry point for the application script"""
-    uvicorn.run("flip.main:app", host="0.0.0.0", port=81, reload=True)
+    uvicorn.run("flip_api.main:app", host="0.0.0.0", port=81, reload=True)
 
 
 if __name__ == "__main__":

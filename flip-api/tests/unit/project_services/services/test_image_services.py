@@ -22,13 +22,13 @@ from flip_api.domain.interfaces.project import (
     IReimportQuery,
     IUpdateXnatProfile,
 )
-from flip.domain.interfaces.trust import ITrust
-from flip.domain.schemas.projects import (
+from flip_api.domain.interfaces.trust import ITrust
+from flip_api.domain.schemas.projects import (
     ImagingProject,
     XnatProjectStatusInfo,
 )
-from flip.domain.schemas.status import XNATImageStatus
-from flip.project_services.services.image_service import (
+from flip_api.domain.schemas.status import XNATImageStatus
+from flip_api.project_services.services.image_service import (
     delete_imaging_project,
     get_imaging_project_statuses,
     get_imaging_projects,
@@ -38,7 +38,7 @@ from flip.project_services.services.image_service import (
 )
 
 # Mocking paths
-MOCK_SERVICE_PATH = "flip.project_services.services.image_service"
+MOCK_SERVICE_PATH = "flip_api.project_services.services.image_service"
 MOCK_LOGGER_PATH = f"{MOCK_SERVICE_PATH}.logger"
 # MOCK_API_REQUEST_PATH = f"{MOCK_SERVICE_PATH}.api_request_to_trust"  # Placeholder for actual path
 MOCK_HTTP_REQUEST_PATH = f"{MOCK_SERVICE_PATH}.http_request"  # Placeholder for actual path
