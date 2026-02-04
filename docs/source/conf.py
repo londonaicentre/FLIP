@@ -44,9 +44,9 @@ release = "1.0"
 # The full version of the FLIP platform, including alpha/beta/rc tags
 # The rst_epilog list makes items within it globally-available to compiled .rst files.
 rst_epilog = """
-.. |flipsion| replace:: {flipflip}
+.. |flip_version| replace:: {flip_version}
 """.format(
-    flipsion="1.0",
+    flip_version="1.0",
 )
 
 # -- General configuration ---------------------------------------------------
