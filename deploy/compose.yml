@@ -48,9 +48,9 @@ services:
       # - LOG_LEVEL=DEBUG
     volumes:
       # Provisioned secrets from workspace/ (gitignored)
-      - ../workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/fl-server/local:/app/local
-      - ../workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/fl-server/startup:/app/startup
-      - ../workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/fl-server/transfer:/app/transfer
+      - ../workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/local:/app/local
+      - ../workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/startup:/app/startup
+      - ../workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
 
   flip-fl-api:
@@ -73,8 +73,9 @@ services:
       - "5679:5679"
     volumes:
       # Provisioned secrets from workspace/ (gitignored)
-      - ../workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/admin/local:/app/admin/local
-      - ../workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/admin/startup:/app/admin/startup
+      - ../workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/local:/app/admin/local
+      - ../workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/startup:/app/admin/startup
+      - ../workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/transfer:/app/admin/transfer
       # Static code from fl_services/ (tracked in git)
       - ../fl_services/fl-api-base/fl_api:/app/fl_api
       - ../fl_services/fl-api-base/tests:/app/tests
@@ -109,9 +110,9 @@ services:
       # - LOG_LEVEL=DEBUG
     volumes:
       # Provisioned secrets from workspace/ (gitignored)
-      - ../workspace/net-${NET_NUMBER}/services/Trust_1/fl-client/local:/app/local
-      - ../workspace/net-${NET_NUMBER}/services/Trust_1/fl-client/startup:/app/startup
-      - ../workspace/net-${NET_NUMBER}/services/Trust_1/fl-client/transfer:/app/transfer
+      - ../workspace/net-${NET_NUMBER}/services/Trust_1/local:/app/local
+      - ../workspace/net-${NET_NUMBER}/services/Trust_1/startup:/app/startup
+      - ../workspace/net-${NET_NUMBER}/services/Trust_1/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
     shm_size: "32gb"
     gpus: all
@@ -138,9 +139,9 @@ services:
       # - LOG_LEVEL=DEBUG
     volumes:
       # Provisioned secrets from workspace/ (gitignored)
-      - ../workspace/net-${NET_NUMBER}/services/Trust_2/fl-client/local:/app/local
-      - ../workspace/net-${NET_NUMBER}/services/Trust_2/fl-client/startup:/app/startup
-      - ../workspace/net-${NET_NUMBER}/services/Trust_2/fl-client/transfer:/app/transfer
+      - ../workspace/net-${NET_NUMBER}/services/Trust_2/local:/app/local
+      - ../workspace/net-${NET_NUMBER}/services/Trust_2/startup:/app/startup
+      - ../workspace/net-${NET_NUMBER}/services/Trust_2/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
     shm_size: "32gb"
     gpus: all
