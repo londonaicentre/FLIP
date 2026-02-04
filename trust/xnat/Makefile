@@ -98,7 +98,7 @@ xnat-war-download:
 		echo "✅ XNAT WAR already exists locally."; \
 	else \
 		echo "📦 Downloading XNAT WAR from S3..."; \
-		aws s3 cp "s3://flipdev-artifacts/xnat/xnat-web-$(XNAT_VERSION).war" \
+		aws s3 cp "s3://flip-dev-artifacts/xnat/xnat-web-$(XNAT_VERSION).war" \
 			"xnat-docker-compose/xnat/build-artifacts/xnat-web-$(XNAT_VERSION).war"; \
 		ls -lh "xnat-docker-compose/xnat/build-artifacts/xnat-web-$(XNAT_VERSION).war"; \
 	fi
@@ -112,7 +112,7 @@ xnat-plugins-clean:
 # see https://wiki.xnat.org/container-service/container-service-compatibility-matrix)
 xnat-plugins-download:
 	@echo "📦 Downloading required XNAT plugins if missing..."
-	@aws s3 sync s3://flipdev-artifacts/xnat/plugins/ xnat-docker-compose/xnat/plugins/
+	@aws s3 sync s3://flip-dev-artifacts/xnat/plugins/ xnat-docker-compose/xnat/plugins/
 
 # Note this needs root privileges to run
 # Creates directory structure for XNAT (Docker Swarm requires them to exist beforehand)

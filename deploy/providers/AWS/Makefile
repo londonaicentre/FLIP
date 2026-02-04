@@ -38,6 +38,7 @@ export TF_VAR_ec2_public_key_path=/home/${USER}/.ssh/host-aws.pub
 export TF_VAR_flip_user_pool_name=flip-user-pool
 export TF_VAR_flip_cognito_client=flip-cognito-client
 export TF_VAR_FLIP_BUCKET_NAME=${FLIP_BUCKET_NAME}
+export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
 export TF_VAR_flip_cognito_admin_email=flip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
 export TF_VAR_NET_ENDPOINTS=${NET_ENDPOINTS}

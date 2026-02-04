@@ -51,6 +51,28 @@ resource "aws_s3_object" "uploaded_federated_data" {
 }
 
 ############################
+# AI Centre S3 Bucket
+############################
+
+resource "aws_s3_bucket" "aicentre_bucket" {
+  bucket = var.AICENTRE_BUCKET_NAME
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "aicentre_bucket_cors" {
+  bucket = aws_s3_bucket.aicentre_bucket.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["PUT", "GET"]
+    allowed_origins = ["*"]
+    expose_headers  = []
+  }
+}
+
+############################
 # Cognito
 ############################
 
