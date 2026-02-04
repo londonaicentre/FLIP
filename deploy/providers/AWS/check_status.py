@@ -1,0 +1,990 @@
+#!/usr/bin/env python3
+#
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+"""FLIP Deployment Status Checker.
+
+This script verifies that the AWS deployment is functioning correctly.
+
+PREREQUISITES:
+  - terraform (to read outputs from terraform.tfstate)
+  - aws CLI (configured with appropriate credentials)
+  - SSH key file specified in Terraform outputs
+
+WHAT IT CHECKS:
+  ✓ AWS Resources (EC2 instances, RDS, S3, Secrets Manager)
+  ✓ Network Connectivity (ICMP, SSH, HTTP) for both Central Hub & Trust EC2
+  ✓ Application Endpoints (UI, API, FL API on Central Hub)
+  ✓ Trust Endpoints (Trust API, Imaging API, Data Access API on Trust EC2)
+  ✓ Docker Containers (Central Hub & Trust EC2)
+  ✓ Trust Services (FL clients, OMOP database, Trust APIs)
+  ✓ System Resources (disk, memory) on both EC2 instances
+  ✓ CloudWatch Logs for both Central Hub & Trust EC2
+
+EXIT CODES:
+  0 - All checks passed (warnings are acceptable)
+  1 - One or more checks failed
+"""
+
+import json
+import os
+import platform
+import subprocess
+import sys
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional, Tuple
+
+import click
+
+flip_bucket_name = os.getenv("FLIP_BUCKET_NAME")
+
+
+# Color codes for terminal output
+class Colors:
+    """ANSI color codes for terminal output."""
+
+    RED = "\033[0;31m"
+    GREEN = "\033[0;32m"
+    YELLOW = "\033[1;33m"
+    BLUE = "\033[0;34m"
+    NC = "\033[0m"  # No Color
+
+
+@dataclass
+class StatusCounters:
+    """Track check results."""
+
+    passed: int = 0
+    failed: int = 0
+    warnings: int = 0
+
+    @property
+    def total(self) -> int:
+        """Get total checks."""
+        return self.passed + self.failed + self.warnings
+
+
+# Global counters
+counters = StatusCounters()
+
+
+def print_status(status: str, message: str) -> None:
+    """Print a status message with color coding.
+
+    Args:
+        status: Status type (PASS, FAIL, INFO, WARN)
+        message: Message to display
+    """
+    global counters
+
+    symbols = {
+        "PASS": f"{Colors.GREEN}✓ PASS{Colors.NC}",
+        "FAIL": f"{Colors.RED}✗ FAIL{Colors.NC}",
+        "WARN": f"{Colors.YELLOW}⚠ WARN{Colors.NC}",
+        "INFO": f"{Colors.BLUE}ℹ INFO{Colors.NC}",
+    }
+
+    symbol = symbols.get(status, "")
+    click.echo(f"{symbol} - {message}")
+
+    if status == "PASS":
+        counters.passed += 1
+    elif status == "FAIL":
+        counters.failed += 1
+    elif status == "WARN":
+        counters.warnings += 1
+
+
+def print_section(title: str) -> None:
+    """Print a section header.
+
+    Args:
+        title: Section title
+    """
+    click.echo()
+    click.echo(f"{Colors.BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{Colors.NC}")
+    click.echo(f"{Colors.BLUE}{title}{Colors.NC}")
+    click.echo(f"{Colors.BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{Colors.NC}")
+
+
+def check_command(command: str) -> bool:
+    """Check if a command is available.
+
+    Args:
+        command: Command name to check
+
+    Returns:
+        True if command exists, False otherwise
+    """
+    try:
+        subprocess.run(
+            ["which", command] if platform.system() != "Windows" else ["where", command],
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+        return True
+    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def get_terraform_output(output_name: str) -> Optional[str]:
+    """Get a specific output value from Terraform.
+
+    Args:
+        output_name: Name of the Terraform output variable
+
+    Returns:
+        The output value or None if not found
+    """
+    try:
+        result = subprocess.run(
+            ["terraform", "output", "-raw", output_name],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        output = result.stdout.strip()
+        if output and output != "null":
+            return output
+        return None
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+
+
+def run_aws_command(args: list[str]) -> Tuple[bool, str]:
+    """Run an AWS CLI command.
+
+    Args:
+        args: AWS CLI arguments
+
+    Returns:
+        Tuple of (success, output)
+    """
+    try:
+        result = subprocess.run(
+            ["aws"] + args,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,
+        )
+        return True, result.stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+
+
+def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) -> Tuple[bool, str]:
+    """Run a command via SSH.
+
+    Args:
+        ssh_key: Path to SSH key
+        host: Host address (user@ip)
+        command: Command to run
+        timeout: Command timeout in seconds
+
+    Returns:
+        Tuple of (success, output)
+    """
+    try:
+        result = subprocess.run(
+            [
+                "ssh",
+                "-i",
+                ssh_key,
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-o",
+                f"ConnectTimeout={timeout}",
+                host,
+                command,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=timeout + 5,
+        )
+        return True, result.stdout.strip()
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        return False, str(e)
+
+
+def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 200) -> bool:
+    """Check HTTP endpoint availability.
+
+    Args:
+        url: URL to check
+        name: Endpoint name for logging
+        expected_status: Expected HTTP status code(s). Can be a single int or list of ints.
+
+    Returns:
+        True if endpoint is accessible, False otherwise
+    """
+    print_status("INFO", f"Checking {name} at {url}...")
+
+    # Convert single int to list for uniform handling
+    valid_statuses = [expected_status] if isinstance(expected_status, int) else expected_status
+
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            if response.status in valid_statuses:
+                print_status("PASS", f"{name} is responding (HTTP {response.status})")
+                return True
+            else:
+                print_status(
+                    "FAIL",
+                    (f"{name} returned HTTP {response.status} (expected {valid_statuses})"),
+                )
+                return False
+    except urllib.error.HTTPError as e:
+        # Handle HTTP errors (like 401) that still indicate the service is responding
+        if e.code in valid_statuses:
+            print_status("PASS", f"{name} is responding (HTTP {e.code})")
+            return True
+        else:
+            print_status("FAIL", f"{name} returned HTTP {e.code} (expected {valid_statuses})")
+            return False
+    except Exception as e:
+        print_status("FAIL", f"{name} not responding: {e}")
+        return False
+
+
+def check_endpoint_over_ssh(host: str, endpoint: str, expected_status: int = 200) -> bool:
+    """Check an HTTP endpoint from a remote host via SSH.
+
+    Args:
+        host: Host address (user@ip)
+        endpoint: URL to check
+    Returns:
+        True if endpoint is accessible, False otherwise
+    """
+    command = f"curl -s -o /dev/null -w '%{{http_code}}' {endpoint}"
+    print_status(status="INFO", message=f"Checking endpoint {endpoint} from {host} via SSH...")
+    success, output = run_ssh_command(ssh_key="", host=host, command=command)
+    if success and output == str(expected_status):
+        print_status("PASS", f"{endpoint} is accessible from {host}")
+        return True
+    else:
+        print_status("FAIL", f"{endpoint} is not accessible from {host}: {output}")
+        return False
+
+
+def ping_host(host: str) -> bool:
+    """Ping a host to check connectivity.
+
+    Args:
+        host: Host address to ping
+
+    Returns:
+        True if host is reachable, False otherwise
+    """
+    param = "-n" if platform.system() == "Windows" else "-c"
+    try:
+        subprocess.run(
+            ["ping", param, "1", "-W", "2", host],
+            capture_output=True,
+            check=True,
+            timeout=5,
+        )
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return False
+
+
+@click.command()
+@click.option(
+    "--terraform-dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=Path.cwd(),
+    help="Directory containing terraform.tfstate",
+)
+@click.option(
+    "--skip-network",
+    is_flag=True,
+    help="Skip network connectivity checks (ICMP, SSH)",
+)
+@click.option(
+    "--skip-endpoints",
+    is_flag=True,
+    help="Skip HTTP endpoint checks",
+)
+@click.option(
+    "--skip-docker",
+    is_flag=True,
+    help="Skip Docker container checks",
+)
+def main(
+    terraform_dir: Path,
+    skip_network: bool,
+    skip_endpoints: bool,
+    skip_docker: bool,
+) -> None:
+    """FLIP Deployment Status Checker.
+
+    Verifies that the AWS deployment is functioning correctly.
+    """
+    # Change to terraform directory
+    original_dir = Path.cwd()
+    os.chdir(terraform_dir)
+
+    # Check prerequisites
+    print_section("Checking Prerequisites")
+
+    if not check_command("terraform"):
+        print_status("FAIL", "Required command 'terraform' not found. Please install it.")
+        sys.exit(1)
+
+    if not check_command("aws"):
+        print_status("FAIL", "Required command 'aws' not found. Please install it.")
+        sys.exit(1)
+
+    if not check_command("ssh"):
+        print_status("WARN", "ssh not found, remote checks will be skipped")
+
+    if not check_command("jq"):
+        print_status("WARN", "jq not found, JSON parsing will be limited")
+
+    # Check terraform state
+    print_section("Fetching Terraform Outputs")
+
+    # Get Terraform outputs
+    central_hub_ip = get_terraform_output("Ec2PublicIp")
+    central_hub_id = get_terraform_output("Ec2InstanceId")
+    ssh_key = get_terraform_output("Keypair")
+
+    trust_ip = get_terraform_output("TrustEc2PublicIp")
+    trust_id = get_terraform_output("TrustEc2InstanceId")
+
+    if not central_hub_ip:
+        print_status("FAIL", "Could not retrieve Central Hub EC2 IP from Terraform outputs")
+        sys.exit(1)
+
+    print_status("PASS", f"Central Hub EC2 IP: {central_hub_ip}")
+    print_status("PASS", f"Central Hub EC2 ID: {central_hub_id}")
+
+    if trust_ip:
+        print_status("PASS", f"Trust EC2 IP: {trust_ip}")
+        print_status("PASS", f"Trust EC2 ID: {trust_id}")
+    else:
+        print_status("INFO", "Trust EC2 not found in outputs (may not be deployed)")
+
+    # Check AWS resources
+    print_section("Checking AWS Resources")
+
+    # Check Central Hub EC2 instance status
+    if central_hub_id:
+        success, output = run_aws_command([
+            "ec2",
+            "describe-instances",
+            "--instance-ids",
+            central_hub_id,
+            "--query",
+            "Reservations[0].Instances[0].State.Name",
+            "--output",
+            "text",
+        ])
+        if success and output == "running":
+            print_status("PASS", "Central Hub EC2 instance is running")
+        else:
+            print_status("FAIL", f"Central Hub EC2 instance state: {output}")
+
+    # Check Trust EC2 instance status if it exists
+    if trust_id:
+        success, output = run_aws_command([
+            "ec2",
+            "describe-instances",
+            "--instance-ids",
+            trust_id,
+            "--query",
+            "Reservations[0].Instances[0].State.Name",
+            "--output",
+            "text",
+        ])
+        if success and output == "running":
+            print_status("PASS", "Trust EC2 instance is running")
+        else:
+            print_status("FAIL", f"Trust EC2 instance state: {output}")
+
+        # Check security groups
+    if central_hub_id:
+        success, sg_id = run_aws_command([
+            "ec2",
+            "describe-instances",
+            "--instance-ids",
+            central_hub_id,
+            "--query",
+            "Reservations[0].Instances[0].SecurityGroups[0].GroupId",
+            "--output",
+            "text",
+        ])
+        if success and sg_id:
+            print_status("PASS", f"Security Group: {sg_id}")
+        else:
+            print_status("WARN", "Could not retrieve Security Group ID")
+
+    # Check RDS instance
+    print_status("INFO", "Checking RDS database...")
+    success, rds_endpoint = run_aws_command([
+        "rds",
+        "describe-db-instances",
+        "--query",
+        "DBInstances[?contains(DBInstanceIdentifier, `flipEndpoint.Address",
+        "--output",
+        "text",
+    ])
+    if success and rds_endpoint:
+        print_status("PASS", f"RDS endpoint found: {rds_endpoint}")
+
+        success, rds_status = run_aws_command([
+            "rds",
+            "describe-db-instances",
+            "--query",
+            "DBInstances[?contains(DBInstanceIdentifier, `flipDBInstanceStatus",
+            "--output",
+            "text",
+        ])
+        if success and rds_status == "available":
+            print_status("PASS", "RDS instance is available")
+        else:
+            print_status("WARN", f"RDS instance status: {rds_status}")
+    else:
+        print_status("FAIL", "RDS endpoint not found")
+
+    # Check S3 bucket
+    print_status("INFO", "Checking S3 bucket...")
+    success, _ = run_aws_command(["s3", "ls", f"s3://{flipket_name}"])
+    if success:
+        print_status("PASS", f"S3 bucket '{flipket_name}' is accessible")
+    else:
+        print_status(
+            "WARN",
+            f"S3 bucket '{flipket_name}' not accessible (may need different name or permissions)",
+        )
+
+    # Check Secrets Manager
+    print_status("INFO", "Checking Secrets Manager...")
+    success, secret_arn = run_aws_command([
+        "secretsmanager",
+        "list-secrets",
+        "--query",
+        "SecretList[?contains(Name, `FLIP_API`)].ARN",
+        "--output",
+        "text",
+    ])
+    if success and secret_arn:
+        print_status("PASS", "Secrets Manager secret found")
+    else:
+        print_status("WARN", "Secrets Manager secret not found")
+
+    # Network connectivity checks
+    if not skip_network:
+        print_section("Network Connectivity")
+
+        # SSH connectivity check
+        if ssh_key and Path(ssh_key).expanduser().exists():
+            ssh_key_path = str(Path(ssh_key).expanduser())
+
+            print_status("INFO", "Testing SSH connectivity to Central Hub...")
+            success, _ = run_ssh_command(
+                ssh_key_path,
+                f"ubuntu@{central_hub_ip}",
+                "echo 'SSH connection successful'",
+                timeout=5,
+            )
+            if success:
+                print_status("PASS", "SSH connection to Central Hub successful")
+            else:
+                print_status(
+                    "FAIL",
+                    "Cannot SSH to Central Hub (check key permissions and security groups)",
+                )
+
+            # Check Trust EC2 SSH connectivity
+            if trust_ip:
+                print_status("INFO", "Testing SSH connectivity to Trust EC2...")
+                success, _ = run_ssh_command(
+                    ssh_key_path,
+                    f"ubuntu@{trust_ip}",
+                    "echo 'SSH connection successful'",
+                    timeout=5,
+                )
+                if success:
+                    print_status("PASS", "SSH connection to Trust EC2 successful")
+                else:
+                    print_status(
+                        "WARN",
+                        "Cannot SSH to Trust EC2 (check key permissions and security groups)",
+                    )
+        else:
+            print_status("WARN", f"SSH key not found at {ssh_key}, skipping SSH tests")
+
+    # HTTP/HTTPS endpoint checks
+    if not skip_endpoints:
+        print_section("Application Endpoint Checks")
+
+        # Central Hub EC2 ports
+        UI_PORT = os.getenv("UI_PORT", "")
+        API_PORT = os.getenv("API_PORT", "")
+        FL_API_PORT = os.getenv("FL_API_PORT", "")
+        # Parse NET_ENDPOINTS to determine which FL networks are configured
+        NET_ENDPOINTS = os.getenv("NET_ENDPOINTS", "{}")
+        try:
+            net_endpoints = json.loads(NET_ENDPOINTS.replace("'", '"'))
+            configured_nets = list(net_endpoints.keys())
+            # Extract numbers from net names (e.g., 'net-1' -> 1)
+            configured_net_numbers = [int(net.split("-")[-1]) for net in configured_nets if net.startswith("net-")]
+        except (json.JSONDecodeError, ValueError):
+            configured_net_numbers = [1]  # Default to net-1 only
+        # Trust EC2 ports
+        TRUST_API_PORT = os.getenv("TRUST_API_PORT", "")
+        XNAT_PORT = os.getenv("XNAT_PORT_TRUST_1", "")
+        ORTHANC_PORT = os.getenv("PACS_UI_PORT_TRUST_1", "")
+        # IMAGING_API_PORT = os.getenv("IMAGING_API_PORT", "")
+        # DATA_ACCESS_API_PORT = os.getenv("DATA_ACCESS_API_PORT", "")
+
+        # Check UI
+        check_http_endpoint(f"http://{central_hub_ip}:{UI_PORT}", "FLIP UI", 200)
+
+        # Check API health endpoint
+        check_http_endpoint(f"http://{central_hub_ip}:{API_PORT}/health", "FLIP API Health", 200)
+
+        # Check API docs endpoint
+        check_http_endpoint(f"http://{central_hub_ip}:{API_PORT}/docs", "FLIP API Docs", 200)
+
+        # Check FL API health endpoint
+        check_http_endpoint(f"http://{central_hub_ip}:{FL_API_PORT}/health", "FLIP FL API Health", 200)
+
+        # Check FL API docs endpoint
+        check_http_endpoint(f"http://{central_hub_ip}:{FL_API_PORT}/docs", "FLIP FL API Docs", 200)
+
+        # Check Central Hub API is reachable inside Central Hub EC2 via SSH
+        check_endpoint_over_ssh("flip", f"http://localhost:{API_PORT}/health", 200)
+
+        # Check FL-api-net endpoints over ssh and inside flip running container.
+        for nets in configured_net_numbers:
+            success, message = run_ssh_command(
+                ssh_key=ssh_key_path,
+                host=f"ubuntu@{central_hub_ip}",
+                command=f"docker exec flip httpx http://fl-api-net-{nets}:8000/check_status/all",
+            )
+            # Extract JSON part from the message
+            start = message.find("{")
+            json_part = message[start:]
+            try:
+                data = json.loads(json_part)
+            except json.JSONDecodeError:
+                print_status(
+                    "FAIL",
+                    f"FL API Net {nets} clients returned invalid JSON from flip container:\n{message}",
+                )
+                continue
+            client_info = data.get("client_info", [])
+            if success and ("200" in message) and client_info != []:
+                print_status("PASS", f"FL API Net {nets} clients are reachable inside flip container")
+            else:
+                print_status(
+                    "FAIL",
+                    f"FL API Net {nets} clients are not reachable from flip container:\n{message}",
+                )
+
+        # Trust EC2 endpoint checks
+        if trust_ip:
+            print_status("INFO", "Checking Trust EC2 service endpoints...")
+
+            # Check if Trust API is reachable from Trust EC2 via SSH
+            check_endpoint_over_ssh("flip-trust", f"http://localhost:{TRUST_API_PORT}/health", 200)
+
+            # Check Trust is reachable inside Central Hub
+            check_endpoint_over_ssh("flip", f"http://{trust_ip}:{TRUST_API_PORT}/health", 200)
+
+            # Check Trust API health endpoint
+            check_http_endpoint(f"http://{trust_ip}:{TRUST_API_PORT}/health", "Trust API Health", 200)
+
+            # Check XNAT is reachable
+            check_http_endpoint(f"http://{trust_ip}:{XNAT_PORT}", "XNAT Service", 200)
+
+            # Check Orthanc PACS is reachable (401 is expected - requires authentication)
+            check_http_endpoint(f"http://{trust_ip}:{ORTHANC_PORT}", "Orthanc PACS Service", [200, 401])
+
+        #     # Check Imaging API health endpoint
+        #     check_http_endpoint(
+        #         f"http://{trust_ip}:{imaging_API_PORT}/health",
+        #         "Imaging API Health",
+        #         200,
+        #     )
+
+        #     # Check Imaging API docs endpoint
+        #     check_http_endpoint(f"http://{trust_ip}:{imaging_API_PORT}/docs", "Imaging API Docs", 200)
+
+        #     # Check Data Access API health endpoint
+        #     check_http_endpoint(
+        #         f"http://{trust_ip}:{data_access_API_PORT}/health",
+        #         "Data Access API Health",
+        #         200,
+        #     )
+
+        #     # Check Data Access API docs endpoint
+        #     check_http_endpoint(
+        #         f"http://{trust_ip}:{data_access_API_PORT}/docs",
+        #         "Data Access API Docs",
+        #         200,
+        #     )
+
+    # Docker container checks (via SSH)
+    if not skip_docker and ssh_key and Path(ssh_key).expanduser().exists():
+        ssh_key_path = str(Path(ssh_key).expanduser())
+
+        # Test SSH connectivity first
+        success, _ = run_ssh_command(ssh_key_path, f"ubuntu@{central_hub_ip}", "true", timeout=5)
+
+        if success:
+            print_section("Docker Container Status (Central Hub)")
+
+            print_status("INFO", "Checking Docker containers on Central Hub...")
+
+            # Get container status
+            success, containers = run_ssh_command(
+                ssh_key_path,
+                f"ubuntu@{central_hub_ip}",
+                "docker ps --format '{{.Names}}:{{.Status}}'",
+            )
+
+            if not success or not containers:
+                print_status("FAIL", "Could not retrieve Docker container status")
+            else:
+                # Check each expected container
+                expected_containers = [
+                    "flip,
+                    "flip",
+                ]
+                # Add only configured FL server containers
+                for net_num in configured_net_numbers:
+                    expected_containers.append(f"flipserver-net-{net_num}")
+
+                for container in expected_containers:
+                    container_found = False
+                    for line in containers.split("\n"):
+                        if line.startswith(f"{container}:") and "Up" in line:
+                            status = line.split(":", 1)[1] if ":" in line else ""
+                            print_status("PASS", f"Container '{container}' is running ({status})")
+                            container_found = True
+                            break
+                    if not container_found:
+                        print_status("FAIL", f"Container '{container}' is not running")
+
+                # Check for any exited containers
+                success, exited = run_ssh_command(
+                    ssh_key_path,
+                    f"ubuntu@{central_hub_ip}",
+                    "docker ps -a --filter 'status=exited' --format '{{.Names}}' 2>/dev/null",
+                )
+                if success and exited:
+                    print_status("WARN", f"Exited containers found: {exited}")
+
+            # Check Docker networks
+            print_status("INFO", "Checking Docker networks...")
+            success, networks = run_ssh_command(
+                ssh_key_path,
+                f"ubuntu@{central_hub_ip}",
+                "docker network ls --format '{{.Name}}' 2>/dev/null",
+            )
+            if success and "central-hub-trust-apis-network" in networks:
+                print_status("PASS", "Docker network 'central-hub-trust-apis-network' exists")
+            else:
+                print_status("WARN", "Docker network 'central-hub-trust-apis-network' not found")
+
+            # Check disk space
+            print_status("INFO", "Checking disk space...")
+            success, disk_output = run_ssh_command(
+                ssh_key_path,
+                f"ubuntu@{central_hub_ip}",
+                "df -h / | tail -1 | awk '{print $5}'",
+            )
+            if success and disk_output:
+                disk_usage = int(disk_output.strip().rstrip("%"))
+                if disk_usage < 80:
+                    print_status("PASS", f"Disk usage is {disk_usage}%")
+                else:
+                    print_status("WARN", f"Disk usage is {disk_usage}% (consider cleanup if >80%)")
+
+            # Check memory usage
+            print_status("INFO", "Checking memory usage...")
+            success, mem_output = run_ssh_command(
+                ssh_key_path,
+                f"ubuntu@{central_hub_ip}",
+                "free | grep Mem | awk '{printf(\"%.0f\", $3/$2 * 100)}'",
+            )
+            if success and mem_output:
+                try:
+                    mem_usage = int(mem_output.strip())
+                    if mem_usage < 90:
+                        print_status("PASS", f"Memory usage is {mem_usage}%")
+                    else:
+                        print_status("WARN", f"Memory usage is {mem_usage}% (high memory usage detected)")
+                except ValueError:
+                    print_status("WARN", "Could not parse memory usage")
+
+        # Trust EC2 checks
+        if trust_ip:
+            success, _ = run_ssh_command(ssh_key_path, f"ubuntu@{trust_ip}", "true", timeout=5)
+
+            if success:
+                print_section("Trust EC2 Status")
+                print_status("PASS", "SSH connection to Trust EC2 successful")
+
+                # Check Trust Docker containers
+                print_status("INFO", "Checking Trust Docker containers...")
+                success, trust_containers = run_ssh_command(
+                    ssh_key_path,
+                    f"ubuntu@{trust_ip}",
+                    "docker ps --format '{{.Names}}:{{.Status}}'",
+                )
+
+                if not success or not trust_containers:
+                    print_status(
+                        "WARN",
+                        "Could not retrieve Trust container status (may not be deployed yet)",
+                    )
+                else:
+                    # Count running containers
+                    running_count = trust_containers.count("Up")
+                    total_count = len(trust_containers.split("\n"))
+                    print_status("INFO", f"Trust containers: {running_count}/{total_count} running")
+
+                    # Check specific Trust API services
+                    trust_services = ["trust-api", "imaging-api", "data-access-api"]
+                    for service in trust_services:
+                        service_found = False
+                        for line in trust_containers.split("\n"):
+                            if service in line and "Up" in line:
+                                status = line.split(":", 1)[1] if ":" in line else ""
+                                print_status(
+                                    "PASS",
+                                    f"Trust service '{service}' is running ({status})",
+                                )
+                                service_found = True
+                                break
+                        if not service_found:
+                            print_status(
+                                "WARN",
+                                f"Trust service '{service}' not found or not running",
+                            )
+
+                    # Check FL clients on Trust EC2 (only for configured networks)
+                    for net_num in configured_net_numbers:
+                        client = f"fl-client-net-{net_num}"
+                        client_found = False
+                        for line in trust_containers.split("\n"):
+                            if client in line and "Up" in line:
+                                status = line.split(":", 1)[1] if ":" in line else ""
+                                print_status("PASS", f"FL client '{client}' is running ({status})")
+                                client_found = True
+                                break
+                        if not client_found:
+                            print_status("WARN", f"FL client '{client}' not found or not running")
+
+                    # Check OMOP database
+                    if "omop-db" in trust_containers and "Up" in trust_containers:
+                        for line in trust_containers.split("\n"):
+                            if "omop-db" in line and "Up" in line:
+                                status = line.split(":", 1)[1] if ":" in line else ""
+                                print_status("PASS", f"OMOP database is running ({status})")
+                                break
+                    else:
+                        print_status("WARN", "OMOP database not found or not running")
+
+                # Check Docker networks on Trust EC2
+                print_status("INFO", "Checking Trust Docker networks...")
+                success, trust_networks = run_ssh_command(
+                    ssh_key_path,
+                    f"ubuntu@{trust_ip}",
+                    "docker network ls --format '{{.Name}}' 2>/dev/null",
+                )
+
+                expected_networks = [
+                    "central-hub-trust-apis-network",
+                    "deploy_shared-net-1",
+                    "deploy_shared-net-2",
+                    "deploy_trust-network-1",
+                ]
+                if success:
+                    for network in expected_networks:
+                        if network in trust_networks:
+                            print_status("PASS", f"Trust network '{network}' exists")
+                        else:
+                            print_status("WARN", f"Trust network '{network}' not found")
+
+                # Check disk space on Trust EC2
+                print_status("INFO", "Checking Trust EC2 disk space...")
+                success, trust_disk_output = run_ssh_command(
+                    ssh_key_path,
+                    f"ubuntu@{trust_ip}",
+                    "df -h / | tail -1 | awk '{print $5}'",
+                )
+                if success and trust_disk_output:
+                    trust_disk_usage = int(trust_disk_output.strip().rstrip("%"))
+                    if trust_disk_usage < 80:
+                        print_status("PASS", f"Trust disk usage is {trust_disk_usage}%")
+                    else:
+                        print_status(
+                            "WARN",
+                            (f"Trust disk usage is {trust_disk_usage}% (consider cleanup if >80%)"),
+                        )
+
+                # Check memory usage on Trust EC2
+                print_status("INFO", "Checking Trust EC2 memory usage...")
+                success, trust_mem_output = run_ssh_command(
+                    ssh_key_path,
+                    f"ubuntu@{trust_ip}",
+                    "free | grep Mem | awk '{printf(\"%.0f\", $3/$2 * 100)}'",
+                )
+                if success and trust_mem_output:
+                    try:
+                        trust_mem_usage = int(trust_mem_output.strip())
+                        if trust_mem_usage < 90:
+                            print_status("PASS", f"Trust memory usage is {trust_mem_usage}%")
+                        else:
+                            print_status(
+                                "WARN",
+                                (f"Trust memory usage is {trust_mem_usage}% (high memory usage detected)"),
+                            )
+                    except ValueError:
+                        print_status("WARN", "Could not parse Trust memory usage")
+
+                # Check for any exited containers on Trust EC2
+                success, trust_exited = run_ssh_command(
+                    ssh_key_path,
+                    f"ubuntu@{trust_ip}",
+                    "docker ps -a --filter 'status=exited' --format '{{.Names}}' 2>/dev/null",
+                )
+                if success and trust_exited:
+                    print_status("WARN", f"Trust EC2 exited containers found: {trust_exited}")
+            else:
+                print_status("WARN", "Cannot SSH to Trust EC2 (check security groups and key)")
+
+    # CloudWatch Logs check
+    print_section("CloudWatch Logs")
+
+    print_status("INFO", "Checking Central Hub CloudWatch log groups...")
+    log_group = "/aws/ec2/flip
+    success, output = run_aws_command(["logs", "describe-log-groups", "--log-group-name-prefix", log_group])
+    if success and log_group in output:
+        print_status("PASS", f"CloudWatch log group '{log_group}' exists")
+
+        # Check for recent log streams
+        success, streams_output = run_aws_command([
+            "logs",
+            "describe-log-streams",
+            "--log-group-name",
+            log_group,
+            "--order-by",
+            "LastEventTime",
+            "--descending",
+            "--max-items",
+            "1",
+        ])
+        if success:
+            try:
+                streams_data = json.loads(streams_output)
+                if streams_data.get("logStreams"):
+                    print_status("PASS", "Recent Central Hub log streams found")
+                else:
+                    print_status(
+                        "WARN",
+                        "No recent Central Hub log streams (instance may not be sending logs yet)",
+                    )
+            except json.JSONDecodeError:
+                print_status("WARN", "Could not parse log streams data")
+    else:
+        print_status("WARN", "Central Hub CloudWatch log group not found")
+
+    # Check Trust EC2 CloudWatch logs if it exists
+    if trust_ip:
+        print_status("INFO", "Checking Trust EC2 CloudWatch log groups...")
+        trust_log_group = "/aws/ec2/flipst"
+        success, output = run_aws_command([
+            "logs",
+            "describe-log-groups",
+            "--log-group-name-prefix",
+            trust_log_group,
+        ])
+        if success and trust_log_group in output:
+            print_status("PASS", f"CloudWatch log group '{trust_log_group}' exists")
+
+            # Check for recent log streams
+            success, trust_streams_output = run_aws_command([
+                "logs",
+                "describe-log-streams",
+                "--log-group-name",
+                trust_log_group,
+                "--order-by",
+                "LastEventTime",
+                "--descending",
+                "--max-items",
+                "1",
+            ])
+            if success:
+                try:
+                    trust_streams_data = json.loads(trust_streams_output)
+                    if trust_streams_data.get("logStreams"):
+                        print_status("PASS", "Recent Trust EC2 log streams found")
+                    else:
+                        print_status(
+                            "WARN",
+                            ("No recent Trust EC2 log streams (instance may not be sending logs yet)"),
+                        )
+                except json.JSONDecodeError:
+                    print_status("WARN", "Could not parse Trust log streams data")
+        else:
+            print_status("WARN", "Trust EC2 CloudWatch log group not found")
+
+    # Final summary
+    print_section("Summary")
+
+    click.echo()
+    click.echo(f"{Colors.GREEN}Passed:   {counters.passed}/{counters.total}{Colors.NC}")
+    click.echo(f"{Colors.RED}Failed:   {counters.failed}/{counters.total}{Colors.NC}")
+    click.echo(f"{Colors.YELLOW}Warnings: {counters.warnings}/{counters.total}{Colors.NC}")
+    click.echo()
+
+    if counters.failed == 0:
+        click.echo(f"{Colors.GREEN}✓ Deployment verification completed successfully!{Colors.NC}")
+        if counters.warnings > 0:
+            click.echo(
+                f"{Colors.YELLOW}⚠ However, there are {counters.warnings} "
+                f"warning(s) that should be reviewed.{Colors.NC}"
+            )
+            # Open centralhub on browser
+            try:
+                os.system(f"open http://{central_hub_ip}:{os.getenv('UI_PORT', '80')}")
+            except Exception:
+                pass
+        sys.exit(0)
+    else:
+        click.echo(f"{Colors.RED}✗ Deployment verification failed with {counters.failed} error(s).{Colors.NC}")
+        click.echo(
+            f"{Colors.YELLOW}Please review the failed checks and ensure all "
+            f"services are properly configured.{Colors.NC}"
+        )
+        sys.exit(1)
+
+    # Restore original directory
+    os.chdir(original_dir)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,814 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+import json
+import time
+from typing import Any, List, Optional
+from urllib.parse import urlparse
+from uuid import UUID
+
+from fastapi import Request
+from sqlmodel import Session, select
+
+from flip_api.config import get_settings
+from flip.db.database import engine
+from flip.db.models.main_models import FLJob
+from flip.domain.interfaces.fl import (
+    AggregationWeights,
+    FLAggregators,
+    IClientStatus,
+    INVFlareTargetPathParameters,
+    IOverridableConfig,
+    IServerStatus,
+    IStartTrainingBody,
+    JobRequiredFiles,
+    JobTypes,
+)
+from flip.domain.interfaces.shared import TrainingRound
+from flip.domain.schemas.fl import ClientInfoModel
+from flip.domain.schemas.status import ClientStatus, NVFlareTargets
+from flip.model_services.services.model_service import add_log
+from flip.utils.encryption import encrypt
+from flip.utils.http import http_delete, http_get, http_post
+from flip.utils.logger import logger
+from flip.utils.s3_client import S3Client
+
+
+class UnknownJobTypeError(Exception):
+    """Custom exception for unknown job types in FL"""
+
+    pass
+
+
+def validate_config(config: IOverridableConfig) -> IOverridableConfig:
+    """
+    Validate the provided configuration dictionary.
+
+    Args:
+        config (IOverridableConfig): The configuration dictionary to validate.
+
+    Returns:
+        IOverridableConfig: The validated configuration dictionary.
+
+    Raises:
+        ValueError: If any of the checks fail, a ValueError is raised with an appropriate message.
+    """
+    validated = IOverridableConfig()
+
+    def is_valid(value):
+        return isinstance(value, (int, float)) and 0 < value <= 100
+
+    if not isinstance(config, dict):
+        raise ValueError("Provided config is not a valid dictionary")
+
+    if is_valid(config.get("LOCAL_ROUNDS")):
+        validated.LOCAL_ROUNDS = config["LOCAL_ROUNDS"]
+
+    if is_valid(config.get("GLOBAL_ROUNDS")):
+        validated.GLOBAL_ROUNDS = config["GLOBAL_ROUNDS"]
+
+    if isinstance(config.get("IGNORE_RESULT_ERROR"), bool):
+        validated.IGNORE_RESULT_ERROR = config["IGNORE_RESULT_ERROR"]
+
+    agg = config.get("AGGREGATOR")
+    if agg:
+        if agg in FLAggregators:
+            validated.AGGREGATOR = agg
+        else:
+            raise ValueError(f"Unknown aggregator: {agg}")
+
+    weights = config.get("AGGREGATION_WEIGHTS")
+    if weights:
+        if not isinstance(weights, dict):
+            raise ValueError("AGGREGATION_WEIGHTS must be a dictionary")
+
+        for key, val in weights.items():
+            logger.info(f"Validating aggregation weight: {key} -> {val}")
+            if not (
+                isinstance(val, (int, float))
+                and AggregationWeights.MinimumAggregationWeight <= val <= AggregationWeights.MaximumAggregationWeight
+            ):
+                raise ValueError(f"Invalid weight: {val}")
+
+        validated.AGGREGATION_WEIGHTS = weights
+
+    return validated
+
+
+def download_config(bundle_urls: List[str], model_id: UUID) -> Optional[IOverridableConfig]:
+    """
+    Download the config.json file from the bundle URLs and validate its contents.
+    If the file is found and valid, return the validated config.
+    If the file is not found or invalid, return None.
+
+    Args:
+        bundle_urls (List[str]): A list of URLs to download the config.json file from.
+        model_id (UUID): The ID of the model.
+
+    Returns:
+        Optional[IOverridableConfig]: The validated config if found, otherwise None.
+    """
+    for url in bundle_urls:
+        if "/custom/config.json" in urlparse(url).path:
+            config = http_get(url)
+            return validate_config(config)
+    logger.info("No config.json file found.")
+    return None
+
+
+def upload_app(model_id: UUID, body: IStartTrainingBody, request_id: str, endpoint: str) -> Any:
+    """
+    Upload the application to the NVFlare server.
+
+    It sends a POST request to the FL API service with the model ID and payload containing the project ID, cohort query,
+    local rounds, global rounds, trusts, ignore result error, aggregator, and aggregation weights.
+
+    Args:
+        model_id (UUID): The ID of the model to upload.
+        body (IStartTrainingBody): The payload containing the training details.
+        request_id (str): The request ID of the request that triggered the function.
+        endpoint (str): The endpoint of the net (FL API service).
+
+    Returns:
+        Any: The response from the server after uploading the application.
+    """
+    url = f"{endpoint}/upload_app/{model_id}"
+    response = http_post(url, request_id, body.model_dump())
+    logger.info(f"upload_app response: {response}")
+    # TODO There should be some response validation here, and the return type should not be Any
+    return response
+
+
+def get_nvflare_job_id_by_model_id(model_id: UUID, session: Session) -> str:
+    """
+    Get the NVFlare job ID associated with a given model ID
+
+    Args:
+        model_id: The ID of the model
+        session: SQLModel session object
+
+    Returns:
+        str: The NVFlare job ID associated with the model ID
+
+    Raises:
+        ValueError: If the model ID is not found in the database
+    """
+    statement = select(FLJob.nvflare_job_id).where(FLJob.model_id == model_id)
+    result = session.exec(statement)
+    nvflare_job_id = result.one_or_none()
+
+    if nvflare_job_id is None:
+        raise ValueError(f"No nvflare_job_id found for modelId: {model_id}")
+
+    return nvflare_job_id
+
+
+def add_nvflare_job_id(fl_job_id: UUID, nvflare_job_id: str, session: Session):
+    """
+    Add the NVFlare job ID to the FLJob entry in the database
+
+    Args:
+        fl_job_id (UUID): The ID of the FLJob entry
+        nvflare_job_id (str): The NVFlare job ID to add
+        session (Session): SQLModel session object
+
+    Raises:
+        ValueError: If the FLJob entry is not found
+    """
+    fl_job = session.get(FLJob, fl_job_id)
+    if fl_job is None:
+        raise ValueError(f"FLJob with id {fl_job_id} not found")
+
+    # NVFLARE job IDs are strings
+    fl_job.nvflare_job_id = nvflare_job_id
+    session.commit()
+
+
+def submit_job(request_id: str, fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session):
+    """
+    Submits a job to the FL API that is going to kick off training
+
+    Args:
+        request_id (str): The request ID of the request that triggered the function.
+        fl_job_id (UUID): The ID of the FL job to add the nvflare job id given successful job submission
+        endpoint (str): The endpoint of the Flare Loader service.
+        model_id (UUID): The ID of the model to start submit the job for.
+        session (Session): An instance of the database connection.
+
+    Raises:
+        ValueError: If the NVFlare job ID is not returned in the response.
+    """
+    url = f"{endpoint}/submit_job/{model_id}"
+    nvflare_job_id = http_post(url, request_id)
+    # Validate that the nvflare_job_id is returned and is a string
+    if not nvflare_job_id or not isinstance(nvflare_job_id, str):
+        raise ValueError("No nvflare job id returned or invalid format")
+    add_nvflare_job_id(fl_job_id, nvflare_job_id, session)
+
+
+def get_status(details: INVFlareTargetPathParameters, request_id: str, endpoint: str):
+    """
+    It takes in a target and a client, and returns the status of the target.
+    It sends a GET request to the Flare Loader service to check the status of the target.
+    The target can be a server or a client, and the client can be a specific client or all clients.
+
+    Args:
+        details (INVFlareTargetPathParameters): The target and clients to check the status of.
+        request_id (str): The request ID of the request that triggered the function.
+        endpoint (str): The endpoint of the Flare Loader service.
+    """
+    url = f"{endpoint}/check_status/{details.target.value}"
+    if details.clients:
+        url += f"/{details.clients}"
+    logger.debug(f"Checking status at '{url}' with request_id '{request_id}'")
+    response = http_get(url, request_id)
+    logger.debug(f"Status response: {response}")
+    return response
+
+
+def fetch_server_status(request_id: str, endpoint: str) -> IServerStatus | None:
+    """
+    Fetch the status of the server from the NVFlare wrapper.
+
+    Args:
+        request_id (str): The request ID for logging purposes.
+        endpoint (str): The endpoint of the server to fetch the status from.
+
+    Returns:
+        IServerStatus | None: The server status if available, otherwise None.
+    """
+    payload = INVFlareTargetPathParameters(target=NVFlareTargets.SERVER)
+    server_status = get_status(payload, request_id, endpoint)
+    if not server_status:
+        logger.error(f"No response from FL API for server at endpoint {endpoint}")
+        return None
+    server_status = IServerStatus.model_validate(server_status)
+    return server_status
+
+
+def fetch_client_status(request_id: str, endpoint: str) -> List[IClientStatus]:
+    payload = INVFlareTargetPathParameters(target=NVFlareTargets.CLIENT)
+    client_status = get_status(payload, request_id, endpoint)
+    logger.debug({"client status response": client_status})
+
+    if not client_status:
+        logger.error(f"No response from FLARE API for clients at endpoint {endpoint}")
+        return []
+
+    clients = []
+    for client in client_status:
+        is_online = client["status"] != ClientStatus.NO_REPLY
+        clients.append(
+            IClientStatus(
+                name=client["name"],
+                online=is_online,
+                status=client["status"],
+                last_connected=client["last_connect_time"],
+            )
+        )
+
+    return clients
+
+
+def validate_client_availability(clients: List[str], endpoint: str, request_id: str):
+    """
+    Validate the availability of clients by checking their status.
+    It sends a GET request to the Flare Loader service to check the status of the clients.
+    If any client is unavailable, it raises a ValueError.
+
+    Args:
+        clients (List[str]): A list of client names to check the availability of.
+        endpoint (str): The endpoint of the Flare Loader service.
+        request_id (str): The request ID of the request that triggered the function.
+
+    Raises:
+        ValueError: If any client is unavailable.
+    """
+    client_statuses = get_status(INVFlareTargetPathParameters(target=NVFlareTargets.CLIENT), request_id, endpoint)
+    client_statuses = [ClientInfoModel.model_validate(c) for c in client_statuses]
+
+    if not client_statuses:
+        raise ValueError("No clients are available")
+    logger.info(f"Client status: {client_statuses}")
+
+    def is_client_available(client_name, client_statuses):
+        for status in client_statuses:
+            logger.info(f"Checking client status: {status}")
+            logger.info(f"Client name: {client_name}")
+            name = status.name
+            state = status.status
+            if name == client_name and state != ClientStatus.NO_REPLY:
+                return True
+        return False
+
+    unavailable = [client for client in clients if not is_client_available(client, client_statuses)]
+
+    if unavailable:
+        raise ValueError(f"Clients unavailable: {', '.join(unavailable)}")
+
+
+def abort_job(request_id: str, endpoint: str, job_id: str) -> dict:
+    """
+    Aborts a job on the NVFlare server.
+
+    Args:
+        request_id (str): The request ID of the request that triggered the function.
+        endpoint (str): The endpoint of the Flare Loader service.
+        job_id (str): The ID of the job to abort.
+
+    Returns:
+        dict: The response from the server after aborting the job.
+    """
+    url = f"{endpoint}/abort_job/{job_id}"
+    response = http_delete(url, request_id)
+    return response
+
+
+def start_training(
+    model_id: UUID,
+    fl_job_id: UUID,
+    clients: List[str],
+    endpoint: str,
+    bundle_urls: List[str],
+    request_id: str,
+    session: Session,
+    job_type: JobTypes = JobTypes.standard,  # type: ignore[attr-defined]
+):
+    """
+    Start the training process for a given model by uploading the application and submitting the job.
+    It first checks if the clients are available, then it bundles the application files,
+    downloads the configuration, and finally uploads the application and submits the job.
+
+    Args:
+        model_id (UUID): The ID of the model to start training for.
+        fl_job_id (UUID): The ID of the FL job to add the nvflare job id given successful job submission.
+        clients (List[str]): A list of client names to start training on.
+        endpoint (str): The endpoint of the Flare Loader service.
+        bundle_urls (List[str]): A list of URLs for the application bundle.
+        request_id (str): The request ID of the request that triggered the function.
+        session (Session): An instance of the database connection.
+        job_type (JobTypes): The type of job (e.g., 'standard', 'evaluation'). Defaults to 'standard'.
+
+    Raises:
+        ValueError: If the NVFlare job ID is not returned in the response.
+    """
+    from flip.fl_services.services import fl_scheduler_service
+
+    required_info = fl_scheduler_service.get_required_training_details(model_id, session)
+    encrypted_project_id = encrypt(required_info.project_id)
+
+    config = download_config(bundle_urls, model_id)
+    if config:
+        local_rounds = config.LOCAL_ROUNDS if config.LOCAL_ROUNDS else TrainingRound.MIN
+        global_rounds = config.GLOBAL_ROUNDS if config.GLOBAL_ROUNDS else TrainingRound.MIN
+        aggregator = config.AGGREGATOR if config.AGGREGATOR else FLAggregators.InTimeAccumulateWeightedAggregator.value
+        aggregation_weights = config.AGGREGATION_WEIGHTS if config.AGGREGATION_WEIGHTS else {}
+        ignore_result_error = config.IGNORE_RESULT_ERROR if config.IGNORE_RESULT_ERROR else False
+    else:
+        local_rounds = TrainingRound.MIN
+        global_rounds = TrainingRound.MIN
+        aggregator = FLAggregators.InTimeAccumulateWeightedAggregator.value
+        aggregation_weights = {}
+        ignore_result_error = False
+
+    body = IStartTrainingBody(
+        project_id=encrypted_project_id,
+        cohort_query=required_info.cohort_query,
+        local_rounds=local_rounds,
+        global_rounds=global_rounds,
+        trusts=clients,
+        aggregator=aggregator,
+        aggregation_weights=aggregation_weights,
+        bundle_urls=bundle_urls,
+        ignore_result_error=ignore_result_error,
+        job_type=job_type.value,
+    )
+
+    upload_app(model_id, body, request_id, endpoint)
+    logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
+    submit_job(request_id, fl_job_id, endpoint, model_id, session)
+
+    if config:
+        add_log(model_id, "Config file found ✅", session)
+        if not config.AGGREGATION_WEIGHTS:
+            add_log(model_id, "No aggregation weights provided. Using default = 1", session)
+        else:
+            weight_summary = ", ".join([f"{k}: {v}" for k, v in config.AGGREGATION_WEIGHTS.items()])
+            add_log(model_id, f"Aggregation weights for training: {weight_summary}", session)
+
+
+def bundle_application(model_id: str, job_type: JobTypes = JobTypes.standard) -> tuple[int, JobTypes]:  # type: ignore[attr-defined]
+    """
+    Creates the app folder from the base application files and the uploaded files.
+
+    It copies the base application files and the model files to the destination bucket.
+    It checks if the destination bucket has any files, and if it does, it deletes them.
+
+    Example:
+
+    Base application files in the base bucket:
+
+        s3://base-bucket/src/standard/
+        ├── app_site1/
+        │   ├── config/
+        │   │   └── config_fed_client.json
+        │   │   └── config_fed_server.json
+        │   └── custom/
+        │       └── flip.py [and other files]
+        ├── app_site2/
+        │   ├── config/
+        │   │   └── config_fed_server.json
+        │   │   └── config_fed_client.json
+        │   └── custom/
+        │       └── flip.py [and other files]
+
+    Model files in the model files bucket:
+
+        s3://model-bucket/<model_id>/
+        ├── trainer.py
+        ├── validator.py
+        ├── config.json
+        └── [other user uploaded files]
+
+    Final structure in the destination bucket:
+
+        s3://dest-bucket/<model_id>/
+        ├── app_site1/
+        │   ├── config/
+        │   │   └── config_fed_client.json
+        │   │   └── config_fed_server.json
+        │   ├── custom/
+        │   │   ├── [base application files files]
+        │   │   ├── trainer.py             ← copied from model files
+        │   │   ├── validator.py           ← copied from model files
+        │   │   └── config.json            ← copied from model files
+        │   │   └── [other user uploaded files]
+        ├── app_site2/
+        │   ├── config/
+        │   │   └── config_fed_server.json
+        │   │   └── config_fed_client.json
+        │   ├── custom/
+        │   │   ├── [base application files]
+        │   │   ├── trainer.py             ← copied from model files
+        │   │   ├── validator.py           ← copied from model files
+        │   │   └── config.json            ← copied from model files
+        │   │   └── [other user uploaded files]
+        └── meta.json                      ← copied only once (not per app)
+
+    Args:
+        model_id (str): model ID, which will give the name to the app folder.
+        job_type (JobTypes, optional): type of job (e.g. 'standard', 'generative', etc.). This will cause
+        a specific base application to be selected. Defaults to 'standard'.
+    Raises:
+        EnvironmentError: If the S3 bucket environment variables are not set.
+        FileNotFoundError: If the base or model files are missing.
+        FileNotFoundError: If required files for the job type are missing.
+    Returns:
+        tuple[int, JobTypes]: A tuple containing the length of unique files and the job type used.
+    """
+    s3 = S3Client()
+
+    # Construct S3 paths for base, model, and destination buckets
+    model_bucket_s3_path = f"{get_settings().SCANNED_MODEL_FILES_BUCKET}/{model_id}"
+    dest_bucket_s3_path = f"{get_settings().FL_APP_DESTINATION_BUCKET}/{model_id}"
+
+    logger.debug(f"Model bucket: {model_bucket_s3_path}")
+    logger.debug(f"Destination bucket: {dest_bucket_s3_path}")
+
+    # TODO Validate that the buckets are valid S3 paths
+    #
+
+    # List objects in the model bucket
+    model_files = s3.list_objects(model_bucket_s3_path)
+    if not model_files:
+        raise FileNotFoundError("Model files missing on the S3 bucket")
+
+    # We look for config file and job_type parameter specifically.
+    config_file = [f for f in model_files if "config.json" in f]
+    if len(config_file) == 0:
+        logger.info("No config.json file was found in the scanned files. Using job_type=standard.")
+    else:
+        # We download the file
+        s3_config_object = s3.get_object(config_file[0])
+        config_object = s3_config_object["Body"].read()
+        input_config = json.loads(config_object)
+
+        if "job_type" not in input_config:
+            logger.info("No job_type argument found in config.json. Using job_type=standard.")
+        else:
+            if input_config["job_type"]:
+                try:
+                    job_type = JobTypes(input_config["job_type"])
+                except ValueError:
+                    raise UnknownJobTypeError(
+                        f"Unknown job_type argument found in config.json: {input_config['job_type']}"
+                    )
+            logger.info(
+                f"job_type argument found in config.json:{job_type.value}. Using it to select base application."
+            )
+
+    # List objects in the base bucket
+    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/src/{job_type.value}"
+    logger.debug(f"Source bucket: {base_bucket_s3_path}")
+    base_files = s3.list_objects(base_bucket_s3_path)
+    if not base_files:
+        raise FileNotFoundError("Base application files missing on the S3 bucket")
+
+    # If the destination bucket already has files, we delete them
+    dest_files = s3.list_objects(dest_bucket_s3_path)
+    if dest_files:
+        s3.delete_objects(dest_files)
+
+    # We create a set of unique files from the base and model files.
+    # TODO If I have e.g. bucket/some/path/file1.py and bucket/some/path2/file1.py, unique_files will not work?
+    # Also, this will probably not work for multiple app folders
+    unique_files = set([k.split("/")[-1] for k in base_files + model_files])
+    logger.debug(f"Unique files to copy: {unique_files}")
+
+    # Do we have multiple app folders in this base application? e.g. app_site1, app_site2, etc.
+    # Retrieve the name of the app folders from the base_files
+    app_folders = []
+    for file in base_files:
+        if "/app" in file:
+            keys_split = file.split("/app")[-1].split("/")[0]  # We retrieve the name of the app
+            app_folders.append(f"app{keys_split}")
+    app_folders = list(set(app_folders))
+    logger.debug(f"App folders found: {app_folders}")
+
+    # We look for the required keys for specific job type within model_keys. If we cannot find them,
+    # we raise an error.
+    required_files = JobRequiredFiles.get_required_files(job_type)
+    missing_files = [
+        file for file in required_files if file not in [m.replace(f"{model_id}/", "") for m in unique_files]
+    ]
+    if len(missing_files) > 0:
+        raise FileNotFoundError(f"Missing required files for job type {job_type.value}: {', '.join(missing_files)}. ")  # type: ignore[attr-defined]
+
+    # Copy base application files to the destination bucket
+    for file in base_files:
+        # extract the rest of the file after the parent s3 path to copy the file tree structure
+        key = file.replace(f"{base_bucket_s3_path}/", "")
+        dest_file_path = f"{dest_bucket_s3_path}/{key}"
+
+        logger.debug(f"Copying {file} to {dest_file_path}")
+        s3.copy_object(file, dest_file_path)
+
+    # Copy meta.json file from model files (if it exists) to the destination bucket
+    if f"{model_bucket_s3_path}/meta.json" in model_files:
+        dest_meta_path = f"{dest_bucket_s3_path}/meta.json"
+        logger.debug(f"Copying meta.json file to {dest_meta_path}")
+        s3.copy_object(f"{model_bucket_s3_path}/meta.json", dest_meta_path)
+
+    # Copy model files to the destination bucket, create a copy into each app folder
+    for file in model_files:
+        # TODO Skip meta.json as it is already copied?
+
+        # extract the rest of the file after the parent s3 path to copy the file tree structure
+        key = file.replace(f"{model_bucket_s3_path}/", "")
+
+        for app_folder in app_folders:
+            dest_file_path = f"{dest_bucket_s3_path}/{app_folder}/custom/{key}"
+            logger.debug(f"Copying {file} to {dest_file_path}")
+            s3.copy_object(file, dest_file_path)
+
+    return len(unique_files), job_type  # type: ignore[attr-defined]
+
+
+def get_bundle_urls(model_id: str, expected_count: int, retry_count: int = 1) -> List[str]:
+    """
+    Get pre-signed URLs for the model bundle files in S3.
+
+    Args:
+        model_id (str): The ID of the model to get the bundle URLs for.
+        expected_count (int): The expected number of files in the bundle.
+        retry_count (int): The current retry count, defaults to 1.
+
+    Returns:
+        List[str]: A list of pre-signed URLs for the model bundle files.
+
+    Raises:
+        ValueError: If the maximum number of retries is reached and the expected files are not found.
+        ClientError: If there is an error listing objects or generating pre-signed URLs.
+    """
+    s3_path = f"{get_settings().FL_APP_DESTINATION_BUCKET}/{model_id}"
+
+    max_retries = 10
+
+    logger.info(f"Getting bundle URLs from {s3_path}, retry count: {retry_count} of {max_retries}")
+
+    s3 = S3Client()
+
+    try:
+        # List objects in the destination S3 bucket
+        files = s3.list_objects(s3_path)
+    except Exception as e:
+        logger.error(f"Failed to list objects in S3 bucket {s3_path}: {e}")
+        raise
+
+    actual_count = len(files)
+    logger.info(f"Listed objects: {actual_count}, Expected: {expected_count}")
+
+    if actual_count != expected_count:
+        if retry_count == max_retries:
+            raise ValueError(
+                f"Max retries reached in get_bundle_urls ({max_retries=})"
+                f"Could not get all bundle URLs (Listed objects: {actual_count}, Expected: {expected_count})"
+            )
+
+        logger.info(
+            f"Couldn't find the expected bundle files (Listed objects: {actual_count}, Expected: {expected_count})."
+            " Will try again."
+        )
+        # Wait half a second before retrying
+        time.sleep(0.5)
+        return get_bundle_urls(model_id, expected_count, retry_count + 1)
+
+    # If we have found all expected files in the destination bucket
+    # Generate presigned URLs for each object to be downloaded
+    try:
+        urls = [s3.get_presigned_url(f) for f in files]
+        return urls
+    except Exception as e:
+        error_msg = f"Failed to generate presigned URLs: {e}"
+        logger.error(error_msg)
+        raise RuntimeError(error_msg)
+
+
+def extract_current_job_data(net_endpoint: str, nvflare_job_id: str) -> dict:
+    """
+    Extract the current job data from the server status response.
+
+    Args:
+        net_endpoint (str): The endpoint of the Flare Loader service.
+        nvflare_job_id (str): The NVFlare job ID to look for.
+
+    Returns:
+        dict: The current job data if found.
+    """
+    url = f"{net_endpoint}/list_jobs"
+    current_job_data = http_get(url)
+    logger.debug(f"Current job data: {current_job_data}")
+
+    # Note this will be a list of job details in the form:
+    # current_job_data =
+    # [
+    # {
+    #     "job_id": "59ea671e-6551-49cf-a81b-0c5011a7401b",
+    #     "job_name": "665dcd35-7dbf-4ad1-93dc-1773a7b44de1",
+    #     "status": "RUNNING",
+    #     "submit_time": "2025-10-08T14:25:47.119547+00:00",
+    #     "duration": "2:38:26.597705"
+    # }
+    # ]
+
+    # Get the running jobs only
+    current_job_data = [j for j in current_job_data if j.get("status") == "RUNNING"]
+    logger.debug(f"Running jobs: {current_job_data}")
+
+    # Filter the nvflare_job_id
+    current_job_data = [j for j in current_job_data if j.get("job_id") == nvflare_job_id]
+    logger.debug(f"Current job data for job ID {nvflare_job_id}: {current_job_data}")
+
+    if not current_job_data:
+        error_msg = f"Could not find job ID {nvflare_job_id} on NVFLARE server {net_endpoint}."
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    # assert that there is only 1 running job with the nvflare_job_id
+    # this should not happen, but just in case
+    if len(current_job_data) > 1:
+        error_msg = f"Multiple running jobs found on NVFlare server for job ID {nvflare_job_id}. Cannot abort."
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    return current_job_data[0]
+
+
+def abort_model_training(request: Request, model_id: UUID, session: Session) -> None:
+    """
+    Check if the model is currently running training, and if it is, send an abort request to the NVFLARE server.
+
+    Args:
+        request: The FastAPI request object
+        model_id: The ID of the model to abort
+        session: SQLModel session object
+    """
+    logger.debug(f"Checking if model {model_id} is currently running...")
+
+    try:
+        from flip.fl_services.services import fl_scheduler_service
+
+        # Always try to remove the job from queue
+        fl_scheduler_service.remove_job_from_queue(model_id, session)
+
+        nvflare_job_id = get_nvflare_job_id_by_model_id(model_id, session)
+        net_details = fl_scheduler_service.get_net_by_model_id(model_id, session)
+        net_endpoint = net_details.endpoint
+        net_name = net_details.name
+
+        logger.info(f"Net info for model {model_id}: endpoint={net_endpoint}, name={net_name}")
+
+    except Exception as e:
+        logger.info(f"Model {model_id} not currently running training; removed from queue. Reason: {e}")
+        return
+
+    request_id = str(request.scope.get("request_id", ""))
+    server_status = fetch_server_status(request_id, net_endpoint)
+    logger.debug(f"Server status: {server_status}")
+
+    if not server_status:  # or server_status.status != FLStatus.SUCCESS.value:
+        error_msg = f"NVFlare Server not running for {model_id=}. Server status: {server_status}"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    # Extracting current job data from the server status
+    current_job_data = extract_current_job_data(net_endpoint, nvflare_job_id)
+
+    # Current server job name (i.e. app_name) must match the model_id in order to abort
+    current_app_name = current_job_data.get("job_name")
+
+    if current_app_name != str(model_id):
+        error_msg = (
+            f"Requested model to abort ({model_id=}) does not match the current model running on the server "
+            f"({current_app_name=})."
+        )
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    # Extracting target and clients from the request path parameters
+    path_params = request.path_params
+    target = path_params.get("target")
+    clients = path_params.get("clients")
+
+    # Checking if the target provided is valid
+    if target and target not in NVFlareTargets:
+        logger.error(f"Invalid target: {target}")
+        raise ValueError(f"Invalid target: {target}")
+
+    logger.debug(f"Attempting abort request for model ID: {model_id} on {net_name} (job ID: {nvflare_job_id})")
+
+    response = abort_job(request_id, net_endpoint, nvflare_job_id)
+
+    logger.info(f"Abort job response ({target=}, {clients=}): {response}")
+
+
+def add_fl_job(model_id: UUID, clients: List[str], session: Session) -> None:
+    """
+    Insert a new FL job into the database.
+
+    Args:
+        model_id (UUID): The ID of the model for which the FL job is being created.
+        clients (List[str]): A list of client names associated with the FL job.
+        session (Session): The SQLModel session to use for the database operation.
+
+    Raises:
+        Exception: If there is an error during the database operation.
+    """
+    logger.debug(f"Adding FL job for model ID: {model_id}")
+
+    job = FLJob(model_id=model_id, clients=clients)
+
+    try:
+        session.add(job)
+        session.commit()
+        session.refresh(job)  # Pull back generated fields like created timestamp
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Failed to insert FL job for model ID {model_id}: {e}")
+        raise
+
+    logger.info(f"FL job {job.id} added for model ID: {model_id}")
+
+
+def keep_fl_api_session_alive() -> None:
+    """
+    A periodic function to keep the FL API NVFLARE session alive by making a simple request.
+    This is useful to prevent the session from going idle or being shut down by the server.
+    See https://github.com/NVIDIA/NVFlare/discussions/3526#discussioncomment-13574644
+    """
+    from flip.fl_services.get_status import fetch_server_status
+    from flip.fl_services.services import fl_scheduler_service
+
+    logger.info("🛟 Keeping FL API NVFLARE session alive ...")
+
+    with Session(engine) as db:
+        nets = fl_scheduler_service.get_nets(db)
+
+    # For each FL Net in the database, call its check_status endpoint, which in turn calls the NVFLARE session.
+    # NOTE In the old implementation, we had 3 'nets' in the database, each with its own FLAdminAPI. So each net had a
+    # separate FLAdminAPI endpoint. Here, there should just be 1 net for now. If we add more nets in the future, they
+    # might all have the same FLARE_API endpoint, if the FLARE_API controls all controllers/clients.
+    for net in nets:
+        try:
+            fetch_server_status("", net.endpoint)
+        except Exception as e:
+            logger.error(f"Failed to send check request: {e}")

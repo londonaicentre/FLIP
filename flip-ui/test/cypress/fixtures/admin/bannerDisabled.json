@@ -1,0 +1,8 @@
+{
+    "banner": {
+        "message": "Some cool message for testing",
+        "enabled": false,
+        "link": "https://google.com"
+    },
+    "deploymentMode": false
+}

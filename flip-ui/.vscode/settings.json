@@ -1,0 +1,29 @@
+{
+    "[jsonc]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "cSpell.autoFormatConfigFile": true,
+    "cSpell.words": [
+        "flip"
+    ],
+    "editor.codeActionsOnSave": {
+        "source.fixAll": "explicit",
+        "source.organizeImports": "explicit"
+    },
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.inlineSuggest.enabled": true,
+    "editor.inlineSuggest.showToolbar": "always",
+    "editor.rulers": [
+        120
+    ],
+    "files.autoSave": "afterDelay",
+    "git.autofetch": true,
+    "git.confirmSync": false,
+    "interactiveWindow.executeWithShiftEnter": true,
+    "makefile.configureOnOpen": true,
+    "problems.showCurrentInStatus": true,
+    "remote.autoForwardPortsSource": "hybrid",
+    "terminal.integrated.accessibleViewPreserveCursorPosition": true,
+    "terminal.integrated.allowChords": false,
+}

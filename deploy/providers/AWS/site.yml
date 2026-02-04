@@ -1,0 +1,359 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+---
+- name: create EC2 Ansible inventory hosts on-the-fly
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: ensure flip_aicentre_bucket variable is defined
+      assert:
+        that:
+          - flip_aicentre_bucket is defined
+          - flip_aicentre_bucket | length > 0
+        fail_msg: "The flip_aicentre_bucket variable must be defined to proceed."
+    - name: use plugin to extract Terraform outputs
+      community.general.terraform:
+        state: present
+        project_path: "./"
+      register: terraform_output
+    - name: add Central Hub EC2 instance to Ansible inventory
+      add_host:
+        name: "{{ terraform_output.outputs.Ec2PublicIp.value }}"
+        groups:
+          - ec2
+          - central_hub
+        ansible_ssh_user: ubuntu
+        ansible_ssh_private_key_file: "{{ terraform_output.outputs.Keypair.value }}"
+        ansible_ssh_common_args: "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        ansible_ec2_instance_id: "{{ terraform_output.outputs.Ec2InstanceId.value }}"
+    - name: add Trust EC2 instance to Ansible inventory
+      add_host:
+        name: "{{ terraform_output.outputs.TrustEc2PublicIp.value }}"
+        groups:
+          - ec2
+          - trust_ec2
+        ansible_ssh_user: ubuntu
+        ansible_ssh_private_key_file: "{{ terraform_output.outputs.Keypair.value }}"
+        ansible_ssh_common_args: "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        ansible_ec2_instance_id: "{{ terraform_output.outputs.TrustEc2InstanceId.value }}"
+
+- name: update packages
+  hosts: ec2
+  become: true
+  tasks:
+    - name: update and upgrade apt packages
+      apt:
+        upgrade: yes
+        update_cache: yes
+
+- name: install docker, adding ubuntu to docker group
+  hosts: ec2
+  become: true
+  roles:
+    - geerlingguy.docker
+  vars:
+    docker_users: [ubuntu]
+
+- name: install AWS CLI v2 on EC2 instances (if missing)
+  hosts: ec2
+  become: true
+  tasks:
+    - name: install prerequisites for AWS CLI
+      apt:
+        name:
+          - curl
+          - unzip
+        state: present
+        update_cache: yes
+
+    - name: check if aws cli is already installed
+      command: aws --version
+      register: awscli_check
+      changed_when: false
+      failed_when: false
+
+    - name: download AWS CLI v2 installer
+      get_url:
+        url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+        dest: /tmp/awscliv2.zip
+      when: awscli_check.rc != 0
+
+    - name: unzip AWS CLI installer
+      unarchive:
+        src: /tmp/awscliv2.zip
+        dest: /tmp
+        remote_src: true
+      when: awscli_check.rc != 0
+
+    - name: install AWS CLI v2
+      command: /tmp/aws/install
+      when: awscli_check.rc != 0
+
+- name: create Central Hub application directories, create data directory for FL server and change ownership
+  hosts: central_hub
+  become: true
+  tasks:
+    - name: create Central Hub application directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      loop:
+        - /opt/flip
+        - /opt/flip/data
+
+- name: download participant kit services to Central Hub
+  hosts: central_hub
+  become: true
+  vars:
+    central_services_dir: "/opt/flip/services"
+    central_s3_sources:
+      - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/20260203/net-1/services/fl-server-net-1/"
+      - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/20260203/net-1/services/flip-fl-api-net-1/"
+  tasks:
+    - name: ensure central services directory exists
+      file:
+        path: "{{ central_services_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: sync Central Hub services from S3
+      shell: |
+        set -euo pipefail
+        src="{{ item }}"
+        name="$(basename "${src%/}")"
+        dest="{{ central_services_dir }}/${name}"
+        mkdir -p "$dest"
+        aws s3 sync "$src" "$dest"
+      args:
+        executable: /bin/bash
+      loop: "{{ central_s3_sources }}"
+      register: central_sync
+      changed_when: "'download:' in central_sync.stdout or 'copy:' in central_sync.stdout"
+
+- name: create Trust EC2 application directories
+  hosts: trust_ec2
+  become: true
+  tasks:
+    - name: create Trust application directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      loop:
+        - /opt/flip
+        # Data directory for Trust 1 (where XNAT images will be downloaded for the FL client to use)
+        # NOTE if this is not created here, it will be created later by Docker Compose but owned by root, and will cause permission issues
+        - /opt/flip/data/trust-1
+
+- name: download participant kit services to Trust EC2
+  hosts: trust_ec2
+  become: true
+  vars:
+    trust_services_dir: "/opt/flip/services"
+    trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/20260203/net-1/services/Trust_1/"
+  tasks:
+    - name: ensure trust services directory exists
+      file:
+        path: "{{ trust_services_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: sync Trust_1 service from S3
+      shell: |
+        set -euo pipefail
+        src="{{ trust_s3_source }}"
+        name="$(basename "${src%/}")"
+        dest="{{ trust_services_dir }}/${name}"
+        mkdir -p "$dest"
+        aws s3 sync "$src" "$dest"
+      args:
+        executable: /bin/bash
+      register: trust_sync
+      changed_when: "'download:' in trust_sync.stdout or 'copy:' in trust_sync.stdout"
+
+- name: install and configure CloudWatch agent on Central Hub
+  hosts: central_hub
+  become: true
+  vars:
+    cloudwatch_agent_deb: "https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb"
+    log_group_name: "/aws/ec2/flip"
+  tasks:
+    - name: install prerequisites
+      apt:
+        name:
+          - unzip
+        state: present
+        update_cache: yes
+    - name: download CloudWatch agent package
+      get_url:
+        url: "{{ cloudwatch_agent_deb }}"
+        dest: "/tmp/amazon-cloudwatch-agent.deb"
+        mode: "0644"
+    - name: install CloudWatch agent
+      apt:
+        deb: "/tmp/amazon-cloudwatch-agent.deb"
+    - name: configure CloudWatch agent
+      template:
+        src: cloudwatch-agent.json.j2
+        dest: /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+        owner: root
+        group: root
+        mode: "0644"
+    - name: start CloudWatch agent
+      command: >
+        /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl
+        -a fetch-config -m ec2
+        -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+
+- name: install and configure CloudWatch agent on Trust EC2
+  hosts: trust_ec2
+  become: true
+  vars:
+    cloudwatch_agent_deb: "https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb"
+    log_group_name: "/aws/ec2/flip-trust"
+  tasks:
+    - name: install prerequisites
+      apt:
+        name:
+          - unzip
+        state: present
+        update_cache: yes
+    - name: download CloudWatch agent package
+      get_url:
+        url: "{{ cloudwatch_agent_deb }}"
+        dest: "/tmp/amazon-cloudwatch-agent.deb"
+        mode: "0644"
+    - name: install CloudWatch agent
+      apt:
+        deb: "/tmp/amazon-cloudwatch-agent.deb"
+    - name: configure CloudWatch agent for Trust EC2
+      template:
+        src: cloudwatch-agent-trust.json.j2
+        dest: /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+        owner: root
+        group: root
+        mode: "0644"
+    - name: start CloudWatch agent
+      command: >
+        /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl
+        -a fetch-config -m ec2
+        -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+
+- name: download and restore trust1 OMOP PGDATA on Trust EC2
+  hosts: trust_ec2
+  become: true
+  vars:
+    s3_bucket: "{{ flip_aicentre_bucket }}"
+    s3_prefix: "omop"
+    base_dir: "/opt/flip/volumes"
+    trust1_key: "trust1_pgdata_20260106.tar.gz"
+  tasks:
+    - name: install tar
+      apt:
+        name:
+          - tar
+        state: present
+        update_cache: yes
+
+    - name: create trust1 directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ base_dir }}"
+        - "{{ base_dir }}/trust1"
+        - "{{ base_dir }}/trust1/db_data"
+
+    - name: download trust1 PGDATA archive from S3
+      command: >
+        aws s3 cp
+        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ trust1_key }}
+        {{ base_dir }}/trust1/trust1_pgdata.tar.gz
+      args:
+        creates: "{{ base_dir }}/trust1/trust1_pgdata.tar.gz"
+
+    - name: clear existing PGDATA directory
+      shell: rm -rf {{ base_dir }}/trust1/db_data/*
+      changed_when: false
+
+    - name: extract trust1 PGDATA
+      command: >
+        tar -xzf {{ base_dir }}/trust1/trust1_pgdata.tar.gz
+        -C {{ base_dir }}/trust1/db_data
+
+    - name: set Postgres ownership and permissions
+      shell: |
+        chown -R 999:999 {{ base_dir }}/trust1/db_data
+        chmod 700 {{ base_dir }}/trust1/db_data
+      changed_when: false
+
+- name: restore trust1 Orthanc storage on Trust EC2
+  hosts: trust_ec2
+  become: true
+  vars:
+    s3_bucket: "{{ flip_aicentre_bucket }}"
+    s3_prefix: "orthanc"
+    archive: "trust1_orthanc_data_20260106.tar.gz"
+    base_dir: "/opt/flip/orthanc"
+    data_dir: "/opt/flip/orthanc/orthanc-storage"
+  tasks:
+    - name: install tar
+      apt:
+        name:
+          - tar
+        state: present
+        update_cache: yes
+
+    - name: ensure orthanc base directory exists
+      file:
+        path: "{{ base_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: download Orthanc archive from S3
+      command: >
+        aws s3 cp
+        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ archive }}
+        {{ base_dir }}/orthanc-storage.tar.gz
+      args:
+        creates: "{{ base_dir }}/orthanc-storage.tar.gz"
+
+    - name: clear existing Orthanc storage
+      shell: rm -rf {{ data_dir }}/*
+      changed_when: false
+
+    - name: ensure orthanc data directory exists
+      file:
+        path: "{{ data_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: extract Orthanc data into orthanc-storage
+      command: >
+        tar -xzf {{ base_dir }}/orthanc-storage.tar.gz -C {{ data_dir }}
+
+    - name: ensure Orthanc storage is writable
+      file:
+        path: "{{ data_dir }}"
+        mode: "0755"
+        recurse: true

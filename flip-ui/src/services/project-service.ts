@@ -1,0 +1,124 @@
+/*
+ * Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+
+
+
+import { _http, IPaginatedResponse } from "@/services/api";
+
+export interface IProjectTrust {
+    name: string;
+    id: string;
+    approved: boolean;
+}
+
+export interface IProjectQuery {
+    id: string;
+    name: string;
+    query: string;
+    trustsQueried: number;
+    totalCohort: number;
+}
+
+export type ProjectStatus = "UNSTAGED" | "STAGED" | "APPROVED";
+
+export type IProject = {
+    id: string;
+    name: string;
+    description: string;
+    ownerId: string;
+    ownerEmail: string;
+    creationtimestamp: string;
+    query?: IProjectQuery;
+    approvedTrusts?: IProjectTrust[];
+    users: IProjectUser[]
+    status: ProjectStatus
+}
+
+export interface IProjectUser {
+    id: string;
+    email: string;
+    isDisabled: boolean;
+}
+
+export interface IProjectCreate {
+    name: string;
+    description: string;
+    users?: string[];
+}
+
+export interface ICreateProjectResponse {
+    id: string;
+}
+
+export interface IImagingImportStatus {
+    successful: number;
+    failed: number;
+    processing: number;
+    queued: number;
+    queueFailed: number;
+}
+
+export interface IImagingProjectStatus {
+    trustId: string,
+    trustName: string,
+    projectCreationCompleted: boolean,
+    importStatus?: IImagingImportStatus,
+    reimportCount?: number,
+}
+
+export async function getProject(url: string): Promise<IProject> {
+    const response = await _http.get<IProject>(url);
+
+    return response.data;
+}
+
+export async function editProject(url: string, project: { name: string; description: string }): Promise<IProject> {
+    const response = await _http.put<IProject>(url, project);
+
+    return response.data;
+}
+
+export async function getProjects(url: string): Promise<IPaginatedResponse<IProject>> {
+    const response = await _http.get<IPaginatedResponse<IProject>>(url);
+
+    return response.data;
+}
+
+export async function createProject(url: string, project: IProjectCreate): Promise<ICreateProjectResponse> {
+    const response = await _http.post<ICreateProjectResponse>(url, project);
+
+    return response.data;
+}
+
+export async function stageProject(url: string, trusts: string[]): Promise<void> {
+    await _http.post<never>(url, { trusts: trusts });
+}
+
+export async function unstageProject(url: string): Promise<void> {
+    await _http.post<never>(url);
+}
+
+export async function approveProject(url: string, trusts: string[]): Promise<void> {
+    await _http.post<never>(url, { trusts: trusts });
+}
+
+export async function deleteProject(url: string): Promise<void> {
+    await _http.delete<never>(url);
+}
+
+export async function getImagingProjectsStatus(url: string): Promise<IImagingProjectStatus[]> {
+    const response = await _http.get<IImagingProjectStatus[]>(url);
+
+    return response.data;
+}

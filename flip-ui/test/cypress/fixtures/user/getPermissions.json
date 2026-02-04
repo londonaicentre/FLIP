@@ -1,0 +1,10 @@
+{
+    "permissions": [
+        "CanDeleteAnyProject",
+        "CanManageProjects",
+        "CanManageUsers",
+        "CanApproveProjects",
+        "CanUnstageProjects",
+        "CanAccessAdminPanel"
+    ]
+}

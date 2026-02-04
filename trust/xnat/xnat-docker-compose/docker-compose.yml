@@ -1,0 +1,93 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# version: '3.7'
+services:
+  xnat-web:
+    build:
+      context: ./xnat
+      args:
+        XNAT_VERSION: ${XNAT_VERSION}
+        XNAT_SMTP_ENABLED: ${XNAT_SMTP_ENABLED}
+        XNAT_SMTP_HOSTNAME: ${XNAT_SMTP_HOSTNAME}
+        XNAT_SMTP_PORT: ${XNAT_SMTP_PORT}
+        XNAT_SMTP_AUTH: ${XNAT_SMTP_AUTH}
+        XNAT_SMTP_USERNAME: ${XNAT_SMTP_USERNAME}
+        XNAT_SMTP_PASSWORD: ${XNAT_SMTP_PASSWORD}
+        XNAT_DATASOURCE_DRIVER: ${XNAT_DATASOURCE_DRIVER}
+        XNAT_DATASOURCE_URL: ${XNAT_DATASOURCE_URL}
+        XNAT_DATASOURCE_USERNAME: ${XNAT_DATASOURCE_USERNAME}
+        XNAT_DATASOURCE_PASSWORD: ${XNAT_DATASOURCE_PASSWORD}
+        TOMCAT_XNAT_FOLDER: ${TOMCAT_XNAT_FOLDER}
+        XNAT_ROOT: ${XNAT_ROOT}
+        XNAT_HOME: ${XNAT_HOME}
+        XNAT_EMAIL: ${XNAT_EMAIL}
+      target: development
+    ports:
+      - ${XNAT_PORT}:8080
+    environment:
+      - CATALINA_OPTS=-Xms${XNAT_MIN_HEAP} -Xmx${XNAT_MAX_HEAP} -Dxnat.home=${XNAT_HOME} -XX:+UseG1GC -Djava.awt.headless=true -XX:+ParallelRefProcEnabled -XX:ParallelGCThreads=6 -XX:+UseStringDeduplication
+      - XNAT_HOME=${XNAT_HOME}
+      - DATA_PATH=${PWD}/${XNAT_PORT}/xnat-data
+      - XNAT_ADMIN_USER=${XNAT_ADMIN_USER}
+      - XNAT_ADMIN_INITIAL_PASSWORD=${XNAT_ADMIN_INITIAL_PASSWORD}
+      - XNAT_ADMIN_PASSWORD=${XNAT_ADMIN_PASSWORD}
+      - XNAT_SERVICE_USER=${XNAT_SERVICE_USER}
+      - XNAT_SERVICE_PASSWORD=${XNAT_SERVICE_PASSWORD}
+      - XNAT_PORT=${XNAT_PORT}
+      - PACS_DICOM_PORT=${PACS_DICOM_PORT}
+    volumes:
+      # added to allow for the plugins to be mounted while developing - in production they will already be in the image
+      - ${XNAT_PATH}/xnat-docker-compose/xnat/plugins:${XNAT_HOME}/plugins
+      - ${XNAT_PATH}/xnat-docker-compose/${XNAT_PORT}/xnat-data/tomcat_logs:${XNAT_HOME}/logs
+      - ${XNAT_PATH}/xnat-docker-compose/${XNAT_PORT}/xnat-data/archive:${XNAT_ROOT}/archive
+      - ${XNAT_PATH}/xnat-docker-compose/${XNAT_PORT}/xnat-data/build:${XNAT_ROOT}/build
+      - ${XNAT_PATH}/xnat-docker-compose/${XNAT_PORT}/xnat-data/cache:${XNAT_ROOT}/cache
+      - /var/run/docker.sock:/var/run/docker.sock
+      # added to allow for the config to be mounted while developing - in production this will already be in the image
+      - ${XNAT_PATH}/xnat-docker-compose/xnat/config:${XNAT_ROOT}/config
+    depends_on:
+      - xnat-db
+
+  xnat-db:
+    image: postgres:${PG_VERSION}
+    expose:
+      - "5432"
+    volumes:
+      # - ./postgres-data:/var/lib/postgresql/data
+      #
+      - ./postgres:/docker-entrypoint-initdb.d
+    environment:
+      - POSTGRES_PASSWORD=${XNAT_DATASOURCE_ADMIN_PASSWORD}
+      - POSTGRES_DB=${XNAT_DATASOURCE_NAME}
+      # variables for the sql script
+      - XNAT_DATASOURCE_USERNAME=${XNAT_DATASOURCE_USERNAME}
+      - XNAT_DATASOURCE_PASSWORD=${XNAT_DATASOURCE_PASSWORD}
+
+  xnat-nginx:
+    build:
+      context: ./nginx
+      args:
+        NGINX_VERSION: ${NGINX_VERSION}
+    # ports:
+    #   - "80:80"
+    expose:
+      - "80"
+    depends_on:
+      - xnat-web
+    links:
+      - xnat-web
+
+networks:
+  default:
+    name: ${TRUST_NETWORK_NAME}
+    external: true

@@ -1,0 +1,183 @@
+/*
+ * Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+@import "highlightjs.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@font-face {
+    font-family: 'JetBrainsMono';
+    font-weight: 400 500;
+    src: local('JetBrainsMono'), url(../fonts/JetBrainsMono/JetBrainsMono-Regular.woff2) format('woff2');
+}
+
+@font-face {
+    font-family: 'JetBrainsMono';
+    font-weight: 600 700;
+    src: local('JetBrainsMono'), url(../fonts/JetBrainsMono/JetBrainsMono-SemiBold.woff2) format('woff2');
+}
+
+@font-face {
+    font-family: 'JetBrainsMono';
+    font-weight: 800 900;
+    src: local('JetBrainsMono'), url(../fonts/JetBrainsMono/JetBrainsMono-ExtraBold.woff2) format('woff2');
+}
+
+@font-face {
+    font-family: 'Inter';
+    font-weight: 400 500;
+    src: local('Inter'), url(../fonts/Inter/Inter-Medium.woff2) format('woff2');
+}
+
+@font-face {
+    font-family: 'Inter';
+    font-weight: 600 700;
+    src: local('Inter'), url(../fonts/Inter/Inter-SemiBold.woff2) format('woff2');
+}
+
+@font-face {
+    font-family: 'Inter';
+    font-weight: 800 900;
+    src: local('Inter'), url(../fonts/Inter/Inter-ExtraBold.woff2) format('woff2');
+}
+
+@font-face {
+    font-family: 'Bai Jamjuree';
+    font-weight: 400 500;
+    src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-Medium.ttf) format('truetype');
+}
+
+@font-face {
+    font-family: 'Bai Jamjuree';
+    font-weight: 600 700;
+    src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-SemiBold.ttf) format('truetype');
+}
+
+@font-face {
+    font-family: 'Bai Jamjuree';
+    font-weight: 800 900;
+    src: local('Bai Jamjuree'), url(../fonts/BaiJamjuree/BaiJamjuree-Bold.ttf) format('truetype');
+}
+
+@layer base {
+    html {
+        @apply subpixel-antialiased scroll-smooth;
+        scroll-behavior: smooth;
+        font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    }
+
+    body {
+        @apply overflow-hidden;
+    }
+
+    .font-bold {
+        @apply text-gray-600 dark:text-gray-400 antialiased
+    }
+
+    a:not(nav a) {
+        @apply hover:text-primary-400 dark:hover:text-gray-400 transition font-semibold;
+    }
+}
+
+@layer components {
+    table {
+        @apply w-full rounded overflow-hidden table-auto shadow-sm ring-1 ring-black/10 dark:ring-white/20 border-collapse;
+    }
+
+    table thead {
+        @apply bg-gray-50 dark:bg-gray-900;
+    }
+
+    table thead tr {
+        @apply divide-x divide-gray-200 dark:divide-gray-700;
+    }
+
+    table thead tr th {
+        @apply py-3.5 pl-4 pr-4 text-left text-sm font-semibold text-gray-700 dark:text-gray-300;
+    }
+
+    table tbody {
+        @apply bg-white dark:bg-gray-800 divide-gray-200 dark:divide-gray-700 divide-y;
+    }
+
+    table tbody tr {
+        @apply hover:bg-gray-50 dark:hover:bg-gray-900 transition;
+    }
+
+    tbody td {
+        @apply px-4 py-2 first:font-semibold first:text-gray-700 text-gray-500 dark:first:text-gray-300 text-sm border-r border-gray-200 dark:border-gray-700;
+    }
+}
+
+.dark {
+    color-scheme: dark;
+}
+
+.tippy-content {
+    @apply break-words;
+}
+
+.CodeMirror * {
+    @apply  !font-mono text-base;
+}
+
+.CodeMirror-line {
+    @apply  !px-4
+}
+
+.slidedown-enter-active {
+    transition: max-height 0.8s ease-in-out;
+}
+
+.slidedown-leave-active {
+    transition: max-height 1s linear;
+    transition-delay: -0.8s;
+}
+
+.slidedown-enter-to,
+.slidedown-leave-from {
+    overflow: hidden;
+    max-height: 1000px;
+}
+
+.slidedown-enter-from,
+.slidedown-leave-to {
+    overflow: hidden;
+    max-height: 0;
+}
+
+.fade-enter-active,
+.fade-leave-active {
+    transition: opacity 0.5s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+    opacity: 0;
+}
+
+.slide-up-enter-active,
+.slide-up-leave-active {
+    transition: all 0.25s ease-out;
+}
+
+.slide-up-enter-from {
+    opacity: 0;
+    transform: translateY(30px);
+}
+
+.slide-up-leave-to {
+    opacity: 0;
+    transform: translateY(-30px);
+}

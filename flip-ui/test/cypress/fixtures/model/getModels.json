@@ -1,0 +1,148 @@
+{
+  "page": 1,
+  "pageSize": 20,
+  "totalPages": 2,
+  "totalRecords": 25,
+  "data": [
+    {
+      "id": "fde8ced3-ceb7-445d-8724-6d7b7824bf2a",
+      "name": "Example Model",
+      "description": "Example Model",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "c5fac2b1-b61a-44a5-b7ec-4723701cf273",
+      "name": "This is a test model",
+      "description": "This test model exists on page 1",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "95a35423-43d4-4fac-b9d7-63f4b4324049",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "8634286c-9246-4e11-abfe-2c7529329d34",
+      "name": "Model C",
+      "description": "A model completed doing important things",
+      "status": "UPLOAD_COMPLETED",
+      "ownerid": "3e4f45a2-4295-4870-a270-6ed7205ea498"
+    },
+    {
+      "id": "32eb1f62-6306-4fbc-982d-69d6ebc306ae",
+      "name": "Model B",
+      "description": "A model doing important things",
+      "status": "FEDERATION_INITIALIZATION_STARTED",
+      "ownerid": "3e4f45a2-4295-4870-a270-6ed7205ea498"
+    },
+    {
+      "id": "37cac539-a75f-4086-b146-ffcc5ebf7219",
+      "name": "Model A",
+      "description": "Some details about the model",
+      "status": "INITIALIZATION",
+      "ownerid": "3e4f45a2-4295-4870-a270-6ed7205ea498"
+    },
+    {
+      "id": "b9fd95e3974643c4ac850e18399b3794",
+      "name": "Model 99",
+      "description": "Some details about the model",
+      "status": "INITIALIZATION",
+      "ownerid": "3e4f45a2-4295-4870-a270-6ed7205ea498"
+    },
+    {
+      "id": "a7b68bba-3713-4c20-83a5-a974fe1b57ea",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "cc89cda9-18ef-497d-b305-d8bb84fafbc1",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "258731cb-f816-4fb0-9d8d-4ab46af9dddf",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "a43903ce-bb59-4adf-9d80-f6c889c2e2eb",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "81001bd1-a56b-4931-a7ec-1b76386ac3cf",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "3b12a1d0-230e-4a99-9e5a-44932020fa72",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "f5dd9a03-636a-455d-b561-41b2e381288b",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "f206c467-6fc2-44ec-a52d-b7a7029d30ff",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "dd9e59f6-d1de-4589-ac77-f7c4414738ee",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "182e5e65-0378-4a7c-8735-ca0f45314b64",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "8ddf300f-1d17-489f-af15-fcb18b1e31d0",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "e01e658e-125b-444e-9eab-49cc7f47afff",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "9c88ab11-a5b8-46f1-acf7-279696a9ecfc",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "UI",
+            "type": "chrome",
+            "request": "launch",
+            "url": "http://localhost:44357",
+            // Ignore node_modules on debugging. DO NOT REMOVE, otherwise debugging will stop in every internal
+            // functions from the dependencies.
+            "skipFiles": [
+                "${workspaceFolder}/<node_internals>/**",
+                "${workspaceFolder}/src/node_modules/**",
+                "${workspaceFolder}/node_modules/**",
+            ],
+            "env": {
+                "NODE_ENV": "development",
+                "VITE_AWS_BASE_URL": ""
+            },
+            "webRoot": "${workspaceFolder}/",
+            "sourceMaps": true,
+            "trace": true,
+        },
+    ]
+}

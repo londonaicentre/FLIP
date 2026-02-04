@@ -1,0 +1,48 @@
+{
+    "id": "6fcbdd40-3675-45c9-899e-1a005e5245ba",
+    "name": "Stroke Test Project",
+    "description": "A test project",
+    "ownerId": "c6cd75c9-667b-4c4d-8336-25413c6eb1ae",
+    "ownerEmail": "test.user@example.com",
+    "creationtimestamp": "2022-02-07T14:10:56.687Z",
+    "approvedTrusts": [
+        {
+            "name": "KCH",
+            "id": "SOMEIDFORKCH",
+            "requested": true,
+            "approved": true
+        },
+        {
+            "name": "UCLH",
+            "id": "SOMEIDFORUCLH",
+            "requested": true,
+            "approved": false
+        },
+        {
+            "name": "Guy's and St Thomas'",
+            "id": "SOMEIDFORKINGS",
+            "requested": true,
+            "approved": false
+        }
+    ],
+    "users": [
+        {
+            "id": "03a3a210-cd5a-405e-a838-07a16aefc806",
+            "email": "joe@bloggs.com",
+            "isDisabled": false
+        },
+        {
+            "id": "03a3a210-cd5a-405e-a838-07a16aefc806",
+            "email": "joe@sloggs.com",
+            "isDisabled": false
+        }
+    ],
+    "status": "APPROVED",
+    "query": {
+        "id": "58920505-6027-4ad5-acff-4150a248ccdb",
+        "name": "Some test query",
+        "query": "Some query > 3000",
+        "totalCohort": 32567,
+        "trustsQueried": 2
+    }
+}

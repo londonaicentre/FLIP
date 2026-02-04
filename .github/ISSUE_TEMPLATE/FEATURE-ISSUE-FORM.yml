@@ -1,0 +1,49 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Feature
+description: Raise a feature request
+title: "[Feature]: "
+labels: ["enhancement"]
+type: Feature
+projects: ["londonaicentre/10"]
+body:
+  - type: input
+    id: short-description
+    attributes:
+      label: Description
+      placeholder: ex. There should be an API endpoint for DICOM retrieval from a PACS to XNAT
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: What are one or more acceptance criteria that would be used to verify this feature is working as expected?
+      placeholder: ex. The endpoint supports retrieval based either accession numbers or study instance UIDs
+    validations:
+      required: true
+  - type: textarea
+    id: technical-considerations
+    attributes:
+      label: Technical considerations
+      description: Are there any technical considerations for this feature?
+      placeholder: ex. This feature will require a new API endpoint, additional logging, and existing API endpoints will need to be updated
+    validations:
+      required: false
+  - type: checkboxes
+    id: project-admin
+    attributes:
+      label: Assign the relevant label(s) and, if known, Milestone to this feature request
+      options:
+        - label: I confirm I have assigned the relevant label(s) and, if known, Milestone to this feature request
+          required: true

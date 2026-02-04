@@ -1,0 +1,12 @@
+[
+    {
+        "trustId": "some-id-1",
+        "trustName": "KCH",
+        "online": true
+    },
+    {
+        "trustId": "some-id-2",
+        "trustName": "UCLH",
+        "online": true
+    }
+]

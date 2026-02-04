@@ -1,0 +1,115 @@
+{
+    "name": "dcm2niix",
+    "label": "dcm2niix",
+    "description": "Runs dcm2niix",
+    "version": "1.6",
+    "schema-version": "1.0",
+    "info-url": "https://github.com/rordenlab/dcm2niix",
+    "image": "xnat/dcm2niix:latest",
+    "type": "docker",
+    "command-line": "dcm2niix [BIDS] [GZIP] [OTHER_OPTIONS] -o /output /input",
+    "mounts": [
+      {
+        "name": "dicom-in",
+        "writable": false,
+        "path": "/input"
+      },
+      {
+        "name": "nifti-out",
+        "writable": true,
+        "path": "/output"
+      }
+    ],
+    "environment-variables": {},
+    "ports": {},
+    "inputs": [
+      {
+        "name": "bids",
+        "description": "Create BIDS metadata file",
+        "type": "boolean",
+        "default-value": "false",
+        "required": false,
+        "replacement-key": "[BIDS]",
+        "command-line-flag": "-b",
+        "true-value": "y",
+        "false-value": "n",
+        "select-values": []
+      },
+      {
+        "name": "gzip",
+        "description": "Compress output files with gzip",
+        "type": "boolean",
+        "default-value": "true",
+        "required": false,
+        "replacement-key": "[GZIP]",
+        "command-line-flag": "-z",
+        "true-value": "y",
+        "false-value": "n",
+        "select-values": []
+      },
+      {
+        "name": "other-options",
+        "description": "Other command-line flags to pass to dcm2niix",
+        "type": "string",
+        "required": false,
+        "replacement-key": "[OTHER_OPTIONS]",
+        "select-values": []
+      }
+    ],
+    "outputs": [
+      {
+        "name": "nifti",
+        "description": "The nifti files",
+        "required": true,
+        "mount": "nifti-out"
+      }
+    ],
+    "xnat": [
+      {
+        "name": "dcm2niix-scan",
+        "label": "dcm2niix",
+        "description": "Run dcm2niix on a Scan",
+        "contexts": [
+          "xnat:imageScanData"
+        ],
+        "external-inputs": [
+          {
+            "name": "scan",
+            "description": "Input scan",
+            "type": "Scan",
+            "matcher": "'DICOM' in @.resources[*].label",
+            "required": true,
+            "load-children": true
+          }
+        ],
+        "derived-inputs": [
+          {
+            "name": "scan-dicoms",
+            "description": "The dicom resource on the scan",
+            "type": "Resource",
+            "matcher": "@.label == 'DICOM'",
+            "required": true,
+            "provides-files-for-command-mount": "dicom-in",
+            "load-children": true,
+            "derived-from-wrapper-input": "scan",
+            "multiple": false
+          }
+        ],
+        "output-handlers": [
+          {
+            "name": "nifti-resource",
+            "accepts-command-output": "nifti",
+            "as-a-child-of": "scan",
+            "type": "Resource",
+            "label": "NIFTI",
+            "tags": []
+          }
+        ]
+      }
+    ],
+    "reserve-memory": 1000,
+    "limit-cpu": 1,
+    "container-labels": {},
+    "generic-resources": {},
+    "ulimits": {}
+}

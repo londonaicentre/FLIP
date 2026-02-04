@@ -1,0 +1,16 @@
+charliermarsh.ruff
+davidanson.vscode-markdownlint
+docker.docker
+henriiik.docker-linter
+matangover.mypy
+ms-azuretools.vscode-docker
+ms-python.python
+ms-python.vscode-pylance
+ms-vscode-remote.vscode-remote-extensionpack
+ms-vscode-remote.remote-containers
+ms-vscode.makefile-tools
+ms-vscode.remote-explorer
+ms-vscode.remote-server
+redhat.vscode-yaml
+streetsidesoftware.code-spell-checker
+tamasfe.even-better-toml

@@ -1,0 +1,89 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "CH API",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5678
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/flip-api",
+                    "remoteRoot": "/app"
+                }
+            ],
+            "justMyCode": true,
+            "preLaunchTask": "debug-flip-api",
+            "postDebugTask": "debug-off-flip-api"
+        },
+        {
+            "name": "Trust API",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5682
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/trust/trust-api",
+                    "remoteRoot": "/app"
+                }
+            ],
+            "justMyCode": true,
+            "preLaunchTask": "debug-trust-api",
+            "postDebugTask": "debug-off-trust-api"
+        },
+        {
+            "name": "Imaging API",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5681
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/trust/imaging-api",
+                    "remoteRoot": "/app"
+                }
+            ],
+            "justMyCode": true,
+            "preLaunchTask": "debug-imaging-api",
+            "postDebugTask": "debug-off-imaging-api"
+        },
+        {
+            "name": "Data Access API",
+            "type": "debugpy",
+            "request": "attach",
+            "connect": {
+                "host": "localhost",
+                "port": 5680
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/trust/data-access-api",
+                    "remoteRoot": "/app"
+                }
+            ],
+            "justMyCode": true,
+            "preLaunchTask": "debug-data-access-api",
+            "postDebugTask": "debug-off-data-access-api"
+        },
+        {
+            "name": "UI",
+            "type": "chrome",
+            "request": "launch",
+            "url": "http://localhost:44357",
+            "webRoot": "${workspaceFolder}/flip-ui/",
+            "skipFiles": [
+                "${workspaceFolder}/flip-ui/<node_internals>/**",
+                "${workspaceFolder}/flip-ui/src/node_modules/**",
+                "${workspaceFolder}/flip-ui/node_modules/**"
+            ]
+        }
+    ],
+}

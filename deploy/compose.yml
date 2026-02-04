@@ -1,0 +1,281 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
+# inheriting service configs below
+
+services:
+  #################### CENTRAL HUB ####################
+
+  flip-ui:
+    build:
+      args:
+        UI_PORT: ${UI_PORT}
+      context: ../flip-ui
+      dockerfile: Dockerfile
+      target: development
+    ports:
+      - "${UI_PORT}:44357"
+    volumes:
+      - ../flip-ui:/app
+      - /app/node_modules
+      - ~/.aws/config:/root/.aws/config:ro
+      - ~/.aws/sso/cache:/root/.aws/sso/cache
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - VITE_LOCAL=${VITE_LOCAL}
+      - VITE_AWS_BASE_URL=${VITE_AWS_BASE_URL}
+      - VITE_AWS_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
+      - VITE_AWS_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
+      - VITE_AWS_REGION=${AWS_REGION}
+      - VITE_BLACKLISTED_MODEL_FILES=${VITE_BLACKLISTED_MODEL_FILES}
+    restart: unless-stopped
+    networks:
+      - default
+    container_name: flip-ui
+
+  flip-api:
+    platform: linux/x86_64
+    build:
+      args:
+        UID: ${UID}
+        GID: ${GID}
+        UNAME: ${UNAME}
+      context: ../flip-api
+      dockerfile: Dockerfile
+      target: development
+    ports:
+      - "${API_PORT}:8000"
+      - 5678:5678
+    depends_on:
+      - flip-db
+    volumes:
+      - ../flip-api/src/:/app/src/
+      - ../flip-api/entrypoint.sh:/app/entrypoint.sh
+      - ../flip-api/tests/:/app/tests/
+      - ../flip-api/.vscode:/app/.vscode
+      - ~/.aws/config:/home/${UNAME}/.aws/config:ro
+      - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
+    networks:
+      - default
+      - central-hub-trust-apis-network
+      - shared-net-1
+      - shared-net-2
+    environment:
+      - ENV=development
+      - DEBUG=${DEBUG}
+      - AWS_PROFILE=${AWS_PROFILE}
+      - AWS_REGION=${AWS_REGION}
+      - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
+      - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      - AWS_SECRET_NAME=${AWS_SECRET_NAME}
+      - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
+      - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS}
+      - UPLOADED_MODEL_FILES_BUCKET=${UPLOADED_MODEL_FILES_BUCKET}
+      - SCANNED_MODEL_FILES_BUCKET=${SCANNED_MODEL_FILES_BUCKET}
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - FL_APP_BASE_BUCKET=${FL_APP_BASE_BUCKET}
+      - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
+      - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
+    restart: unless-stopped
+    container_name: flip-api
+
+  flip-db:
+    image: postgres:13
+    ports:
+      - ${DB_PORT}:${DB_PORT}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    networks:
+      - default
+    container_name: flip-db
+
+  #################### CENTRAL HUB FL ####################
+
+  fl-api-net-1:
+    container_name: flip-fl-api-net-1
+    image: ghcr.io/londonaicentre/flare-fl-api:${DOCKER_FL_TAG}
+    volumes:
+      # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
+      - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/admin/local:/app/admin/local
+      - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/admin/startup:/app/admin/startup
+      # Mount the AWS credentials
+      - ~/.aws/config:/root/.aws/config:ro
+      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+    environment:
+      - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+      - DEBUG=${DEBUG}
+    ports:
+      - "${FL_API_PORT}:8000"
+      - "5679:5679"
+    depends_on:
+      - fl-server-net-1
+    networks:
+      - default
+      - shared-net-1
+    restart: unless-stopped
+
+  fl-api-net-2:
+    container_name: flip-fl-api-net-2
+    image: ghcr.io/londonaicentre/flare-fl-api:${DOCKER_FL_TAG}
+    volumes:
+      # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
+      - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/admin/local:/app/admin/local
+      - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/admin/startup:/app/admin/startup
+      # Mount the AWS credentials
+      - ~/.aws/config:/root/.aws/config:ro
+      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+    environment:
+      - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+      - DEBUG=${DEBUG}
+    depends_on:
+      - fl-server-net-2
+    networks:
+      - default
+      - shared-net-2
+    restart: unless-stopped
+
+  # Reuse common fl-server config
+  fl-server-net-1:
+    container_name: fl-server-net-1
+    image: ghcr.io/londonaicentre/flare-fl-server:${DOCKER_FL_TAG}
+    volumes:
+      # Provisioned NVFLARE secrets (certificates, fed_server.json)
+      - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/fl-server/local:/app/local
+      - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/fl-server/startup:/app/startup
+      - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/fl-server/transfer:/app/transfer
+      # Mount the AWS credentials
+      - ~/.aws/config:/root/.aws/config:ro
+      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+    environment:
+      - NET_ID=net-1
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=${MIN_CLIENTS}
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+      - IMAGING_API_URL=${IMAGING_API_URL}
+      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      - AWS_PROFILE=${AWS_PROFILE}
+    networks:
+      - shared-net-1
+    restart: unless-stopped
+    init: true
+
+  fl-server-net-2:
+    container_name: fl-server-net-2
+    image: ghcr.io/londonaicentre/flare-fl-server:${DOCKER_FL_TAG}
+    volumes:
+      # Provisioned NVFLARE secrets (certificates, fed_server.json)
+      - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/fl-server/local:/app/local
+      - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/fl-server/startup:/app/startup
+      - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/fl-server/transfer:/app/transfer
+      # Mount the AWS credentials
+      - ~/.aws/config:/root/.aws/config:ro
+      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+    environment:
+      - NET_ID=net-2
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=${MIN_CLIENTS}
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+      - IMAGING_API_URL=${IMAGING_API_URL}
+      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      - AWS_PROFILE=${AWS_PROFILE}
+    networks:
+      - shared-net-2
+    restart: unless-stopped
+    init: true
+
+  #################### PGADMIN ####################
+
+  pgadmin:
+    image: dpage/pgadmin4:9
+    restart: always
+    ports:
+      - "${PGADMIN_PORT}:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - default
+      - trust-network-1
+      - trust-network-2
+    container_name: flip-pgadmin
+
+volumes:
+  pgadmin_data:
+
+networks:
+  default:
+    external: true
+    name: central-hub-network
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: "central-hub-network"
+      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
+
+  central-hub-trust-apis-network:
+    external: true
+    name: central-hub-trust-apis-network
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: "central-hub-trust-apis-network"
+      com.docker.network.bridge.host_binding_ipv4: "127.10.0.1"
+
+  trust-network-1:
+    external: true
+    name: deploy_trust-network-1
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: "deploy_trust-network-1"
+      com.docker.network.bridge.host_binding_ipv4: "127.20.0.1"
+
+  trust-network-2:
+    external: true
+    name: deploy_trust-network-2
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: "deploy_trust-network-2"
+      com.docker.network.bridge.host_binding_ipv4: "127.30.0.1"
+
+  shared-net-1:
+    external: true
+    name: deploy_shared-net-1
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: "deploy_shared-net-1"
+      com.docker.network.bridge.host_binding_ipv4: "127.40.0.1"
+
+  shared-net-2:
+    external: true
+    name: deploy_shared-net-2
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: "deploy_shared-net-2"
+      com.docker.network.bridge.host_binding_ipv4: "127.50.0.1"

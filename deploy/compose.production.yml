@@ -1,0 +1,142 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
+# inheriting service configs below
+
+services:
+  #################### CENTRAL HUB ####################
+
+  flip-ui:
+    image: ghcr.io/londonaicentre/flip-ui:${DOCKER_TAG}
+    ports:
+      - "${UI_PORT}:44357"
+    environment:
+      - NODE_ENV=${NODE_ENV}
+      - VITE_LOCAL=${VITE_LOCAL}
+      - VITE_AWS_BASE_URL=${CENTRAL_HUB_API_URL}
+      - VITE_AWS_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
+      - VITE_AWS_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
+      - VITE_AWS_REGION=${AWS_REGION}
+      - VITE_BLACKLISTED_MODEL_FILES=${VITE_BLACKLISTED_MODEL_FILES}
+    restart: unless-stopped
+    container_name: flip-ui
+
+  flip-api:
+    image: ghcr.io/londonaicentre/flip-api:${DOCKER_TAG}
+    ports:
+      - "${API_PORT}:8000"
+    environment:
+      - ENV=production
+      # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
+      - AWS_REGION=${AWS_REGION}
+      - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
+      - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_SECRET_ARN=${POSTGRES_SECRET_ARN} # in production, password is retrieved from AWS Secrets Manager
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      - AWS_SECRET_NAME=${AWS_SECRET_NAME}
+      - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
+      - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS}
+      - UPLOADED_MODEL_FILES_BUCKET=${UPLOADED_MODEL_FILES_BUCKET}
+      - SCANNED_MODEL_FILES_BUCKET=${SCANNED_MODEL_FILES_BUCKET}
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - FL_APP_BASE_BUCKET=${FL_APP_BASE_BUCKET}
+      - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
+    restart: unless-stopped
+    container_name: flip-api
+
+  #################### CENTRAL HUB FL ####################
+
+  fl-api-net-1:
+    container_name: flip-fl-api-net-1
+    image: ghcr.io/londonaicentre/flare-fl-api:${DOCKER_TAG}
+    environment:
+      - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+    ports:
+      - "${FL_API_PORT}:8000"
+    volumes:
+      # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
+      - /opt/flip/services/flip-fl-api-net-1/admin/local:/app/admin/local
+      - /opt/flip/services/flip-fl-api-net-1/admin/startup:/app/admin/startup
+    depends_on:
+      - fl-server-net-1
+    restart: unless-stopped
+
+  # TODO add second FL network when needed
+  # fl-api-net-2:
+  #   container_name: flip-fl-api-net-2
+  #   image: ghcr.io/londonaicentre/flare-fl-api:${DOCKER_FL_TAG}
+  #   environment:
+  #     - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+  #   volumes:
+  #     # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
+  #     - /opt/flip/services/flip-fl-api-net-2/admin/local:/app/admin/local
+  #     - /opt/flip/services/flip-fl-api-net-2/admin/startup:/app/admin/startup
+  #   depends_on:
+  #     - fl-server-net-2
+  #   restart: unless-stopped
+
+  # Reuse common fl-server config
+  fl-server-net-1:
+    container_name: flip-fl-server-net-1
+    image: ghcr.io/londonaicentre/flare-fl-server:${DOCKER_FL_TAG}
+    volumes:
+      # Provisioned NVFLARE secrets (certificates, fed_server.json)
+      - /opt/flip/services/fl-server-net-1/fl-server/local:/app/local
+      - /opt/flip/services/fl-server-net-1/fl-server/startup:/app/startup
+      - /opt/flip/services/fl-server-net-1/fl-server/transfer:/app/transfer
+    ports:
+      - "8002:8002"
+      - "8003:8003"
+    environment:
+      - NET_ID=net-1
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=${MIN_CLIENTS}
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+      - IMAGING_API_URL=${IMAGING_API_URL}
+      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
+    restart: unless-stopped
+    init: true
+
+  # TODO add second FL network when needed
+  # fl-server-net-2:
+  #   container_name: flip-fl-server-net-2
+  #   image: ghcr.io/londonaicentre/flare-fl-server:${DOCKER_FL_TAG}
+  #   volumes:
+  #     # Provisioned NVFLARE secrets (certificates, fed_server.json)
+  #     - /opt/flip/services/fl-server-net-2/fl-server/local:/app/local
+  #     - /opt/flip/services/fl-server-net-2/fl-server/startup:/app/startup
+  #     - /opt/flip/services/fl-server-net-2/fl-server/transfer:/app/transfer
+  #   environment:
+  #     - NET_ID=net-2
+  #     - LOCAL_DEV=false
+  #     - MIN_CLIENTS=${MIN_CLIENTS}
+  #     - IMAGES_DIR=/app/data/images
+  #     - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+  #     - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+  #     - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+  #     - IMAGING_API_URL=${IMAGING_API_URL}
+  #     - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+  #     - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+  #     # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
+  #   restart: unless-stopped
+  #   init: true

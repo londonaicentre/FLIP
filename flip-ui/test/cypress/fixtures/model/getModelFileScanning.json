@@ -1,0 +1,62 @@
+{
+    "modelId": "6292d9ec-e821-4e4a-814e-3a315a4cb95e",
+    "modelName": "CS Test",
+    "modelDescription": "A Model to test with",
+    "projectId": "13fe7e36-2310-432d-8c59-91da99b80988",
+    "status": "PENDING",
+    "query": {
+        "id": "54af9df8-b28b-4db9-8591-11ddda59f9be",
+        "name": "A query",
+        "query": "*:*",
+        "results": [
+            {
+                "Data": {
+                    "TotalCount": 60,
+                    "Age": {
+                        "Mean": 63
+                    },
+                    "Gender": {
+                        "Male": 22,
+                        "Female": 25,
+                        "MissingData": 13
+                    },
+                    "ClientVisit": {
+                        "Emergency": 14,
+                        "Inpatient": 18,
+                        "MissingData": 28
+                    }
+                },
+                "TrustName": "KCH"
+            },
+            {
+                "Data": {
+                    "TotalCount": 60,
+                    "Age": {
+                        "Mean": 63
+                    },
+                    "Gender": {
+                        "Male": 22,
+                        "Female": 28,
+                        "MissingData": 10
+                    },
+                    "ClientVisit": {
+                        "Emergency": 22,
+                        "Inpatient": 12,
+                        "MissingData": 26
+                    }
+                },
+                "TrustName": "UCLH"
+            }
+        ]
+    },
+    "files": [
+        {
+            "id": "8c81bfe0-b6be-4067-9657-116d30c6d519",
+            "name": "monaiopener.py",
+            "status": "SCANNING",
+            "size": 3751,
+            "type": "text/x-python",
+            "tag": null
+        }
+    ]
+}

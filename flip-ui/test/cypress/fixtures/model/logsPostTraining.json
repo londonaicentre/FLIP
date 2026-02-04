@@ -1,0 +1,162 @@
+[
+    {
+        "id": "3818fd33-d876-487e-872d-4382ab8d0794",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:45:58.637Z",
+        "success": true,
+        "trustName": "trust2",
+        "log": "sending the training request..."
+    },
+    {
+        "id": "db796fa7-333d-4825-9d07-707dba2b78ad",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:45:58.636Z",
+        "success": true,
+        "trustName": "trust2",
+        "log": "returned status: alive"
+    },
+    {
+        "id": "577b2273-57f8-4a2f-a6ba-4aaac5e2fda1",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:45:58.630Z",
+        "success": true,
+        "trustName": "trust1",
+        "log": "sending the training request..."
+    },
+    {
+        "id": "c163a3b6-cb6c-41be-883f-c050b466cc23",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:45:58.629Z",
+        "success": true,
+        "trustName": "trust1",
+        "log": "returned status: alive"
+    },
+    {
+        "id": "27f178ef-f6b4-439c-9fc4-be64f7caaf87",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:45:58.620Z",
+        "success": true,
+        "trustName": "trust2",
+        "log": "checking fl trust status..."
+    },
+    {
+        "id": "b75d170c-58d7-45c5-85df-4368333a2c53",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:45:58.615Z",
+        "success": true,
+        "trustName": "trust1",
+        "log": "checking fl trust status..."
+    },
+    {
+        "id": "b67db376-c062-43a2-ae94-9e623f7cc902",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:45:58.601Z",
+        "success": true,
+        "trustName": null,
+        "log": "current model shared with all fl trusts"
+    },
+    {
+        "id": "3b223eca-7382-4af1-950d-4dd691fff77e",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:45:58.580Z",
+        "success": true,
+        "trustName": "trust1",
+        "log": "returned status: model received"
+    },
+    {
+        "id": "d091defb-12d1-4ab1-867f-e2e66d48fc91",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:45:58.579Z",
+        "success": true,
+        "trustName": "trust1",
+        "log": "answer received"
+    },
+    {
+        "id": "0f8f6010-20d4-4d19-a2ef-2e51f4c337c0",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:45:58.508Z",
+        "success": true,
+        "trustName": "trust2",
+        "log": "returned status: model received"
+    },
+    {
+        "id": "ba2feac0-7112-40ab-b088-c61b26b3b14c",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:47:13.055Z",
+        "success": true,
+        "trustName": null,
+        "log": "upload completed"
+    },
+    {
+        "id": "6565469e-924b-4a6e-8cf1-dfcddf3bc228",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:47:13.055Z",
+        "success": true,
+        "trustName": null,
+        "log": "fl hub terminated"
+    },
+    {
+        "id": "6614671f-09a5-414f-a536-bbd5ee8d449a",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:47:11.376Z",
+        "success": true,
+        "trustName": null,
+        "log": "uploading zip file..."
+    },
+    {
+        "id": "305d588b-cc6e-4c74-a317-ffa0468f4454",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:47:09.655Z",
+        "success": true,
+        "trustName": null,
+        "log": "federated process completed across all trusts"
+    },
+    {
+        "id": "93c93cc3-6ef2-4ac9-ad9c-bf20c7f2ced7",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:47:09.655Z",
+        "success": true,
+        "trustName": null,
+        "log": "zipping the final model and the reports..."
+    },
+    {
+        "id": "069f7311-8d35-4967-b50d-e53c52054737",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:47:09.640Z",
+        "success": true,
+        "trustName": "trust2",
+        "log": "received the trust status"
+    },
+    {
+        "id": "1013f15d-2d2e-44db-9b98-c77406e7e0aa",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:47:09.640Z",
+        "success": true,
+        "trustName": "trust2",
+        "log": "returned status: stopping"
+    },
+    {
+        "id": "db1bdd0b-34ef-4ad7-8970-c816464c1d18",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:47:09.639Z",
+        "success": true,
+        "trustName": "trust1",
+        "log": "received the trust status"
+    },
+    {
+        "id": "d19f8303-ab40-48a4-9bff-933dc7dec7cf",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:47:09.639Z",
+        "success": true,
+        "trustName": "trust1",
+        "log": "returned status: stopping"
+    },
+    {
+        "id": "b0b2df25-209b-4983-9f0a-cb7e06492cd0",
+        "modelId": "6e35c21b-a6f6-4fba-8228-8d260becb212",
+        "logDate": "2021-11-10T16:47:09.636Z",
+        "success": true,
+        "trustName": "trust2",
+        "log": "sending the stop message..."
+    }
+]

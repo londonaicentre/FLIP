@@ -1,0 +1,144 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
+# inheriting service configs below
+
+services:
+
+  fl-client-net-1:
+    image: ghcr.io/londonaicentre/flare-fl-client:${DOCKER_FL_TAG}
+    volumes:
+      # Mount the base images download directory to share images downloaded from XNAT with FL clients
+      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # Provisioned NVFLARE secrets (certificates, fed_client.json)
+      - /opt/flip/services/Trust_${TRUST_NUMBER}/fl-client/local:/app/local
+      - /opt/flip/services/Trust_${TRUST_NUMBER}/fl-client/startup:/app/startup
+      - /opt/flip/services/Trust_${TRUST_NUMBER}/fl-client/transfer:/app/transfer
+    environment:
+      - NET_ID=net-1
+      - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
+      - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=${MIN_CLIENTS}
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+      - IMAGING_API_URL=${IMAGING_API_URL}
+      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+    shm_size: '8gb'
+    # gpus: all
+
+  # TODO add second FL network when needed
+  # fl-client-net-2:
+  #   image: ghcr.io/londonaicentre/flare-fl-client:${DOCKER_FL_TAG}
+  #   volumes:
+  #     # Mount the base images download directory to share images downloaded from XNAT with FL clients
+  #     - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+  #     # Provisioned NVFLARE secrets (certificates, fed_client.json)
+  #     - /opt/flip/services/Trust_${TRUST_NUMBER}/fl-client/local:/app/local
+  #     - /opt/flip/services/Trust_${TRUST_NUMBER}/fl-client/startup:/app/startup
+  #     - /opt/flip/services/Trust_${TRUST_NUMBER}/fl-client/transfer:/app/transfer
+  #   environment:
+  #     - NET_ID=net-2
+  #     - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
+  #     - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
+  #     - LOCAL_DEV=false
+  #     - MIN_CLIENTS=${MIN_CLIENTS}
+  #     - IMAGES_DIR=/app/data/images
+  #     - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+  #     - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+  #     - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+  #     - IMAGING_API_URL=${IMAGING_API_URL}
+  #     - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+  #     - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+  #   shm_size: '8gb'
+  #   # gpus: all
+
+  omop-db:
+    image: ghcr.io/londonaicentre/omop-db:stag
+    restart: always
+    ports:
+      - "${OMOP_DB_PORT}:5432"
+    environment:
+      POSTGRES_USER: ${OMOP_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${OMOP_POSTGRES_DB}
+    volumes:
+      - /opt/flip/volumes/${TRUST_NAME}/db_data:/var/lib/postgresql/data
+
+  orthanc:
+    image: ghcr.io/londonaicentre/orthanc:${DOCKER_TAG}
+    restart: always
+    ports:
+      # - "${PACS_DICOM_PORT}:4242"
+      - "${PACS_UI_PORT}:8042"
+    volumes:
+      - /opt/flip/orthanc/${ORTHANC_STORAGE}:/var/lib/orthanc/db
+    environment:
+      ORTHANC__REGISTERED_USERS: |
+          {"${ORTHANC_USERNAME}": "${ORTHANC_PASSWORD}"}
+      ORTHANC__DICOM_MODALITIES: |
+          {"XNAT": {"AET": "XNAT", "Host": "xnat-web", "Port": "${XNAT_PORT}"}}
+
+  imaging-api:
+    image: ghcr.io/londonaicentre/imaging-api:${DOCKER_TAG}
+    ports:
+      - "${IMAGING_API_PORT}:8000"
+    environment:
+      XNAT_URL: ${XNAT_URL}
+      XNAT_PORT: ${XNAT_PORT}
+      XNAT_SERVICE_USER: ${XNAT_SERVICE_USER}
+      XNAT_SERVICE_PASSWORD: ${XNAT_SERVICE_PASSWORD}
+      PACS_ID: ${PACS_ID}
+      XNAT_DATABASE_URL: ${XNAT_DATABASE_URL}
+      DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
+      AES_KEY_BASE64: ${AES_KEY_BASE64}
+      DEBUG_PORT: ${IMAGING_DEBUG_PORT_TRUST_1}
+      DEBUG: ${DEBUG}
+      BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
+    # NOTE the volume BASE_IMAGES_DOWNLOAD_DIR is mounted to share images downloaded from XNAT with FL clients
+    volumes:
+      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+
+  data-access-api:
+    image: ghcr.io/londonaicentre/data-access-api:${DOCKER_TAG}
+    ports:
+      - "${DATA_ACCESS_API_PORT}:8000"
+    environment:
+      OMOP_DB_SERVICE_NAME: ${OMOP_DB_SERVICE_NAME}
+      DATA_ACCESS_POSTGRES_USER: ${DATA_ACCESS_POSTGRES_USER}
+      DATA_ACCESS_POSTGRES_PASSWORD: ${DATA_ACCESS_POSTGRES_PASSWORD}
+      OMOP_POSTGRES_DB: ${OMOP_POSTGRES_DB}
+      AES_KEY_BASE64: ${AES_KEY_BASE64}
+      DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT_TRUST_1}
+      DEBUG: ${DEBUG}
+
+  trust-api:
+    image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}
+    ports:
+      - "${TRUST_API_PORT}:8000"
+    environment:
+      CENTRAL_HUB_API_URL: ${CENTRAL_HUB_API_URL}
+      DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
+      IMAGING_API_URL: ${IMAGING_API_URL}
+      DEBUG_PORT: ${TRUST_DEBUG_PORT_TRUST_1}
+      DEBUG: ${DEBUG}
+      PRIVATE_API_KEY_HEADER: ${PRIVATE_API_KEY_HEADER}
+      PRIVATE_API_KEY: ${PRIVATE_API_KEY}
+
+networks:
+  default:
+    external: true
+    name: ${TRUST_NETWORK_NAME}

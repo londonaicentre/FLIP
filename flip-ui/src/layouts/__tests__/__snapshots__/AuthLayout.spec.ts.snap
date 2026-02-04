@@ -1,0 +1,99 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Auth Layout > Renders component 1`] = `
+<div
+  data-v-app=""
+>
+  
+  <!--v-if-->
+  <div
+    class="bg-body dark:bg-gray-900"
+  >
+    <div
+      class="flex items-center justify-center h-screen"
+    >
+      <div
+        class="absolute top-0 right-0"
+      >
+        <img
+          src="/src/assets/login/top-right.svg"
+        />
+      </div>
+      <div
+        class="absolute bottom-0 left-0"
+      >
+        <img
+          src="/src/assets/login/bottom-left.svg"
+        />
+      </div>
+      <div
+        class="p-2 flex flex-row bg-white dark:bg-gray-800 w-full md:min-w-[760px] md:max-w-[800px] min-h-[417px] shadow-xl rounded-md relative m-4"
+      >
+        <div
+          class="flex-shrink-0 hidden max-w-sm md:flex items-center bg-white justify-center grow rounded-lg"
+        >
+          <div
+            class="flex h-full w-[384px] rounded-lg relative p-2 select-none"
+          >
+            <img
+              class="absolute top-3 left-4 h-[76px] w-[116px]"
+              src="/images/AI-centre.png"
+            />
+            <div
+              class="login-branding-container w-full h-full relative"
+            >
+              <img
+                class="absolute top-2 right-2 h-[97.61px] w-[156px]"
+                src="/src/assets/login/branding-top-right.png"
+              />
+              <img
+                class="absolute bottom-2 left-2 h-[74.88px] w-[99px]"
+                src="/src/assets/login/branding-bottom-left.png"
+              />
+            </div>
+          </div>
+        </div>
+        <div
+          class="flex flex-grow p-2 md:pl-4"
+        >
+          <div
+            class="flex flex-col flex-grow"
+          >
+            <div
+              class="flex pb-1"
+            >
+              <router-link
+                class="inline-flex items-center text-sm"
+                to="/auth/login"
+              >
+                <svg
+                  class="mr-1"
+                  height="1.2em"
+                  viewBox="0 0 24 24"
+                  width="1.2em"
+                >
+                  <path
+                    d="M15.41 16.58L10.83 12l4.58-4.59L14 6l-6 6l6 6l1.41-1.42z"
+                    fill="currentColor"
+                  />
+                </svg>
+                 Back to log in 
+              </router-link>
+              <div
+                class="flex-grow"
+              />
+              <img
+                alt="NHS logo"
+                class="h-[40px] rounded"
+                src="/images/nhs-logo.png"
+              />
+            </div>
+            <router-view />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+</div>
+`;

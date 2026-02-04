@@ -1,0 +1,206 @@
+{
+    "recordCount": 15465,
+    "trustsResults": [
+        {
+            "name": "age",
+            "results": [
+                {
+                    "trustName": "KCH",
+                    "trustId": "KCHID",
+                    "data": [
+                        {
+                            "value": "0",
+                            "count": 123
+                        },
+                        {
+                            "value": "1",
+                            "count": 264
+                        },
+                        {
+                            "value": "2",
+                            "count": 387
+                        },
+                        {
+                            "value": "3",
+                            "count": 201
+                        },
+                        {
+                            "value": "5",
+                            "count": 123
+                        },
+                        {
+                            "value": "6",
+                            "count": 264
+                        },
+                        {
+                            "value": "7",
+                            "count": 387
+                        },
+                        {
+                            "value": "8",
+                            "count": 201
+                        },
+                        {
+                            "value": "9",
+                            "count": 123
+                        },
+                        {
+                            "value": "65",
+                            "count": 264
+                        },
+                        {
+                            "value": "69",
+                            "count": 387
+                        },
+                        {
+                            "value": "70",
+                            "count": 201
+                        },
+                        {
+                            "value": "35",
+                            "count": 123
+                        },
+                        {
+                            "value": "36",
+                            "count": 264
+                        },
+                        {
+                            "value": "39",
+                            "count": 387
+                        },
+                        {
+                            "value": "40",
+                            "count": 201
+                        }
+                    ]
+                },
+                {
+                    "trustName": "UCLH",
+                    "trustId": "UCLHID",
+                    "data": [
+                        {
+                            "value": "33",
+                            "count": 198
+                        },
+                        {
+                            "value": "61",
+                            "count": 212
+                        },
+                        {
+                            "value": "69",
+                            "count": 399
+                        },
+                        {
+                            "value": "76",
+                            "count": 254
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "gender",
+            "results": [
+                {
+                    "trustName": "KCH",
+                    "trustId": "KCHID",
+                    "data": [
+                        {
+                            "value": "M",
+                            "count": 1025
+                        },
+                        {
+                            "value": "F",
+                            "count": 715
+                        },
+                        {
+                            "value": "Unknown",
+                            "count": 301
+                        }
+                    ]
+                },
+                {
+                    "trustName": "UCLH",
+                    "trustId": "UCLHID",
+                    "data": [
+                        {
+                            "value": "M",
+                            "count": 5856
+                        },
+                        {
+                            "value": "F",
+                            "count": 3456
+                        }
+                    ]
+                },
+                {
+                    "trustName": "KINGS",
+                    "trustId": "KCHID",
+                    "data": [
+                        {
+                            "value": "M",
+                            "count": 1025
+                        },
+                        {
+                            "value": "F",
+                            "count": 715
+                        },
+                        {
+                            "value": "Unknown",
+                            "count": 301
+                        },
+                        {
+                            "value": "Indeterminate",
+                            "count": 26
+                        }
+                    ]
+                }
+            ]
+        },
+        {
+            "name": "diagnosis",
+            "results": [
+                {
+                    "trustName": "KCH",
+                    "trustId": "KCHID",
+                    "data": [
+                        {
+                            "value": "haemorrhage",
+                            "count": 211
+                        },
+                        {
+                            "value": "cavernoma",
+                            "count": 254
+                        },
+                        {
+                            "value": "stroke",
+                            "count": 645
+                        }
+                    ]
+                },
+                {
+                    "trustName": "UCLH",
+                    "trustId": "UCLHID",
+                    "data": [
+                        {
+                            "value": "haemorrhage",
+                            "count": 316
+                        },
+                        {
+                            "value": "cavernoma",
+                            "count": 359
+                        },
+                        {
+                            "value": "stroke",
+                            "count": 356
+                        },
+                        {
+                            "value": "seizure",
+                            "count": 112
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+}

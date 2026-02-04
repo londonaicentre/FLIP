@@ -1,0 +1,61 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+.DS_Store
+node_modules
+/dist
+
+
+# local env files
+.env.local
+.env.*.local
+
+# production env file
+.env.stag
+
+# Log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor directories and files
+.idea
+!.vscode/extensions.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# CodeceptJS
+test/ui/output
+test/ui/screenshots/e2e/diff
+test/ui/screenshots/integration/diff
+
+# Cypress generated files #
+######################
+test/cypress/screenshots/*
+test/cypress/videos/*
+cypress.meta.json
+cypress/logs/
+cypress/videos/*
+cypress/screenshots/*
+cypress/integration/_generated/*
+cypress/data/migration/generated/*.csv
+cypress/fixtures/example.json
+cypress/build/*
+
+# GitLab Runner
+builds/
+
+coverage

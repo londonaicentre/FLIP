@@ -1,0 +1,19 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Ai Buttons > Renders Component 1`] = `
+<div
+  data-v-90422ccc=""
+>
+  <button
+    class="relative flex flex-row justify-center btn-base"
+    data-test="btn"
+    data-v-90422ccc=""
+    tabindex="0"
+    type="button"
+  >
+    <!--v-if-->
+    
+    
+  </button>
+</div>
+`;
