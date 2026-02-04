@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.abspath("../../trust/trust-api"))
 # sys.path.insert(0, os.path.abspath('.'))
 
 # -- Project information -----------------------------------------------------
-project = "flip
+project = "flip"
 copyright = "2025, The London Medical Imaging & AI Centre for Value Based Healthcare (AIC)"
 author = "The London Medical Imaging & AI Centre for Value Based Healthcare (AIC)"
 
