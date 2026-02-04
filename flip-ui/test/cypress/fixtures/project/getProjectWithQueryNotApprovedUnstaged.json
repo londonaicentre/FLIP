@@ -1,0 +1,28 @@
+{
+    "id": "6fcbdd40-3675-45c9-899e-1a005e5245ba",
+    "name": "Stroke Test Project",
+    "description": "A test project",
+    "ownerId": "c16dab4d-ab43-4bea-9be5-a045c6d684ff",
+    "ownerEmail": "test.user@example.com",
+    "creationtimestamp": "2022-02-07T14:10:56.687Z",
+    "status": "UNSTAGED",
+    "query": {
+        "id": "58920505-6027-4ad5-acff-4150a248ccdb",
+        "name": "Some test query",
+        "query": "Some query > 3000",
+        "totalCohort": 32567,
+        "trustsQueried": 2
+    },
+    "users": [
+        {
+            "id": "03a3a210-cd5a-405e-a838-07a16aefc806",
+            "email": "joe@bloggs.com",
+            "isDisabled": false
+        },
+        {
+            "id": "03a3a210-cd5a-405e-a838-07a16aefc806",
+            "email": "joe@sloggs.com",
+            "isDisabled": false
+        }
+    ]
+}

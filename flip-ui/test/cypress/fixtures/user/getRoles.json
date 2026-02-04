@@ -1,0 +1,14 @@
+{
+    "roles": [
+        {
+            "id": "da2d1b85-6bdd-4089-b2fa-3594cc233327",
+            "rolename": "Researcher",
+            "roledescription": "A researcher"
+        },
+        {
+            "id": "8ce0351a-33cc-432b-8d6e-161122c712dd",
+            "rolename": "Admin",
+            "roledescription": "flip Administrator"
+        }
+    ]
+}

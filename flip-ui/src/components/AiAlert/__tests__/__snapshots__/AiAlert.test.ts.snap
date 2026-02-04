@@ -1,0 +1,48 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Ai Alert > Renders Component 1`] = `
+<div
+  class="block w-full p-2 rounded-md bg-lightgreen-100/50 border border-emerald-600/20 dark:bg-green-700 dark:border-green-600"
+>
+  <div
+    class="flex"
+  >
+    <div
+      class="flex-shrink-0 mr-3"
+    >
+      <!--v-if-->
+      <!--v-if-->
+      <svg
+        class="w-5 h-5 text-lightgreen-900 dark:text-green-200"
+        height="1.2em"
+        viewBox="0 0 24 24"
+        width="1.2em"
+      >
+        <path
+          d="M12 4c-4.41 0-8 3.59-8 8s3.59 8 8 8s8-3.59 8-8s-3.59-8-8-8zm-2 13l-4-4l1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z"
+          fill="currentColor"
+          opacity=".3"
+        />
+        <path
+          d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10s10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8s8 3.59 8 8s-3.59 8-8 8zm4.59-12.42L10 14.17l-2.59-2.58L6 13l4 4l8-8z"
+          fill="currentColor"
+        />
+      </svg>
+      <!--v-if-->
+    </div>
+    <div
+      class="items-center justify-center flex-1 md:flex md:justify-between"
+    >
+      <p
+        class="text-sm font-semibold text-lightgreen-900 dark:text-green-200"
+      >
+        <span>
+          Testing
+        </span>
+      </p>
+      <!--v-if-->
+      <!--v-if-->
+    </div>
+  </div>
+</div>
+`;

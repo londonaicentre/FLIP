@@ -1,0 +1,21 @@
+{
+    "extends": "../tsconfig.json",
+    "include": [
+        "../node_modules/cypress",
+        "./**/*.ts"
+    ],
+    "compilerOptions": {
+        "types": [
+            "cypress"
+        ],
+        "target": "es2019",
+        "lib": [
+            "dom",
+            "dom.iterable",
+            "es2022"
+        ],
+        "isolatedModules": false,
+        "allowJs": true,
+        "noEmit": true,
+    }
+}

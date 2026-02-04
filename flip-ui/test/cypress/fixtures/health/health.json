@@ -1,0 +1,12 @@
+[
+    {
+        "trustId": "53ca8126-5551-41a8-bd0a-587956c859d5",
+        "trustName": "UCLH",
+        "online": true
+    },
+    {
+        "trustId": "4c9692ac-f607-4216-9f0b-b45eb72d83d2",
+        "trustName": "KCH",
+        "online": true
+    }
+]

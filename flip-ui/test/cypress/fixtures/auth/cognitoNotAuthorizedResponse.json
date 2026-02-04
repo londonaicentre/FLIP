@@ -1,0 +1,4 @@
+{
+    "__type": "NotAuthorizedException",
+    "message": "Refresh Token has been revoked"
+}

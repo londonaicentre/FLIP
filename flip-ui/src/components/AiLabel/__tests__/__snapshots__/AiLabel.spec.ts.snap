@@ -1,0 +1,15 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Ai Label > Renders Component 1`] = `
+<label
+  class="inline-flex items-center justify-center h-full gap-2 p-4 pt-1 pb-1 text-sm rounded-md label-base"
+  data-v-318f54cc=""
+  small=""
+>
+  
+  
+    
+  
+  
+</label>
+`;

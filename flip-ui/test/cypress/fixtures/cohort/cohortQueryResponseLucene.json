@@ -1,0 +1,12 @@
+{
+    "body": {
+        "statusCode": 200,
+        "headers": {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "OPTIONS,POST,GET,PUT,DELETE"
+        },
+        "body": "{\"trust\":[{\"name\":\"UCLH\",\"statusCode\":200},{\"name\":\"KCH\",\"statusCode\":200}],\"queryId\":\"c9453df9-d228-4c9c-80dd-9a2e3c2ecf11\"}"
+    }
+}

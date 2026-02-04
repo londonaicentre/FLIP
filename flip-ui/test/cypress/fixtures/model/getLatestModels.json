@@ -1,0 +1,43 @@
+{
+  "page": 1,
+  "pageSize": 5,
+  "totalPages": 1,
+  "totalRecords": 5,
+  "data": [
+    {
+      "id": "fde8ced3-ceb7-445d-8724-6d7b7824bf2a",
+      "name": "Example Model",
+      "description": "Example Model",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "c5fac2b1-b61a-44a5-b7ec-4723701cf273",
+      "name": "This is a test model",
+      "description": "This test model exists on page 1",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "95a35423-43d4-4fac-b9d7-63f4b4324049",
+      "name": "John",
+      "description": "Doe",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    },
+    {
+      "id": "8634286c-9246-4e11-abfe-2c7529329d34",
+      "name": "Model C",
+      "description": "A model completed doing important things",
+      "status": "UPLOAD_COMPLETED",
+      "ownerid": "3e4f45a2-4295-4870-a270-6ed7205ea498"
+    },
+    {
+      "id": "32eb1f62-6306-4fbc-982d-69d6ebc306ae",
+      "name": "Model B",
+      "description": "A model doing important things",
+      "status": "FEDERATION_INITIALIZATION_STARTED",
+      "ownerid": "3e4f45a2-4295-4870-a270-6ed7205ea498"
+    }
+  ]
+}

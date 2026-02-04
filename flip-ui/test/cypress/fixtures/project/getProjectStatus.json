@@ -1,0 +1,27 @@
+[
+    {
+        "trustId": "7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2",
+        "trustName": "KCH",
+        "projectCreationCompleted": true,
+        "reimportCount": 2
+    },
+    {
+        "trustId": "5d512a2b-747e-4b1f-ad9d-f65fdb3c6585",
+        "trustName": "GSTT",
+        "projectCreationCompleted": false,
+        "reimportCount": 0
+    },
+    {
+        "trustId": "df8f0069-ad2c-44a7-b082-10e84d453b24",
+        "trustName": "UCLH",
+        "projectCreationCompleted": true,
+        "importStatus": {
+            "successful": 12,
+            "failed": 3,
+            "processing": 2,
+            "queued": 212,
+            "queueFailed": 23
+        },
+        "reimportCount": 5
+    }
+]

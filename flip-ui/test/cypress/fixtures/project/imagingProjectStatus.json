@@ -1,0 +1,14 @@
+[
+    {
+        "trustId": "a9b4cbe9-5754-4b7c-b2ae-6de495610f1b",
+        "trustName": "UCLH",
+        "projectCreationCompleted": true,
+        "imageRetrievalRunningTotal": 70
+    },
+    {
+        "trustId": "059943ac-250b-486e-89e0-8d805d10769c",
+        "trustName": "KCH",
+        "projectCreationCompleted": true,
+        "imageRetrievalRunningTotal": 68
+    }
+]

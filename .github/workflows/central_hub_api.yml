@@ -1,0 +1,75 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: FLIP Central Hub API CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "flip-api/**"
+      - ".github/workflows/central_hub_api.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "flip-api/**"
+      - ".github/workflows/central_hub_api.yml"
+
+jobs:
+  flip-api:
+    runs-on: ubuntu-latest
+
+    services:
+      # label used to access the service container
+      postgres:
+        # Docker Hub image
+        image: postgres:latest
+        # service environment variables
+        # `POSTGRES_HOST` is `postgres`
+        env:
+          # optional (defaults to `postgres`)
+          POSTGRES_DB: centralhub
+          # required
+          POSTGRES_PASSWORD: some_password
+          # optional (defaults to `5432`)
+          POSTGRES_PORT: 5432
+          # optional (defaults to `postgres`)
+          POSTGRES_USER: local_user
+        ports:
+          # maps tcp port 5432 on service container to the host
+          - 5432:5432
+        # set health checks to wait until postgres has started
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: ./flip-api # Set working directory for subsequent steps
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # get python version from ./flip-api/.python-version file
+          # if not found, use 3.11
+          python-version: ${{ github.event.inputs.python-version || '3.11' }}
+
+      - name: Install uv (if used for dependency management)
+        run: pip install uv
+
+      - name: Run unit tests
+        run: make unit_test

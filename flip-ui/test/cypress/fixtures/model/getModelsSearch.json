@@ -1,0 +1,15 @@
+{
+  "page": 1,
+  "pageSize": 20,
+  "totalPages": 1,
+  "totalRecords": 1,
+  "data": [
+    {
+      "id": "1f3408ea-bb78-4012-88fa-5af515d7e0d4",
+      "name": "Example Model",
+      "description": "This is a test model",
+      "status": "PENDING",
+      "ownerid": "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+[
+    {
+        "trustId": "7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2",
+        "trustName": "KCH",
+        "projectCreationCompleted": true,
+        "imageRetrievalRunningTotal": 220
+    },
+    {
+        "trustId": "5d512a2b-747e-4b1f-ad9d-f65fdb3c6585",
+        "trustName": "GSTT",
+        "projectCreationCompleted": false,
+        "imageRetrievalRunningTotal": 0
+    },
+    {
+        "trustId": "df8f0069-ad2c-44a7-b082-10e84d453b24",
+        "trustName": "UCLH",
+        "projectCreationCompleted": true,
+        "imageRetrievalRunningTotal": 21
+    }
+]

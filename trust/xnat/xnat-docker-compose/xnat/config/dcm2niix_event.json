@@ -1,0 +1,14 @@
+{
+    "name": "DICOM-NifTi Conversion",
+    "event-selector": "org.nrg.xnat.eventservice.events.ScanEvent:CREATED",
+    "action-key": "org.nrg.containers.services.CommandActionProvider:${CMD_ID}",
+    "attributes": {},
+    "active": true,
+    "project-id": "",
+    "event-filter": {
+        "event-type": "org.nrg.xnat.eventservice.events.ScanEvent",
+        "status": "CREATED",
+        "payload-filter": "(@.resources.length() > 0 && \"DICOM\" in @.resources[*].label)"
+    },
+    "act-as-event-user": false
+}

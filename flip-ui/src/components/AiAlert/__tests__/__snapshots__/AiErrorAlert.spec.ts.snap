@@ -1,0 +1,72 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`AiErrorAlert > Renders Component 1`] = `
+<div
+  class="block w-full px-4 py-2 bg-red-50 dark:bg-red-800"
+>
+  <div
+    class="flex items-center justify-center"
+  >
+    <div
+      class="flex-shrink-0"
+    >
+      <svg
+        class="w-5 h-5 text-red-500 dark:text-red-200"
+        height="1.2em"
+        viewBox="0 0 24 24"
+        width="1.2em"
+      >
+        <path
+          d="M12 4c-4.41 0-8 3.59-8 8s3.59 8 8 8s8-3.59 8-8s-3.59-8-8-8zm5 11.59L15.59 17L12 13.41L8.41 17L7 15.59L10.59 12L7 8.41L8.41 7L12 10.59L15.59 7L17 8.41L13.41 12L17 15.59z"
+          fill="currentColor"
+          opacity=".3"
+        />
+        <path
+          d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10s10-4.47 10-10S17.53 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8s8 3.59 8 8s-3.59 8-8 8zm3.59-13L12 10.59L8.41 7L7 8.41L10.59 12L7 15.59L8.41 17L12 13.41L15.59 17L17 15.59L13.41 12L17 8.41z"
+          fill="currentColor"
+        />
+      </svg>
+    </div>
+    <div
+      class="flex-1 ml-3 md:flex md:justify-between"
+    >
+      <p
+        class="text-sm font-semibold text-red-500 dark:text-red-200"
+      >
+        Something went wrong, please try again later. If the issue persists please contact the service desk.
+      </p>
+    </div>
+    <div
+      class="flex-shrink-0"
+    >
+      <div
+        class="group"
+        data-v-90422ccc=""
+      >
+        <button
+          class="relative flex flex-row justify-center btn-base btn-sm btn-text"
+          data-test="btn"
+          data-v-90422ccc=""
+          tabindex="0"
+          type="button"
+        >
+          <!--v-if-->
+          
+          <svg
+            class="w-5 h-5 text-red-500 dark:text-red-200 dark:group-hover:text-red-100 transition group-hover:text-red-800"
+            height="1.2em"
+            viewBox="0 0 24 24"
+            width="1.2em"
+          >
+            <path
+              d="M19 6.41L17.59 5L12 10.59L6.41 5L5 6.41L10.59 12L5 17.59L6.41 19L12 13.41L17.59 19L19 17.59L13.41 12L19 6.41z"
+              fill="currentColor"
+            />
+          </svg>
+          
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+`;

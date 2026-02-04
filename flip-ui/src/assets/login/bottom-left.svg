@@ -1,0 +1,27 @@
+<!--
+    Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use this file except in compliance with the License.
+    You may obtain a copy of the License at
+        http://www.apache.org/licenses/LICENSE-2.0
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+-->
+
+<svg width="259" height="342" viewBox="0 0 259 342" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+        fill-rule="evenodd"
+        clip-rule="evenodd"
+        d="M-55.7603 0.0441611C8.05399 -1.75009 56.9416 51.5162 108.309 89.4266C159.239 127.014 217.728 159.958 240.794 218.908C264.511 279.522 268.01 354.102 233.452 409.258C200.559 461.756 120.066 451.954 71.0459 489.831C19.3911 529.743 9.26834 627.056 -55.7603 632.725C-119.398 638.272 -154.553 558.618 -199.712 513.432C-236.823 476.299 -280.377 443.451 -295.244 393.098C-309.893 343.485 -293.577 292.339 -279.709 242.502C-265.179 190.284 -250.036 138.282 -213.261 98.4681C-170.201 51.8486 -119.195 1.82772 -55.7603 0.0441611Z"
+        fill="#61366E"
+    />
+    <path
+        fill-rule="evenodd"
+        clip-rule="evenodd"
+        d="M66.2099 271.004C87.4395 270.694 102.774 289.104 115.572 306.035C127.817 322.234 138.097 340.957 134.138 360.87C130.061 381.38 114.607 397.62 95.6184 406.404C76.9985 415.018 55.1143 415.597 37.1159 405.752C20.097 396.442 11.8113 377.657 8.22616 358.601C4.84139 340.611 8.51468 322.715 18.6207 307.447C30.2213 289.922 45.1863 271.31 66.2099 271.004Z"
+        fill="#E82678"
+    />
+</svg>

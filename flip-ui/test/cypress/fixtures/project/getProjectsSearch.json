@@ -1,0 +1,16 @@
+{
+    "page": 1,
+    "pageSize": 20,
+    "totalPages": 1,
+    "totalRecords": 1,
+    "data": [
+        {
+            "id": "4b712b07-0c70-4e5e-8afc-e0a881f4fdd4",
+            "name": "Example project",
+            "description": "Example project we have mocked",
+            "queryid": "02507eab-67dd-4a73-aff8-a6af817c49e6",
+            "ownerid": "3e4f45a2-4295-4870-a270-6ed7205ea498",
+            "created": "2021-12-08T10:36:49.192553"
+        }
+    ]
+}

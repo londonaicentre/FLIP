@@ -1,0 +1,24 @@
+{
+    "page": 1,
+    "pageSize": 20,
+    "totalPages": 1,
+    "totalRecords": 1,
+    "data": [
+        {
+            "id": "5b712b07-5c70-4e5e-8afc-e0a881f4fdd5",
+            "name": "Researcher's Project",
+            "description": "Example project we have mocked",
+            "queryid": "02507eab-67dd-4a73-aff8-a6af817c49e6",
+            "ownerid": "727d1290-d2b3-4987-9106-656072e459f4",
+            "created": "2021-12-08T10:36:49.192553"
+        },
+        {
+            "id": "4b712b07-0c70-4e5e-8afc-e0a881f4fdd4",
+            "name": "Administrator's Project",
+            "description": "Example project we have mocked",
+            "queryid": "02507eab-67dd-4a73-aff8-a6af817c49e6",
+            "ownerid": "1c7335ef-9c0a-4f16-b07f-147fcead1f3d",
+            "created": "2021-12-08T10:36:49.192553"
+        }
+    ]
+}

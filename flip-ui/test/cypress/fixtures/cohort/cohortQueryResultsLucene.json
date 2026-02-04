@@ -1,0 +1,60 @@
+{
+    "AggregatedStats": {
+        "Stats": {
+            "TotalCount": 120,
+            "Age": {
+                "Mean": 63
+            },
+            "Gender": {
+                "Male": 44,
+                "Female": 53,
+                "MissingData": 23
+            },
+            "ClientVisit": {
+                "MissingData": 54,
+                "Inpatient": 30,
+                "Emergency": 36
+            }
+        }
+    },
+    "TrustsResults": [
+        {
+            "Data": {
+                "TotalCount": 60,
+                "Age": {
+                    "Mean": 63
+                },
+                "Gender": {
+                    "Male": 22,
+                    "Female": 28,
+                    "MissingData": 10
+                },
+                "ClientVisit": {
+                    "Emergency": 22,
+                    "Inpatient": 12,
+                    "MissingData": 26
+                }
+            },
+            "TrustName": "UCLH"
+        },
+        {
+            "Data": {
+                "TotalCount": 60,
+                "Age": {
+                    "Mean": 63
+                },
+                "Gender": {
+                    "Male": 22,
+                    "Female": 25,
+                    "MissingData": 13
+                },
+                "ClientVisit": {
+                    "Emergency": 14,
+                    "Inpatient": 18,
+                    "MissingData": 28
+                }
+            },
+            "TrustName": "KCH"
+        }
+    ]
+}

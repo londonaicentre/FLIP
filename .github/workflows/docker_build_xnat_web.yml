@@ -1,0 +1,125 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Build and Push Docker Image for XNAT Web
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'trust/trust-api/xnat/**'
+
+permissions:
+  id-token: write # required for OIDC
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    environment: flip
+    defaults:
+      run:
+        working-directory: ./trust/xnat/xnat-docker-compose/xnat
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: londonaicentre/xnat-web
+      BUILD_ARGS: |
+        --build-arg XNAT_VERSION=1.9.3
+        --build-arg XNAT_SMTP_ENABLED=false
+        --build-arg XNAT_DATASOURCE_DRIVER=org.postgresql.Driver
+        --build-arg XNAT_DATASOURCE_USERNAME=xnat
+        --build-arg XNAT_DATASOURCE_PASSWORD=xnat
+        --build-arg XNAT_DATASOURCE_URL=jdbc:postgresql://xnat-db/xnat
+        --build-arg TOMCAT_XNAT_FOLDER=ROOT
+        --build-arg XNAT_ROOT=/data/xnat
+        --build-arg XNAT_HOME=/data/xnat/home
+        --build-arg XNAT_EMAIL=email@gstt.nhs.uk
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event.workflow_run.head_repository.full_name }}
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          role-session-name: ${{ vars.AWS_ROLE_SESSION_NAME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Determine tags
+        id: tags
+        run: |
+          TAGS="${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}"
+
+          # Branch name sanitization
+          REF_NAME="${{ github.ref_name }}"
+          SAFE_REF_NAME=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
+          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+
+          # Branch number (if starts with number)
+          if [[ "$REF_NAME" =~ ^[0-9]+ ]]; then
+              BRANCH_NUM=$(echo "$REF_NAME" | grep -oE '^[0-9]+')
+              TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${BRANCH_NUM}"
+          fi
+
+          # PR Number (if PR)
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+             PR_NUMBER=$(echo "${{ github.ref }}" | awk -F / '{print $3}')
+             TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:pr-${PR_NUMBER}"
+          fi
+
+          # Determine if this is a merge/push to main or develop
+          BRANCH_NAME=""
+          if [[ "${{ github.event_name }}" == "workflow_run" && "${{ github.event.workflow_run.event }}" == "push" ]]; then
+            BRANCH_NAME="${{ github.event.workflow_run.head_branch }}"
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            BRANCH_NAME="${{ github.ref_name }}"
+          fi
+
+          if [[ "$BRANCH_NAME" == "main" ]]; then
+            TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:prod"
+          elif [[ "$BRANCH_NAME" == "develop" ]]; then
+            TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:stag"
+          fi
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "Generated tags: ${TAGS}"
+
+      - name: Log in to GitHub Container Registry
+        run: echo ${{ secrets.GITHUB_TOKEN }} | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
+
+      - name: Download XNAT WAR
+        run: aws s3 cp s3://flipdev-artifacts/xnat/xnat-web-1.9.3.war build-artifacts/xnat-web-1.9.3.war
+
+      - name: Download XNAT plugins
+        run: aws s3 sync s3://flipdev-artifacts/xnat/plugins/ plugins/
+
+      - name: Build Docker image
+        run: |
+          IFS=',' read -ra TAG_ARRAY <<< "${{ steps.tags.outputs.tags }}"
+          BUILD_CMD="docker build ${BUILD_ARGS}"
+          for tag in "${TAG_ARRAY[@]}"; do
+            BUILD_CMD+=" -t $tag"
+          done
+          BUILD_CMD+=" ."
+          echo "Running: $BUILD_CMD"
+          eval $BUILD_CMD
+
+      - name: Push Docker image
+        run: |
+          IFS=',' read -ra TAG_ARRAY <<< "${{ steps.tags.outputs.tags }}"
+          for tag in "${TAG_ARRAY[@]}"; do
+            docker push "$tag"
+          done

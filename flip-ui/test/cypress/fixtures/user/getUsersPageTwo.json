@@ -1,0 +1,20 @@
+{
+    "page": 2,
+    "pageSize": 1,
+    "totalPages": 2,
+    "totalRecords": 1,
+    "data": [
+        {
+            "id": "1c7335ef-9c0a-4f16-b07f-147fcead1f3d",
+            "email": "test.user@flip.com",
+            "isDisabled": false,
+            "roles": [
+                {
+                    "id": "da2d1b85-6bdd-4089-b2fa-3594cc233327",
+                    "rolename": "Researcher",
+                    "roledescription": "A researcher"
+                }
+            ]
+        }
+    ]
+}

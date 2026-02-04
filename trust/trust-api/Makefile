@@ -1,0 +1,49 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+ifneq ("$(wildcard ../../.env.development)","")
+include ../../.env.development
+export $(shell sed 's/=.*//' ../../.env.development)
+endif
+
+service_name = trust-api
+lint_command = uv run ruff check . --fix
+test_coverage_html_command = uv run pytest --tb=short --disable-warnings --cov=trust_api/ --cov-report=html --cov-report=term-missing 
+docker_command = docker compose -f ../compose_trust.yml
+run_clean = run --rm --remove-orphans
+mypy_command = uv run mypy . --ignore-missing-imports
+
+build:
+	$(docker_command) build $(service_name)
+up:
+#   For testing, set network to trust 1
+	TRUST_NETWORK_NAME="deploy_trust-network-1" \
+	$(docker_command) up $(service_name)
+down:
+	$(docker_command) down --remove-orphans $(service_name)
+shell:
+	$(docker_command) $(run_clean) $(service_name) /bin/bash
+lint:
+	$(docker_command) $(run_clean) $(service_name) $(lint_command)
+mypy:
+	$(docker_command) $(run_clean) $(service_name) $(mypy_command)
+test:
+	@export BASE_IMAGES_DOWNLOAD_DIR=/tmp/images; \
+	TRUST_NETWORK_NAME="deploy_trust-network-1" \
+	$(docker_command) $(run_clean) $(service_name) $(lint_command) && $(mypy_command) && $(test_coverage_html_command)
+local_lint:
+	$(lint_command)
+local_mypy:
+	$(mypy_command)
+local_test:
+	@export BASE_IMAGES_DOWNLOAD_DIR=/tmp/images; \
+	$(lint_command) && $(mypy_command) && $(test_coverage_html_command)

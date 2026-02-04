@@ -1,0 +1,49 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Bug
+description: Raise a bug report
+title: "[Bug]: "
+labels: ["bug"]
+type: Bug
+projects: ["londonaicentre/10"]
+body:
+  - type: input
+    id: short-description
+    attributes:
+      label: Description
+      placeholder: ex. The Central Hub database is not being updated with active projects' FL training progress
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output or error messages
+      description: Please copy and paste any relevant log output or error messages, which will be automatically formatted into a codeblock.
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: What are one or more acceptance criteria that would be used to verify this bug has been fixed?
+      placeholder: ex. Each project's FL training status is updated every 24 hours in the relevant Central Hub database table
+    validations:
+      required: true
+  - type: checkboxes
+    id: project-admin
+    attributes:
+      label: Assign the relevant label(s) and, if known, Milestone to this bug report
+      options:
+        - label: I confirm I have assigned the relevant label(s) and, if known, Milestone to this bug report
+          required: true

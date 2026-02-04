@@ -1,0 +1,11 @@
+{
+    "name": "Local socket",
+    "host": "unix:///var/run/docker.sock",
+    "cert-path": "",
+    "swarm-mode": true,
+    "path-translation-xnat-prefix": "/data/xnat",
+    "path-translation-docker-prefix": "${DATA_PATH}",
+    "pull-images-on-xnat-init": true,
+    "container-user": "",
+    "auto-cleanup": true
+}

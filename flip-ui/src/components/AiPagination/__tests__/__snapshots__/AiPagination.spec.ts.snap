@@ -1,0 +1,130 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Ai Pagination > Renders Component 1`] = `
+<div
+  class="min-w-max"
+  data-v-bf58aa44=""
+>
+  <section
+    class="flex justify-between py-2 text-gray-700 border-t border-gray-200 dark:border-gray-700 bg-body dark:bg-gray-900"
+    data-v-bf58aa44=""
+  >
+    <div
+      class="flex items-center justify-center w-full"
+      data-v-bf58aa44=""
+    >
+      <div
+        class="pr-4"
+        data-v-bf58aa44=""
+      >
+        <div
+          data-v-90422ccc=""
+          data-v-bf58aa44=""
+        >
+          <button
+            class="relative flex flex-row justify-center btn-base btn-text btn-disabled"
+            data-test="page-btn-prev"
+            data-v-90422ccc=""
+            disabled=""
+            tabindex="0"
+            type="button"
+          >
+            <!--v-if-->
+            
+            <svg
+              class="mr-2"
+              data-v-bf58aa44=""
+              height="1.2em"
+              viewBox="0 0 24 24"
+              width="1.2em"
+            >
+              <path
+                d="M20 11H7.83l5.59-5.59L12 4l-8 8l8 8l1.41-1.41L7.83 13H20v-2z"
+                fill="currentColor"
+              />
+            </svg>
+            
+             Previous 
+            
+            
+          </button>
+        </div>
+      </div>
+      <div
+        class="flex items-center justify-center flex-grow"
+        data-v-bf58aa44=""
+      >
+        <!--v-if-->
+        <!--v-if-->
+        
+        <div
+          class="flex flex-col pr-2"
+          data-v-bf58aa44=""
+        >
+          <div
+            class="selected-border"
+            data-v-bf58aa44=""
+          />
+          <div
+            class="text-primary-500 dark:text-primary-400"
+            data-v-90422ccc=""
+            data-v-bf58aa44=""
+          >
+            <button
+              class="relative flex flex-row justify-center btn-base btn-text"
+              data-test="page-btn-1"
+              data-v-90422ccc=""
+              tabindex="0"
+              type="button"
+            >
+              <!--v-if-->
+              
+              1
+              
+            </button>
+          </div>
+        </div>
+        
+        <!--v-if-->
+        <!--v-if-->
+      </div>
+      <div
+        data-v-bf58aa44=""
+      >
+        <div
+          data-v-90422ccc=""
+          data-v-bf58aa44=""
+        >
+          <button
+            class="relative flex flex-row justify-center btn-base btn-text btn-disabled"
+            data-test="page-btn-next"
+            data-v-90422ccc=""
+            disabled=""
+            tabindex="0"
+            type="button"
+          >
+            <!--v-if-->
+            
+            
+             Next 
+            
+            <svg
+              class="ml-2"
+              data-v-bf58aa44=""
+              height="1.2em"
+              viewBox="0 0 24 24"
+              width="1.2em"
+            >
+              <path
+                d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"
+                fill="currentColor"
+              />
+            </svg>
+            
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+`;

@@ -1,0 +1,90 @@
+{
+    "page": 1,
+    "pageSize": 20,
+    "totalPages": 2,
+    "totalRecords": 13,
+    "data": [
+        {
+            "id": "1c7335ef-9c0a-4f16-b07f-147fcead1f3d",
+            "email": "researcher.user@flip.com",
+            "isDisabled": false,
+            "roles": [
+                {
+                    "id": "da2d1b85-6bdd-4089-b2fa-3594cc233327",
+                    "rolename": "Researcher",
+                    "roledescription": "A researcher"
+                }
+            ]
+        },
+        {
+            "id": "c16dab4d-ab43-4bea-9be5-a045c6d684ff",
+            "email": "multipleRole.user@flip.com",
+            "isDisabled": false,
+            "roles": [
+                {
+                    "id": "da2d1b85-6bdd-4089-b2fa-3594cc233327",
+                    "rolename": "Researcher",
+                    "roledescription": "A researcher"
+                },
+                {
+                    "id": "8ce0351a-33cc-432b-8d6e-161122c712dd",
+                    "rolename": "Admin",
+                    "roledescription": "flip Administrator"
+                }
+            ]
+        },
+        {
+            "id": "56e5f17a-feff-40cb-a52a-00da8d0091f9",
+            "email": "test.man@answerdigital.com",
+            "isDisabled": false,
+            "roles": [
+                {
+                    "id": "da2d1b85-6bdd-4089-b2fa-3594cc233327",
+                    "rolename": "Researcher",
+                    "roledescription": "A researcher"
+                }
+            ]
+        },
+        {
+            "id": "03a3a210-cd5a-405e-a838-07a16aefc806",
+            "email": "HasAdminRole@gmail.com",
+            "isDisabled": false,
+            "roles": [
+                {
+                    "id": "da2d1b85-6bdd-4089-b2fa-3594cc233327",
+                    "rolename": "Researcher",
+                    "roledescription": "A researcher"
+                },
+                {
+                    "id": "8ce0351a-33cc-432b-8d6e-161122c712dd",
+                    "rolename": "Admin",
+                    "roledescription": "flip Administrator"
+                }
+            ]
+        },
+        {
+            "id": "55519a49-3206-4721-959b-8ab1f3abca1c",
+            "email": "HasResearcherRole@gmail.com",
+            "isDisabled": false,
+            "roles": [
+                {
+                    "id": "da2d1b85-6bdd-4089-b2fa-3594cc233327",
+                    "rolename": "Researcher",
+                    "roledescription": "A researcher"
+                }
+            ]
+        },
+        {
+            "id": "35519a49-6206-6721-659b-6ab1f3abca1c",
+            "email": "disabled.user@flip.com",
+            "isDisabled": true,
+            "roles": [
+                {
+                    "id": "da2d1b85-6bdd-4089-b2fa-3594cc233327",
+                    "rolename": "Researcher",
+                    "roledescription": "A researcher"
+                }
+            ]
+        }
+    ]
+}
