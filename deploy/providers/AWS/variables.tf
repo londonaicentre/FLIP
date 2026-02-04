@@ -50,6 +50,10 @@ variable "FLIP_BUCKET_NAME" {
   type = string
 }
 
+variable "AICENTRE_BUCKET_NAME" {
+  type = string
+}
+
 variable "flip_user_pool_name" {
   description = "Cognito User Pool name for FLIP"
   type        = string
