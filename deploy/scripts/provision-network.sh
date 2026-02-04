@@ -33,12 +33,15 @@ SERVICES_DIR="${WORKSPACE_DIR}/services"
 
 log "Provisioning network ${NET_NUMBER}..."
 
+# FLARE project YAML file for this network
+PROJECT_YAML="net-${NET_NUMBER}_project.yml"
+
 # Generate network-specific project file from template
 export NET_NUMBER FL_PORT ADMIN_PORT DEBUG
-envsubst < net_project.yml > "net-${NET_NUMBER}_project.yml"
+envsubst < net_project.yml > "${PROJECT_YAML}"
 
 # Run NVFLARE provisioning
-uv run nvflare provision -p "net-${NET_NUMBER}_project.yml"
+uv run nvflare provision -p "${PROJECT_YAML}"
 
 echo "Restructuring provisioned files in workspace..."
 
@@ -52,6 +55,17 @@ fi
 
 rm -rf "${SERVICES_DIR}"
 mkdir -p "${SERVICES_DIR}"
+
+# Function to get the first participant name of a given type from the project YAML
+# This avoids hardcoding participant (server, admin) names in the script
+get_participant_name_by_type() {
+  local project_yaml="$1"
+  local participant_type="$2"
+
+  yq -r \
+    ".participants[] | select(.type == \"${participant_type}\") | .name" \
+    "$project_yaml" | head -n 1
+}
 
 # Function to restructure a participant's files
 restructure_participant() {
@@ -141,11 +155,17 @@ create_resources_template() {
 
 
 # Restructure all participants
-# TODO this is hardcoded to 2 clients and 1 server for now -- make this dynamic later
+SERVER_NAME="$(get_participant_name_by_type "$PROJECT_YAML" server)"
+echo "Identified server participant name: ${SERVER_NAME}"
+
+ADMIN_NAME="$(get_participant_name_by_type "$PROJECT_YAML" admin)"
+echo "Identified admin participant name: ${ADMIN_NAME}"
+
+# TODO this is hardcoded to 2 clients for now -- make this dynamic later
 restructure_participant "Trust_1" "Trust_1" 1
 restructure_participant "Trust_2" "Trust_2" 1
-restructure_participant "fl-server-net-${NET_NUMBER}" "fl-server-net-${NET_NUMBER}" 0
-restructure_participant "admin@nvidia.com" "flip-fl-api-net-${NET_NUMBER}" 0
+restructure_participant "${SERVER_NAME}" "fl-server-net-${NET_NUMBER}" 0
+restructure_participant "${ADMIN_NAME}" "flip-fl-api-net-${NET_NUMBER}" 0
 
 # Clean up prod directory
 echo "Cleaning up prod directory..."
