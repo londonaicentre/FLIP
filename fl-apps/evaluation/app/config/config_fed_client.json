@@ -1,0 +1,34 @@
+{
+  "format_version": 2,
+  "project_id": "",
+  "query": "SELECT * FROM Table;",
+  "local_rounds": 1,
+  "executors": [
+    {
+      "tasks": ["post_task", "init_task"],
+      "executor": {
+        "path": "cleanup.CleanupImages",
+        "args": {}
+      }
+    },
+    {
+      "tasks": ["evaluation"],
+      "executor": {
+        "path": "flip_evaluator.RUN_EVALUATOR",
+        "args": {
+          "project_id": "{project_id}",
+          "query": "{query}"
+        }
+      }
+    }
+  ],
+  "task_result_filters": [],
+  "task_data_filters": [],
+  "components": [
+    {
+      "id": "flip_client_event_handler",
+      "path": "flip_client_event_handler.ClientEventHandler",
+      "args": {}
+    }
+  ]
+}

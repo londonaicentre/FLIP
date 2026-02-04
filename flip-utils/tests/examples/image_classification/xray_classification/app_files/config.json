@@ -1,0 +1,18 @@
+{
+  "LOCAL_ROUNDS": 3,
+  "LR_START": 0.001,
+  "LR_END": 0.0001,
+  "VAL_SPLIT": 0.2,
+  "TEST_SPLIT": 0.2,
+  "BATCH_SIZE": 24,
+  "LESIONS": {
+    "0": "Effusion",
+    "1": "Edema",
+    "-1": "Lungs in normal arrangement"
+  },
+  "value_to_numerical": {
+    "1": "Yes",
+    "0": "No"
+  },
+  "VALIDATE_EVERY": 1
+}

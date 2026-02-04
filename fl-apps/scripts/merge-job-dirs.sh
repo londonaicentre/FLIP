@@ -1,0 +1,43 @@
+#!/bin/bash
+#
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Merge base app config with test app custom files
+# Usage: ./scripts/merge-job-dirs.sh <base_app_dir> <test_app_dir> <output_dir>
+
+set -euo pipefail
+
+BASE_APP_DIR="${1:?Error: BASE_APP_DIR is required}"
+TEST_APP_DIR="${2:?Error: TEST_APP_DIR is required}"
+OUTPUT_DIR="${3:-.test_runs/merged-job-dir}"
+
+echo "Merging job directories..."
+echo "  Base: ${BASE_APP_DIR}"
+echo "  Test: ${TEST_APP_DIR}"
+echo "  Output: ${OUTPUT_DIR}"
+
+# Clean and create output directory
+rm -rf "${OUTPUT_DIR}"
+mkdir -p "${OUTPUT_DIR}/custom"
+
+# Copy base app files
+if [[ -d "${BASE_APP_DIR}" ]]; then
+    cp -r "${BASE_APP_DIR}"/* "${OUTPUT_DIR}/" 2>/dev/null || true
+fi
+
+# Copy test app files into custom subdirectory
+if [[ -d "${TEST_APP_DIR}" ]]; then
+    cp -r "${TEST_APP_DIR}"/* "${OUTPUT_DIR}/custom/" 2>/dev/null || true
+fi
+
+echo "Done. Output: ${OUTPUT_DIR}"

@@ -1,0 +1,134 @@
+{
+  "format_version": 2,
+  "model_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "python_path": [".", "custom"],
+  "min_clients": 2,
+  "server": {
+    "heart_beat_timeout": 600
+  },
+  "task_data_filters": [],
+  "task_result_filters": [],
+  "components": [
+    {
+      "id": "persistor",
+      "path": "nvflare.app_common.pt.pt_file_model_persistor.PTFileModelPersistor",
+      "args": {
+        "model": {
+          "path": "models.get_model"
+        }
+      }
+    },
+    {
+      "id": "shareable_generator",
+      "path": "nvflare.app_common.shareablegenerators.full_model_shareable_generator.FullModelShareableGenerator",
+      "args": {}
+    },
+    {
+      "id": "aggregator",
+      "name": "InTimeAccumulateWeightedAggregator",
+      "args": {
+        "expected_data_kind": "WEIGHTS"
+      }
+    },
+    {
+      "id": "model_locator",
+      "path": "pt_model_locator.PTModelLocator",
+      "args": {
+      }
+    },
+    {
+      "id": "model_locator_initial",
+      "path": "pt_model_locator.InitialPTModelLocator",
+      "args": {
+      }
+    },
+    {
+      "id": "json_generator",
+      "path": "validation_json_generator.ValidationJsonGenerator",
+      "args": {}
+    },
+    {
+      "id": "flip_server_event_handler",
+      "path": "flip_server_event_handler.ServerEventHandler",
+      "args": {
+        "model_id": "{model_id}"
+      }
+    },
+    {
+      "id": "persist_and_cleanup",
+      "path": "persist_and_cleanup.PersistToS3AndCleanup",
+      "args": {
+        "model_id": "{model_id}",
+        "persistor_id": "persistor"
+      }
+    }
+  ],
+  "workflows": [
+    {
+      "id": "init_training",
+      "path": "init_training.InitTraining",
+      "args": {
+        "model_id": "{model_id}",
+        "min_clients": "{min_clients}"
+      }
+    },
+    {
+      "id": "scatter_and_gather_ae",
+      "path": "scatter_and_gather.ScatterAndGather",
+      "args": {
+        "min_clients": "{min_clients}",
+        "start_round": 0,
+        "wait_time_after_min_received": 10,
+        "aggregator_id": "aggregator",
+        "persistor_id": "persistor",
+        "model_locator_id": "model_locator_initial",
+        "shareable_generator_id": "shareable_generator",
+        "train_task_name": "train_ae",
+        "train_timeout": 0,
+        "model_id": "{model_id}",
+        "ignore_result_error": false
+      }
+    },
+    {
+      "id": "cross_site_validate_ae",
+      "name": "CrossSiteModelEvalLDM",
+      "path": "cross_site_model_eval.CrossSiteModelEval",
+      "args": {
+        "validation_task_name": "validate_ae",
+        "model_locator_id": "model_locator",
+        "participating_clients": "{participating_clients}",
+        "validation_timeout": 12000,
+        "model_id": "{model_id}"
+      }
+    },
+    {
+      "id": "scatter_and_gather_dm",
+      "path": "scatter_and_gather.ScatterAndGather",
+      "args": {
+        "min_clients": "{min_clients}",
+        "start_round": 0,
+        "wait_time_after_min_received": 10,
+        "aggregator_id": "aggregator",
+        "persistor_id": "persistor",
+        "model_locator_id": "model_locator",
+        "shareable_generator_id": "shareable_generator",
+        "train_task_name": "train_dm",
+        "train_timeout": 0,
+        "model_id": "{model_id}",
+        "ignore_result_error": false
+      }
+    },
+    {
+      "id": "cross_site_validate_dm",
+      "name": "CrossSiteModelEvalLDM",
+      "path": "cross_site_model_eval.CrossSiteModelEval",
+      "args": {
+        "model_locator_id": "model_locator",
+        "validation_task_name": "validate_dm",
+        "participating_clients": "{participating_clients}",
+        "validation_timeout": 12000,
+        "model_id": "{model_id}"
+      }
+    }
+  ]
+}

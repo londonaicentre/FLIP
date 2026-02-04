@@ -1,0 +1,82 @@
+{
+  "format_version": 2,
+  "project_id": "",
+  "query": "SELECT * FROM Table;",
+  "executors": [
+    {
+      "tasks": ["init_training", "post_validation"],
+      "executor": {
+        "path": "cleanup.CleanupImages",
+        "args": {}
+      }
+    },
+    {
+      "tasks": ["train_ae"],
+      "executor": {
+        "path": "trainer.FLIP_TRAINER",
+        "args": {
+          "train_task_name": "train_ae",
+          "project_id": "{project_id}",
+          "query": "{query}"
+        }
+      }
+    },
+    {
+      "tasks": ["train_dm", "submit_model"],
+      "executor": {
+        "path": "trainer.FLIP_TRAINER",
+        "args": {
+          "train_task_name": "train_dm",
+          "project_id": "{project_id}",
+          "query": "{query}"
+        }
+      }
+    },
+    {
+      "tasks": ["validate_ae"],
+      "executor": {
+        "path": "validator.FLIP_VALIDATOR",
+        "args": {
+          "validate_task_name": "validate_ae",
+          "project_id": "{project_id}",
+          "query": "{query}"
+        }
+      }
+    },
+      {
+      "tasks": ["validate_dm"],
+      "executor": {
+        "path": "validator.FLIP_VALIDATOR",
+        "args": {
+          "validate_task_name": "validate_dm",
+          "project_id": "{project_id}",
+          "query": "{query}"
+        }
+      }
+    }
+  ],
+  "task_result_filters": [
+      {
+      "tasks": ["train_ae", "train_dm"],
+      "filters": [
+        {
+        "id": "percentile_privacy",
+        "path": "stage_percentile_privacy.StagePercentilePrivacy",
+        "args": {
+          "gamma": 2.0,
+          "percentile": 95,
+          "off": false
+      }
+        }
+      ]
+    }
+  ],
+  "task_data_filters": [],
+  "components": [
+    {
+      "id": "flip_client_event_handler",
+      "path": "flip_client_event_handler.ClientEventHandler",
+      "args": {}
+    }
+  ]
+}
