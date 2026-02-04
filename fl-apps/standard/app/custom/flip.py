@@ -407,7 +407,7 @@ class _FLIPProd(FLIP_Parent):
         # Note the FL client 'site' name needs to match the trust name
         trust_name = client_name.replace("site-", "Trust_")
 
-        # TODO Change when addressing https://github.com/londonaicentre/nhsflame/issues/428
+        # TODO Change when addressing https://github.com/londonaicentre/FLIP/issues/31
         if "round" in metrics_data.keys():
             # New behaviour if client sends round in metrics
             payload = {
@@ -629,7 +629,7 @@ class _FLIPDev(FLIP_Parent):
         # Note the FL client 'site' name needs to match the trust name
         trust_name = client_name.replace("site-", "Trust_")
 
-        # TODO Change when addressing https://github.com/londonaicentre/nhsflame/issues/428
+        # TODO Change when addressing https://github.com/londonaicentre/FLIP/issues/31
         if "round" in metrics_data.keys():
             # New behaviour if client sends round in metrics
             payload = {
