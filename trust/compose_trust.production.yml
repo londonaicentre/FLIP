@@ -21,9 +21,9 @@ services:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
       # Provisioned NVFLARE secrets (certificates, fed_client.json)
-      - /opt/flip/services/Trust_${TRUST_NUMBER}/fl-client/local:/app/local
-      - /opt/flip/services/Trust_${TRUST_NUMBER}/fl-client/startup:/app/startup
-      - /opt/flip/services/Trust_${TRUST_NUMBER}/fl-client/transfer:/app/transfer
+      - /opt/flip/services/Trust_${TRUST_NUMBER}/local:/app/local
+      - /opt/flip/services/Trust_${TRUST_NUMBER}/startup:/app/startup
+      - /opt/flip/services/Trust_${TRUST_NUMBER}/transfer:/app/transfer
     environment:
       - NET_ID=net-1
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
@@ -47,9 +47,9 @@ services:
   #     # Mount the base images download directory to share images downloaded from XNAT with FL clients
   #     - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
   #     # Provisioned NVFLARE secrets (certificates, fed_client.json)
-  #     - /opt/flip/services/Trust_${TRUST_NUMBER}/fl-client/local:/app/local
-  #     - /opt/flip/services/Trust_${TRUST_NUMBER}/fl-client/startup:/app/startup
-  #     - /opt/flip/services/Trust_${TRUST_NUMBER}/fl-client/transfer:/app/transfer
+  #     - /opt/flip/services/Trust_${TRUST_NUMBER}/local:/app/local
+  #     - /opt/flip/services/Trust_${TRUST_NUMBER}/startup:/app/startup
+  #     - /opt/flip/services/Trust_${TRUST_NUMBER}/transfer:/app/transfer
   #   environment:
   #     - NET_ID=net-2
   #     - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
