@@ -18,10 +18,10 @@ from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.user_models import PermissionRef
-from flip.domain.interfaces.project import ProjectStatus
-from flip.project_services.unstage_project import router as unstage_project_router
+from flip_api.db.database import get_session
+from flip_api.db.models.user_models import PermissionRef
+from flip_api.domain.interfaces.project import ProjectStatus
+from flip_api.project_services.unstage_project import router as unstage_project_router
 
 
 @pytest.fixture
@@ -60,9 +60,9 @@ def test_unstage_project_success(app_fixture, client, test_user_id, test_project
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip.project_services.unstage_project.has_permissions", return_value=True),
-        patch("flip.project_services.unstage_project.get_project", return_value=mock_project_data),
-        patch("flip.project_services.unstage_project.unstage_project_service") as mock_unstage_service,
+        patch("flip_api.project_services.unstage_project.has_permissions", return_value=True),
+        patch("flip_api.project_services.unstage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.unstage_project.unstage_project_service") as mock_unstage_service,
     ):
         # Act
         response = client.post(f"/projects/{test_project_id}/unstage")
@@ -81,8 +81,8 @@ def test_unstage_project_permission_denied(app_fixture, client, test_user_id, te
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip.project_services.unstage_project.has_permissions", return_value=False),
-        patch("flip.project_services.unstage_project.get_project") as mock_get_project,
+        patch("flip_api.project_services.unstage_project.has_permissions", return_value=False),
+        patch("flip_api.project_services.unstage_project.get_project") as mock_get_project,
     ):
         # Act
         response = client.post(f"/projects/{test_project_id}/unstage")
@@ -100,8 +100,8 @@ def test_unstage_project_not_found(app_fixture, client, test_user_id, test_proje
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip.project_services.unstage_project.has_permissions", return_value=True),
-        patch("flip.project_services.unstage_project.get_project", return_value=None),
+        patch("flip_api.project_services.unstage_project.has_permissions", return_value=True),
+        patch("flip_api.project_services.unstage_project.get_project", return_value=None),
     ):
         # Act
         response = client.post(f"/projects/{test_project_id}/unstage")
@@ -121,8 +121,8 @@ def test_unstage_project_not_staged_status(app_fixture, client, test_user_id, te
     mock_project_data.status = ProjectStatus.UNSTAGED.value
 
     with (
-        patch("flip.project_services.unstage_project.has_permissions", return_value=True),
-        patch("flip.project_services.unstage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.unstage_project.has_permissions", return_value=True),
+        patch("flip_api.project_services.unstage_project.get_project", return_value=mock_project_data),
     ):
         # Act
         response = client.post(f"/projects/{test_project_id}/unstage")
@@ -142,8 +142,8 @@ def test_unstage_project_approved_status(app_fixture, client, test_user_id, test
     mock_project_data.status = ProjectStatus.APPROVED.value
 
     with (
-        patch("flip.project_services.unstage_project.has_permissions", return_value=True),
-        patch("flip.project_services.unstage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.unstage_project.has_permissions", return_value=True),
+        patch("flip_api.project_services.unstage_project.get_project", return_value=mock_project_data),
     ):
         # Act
         response = client.post(f"/projects/{test_project_id}/unstage")
@@ -162,10 +162,10 @@ def test_unstage_project_value_error_from_service(
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip.project_services.unstage_project.has_permissions", return_value=True),
-        patch("flip.project_services.unstage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.unstage_project.has_permissions", return_value=True),
+        patch("flip_api.project_services.unstage_project.get_project", return_value=mock_project_data),
         patch(
-            "flip.project_services.unstage_project.unstage_project_service",
+            "flip_api.project_services.unstage_project.unstage_project_service",
             side_effect=ValueError("Invalid project state for unstaging"),
         ),
     ):
@@ -186,10 +186,10 @@ def test_unstage_project_generic_exception_from_service(
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip.project_services.unstage_project.has_permissions", return_value=True),
-        patch("flip.project_services.unstage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.unstage_project.has_permissions", return_value=True),
+        patch("flip_api.project_services.unstage_project.get_project", return_value=mock_project_data),
         patch(
-            "flip.project_services.unstage_project.unstage_project_service",
+            "flip_api.project_services.unstage_project.unstage_project_service",
             side_effect=Exception("Database connection error"),
         ),
     ):
@@ -225,9 +225,9 @@ def test_unstage_project_permission_check_called_correctly(app_fixture, client, 
 
     with (
         patch(
-            "flip.project_services.unstage_project.has_permissions", return_value=True
+            "flip_api.project_services.unstage_project.has_permissions", return_value=True
         ) as mock_has_permissions,
-        patch("flip.project_services.unstage_project.get_project", return_value=None),
+        patch("flip_api.project_services.unstage_project.get_project", return_value=None),
     ):
         # Act
         client.post(f"/projects/{test_project_id}/unstage")
@@ -245,9 +245,9 @@ def test_unstage_project_session_transaction_management(
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip.project_services.unstage_project.has_permissions", return_value=True),
-        patch("flip.project_services.unstage_project.get_project", return_value=mock_project_data),
-        patch("flip.project_services.unstage_project.unstage_project_service") as mock_unstage_service,
+        patch("flip_api.project_services.unstage_project.has_permissions", return_value=True),
+        patch("flip_api.project_services.unstage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.unstage_project.unstage_project_service") as mock_unstage_service,
     ):
         # Act
         response = client.post(f"/projects/{test_project_id}/unstage")
@@ -269,8 +269,8 @@ def test_unstage_project_edge_case_empty_uuid(app_fixture, client, test_user_id)
     zero_uuid = "00000000-0000-0000-0000-000000000000"
 
     with (
-        patch("flip.project_services.unstage_project.has_permissions", return_value=True),
-        patch("flip.project_services.unstage_project.get_project", return_value=None),
+        patch("flip_api.project_services.unstage_project.has_permissions", return_value=True),
+        patch("flip_api.project_services.unstage_project.get_project", return_value=None),
     ):
         # Act
         response = client.post(f"/projects/{zero_uuid}/unstage")

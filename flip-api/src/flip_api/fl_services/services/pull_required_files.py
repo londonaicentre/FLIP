@@ -14,8 +14,8 @@ import json
 import os
 
 from flip_api.config import get_settings
-from flip.utils.logger import logger
-from flip.utils.s3_client import S3Client
+from flip_api.utils.logger import logger
+from flip_api.utils.s3_client import S3Client
 
 
 # TODO Review: This is disruptive for development if the file on the s3 bucket is not in sync with the current codebase.

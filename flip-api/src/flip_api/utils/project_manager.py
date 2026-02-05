@@ -18,8 +18,8 @@ from sqlmodel import Session
 from flip_api.db.models.main_models import (
     Projects,
 )
-from flip.domain.schemas.status import ProjectStatus
-from flip.utils.logger import logger
+from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.utils.logger import logger
 
 
 def get_project_by_id(project_id: UUID, db: Session) -> Optional[Projects]:

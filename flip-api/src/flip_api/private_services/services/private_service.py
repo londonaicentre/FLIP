@@ -15,8 +15,8 @@ from uuid import UUID
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import FLMetrics
-from flip.domain.schemas.private import TrainingMetrics
-from flip.utils.logger import logger
+from flip_api.domain.schemas.private import TrainingMetrics
+from flip_api.utils.logger import logger
 
 
 def save_training_metrics(model_id: UUID, training_metrics: TrainingMetrics, db: Session) -> None:

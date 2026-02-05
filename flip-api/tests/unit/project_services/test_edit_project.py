@@ -18,9 +18,9 @@ from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.main_models import Projects
-from flip.project_services.edit_project import router as edit_project_router
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import Projects
+from flip_api.project_services.edit_project import router as edit_project_router
 
 # Common test data
 TEST_PROJECT_ID = uuid.uuid4()
@@ -45,14 +45,14 @@ def mock_edit_payload():
 
 @pytest.fixture
 def mock_get_user_pool_id():
-    with patch("flip.project_services.edit_project.get_user_pool_id", return_value="mock_user_pool_id"):
+    with patch("flip_api.project_services.edit_project.get_user_pool_id", return_value="mock_user_pool_id"):
         yield
 
 
 @pytest.fixture
 def mock_filter_enabled_users():
     with patch(
-        "flip.project_services.edit_project.filter_enabled_users", return_value=[uuid.uuid4(), uuid.uuid4()]
+        "flip_api.project_services.edit_project.filter_enabled_users", return_value=[uuid.uuid4(), uuid.uuid4()]
     ):
         yield
 
@@ -68,7 +68,7 @@ def test_edit_project_success(
     app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
     app_fixture.dependency_overrides[verify_token] = lambda: uuid.uuid4()
 
-    with patch("flip.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
+    with patch("flip_api.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
         response = client.put(
             f"/projects/{str(TEST_PROJECT_ID)}",
             json=mock_edit_payload,
@@ -93,7 +93,7 @@ def test_edit_project_no_permission(client: TestClient, app_fixture: FastAPI, mo
     app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
     app_fixture.dependency_overrides[verify_token] = lambda: uuid.uuid4()
 
-    with patch("flip.project_services.edit_project.can_access_project", return_value=False) as mock_can_access:
+    with patch("flip_api.project_services.edit_project.can_access_project", return_value=False) as mock_can_access:
         response = client.put(
             f"/projects/{str(TEST_PROJECT_ID)}",
             json=mock_edit_payload,
@@ -115,7 +115,7 @@ def test_edit_project_not_found(client: TestClient, app_fixture: FastAPI, mock_e
     app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
     app_fixture.dependency_overrides[verify_token] = lambda: uuid.uuid4()
 
-    with patch("flip.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
+    with patch("flip_api.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
         response = client.put(
             f"/projects/{project_id}",
             json=mock_edit_payload,
@@ -137,7 +137,7 @@ def test_edit_project_staged(client: TestClient, app_fixture: FastAPI, mock_edit
     app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
     app_fixture.dependency_overrides[verify_token] = lambda: uuid.uuid4()
 
-    with patch("flip.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
+    with patch("flip_api.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
         response = client.put(
             f"/projects/{str(TEST_PROJECT_ID)}",
             json=mock_edit_payload,
@@ -164,7 +164,7 @@ def test_edit_project_db_commit_value_error(
     app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
     app_fixture.dependency_overrides[verify_token] = lambda: uuid.uuid4()
 
-    with patch("flip.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
+    with patch("flip_api.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
         response = client.put(
             f"/projects/{str(TEST_PROJECT_ID)}",
             json=mock_edit_payload,
@@ -188,7 +188,7 @@ def test_edit_project_db_commit_generic_exception(
     app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
     app_fixture.dependency_overrides[verify_token] = lambda: uuid.uuid4()
 
-    with patch("flip.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
+    with patch("flip_api.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
         response = client.put(
             f"/projects/{str(TEST_PROJECT_ID)}",
             json=mock_edit_payload,

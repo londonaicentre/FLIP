@@ -17,7 +17,7 @@ import pytest
 from fastapi import HTTPException, status
 
 from flip_api.config import Settings
-from flip.file_services.retrieve_model_files_list import (
+from flip_api.file_services.retrieve_model_files_list import (
     ModelFiles,
     ModelFilesList,
     retrieve_model_files_list,
@@ -28,7 +28,7 @@ from tests.fixtures.db_fixtures import ModelFactory, ProjectFactory
 @pytest.fixture
 def mock_logger():
     """Mock logger for testing."""
-    with patch("flip.file_services.retrieve_model_files_list.logger") as mock_logger:
+    with patch("flip_api.file_services.retrieve_model_files_list.logger") as mock_logger:
         yield mock_logger
 
 
@@ -49,7 +49,7 @@ def sample_model(sample_model_id):
 @pytest.fixture
 def s3_mock_success():
     """Mock S3 client for success case with various file types."""
-    with patch("flip.file_services.retrieve_model_files_list.S3Client") as mock_s3:
+    with patch("flip_api.file_services.retrieve_model_files_list.S3Client") as mock_s3:
         mock_instance = MagicMock()
         mock_s3.return_value = mock_instance
 
@@ -69,7 +69,7 @@ def s3_mock_success():
 @pytest.fixture
 def s3_mock_empty():
     """Mock S3 client returning empty results."""
-    with patch("flip.file_services.retrieve_model_files_list.S3Client") as mock_s3:
+    with patch("flip_api.file_services.retrieve_model_files_list.S3Client") as mock_s3:
         mock_instance = MagicMock()
         mock_s3.return_value = mock_instance
         mock_instance.list_objects.return_value = {}
@@ -79,7 +79,7 @@ def s3_mock_empty():
 @pytest.fixture
 def s3_mock_error():
     """Mock S3 client that raises an error."""
-    with patch("flip.file_services.retrieve_model_files_list.S3Client") as mock_s3:
+    with patch("flip_api.file_services.retrieve_model_files_list.S3Client") as mock_s3:
         mock_instance = MagicMock()
         mock_s3.return_value = mock_instance
         mock_instance.list_objects.side_effect = Exception("S3 error")
@@ -91,7 +91,7 @@ def mocked_settings():
     mock = Settings(
         SCANNED_MODEL_FILES_BUCKET="test-bucket",
     )
-    with patch("flip.file_services.retrieve_model_files_list.get_settings", return_value=mock):
+    with patch("flip_api.file_services.retrieve_model_files_list.get_settings", return_value=mock):
         yield mock
 
 
@@ -142,7 +142,7 @@ class TestRetrieveModelFilesList:
 
     def test_access_denied(self, mock_db_session, sample_model_id):
         """Test handling of unauthorized access to model."""
-        with patch("flip.file_services.retrieve_model_files_list.can_access_model", return_value=False):
+        with patch("flip_api.file_services.retrieve_model_files_list.can_access_model", return_value=False):
             with pytest.raises(HTTPException) as exc_info:
                 retrieve_model_files_list(model_id=sample_model_id, db=mock_db_session, user_id="test-user-id")
 
@@ -151,7 +151,7 @@ class TestRetrieveModelFilesList:
 
     def test_s3_listing_error(self, mock_db_session, s3_mock_error, sample_model_id):
         """Test handling of S3 listing error."""
-        with patch("flip.file_services.retrieve_model_files_list.can_access_model", return_value=True):
+        with patch("flip_api.file_services.retrieve_model_files_list.can_access_model", return_value=True):
             with pytest.raises(HTTPException) as exc_info:
                 retrieve_model_files_list(model_id=sample_model_id, db=mock_db_session, user_id="test-user-id")
 
@@ -167,7 +167,7 @@ class TestRetrieveModelFilesList:
     def test_unexpected_error(self, mock_db_session, sample_model_id):
         """Test handling of unexpected general errors."""
         with patch(
-            "flip.file_services.retrieve_model_files_list.can_access_model",
+            "flip_api.file_services.retrieve_model_files_list.can_access_model",
             side_effect=Exception("Unexpected error"),
         ):
             with pytest.raises(HTTPException) as exc_info:

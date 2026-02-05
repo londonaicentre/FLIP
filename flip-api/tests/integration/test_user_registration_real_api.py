@@ -17,11 +17,11 @@ import pytest
 from sqlmodel import Session, select
 
 from flip_api.config import get_settings
-from flip.db.database import engine
-from flip.db.models.user_models import Role
+from flip_api.db.database import engine
+from flip_api.db.models.user_models import Role
 from tests.integration.utils import admin_authentication
 
-REGISTER_USER_MODULE = "flip.user_services.register_user"
+REGISTER_USER_MODULE = "flip_api.user_services.register_user"
 
 
 @pytest.fixture

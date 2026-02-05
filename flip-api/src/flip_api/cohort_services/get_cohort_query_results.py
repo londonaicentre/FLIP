@@ -17,11 +17,11 @@ from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlmodel import Session, select
 
 from flip_api.auth.access_manager import can_access_cohort_query
-from flip.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.main_models import QueryStats
-from flip.domain.schemas.cohort import OmopCohortResultsResponse
-from flip.utils.logger import logger
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import QueryStats
+from flip_api.domain.schemas.cohort import OmopCohortResultsResponse
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/cohort", tags=["cohort_services"])
 

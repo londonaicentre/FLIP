@@ -18,7 +18,7 @@ import pytest
 from fastapi import HTTPException, status
 
 from flip_api.db.models.main_models import UploadedFiles
-from flip.file_services.get_model_files_list import get_model_files_list
+from flip_api.file_services.get_model_files_list import get_model_files_list
 
 # filepath: /app/src/flip/file_services/test_get_model_files_list.py
 
@@ -70,7 +70,7 @@ def test_get_model_files_list_success(mock_session, mock_db_files):
     """Test successfully retrieving model files."""
     files, model_id = mock_db_files
 
-    with patch("flip.file_services.get_model_files_list.can_access_model", return_value=True):
+    with patch("flip_api.file_services.get_model_files_list.can_access_model", return_value=True):
         result = get_model_files_list(model_id=model_id, db=mock_session, user_id="test-user-id")
 
         assert len(result) == 2
@@ -87,7 +87,7 @@ def test_get_model_files_list_access_denied(mock_session, mock_db_files):
     """Test access denied when user doesn't have permission."""
     _, model_id = mock_db_files
 
-    with patch("flip.file_services.get_model_files_list.can_access_model", return_value=False):
+    with patch("flip_api.file_services.get_model_files_list.can_access_model", return_value=False):
         with pytest.raises(HTTPException) as exc_info:
             get_model_files_list(model_id=model_id, db=mock_session, user_id="unauthorized-user")
 
@@ -107,7 +107,7 @@ def test_get_model_files_list_empty_result():
 
             return MockResult()
 
-    with patch("flip.file_services.get_model_files_list.can_access_model", return_value=True):
+    with patch("flip_api.file_services.get_model_files_list.can_access_model", return_value=True):
         result = get_model_files_list(model_id=model_id, db=EmptyMockSession(), user_id="test-user-id")
 
         assert isinstance(result, list)
@@ -118,7 +118,7 @@ def test_get_model_files_list_unexpected_error(mock_session, mock_db_files):
     """Test handling of unexpected errors."""
     _, model_id = mock_db_files
 
-    with patch("flip.file_services.get_model_files_list.can_access_model", return_value=True):
+    with patch("flip_api.file_services.get_model_files_list.can_access_model", return_value=True):
         with patch.object(mock_session, "exec", side_effect=Exception("Unexpected database error")):
             with pytest.raises(HTTPException) as exc_info:
                 get_model_files_list(model_id=model_id, db=mock_session, user_id="test-user-id")

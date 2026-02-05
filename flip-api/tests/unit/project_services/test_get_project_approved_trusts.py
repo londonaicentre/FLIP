@@ -18,11 +18,11 @@ from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.main_models import Projects
-from flip.domain.interfaces.trust import ITrust
-from flip.domain.schemas.status import ProjectStatus
-from flip.project_services.get_project_approved_trusts import router as get_project_approved_trusts_router
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import Projects
+from flip_api.domain.interfaces.trust import ITrust
+from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.project_services.get_project_approved_trusts import router as get_project_approved_trusts_router
 
 # Assuming the router and endpoint are in get_project_approved_trusts.py
 # Use absolute import based on the project structure
@@ -63,8 +63,8 @@ def test_get_project_approved_trusts_success(
     app_fixture.dependency_overrides[verify_token] = lambda: user_id
 
     with (
-        patch("flip.project_services.get_project_approved_trusts.can_access_project", return_value=True),
-        patch("flip.project_services.get_project_approved_trusts.get_project", return_value=mock_project),
+        patch("flip_api.project_services.get_project_approved_trusts.can_access_project", return_value=True),
+        patch("flip_api.project_services.get_project_approved_trusts.get_project", return_value=mock_project),
     ):
         response = client.get(f"projects/{TEST_PROJECT_ID}/trusts/approved")
 
@@ -83,7 +83,7 @@ def test_get_project_approved_trusts_forbidden(
     app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
     app_fixture.dependency_overrides[verify_token] = lambda: TEST_USER_ID
 
-    with patch("flip.project_services.get_project_approved_trusts.can_access_project", return_value=False):
+    with patch("flip_api.project_services.get_project_approved_trusts.can_access_project", return_value=False):
         response = client.get(f"projects/{TEST_PROJECT_ID}/trusts/approved")
 
     # Assert
@@ -102,8 +102,8 @@ def test_get_project_approved_trusts_not_found(
     app_fixture.dependency_overrides[verify_token] = lambda: TEST_USER_ID
 
     with (
-        patch("flip.project_services.get_project_approved_trusts.can_access_project", return_value=True),
-        patch("flip.project_services.get_project_approved_trusts.get_project", return_value=None),
+        patch("flip_api.project_services.get_project_approved_trusts.can_access_project", return_value=True),
+        patch("flip_api.project_services.get_project_approved_trusts.get_project", return_value=None),
     ):
         response = client.get(f"projects/{TEST_PROJECT_ID}/trusts/approved")
 
@@ -128,10 +128,10 @@ def test_get_project_approved_trusts_project_not_approved(
     mock_project.status = ProjectStatus.UNSTAGED  # Or any status other than APPROVED
 
     with (
-        patch("flip.project_services.get_project_approved_trusts.can_access_project", return_value=True),
-        patch("flip.project_services.get_project_approved_trusts.get_project", return_value=mock_project),
+        patch("flip_api.project_services.get_project_approved_trusts.can_access_project", return_value=True),
+        patch("flip_api.project_services.get_project_approved_trusts.get_project", return_value=mock_project),
         patch(
-            "flip.project_services.get_project_approved_trusts.get_approved_trusts_for_project"
+            "flip_api.project_services.get_project_approved_trusts.get_approved_trusts_for_project"
         ) as mock_get_trusts,
     ):
         response = client.get(f"/projects/{TEST_PROJECT_ID}/trusts/approved")
@@ -155,10 +155,10 @@ def test_get_project_approved_trusts_value_error_fetching_trusts(
     mock_project.status = ProjectStatus.APPROVED
 
     with (
-        patch("flip.project_services.get_project_approved_trusts.can_access_project", return_value=True),
-        patch("flip.project_services.get_project_approved_trusts.get_project", return_value=mock_project),
+        patch("flip_api.project_services.get_project_approved_trusts.can_access_project", return_value=True),
+        patch("flip_api.project_services.get_project_approved_trusts.get_project", return_value=mock_project),
         patch(
-            "flip.project_services.get_project_approved_trusts.get_approved_trusts_for_project",
+            "flip_api.project_services.get_project_approved_trusts.get_approved_trusts_for_project",
             side_effect=ValueError("Test Value Error"),
         ) as mock_get_trusts,
     ):
@@ -183,10 +183,10 @@ def test_get_project_approved_trusts_generic_exception_fetching_trusts(
     mock_project.status = ProjectStatus.APPROVED
 
     with (
-        patch("flip.project_services.get_project_approved_trusts.can_access_project", return_value=True),
-        patch("flip.project_services.get_project_approved_trusts.get_project", return_value=mock_project),
+        patch("flip_api.project_services.get_project_approved_trusts.can_access_project", return_value=True),
+        patch("flip_api.project_services.get_project_approved_trusts.get_project", return_value=mock_project),
         patch(
-            "flip.project_services.get_project_approved_trusts.get_approved_trusts_for_project",
+            "flip_api.project_services.get_project_approved_trusts.get_approved_trusts_for_project",
             side_effect=Exception("Test Generic Error"),
         ) as mock_get_trusts,
     ):
@@ -217,10 +217,10 @@ def test_get_project_approved_trusts_success_with_data(
     expected_trusts_json = [trust.model_dump(mode="json") for trust in expected_trusts_data]
 
     with (
-        patch("flip.project_services.get_project_approved_trusts.can_access_project", return_value=True),
-        patch("flip.project_services.get_project_approved_trusts.get_project", return_value=mock_project),
+        patch("flip_api.project_services.get_project_approved_trusts.can_access_project", return_value=True),
+        patch("flip_api.project_services.get_project_approved_trusts.get_project", return_value=mock_project),
         patch(
-            "flip.project_services.get_project_approved_trusts.get_approved_trusts_for_project",
+            "flip_api.project_services.get_project_approved_trusts.get_approved_trusts_for_project",
             return_value=expected_trusts_data,
         ) as mock_get_trusts,
     ):

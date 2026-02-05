@@ -19,10 +19,10 @@ from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.domain.interfaces.project import ProjectStatus
-from flip.domain.schemas.projects import StageProjectRequest
-from flip.project_services.stage_project import router as stage_project_router
+from flip_api.db.database import get_session
+from flip_api.domain.interfaces.project import ProjectStatus
+from flip_api.domain.schemas.projects import StageProjectRequest
+from flip_api.project_services.stage_project import router as stage_project_router
 
 # Global test data
 TEST_PROJECT_ID = uuid.uuid4()
@@ -81,9 +81,9 @@ def test_stage_project_success(
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip.project_services.stage_project.can_access_project", return_value=True),
-        patch("flip.project_services.stage_project.get_project", return_value=mock_project_data),
-        patch("flip.project_services.stage_project.stage_project_service"),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
+        patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.stage_project.stage_project_service"),
     ):
         # Act
         response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
@@ -99,8 +99,8 @@ def test_stage_project_access_denied(app_fixture, client, test_user_id, test_pro
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip.project_services.stage_project.can_access_project", return_value=False),
-        patch("flip.project_services.stage_project.get_project") as mock_get_project,
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=False),
+        patch("flip_api.project_services.stage_project.get_project") as mock_get_project,
     ):
         # Act
         response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
@@ -118,8 +118,8 @@ def test_stage_project_not_found(app_fixture, client, test_user_id, test_project
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip.project_services.stage_project.can_access_project", return_value=True),
-        patch("flip.project_services.stage_project.get_project", return_value=None),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
+        patch("flip_api.project_services.stage_project.get_project", return_value=None),
     ):
         # Act
         response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
@@ -139,8 +139,8 @@ def test_stage_project_not_unstaged_status(app_fixture, client, test_user_id, te
     mock_project_data.status = ProjectStatus.STAGED
 
     with (
-        patch("flip.project_services.stage_project.can_access_project", return_value=True),
-        patch("flip.project_services.stage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
+        patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
     ):
         # Act
         response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
@@ -164,8 +164,8 @@ def test_stage_project_no_query(app_fixture, client, test_user_id, test_project_
     mock_project_data.query = None
 
     with (
-        patch("flip.project_services.stage_project.can_access_project", return_value=True),
-        patch("flip.project_services.stage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
+        patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
     ):
         # Act
         response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
@@ -193,8 +193,8 @@ def test_stage_project_invalid_trusts_queried(
     mock_project_data.query.trusts_queried = 0
 
     with (
-        patch("flip.project_services.stage_project.can_access_project", return_value=True),
-        patch("flip.project_services.stage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
+        patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
     ):
         # Act
         response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
@@ -217,10 +217,10 @@ def test_stage_project_value_error_from_service(
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip.project_services.stage_project.can_access_project", return_value=True),
-        patch("flip.project_services.stage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
+        patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
         patch(
-            "flip.project_services.stage_project.stage_project_service",
+            "flip_api.project_services.stage_project.stage_project_service",
             side_effect=ValueError("Invalid trust configuration"),
         ),
     ):
@@ -241,10 +241,10 @@ def test_stage_project_generic_exception(
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip.project_services.stage_project.can_access_project", return_value=True),
-        patch("flip.project_services.stage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
+        patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
         patch(
-            "flip.project_services.stage_project.stage_project_service", side_effect=Exception("Database error")
+            "flip_api.project_services.stage_project.stage_project_service", side_effect=Exception("Database error")
         ),
     ):
         # Act

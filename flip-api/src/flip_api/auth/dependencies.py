@@ -19,7 +19,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt import PyJWKClient
 
 from flip_api.config import get_settings
-from flip.utils.logger import logger
+from flip_api.utils.logger import logger
 
 security = HTTPBearer()
 AWS_REGION = get_settings().AWS_REGION
