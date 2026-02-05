@@ -31,13 +31,13 @@ def test_encryption_decryption_roundtrip():
 
 
 def test_get_aes_key_returns_decoded_bytes():
-    with patch("flip.utils.encryption.get_secret", return_value=ENCODED_KEY):
+    with patch("flip_api.utils.encryption.get_secret", return_value=ENCODED_KEY):
         key = get_aes_key()
         assert key == RAW_KEY_BYTES
 
 
 def test_get_aes_key_raises_if_secret_invalid_base64():
-    with patch("flip.utils.encryption.get_secret", return_value="not-base64"):
+    with patch("flip_api.utils.encryption.get_secret", return_value="not-base64"):
         with pytest.raises(binascii.Error, match="Invalid base64-encoded string"):
             get_aes_key()
 

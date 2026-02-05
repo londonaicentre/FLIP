@@ -16,7 +16,7 @@ import pytest
 from fastapi import status
 
 from flip_api.config import get_settings
-from flip.domain.schemas.private import OmopCohortResults
+from flip_api.domain.schemas.private import OmopCohortResults
 
 
 @pytest.fixture

@@ -18,8 +18,8 @@ import pytest
 from fastapi import HTTPException
 
 from flip_api.db.models.user_models import PermissionRef
-from flip.domain.interfaces.role import IRole, IRolesResponse
-from flip.role_services.get_roles import get_roles
+from flip_api.domain.interfaces.role import IRole, IRolesResponse
+from flip_api.role_services.get_roles import get_roles
 
 
 @pytest.fixture
@@ -45,8 +45,8 @@ def test_get_roles_success(mock_token_id):
     expected_response = IRolesResponse(roles=expected_roles)
 
     with (
-        patch("flip.role_services.get_roles.has_permissions", return_value=True) as mock_has_perms,
-        patch("flip.role_services.get_roles.logger") as mock_logger,
+        patch("flip_api.role_services.get_roles.has_permissions", return_value=True) as mock_has_perms,
+        patch("flip_api.role_services.get_roles.logger") as mock_logger,
     ):
         # Act
         response = get_roles(session=mock_session, token_id=mock_token_id)
@@ -71,8 +71,8 @@ def test_get_roles_no_permission(mock_token_id):
     mock_session = MagicMock()
 
     with (
-        patch("flip.role_services.get_roles.has_permissions", return_value=False) as mock_has_perms,
-        patch("flip.role_services.get_roles.logger") as mock_logger,
+        patch("flip_api.role_services.get_roles.has_permissions", return_value=False) as mock_has_perms,
+        patch("flip_api.role_services.get_roles.logger") as mock_logger,
     ):
         # Act & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -93,8 +93,8 @@ def test_get_roles_database_error(mock_token_id):
     mock_session.exec.side_effect = db_error
 
     with (
-        patch("flip.role_services.get_roles.has_permissions", return_value=True) as mock_has_perms,
-        patch("flip.role_services.get_roles.logger") as mock_logger,
+        patch("flip_api.role_services.get_roles.has_permissions", return_value=True) as mock_has_perms,
+        patch("flip_api.role_services.get_roles.logger") as mock_logger,
     ):
         # Act & Assert
         with pytest.raises(HTTPException) as exc_info:
@@ -117,8 +117,8 @@ def test_get_roles_no_roles_found(mock_token_id):
     expected_response = IRolesResponse(roles=[])
 
     with (
-        patch("flip.role_services.get_roles.has_permissions", return_value=True) as mock_has_perms,
-        patch("flip.role_services.get_roles.logger") as mock_logger,
+        patch("flip_api.role_services.get_roles.has_permissions", return_value=True) as mock_has_perms,
+        patch("flip_api.role_services.get_roles.logger") as mock_logger,
     ):
         # Act
         response = get_roles(session=mock_session, token_id=mock_token_id)

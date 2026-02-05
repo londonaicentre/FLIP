@@ -20,8 +20,8 @@ from flip_api.domain.schemas.cohort import (
     SubmitCohortQueryOutput,
     TrustDetails,
 )
-from flip.main import app
-from flip.step_functions_services.retrieve_model_step_function import (
+from flip_api.main import app
+from flip_api.step_functions_services.retrieve_model_step_function import (
     get_session,
     verify_token,
 )
@@ -47,9 +47,9 @@ def override_dependencies():
     app.dependency_overrides = {}
 
 
-@patch("flip.step_functions_services.cohort_query_step_function.get_project_by_id")
-@patch("flip.step_functions_services.cohort_query_step_function.save_cohort_query")
-@patch("flip.step_functions_services.cohort_query_step_function.submit_cohort_query")
+@patch("flip_api.step_functions_services.cohort_query_step_function.get_project_by_id")
+@patch("flip_api.step_functions_services.cohort_query_step_function.save_cohort_query")
+@patch("flip_api.step_functions_services.cohort_query_step_function.submit_cohort_query")
 def test_cohort_query_success(
     mock_submit,
     mock_save,
@@ -85,7 +85,7 @@ def test_cohort_query_success(
     mock_submit.assert_called_once()
 
 
-@patch("flip.step_functions_services.cohort_query_step_function.get_project_by_id")
+@patch("flip_api.step_functions_services.cohort_query_step_function.get_project_by_id")
 def test_cohort_query_project_not_found(mock_get_project, cohort_query_input):
     mock_get_project.return_value = None
 
@@ -96,8 +96,8 @@ def test_cohort_query_project_not_found(mock_get_project, cohort_query_input):
     mock_get_project.assert_called_once()
 
 
-@patch("flip.step_functions_services.cohort_query_step_function.get_project_by_id")
-@patch("flip.step_functions_services.cohort_query_step_function.save_cohort_query")
+@patch("flip_api.step_functions_services.cohort_query_step_function.get_project_by_id")
+@patch("flip_api.step_functions_services.cohort_query_step_function.save_cohort_query")
 def test_cohort_query_unexpected_exception(mock_save, mock_get_project, cohort_query_input):
     mock_get_project.return_value = True
     mock_save.side_effect = Exception("Database error")

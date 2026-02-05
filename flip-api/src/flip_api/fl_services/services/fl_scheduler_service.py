@@ -25,26 +25,26 @@ from flip_api.db.models.main_models import (
     Model,
     Queries,
 )
-from flip.domain.interfaces.fl import (
+from flip_api.domain.interfaces.fl import (
     IJobResponse,
     INetDetails,
     IRequiredTrainingInformation,
     ISchedulerResponse,
 )
-from flip.domain.schemas.status import (
+from flip_api.domain.schemas.status import (
     JobStatus,
     ModelStatus,
     NetStatus,
 )
-from flip.fl_services.services.fl_service import (
+from flip_api.fl_services.services.fl_service import (
     bundle_application,
     get_bundle_urls,
     start_training,
     validate_client_availability,
 )
-from flip.model_services.services.model_service import add_log, update_model_status, validate_trusts
-from flip.utils.exceptions import DatabaseError, NotFoundError
-from flip.utils.logger import logger
+from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trusts
+from flip_api.utils.exceptions import DatabaseError, NotFoundError
+from flip_api.utils.logger import logger
 
 
 def remove_job(job_id: UUID, session: Session):

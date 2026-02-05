@@ -19,7 +19,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from flip_api.domain.interfaces.shared import TrainingRound
-from flip.domain.schemas.status import NVFlareTargets
+from flip_api.domain.schemas.status import NVFlareTargets
 
 # Path to the JSON file containing job types and required files (relative to this file)
 REQUIRED_JOB_TYPES_FILE = Path(__file__).parent.parent.parent / "assets" / "required_job_types.json"

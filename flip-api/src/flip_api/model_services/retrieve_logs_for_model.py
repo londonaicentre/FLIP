@@ -18,12 +18,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, col, select
 
 from flip_api.auth.access_manager import can_access_model
-from flip.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.main_models import FLLogs, Model, Projects
-from flip.domain.interfaces.model import ILog
-from flip.model_services.services.model_service import get_model_status
-from flip.utils.logger import logger
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import FLLogs, Model, Projects
+from flip_api.domain.interfaces.model import ILog
+from flip_api.model_services.services.model_service import get_model_status
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/model", tags=["model_services"])
 

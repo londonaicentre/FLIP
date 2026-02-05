@@ -18,7 +18,7 @@ import pytest
 from sqlmodel import delete, insert
 
 from flip_api.db.models.user_models import Role, User, UserRole, UsersAudit
-from flip.user_services.set_user_roles import set_user_roles
+from flip_api.user_services.set_user_roles import set_user_roles
 
 
 @pytest.fixture
@@ -108,8 +108,8 @@ def test_audit_record_creation(mock_db, user_id, token_id, roles_data):
     mock_db.exec.return_value.all.return_value = role_instances
 
     with (
-        patch("flip.user_services.set_user_roles.has_permissions") as mock_has_permissions,
-        patch("flip.user_services.set_user_roles.UsersAudit") as mock_audit_class,
+        patch("flip_api.user_services.set_user_roles.has_permissions") as mock_has_permissions,
+        patch("flip_api.user_services.set_user_roles.UsersAudit") as mock_audit_class,
     ):
         mock_has_permissions.return_value = True
 

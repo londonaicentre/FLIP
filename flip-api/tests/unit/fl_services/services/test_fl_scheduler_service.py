@@ -21,9 +21,9 @@ from flip_api.domain.interfaces.fl import (
     IRequiredTrainingInformation,
     ISchedulerResponse,
 )
-from flip.domain.schemas.status import JobStatus, ModelStatus, NetStatus
-from flip.fl_services.services import fl_scheduler_service
-from flip.utils.exceptions import NotFoundError
+from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus
+from flip_api.fl_services.services import fl_scheduler_service
+from flip_api.utils.exceptions import NotFoundError
 
 
 @pytest.fixture
@@ -47,20 +47,20 @@ def scheduler_id():
 
 
 def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
-    from flip.domain.interfaces.fl import JobTypes
+    from flip_api.domain.interfaces.fl import JobTypes
 
     with (
         patch(
-            "flip.fl_services.services.fl_scheduler_service.bundle_application",
+            "flip_api.fl_services.services.fl_scheduler_service.bundle_application",
             return_value=(2, JobTypes.standard),
         ) as mock_bundle,
-        patch("flip.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
         patch(
-            "flip.fl_services.services.fl_scheduler_service.validate_client_availability"
+            "flip_api.fl_services.services.fl_scheduler_service.validate_client_availability"
         ) as mock_validate_clients,
-        patch("flip.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url1", "url2"]),
-        patch("flip.fl_services.services.fl_scheduler_service.start_training") as mock_start,
-        patch("flip.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_bundle_urls", return_value=["url1", "url2"]),
+        patch("flip_api.fl_services.services.fl_scheduler_service.start_training") as mock_start,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
     ):
         mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name")
 
@@ -81,12 +81,12 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
 def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
     with (
         patch(
-            "flip.fl_services.services.fl_scheduler_service.bundle_application",
+            "flip_api.fl_services.services.fl_scheduler_service.bundle_application",
             side_effect=Exception("bundle failed"),
         ),
-        patch("flip.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
-        patch("flip.fl_services.services.fl_scheduler_service.add_log") as mock_log,
-        patch("flip.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
+        patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
+        patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
+        patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
     ):
         with pytest.raises(Exception, match="bundle failed"):
             fl_scheduler_service.prepare_and_start_training(
@@ -263,7 +263,7 @@ def test_check_for_queued_jobs_success(fake_session, scheduler_id, model_id):
     ]
     fake_session.get.return_value = scheduler
 
-    with patch("flip.fl_services.services.fl_scheduler_service.validate_trusts", return_value=True):
+    with patch("flip_api.fl_services.services.fl_scheduler_service.validate_trusts", return_value=True):
         result = fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
 
     assert isinstance(result, IJobResponse)
@@ -274,7 +274,7 @@ def test_check_for_queued_jobs_success(fake_session, scheduler_id, model_id):
 def test_check_for_queued_jobs_none(fake_session, scheduler_id):
     fake_session.exec.return_value.first.return_value = None
 
-    with patch("flip.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as mock_revert:
+    with patch("flip_api.fl_services.services.fl_scheduler_service.revert_scheduler_pickup") as mock_revert:
         result = fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
         assert result is None
         mock_revert.assert_called_once()

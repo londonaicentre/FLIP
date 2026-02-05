@@ -17,13 +17,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
-from flip.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.user_models import PermissionRef
-from flip.domain.schemas.users import IUser
-from flip.utils.cognito_helpers import get_cognito_users, get_pool_id, get_user_role_data
-from flip.utils.logger import logger
-from flip.utils.paging_utils import IPagedData, get_paging_details, get_total_pages
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
+from flip_api.db.models.user_models import PermissionRef
+from flip_api.domain.schemas.users import IUser
+from flip_api.utils.cognito_helpers import get_cognito_users, get_pool_id, get_user_role_data
+from flip_api.utils.logger import logger
+from flip_api.utils.paging_utils import IPagedData, get_paging_details, get_total_pages
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 

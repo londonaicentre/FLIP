@@ -20,19 +20,19 @@ from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
-from flip.config import Settings
-from flip.db.database import get_session
-from flip.db.models.main_models import Model
-from flip.file_services.retrieve_federated_results import retrieve_federated_results
-from flip.main import app
-from flip.utils.s3_client import S3Client
+from flip_api.config import Settings
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import Model
+from flip_api.file_services.retrieve_federated_results import retrieve_federated_results
+from flip_api.main import app
+from flip_api.utils.s3_client import S3Client
 from tests.fixtures.db_fixtures import ModelFactory, ProjectFactory
 
 
 @pytest.fixture
 def mock_logger():
     """Mock logger for testing."""
-    with patch("flip.file_services.retrieve_federated_results.logger") as mock_logger:
+    with patch("flip_api.file_services.retrieve_federated_results.logger") as mock_logger:
         yield mock_logger
 
 
@@ -68,7 +68,7 @@ def empty_db_session():
 @pytest.fixture
 def s3_mock_success():
     """Mock S3 client for success case."""
-    with patch("flip.file_services.retrieve_federated_results.S3Client") as mock_s3:
+    with patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3:
         mock_instance = MagicMock()
         mock_s3.return_value = mock_instance
 
@@ -88,7 +88,7 @@ def s3_mock_success():
 @pytest.fixture
 def s3_mock_empty():
     """Mock S3 client returning empty results."""
-    with patch("flip.file_services.retrieve_federated_results.S3Client") as mock_s3:
+    with patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3:
         mock_instance = MagicMock()
         mock_s3.return_value = mock_instance
         mock_instance.list_objects.return_value = []
@@ -98,7 +98,7 @@ def s3_mock_empty():
 @pytest.fixture
 def s3_mock_error():
     """Mock S3 client that raises an error."""
-    with patch("flip.file_services.retrieve_federated_results.S3Client") as mock_s3:
+    with patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3:
         mock_instance = MagicMock()
         mock_s3.return_value = mock_instance
         mock_instance.list_objects.side_effect = Exception("S3 error")
@@ -108,7 +108,7 @@ def s3_mock_error():
 @pytest.fixture
 def s3_mock_presigned_error():
     """Mock S3 client with presigned URL error."""
-    with patch("flip.file_services.retrieve_federated_results.S3Client") as mock_s3:
+    with patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3:
         mock_instance = MagicMock()
         mock_s3.return_value = mock_instance
         mock_instance.list_objects.return_value = ["model-id/file1.csv"]
@@ -130,7 +130,7 @@ def mocked_settings():
         SCANNED_MODEL_FILES_BUCKET="s3://mock-bucket-scanned/model_files",
         FL_APP_DESTINATION_BUCKET="s3://mock-bucket-dest/dest_files",
     )
-    with patch("flip.file_services.retrieve_federated_results.get_settings", return_value=mock):
+    with patch("flip_api.file_services.retrieve_federated_results.get_settings", return_value=mock):
         yield mock
 
 
@@ -159,8 +159,8 @@ def test_retrieve_federated_results_endpoint_calls_function(override_dependencie
     override_dependencies.exec.return_value.first.return_value = mock_model
 
     with (
-        patch("flip.file_services.retrieve_federated_results.can_access_model", return_value=True),
-        patch("flip.file_services.retrieve_federated_results.S3Client") as mock_s3_client,
+        patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True),
+        patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3_client,
     ):
         # Mock S3 list_objects and get_presigned_url
         mock_s3 = mock_s3_client.return_value
@@ -179,7 +179,7 @@ class TestRetrieveFederatedResults:
 
     def test_retrieve_success(self, mock_db_session, s3_mock_success, mocked_settings, sample_model_id, user_id):
         """Test successful retrieval of federated results."""
-        with patch("flip.file_services.retrieve_federated_results.can_access_model", return_value=True):
+        with patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True):
             result = retrieve_federated_results(model_id=sample_model_id, db=mock_db_session, user_id=user_id)
             assert len(result) == 2
             assert result[0] == "https://test-bucket.s3.amazonaws.com/model-id/file1.csv"
@@ -187,7 +187,7 @@ class TestRetrieveFederatedResults:
 
     def test_access_denied(self, mock_db_session, mocked_settings, sample_model_id, user_id):
         """Test handling of unauthorized access to model."""
-        with patch("flip.file_services.retrieve_federated_results.can_access_model", return_value=False):
+        with patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=False):
             with pytest.raises(HTTPException) as exc_info:
                 retrieve_federated_results(model_id=sample_model_id, db=mock_db_session, user_id=user_id)
 
@@ -196,7 +196,7 @@ class TestRetrieveFederatedResults:
 
     def test_model_not_found(self, empty_db_session, mocked_settings, sample_model_id, user_id):
         """Test handling of non-existent model."""
-        with patch("flip.file_services.retrieve_federated_results.can_access_model", return_value=True):
+        with patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True):
             with pytest.raises(HTTPException) as exc_info:
                 retrieve_federated_results(model_id=sample_model_id, db=empty_db_session, user_id=user_id)
 
@@ -205,7 +205,7 @@ class TestRetrieveFederatedResults:
 
     def test_s3_listing_error(self, mock_db_session, s3_mock_error, mocked_settings, sample_model_id, user_id):
         """Test handling of S3 listing error."""
-        with patch("flip.file_services.retrieve_federated_results.can_access_model", return_value=True):
+        with patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True):
             with pytest.raises(HTTPException) as exc_info:
                 retrieve_federated_results(model_id=sample_model_id, db=mock_db_session, user_id=user_id)
 
@@ -214,7 +214,7 @@ class TestRetrieveFederatedResults:
 
     def test_no_files_found(self, mock_db_session, s3_mock_empty, mocked_settings, sample_model_id, user_id):
         """Test handling of no files found in S3."""
-        with patch("flip.file_services.retrieve_federated_results.can_access_model", return_value=True):
+        with patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True):
             with pytest.raises(HTTPException) as exc_info:
                 retrieve_federated_results(model_id=sample_model_id, db=mock_db_session, user_id=user_id)
 
@@ -225,7 +225,7 @@ class TestRetrieveFederatedResults:
         self, mock_db_session, s3_mock_presigned_error, mocked_settings, sample_model_id, user_id
     ):
         """Test handling of error when generating presigned URLs."""
-        with patch("flip.file_services.retrieve_federated_results.can_access_model", return_value=True):
+        with patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True):
             with pytest.raises(HTTPException) as exc_info:
                 retrieve_federated_results(model_id=sample_model_id, db=mock_db_session, user_id=user_id)
 
@@ -235,7 +235,7 @@ class TestRetrieveFederatedResults:
     def test_unexpected_error(self, mock_db_session, mocked_settings, sample_model_id, user_id):
         """Test handling of unexpected general errors."""
         with patch(
-            "flip.file_services.retrieve_federated_results.can_access_model",
+            "flip_api.file_services.retrieve_federated_results.can_access_model",
             side_effect=Exception("Unexpected error"),
         ):
             with pytest.raises(HTTPException) as exc_info:

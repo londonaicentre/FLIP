@@ -18,15 +18,15 @@ import pytest
 from fastapi.exceptions import HTTPException
 
 from flip_api.config import Settings
-from flip.db.models.main_models import UploadedFiles
-from flip.domain.schemas.file import BucketStatus, FileUploadStatus, ScannedFileInput
-from flip.file_services.uploaded_file import process_scanned_file
+from flip_api.db.models.main_models import UploadedFiles
+from flip_api.domain.schemas.file import BucketStatus, FileUploadStatus, ScannedFileInput
+from flip_api.file_services.uploaded_file import process_scanned_file
 
 
 @pytest.fixture
 def mock_s3_client():
     """Mock S3Client for testing."""
-    with patch("flip.file_services.uploaded_file.S3Client") as mock_client:
+    with patch("flip_api.file_services.uploaded_file.S3Client") as mock_client:
         s3_instance = MagicMock()
         mock_client.return_value = s3_instance
         # Mock head_object to return file metadata
@@ -39,7 +39,7 @@ def mocked_settings():
     mock = Settings(
         SCANNED_MODEL_FILES_BUCKET="test-secure-bucket",
     )
-    with patch("flip.file_services.uploaded_file.get_settings", return_value=mock):
+    with patch("flip_api.file_services.uploaded_file.get_settings", return_value=mock):
         yield mock
 
 

@@ -18,11 +18,11 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.domain.schemas.status import ProjectStatus
-from flip.main import app
+from flip_api.db.database import get_session
+from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.main import app
 
-# from flip.project_services.services.project_services import (
+# from flip_api.project_services.services.project_services import (
 #     get_approved_trusts_for_project,
 # )
 
@@ -97,7 +97,7 @@ def mock_users_with_access():
 def test_get_project_details_no_access(client, mock_db):
     """Test project details access denied"""
     # Arrange
-    with patch("flip.project_services.get_project.can_access_project", return_value=False):
+    with patch("flip_api.project_services.get_project.can_access_project", return_value=False):
         # Act
         response = client.get(f"/projects/{TEST_PROJECT_ID}")
 
@@ -110,8 +110,8 @@ def test_get_project_details_not_found(client, mock_db):
     """Test project not found"""
     # Arrange
     with (
-        patch("flip.project_services.get_project.can_access_project", return_value=True),
-        patch("flip.project_services.get_project.get_project", return_value=None),
+        patch("flip_api.project_services.get_project.can_access_project", return_value=True),
+        patch("flip_api.project_services.get_project.get_project", return_value=None),
     ):
         # Act
         response = client.get(f"/projects/{TEST_PROJECT_ID}")

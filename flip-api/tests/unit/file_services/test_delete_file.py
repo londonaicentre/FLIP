@@ -19,7 +19,7 @@ from fastapi import HTTPException, status
 from sqlmodel import Session
 
 from flip_api.config import Settings
-from flip.file_services.delete_file import (
+from flip_api.file_services.delete_file import (
     S3Client,
     delete_model_file,
 )
@@ -36,16 +36,16 @@ def mocked_settings():
     mock = Settings(
         SCANNED_MODEL_FILES_BUCKET=bucket_name,
     )
-    with patch("flip.file_services.delete_file.get_settings", return_value=mock):
+    with patch("flip_api.file_services.delete_file.get_settings", return_value=mock):
         yield mock
 
 
-@patch("flip.file_services.delete_file.can_access_model", return_value=True)
+@patch("flip_api.file_services.delete_file.can_access_model", return_value=True)
 def test_delete_model_file_success(session: Session, monkeypatch, mocked_settings):
     """Test successful file deletion from S3 and database."""
     # Mock S3 client
     s3_client_mock = mock.Mock(spec=S3Client)
-    monkeypatch.setattr("flip.file_services.delete_file.S3Client", lambda: s3_client_mock)
+    monkeypatch.setattr("flip_api.file_services.delete_file.S3Client", lambda: s3_client_mock)
 
     # Mock database operations
     db_mock = mock.Mock(spec=Session)
@@ -64,7 +64,7 @@ def test_delete_model_file_success(session: Session, monkeypatch, mocked_setting
 def test_delete_model_file_no_access(session: Session, monkeypatch):
     """Test when the user does not have access to the model."""
     # Mock can_access_model to return False
-    monkeypatch.setattr("flip.file_services.delete_file.can_access_model", lambda *args: False)
+    monkeypatch.setattr("flip_api.file_services.delete_file.can_access_model", lambda *args: False)
 
     # Call the function and assert HTTPException is raised
     with pytest.raises(HTTPException) as exc_info:
@@ -75,13 +75,13 @@ def test_delete_model_file_no_access(session: Session, monkeypatch):
     assert str(user_id) in exc_info.value.detail
 
 
-@patch("flip.file_services.delete_file.can_access_model", return_value=True)
+@patch("flip_api.file_services.delete_file.can_access_model", return_value=True)
 def test_delete_model_file_s3_error(session: Session, monkeypatch):
     """Test when there is an error deleting from S3."""
     # Mock S3 client to raise an exception
     s3_client_mock = mock.Mock(spec=S3Client)
     s3_client_mock.delete_object.side_effect = Exception("S3 error")
-    monkeypatch.setattr("flip.file_services.delete_file.S3Client", lambda: s3_client_mock)
+    monkeypatch.setattr("flip_api.file_services.delete_file.S3Client", lambda: s3_client_mock)
 
     # Mock database operations
     db_mock = mock.Mock(spec=Session)
@@ -103,7 +103,7 @@ def test_delete_model_file_general_exception(session: Session, monkeypatch):
     """Test when a general exception occurs."""
     # Mock ModelFileDelete to raise an exception
     monkeypatch.setattr(
-        "flip.file_services.delete_file.ModelFileDelete",
+        "flip_api.file_services.delete_file.ModelFileDelete",
         lambda *args, **kwargs: (_ for _ in ()).throw(Exception("General error")),
     )
 

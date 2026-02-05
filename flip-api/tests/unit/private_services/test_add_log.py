@@ -16,8 +16,8 @@ import pytest
 from fastapi import HTTPException
 
 from flip_api.domain.schemas.private import TrainingLog
-from flip.private_services.add_log import add_log_endpoint
-from flip.utils.logger import logger  # To assert logger calls
+from flip_api.private_services.add_log import add_log_endpoint
+from flip_api.utils.logger import logger  # To assert logger calls
 
 # Mock schema validation functions if they are complex or have side effects
 # For this example, we'll patch them directly in the tests.
@@ -43,8 +43,8 @@ def sample_training_log():
 class TestAddLogEndpoint:
     """Tests for the add_log FastAPI endpoint."""
 
-    @patch("flip.private_services.add_log.validate_trusts", return_value=True)
-    @patch("flip.private_services.add_log.add_log")
+    @patch("flip_api.private_services.add_log.validate_trusts", return_value=True)
+    @patch("flip_api.private_services.add_log.add_log")
     def test_add_log_success(self, mock_add_log, mock_validate_trusts, mock_db_session, sample_training_log):
         """Test successful log creation via the endpoint."""
 
@@ -56,8 +56,8 @@ class TestAddLogEndpoint:
         mock_add_log.assert_called_once_with(model_id=model_id, log=sample_training_log.log, session=session)
         assert response == {"detail": "Created"}
 
-    @patch("flip.private_services.add_log.validate_trusts", return_value=True)
-    @patch("flip.private_services.add_log.add_log")
+    @patch("flip_api.private_services.add_log.validate_trusts", return_value=True)
+    @patch("flip_api.private_services.add_log.add_log")
     def test_add_log_http_exception_from_add_log(
         self, mock_add_log, mock_validate_trusts, mock_db_session, sample_training_log
     ):
@@ -74,8 +74,8 @@ class TestAddLogEndpoint:
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail == "Conflict in logging"
 
-    @patch("flip.private_services.add_log.validate_trusts", return_value=True)
-    @patch("flip.private_services.add_log.add_log")
+    @patch("flip_api.private_services.add_log.validate_trusts", return_value=True)
+    @patch("flip_api.private_services.add_log.add_log")
     @patch.object(logger, "error")
     def test_add_log_general_exception_from_add_log(
         self,
@@ -110,7 +110,7 @@ class TestAddLogEndpoint:
         session = mock_db_session
 
         # Mock the trust validation to return False
-        with patch("flip.private_services.add_log.validate_trusts", return_value=False):
+        with patch("flip_api.private_services.add_log.validate_trusts", return_value=False):
             with pytest.raises(HTTPException) as exc_info:
                 add_log_endpoint(model_id, sample_training_log, session, token="fake_token")
 

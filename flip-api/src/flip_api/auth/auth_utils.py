@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from flip_api.db.models.user_models import PermissionRef, Role, RolePermission, UserRole
-from flip.utils.logger import logger
+from flip_api.utils.logger import logger
 
 # OAuth2 scheme for token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")

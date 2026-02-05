@@ -38,8 +38,7 @@ export TF_VAR_ec2_public_key_path=/home/${USER}/.ssh/host-aws.pub
 export TF_VAR_flip_user_pool_name=flip-user-pool
 export TF_VAR_flip_cognito_client=flip-cognito-client
 export TF_VAR_FLIP_BUCKET_NAME=${FLIP_BUCKET_NAME}
-export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
-export TF_VAR_flip_cognito_admin_email=flip@gmail.com
+export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
 export TF_VAR_NET_ENDPOINTS=${NET_ENDPOINTS}
 export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
@@ -130,7 +129,7 @@ import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prev
 		if [ -n "$$CLIENT_ID" ]; then \
 			terraform import aws_cognito_user_pool_client.client "$$POOL_ID/$$CLIENT_ID" 2>/dev/null || echo "   ✓ Client"; \
 		fi; \
-		terraform import aws_cognito_user.admin_user "$$POOL_ID/flip@gmail.com" 2>/dev/null || echo "   ✓ Admin user"; \
+		terraform import aws_cognito_user.admin_user "$$POOL_ID/aicentreflip@gmail.com" 2>/dev/null || echo "   ✓ Admin user"; \
 		terraform import aws_cognito_user.researcher_user "$$POOL_ID/rafaelagd@gmail.com" 2>/dev/null || echo "   ✓ Researcher user"; \
 	fi
 	@echo ""

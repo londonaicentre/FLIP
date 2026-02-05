@@ -15,8 +15,8 @@ from typing import Dict, List
 from sqlmodel import Session, col, select
 
 from flip_api.db.database import engine
-from flip.db.models.main_models import Trust
-from flip.utils.get_secrets import get_secret
+from flip_api.db.models.main_models import Trust
+from flip_api.utils.get_secrets import get_secret
 
 
 def seed_trusts(session: Session) -> List[Dict[str, str]]:

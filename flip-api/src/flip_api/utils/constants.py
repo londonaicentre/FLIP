@@ -18,5 +18,5 @@ IMAGING_CREDENTIALS_TEMPLATE_NAME = "flip-xnat-credentials"
 
 # Testing constants
 BASE_URL = "http://localhost:8080/"
-ADMIN_EMAIL = "flip@gmail.com"
+ADMIN_EMAIL = "aicentreflip@gmail.com"
 RESEARCHER_EMAIL = "rafaelagd@gmail.com"
