@@ -70,7 +70,7 @@ overhead of testing things in your local machine and then deploying them to the 
 
 To be able to pull the FLIP docker images, configure your ghcr.io credentials as follows:
 
-1. Make sure you can see the images in [https://github.com/orgs/londonaicentre/packages](https://github.com/orgs/londonaicentre/packages).
+1. Make sure you can see the images in [https://github.com/londonaicentre/FLIP/packages](https://github.com/londonaicentre/FLIP/packages) and [https://github.com/londonaicentre/flip-fl-base/packages](https://github.com/londonaicentre/flip-fl-base/packages)
    - Contact a team member to be given permission if you cannot.
 2. Create a [Github public access token (classic)](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic) with these permissions:
    - `repo`
