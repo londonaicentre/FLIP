@@ -11,7 +11,7 @@
 #
 
 [project]
-name = "flip-base-application"
+name = "flip-fl-base"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
