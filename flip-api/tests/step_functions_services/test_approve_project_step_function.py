@@ -17,8 +17,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flip_api.domain.interfaces.trust import ITrust
-from flip.main import app
-from flip.step_functions_services.approve_project_step_function import (
+from flip_api.main import app
+from flip_api.step_functions_services.approve_project_step_function import (
     get_session,
     verify_token,
 )
@@ -66,9 +66,9 @@ def override_dependencies():
     app.dependency_overrides = {}
 
 
-@patch("flip.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_success(
@@ -96,9 +96,9 @@ def test_approve_project_success(
     assert mock_start_imaging.await_count == 2
 
 
-@patch("flip.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 @patch(
-    "flip.step_functions_services.approve_project_step_function.start_project_imaging_creation",
+    "flip_api.step_functions_services.approve_project_step_function.start_project_imaging_creation",
     new_callable=AsyncMock,
 )
 def test_approve_project_with_failure_in_trust(
@@ -129,7 +129,7 @@ def test_approve_project_with_failure_in_trust(
     assert data["trusts"]["succeeded"] == 1
 
 
-@patch("flip.step_functions_services.approve_project_step_function.approve_project_endpoint")
+@patch("flip_api.step_functions_services.approve_project_step_function.approve_project_endpoint")
 def test_approve_project_with_empty_trusts(
     mock_approve_project,
     project_id,

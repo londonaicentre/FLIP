@@ -24,7 +24,7 @@ from flip_api.db.models.main_models import UploadedFiles
 @pytest.fixture
 def mock_logger():
     """Mock logger for testing."""
-    with patch("flip.file_services.retrieve_uploaded_file_info.logger") as mock_logger:
+    with patch("flip_api.file_services.retrieve_uploaded_file_info.logger") as mock_logger:
         yield mock_logger
 
 
@@ -109,7 +109,7 @@ class TestIntegration:
         _, sample_file_ids, _ = sample_files
         file_ids_str = ",".join(str(fid) for fid in sample_file_ids[:2])
 
-        with patch("flip.auth.dependencies.verify_token", return_value="test-user-id"):
+        with patch("flip_api.auth.dependencies.verify_token", return_value="test-user-id"):
             with patch("sqlmodel.Session.exec") as mock_exec:
                 mock_result = MagicMock()
                 mock_result.all.return_value = sample_files[0]
@@ -126,7 +126,7 @@ class TestIntegration:
         """Integration test for the POST endpoint."""
         _, sample_file_ids, _ = sample_files
 
-        with patch("flip.auth.dependencies.verify_token", return_value="test-user-id"):
+        with patch("flip_api.auth.dependencies.verify_token", return_value="test-user-id"):
             with patch("sqlmodel.Session.exec") as mock_exec:
                 mock_result = MagicMock()
                 mock_result.all.return_value = sample_files[0]

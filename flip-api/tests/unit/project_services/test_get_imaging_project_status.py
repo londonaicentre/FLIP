@@ -19,11 +19,11 @@ from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.main_models import Queries as DbQueries
-from flip.domain.interfaces.project import IImagingStatus, IProjectQuery, IProjectResponse
-from flip.domain.schemas.status import ProjectStatus
-from flip.project_services.get_imaging_project_status import router as get_imaging_project_status_router
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import Queries as DbQueries
+from flip_api.domain.interfaces.project import IImagingStatus, IProjectQuery, IProjectResponse
+from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.project_services.get_imaging_project_status import router as get_imaging_project_status_router
 
 # Assuming Queries is the model for project_response.query
 
@@ -77,22 +77,22 @@ def test_get_imaging_project_status_success(client: TestClient, app_fixture: Fas
 
     with (
         patch(
-            "flip.project_services.get_imaging_project_status.can_access_project", return_value=True
+            "flip_api.project_services.get_imaging_project_status.can_access_project", return_value=True
         ) as mock_can_access,
         patch(
-            "flip.project_services.get_imaging_project_status.get_project",
+            "flip_api.project_services.get_imaging_project_status.get_project",
             return_value=mock_project_response_obj,
         ) as mock_get_project,
         patch(
-            "flip.project_services.get_imaging_project_status.get_imaging_projects",
+            "flip_api.project_services.get_imaging_project_status.get_imaging_projects",
             return_value=mock_imaging_projects_list,
         ) as mock_get_imaging_projects,
         patch(
-            "flip.project_services.get_imaging_project_status.base64_url_encode",
+            "flip_api.project_services.get_imaging_project_status.base64_url_encode",
             return_value=MOCK_ENCODED_QUERY,
         ) as mock_base64_encode,
         patch(
-            "flip.project_services.get_imaging_project_status.get_imaging_project_statuses",
+            "flip_api.project_services.get_imaging_project_status.get_imaging_project_statuses",
             return_value=mock_imaging_statuses_list_data,
         ) as mock_get_statuses,
     ):
@@ -117,9 +117,9 @@ def test_get_imaging_project_status_forbidden(client: TestClient, app_fixture: F
 
     with (
         patch(
-            "flip.project_services.get_imaging_project_status.can_access_project", return_value=False
+            "flip_api.project_services.get_imaging_project_status.can_access_project", return_value=False
         ) as mock_can_access,
-        patch("flip.project_services.get_imaging_project_status.get_project") as mock_get_project,
+        patch("flip_api.project_services.get_imaging_project_status.get_project") as mock_get_project,
     ):
         response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/image/status")
 
@@ -143,10 +143,10 @@ def test_get_imaging_project_status_project_not_found(
 
     with (
         patch(
-            "flip.project_services.get_imaging_project_status.can_access_project", return_value=True
+            "flip_api.project_services.get_imaging_project_status.can_access_project", return_value=True
         ) as mock_can_access,
         patch(
-            "flip.project_services.get_imaging_project_status.get_project", return_value=None
+            "flip_api.project_services.get_imaging_project_status.get_project", return_value=None
         ) as mock_get_project,
     ):
         mock_get_project.return_value = IProjectResponse(
@@ -183,10 +183,10 @@ def test_get_imaging_project_status_project_query_not_found(client: TestClient, 
 
     with (
         patch(
-            "flip.project_services.get_imaging_project_status.can_access_project", return_value=True
+            "flip_api.project_services.get_imaging_project_status.can_access_project", return_value=True
         ) as mock_can_access,
         patch(
-            "flip.project_services.get_imaging_project_status.get_project",
+            "flip_api.project_services.get_imaging_project_status.get_project",
             return_value=project_response_no_query,
         ) as mock_get_project,
     ):
@@ -206,13 +206,13 @@ def test_get_imaging_project_status_imaging_projects_not_found(client: TestClien
     app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
 
     with (
-        patch("flip.project_services.get_imaging_project_status.can_access_project", return_value=True),
+        patch("flip_api.project_services.get_imaging_project_status.can_access_project", return_value=True),
         patch(
-            "flip.project_services.get_imaging_project_status.get_project",
+            "flip_api.project_services.get_imaging_project_status.get_project",
             return_value=mock_project_response_obj,
         ),
         patch(
-            "flip.project_services.get_imaging_project_status.get_imaging_projects", return_value=None
+            "flip_api.project_services.get_imaging_project_status.get_imaging_projects", return_value=None
         ) as mock_get_imaging_projects,
     ):
         response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/image/status")
@@ -230,21 +230,21 @@ def test_get_imaging_project_status_statuses_not_found(client: TestClient, app_f
     app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
 
     with (
-        patch("flip.project_services.get_imaging_project_status.can_access_project", return_value=True),
+        patch("flip_api.project_services.get_imaging_project_status.can_access_project", return_value=True),
         patch(
-            "flip.project_services.get_imaging_project_status.get_project",
+            "flip_api.project_services.get_imaging_project_status.get_project",
             return_value=mock_project_response_obj,
         ),
         patch(
-            "flip.project_services.get_imaging_project_status.get_imaging_projects",
+            "flip_api.project_services.get_imaging_project_status.get_imaging_projects",
             return_value=mock_imaging_projects_list,
         ),
         patch(
-            "flip.project_services.get_imaging_project_status.base64_url_encode",
+            "flip_api.project_services.get_imaging_project_status.base64_url_encode",
             return_value=MOCK_ENCODED_QUERY,
         ),
         patch(
-            "flip.project_services.get_imaging_project_status.get_imaging_project_statuses", return_value=None
+            "flip_api.project_services.get_imaging_project_status.get_imaging_project_statuses", return_value=None
         ) as mock_get_statuses,
     ):
         response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/image/status")

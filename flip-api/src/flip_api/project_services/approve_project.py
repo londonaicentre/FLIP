@@ -17,17 +17,17 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
 from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
-from flip.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.main_models import Projects
-from flip.db.models.user_models import PermissionRef
-from flip.domain.interfaces.project import IProjectApproval
-from flip.domain.interfaces.trust import ITrust
-from flip.domain.schemas.projects import ApproveProjectBodyPayload
-from flip.domain.schemas.status import ProjectStatus
-from flip.project_services.services.project_services import approve_project
-from flip.trusts_services.services.trust import get_trusts
-from flip.utils.logger import logger
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import Projects
+from flip_api.db.models.user_models import PermissionRef
+from flip_api.domain.interfaces.project import IProjectApproval
+from flip_api.domain.interfaces.trust import ITrust
+from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
+from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.project_services.services.project_services import approve_project
+from flip_api.trusts_services.services.trust import get_trusts
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/projects", tags=["project_services"])
 

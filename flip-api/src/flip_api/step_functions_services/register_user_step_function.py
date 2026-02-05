@@ -16,12 +16,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.domain.interfaces.user import IRegisterUser, IRegisterUserDto, IRoles
-from flip.user_services.delete_user import delete_user
-from flip.user_services.register_user import register_user
-from flip.user_services.set_user_roles import set_user_roles
-from flip.utils.logger import logger
+from flip_api.db.database import get_session
+from flip_api.domain.interfaces.user import IRegisterUser, IRegisterUserDto, IRoles
+from flip_api.user_services.delete_user import delete_user
+from flip_api.user_services.register_user import register_user
+from flip_api.user_services.set_user_roles import set_user_roles
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/step", tags=["step_functions_services"])
 

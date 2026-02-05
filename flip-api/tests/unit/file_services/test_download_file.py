@@ -21,7 +21,7 @@ from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
 
 from flip_api.config import Settings
-from flip.file_services.download_file import download_file
+from flip_api.file_services.download_file import download_file
 
 bucket = "s3://test-secure-bucket"
 
@@ -29,7 +29,7 @@ bucket = "s3://test-secure-bucket"
 @pytest.fixture
 def mock_s3_client():
     """Mock S3Client for testing."""
-    with patch("flip.file_services.download_file.S3Client") as mock_client:
+    with patch("flip_api.file_services.download_file.S3Client") as mock_client:
         s3_instance = MagicMock()
         mock_client.return_value = s3_instance
 
@@ -43,7 +43,7 @@ def mock_s3_client():
 @pytest.fixture
 def mock_access_manager():
     """Mock can_access_model function."""
-    with patch("flip.file_services.download_file.can_access_model") as mock_access:
+    with patch("flip_api.file_services.download_file.can_access_model") as mock_access:
         # Default to allowing access
         mock_access.return_value = True
         yield mock_access
@@ -54,7 +54,7 @@ def mocked_settings():
     mock = Settings(
         SCANNED_MODEL_FILES_BUCKET=bucket,
     )
-    with patch("flip.file_services.download_file.get_settings", return_value=mock):
+    with patch("flip_api.file_services.download_file.get_settings", return_value=mock):
         yield mock
 
 

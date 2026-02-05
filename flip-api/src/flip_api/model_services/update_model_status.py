@@ -18,13 +18,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import can_access_model
-from flip.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.domain.schemas.status import ModelStatus
-from flip.model_services.services.model_service import add_log, update_model_status
-from flip.utils.constants import SERVICE_UNAVAILABLE_MESSAGE
-from flip.utils.logger import logger
-from flip.utils.site_manager import is_deployment_mode_enabled
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
+from flip_api.domain.schemas.status import ModelStatus
+from flip_api.model_services.services.model_service import add_log, update_model_status
+from flip_api.utils.constants import SERVICE_UNAVAILABLE_MESSAGE
+from flip_api.utils.logger import logger
+from flip_api.utils.site_manager import is_deployment_mode_enabled
 
 router = APIRouter(prefix="/model", tags=["model_services"])
 

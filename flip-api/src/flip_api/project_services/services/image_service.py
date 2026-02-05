@@ -21,20 +21,20 @@ from sqlalchemy.exc import SQLAlchemyError  # For more specific DB error handlin
 from sqlmodel import Session, col, select, update
 
 from flip_api.db.models.main_models import Trust as DBTrust
-from flip.db.models.main_models import XNATProjectStatus  # Assuming these exist
-from flip.domain.interfaces.project import (
+from flip_api.db.models.main_models import XNATProjectStatus  # Assuming these exist
+from flip_api.domain.interfaces.project import (
     IImagingStatus,
     IImagingStatusResponse,
     IReimportQuery,
     IUpdateXnatProfile,
 )
-from flip.domain.schemas.projects import (
+from flip_api.domain.schemas.projects import (
     ImagingProject,
     XnatProjectStatusInfo,
 )
-from flip.domain.schemas.status import XNATImageStatus
-from flip.trusts_services.services.trust import get_trusts
-from flip.utils.logger import logger
+from flip_api.domain.schemas.status import XNATImageStatus
+from flip_api.trusts_services.services.trust import get_trusts
+from flip_api.utils.logger import logger
 
 
 def to_utc_aware(dt: datetime | None) -> datetime:

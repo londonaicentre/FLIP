@@ -16,12 +16,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from flip_api.auth.dependencies import verify_token
-from flip.config import get_settings
-from flip.db.database import get_session
-from flip.db.models.main_models import UploadedFiles
-from flip.domain.schemas.file import FileUploadStatus
-from flip.utils.logger import logger
-from flip.utils.s3_client import S3Client
+from flip_api.config import get_settings
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import UploadedFiles
+from flip_api.domain.schemas.file import FileUploadStatus
+from flip_api.utils.logger import logger
+from flip_api.utils.s3_client import S3Client
 
 router = APIRouter(prefix="/files", tags=["file_services"])
 

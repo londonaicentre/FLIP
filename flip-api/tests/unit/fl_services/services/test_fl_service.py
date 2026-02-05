@@ -17,11 +17,11 @@ from uuid import uuid4
 import pytest
 
 from flip_api.config import Settings
-from flip.domain.interfaces.fl import (
+from flip_api.domain.interfaces.fl import (
     IStartTrainingBody,
 )
-from flip.domain.schemas.status import ClientStatus
-from flip.fl_services.services import fl_service
+from flip_api.domain.schemas.status import ClientStatus
+from flip_api.fl_services.services import fl_service
 
 
 @pytest.fixture
@@ -46,7 +46,7 @@ def mocked_settings():
         SCANNED_MODEL_FILES_BUCKET="s3://mock-bucket-scanned/model_files",
         FL_APP_DESTINATION_BUCKET="s3://mock-bucket-dest/dest_files",
     )
-    with patch("flip.fl_services.services.fl_service.get_settings", return_value=mock):
+    with patch("flip_api.fl_services.services.fl_service.get_settings", return_value=mock):
         yield mock
 
 
@@ -102,24 +102,24 @@ def test_validate_config_invalid_weights():
         fl_service.validate_config(bad_weights)
 
 
-@patch("flip.fl_services.services.fl_service.http_get")
+@patch("flip_api.fl_services.services.fl_service.http_get")
 def test_download_config_returns_config(mock_get, model_id):
     mock_get.return_value = {"LOCAL_ROUNDS": 1, "GLOBAL_ROUNDS": 1}
-    with patch("flip.fl_services.services.fl_service.validate_config") as mock_validate:
+    with patch("flip_api.fl_services.services.fl_service.validate_config") as mock_validate:
         mock_validate.return_value = "validated_config"
         urls = [f"http://host/{model_id}/custom/config.json"]
         config = fl_service.download_config(urls, model_id)
         assert config == "validated_config"
 
 
-@patch("flip.fl_services.services.fl_service.http_get")
+@patch("flip_api.fl_services.services.fl_service.http_get")
 def test_download_config_no_config_found(mock_get, model_id):
     urls = [f"http://host/{model_id}/other/file.txt"]
     result = fl_service.download_config(urls, model_id)
     assert result is None
 
 
-@patch("flip.fl_services.services.fl_service.http_post")
+@patch("flip_api.fl_services.services.fl_service.http_post")
 def test_upload_app_calls_http_post(mock_post, model_id):
     body = IStartTrainingBody(
         project_id="proj",
@@ -156,14 +156,14 @@ def test_add_nvflare_job_id_updates_db(fl_job_id, fake_session):
     fake_session.commit.assert_called_once()
 
 
-@patch("flip.fl_services.services.fl_service.http_post")
+@patch("flip_api.fl_services.services.fl_service.http_post")
 def test_submit_job_raises_when_no_job_id(mock_post, fl_job_id, model_id, fake_session):
     mock_post.return_value = ""
     with pytest.raises(ValueError, match="No nvflare job id returned"):
         fl_service.submit_job("req-id", fl_job_id, "endpoint", model_id, fake_session)
 
 
-@patch("flip.fl_services.services.fl_service.http_get")
+@patch("flip_api.fl_services.services.fl_service.http_get")
 def test_get_status_with_clients(mock_get):
     details = MagicMock()
     details.target.value = "SERVER"
@@ -186,7 +186,7 @@ def test_add_nvflare_job_id_raises_if_job_missing(fl_job_id, fake_session):
         fl_service.add_nvflare_job_id(fl_job_id, str(uuid4()), fake_session)
 
 
-@patch("flip.fl_services.services.fl_service.get_status")
+@patch("flip_api.fl_services.services.fl_service.get_status")
 def test_validate_client_availability_all_offline(mock_get_status):
     mock_get_status.return_value = [
         {"name": "Trust_2", "last_connect_time": "12345", "status": ClientStatus.NO_REPLY},
@@ -197,7 +197,7 @@ def test_validate_client_availability_all_offline(mock_get_status):
         fl_service.validate_client_availability(["trust-1"], "endpoint", "req-id")
 
 
-@patch("flip.fl_services.services.fl_service.get_status")
+@patch("flip_api.fl_services.services.fl_service.get_status")
 def test_validate_client_availability_some_online(mock_get_status):
     mock_get_status.return_value = [
         {"name": "Trust_2", "last_connect_time": "12345", "status": ClientStatus.NO_REPLY},
@@ -209,7 +209,7 @@ def test_validate_client_availability_some_online(mock_get_status):
         fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint", "req-id")
 
 
-@patch("flip.fl_services.services.fl_service.get_status")
+@patch("flip_api.fl_services.services.fl_service.get_status")
 def test_validate_client_availability_empty_statuses(mock_get_status):
     mock_get_status.return_value = []
 
@@ -217,19 +217,19 @@ def test_validate_client_availability_empty_statuses(mock_get_status):
         fl_service.validate_client_availability(["trust-1"], "endpoint", "req-id")
 
 
-@patch("flip.fl_services.services.fl_service.http_delete")
+@patch("flip_api.fl_services.services.fl_service.http_delete")
 def test_abort_job_success(mock_delete):
     mock_delete.return_value = {"status": "aborted"}
     result = fl_service.abort_job("req-id", "endpoint", "job-id")
     assert result == {"status": "aborted"}
 
 
-@patch("flip.fl_services.services.fl_service.submit_job")
-@patch("flip.fl_services.services.fl_service.upload_app")
-@patch("flip.fl_services.services.fl_service.download_config")
-@patch("flip.fl_services.services.fl_service.add_log")
-@patch("flip.fl_services.services.fl_service.encrypt")
-@patch("flip.fl_services.services.fl_scheduler_service.get_required_training_details")
+@patch("flip_api.fl_services.services.fl_service.submit_job")
+@patch("flip_api.fl_services.services.fl_service.upload_app")
+@patch("flip_api.fl_services.services.fl_service.download_config")
+@patch("flip_api.fl_services.services.fl_service.add_log")
+@patch("flip_api.fl_services.services.fl_service.encrypt")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
 def test_start_training_with_config(
     mock_get_required,
     mock_encrypt,
@@ -257,8 +257,8 @@ def test_start_training_with_config(
     mock_add_log.assert_called()
 
 
-@patch("flip.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
-@patch("flip.fl_services.services.fl_service.S3Client")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_application_success(mock_s3, mock_required, model_id, mocked_settings):
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
@@ -296,8 +296,8 @@ def test_bundle_application_success(mock_s3, mock_required, model_id, mocked_set
     )
 
 
-@patch("flip.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
-@patch("flip.fl_services.services.fl_service.S3Client")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
 @pytest.mark.parametrize(
     "job_type",
     [
@@ -345,7 +345,7 @@ def test_bundle_application_file_wrong_job_type_in_config(mock_s3, mock_required
         assert returned_job_type.value == job_type
 
 
-@patch("flip.fl_services.services.fl_service.S3Client")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_application_wrong_files(mock_s3, model_id, mocked_settings):
     mock_client = mock_s3.return_value
     # Provide an empty JSON config for tests that include config.json in model files
@@ -363,7 +363,7 @@ def test_bundle_application_wrong_files(mock_s3, model_id, mocked_settings):
         _ = fl_service.bundle_application(model_id)
 
 
-@patch("flip.fl_services.services.fl_service.S3Client")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_get_bundle_urls_retry_success(mock_s3, mocked_settings, model_id):
     mock_client = mock_s3.return_value
     mock_client.list_objects.return_value = [
@@ -380,9 +380,9 @@ def test_get_bundle_urls_retry_success(mock_s3, mocked_settings, model_id):
     assert all(url.startswith("https://dest/") for url in urls)
 
 
-@patch("flip.fl_services.services.fl_service.http_get")
+@patch("flip_api.fl_services.services.fl_service.http_get")
 def test_extract_current_job_data_success(mock_http_get):
-    from flip.fl_services.services.fl_service import extract_current_job_data
+    from flip_api.fl_services.services.fl_service import extract_current_job_data
 
     net_endpoint = "http://flare-endpoint"
     nvflare_job_id = "job123"
@@ -403,9 +403,9 @@ def test_extract_current_job_data_success(mock_http_get):
     mock_http_get.assert_called_once_with(f"{net_endpoint}/list_jobs")
 
 
-@patch("flip.fl_services.services.fl_service.http_get")
+@patch("flip_api.fl_services.services.fl_service.http_get")
 def test_extract_current_job_data_not_found(mock_http_get):
-    from flip.fl_services.services.fl_service import extract_current_job_data
+    from flip_api.fl_services.services.fl_service import extract_current_job_data
 
     mock_http_get.return_value = [{"job_id": "other", "status": "RUNNING"}]
     net_endpoint = "http://flare-endpoint"
@@ -415,9 +415,9 @@ def test_extract_current_job_data_not_found(mock_http_get):
         extract_current_job_data(net_endpoint, nvflare_job_id)
 
 
-@patch("flip.fl_services.services.fl_service.http_get")
+@patch("flip_api.fl_services.services.fl_service.http_get")
 def test_extract_current_job_data_multiple_found(mock_http_get):
-    from flip.fl_services.services.fl_service import extract_current_job_data
+    from flip_api.fl_services.services.fl_service import extract_current_job_data
 
     net_endpoint = "http://flare-endpoint"
     nvflare_job_id = "duplicate-job"
@@ -431,12 +431,12 @@ def test_extract_current_job_data_multiple_found(mock_http_get):
         extract_current_job_data(net_endpoint, nvflare_job_id)
 
 
-@patch("flip.fl_services.services.fl_service.extract_current_job_data")
-@patch("flip.fl_services.services.fl_service.get_nvflare_job_id_by_model_id")
-@patch("flip.fl_services.services.fl_service.fetch_server_status")
-@patch("flip.fl_services.services.fl_service.abort_job")
-@patch("flip.fl_services.services.fl_scheduler_service.get_net_by_model_id")
-@patch("flip.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_nvflare_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
 def test_abort_model_training_success(
     mock_remove,
     mock_get_net,

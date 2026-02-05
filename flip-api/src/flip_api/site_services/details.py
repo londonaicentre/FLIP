@@ -16,10 +16,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.domain.interfaces.site import ISiteDetails
-from flip.site_services.services.details_service import get_site_details, update_site_details
-from flip.utils.logger import logger
+from flip_api.db.database import get_session
+from flip_api.domain.interfaces.site import ISiteDetails
+from flip_api.site_services.services.details_service import get_site_details, update_site_details
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/site", tags=["site_services"])
 

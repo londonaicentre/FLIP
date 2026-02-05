@@ -17,9 +17,9 @@ from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException, status
 
 from flip_api.config import get_settings
-from flip.domain.interfaces.shared import IAccessRequest
-from flip.utils.constants import ACCESS_REQUEST_TEMPLATE_NAME
-from flip.utils.logger import logger
+from flip_api.domain.interfaces.shared import IAccessRequest
+from flip_api.utils.constants import ACCESS_REQUEST_TEMPLATE_NAME
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 

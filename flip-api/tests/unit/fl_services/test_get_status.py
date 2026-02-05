@@ -19,12 +19,12 @@ from flip_api.domain.interfaces.fl import (
     IClientStatus,
     IServerStatus,
 )
-from flip.fl_services.get_status import get_status_endpoint
+from flip_api.fl_services.get_status import get_status_endpoint
 
 
 @pytest.fixture
 def mock_db():
-    with patch("flip.fl_services.run_jobs.get_session") as mock_get_session:
+    with patch("flip_api.fl_services.run_jobs.get_session") as mock_get_session:
         mock_db = MagicMock()
         mock_get_session.return_value = mock_db
         yield mock_db
@@ -44,7 +44,7 @@ def mock_get_nets():
             self.name = name
             self.endpoint = endpoint
 
-    with patch("flip.fl_services.get_status.get_nets") as mock:
+    with patch("flip_api.fl_services.get_status.get_nets") as mock:
         mock.return_value = [Net("net-1", "endpoint1")]
         yield mock
 
@@ -55,14 +55,14 @@ def mock_get_trusts():
         def __init__(self, name):
             self.name = name
 
-    with patch("flip.fl_services.get_status.get_trusts") as mock:
+    with patch("flip_api.fl_services.get_status.get_trusts") as mock:
         mock.return_value = [Trust("trust-1"), Trust("trust-2")]
         yield mock
 
 
 @pytest.fixture
 def mock_fetch_server_status():
-    with patch("flip.fl_services.get_status.fetch_server_status") as mock:
+    with patch("flip_api.fl_services.get_status.fetch_server_status") as mock:
         mock.return_value = IServerStatus(
             status="started",
             start_time=1750067408.3509645,
@@ -72,7 +72,7 @@ def mock_fetch_server_status():
 
 @pytest.fixture
 def mock_fetch_client_status():
-    with patch("flip.fl_services.get_status.fetch_client_status") as mock:
+    with patch("flip_api.fl_services.get_status.fetch_client_status") as mock:
         mock.return_value = [
             IClientStatus(name="trust-1", online=True, status="no_jobs", last_connected=1750086492.088829),
         ]
@@ -95,7 +95,7 @@ def test_get_status_endpoint_success(
 
 
 def test_get_status_endpoint_error(fake_request, mock_db):
-    with patch("flip.fl_services.get_status.get_nets", side_effect=Exception("boom")):
+    with patch("flip_api.fl_services.get_status.get_nets", side_effect=Exception("boom")):
         with pytest.raises(HTTPException) as exc:
             get_status_endpoint(fake_request, mock_db, user_id="user-1")
         assert exc.value.status_code == 500

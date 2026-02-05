@@ -16,14 +16,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
-from flip.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.user_models import PermissionRef
-from flip.domain.interfaces.project import IUpdateXnatProfile
-from flip.domain.schemas.users import Disabled
-from flip.project_services.services.image_service import update_xnat_user_profile
-from flip.utils.cognito_helpers import get_user_pool_id, get_username, update_user
-from flip.utils.logger import logger
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
+from flip_api.db.models.user_models import PermissionRef
+from flip_api.domain.interfaces.project import IUpdateXnatProfile
+from flip_api.domain.schemas.users import Disabled
+from flip_api.project_services.services.image_service import update_xnat_user_profile
+from flip_api.utils.cognito_helpers import get_user_pool_id, get_username, update_user
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 
