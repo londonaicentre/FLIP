@@ -239,7 +239,7 @@ Pull requests automatically push to a dev S3 bucket for testing:
 s3://flip-dev/base-application-dev/pull-requests/<PR_NUMBER>/src/
 ```
 
-To test on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo environment variables](https://github.com/londonaicentre/flip/blob/develop/flip-api/.env.development) to point to your PR's bucket.
+To test on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo environment variables](https://github.com/londonaicentre/FLIP/blob/main/.env.development) to point to your PR's bucket.
 
 ## S3 Bucket Mounting (Optional)
 
