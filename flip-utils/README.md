@@ -236,7 +236,7 @@ The standard application requires:
 Pull requests automatically push to a dev S3 bucket for testing:
 
 ```text
-s3://flip-dev/base-application-dev/pull-requests/<PR_NUMBER>/src/
+s3://flipdev/base-application-dev/pull-requests/<PR_NUMBER>/src/
 ```
 
 To test on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo environment variables](https://github.com/londonaicentre/FLIP/blob/main/.env.development) to point to your PR's bucket.
@@ -273,12 +273,12 @@ Test with `mount -a` before relying on it.
 These workflows use GitHub OIDC to securely authenticate to AWS (no long-lived AWS keys required). They use an IAM role with a policy that allows S3 operations.
 
 - **PR to any branch**: Pushes to dev S3 bucket for testing on AWS dev account:
-  - (dev) `s3://flip-dev/base-application-dev/pull-requests/<PR_NUMBER>/src/`
+  - (dev) `s3://flipdev/base-application-dev/pull-requests/<PR_NUMBER>/src/`
 - **Merge to develop**: Syncs `src/` to S3 buckets on AWS dev and staging accounts:
-  - (dev) `s3://flip-dev/base-application-dev/src/`
-  - (staging) `s3://flip-stag/base-application/src/`
+  - (dev) `s3://flipdev/base-application-dev/src/`
+  - (staging) `s3://flipstag/base-application/src/`
 - **Merge to main**: Syncs `src/` to S3 bucket in AWS prod account:
-  - (prod) `s3://flip-prod/base-application/src/`
+  - (prod) `s3://flipprod/base-application/src/`
 
 > **Warning**: Never manually sync to the production bucket.
 
