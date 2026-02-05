@@ -18,9 +18,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, col, select
 
 from flip_api.auth.access_manager import check_authorization_token
-from flip.db.database import get_session
-from flip.db.models.main_models import QueryResult, QueryStats, Trust
-from flip.domain.schemas.private import (
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import QueryResult, QueryStats, Trust
+from flip_api.domain.schemas.private import (
     AggregatedCohortStats,
     AggregatedFieldResult,
     AggregatedTrustFieldResult,
@@ -28,7 +28,7 @@ from flip.domain.schemas.private import (
     OmopCohortResults,
     TrustSpecificData,
 )
-from flip.utils.logger import logger
+from flip_api.utils.logger import logger
 
 router = APIRouter(tags=["private_services"])
 

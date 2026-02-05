@@ -16,13 +16,13 @@ import pytest
 from fastapi import HTTPException, Request
 
 from flip_api.domain.interfaces.fl import IClientStatus
-from flip.domain.schemas.status import ClientStatus
-from flip.fl_services.get_net_status import get_net_status
+from flip_api.domain.schemas.status import ClientStatus
+from flip_api.fl_services.get_net_status import get_net_status
 
 
 @pytest.fixture
 def mock_db():
-    with patch("flip.fl_services.get_net_status.get_session") as mock_get_session:
+    with patch("flip_api.fl_services.get_net_status.get_session") as mock_get_session:
         mock_db = MagicMock()
         mock_get_session.return_value = mock_db
         yield mock_db
@@ -37,14 +37,14 @@ def fake_request():
 
 @pytest.fixture
 def mock_get_net_by_name():
-    with patch("flip.fl_services.get_net_status.get_net_by_name") as mock:
+    with patch("flip_api.fl_services.get_net_status.get_net_by_name") as mock:
         mock.return_value = MagicMock(endpoint="endpoint", name="net-name")
         yield mock
 
 
 @pytest.fixture
 def mock_get_status():
-    with patch("flip.fl_services.get_net_status.fetch_client_status") as mock:
+    with patch("flip_api.fl_services.get_net_status.fetch_client_status") as mock:
         mock.return_value = [
             IClientStatus(name="client1", online=True, status=ClientStatus.NO_JOBS),
             IClientStatus(name="client2", online=False, status=ClientStatus.NO_REPLY),
@@ -59,7 +59,7 @@ def mock_get_trusts():
         def __init__(self, name):
             self.name = name
 
-    with patch("flip.fl_services.get_net_status.get_trusts") as mock:
+    with patch("flip_api.fl_services.get_net_status.get_trusts") as mock:
         mock.return_value = [Trust("client1"), Trust("client2"), Trust("client3")]
         yield mock
 
@@ -74,14 +74,14 @@ def test_get_net_status_success(fake_request, mock_db, mock_get_net_by_name, moc
 
 
 def test_get_net_status_net_not_found(fake_request, mock_db):
-    with patch("flip.fl_services.get_net_status.get_net_by_name", return_value=None):
+    with patch("flip_api.fl_services.get_net_status.get_net_by_name", return_value=None):
         with pytest.raises(HTTPException) as exc:
             get_net_status("unknown", fake_request, mock_db)
         assert exc.value.status_code == 404
 
 
 def test_get_net_status_status_missing(fake_request, mock_db, mock_get_net_by_name):
-    with patch("flip.fl_services.get_net_status.fetch_client_status", return_value=None):
+    with patch("flip_api.fl_services.get_net_status.fetch_client_status", return_value=None):
         with pytest.raises(HTTPException) as exc:
             get_net_status("net-name", fake_request, mock_db)
         assert exc.value.status_code == 502

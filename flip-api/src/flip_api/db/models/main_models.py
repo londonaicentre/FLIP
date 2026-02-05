@@ -18,9 +18,9 @@ from sqlalchemy import JSON, Column
 from sqlmodel import Field, Relationship, SQLModel
 
 from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction
-from flip.domain.schemas.file import FileUploadStatus
-from flip.domain.schemas.images import ImageType
-from flip.domain.schemas.status import (
+from flip_api.domain.schemas.file import FileUploadStatus
+from flip_api.domain.schemas.images import ImageType
+from flip_api.domain.schemas.status import (
     JobStatus,
     ModelStatus,
     NetStatus,

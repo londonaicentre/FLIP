@@ -17,8 +17,8 @@ import psycopg2
 from sqlmodel import Session, delete, select
 
 from flip_api.db.database import engine
-from flip.db.models.user_models import Permission, PermissionRef, Role, RolePermission
-from flip.utils.logger import logger
+from flip_api.db.models.user_models import Permission, PermissionRef, Role, RolePermission
+from flip_api.utils.logger import logger
 
 
 def seed_role_permissions(session: Session) -> None:

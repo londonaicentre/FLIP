@@ -17,8 +17,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flip_api.domain.interfaces.user import IUserResponse
-from flip.main import app
-from flip.step_functions_services.register_user_step_function import (
+from flip_api.main import app
+from flip_api.step_functions_services.register_user_step_function import (
     get_session,
     verify_token,
 )
@@ -52,8 +52,8 @@ def override_dependencies():
     app.dependency_overrides = {}
 
 
-@patch("flip.step_functions_services.register_user_step_function.set_user_roles")
-@patch("flip.step_functions_services.register_user_step_function.register_user")
+@patch("flip_api.step_functions_services.register_user_step_function.set_user_roles")
+@patch("flip_api.step_functions_services.register_user_step_function.register_user")
 def test_register_user_success(mock_register, mock_set_roles, user_payload, mock_register_response):
     mock_register.return_value = mock_register_response
     mock_set_roles.return_value = user_payload["roles"]
@@ -70,9 +70,9 @@ def test_register_user_success(mock_register, mock_set_roles, user_payload, mock
     mock_set_roles.assert_called_once()
 
 
-@patch("flip.step_functions_services.register_user_step_function.delete_user")
-@patch("flip.step_functions_services.register_user_step_function.set_user_roles")
-@patch("flip.step_functions_services.register_user_step_function.register_user")
+@patch("flip_api.step_functions_services.register_user_step_function.delete_user")
+@patch("flip_api.step_functions_services.register_user_step_function.set_user_roles")
+@patch("flip_api.step_functions_services.register_user_step_function.register_user")
 def test_register_user_role_assignment_fails(
     mock_register, mock_set_roles, mock_delete_user, user_payload, mock_register_response
 ):
@@ -94,7 +94,7 @@ def test_register_user_role_assignment_fails(
     mock_delete_user.assert_called_once()
 
 
-@patch("flip.step_functions_services.register_user_step_function.register_user")
+@patch("flip_api.step_functions_services.register_user_step_function.register_user")
 def test_register_user_unexpected_exception(mock_register, user_payload):
     mock_register.side_effect = Exception("DB failure")
 

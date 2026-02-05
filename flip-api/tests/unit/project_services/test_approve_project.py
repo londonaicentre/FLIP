@@ -17,10 +17,10 @@ import pytest
 from fastapi import HTTPException, status
 
 from flip_api.db.models.main_models import Projects, Trust
-from flip.db.models.user_models import PermissionRef
-from flip.domain.schemas.projects import ApproveProjectBodyPayload
-from flip.domain.schemas.status import ProjectStatus
-from flip.project_services.approve_project import approve_project_endpoint
+from flip_api.db.models.user_models import PermissionRef
+from flip_api.domain.schemas.projects import ApproveProjectBodyPayload
+from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.project_services.approve_project import approve_project_endpoint
 
 # Imports from the module to be tested
 # Assuming sqlmodel.Session is used for type hinting or spec
@@ -47,10 +47,10 @@ def mock_staged_project():
     return project
 
 
-@patch("flip.project_services.approve_project.logger")
-@patch("flip.project_services.approve_project.get_trusts")
-@patch("flip.project_services.approve_project.approve_project", return_value=True)
-@patch("flip.project_services.approve_project.has_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.logger")
+@patch("flip_api.project_services.approve_project.get_trusts")
+@patch("flip_api.project_services.approve_project.approve_project", return_value=True)
+@patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
 def test_approve_project_endpoint_success(
     mock_has_permissions,
     mock_approve_project,  # This is the approve_project function
@@ -84,8 +84,8 @@ def test_approve_project_endpoint_success(
     assert result == mock_trust_list
 
 
-@patch("flip.project_services.approve_project.logger")
-@patch("flip.project_services.approve_project.has_permissions")
+@patch("flip_api.project_services.approve_project.logger")
+@patch("flip_api.project_services.approve_project.has_permissions")
 def test_approve_project_endpoint_no_permission(mock_has_permissions, mock_logger, mock_db_session, mock_payload):
     # Arrange
     mock_has_permissions.return_value = False
@@ -107,8 +107,8 @@ def test_approve_project_endpoint_no_permission(mock_has_permissions, mock_logge
     )
 
 
-@patch("flip.project_services.approve_project.logger")
-@patch("flip.project_services.approve_project.has_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.logger")
+@patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
 def test_approve_project_endpoint_project_not_found(
     mock_has_permissions,  # Patched with return_value=True
     mock_logger,
@@ -133,8 +133,8 @@ def test_approve_project_endpoint_project_not_found(
     mock_logger.error.assert_called_once_with(f"Project with ID {TEST_PROJECT_ID} not found for approval.")
 
 
-@patch("flip.project_services.approve_project.logger")
-@patch("flip.project_services.approve_project.has_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.logger")
+@patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
 def test_approve_project_endpoint_project_not_staged(
     mock_has_permissions,
     mock_logger,
@@ -160,10 +160,10 @@ def test_approve_project_endpoint_project_not_staged(
     mock_logger.error.assert_called_once_with(f"Project {TEST_PROJECT_ID} is not in STAGED status, cannot approve.")
 
 
-@patch("flip.project_services.approve_project.logger")
-@patch("flip.project_services.approve_project.get_trusts")
-@patch("flip.project_services.approve_project.approve_project")
-@patch("flip.project_services.approve_project.has_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.logger")
+@patch("flip_api.project_services.approve_project.get_trusts")
+@patch("flip_api.project_services.approve_project.approve_project")
+@patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
 def test_approve_project_endpoint_commit_status_fails(
     mock_has_permissions,
     mock_approve_project,  # This is the approve_project function
@@ -192,10 +192,10 @@ def test_approve_project_endpoint_commit_status_fails(
     assert exc_info.value.detail == "DB Commit Error"
 
 
-@patch("flip.project_services.approve_project.logger")
-@patch("flip.project_services.approve_project.get_trusts")
-@patch("flip.project_services.approve_project.approve_project", return_value=True)
-@patch("flip.project_services.approve_project.has_permissions", return_value=True)
+@patch("flip_api.project_services.approve_project.logger")
+@patch("flip_api.project_services.approve_project.get_trusts")
+@patch("flip_api.project_services.approve_project.approve_project", return_value=True)
+@patch("flip_api.project_services.approve_project.has_permissions", return_value=True)
 def test_approve_project_endpoint_fetch_trusts_exec_fails(
     mock_has_permissions,
     mock_approve_project,  # This is the approve_project function

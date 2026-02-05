@@ -13,9 +13,9 @@
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from flip_api.config import get_settings
-from flip.fl_services.run_jobs import run_jobs_scheduled_task
-from flip.fl_services.services.fl_service import keep_fl_api_session_alive
-from flip.project_services.reimport_imaging_project_studies import (
+from flip_api.fl_services.run_jobs import run_jobs_scheduled_task
+from flip_api.fl_services.services.fl_service import keep_fl_api_session_alive
+from flip_api.project_services.reimport_imaging_project_studies import (
     reimport_imaging_project_studies_scheduled_task,
 )
 

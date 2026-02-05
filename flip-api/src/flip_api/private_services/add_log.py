@@ -16,10 +16,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import check_authorization_token
-from flip.db.database import get_session
-from flip.domain.schemas.private import TrainingLog
-from flip.model_services.services.model_service import add_log, validate_trusts
-from flip.utils.logger import logger
+from flip_api.db.database import get_session
+from flip_api.domain.schemas.private import TrainingLog
+from flip_api.model_services.services.model_service import add_log, validate_trusts
+from flip_api.utils.logger import logger
 
 router = APIRouter(tags=["private_services"])
 

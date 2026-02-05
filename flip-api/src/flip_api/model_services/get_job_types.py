@@ -17,7 +17,7 @@ from typing import Dict, List
 from fastapi import APIRouter
 
 from flip_api.domain.interfaces.fl import JobRequiredFiles
-from flip.utils.logger import logger
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/model", tags=["model_services"])
 

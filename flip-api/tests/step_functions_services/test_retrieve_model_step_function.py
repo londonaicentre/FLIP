@@ -17,8 +17,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from flip_api.domain.interfaces.model import IModelResponse
-from flip.main import app
-from flip.step_functions_services.retrieve_model_step_function import (
+from flip_api.main import app
+from flip_api.step_functions_services.retrieve_model_step_function import (
     get_session,
     verify_token,
 )
@@ -58,7 +58,7 @@ def mock_model_response(model_id):
 # @pytest.fixture
 # def mock_retrieve_model_status_from_logs():
 #     with patch(
-#         "flip.step_functions_services.retrieve_model_step_function.retrieve_model_status_from_logs"
+#         "flip_api.step_functions_services.retrieve_model_step_function.retrieve_model_status_from_logs"
 #     ) as mock:
 #         mock.return_value = {"modelStatus": "TRAINING_STARTED"}
 #         yield mock
@@ -77,8 +77,8 @@ def override_dependencies():
     app.dependency_overrides = {}
 
 
-@patch("flip.step_functions_services.retrieve_model_step_function.update_model_status")
-@patch("flip.step_functions_services.retrieve_model_step_function.retrieve_model")
+@patch("flip_api.step_functions_services.retrieve_model_step_function.update_model_status")
+@patch("flip_api.step_functions_services.retrieve_model_step_function.retrieve_model")
 def test_retrieve_model_success(
     mock_retrieve_model,
     mock_update_status,
@@ -96,8 +96,8 @@ def test_retrieve_model_success(
     mock_retrieve_model.assert_called_once()
 
 
-@patch("flip.step_functions_services.retrieve_model_step_function.update_model_status")
-@patch("flip.step_functions_services.retrieve_model_step_function.retrieve_model")
+@patch("flip_api.step_functions_services.retrieve_model_step_function.update_model_status")
+@patch("flip_api.step_functions_services.retrieve_model_step_function.retrieve_model")
 def test_update_model_status_fails(
     mock_retrieve_model,
     mock_update_status,
@@ -111,8 +111,8 @@ def test_update_model_status_fails(
     assert response.json()["detail"] == "Failed to update model status"
 
 
-@patch("flip.step_functions_services.retrieve_model_step_function.update_model_status")
-@patch("flip.step_functions_services.retrieve_model_step_function.retrieve_model")
+@patch("flip_api.step_functions_services.retrieve_model_step_function.update_model_status")
+@patch("flip_api.step_functions_services.retrieve_model_step_function.retrieve_model")
 def test_retrieve_model_raises_exception(
     mock_retrieve_model,
     mock_update_status,

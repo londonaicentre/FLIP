@@ -16,8 +16,8 @@ from uuid import uuid4
 import pytest
 
 from flip_api.db.models.main_models import Trust
-from flip.domain.interfaces.trust import ITrust
-from flip.trusts_services.services.trust import get_trusts
+from flip_api.domain.interfaces.trust import ITrust
+from flip_api.trusts_services.services.trust import get_trusts
 
 
 def create_mock_trust(id=None, name="Test Trust", endpoint="https://test.endpoint"):

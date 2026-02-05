@@ -17,10 +17,10 @@ from fastapi.security.api_key import APIKeyHeader
 from sqlmodel import Session, select
 
 from flip_api.auth.auth_utils import has_permissions
-from flip.config import get_settings
-from flip.db.models.main_models import Model, Projects, ProjectUserAccess, Queries
-from flip.db.models.user_models import PermissionRef
-from flip.utils.logger import logger
+from flip_api.config import get_settings
+from flip_api.db.models.main_models import Model, Projects, ProjectUserAccess, Queries
+from flip_api.db.models.user_models import PermissionRef
+from flip_api.utils.logger import logger
 
 
 def can_access_project(user_id: UUID, project_id: UUID, db: Session) -> bool:

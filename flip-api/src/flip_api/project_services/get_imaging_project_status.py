@@ -17,16 +17,16 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import can_access_project
-from flip.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.domain.interfaces.project import IImagingStatus
-from flip.project_services.services.image_service import (
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
+from flip_api.domain.interfaces.project import IImagingStatus
+from flip_api.project_services.services.image_service import (
     base64_url_encode,
     get_imaging_project_statuses,
     get_imaging_projects,
 )
-from flip.project_services.services.project_services import get_project
-from flip.utils.logger import logger
+from flip_api.project_services.services.project_services import get_project
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/projects", tags=["project_services"])
 

@@ -14,8 +14,8 @@ from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
 from flip_api.db.models.main_models import SiteBanner, SiteConfig
-from flip.domain.interfaces.site import ISiteBanner, ISiteDetails
-from flip.utils.logger import logger
+from flip_api.domain.interfaces.site import ISiteBanner, ISiteDetails
+from flip_api.utils.logger import logger
 
 
 def get_site_details(db: Session) -> ISiteDetails:

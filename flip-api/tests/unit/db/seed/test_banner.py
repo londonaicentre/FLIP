@@ -16,7 +16,7 @@ import pytest
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import SiteBanner
-from flip.db.seed.banner import seed_banner
+from flip_api.db.seed.banner import seed_banner
 
 
 @pytest.fixture

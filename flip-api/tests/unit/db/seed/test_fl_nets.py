@@ -16,7 +16,7 @@ import pytest
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import FLNets
-from flip.db.seed.fl_nets import seed_fl_nets
+from flip_api.db.seed.fl_nets import seed_fl_nets
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def sample_secret():
     return "{'net1': 'http://net1.com', 'net2': 'http://net2.com'}"
 
 
-@patch("flip.db.seed.fl_nets.get_secret")
+@patch("flip_api.db.seed.fl_nets.get_secret")
 def test_seed_fl_nets_creates_new_nets_when_none_exist(mock_get_secret, mock_session, sample_secret):
     """Test that seed_fl_nets creates new nets when none exist."""
     # Arrange
@@ -67,7 +67,7 @@ def test_seed_fl_nets_creates_new_nets_when_none_exist(mock_get_secret, mock_ses
     assert {added_net1.endpoint, added_net2.endpoint} == {"http://net1.com", "http://net2.com"}
 
 
-@patch("flip.db.seed.fl_nets.get_secret")
+@patch("flip_api.db.seed.fl_nets.get_secret")
 def test_seed_fl_nets_skips_existing_nets(mock_get_secret, mock_session, sample_secret, mock_fl_net):
     """Test that seed_fl_nets skips existing nets and only adds new ones."""
     # Arrange
@@ -91,7 +91,7 @@ def test_seed_fl_nets_skips_existing_nets(mock_get_secret, mock_session, sample_
     assert added_net.endpoint == "http://new.com"
 
 
-@patch("flip.db.seed.fl_nets.get_secret")
+@patch("flip_api.db.seed.fl_nets.get_secret")
 def test_seed_fl_nets_handles_json_with_single_quotes(mock_get_secret, mock_session):
     """Test that seed_fl_nets correctly handles JSON with single quotes."""
     # Arrange
@@ -109,7 +109,7 @@ def test_seed_fl_nets_handles_json_with_single_quotes(mock_get_secret, mock_sess
     assert added_net.endpoint == "http://test.com"
 
 
-@patch("flip.db.seed.fl_nets.get_secret")
+@patch("flip_api.db.seed.fl_nets.get_secret")
 def test_seed_fl_nets_returns_all_nets(mock_get_secret, mock_session, sample_secret):
     """Test that seed_fl_nets returns all nets from database."""
     # Arrange
@@ -129,7 +129,7 @@ def test_seed_fl_nets_returns_all_nets(mock_get_secret, mock_session, sample_sec
     assert result == final_nets
 
 
-@patch("flip.db.seed.fl_nets.get_secret")
+@patch("flip_api.db.seed.fl_nets.get_secret")
 def test_seed_fl_nets_with_empty_secrets(mock_get_secret, mock_session):
     """Test that seed_fl_nets handles empty net endpoints."""
     # Arrange

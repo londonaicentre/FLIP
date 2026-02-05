@@ -17,13 +17,13 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, stat
 from sqlmodel import Session, select
 
 from flip_api.auth.access_manager import can_access_model
-from flip.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.main_models import ModelTrustIntersect, Trust, TrustIntersectStatus
-from flip.domain.schemas.trusts import UpdateTrustStatusSchema
-from flip.utils.constants import SERVICE_UNAVAILABLE_MESSAGE
-from flip.utils.logger import logger
-from flip.utils.site_manager import is_deployment_mode_enabled
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import ModelTrustIntersect, Trust, TrustIntersectStatus
+from flip_api.domain.schemas.trusts import UpdateTrustStatusSchema
+from flip_api.utils.constants import SERVICE_UNAVAILABLE_MESSAGE
+from flip_api.utils.logger import logger
+from flip_api.utils.site_manager import is_deployment_mode_enabled
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
 

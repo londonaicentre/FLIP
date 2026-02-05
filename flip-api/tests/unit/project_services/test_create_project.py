@@ -18,9 +18,9 @@ from fastapi import HTTPException, status
 from psycopg2 import DatabaseError
 
 from flip_api.db.models.main_models import Projects
-from flip.db.models.user_models import PermissionRef
-from flip.domain.schemas.projects import ProjectDetails
-from flip.project_services.create_project import create_project_endpoint
+from flip_api.db.models.user_models import PermissionRef
+from flip_api.domain.schemas.projects import ProjectDetails
+from flip_api.project_services.create_project import create_project_endpoint
 
 # Common test data
 TEST_USER_ID = uuid.uuid4()
@@ -45,8 +45,8 @@ def mock_valid_payload():
     return payload
 
 
-@patch("flip.project_services.create_project.logger")
-@patch("flip.project_services.create_project.has_permissions")
+@patch("flip_api.project_services.create_project.logger")
+@patch("flip_api.project_services.create_project.has_permissions")
 def test_create_project_endpoint_success(
     mock_has_permissions: MagicMock,
     mock_logger: MagicMock,
@@ -72,8 +72,8 @@ def test_create_project_endpoint_success(
     assert str(result.id) in logged_message
 
 
-@patch("flip.project_services.create_project.logger")
-@patch("flip.project_services.create_project.has_permissions")
+@patch("flip_api.project_services.create_project.logger")
+@patch("flip_api.project_services.create_project.has_permissions")
 def test_create_project_endpoint_no_permission(
     mock_has_permissions: MagicMock,
     mock_logger: MagicMock,
@@ -101,8 +101,8 @@ def test_create_project_endpoint_no_permission(
     mock_db_session.commit.assert_not_called()
 
 
-@patch("flip.project_services.create_project.logger")
-@patch("flip.project_services.create_project.has_permissions")
+@patch("flip_api.project_services.create_project.logger")
+@patch("flip_api.project_services.create_project.has_permissions")
 def test_create_project_endpoint_missing_name(
     mock_has_permissions: MagicMock,
     mock_logger: MagicMock,
@@ -130,8 +130,8 @@ def test_create_project_endpoint_missing_name(
     mock_db_session.add.assert_not_called()
 
 
-@patch("flip.project_services.create_project.logger")
-@patch("flip.project_services.create_project.has_permissions")
+@patch("flip_api.project_services.create_project.logger")
+@patch("flip_api.project_services.create_project.has_permissions")
 def test_create_project_endpoint_db_commit_fails(
     mock_has_permissions: MagicMock,
     mock_logger: MagicMock,

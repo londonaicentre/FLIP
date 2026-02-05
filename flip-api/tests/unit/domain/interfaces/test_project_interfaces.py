@@ -32,8 +32,8 @@ from flip_api.domain.interfaces.project import (
     IReturnedProject,
     IUpdateXnatProfile,
 )
-from flip.domain.schemas.status import ModelStatus, ProjectStatus
-from flip.utils.paging_utils import IPagedData, IPagedResponse
+from flip_api.domain.schemas.status import ModelStatus, ProjectStatus
+from flip_api.utils.paging_utils import IPagedData, IPagedResponse
 
 # Common timestamp used for testing
 now = datetime.utcnow().isoformat(timespec="milliseconds")

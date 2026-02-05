@@ -16,9 +16,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import ValidationError
 
 from flip_api.auth.dependencies import verify_token
-from flip.domain.schemas.users import GetUserByEmail, GetUserById
-from flip.utils.cognito_helpers import get_user_by_email_or_id, get_user_pool_id
-from flip.utils.logger import logger
+from flip_api.domain.schemas.users import GetUserByEmail, GetUserById
+from flip_api.utils.cognito_helpers import get_user_by_email_or_id, get_user_pool_id
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 

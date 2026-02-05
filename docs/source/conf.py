@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.abspath("../../trust/trust-api"))
 # sys.path.insert(0, os.path.abspath('.'))
 
 # -- Project information -----------------------------------------------------
-project = "flip
+project = "flip"
 copyright = "2025, The London Medical Imaging & AI Centre for Value Based Healthcare (AIC)"
 author = "The London Medical Imaging & AI Centre for Value Based Healthcare (AIC)"
 
@@ -44,9 +44,9 @@ release = "1.0"
 # The full version of the FLIP platform, including alpha/beta/rc tags
 # The rst_epilog list makes items within it globally-available to compiled .rst files.
 rst_epilog = """
-.. |flipsion| replace:: {flipflip}
+.. |flip_version| replace:: {flip_version}
 """.format(
-    flipsion="1.0",
+    flip_version="1.0",
 )
 
 # -- General configuration ---------------------------------------------------
@@ -68,7 +68,7 @@ autoapi_type = "python"
 
 # autoapi
 autoapi_dirs = [
-    "../../flip/src",
+    "../../flip-api/src",
     "../../trust/data-access-api",
     "../../trust/imaging-api",
     "../../trust/trust-api",
@@ -77,7 +77,6 @@ autoapi_ignore = [
     "*/.venv/*",
     "*/tests/*",
     "*/conftest.py",
-    "*/flipapi/transfer/*",
 ]
 
 # Optional:
