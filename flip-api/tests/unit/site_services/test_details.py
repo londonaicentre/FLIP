@@ -17,9 +17,9 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.main_models import SiteBanner, SiteConfig
-from flip.main import app
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import SiteBanner, SiteConfig
+from flip_api.main import app
 
 # ---- Test setup ----
 

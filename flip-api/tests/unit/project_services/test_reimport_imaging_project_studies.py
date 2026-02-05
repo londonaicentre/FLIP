@@ -23,9 +23,9 @@ def mock_session():
     return MagicMock()
 
 
-@patch("flip.project_services.reimport_imaging_project_studies.get_settings")
-@patch("flip.project_services.reimport_imaging_project_studies.get_reimport_queries_service")
-@patch("flip.project_services.reimport_imaging_project_studies.reimport_failed_studies")
+@patch("flip_api.project_services.reimport_imaging_project_studies.get_settings")
+@patch("flip_api.project_services.reimport_imaging_project_studies.get_reimport_queries_service")
+@patch("flip_api.project_services.reimport_imaging_project_studies.reimport_failed_studies")
 def test_reimport_success(mock_reimport, mock_queries_service, mock_get_settings, mock_session):
     # Mock settings
     mock_get_settings.return_value.PROJECT_REIMPORT_RATE = 2
@@ -43,9 +43,9 @@ def test_reimport_success(mock_reimport, mock_queries_service, mock_get_settings
     mock_reimport.assert_called_once()
 
 
-@patch("flip.project_services.reimport_imaging_project_studies.get_settings")
-@patch("flip.project_services.reimport_imaging_project_studies.get_reimport_queries_service")
-@patch("flip.project_services.reimport_imaging_project_studies.reimport_failed_studies")
+@patch("flip_api.project_services.reimport_imaging_project_studies.get_settings")
+@patch("flip_api.project_services.reimport_imaging_project_studies.get_reimport_queries_service")
+@patch("flip_api.project_services.reimport_imaging_project_studies.reimport_failed_studies")
 def test_failed_study_reimport_raises_500(mock_reimport, mock_queries_service, mock_get_settings, mock_session):
     mock_get_settings.return_value.PROJECT_REIMPORT_RATE = 2
     mock_get_settings.return_value.MAX_REIMPORT_COUNT = 100

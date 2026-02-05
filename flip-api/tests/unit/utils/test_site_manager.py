@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import SiteConfig
-from flip.utils.site_manager import is_deployment_mode_enabled
+from flip_api.utils.site_manager import is_deployment_mode_enabled
 
 
 def test_deployment_mode_enabled():

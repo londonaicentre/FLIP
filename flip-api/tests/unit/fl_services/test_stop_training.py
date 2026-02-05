@@ -17,7 +17,7 @@ import pytest
 from fastapi import HTTPException, Request
 
 from flip_api.domain.schemas.status import ModelStatus
-from flip.fl_services.stop_training import stop_training
+from flip_api.fl_services.stop_training import stop_training
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def fake_request():
 
 @pytest.fixture
 def mock_db():
-    with patch("flip.fl_services.stop_training.get_session") as mock_get_session:
+    with patch("flip_api.fl_services.stop_training.get_session") as mock_get_session:
         mock_db = MagicMock()
         mock_get_session.return_value = mock_db
         yield mock_db
@@ -43,7 +43,7 @@ def mock_db():
 
 @pytest.fixture
 def mock_can_access_model():
-    with patch("flip.fl_services.stop_training.can_access_model") as mock:
+    with patch("flip_api.fl_services.stop_training.can_access_model") as mock:
         mock.return_value = True
         yield mock
 
@@ -55,13 +55,13 @@ def user_id():
 
 @pytest.fixture
 def mock_abort_model_training():
-    with patch("flip.fl_services.stop_training.abort_model_training") as mock:
+    with patch("flip_api.fl_services.stop_training.abort_model_training") as mock:
         yield mock
 
 
 @pytest.fixture
 def mock_update_status():
-    with patch("flip.fl_services.stop_training.update_model_status") as mock:
+    with patch("flip_api.fl_services.stop_training.update_model_status") as mock:
         yield mock
 
 

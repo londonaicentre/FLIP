@@ -16,7 +16,7 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from flip_api.db.models.main_models import FLLogs, FLMetrics, Model, ModelTrustIntersect, Trust
-from flip.domain.interfaces.model import (
+from flip_api.domain.interfaces.model import (
     IDetailedModelStatus,
     IModelAuditAction,
     IModelDetails,
@@ -24,12 +24,12 @@ from flip.domain.interfaces.model import (
     IModelMetricsData,
     IModelMetricsValue,
 )
-from flip.domain.schemas.actions import ModelAuditAction
-from flip.domain.schemas.status import ModelStatus
-from flip.fl_services.services import fl_scheduler_service
-from flip.fl_services.services.pull_required_files import pull_required_files_json_to_assets
-from flip.model_services.utils.audit_helper import audit_model_action, audit_model_actions
-from flip.utils.logger import logger
+from flip_api.domain.schemas.actions import ModelAuditAction
+from flip_api.domain.schemas.status import ModelStatus
+from flip_api.fl_services.services import fl_scheduler_service
+from flip_api.fl_services.services.pull_required_files import pull_required_files_json_to_assets
+from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
+from flip_api.utils.logger import logger
 
 
 def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, session: Session) -> None:

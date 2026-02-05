@@ -13,7 +13,7 @@
 from sqlmodel import Session, col, select
 
 from flip_api.db.models.main_models import SiteConfig
-from flip.utils.logger import logger
+from flip_api.utils.logger import logger
 
 
 def is_deployment_mode_enabled(db: Session) -> bool:

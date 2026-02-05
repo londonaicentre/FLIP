@@ -16,9 +16,9 @@ from uuid import UUID
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import ModelsAudit
-from flip.domain.interfaces.model import IModelAuditAction
-from flip.domain.schemas.actions import ModelAuditAction
-from flip.utils.logger import logger
+from flip_api.domain.interfaces.model import IModelAuditAction
+from flip_api.domain.schemas.actions import ModelAuditAction
+from flip_api.utils.logger import logger
 
 
 def audit_model_action(model_id: UUID, action: ModelAuditAction, user_id: UUID, session: Session) -> ModelsAudit:

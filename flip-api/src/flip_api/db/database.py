@@ -16,7 +16,7 @@ from urllib.parse import quote_plus
 from sqlmodel import Session, create_engine
 
 from flip_api.config import get_settings
-from flip.utils.get_secrets import get_secret
+from flip_api.utils.get_secrets import get_secret
 
 # Get database settings
 stt = get_settings()

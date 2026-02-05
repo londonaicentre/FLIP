@@ -16,8 +16,8 @@ import pytest
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import FLNets, FLScheduler
-from flip.db.seed.fl_scheduler import seed_fl_scheduler
-from flip.domain.schemas.status import NetStatus
+from flip_api.db.seed.fl_scheduler import seed_fl_scheduler
+from flip_api.domain.schemas.status import NetStatus
 
 
 @pytest.fixture
@@ -76,10 +76,10 @@ def sample_all_schedulers():
     return [scheduler1, scheduler2, scheduler3]
 
 
-@patch("flip.db.seed.fl_scheduler.logger")
-@patch("flip.db.seed.fl_scheduler.select")
-@patch("flip.db.seed.fl_scheduler.col")
-@patch("flip.db.seed.fl_scheduler.FLScheduler")
+@patch("flip_api.db.seed.fl_scheduler.logger")
+@patch("flip_api.db.seed.fl_scheduler.select")
+@patch("flip_api.db.seed.fl_scheduler.col")
+@patch("flip_api.db.seed.fl_scheduler.FLScheduler")
 def test_seed_fl_scheduler_no_existing_schedulers(
     mock_fl_scheduler_class, mock_col, mock_select, mock_logger, mock_session, sample_nets, sample_all_schedulers
 ):
@@ -113,10 +113,10 @@ def test_seed_fl_scheduler_no_existing_schedulers(
     assert len(result) == 3
 
 
-@patch("flip.db.seed.fl_scheduler.logger")
-@patch("flip.db.seed.fl_scheduler.select")
-@patch("flip.db.seed.fl_scheduler.col")
-@patch("flip.db.seed.fl_scheduler.FLScheduler")
+@patch("flip_api.db.seed.fl_scheduler.logger")
+@patch("flip_api.db.seed.fl_scheduler.select")
+@patch("flip_api.db.seed.fl_scheduler.col")
+@patch("flip_api.db.seed.fl_scheduler.FLScheduler")
 def test_seed_fl_scheduler_some_existing_schedulers(
     mock_fl_scheduler_class,
     mock_col,
@@ -151,10 +151,10 @@ def test_seed_fl_scheduler_some_existing_schedulers(
     assert result == sample_all_schedulers
 
 
-@patch("flip.db.seed.fl_scheduler.logger")
-@patch("flip.db.seed.fl_scheduler.select")
-@patch("flip.db.seed.fl_scheduler.col")
-@patch("flip.db.seed.fl_scheduler.FLScheduler")
+@patch("flip_api.db.seed.fl_scheduler.logger")
+@patch("flip_api.db.seed.fl_scheduler.select")
+@patch("flip_api.db.seed.fl_scheduler.col")
+@patch("flip_api.db.seed.fl_scheduler.FLScheduler")
 def test_seed_fl_scheduler_all_existing_schedulers(
     mock_fl_scheduler_class,
     mock_col,
@@ -186,10 +186,10 @@ def test_seed_fl_scheduler_all_existing_schedulers(
     assert result == sample_all_schedulers
 
 
-@patch("flip.db.seed.fl_scheduler.logger")
-@patch("flip.db.seed.fl_scheduler.select")
-@patch("flip.db.seed.fl_scheduler.col")
-@patch("flip.db.seed.fl_scheduler.FLScheduler")
+@patch("flip_api.db.seed.fl_scheduler.logger")
+@patch("flip_api.db.seed.fl_scheduler.select")
+@patch("flip_api.db.seed.fl_scheduler.col")
+@patch("flip_api.db.seed.fl_scheduler.FLScheduler")
 def test_seed_fl_scheduler_empty_nets_list(mock_fl_scheduler_class, mock_col, mock_select, mock_logger, mock_session):
     """Test seeding with empty nets list."""
     # Setup mocks
@@ -207,9 +207,9 @@ def test_seed_fl_scheduler_empty_nets_list(mock_fl_scheduler_class, mock_col, mo
     assert result == []
 
 
-@patch("flip.db.seed.fl_scheduler.logger")
-@patch("flip.db.seed.fl_scheduler.select")
-@patch("flip.db.seed.fl_scheduler.col")
+@patch("flip_api.db.seed.fl_scheduler.logger")
+@patch("flip_api.db.seed.fl_scheduler.select")
+@patch("flip_api.db.seed.fl_scheduler.col")
 def test_seed_fl_scheduler_query_construction(mock_col, mock_select, mock_logger, mock_session, sample_nets):
     """Test that database queries are constructed correctly."""
     # Setup mocks
@@ -231,7 +231,7 @@ def test_seed_fl_scheduler_query_construction(mock_col, mock_select, mock_logger
     mock_select.assert_any_call(FLScheduler)
 
 
-@patch("flip.db.seed.fl_scheduler.logger")
+@patch("flip_api.db.seed.fl_scheduler.logger")
 def test_seed_fl_scheduler_logging(mock_logger, mock_session, sample_nets):
     """Test that appropriate logging occurs."""
     # Setup mocks
@@ -243,9 +243,9 @@ def test_seed_fl_scheduler_logging(mock_logger, mock_session, sample_nets):
     ]
 
     with (
-        patch("flip.db.seed.fl_scheduler.select"),
-        patch("flip.db.seed.fl_scheduler.col"),
-        patch("flip.db.seed.fl_scheduler.FLScheduler"),
+        patch("flip_api.db.seed.fl_scheduler.select"),
+        patch("flip_api.db.seed.fl_scheduler.col"),
+        patch("flip_api.db.seed.fl_scheduler.FLScheduler"),
     ):
         # Execute
         seed_fl_scheduler(mock_session, sample_nets)

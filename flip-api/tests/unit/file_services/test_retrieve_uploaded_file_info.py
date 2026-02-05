@@ -18,8 +18,8 @@ import pytest
 from fastapi import HTTPException, status
 
 from flip_api.db.models.main_models import UploadedFiles
-from flip.domain.schemas.file import IdList
-from flip.file_services.retrieve_uploaded_file_info import get_uploaded_files_info, get_uploaded_files_info_post
+from flip_api.domain.schemas.file import IdList
+from flip_api.file_services.retrieve_uploaded_file_info import get_uploaded_files_info, get_uploaded_files_info_post
 
 # filepath: /app/src/flip/file_services/test_retrieve_uploaded_file_info.py
 
@@ -27,7 +27,7 @@ from flip.file_services.retrieve_uploaded_file_info import get_uploaded_files_in
 @pytest.fixture
 def mock_logger():
     """Mock logger for testing."""
-    with patch("flip.file_services.retrieve_uploaded_file_info.logger") as mock_logger:
+    with patch("flip_api.file_services.retrieve_uploaded_file_info.logger") as mock_logger:
         yield mock_logger
 
 

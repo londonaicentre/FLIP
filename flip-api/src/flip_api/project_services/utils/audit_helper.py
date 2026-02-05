@@ -15,8 +15,8 @@ from uuid import UUID
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import ProjectsAudit
-from flip.domain.schemas.actions import ProjectAuditAction
-from flip.utils.logger import logger
+from flip_api.domain.schemas.actions import ProjectAuditAction
+from flip_api.utils.logger import logger
 
 
 def audit_project_action(

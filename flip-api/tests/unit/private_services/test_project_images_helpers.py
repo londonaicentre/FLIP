@@ -14,7 +14,7 @@ import uuid
 from unittest.mock import MagicMock
 
 from flip_api.db.models.main_models import XNATImageStatus, XNATProjectStatus
-from flip.private_services.project_images_helpers import (
+from flip_api.private_services.project_images_helpers import (
     insert_status,
     update_status,
 )

@@ -16,13 +16,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import engine, get_session
-from flip.fl_services.services.fl_scheduler_service import (
+from flip_api.db.database import engine, get_session
+from flip_api.fl_services.services.fl_scheduler_service import (
     check_for_available_net,
     check_for_queued_jobs,
     prepare_and_start_training,
 )
-from flip.utils.logger import logger
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/fl", tags=["fl_services"])
 

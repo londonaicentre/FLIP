@@ -17,8 +17,8 @@ from fastapi import HTTPException
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import SiteBanner, SiteConfig
-from flip.domain.interfaces.site import ISiteBanner, ISiteDetails
-from flip.site_services.services.details_service import get_site_details, update_site_details
+from flip_api.domain.interfaces.site import ISiteBanner, ISiteDetails
+from flip_api.site_services.services.details_service import get_site_details, update_site_details
 
 
 @pytest.fixture

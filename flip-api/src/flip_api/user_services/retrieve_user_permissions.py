@@ -17,11 +17,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, col, select
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.user_models import Permission, RolePermission, UserRole
-from flip.domain.schemas.users import UserPermissionsResponse
-from flip.utils.formatters import to_pascal_case
-from flip.utils.logger import logger
+from flip_api.db.database import get_session
+from flip_api.db.models.user_models import Permission, RolePermission, UserRole
+from flip_api.domain.schemas.users import UserPermissionsResponse
+from flip_api.utils.formatters import to_pascal_case
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 
