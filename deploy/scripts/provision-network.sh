@@ -33,12 +33,15 @@ SERVICES_DIR="${WORKSPACE_DIR}/services"
 
 log "Provisioning network ${NET_NUMBER}..."
 
+# FLARE project YAML file for this network
+PROJECT_YAML="net-${NET_NUMBER}_project.yml"
+
 # Generate network-specific project file from template
 export NET_NUMBER FL_PORT ADMIN_PORT DEBUG
-envsubst < net_project.yml > "net-${NET_NUMBER}_project.yml"
+envsubst < net_project.yml > "${PROJECT_YAML}"
 
 # Run NVFLARE provisioning
-uv run nvflare provision -p "net-${NET_NUMBER}_project.yml"
+uv run nvflare provision -p "${PROJECT_YAML}"
 
 echo "Restructuring provisioned files in workspace..."
 
@@ -50,88 +53,64 @@ if [[ -z "${PROD_DIR}" ]]; then
     exit 1
 fi
 
+rm -rf "${SERVICES_DIR}"
 mkdir -p "${SERVICES_DIR}"
+
+# Function to get the first participant name of a given type from the project YAML
+# This avoids hardcoding participant (server, admin) names in the script
+get_participant_name_by_type() {
+  local project_yaml="$1"
+  local participant_type="$2"
+
+  yq -r \
+    ".participants[] | select(.type == \"${participant_type}\") | .name" \
+    "$project_yaml" | head -n 1
+}
 
 # Function to restructure a participant's files
 restructure_participant() {
     local participant_name="$1"
-    local service_subdir="$2"
+    local participant_name_dest="$2"
+    local is_client="$3"
 
     local src_path="${PROD_DIR}/${participant_name}"
-    local dest_path="${SERVICES_DIR}/${participant_name}"
-
-    if [[ ! -d "${src_path}" ]]; then
-        echo "  Skipping ${participant_name} (not found)"
-        return
-    fi
+    local dest_path="${SERVICES_DIR}/${participant_name_dest}"
 
     echo " - Restructuring ${participant_name}"
 
-    rm -rf "${dest_path}"
-    mkdir -p "${dest_path}/${service_subdir}"
+    mkdir -p "${dest_path}"
 
     # Move standard directories
     for dir in startup local transfer; do
         if [[ -d "${src_path}/${dir}" ]]; then
-            vlog "Moving '${src_path}/${dir}' to '${dest_path}/${service_subdir}/'"
-            mv "${src_path}/${dir}" "${dest_path}/${service_subdir}/"
+            vlog "Moving '${src_path}/${dir}' to '${dest_path}/'"
+            mv "${src_path}/${dir}" "${dest_path}/"
         fi
     done
 
     # Move readme.txt
     if [[ -f "${src_path}/readme.txt" ]]; then
-        vlog "Moving 'readme.txt' to '${dest_path}/${service_subdir}/'"
-        mv "${src_path}/readme.txt" "${dest_path}/${service_subdir}/"
+        vlog "Moving 'readme.txt' to '${dest_path}/'"
+        mv "${src_path}/readme.txt" "${dest_path}/"
     fi
 
     # Fix start.sh to run in foreground (remove & from sub_start.sh call)
-    local start_script="${dest_path}/${service_subdir}/startup/start.sh"
+    local start_script="${dest_path}/startup/start.sh"
     if [[ -f "${start_script}" ]]; then
         vlog "Modifying start.sh script to run 'sub_start.sh' process in foreground (removing &)"
         sed -i 's|\$DIR/sub_start.sh &|\$DIR/sub_start.sh|g' "${start_script}"
     fi
 
     # Create log_config.template.json
-    local local_dir="${dest_path}/${service_subdir}/local"
+    local local_dir="${dest_path}/local"
     if [[ -d "${local_dir}" ]]; then
         create_log_config_template "${local_dir}"
     fi
 
     # Create resources template configs (FL clients only)
-    local local_dir="${dest_path}/${service_subdir}/local"
-    if [[ -d "${local_dir}" && "${service_subdir}" == "fl-client" ]]; then
+    if [[ -d "${local_dir}" && "${is_client}" == "1" ]]; then
         create_resources_template "${local_dir}"
     fi
-}
-
-# Function to restructure the admin participant (slightly different structure)
-restructure_admin() {
-    local src_name="$1"
-    local dest_name="$2"
-
-    local src_path="${PROD_DIR}/${src_name}"
-    local dest_path="${SERVICES_DIR}/${dest_name}"
-
-    if [[ ! -d "${src_path}" ]]; then
-        vlog "Skipping ${src_name} (not found)"
-        return
-    fi
-
-    echo " - Restructuring ${src_name} -> ${dest_name}"
-
-    rm -rf "${dest_path}"
-    mkdir -p "${dest_path}/admin"
-
-    # Move standard directories
-    for dir in startup local transfer; do
-        if [[ -d "${src_path}/${dir}" ]]; then
-            vlog "Moving '${src_path}/${dir}' to '${dest_path}/admin/'"
-            mv "${src_path}/${dir}" "${dest_path}/admin/"
-        fi
-    done
-
-    # NOTE the transfer dir in the new provisioning is not straightforward to configure - for now, we keep "transfer"
-    # as both the download_dir and upload_dir in fed_admin.json
 }
 
 # Create log_config.template.json from log_config.json.default
@@ -176,11 +155,17 @@ create_resources_template() {
 
 
 # Restructure all participants
-# TODO this is hardcoded to 2 clients and 1 server for now -- make this dynamic later
-restructure_participant "Trust_1" "fl-client"
-restructure_participant "Trust_2" "fl-client"
-restructure_participant "fl-server-net-${NET_NUMBER}" "fl-server"
-restructure_admin "admin@nvidia.com" "flip-fl-api-net-${NET_NUMBER}"
+SERVER_NAME="$(get_participant_name_by_type "$PROJECT_YAML" server)"
+echo "Identified server participant name: ${SERVER_NAME}"
+
+ADMIN_NAME="$(get_participant_name_by_type "$PROJECT_YAML" admin)"
+echo "Identified admin participant name: ${ADMIN_NAME}"
+
+# TODO this is hardcoded to 2 clients for now -- make this dynamic later
+restructure_participant "Trust_1" "Trust_1" 1
+restructure_participant "Trust_2" "Trust_2" 1
+restructure_participant "${SERVER_NAME}" "fl-server-net-${NET_NUMBER}" 0
+restructure_participant "${ADMIN_NAME}" "flip-fl-api-net-${NET_NUMBER}" 0
 
 # Clean up prod directory
 echo "Cleaning up prod directory..."

@@ -205,7 +205,7 @@ def configure_meta(job_dir: str, app_name: str, trusts: List[str]):
     # Resources required to perform this job at each site
     # See https://nvflare.readthedocs.io/en/2.4/real_world_fl/job.html#job
     # TODO Currently this is set from the global config, but we should allow per-job overrides in the future.
-    # See https://github.com/londonaicentre/nhsflame/issues/41
+    # See https://github.com/londonaicentre/FLIP/issues/70
     num_gpus = get_settings().JOB_RESOURCE_SPEC_NUM_GPUS
     mem_per_gpu_in_gib = get_settings().JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB
     print(f"Job configured to use {num_gpus=} with {mem_per_gpu_in_gib=}.")
