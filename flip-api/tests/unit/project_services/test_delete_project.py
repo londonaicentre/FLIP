@@ -18,9 +18,9 @@ from fastapi import status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.main import app
-from flip.project_services import delete_project as delete_project_module
+from flip_api.db.database import get_session
+from flip_api.main import app
+from flip_api.project_services import delete_project as delete_project_module
 
 # Mount the router once
 app.include_router(delete_project_module.router)

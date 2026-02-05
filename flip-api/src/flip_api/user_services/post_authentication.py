@@ -16,7 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 
 from flip_api.db.models.user_models import User
-from flip.utils.logger import logger
+from flip_api.utils.logger import logger
 
 
 def sync_user_on_authentication(user_id: UUID, email: str, db: Session) -> User:

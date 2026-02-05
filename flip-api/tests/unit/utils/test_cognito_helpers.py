@@ -20,7 +20,7 @@ from fastapi.exceptions import HTTPException
 from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERROR
 
 from flip_api.domain.schemas.users import CognitoUser
-from flip.utils.cognito_helpers import create_cognito_user, filter_enabled_users, get_cognito_users, get_pool_id
+from flip_api.utils.cognito_helpers import create_cognito_user, filter_enabled_users, get_cognito_users, get_pool_id
 
 user1, user2, user3, user4, user5, user6 = [uuid4() for i in range(6)]
 USER_POOL_ID = "test-user-pool-id"
@@ -41,7 +41,7 @@ class CognitoUserFactory(factory.Factory):
 @pytest.fixture
 def mock_logger():
     """Mock logger for testing."""
-    with patch("flip.utils.cognito_helpers.logger") as mock_logger:
+    with patch("flip_api.utils.cognito_helpers.logger") as mock_logger:
         yield mock_logger
 
 
@@ -70,7 +70,7 @@ class TestFilterEnabledUsers:
 
     def test_empty_user_list(self):
         """Test that an empty user list returns an empty list."""
-        with patch("flip.utils.cognito_helpers.get_cognito_users") as mock_get_users:
+        with patch("flip_api.utils.cognito_helpers.get_cognito_users") as mock_get_users:
             result = filter_enabled_users(USER_POOL_ID, [])
 
             assert result == []
@@ -81,7 +81,7 @@ class TestFilterEnabledUsers:
         """Test when all users exist and are enabled."""
         valid_users = [user1, user3]
 
-        with patch("flip.utils.cognito_helpers.get_cognito_users") as mock_get_users:
+        with patch("flip_api.utils.cognito_helpers.get_cognito_users") as mock_get_users:
             mock_get_users.return_value = [
                 CognitoUserFactory(id=user1, is_disabled=False),
                 CognitoUserFactory(id=user3, is_disabled=False),
@@ -97,7 +97,7 @@ class TestFilterEnabledUsers:
         """Test filtering out disabled users."""
         input_users = [user1, user2, user3]
 
-        with patch("flip.utils.cognito_helpers.get_cognito_users") as mock_get_users:
+        with patch("flip_api.utils.cognito_helpers.get_cognito_users") as mock_get_users:
             mock_get_users.return_value = cognito_users
 
             result = filter_enabled_users(USER_POOL_ID, input_users)
@@ -112,7 +112,7 @@ class TestFilterEnabledUsers:
         """Test filtering out users that don't exist in Cognito."""
         input_users = [user1, user4, user5]
 
-        with patch("flip.utils.cognito_helpers.get_cognito_users") as mock_get_users:
+        with patch("flip_api.utils.cognito_helpers.get_cognito_users") as mock_get_users:
             mock_get_users.return_value = cognito_users
 
             result = filter_enabled_users(USER_POOL_ID, input_users)
@@ -127,7 +127,7 @@ class TestFilterEnabledUsers:
         """Test with mix of valid, disabled, and non-existent users."""
         input_users = [user1, user2, user3, user4, user5]
 
-        with patch("flip.utils.cognito_helpers.get_cognito_users") as mock_get_users:
+        with patch("flip_api.utils.cognito_helpers.get_cognito_users") as mock_get_users:
             mock_get_users.return_value = cognito_users
 
             result = filter_enabled_users(USER_POOL_ID, input_users)
@@ -144,7 +144,7 @@ class TestFilterEnabledUsers:
 
     def test_error_from_get_cognito_users(self):
         """Test handling of errors from get_cognito_users."""
-        with patch("flip.utils.cognito_helpers.get_cognito_users") as mock_get_users:
+        with patch("flip_api.utils.cognito_helpers.get_cognito_users") as mock_get_users:
             mock_get_users.side_effect = RuntimeError("Cognito service error")
 
             with pytest.raises(RuntimeError) as exc_info:
@@ -159,13 +159,13 @@ class TestCreateCognitoUser:
     @pytest.fixture
     def mock_boto3_client(self):
         """Mock boto3 client for Cognito operations."""
-        with patch("flip.utils.cognito_helpers.boto3.client") as mock_client:
+        with patch("flip_api.utils.cognito_helpers.boto3.client") as mock_client:
             yield mock_client
 
     @pytest.fixture
     def mock_settings(self):
         """Mock settings for AWS region."""
-        with patch("flip.utils.cognito_helpers.get_settings") as mock_get_settings:
+        with patch("flip_api.utils.cognito_helpers.get_settings") as mock_get_settings:
             mock_get_settings.return_value.AWS_REGION = "eu-west-2"
             yield mock_get_settings
 
@@ -446,7 +446,7 @@ class TestGetPoolId:
     @pytest.fixture
     def mock_get_settings(self):
         """Mock settings for testing."""
-        with patch("flip.utils.cognito_helpers.get_settings") as mock_settings:
+        with patch("flip_api.utils.cognito_helpers.get_settings") as mock_settings:
             yield mock_settings
 
     @pytest.fixture
@@ -684,13 +684,13 @@ class TestGetCognitoUsers:
     @pytest.fixture
     def mock_boto3_client(self):
         """Mock boto3 client for Cognito operations."""
-        with patch("flip.utils.cognito_helpers.boto3.client") as mock_client:
+        with patch("flip_api.utils.cognito_helpers.boto3.client") as mock_client:
             yield mock_client
 
     @pytest.fixture
     def mock_get_settings(self):
         """Mock settings for AWS region and user pool ID."""
-        with patch("flip.utils.cognito_helpers.get_settings") as mock_get_settings:
+        with patch("flip_api.utils.cognito_helpers.get_settings") as mock_get_settings:
             mock_get_settings.return_value.AWS_REGION = "test-west-1"
             mock_get_settings.return_value.AWS_COGNITO_USER_POOL_ID = "test-pool-id"
             yield mock_get_settings

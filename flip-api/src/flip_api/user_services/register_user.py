@@ -16,12 +16,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
-from flip.auth.dependencies import verify_token
-from flip.db.database import get_session
-from flip.db.models.user_models import PermissionRef, User
-from flip.domain.interfaces.user import IRegisterUser, IUserResponse
-from flip.utils.cognito_helpers import create_cognito_user, get_all_roles, get_user_pool_id, validate_roles
-from flip.utils.logger import logger
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
+from flip_api.db.models.user_models import PermissionRef, User
+from flip_api.domain.interfaces.user import IRegisterUser, IUserResponse
+from flip_api.utils.cognito_helpers import create_cognito_user, get_all_roles, get_user_pool_id, validate_roles
+from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/users", tags=["user_services"])
 

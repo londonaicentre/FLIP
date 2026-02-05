@@ -15,7 +15,7 @@ from uuid import uuid4
 import pytest
 
 from flip_api.config import get_settings
-from flip.db.models.main_models import Model, Projects
+from flip_api.db.models.main_models import Model, Projects
 from tests.integration.utils import admin_authentication
 
 

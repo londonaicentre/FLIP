@@ -17,8 +17,8 @@ from uuid import UUID
 from sqlmodel import Session, col, select
 
 from flip_api.db.models.main_models import Trust
-from flip.domain.interfaces.trust import ITrust
-from flip.utils.logger import logger
+from flip_api.domain.interfaces.trust import ITrust
+from flip_api.utils.logger import logger
 
 
 def get_trusts(session: Session, ids: Optional[List[UUID]] = None) -> List[ITrust]:

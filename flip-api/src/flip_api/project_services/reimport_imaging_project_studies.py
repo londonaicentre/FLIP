@@ -14,10 +14,10 @@ from fastapi import HTTPException, status
 from sqlmodel import Session
 
 from flip_api.config import get_settings
-from flip.db.database import engine
-from flip.project_services.services.image_service import reimport_failed_studies
-from flip.project_services.services.project_services import get_reimport_queries_service
-from flip.utils.logger import logger
+from flip_api.db.database import engine
+from flip_api.project_services.services.image_service import reimport_failed_studies
+from flip_api.project_services.services.project_services import get_reimport_queries_service
+from flip_api.utils.logger import logger
 
 
 def reimport_imaging_project_studies(db: Session) -> None:

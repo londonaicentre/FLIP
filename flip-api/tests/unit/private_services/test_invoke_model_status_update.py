@@ -19,16 +19,16 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
 from flip_api.domain.schemas.status import ModelStatus
-from flip.private_services.invoke_model_status_update import (
+from flip_api.private_services.invoke_model_status_update import (
     check_authorization_token,
     get_session,
 )
-from flip.private_services.invoke_model_status_update import router as invoke_model_status_update_router
+from flip_api.private_services.invoke_model_status_update import router as invoke_model_status_update_router
 
 test_app = FastAPI()
 test_app.include_router(invoke_model_status_update_router)
 
-MOCKED_SERVICE_FUNCTION_PATH = "flip.private_services.invoke_model_status_update.update_model_status_endpoint"
+MOCKED_SERVICE_FUNCTION_PATH = "flip_api.private_services.invoke_model_status_update.update_model_status_endpoint"
 
 
 @pytest.fixture
@@ -75,7 +75,7 @@ class TestInvokeModelStatusUpdateEndpoint:
         # Check logs if specific logging is implemented in the endpoint for success
 
     @patch(MOCKED_SERVICE_FUNCTION_PATH)
-    @patch("flip.private_services.invoke_model_status_update.logger.error")
+    @patch("flip_api.private_services.invoke_model_status_update.logger.error")
     def test_invoke_update_service_raises_http_exception(
         self,
         mock_logger_error: MagicMock,
@@ -97,7 +97,7 @@ class TestInvokeModelStatusUpdateEndpoint:
         assert response.json() == {"detail": error_detail}
 
     @patch(MOCKED_SERVICE_FUNCTION_PATH)
-    @patch("flip.private_services.invoke_model_status_update.logger.error")
+    @patch("flip_api.private_services.invoke_model_status_update.logger.error")
     def test_invoke_update_service_raises_general_exception(
         self,
         mock_logger_error: MagicMock,

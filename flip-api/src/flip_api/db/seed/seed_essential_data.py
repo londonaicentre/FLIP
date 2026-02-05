@@ -13,16 +13,16 @@
 from sqlmodel import Session, SQLModel
 
 from flip_api.db.database import engine
-from flip.db.seed.banner import seed_banner
-from flip.db.seed.fl_nets import seed_fl_nets
-from flip.db.seed.fl_scheduler import seed_fl_scheduler
-from flip.db.seed.main_users import seed_main_users
-from flip.db.seed.permissions import seed_permissions
-from flip.db.seed.role_permissions import seed_role_permissions
-from flip.db.seed.roles import seed_roles
-from flip.db.seed.site_config import seed_config
-from flip.db.seed.trusts import seed_trusts
-from flip.utils.logger import logger
+from flip_api.db.seed.banner import seed_banner
+from flip_api.db.seed.fl_nets import seed_fl_nets
+from flip_api.db.seed.fl_scheduler import seed_fl_scheduler
+from flip_api.db.seed.main_users import seed_main_users
+from flip_api.db.seed.permissions import seed_permissions
+from flip_api.db.seed.role_permissions import seed_role_permissions
+from flip_api.db.seed.roles import seed_roles
+from flip_api.db.seed.site_config import seed_config
+from flip_api.db.seed.trusts import seed_trusts
+from flip_api.utils.logger import logger
 
 
 def main() -> None:

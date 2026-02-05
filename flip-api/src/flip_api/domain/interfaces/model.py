@@ -18,8 +18,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, validator
 
 from flip_api.db.models.main_models import UploadedFiles
-from flip.domain.schemas.actions import ModelAuditAction
-from flip.domain.schemas.status import ModelStatus, TrustIntersectStatus
+from flip_api.domain.schemas.actions import ModelAuditAction
+from flip_api.domain.schemas.status import ModelStatus, TrustIntersectStatus
 
 
 class ModelStatusEdit(str, Enum):
