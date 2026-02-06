@@ -33,6 +33,7 @@ XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 
 
 def base64_url_decode(data: str) -> str:
+    """Decode a Base64 URL-encoded string, adding padding if necessary."""
     # Add padding if necessary
     padding = "=" * (-len(data) % 4)
     return base64.urlsafe_b64decode(data + padding).decode("utf-8")
@@ -50,6 +51,9 @@ async def get_import_status_count(project_id: str, encoded_query: str, headers: 
 
     Returns:
         ProjectRetrieval: An object containing the status of study imports.
+
+    Raises:
+        HTTPException: If the project does not exist or if there was an error while retrieving the project.
     """
     # Check if project exists
     try:
@@ -92,9 +96,13 @@ async def reimport_imaging_project_studies(
         project_id (str): The imaging project ID to retrieve the data about.
         encoded_query (str): Project cohort query base64 url encoded.
         headers (XNATAuthHeaders): The headers containing XNAT authentication details.
+        background_tasks (BackgroundTasks): FastAPI BackgroundTasks instance for scheduling the reimport task.
 
     Returns:
         JSONResponse: A response indicating the result of the reimport operation.
+
+    Raises:
+        HTTPException: If the reimport feature is not enabled or if the query is empty
     """
     logger.debug(f"Received request to retry retrieve images for imaging project {project_id}")
 

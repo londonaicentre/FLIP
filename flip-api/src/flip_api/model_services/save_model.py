@@ -31,13 +31,29 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 
 
 # [#114] ✅
-@router.post("", status_code=status.HTTP_200_OK)
+@router.post("", status_code=status.HTTP_200_OK, response_model=IId)
 def save_model(
     request: Request,
     payload: ISaveModel,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> IId:
+    """
+    Create a model for a specific project.
+
+    Args:
+        request (Request): The incoming HTTP request.
+        payload (ISaveModel): The model data to be saved, including name, description, and project ID.
+        db (Session): Database session.
+        user_id (UUID): User ID from authentication.
+
+    Returns:
+        IId: An object containing the ID of the created model.
+
+    Raises:
+        HTTPException: If the user does not have access to the project, if the project does not exist, if the project
+                       is not approved, if there are no approved trusts for the project, or there is a database error.
+    """
     logger.info(f"User {user_id} requested model creation for project {payload.project_id}")
 
     # Access control

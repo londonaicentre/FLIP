@@ -205,6 +205,7 @@ class ImportStudy(BaseModel):
         }
 
     def __init__(self, **data):
+        """Initializes the ImportStudy instance and sets the relabel_map."""
         super().__init__(**data)
         self.set_relabel_map()
 
@@ -222,6 +223,7 @@ class ImportStudyRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def deduplicate_and_parse_studies(cls, data):
+        """Deduplicates and parses studies before validation."""
         # Make sure studies exist in raw input
         studies = data.get("studies", [])
         if studies:
