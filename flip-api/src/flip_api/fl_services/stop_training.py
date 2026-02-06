@@ -34,7 +34,22 @@ def stop_training(
     request: Request,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> None:
+    """
+    Stop the training of a specific model.
+
+    Args:
+        model_id (UUID): The ID of the model to stop training.
+        request (Request): The incoming HTTP request.
+        db (Session): Database session.
+        user_id (UUID): User ID from authentication.
+
+    Returns:
+        None
+
+    Raises:
+        HTTPException: If the user does not have access to the model or if there is an error while stopping training.
+    """
     if not can_access_model(user_id, model_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

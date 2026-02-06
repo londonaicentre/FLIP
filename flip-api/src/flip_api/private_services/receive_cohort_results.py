@@ -33,7 +33,20 @@ from flip_api.utils.logger import logger
 router = APIRouter(tags=["private_services"])
 
 
-def _save_individual_result(db: Session, cohort_results: OmopCohortResults):
+def _save_individual_result(db: Session, cohort_results: OmopCohortResults) -> None:
+    """
+    Saves the individual cohort results from a single trust for a specific query.
+
+    Args:
+        db (Session): Database session.
+        cohort_results (OmopCohortResults): The cohort results to save.
+
+    Returns:
+        None
+
+    Raises:
+        HTTPException: If there is an error while saving the cohort results to the database.
+    """
     logger.debug(
         f"Attempting to save individual cohort results for query_id: {cohort_results.query_id}"
         f", trust_id: {cohort_results.trust_id}"
@@ -84,7 +97,20 @@ def _save_individual_result(db: Session, cohort_results: OmopCohortResults):
         ) from e
 
 
-def _aggregate_and_save_results(db: Session, query_id: UUID):
+def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
+    """
+    Aggregates cohort results for a specific query_id across all trusts and saves the aggregated statistics.
+
+    Args:
+        db (Session): Database session.
+        query_id (UUID): The ID of the query to aggregate results for.
+
+    Returns:
+        None
+
+    Raises:
+        HTTPException: If there is an error during aggregation or saving the aggregated stats to the database.
+    """
     logger.debug(f"Starting aggregation for query_id: {query_id}")
 
     # 1. Fetch all relevant data for the query_id

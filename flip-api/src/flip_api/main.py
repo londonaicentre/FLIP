@@ -192,6 +192,7 @@ app.include_router(update_user.router)
 # Root endpoint
 @app.get("/")
 def root():
+    """Root endpoint to verify the API is running."""
     return {"message": "Welcome to flip"}
 
 

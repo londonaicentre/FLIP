@@ -256,6 +256,16 @@ def fetch_server_status(request_id: str, endpoint: str) -> IServerStatus | None:
 
 
 def fetch_client_status(request_id: str, endpoint: str) -> List[IClientStatus]:
+    """
+    Fetch the status of the clients from the NVFlare wrapper.
+
+    Args:
+        request_id (str): The request ID for logging purposes.
+        endpoint (str): The endpoint of the server to fetch the status from.
+
+    Returns:
+        List[IClientStatus]: A list of client statuses.
+    """
     payload = INVFlareTargetPathParameters(target=NVFlareTargets.CLIENT)
     client_status = get_status(payload, request_id, endpoint)
     logger.debug({"client status response": client_status})
@@ -279,7 +289,7 @@ def fetch_client_status(request_id: str, endpoint: str) -> List[IClientStatus]:
     return clients
 
 
-def validate_client_availability(clients: List[str], endpoint: str, request_id: str):
+def validate_client_availability(clients: List[str], endpoint: str, request_id: str) -> None:
     """
     Validate the availability of clients by checking their status.
     It sends a GET request to the Flare Loader service to check the status of the clients.
@@ -289,6 +299,9 @@ def validate_client_availability(clients: List[str], endpoint: str, request_id: 
         clients (List[str]): A list of client names to check the availability of.
         endpoint (str): The endpoint of the Flare Loader service.
         request_id (str): The request ID of the request that triggered the function.
+
+    Returns:
+        None
 
     Raises:
         ValueError: If any client is unavailable.
@@ -300,7 +313,8 @@ def validate_client_availability(clients: List[str], endpoint: str, request_id: 
         raise ValueError("No clients are available")
     logger.info(f"Client status: {client_statuses}")
 
-    def is_client_available(client_name, client_statuses):
+    def is_client_available(client_name: str, client_statuses: List[ClientInfoModel]) -> bool:
+        """Check if a specific client is available based on its status."""
         for status in client_statuses:
             logger.info(f"Checking client status: {status}")
             logger.info(f"Client name: {client_name}")

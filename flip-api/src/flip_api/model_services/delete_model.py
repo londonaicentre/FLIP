@@ -33,7 +33,23 @@ def delete_model_endpoint(
     model_id: UUID = Path(..., title="Model ID"),
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> None:
+    """
+    Delete a specific model.
+
+    Args:
+        request (Request): The incoming HTTP request.
+        model_id (UUID): The ID of the model to delete.
+        db (Session): Database session.
+        user_id (UUID): User ID from authentication.
+
+    Returns:
+        None
+
+    Raises:
+        HTTPException: If the user does not have access to the model, if the model does not exist, if the model is
+                       already deleted, or if there is a database error.
+    """
     logger.info(f"User {user_id} requested deletion of model {model_id}")
 
     # Check if user has access to the model
