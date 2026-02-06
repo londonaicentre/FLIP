@@ -47,14 +47,14 @@ def edit_project_endpoint(
     project's name and description.
 
     Args:
+        request (Request): FastAPI request object.
         project_id (UUID): The ID of the project to edit.
-        project_name (str): The new name for the project.
-        project_description (str): The new description for the project.
+        project_details (IEditProject): Details of the project to edit.
         user_id (UUID): The ID of the user making the request.
         db (Session): The database session.
 
     Returns:
-        ProjectDetails: The updated project details.
+        Projects: The updated project details.
 
     Raises:
         HTTPException: If the user does not have permission to edit projects, if the project does not exist, or if

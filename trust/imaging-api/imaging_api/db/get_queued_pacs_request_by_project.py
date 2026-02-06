@@ -27,6 +27,7 @@ async def get_queued_pacs_request_by_project(project_id: str, session: AsyncSess
     Args:
         project_id (str): The ID of the project to query.
         session (AsyncSession): The SQLAlchemy async session.
+
     Returns:
         List[QueuedPacsRequest]: A list of queued PACS requests for the project.
     """

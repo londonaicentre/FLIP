@@ -482,10 +482,12 @@ def bundle_application(model_id: str, job_type: JobTypes = JobTypes.standard) ->
         model_id (str): model ID, which will give the name to the app folder.
         job_type (JobTypes, optional): type of job (e.g. 'standard', 'generative', etc.). This will cause
         a specific base application to be selected. Defaults to 'standard'.
+
     Raises:
         EnvironmentError: If the S3 bucket environment variables are not set.
         FileNotFoundError: If the base or model files are missing.
         FileNotFoundError: If required files for the job type are missing.
+
     Returns:
         tuple[int, JobTypes]: A tuple containing the length of unique files and the job type used.
     """

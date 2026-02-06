@@ -104,9 +104,10 @@ def submit_cohort_query(
     Submit a cohort query to all available trusts.
 
     Args:
-        request: HTTP request object
-        cohort_query: SubmitCohortQuery object containing the query details
-        db: Database session
+        request (Request): HTTP request object.
+        cohort_query (SubmitCohortQuery): Query details payload.
+        db (Session): Database session.
+        user_id (UUID): ID of the authenticated user.
 
     Returns:
         SubmitCohortQueryOutput: The result of the submission to each trust
