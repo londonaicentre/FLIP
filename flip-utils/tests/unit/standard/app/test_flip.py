@@ -224,7 +224,7 @@ class TestFLIPDevSendMetricsValue:
         fl_ctx.get_engine.return_value = None
 
         # Should not raise, just logs error
-        flip_dev.send_metrics_value("loss", 0.5, 1, fl_ctx)
+        flip_dev.send_metrics_value("loss", 0.5, fl_ctx, round=1)
 
     def test_send_metrics_value_fires_event(self, flip_dev):
         """send_metrics_value should fire event when engine is available."""
@@ -234,7 +234,7 @@ class TestFLIPDevSendMetricsValue:
         mock_engine = Mock()
         fl_ctx.get_engine.return_value = mock_engine
 
-        flip_dev.send_metrics_value("loss", 0.5, 1, fl_ctx)
+        flip_dev.send_metrics_value("loss", 0.5, fl_ctx, round=1)
 
         mock_engine.fire_event.assert_called_once()
 
