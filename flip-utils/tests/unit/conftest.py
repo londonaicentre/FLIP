@@ -19,9 +19,14 @@ def pytest_sessionstart(session):
     """Make all modules under src importable as top-level for tests."""
     project_root = Path(__file__).resolve().parents[2]  # adjust if tests/ is not at repo root
 
-    # Add custom (so 'flip' and 'utils' work as top-level modules)
+    # Add flip package (root of repo) - insert at beginning so it takes precedence
+    sys.path.insert(0, str(project_root))
+    print(f"[pytest setup] Added to sys.path:\n  {project_root}")
+
+    # Add custom path for legacy modules that haven't been migrated yet
+    # (e.g., cross_site_model_eval, init_training, etc.)
     custom_path = project_root / "src" / "standard" / "app" / "custom"
-    sys.path.insert(0, str(custom_path))
+    sys.path.append(str(custom_path))
     print(f"[pytest setup] Added to sys.path:\n  {custom_path}")
 
     # Set environment variables for local development
