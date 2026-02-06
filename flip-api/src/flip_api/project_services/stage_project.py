@@ -34,6 +34,7 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
     "/{project_id}/stage",
     summary="Stage a project for approval at specified trusts.",
     status_code=status.HTTP_204_NO_CONTENT,  # Success returns no content
+    response_model=None,
     responses={
         status.HTTP_400_BAD_REQUEST: {
             "description": "Invalid request (e.g., project not unstaged, no query, empty trusts)."
@@ -52,6 +53,20 @@ def stage_project_endpoint(
     """
     Stages a project for approval at the specified trusts.
     The project must be in 'UNSTAGED' status and have a valid cohort query.
+
+    Args:
+        project_id (UUID): The ID of the project to stage.
+        payload (StageProjectRequest): The request payload containing the list of trust IDs to stage the project for.
+        session (Session): The database session.
+        current_user_id (UUID): The ID of the user making the request.
+
+    Returns:
+        None
+
+    Raises:
+        HTTPException: If the user does not have permission to stage the project, if the project does not exist, if the
+                       project is not in 'UNSTAGED' status, if the project does not have a valid cohort query, or if
+                       there is an unexpected error during staging.
     """
     logger.info(f"User {current_user_id} attempting to stage project {project_id} for trusts: {payload.trusts}")
 
@@ -103,7 +118,7 @@ def stage_project_endpoint(
             session=session,
         )
         logger.info(f"Project {project_id} successfully staged by user {current_user_id}.")
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     except ValueError as ve:  # Catch specific business logic errors from services
         logger.error(f"ValueError during staging project {project_id}: {ve}", exc_info=True)
         session.rollback()

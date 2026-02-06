@@ -28,13 +28,13 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 
 
 # [#114] ✅
-@router.delete("/model/{model_id}/{file_name}")
+@router.delete("/model/{model_id}/{file_name}", response_model=dict[str, str])
 def delete_model_file(
     model_id: UUID,
     file_name: str,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> dict[str, str]:
     """
     Delete a model file from S3 and the database.
 
@@ -45,7 +45,11 @@ def delete_model_file(
         user_id: ID of the user (obtained from auth token)
 
     Returns:
-        Success message if the file was deleted successfully
+        dict[str, str]: Success message if the file was deleted successfully
+
+    Raises:
+        HTTPException: If the user does not have access to the model, if the model file is not found, or if there is an
+            error during deletion.
     """
     try:
         # Validate input

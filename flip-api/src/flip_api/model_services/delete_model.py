@@ -27,7 +27,7 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 
 
 # [#114] ✅
-@router.delete("/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{model_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def delete_model_endpoint(
     request: Request,
     model_id: UUID = Path(..., title="Model ID"),

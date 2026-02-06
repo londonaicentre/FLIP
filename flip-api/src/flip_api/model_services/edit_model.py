@@ -27,7 +27,7 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 
 
 # [#114] ✅
-@router.put("/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put("/{model_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def edit_model_endpoint(
     model_id: UUID,
     model_details: IModelDetails,

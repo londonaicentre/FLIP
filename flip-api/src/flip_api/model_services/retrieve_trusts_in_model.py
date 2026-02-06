@@ -30,7 +30,7 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 
 
 # [#114] ✅
-@router.get("/{model_id}/trusts", status_code=status.HTTP_200_OK)
+@router.get("/{model_id}/trusts", status_code=status.HTTP_200_OK, response_model=None)
 def retrieve_trusts_in_model_endpoint(
     model_id: UUID = Path(..., title="Model ID"),
     db: Session = Depends(get_session),

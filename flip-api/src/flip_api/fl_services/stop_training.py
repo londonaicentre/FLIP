@@ -26,9 +26,9 @@ router = APIRouter(prefix="/fl", tags=["fl_services"])
 
 
 # [#114] ✅
-@router.post("/stop/{model_id}")
-@router.post("/stop/{model_id}/{target}")
-@router.post("/stop/{model_id}/{target}/{clients}")
+@router.post("/stop/{model_id}", response_model=None)
+@router.post("/stop/{model_id}/{target}", response_model=None)
+@router.post("/stop/{model_id}/{target}/{clients}", response_model=None)
 def stop_training(
     model_id: UUID,
     request: Request,

@@ -28,14 +28,14 @@ router = APIRouter(prefix="/fl", tags=["fl_services"])
 
 
 # [#114] ✅
-@router.post("/initiate/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/initiate/{model_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def initiate_training(
     model_id: UUID,
     payload: IInitiateTrainingInputPayload,
     request: Request,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> None:
     """
     Initiate training for a model by adding it to the queue.
 
@@ -50,7 +50,7 @@ def initiate_training(
         user_id (UUID): User ID from authentication.
 
     Returns:
-        dict: An empty dictionary indicating successful initiation of training.
+        None
 
     Raises:
         HTTPException: If the user does not have access to the model, if the model does not exist, or if there is an
