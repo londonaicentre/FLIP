@@ -56,7 +56,6 @@ async def check_trusts_health(
             logger.warning("No trusts found in the database")
             raise HTTPException(status_code=404, detail="No trusts found")
 
-        response = []
         logger.debug("Sending a request to each of the trusts...")
 
         # Make concurrent requests to all trusts
@@ -70,7 +69,7 @@ async def check_trusts_health(
             trust_health_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # Filter out any exception results
-            response = [res.model_dump() for res in trust_health_results if isinstance(res, ITrustHealth)]
+            response: list[ITrustHealth] = [res for res in trust_health_results if isinstance(res, ITrustHealth)]
 
         logger.info(f"Successfully retrieved health status for {len(response)} trusts")
         logger.debug(f"Trusts health status: {response}")
@@ -103,13 +102,13 @@ async def check_trust_health(client: httpx.AsyncClient, trust: Trust, headers: d
 
         # If the request was successful (status code 200)
         if response.status_code == 200:
-            return ITrustHealth(trust_id=str(trust.id), trust_name=trust.name, online=True)
+            return ITrustHealth(trust_id=trust.id, trust_name=trust.name, online=True)  # type: ignore[call-arg]
         else:
             # If the response was not 200, treat it as unhealthy
-            return ITrustHealth(trust_id=str(trust.id), trust_name=trust.name, online=False)
+            return ITrustHealth(trust_id=trust.id, trust_name=trust.name, online=False)  # type: ignore[call-arg]
 
     except Exception as e:
         logger.error(f"{trust.name} failed to report back. Error message: {str(e)}")
 
         # If an exception is raised during the request, mark the trust as offline
-        return ITrustHealth(trust_id=str(trust.id), trust_name=trust.name, online=False)
+        return ITrustHealth(trust_id=trust.id, trust_name=trust.name, online=False)  # type: ignore[call-arg]
