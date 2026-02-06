@@ -70,8 +70,8 @@ services:
       - "${FL_API_PORT}:8000"
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
-      - /opt/flip/services/flip-fl-api-net-1/admin/local:/app/admin/local
-      - /opt/flip/services/flip-fl-api-net-1/admin/startup:/app/admin/startup
+      - /opt/flip/services/flip-fl-api-net-1/local:/app/admin/local
+      - /opt/flip/services/flip-fl-api-net-1/startup:/app/admin/startup
     depends_on:
       - fl-server-net-1
     restart: unless-stopped
@@ -84,8 +84,8 @@ services:
   #     - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
   #   volumes:
   #     # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
-  #     - /opt/flip/services/flip-fl-api-net-2/admin/local:/app/admin/local
-  #     - /opt/flip/services/flip-fl-api-net-2/admin/startup:/app/admin/startup
+  #     - /opt/flip/services/flip-fl-api-net-2/local:/app/admin/local
+  #     - /opt/flip/services/flip-fl-api-net-2/startup:/app/admin/startup
   #   depends_on:
   #     - fl-server-net-2
   #   restart: unless-stopped
@@ -96,9 +96,9 @@ services:
     image: ghcr.io/londonaicentre/flare-fl-server:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)
-      - /opt/flip/services/fl-server-net-1/fl-server/local:/app/local
-      - /opt/flip/services/fl-server-net-1/fl-server/startup:/app/startup
-      - /opt/flip/services/fl-server-net-1/fl-server/transfer:/app/transfer
+      - /opt/flip/services/fl-server-net-1/local:/app/local
+      - /opt/flip/services/fl-server-net-1/startup:/app/startup
+      - /opt/flip/services/fl-server-net-1/transfer:/app/transfer
     ports:
       - "8002:8002"
       - "8003:8003"
@@ -123,9 +123,9 @@ services:
   #   image: ghcr.io/londonaicentre/flare-fl-server:${DOCKER_FL_TAG}
   #   volumes:
   #     # Provisioned NVFLARE secrets (certificates, fed_server.json)
-  #     - /opt/flip/services/fl-server-net-2/fl-server/local:/app/local
-  #     - /opt/flip/services/fl-server-net-2/fl-server/startup:/app/startup
-  #     - /opt/flip/services/fl-server-net-2/fl-server/transfer:/app/transfer
+  #     - /opt/flip/services/fl-server-net-2/local:/app/local
+  #     - /opt/flip/services/fl-server-net-2/startup:/app/startup
+  #     - /opt/flip/services/fl-server-net-2/transfer:/app/transfer
   #   environment:
   #     - NET_ID=net-2
   #     - LOCAL_DEV=false
