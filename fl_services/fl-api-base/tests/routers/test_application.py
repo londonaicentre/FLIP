@@ -50,7 +50,6 @@ def make_upload_payload():
         "ignore_result_error": False,
         "aggregator": "InTimeAccumulateWeightedAggregator",
         "aggregation_weights": {"trustA": 0.6, "trustB": 0.4},
-        "job_type": "standard",
     }
 
 
