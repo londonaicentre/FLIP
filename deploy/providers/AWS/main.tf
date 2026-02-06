@@ -414,10 +414,6 @@ output "CognitoAppClientId" {
 
 resource "aws_ses_email_identity" "flip_sender" {
   email = var.SES_VERIFIED_EMAIL
-
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 resource "aws_ses_template" "flip_access_request" {
