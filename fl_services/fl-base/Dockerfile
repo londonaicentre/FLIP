@@ -29,7 +29,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 
 # Sync the project into a new environment, using the frozen lockfile
-COPY pyproject.toml uv.lock ./
+# Copy necessary files for building the flip package
+COPY pyproject.toml uv.lock README.md ./
+COPY flip/ ./flip/
 
 # Sync dependencies using uv
 # If LOCAL_DEV is set to true, install dev dependencies as well, else --no-dev
