@@ -26,7 +26,6 @@ class UploadAppRequest(BaseModel):
     ignore_result_error: bool = False
     aggregator: str = "InTimeAccumulateWeightedAggregator"
     aggregation_weights: dict = {}
-    job_type: str = "standard"
 
 
 class ClientInfoModel(BaseModel):
