@@ -36,4 +36,5 @@ COPY flip/ ./flip/
 # Sync dependencies using uv
 # If LOCAL_DEV is set to true, install dev dependencies as well, else --no-dev
 # --frozen ensures exact versions from uv.lock are used
-RUN uv sync --frozen --no-cache $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi)
+# Install with full optional dependencies for ML frameworks
+RUN uv sync --frozen --no-cache --extra full $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi)
