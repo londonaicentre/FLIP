@@ -97,11 +97,19 @@ import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prev
 	@BUCKET_NAME=$(TF_VAR_FLIP_BUCKET_NAME); \
 	if [ -n "$$BUCKET_NAME" ]; then \
 		if aws s3api head-bucket --bucket "$$BUCKET_NAME" --profile $(AWS_PROFILE) 2>/dev/null; then \
-			terraform import aws_s3_bucket.flip_bucket "$$BUCKET_NAME" 2>/dev/null || echo "   ✓ FLIP S3 bucket"; \
+			echo "   Found bucket: $$BUCKET_NAME"; \
+			if terraform state show aws_s3_bucket.flip_bucket >/dev/null 2>&1; then \
+				echo "   ✓ FLIP S3 bucket (already in state)"; \
+			else \
+				echo "   Importing bucket into state..."; \
+				terraform import aws_s3_bucket.flip_bucket "$$BUCKET_NAME" 2>&1 | grep -v "Resource already managed" || echo "   ✓ FLIP S3 bucket imported"; \
+			fi; \
 			terraform import aws_s3_bucket_cors_configuration.flip_bucket_cors "$$BUCKET_NAME" 2>/dev/null || echo "   ✓ FLIP S3 CORS"; \
 			terraform import aws_s3_object.app_destination_bucket "$$BUCKET_NAME/app_destination_bucket/" 2>/dev/null || echo "   ✓ app_destination_bucket folder"; \
 			terraform import aws_s3_object.model_files "$$BUCKET_NAME/model_files/" 2>/dev/null || echo "   ✓ model_files folder"; \
 			terraform import aws_s3_object.uploaded_federated_data "$$BUCKET_NAME/uploaded_federated_data/" 2>/dev/null || echo "   ✓ uploaded_federated_data folder"; \
+		else \
+			echo "   ⚠️  Bucket $$BUCKET_NAME does not exist in AWS"; \
 		fi; \
 	fi
 	@echo ""
@@ -109,9 +117,19 @@ import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prev
 	@AICENTRE_BUCKET_NAME=$(TF_VAR_AICENTRE_BUCKET_NAME); \
 	if [ -n "$$AICENTRE_BUCKET_NAME" ]; then \
 		if aws s3api head-bucket --bucket "$$AICENTRE_BUCKET_NAME" --profile $(AWS_PROFILE) 2>/dev/null; then \
-			terraform import aws_s3_bucket.aicentre_bucket "$$AICENTRE_BUCKET_NAME" 2>/dev/null || echo "   ✓ AI Centre S3 bucket"; \
+			echo "   Found bucket: $$AICENTRE_BUCKET_NAME"; \
+			if terraform state show aws_s3_bucket.aicentre_bucket >/dev/null 2>&1; then \
+				echo "   ✓ AI Centre S3 bucket (already in state)"; \
+			else \
+				echo "   Importing bucket into state..."; \
+				terraform import aws_s3_bucket.aicentre_bucket "$$AICENTRE_BUCKET_NAME" 2>&1 | grep -v "Resource already managed" || echo "   ✓ AI Centre S3 bucket imported"; \
+			fi; \
 			terraform import aws_s3_bucket_cors_configuration.aicentre_bucket_cors "$$AICENTRE_BUCKET_NAME" 2>/dev/null || echo "   ✓ AI Centre S3 CORS"; \
+		else \
+			echo "   ⚠️  Bucket $$AICENTRE_BUCKET_NAME does not exist in AWS - will be created"; \
 		fi; \
+	else \
+		echo "   ⚠️  AICENTRE_BUCKET_NAME not set in environment"; \
 	fi
 	@echo ""
 	@echo "3️⃣  Secrets Manager..."
@@ -147,8 +165,17 @@ import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prev
 	fi
 	@echo ""
 	@echo "5️⃣  SES Email Identity..."
-	@if aws ses list-identities --profile $(AWS_PROFILE) --query 'Identities' --output text | grep -q "$(TF_VAR_SES_VERIFIED_EMAIL)"; then \
-		terraform import aws_ses_email_identity.flip_sender "$(TF_VAR_SES_VERIFIED_EMAIL)" 2>/dev/null || echo "   ✓ SES Email Identity"; \
+	@EXISTING_SES_EMAIL=$$(aws ses list-identities --profile $(AWS_PROFILE) --query 'Identities[0]' --output text 2>/dev/null); \
+	if [ -n "$$EXISTING_SES_EMAIL" ] && [ "$$EXISTING_SES_EMAIL" != "None" ]; then \
+		if [ "$$EXISTING_SES_EMAIL" = "$(TF_VAR_SES_VERIFIED_EMAIL)" ]; then \
+			echo "   ✓ Existing SES identity matches configuration: $$EXISTING_SES_EMAIL"; \
+			terraform import aws_ses_email_identity.flip_sender "$$EXISTING_SES_EMAIL" 2>/dev/null || echo "   ✓ SES Email Identity (already imported)"; \
+		else \
+			echo "   ⚠️  Existing SES identity ($$EXISTING_SES_EMAIL) does NOT match configuration ($(TF_VAR_SES_VERIFIED_EMAIL))"; \
+			echo "   ℹ️  Skipping import - Terraform will destroy and recreate with correct email"; \
+		fi; \
+	else \
+		echo "   ℹ️  No existing SES identity found - Terraform will create $(TF_VAR_SES_VERIFIED_EMAIL)"; \
 	fi
 	@echo ""
 	@echo "6️⃣  ACM Certificate..."
@@ -184,6 +211,12 @@ apply-cert: ## Apply only the ACM certificate (step 1 of 2 for HTTPS)
 	@echo "🔒 Applying ACM certificate (Step 1/2)..."
 	@terraform apply -target=aws_acm_certificate.flip -auto-approve
 	@echo "✅ Certificate created! Now run 'make plan' and 'make apply' to deploy DNS validation."
+
+.PHONY: destroy-cert
+destroy-cert: ## Destroy only the ACM certificate (use with caution - will break HTTPS)
+	@echo "💥 Destroying ACM certificate (Step 1/2)..."
+	@terraform destroy -target=aws_acm_certificate.flip -target=aws_acm_certificate_validation.flip -target=aws_route53_record.cert_validation
+	@echo "✅ Certificate destroyed! Now run 'make plan' and 'make apply' to remove DNS validation."
 
 .PHONY: apply
 apply: ## Apply Terraform configuration to update AWS infrastructure
