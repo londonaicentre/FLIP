@@ -34,9 +34,11 @@ def ping_pacs_endpoint(pacs_id: int, headers: XNATAuthHeaders) -> PacsStatus:
     Pings the imaging provider (PACS) to check if it is reachable.
 
     Args:
-        pacs_id (int): PACS ID to ping
+        pacs_id (int): PACS ID to ping.
+        headers (XNATAuthHeaders): XNAT authentication headers.
+
     Returns:
-        PacsStatus: Status of the PACS system
+        PacsStatus: Status of the PACS system.
     """
     try:
         return ping_pacs(pacs_id, headers)
@@ -55,9 +57,11 @@ def query_by_accession_number_endpoint(accession_number: str, headers: XNATAuthH
     Queries the imaging provider (PACS) to retrieve a list of studies associated with the provided accession number.
 
     Args:
-        accession_number (str): Accession number for the study
+        accession_number (str): Accession number for the study.
+        headers (XNATAuthHeaders): XNAT authentication headers.
+
     Returns:
-        List[Study]: List of studies associated with the provided accession number
+        List[Study]: List of studies associated with the provided accession number.
     """
     try:
         return query_by_accession_number(accession_number, headers)
@@ -78,9 +82,11 @@ def queue_image_import_request_endpoint(
     Queues a job within the imaging provider (PACS) to import the images from the image store.
 
     Args:
-        import_request (ImportStudyRequest): Import request containing the project ID and list of studies
+        import_request (ImportStudyRequest): Import request containing the project ID and list of studies.
+        headers (XNATAuthHeaders): XNAT authentication headers.
+
     Returns:
-        List[ImportStudyResponse]: List of import responses for the queued studies
+        List[ImportStudyResponse]: List of import responses for the queued studies.
     """
     try:
         return queue_image_import_request(import_request, headers)

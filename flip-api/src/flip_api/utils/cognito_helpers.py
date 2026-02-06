@@ -74,11 +74,10 @@ def get_cognito_users(params: Optional[Dict[str, Any]] = None) -> List[CognitoUs
     Get users from Cognito user pool.
 
     Args:
-        user_pool_id: Cognito user ID
-        params: Additional parameters to pass to ListUsers API call
+        params (Optional[Dict[str, Any]]): Additional parameters to pass to the ListUsers API call.
 
     Returns:
-        List of CognitoUser objects
+        List[CognitoUser]: List of CognitoUser objects.
     """
     user_pool_id = get_settings().AWS_COGNITO_USER_POOL_ID
     client = boto3.client("cognito-idp", region_name=get_settings().AWS_REGION)

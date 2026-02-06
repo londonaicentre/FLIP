@@ -111,19 +111,19 @@ def create_payload_for_project_creation(
     project_secondary_id: str,
     project_name: str,
     project_description: str = "",
-):
+) -> str:
     """
     Creates the payload for creating a new project in XNAT.
 
     Args:
-        xnat_projects_uri (str): XNAT projects URI
-        project_id (str): Unique identifier for the project
-        project_secondary_id (str): Secondary ID for the project
-        project_name (str): Name of the project
-        project_description (str, optional): Description of the project
+        xnat_projects_uri (str): XNAT projects URI.
+        project_id (str): Unique identifier for the project.
+        project_secondary_id (str): Secondary ID for the project.
+        project_name (str): Name of the project.
+        project_description (str, optional): Description of the project.
 
     Returns:
-        str: XML payload for creating the project
+        str: XML payload for creating the project.
     """
     payload = f"""
     <xnat:projectData xmlns:xnat="{xnat_projects_uri}">
@@ -152,13 +152,14 @@ def create_project(
     See also https://wiki.xnat.org/xnat-api/project-api#ProjectAPI-Createoneormoreprojects
 
     Args:
-        project_id (str): Unique identifier for the project
-        project_secondary_id (str): Secondary ID for the project
-        project_name (str): Name of the project
-        project_description (str): Description of the project
+        project_id (str): Unique identifier for the project.
+        project_secondary_id (str): Secondary ID for the project.
+        project_name (str): Name of the project.
+        project_description (str): Description of the project.
+        headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        Project: XNAT project object
+        Project: XNAT project object.
     """
     xnat_projects_uri = f"{XNAT_URL}/data/projects"
 
@@ -197,6 +198,7 @@ def to_create_project(imaging_project: CentralHubProject) -> CreateProject:
 
     Args:
         imaging_project (imaging_api.routers.schemas.CentralHubProject): Central Hub project object
+
     Returns:
         CreateProject: XNAT create project request object
     """

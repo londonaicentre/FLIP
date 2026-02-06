@@ -73,12 +73,13 @@ def update_trust_status(
     Update the status of a trust intersect with a model.
 
     Args:
-        model_id (UUID): ID of the model.
-        trust_id (str): ID of the trust.
-        trust_status (str): New status to set.
         request (Request): FastAPI request object.
+        trust_id (str): ID of the trust.
+        model_id (UUID): ID of the model.
+        trust_status (str): New status to set.
         data (Optional[UpdateTrustStatusSchema]): Request body containing additional data.
         db (Session): Database session.
+        user_id (UUID): ID of the authenticated user.
 
     Returns:
         dict[str, str]: Success message.

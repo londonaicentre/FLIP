@@ -26,9 +26,9 @@ router = APIRouter(prefix="/fl", tags=["fl_services"])
 
 
 # [#114] ✅
-@router.post("/stop/{model_id}", response_model=None)
-@router.post("/stop/{model_id}/{target}", response_model=None)
-@router.post("/stop/{model_id}/{target}/{clients}", response_model=None)
+@router.post("/stop/{model_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+@router.post("/stop/{model_id}/{target}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+@router.post("/stop/{model_id}/{target}/{clients}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def stop_training(
     model_id: UUID,
     request: Request,
@@ -65,5 +65,3 @@ def stop_training(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while stopping model training: {str(e)}",
         )
-
-    return {}, status.HTTP_204_NO_CONTENT

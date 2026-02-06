@@ -16,7 +16,7 @@ from uuid import UUID
 import boto3
 import httpx
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
@@ -101,9 +101,9 @@ def send_xnat_login_to_new_users(
 # 'approveProject' (Approves project and starts images creation on trusts).
 @router.post(
     "/projects/{project_id}/trusts/imaging",
-    status_code=204,
     summary="Start imaging project creation",
     description="Initiates the creation of imaging project in the trust system",
+    status_code=status.HTTP_201_CREATED,
     response_model=dict[str, str],
 )
 async def start_project_imaging_creation(

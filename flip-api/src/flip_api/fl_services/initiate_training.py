@@ -80,5 +80,3 @@ def initiate_training(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred during training initiation: {str(e)}",
         )
-
-    return
