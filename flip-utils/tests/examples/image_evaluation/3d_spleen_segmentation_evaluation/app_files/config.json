@@ -1,4 +1,5 @@
 {
+  "job_type": "evaluation",
   "LOCAL_ROUNDS": 2,
   "LEARNING_RATE": 1e-4,
   "num_classes": 2,
