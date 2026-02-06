@@ -71,7 +71,7 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
             )
     except Exception as e:
         logger.error(f"Error executing query: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise e
 
     try:
         results = get_statistics(df, query_input=query_input, threshold=minimum_cohort_size)

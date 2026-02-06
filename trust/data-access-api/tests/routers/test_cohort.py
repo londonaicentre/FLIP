@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -118,7 +117,7 @@ def test_receive_cohort_query_too_few_records(mock_validate_query, mock_get_sett
 
     response = client.post("/cohort", json=sample_query_input)
 
-    assert response.status_code == 500
+    assert response.status_code == 400
     assert response.json()["detail"] == "Query returned too few records: 3 (minimum required: 5)"
 
 
@@ -136,7 +135,7 @@ def test_receive_cohort_query_execution_error(mock_validate_query, mock_get_sett
     # FastAPI TestClient will catch the re-raised exception if not handled by an exception handler.
     # However, let's see how the app is configured. Assuming standard FastAPI behavior for unhandled exceptions.
 
-    with pytest.raises(HTTPException, match="Database connection failed"):
+    with pytest.raises(Exception, match="Database connection failed"):
         client.post("/cohort", json=sample_query_input)
 
 
