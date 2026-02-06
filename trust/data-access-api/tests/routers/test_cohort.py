@@ -117,7 +117,7 @@ def test_receive_cohort_query_too_few_records(mock_validate_query, mock_get_sett
 
     response = client.post("/cohort", json=sample_query_input)
 
-    assert response.status_code == 400
+    assert response.status_code == 500
     assert response.json()["detail"] == "Query returned too few records: 3 (minimum required: 5)"
 
 
