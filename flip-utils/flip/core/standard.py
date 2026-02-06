@@ -36,7 +36,8 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 from requests import HTTPError
 
-from flip.constants.flip_constants import FlipConstants, FlipEvents, ModelStatus, ResourceType
+from flip.constants.flip_constants import (FlipConstants, FlipEvents,
+                                           ModelStatus, ResourceType)
 from flip.core.base import FLIPBase
 from flip.utils.utils import Utils
 
@@ -247,15 +248,15 @@ class FLIPStandardProd(FLIPBase):
             self.logger.exception(e)
 
     @override
-    def send_metrics_value(self, label: str, value: float, round: int, fl_ctx: FLContext) -> None:
+    def send_metrics_value(self, label: str, value: float, fl_ctx: FLContext, round: int = 0) -> None:
         """
         Sends a metric value to the Central Hub.
 
         Args:
             label: The label of the metric.
             value: The value of the metric.
-            round: The local round number.
             fl_ctx: The federated learning context.
+            round: The local round number (default: 0).
         """
         if not isinstance(label, str):
             raise TypeError(f"expect label to be string, but got {type(label)}")
@@ -480,15 +481,15 @@ class FLIPStandardDev(FLIPBase):
         )
 
     @override
-    def send_metrics_value(self, label: str, value: float, round: int, fl_ctx: FLContext) -> None:
+    def send_metrics_value(self, label: str, value: float, fl_ctx: FLContext, round: int = 0) -> None:
         """
         Sends a metric value - fires event in dev mode for testing.
 
         Args:
             label: The label of the metric.
             value: The value of the metric.
-            round: The local round number.
             fl_ctx: The federated learning context.
+            round: The local round number (default: 0).
         """
         if not isinstance(label, str):
             raise TypeError(f"expect label to be string, but got {type(label)}")
@@ -550,4 +551,5 @@ class FLIPStandardDev(FLIPBase):
         self.logger.info(
             "[DEV] send_handled_exception is not supported in LOCAL_DEV mode."
             f"Details of the function call: sending {formatted_exception} for {client_name}."
+        )
         )

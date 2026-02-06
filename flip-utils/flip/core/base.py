@@ -16,8 +16,8 @@ FLIP Base Classes.
 This module contains the abstract base class for all FLIP implementations.
 """
 
-from abc import ABC, abstractmethod
 import logging
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List, Union
 
@@ -115,15 +115,15 @@ class FLIPBase(ABC):
         """
 
     @abstractmethod
-    def send_metrics_value(self, label: str, value: float, round: int, fl_ctx: FLContext) -> None:
+    def send_metrics_value(self, label: str, value: float, fl_ctx: FLContext, round: int = 0) -> None:
         """
         Sends metric value to the Central Hub.
 
         Args:
             label: The metric label
             value: The metric value
-            round: The training round number
             fl_ctx: The NVFLARE FLContext
+            round: The training round number (default: 0)
         """
 
     @abstractmethod
