@@ -552,4 +552,3 @@ class FLIPStandardDev(FLIPBase):
             "[DEV] send_handled_exception is not supported in LOCAL_DEV mode."
             f"Details of the function call: sending {formatted_exception} for {client_name}."
         )
-        )
