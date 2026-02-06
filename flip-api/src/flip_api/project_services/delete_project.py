@@ -31,6 +31,7 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
     "/{project_id}",
     summary="Delete a project.",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
 )
 def delete_project_endpoint(
     request: Request,

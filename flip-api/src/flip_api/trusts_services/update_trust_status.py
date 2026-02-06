@@ -59,7 +59,7 @@ def check_trust_exists(trust_id: str, db: Session) -> bool:
 
 
 # [#114] ✅
-@router.put("/{trust_id}/model/{model_id}/status/{trust_status}")
+@router.put("/{trust_id}/model/{model_id}/status/{trust_status}", response_model=dict[str, str])
 def update_trust_status(
     request: Request,
     trust_id: str = Path(..., description="ID of the trust"),
@@ -68,7 +68,7 @@ def update_trust_status(
     data: Optional[UpdateTrustStatusSchema] = Body(None),
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> dict[str, str]:
     """
     Update the status of a trust intersect with a model.
 
@@ -81,7 +81,7 @@ def update_trust_status(
         db (Session): Database session.
 
     Returns:
-        Dict[str, str]: Success message.
+        dict[str, str]: Success message.
     """
     try:
         # Extract user ID from request context if available

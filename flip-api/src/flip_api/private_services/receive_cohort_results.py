@@ -241,15 +241,27 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
     "/cohort/results",
     summary="Receive and process cohort query results from a participating trust.",
     status_code=status.HTTP_200_OK,
+    response_model=dict[str, str],
 )
 def receive_cohort_results_endpoint(
     cohort_results: OmopCohortResults,
     db: Session = Depends(get_session),
     token: str = Depends(check_authorization_token),
-):
+) -> dict[str, str]:
     """
     Receives cohort query results from a single trust, saves them,
     then re-aggregates and saves the overall statistics for the query.
+
+    Args:
+        cohort_results (OmopCohortResults): The cohort results sent by the trust.
+        db (Session): Database session.
+        token (str): Authorization token (validated by dependency).
+
+    Returns:
+        dict[str, str]: A message indicating successful processing of cohort results.
+
+    Raises:
+        HTTPException: If there is an error during processing, saving individual results, or aggregating results.
     """
     del token  # Token is validated by the dependency
     logger.info(f"Received cohort results for query_id: {cohort_results.query_id}, trust_id: {cohort_results.trust_id}")

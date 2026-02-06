@@ -25,13 +25,23 @@ router = APIRouter(prefix="/trust", tags=["trusts_services"])
 
 
 # [#114] ✅
-@router.get("/health", status_code=status.HTTP_200_OK)
+@router.get("/health", status_code=status.HTTP_200_OK, response_model=list[ITrustHealth])
 async def check_trusts_health(
     request: Request,
     db: Session = Depends(get_session),
-):
+) -> list[ITrustHealth]:
     """
-    Retrieves health status of all trusts by checking their health endpoints
+    Retrieves health status of all trusts by checking their health endpoints.
+
+    Args:
+        request (Request): The incoming HTTP request, used to pass headers to trust health endpoints.
+        db (Session): Database session for querying trusts.
+
+    Returns:
+        list[ITrustHealth]: A list of ITrustHealth objects representing the health status of each trust.
+
+    Raises:
+        HTTPException: If no trusts are found in the database or if there is an error during the operation.
     """
     try:
         logger.debug("Attempting to retrieve trusts from the database...")
@@ -80,9 +90,9 @@ async def check_trust_health(client: httpx.AsyncClient, trust: Trust, headers: d
     Check health of a single trust
 
     Args:
-        client: AsyncClient for HTTP requests
-        trust: Trust model instance
-        auth_header: Authorization header value
+        client (httpx.AsyncClient): AsyncClient for HTTP requests
+        trust (Trust): Trust model instance
+        headers (dict): Headers to include in the request to the trust's health endpoint
 
     Returns:
         ITrustHealth: Trust health status

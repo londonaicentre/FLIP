@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -24,7 +25,7 @@ router = APIRouter(prefix="/users", tags=["user_services"])
 
 
 # [#114] ✅
-@router.get("/{user_id}")
+@router.get("/{user_id}", response_model=dict[str, Any])
 def get_user(
     user_id: str,
     request: Request,
@@ -34,11 +35,16 @@ def get_user(
     Get user details by ID or email.
 
     Args:
-        user_id: User ID or email
-        request: FastAPI request object for headers
+        user_id (str): User ID or email.
+        request (Request): FastAPI request object for headers.
+        token_id (UUID): User ID from authentication token.
 
     Returns:
-        User details
+        dict[str, Any]: User details if found
+
+    Raises:
+        HTTPException: If the user ID format is invalid, if the user is not found, or if there is an error getting the
+                       user details.
     """
     del token_id  # Unused variable
     try:

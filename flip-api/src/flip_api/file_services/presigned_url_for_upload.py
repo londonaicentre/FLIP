@@ -27,7 +27,7 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 
 
 # [#114] ✅
-@router.post("/preSignedUrl/model/{model_id}")
+@router.post("/preSignedUrl/model/{model_id}", response_model=str)
 def get_presigned_url_for_upload(
     model_id: str,
     body: UploadFileBody,

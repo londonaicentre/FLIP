@@ -28,7 +28,7 @@ router = APIRouter(prefix="/fl", tags=["fl_services"])
 
 
 # [#114] ✅
-@router.post("/jobs")
+@router.post("/jobs", response_model=None)
 def run_jobs(db: Session = Depends(get_session), user_id: UUID = Depends(verify_token)) -> None:
     """
     Endpoint to run FL jobs. Calls the core logic to check for available nets, retrieve queued jobs, and start training.
