@@ -35,9 +35,9 @@ def mock_get_xnat_users():
                 enabled=True,
                 id=1,
                 secured=False,
-                email="flipiceAccount@aic.co.uk",
+                email="flipServiceAccount@aic.co.uk",
                 verified=True,
-                firstName="flip
+                firstName="flip",
                 lastName="ServiceAccount",
                 lastSuccessfulLogin=None,
             )
@@ -46,13 +46,13 @@ def mock_get_xnat_users():
 
 
 def test_get_user_profile_by_username(mock_get_xnat_users, headers):
-    username = "flipiceAccount"
+    username = "flipServiceAccount"
     user = get_user_profile_by("username", username, headers)
     assert user.username == username
 
 
 def test_get_user_profile_by_email(mock_get_xnat_users, headers):
-    email = "flipiceAccount@aic.co.uk"
+    email = "flipServiceAccount@aic.co.uk"
     user = get_user_profile_by("email", email, headers)
     assert user.email == email
 
@@ -81,5 +81,5 @@ def test_get_user_profile_by_nonexistent_email(mock_get_xnat_users, headers):
 
 
 def test_user_exists(mock_get_xnat_users, headers):
-    username = "flipiceAccount"
+    username = "flipServiceAccount"
     assert user_exists(username, headers)
