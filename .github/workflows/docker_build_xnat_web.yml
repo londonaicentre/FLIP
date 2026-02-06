@@ -17,7 +17,7 @@ on:
   push:
     branches: [main, develop]
     paths:
-      - 'trust/trust-api/xnat/**'
+      - "trust/trust-api/xnat/**"
 
 permissions:
   id-token: write # required for OIDC
@@ -34,6 +34,7 @@ jobs:
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: londonaicentre/xnat-web
+      FLIP_ARTIFACTS_BUCKET_NAME: flipdev-artifacts
       BUILD_ARGS: |
         --build-arg XNAT_VERSION=1.9.3
         --build-arg XNAT_SMTP_ENABLED=false
@@ -62,23 +63,23 @@ jobs:
       - name: Determine tags
         id: tags
         run: |
-          TAGS="${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}"
+          TAGS="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
           # Branch name sanitization
           REF_NAME="${{ github.ref_name }}"
           SAFE_REF_NAME=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
-          TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
+          TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SAFE_REF_NAME}"
 
           # Branch number (if starts with number)
           if [[ "$REF_NAME" =~ ^[0-9]+ ]]; then
               BRANCH_NUM=$(echo "$REF_NAME" | grep -oE '^[0-9]+')
-              TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${BRANCH_NUM}"
+              TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BRANCH_NUM}"
           fi
 
           # PR Number (if PR)
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
              PR_NUMBER=$(echo "${{ github.ref }}" | awk -F / '{print $3}')
-             TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:pr-${PR_NUMBER}"
+             TAGS="${TAGS},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:pr-${PR_NUMBER}"
           fi
 
           # Determine if this is a merge/push to main or develop
@@ -98,13 +99,13 @@ jobs:
           echo "Generated tags: ${TAGS}"
 
       - name: Log in to GitHub Container Registry
-        run: echo ${{ secrets.GITHUB_TOKEN }} | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
+        run: echo ${{ secrets.GITHUB_TOKEN }} | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
 
       - name: Download XNAT WAR
-        run: aws s3 cp s3://flip-dev-artifacts/xnat/xnat-web-1.9.3.war build-artifacts/xnat-web-1.9.3.war
+        run: aws s3 cp s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/xnat-web-1.9.3.war build-artifacts/xnat-web-1.9.3.war
 
       - name: Download XNAT plugins
-        run: aws s3 sync s3://flip-dev-artifacts/xnat/plugins/ plugins/
+        run: aws s3 sync s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/plugins/ plugins/
 
       - name: Build Docker image
         run: |
