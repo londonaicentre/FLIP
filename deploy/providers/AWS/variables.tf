@@ -88,7 +88,7 @@ variable "DB_PORT" {
 variable "UI_PORT" {
   description = "Port for FLIP UI"
   type        = number
-  default     = 44357
+  default     = 443
 }
 
 variable "API_PORT" {

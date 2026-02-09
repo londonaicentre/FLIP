@@ -24,7 +24,7 @@ services:
       dockerfile: Dockerfile
       target: development
     ports:
-      - "${UI_PORT}:44357"
+      - "${UI_PORT}:443"
     volumes:
       - ../flip-ui:/app
       - /app/node_modules

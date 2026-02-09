@@ -19,7 +19,7 @@ services:
   flip-ui:
     image: ghcr.io/londonaicentre/flip-ui:${DOCKER_TAG}
     ports:
-      - "${UI_PORT}:44357"
+      - "${UI_PORT}:443"
     environment:
       - NODE_ENV=${NODE_ENV}
       - VITE_LOCAL=${VITE_LOCAL}
