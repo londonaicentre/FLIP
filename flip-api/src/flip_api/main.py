@@ -110,6 +110,7 @@ app = FastAPI(
     description="flipflip hub API",
     version="0.1.0",
     lifespan=lifespan,
+    root_path="/api",  # All API routes will be prefixed with /api
 )
 
 # CORS middleware
