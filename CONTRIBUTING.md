@@ -15,9 +15,7 @@
 - [The contribution process](#the-contribution-process)
   - [Preparing pull requests](#preparing-pull-requests)
     1. [Checking the coding style](#checking-the-coding-style)
-    1. [Licensing information](#licensing-information)
     1. [Unit testing](#unit-testing)
-    1. [Building the documentation](#building-the-documentation)
     1. [Signing your work](#signing-your-work)
   - [Submitting pull requests](#submitting-pull-requests)
 
@@ -116,23 +114,6 @@ make test
 
 Documentation follows the [Google style guide](https://google.github.io/styleguide/pyguide.html) for Python docstrings.
 
-#### Licensing information
-
-All source code files should start with the following license header (respecting the comment style of each filetype):
-
-```
-Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-    http://www.apache.org/licenses/LICENSE-2.0
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
-
 If your PR contains code inspired by other code bases, you MUST inform us in your PR so we can add proper references to the original code and evaluate whether it can be incorporated into our License framework.
 
 
@@ -175,28 +156,6 @@ Integration tests for the FL base application are also available (see the [flip-
 *If it's not tested, it's broken*
 
 All new functionality should be accompanied by an appropriate set of tests. Existing tests throughout the services can serve as examples.
-
-#### Building the documentation
-
-FLIP's documentation is located in the `docs/` directory and uses [Sphinx](https://www.sphinx-doc.org/) with the [Read the Docs theme](https://sphinx-rtd-theme.readthedocs.io/).
-
-To build the documentation locally:
-
-```bash
-# Install documentation dependencies
-cd docs
-uv sync
-
-# Build the HTML documentation
-make docs
-
-# Clean previous builds
-make clean
-```
-
-The generated HTML documentation can be viewed by opening `docs/build/html/index.html` in a web browser.
-
-Python docstrings should follow the [Google style guide](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings). API documentation is auto-generated using [sphinx-autoapi](https://sphinx-autoapi.readthedocs.io/).
 
 #### Signing your work
 
@@ -249,24 +208,6 @@ Key points:
 - The `.python-version` file defines the Python version and should match the version used in the service's Dockerfile.
 
 Environment variables are defined centrally in the [`.env.development`](.env.development) file for the development environment. Docker services receive these variables via `env_file` in the Docker Compose file. Avoid hardcoding values in Dockerfiles, source code, or compose files.
-
-### Makefile reference
-
-The root `Makefile` provides commands for managing all services:
-
-| Command | Description |
-|---|---|
-| `make build` | Build all Docker images |
-| `make up` | Start all services (Docker Swarm for XNAT) |
-| `make up-no-trust` | Start all services except trust services |
-| `make up-trusts` | Start trust services only |
-| `make central-hub` | Start the Central Hub API, database, and UI |
-| `make down` | Stop all services and remove containers |
-| `make restart` | Stop and start all services |
-| `make clean` | Remove stopped containers, networks, and images |
-| `make tests` | Run tests for all services |
-| `make debug SERVICE=<name>` | Start debug mode for a specific service |
-| `make debug-off SERVICE=<name>` | Stop debug mode for a specific service |
 
 <p align="right">
   <a href="#introduction">Back to Top</a>
