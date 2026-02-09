@@ -105,7 +105,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 # Initialize the FastAPI app
-app = FastAPI(title="flip", description="flipflip hub API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="flip",
+    description="flipflip hub API",
+    version="0.1.0",
+    lifespan=lifespan,
+)
 
 # CORS middleware
 app.add_middleware(

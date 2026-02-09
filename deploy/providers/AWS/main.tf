@@ -248,8 +248,8 @@ module "alb_security_group" {
   description = "Security group for FLIP ALB"
   ingress_rules = [
     {
-      port        = var.UI_PORT
-      description = "UI traffic"
+      port        = 443
+      description = "HTTPS traffic"
     },
     {
       port        = var.API_PORT
@@ -359,6 +359,40 @@ resource "aws_route53_record" "alb" {
     name                   = module.alb.dns_name
     zone_id                = module.alb.zone_id
     evaluate_target_health = true
+  }
+}
+
+# Listener rule for path-based routing to API
+resource "aws_lb_listener_rule" "api_path_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 100
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/cohort/*", "/files/*", "/fl/*", "/model/*", "/health"]
+    }
+  }
+}
+
+# Additional listener rule for API documentation paths
+resource "aws_lb_listener_rule" "api_docs_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 101
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/docs", "/openapi.json", "/redoc"]
+    }
   }
 }
 
