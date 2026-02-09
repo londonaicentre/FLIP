@@ -39,12 +39,13 @@ def get_net_status(
     Get the status of a net and its clients. A net consists of a central controller with a worker at each of the Trusts.
 
     Args:
-        net_name: The name of the network to get status for
-        request: FastAPI request object
-        db: Database session
+        net_name (str): The name of the network to get status for.
+        request (Request): FastAPI request object.
+        db (Session): Database session.
+        user_id (UUID): ID of the authenticated user.
 
     Returns:
-        INetStatus: Object containing the network name and status of connected clients
+        INetStatus: Object containing the network name and status of connected clients.
     """
     request_id = str(request.scope.get("request_id", "req-id"))
 

@@ -11,6 +11,7 @@
 #
 
 import asyncio
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -27,7 +28,7 @@ from flip_api.utils.logger import logger
 router = APIRouter(prefix="/step", tags=["step_functions_services"])
 
 
-async def process_trust(request, project_id, trust, db, user_id):
+async def process_trust(request: Request, project_id: UUID, trust: Any, db: Session, user_id: UUID) -> dict[str, Any]:
     """
     Process a single trust by starting the imaging project creation.
 
@@ -40,9 +41,6 @@ async def process_trust(request, project_id, trust, db, user_id):
 
     Returns:
         dict: A dictionary containing the result of the imaging creation for the trust.
-
-    Raises:
-        Exception: If an error occurs during the imaging creation process.
     """
     try:
         # Start creating an imaging project for this trust
@@ -57,14 +55,14 @@ async def process_trust(request, project_id, trust, db, user_id):
         return {"trust": trust.name, "success": False, "message": str(e)}
 
 
-@router.post("/project/{project_id}/approve")
+@router.post("/project/{project_id}/approve", response_model=dict[str, Any])
 async def approve_project_step_function_endpoint(
     project_id: UUID,
     body: ProjectApprovalBody,
     request: Request,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> dict[str, Any]:
     """
     Approves a project and starts image creation on all connected trusts
 
@@ -78,7 +76,7 @@ async def approve_project_step_function_endpoint(
         user_id (UUID): The ID of the current user.
 
     Returns:
-        dict: A dictionary containing the result of the approval and imaging creation process.
+        dict[str, Any]: A dictionary containing the result of the approval and imaging creation process.
 
     Raises:
         HTTPException: If an error occurs during the approval or imaging creation process.

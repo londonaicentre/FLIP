@@ -13,7 +13,7 @@
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 from flip_api.domain.schemas.users import CognitoUser
 
@@ -26,9 +26,13 @@ class IBasicTrust(BaseModel):
 
 
 class ITrustHealth(BaseModel):
-    trust_id: str
-    trust_name: str
+    trust_id: UUID = Field(..., alias="trustId")
+    trust_name: str = Field(..., alias="trustName")
     online: bool
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
 
 
 class ITrust(BaseModel):

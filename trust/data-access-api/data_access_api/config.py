@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     # Define the database URL for the OMOP database
     @property
     def OMOP_DATABASE_URL(self) -> SecretStr:
+        """Construct the database URL for the OMOP database."""
         return SecretStr(
             f"postgresql://{self.DATA_ACCESS_POSTGRES_USER}:{self.DATA_ACCESS_POSTGRES_PASSWORD.get_secret_value()}@{self.OMOP_DB_SERVICE_NAME}:{self.OMOP_DB_PORT}/{self.OMOP_POSTGRES_DB}"
         )

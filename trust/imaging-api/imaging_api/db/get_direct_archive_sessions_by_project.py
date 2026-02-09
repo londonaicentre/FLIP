@@ -28,6 +28,7 @@ async def get_direct_archive_sessions_by_project(project_id: str, session: Async
     Args:
         project_id (str): The ID of the project for which to retrieve direct archive sessions.
         session (AsyncSession): The SQLAlchemy async session to use for the database query.
+
     Returns:
         List[DirectArchiveSession]: A list of DirectArchiveSession objects representing the
         sessions found for the project.

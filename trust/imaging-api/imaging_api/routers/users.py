@@ -47,6 +47,7 @@ def create_user_endpoint(user: CreateUser, headers: XNATAuthHeaders) -> User:
 
     Args:
         user (imaging_api.routers.schemas.CreateUser): User data to create.
+        headers (XNATAuthHeaders): XNAT authentication headers.
 
     Returns:
         imaging_api.routers.schemas.User: The created user profile.
@@ -63,7 +64,8 @@ def update_user_profile(update_profile_request: UpdateUser, headers: XNATAuthHea
     Updates the profile of a user on XNAT.
 
     Args:
-        update_profile_request_data (imaging_api.routers.schemas.UpdateUser): User data to update.
+        update_profile_request (imaging_api.routers.schemas.UpdateUser): User data to update.
+        headers (XNATAuthHeaders): XNAT authentication headers.
 
     Returns:
         imaging_api.routers.schemas.User: The updated user profile.
@@ -118,6 +120,7 @@ def add_user_to_project_endpoint(username: str, project_id: str, headers: XNATAu
     Args:
         username (str): The username of the user to add.
         project_id (str): The ID of the project to add the user to.
+        headers (XNATAuthHeaders): XNAT authentication headers.
 
     Returns:
         imaging_api.routers.schemas.User: The updated user profile.

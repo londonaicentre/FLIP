@@ -29,13 +29,13 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 
 
 # [#114] ✅
-@router.get("/model/{model_id}/{file_name}")
+@router.get("/model/{model_id}/{file_name}", response_class=StreamingResponse, response_model=None)
 def download_file(
     model_id: UUID,
     file_name: str,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> StreamingResponse:
     """
     Download a model file from S3.
 
@@ -46,7 +46,7 @@ def download_file(
         user_id (UUID): User ID from authentication.
 
     Returns:
-        Response: A response containing the file content and appropriate headers for download.
+        StreamingResponse: A streaming response containing the file content.
 
     Raises:
         HTTPException: If the user does not have access to the model, if the file does not exist, or there is an error

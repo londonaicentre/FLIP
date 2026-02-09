@@ -42,13 +42,13 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 
 
 # TODO [#114] This endpoint was not defined in the old repo.
-@router.post("/process-scanned-file/{model_id}/{file}")
+@router.post("/process-scanned-file/{model_id}/{file}", response_model=dict[str, str])
 def process_scanned_file(
     model_id: str,
     file: str,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> dict[str, str]:
     """
     Process a scanned file message from SNS.
 
@@ -201,7 +201,7 @@ def process_scanned_file(
         # logger.info(f"Output: {json.dumps(message)}")
 
         # return message
-        return {"File processed successfully"}
+        return {"message": "File processed successfully"}
 
     except HTTPException:
         raise

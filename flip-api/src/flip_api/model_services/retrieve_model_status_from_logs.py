@@ -36,12 +36,12 @@ def get_secret(secret_name: str) -> Optional[str]:
 
 # [#114] ✅
 # TODO Review if this endpoint is useful once we implement logging -- not sure where logs will live
-@router.get("/{model_id}/training/log", status_code=status.HTTP_200_OK)
+@router.get("/{model_id}/training/log", status_code=status.HTTP_200_OK, response_model=dict[str, str])
 def retrieve_model_status_from_logs(
     model_id: UUID,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> dict[str, str]:
     """
     Determine the most recent status of a federated learning model based on logs stored in an Elasticsearch index and
     persist relevant log entries into a PostgreSQL fl_logs table.
@@ -54,7 +54,7 @@ def retrieve_model_status_from_logs(
         user_id (UUID): The ID of the user making the request.
 
     Returns:
-        dict: A dictionary containing the latest status of the model.
+        dict[str, str]: A dictionary containing the latest status of the model.
 
     Raises:
         HTTPException: If the user does not have access to the model, if the model does not exist, or if there are

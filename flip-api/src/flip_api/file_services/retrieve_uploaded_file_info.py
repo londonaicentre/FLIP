@@ -29,7 +29,7 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 
 
 # [#114] ✅
-@router.get("/{file_ids}")
+@router.get("/{file_ids}", response_model=List[Dict[str, Any]])
 def get_uploaded_files_info(
     file_ids: str,
     db: Session = Depends(get_session),
@@ -44,7 +44,7 @@ def get_uploaded_files_info(
         user_id (UUID): ID of the user (obtained from auth token)
 
     Returns:
-        List of file information
+        List[Dict[str, Any]]: A list of dictionaries containing file information
 
     Raises:
         HTTPException: If no files are found or if there is an error during the operation.
@@ -109,7 +109,7 @@ def get_uploaded_files_info(
 
 # TODO [#114] This endpoint was not defined in the old repo.
 # Alternative implementation with a POST request and request body
-@router.post("/")
+@router.post("/", response_model=List[Dict[str, Any]])
 def get_uploaded_files_info_post(
     id_list: IdList,
     db: Session = Depends(get_session),
@@ -124,7 +124,7 @@ def get_uploaded_files_info_post(
         user_id (UUID): ID of the user (obtained from auth token)
 
     Returns:
-        List of file information
+        List[Dict[str, Any]]: A list of dictionaries containing file information
 
     Raises:
         HTTPException: If no files are found or if there is an error during the operation.

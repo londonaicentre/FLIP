@@ -18,6 +18,7 @@ from flip_api.utils.logger import logger
 
 
 def http_get(url: str, request_id: Optional[str] = None) -> Any:
+    """Perform an HTTP GET request to the specified URL with optional request ID for tracing."""
     headers = {"x-request-id": request_id} if request_id else {}
     with httpx.Client() as client:
         try:
@@ -33,6 +34,7 @@ def http_get(url: str, request_id: Optional[str] = None) -> Any:
 
 
 def http_post(url: str, request_id: Optional[str] = None, data: Optional[Dict] = None) -> Any:
+    """Perform an HTTP POST request to the specified URL with optional request ID for tracing."""
     headers = (
         {"Content-Type": "application/json", "x-request-id": request_id}
         if request_id
@@ -52,6 +54,7 @@ def http_post(url: str, request_id: Optional[str] = None, data: Optional[Dict] =
 
 
 def http_delete(url: str, request_id: Optional[str] = None) -> Any:
+    """Perform an HTTP DELETE request to the specified URL with optional request ID for tracing."""
     headers = {"x-request-id": request_id} if request_id else {}
     with httpx.Client() as client:
         try:
