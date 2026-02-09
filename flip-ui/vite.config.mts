@@ -56,6 +56,7 @@ export default defineConfig(({ mode }) => {
             host: true,
             allowedHosts: [
                 "stag.flip.aicentre.co.uk",
+                "flip.aicentre.co.uk",
             ],
         },
         resolve: {
