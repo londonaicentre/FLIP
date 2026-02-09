@@ -27,13 +27,18 @@ router = APIRouter()
 
 @router.post("/submit_job/{job_folder}")
 def submit_job(job_folder: str, session: FLIP_Session = Depends(get_session)) -> str:
-    """Submits an existing job to the server.
+    """
+    Submits an existing job to the server.
 
     Args:
         job_folder (str): folder where the job is located.
+        session (FLIP_Session): FLIP session instance.
 
     Returns:
         str: job ID if the system accepts the job.
+
+    Raises:
+        HTTPException: if the job submission fails due to any reason.
     """
     try:
         return session.submit_job(job_folder)
@@ -46,16 +51,18 @@ def submit_job(job_folder: str, session: FLIP_Session = Depends(get_session)) ->
 
 @router.get("/download_job/{job_id}")
 def download_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> str:
-    """Downloads the job result of the specified job ID.
+    """
+    Downloads the job result of the specified job ID.
 
     Args:
         job_id (str): job ID to be downloaded.
-
-    Raises:
-        HTTPException: if the job does not exist or isn't found.
+        session (FLIP_Session): FLIP session instance.
 
     Returns:
         str: location of the downloaded job result.
+
+    Raises:
+        HTTPException: if the job does not exist or if an error occurs during the download process.
     """
     try:
         return session.download_job_result(job_id)
@@ -80,7 +87,8 @@ def list_jobs(
     reverse: bool = False,
     session: FLIP_Session = Depends(get_session),
 ) -> list[dict]:
-    """Returns a list of available jobs on the server.
+    """
+    Returns a list of available jobs on the server.
 
     Args:
         detailed (bool, optional): whereas extensive description is demanded. Defaults to False.
@@ -89,9 +97,13 @@ def list_jobs(
         name_prefix (str, optional): prefix for the job NAME search. Defaults to None.
         reverse (bool, optional): if True, the order will be the reverse of submission time (otherwise it's the
         opposite). Defaults to False.
+        session (FLIP_Session): FLIP session instance.
 
     Returns:
         list[dict]: a list of job meta data.
+
+    Raises:
+        HTTPException: if an error occurs while listing jobs.
     """
     try:
         return session.list_jobs(
@@ -116,17 +128,21 @@ def show_errors(
     targets: Optional[str] = None,
     session: FLIP_Session = Depends(get_session),
 ) -> dict:
-    """Show processing errors of specified job on specified targets.
+    """
+    Show processing errors of specified job on specified targets.
 
     Args:
         job_id (str): ID of the job
         target_type (str): type of target (server or client)
         targets: list of client names if target type is "client". All clients if not specified.
+        session (FLIP_Session): FLIP session instance.
 
     Returns:
         dict: job errors (if any) on specified targets. The key of the dict is target name. The value is a dict of
         errors reported by different system components (ServerRunner or ClientRunner).
 
+    Raises:
+        HTTPException: if an error occurs while showing errors for the job.
     """
     try:
         return session.show_errors(job_id, target_type, (targets.split(",") if targets else targets))
@@ -145,17 +161,21 @@ def show_stats(
     targets: Optional[str] = None,
     session: FLIP_Session = Depends(get_session),
 ) -> dict:
-    """Show processing stats of specified job on specified targets.
+    """
+    Show processing stats of specified job on specified targets.
 
     Args:
         job_id (str): ID of the job
         target_type (str): type of target (server or client)
         targets: list of client names if target type is "client". All clients if not specified.
+        session (FLIP_Session): FLIP session instance.
 
     Returns:
         dict: job stats on specified targets. The key of the dict is target name. The value is a dict of stats reported
         by different system components (ServerRunner or ClientRunner).
 
+    Raises:
+        HTTPException: if an error occurs while showing stats for the job.
     """
     try:
         return session.show_stats(job_id, target_type, (targets.split(",") if targets else targets))
@@ -168,13 +188,18 @@ def show_stats(
 
 @router.post("/reset_errors")
 def reset_errors(job_id: str, session: FLIP_Session = Depends(get_session)) -> dict:
-    """Resets the errors of a specific job.
+    """
+    Resets the errors of a specific job.
 
     Args:
         job_id (str): job ID.
+        session (FLIP_Session): FLIP session instance.
 
     Returns:
-        dict
+        dict[str, str]: a dictionary containing the status and information about the error reset operation.
+
+    Raises:
+        HTTPException: if the job is not found or if an error occurs during the reset process.
     """
     try:
         session.reset_errors(job_id)
@@ -193,16 +218,18 @@ def reset_errors(job_id: str, session: FLIP_Session = Depends(get_session)) -> d
 
 @router.delete("/delete_job/{job_id}")
 def delete_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> dict:
-    """Deletes a job from the server if it's not running.
+    """
+    Deletes a job from the server if it's not running.
 
     Args:
         job_id (str): job ID to be deleted.
+        session (FLIP_Session): FLIP session instance.
 
     Raises:
-        JobNotFound: if the job ID does not exist, an error is raised.
+        HTTPException: if the job ID does not exist or if an error occurs during the deletion process.
 
     Returns:
-        dict: (status, info)
+        dict[str, str]: a dictionary containing the status and information about the job deletion operation.
     """
     try:
         session.delete_job(job_id)
@@ -225,12 +252,13 @@ def abort_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> dict
 
     Args:
         job_id (str): job ID.
+        session (FLIP_Session): FLIP session instance.
 
     Raises:
-        HTTPException: if the job is not found, an error is raised.
+        HTTPException: if the job is not found or if an error occurs during the abortion process.
 
     Returns:
-        dict: (status, info)
+        dict[str, str]: a dictionary containing the status and information about the job abortion operation.
     """
     try:
         session.abort_job(job_id)
@@ -238,7 +266,7 @@ def abort_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> dict
     except JobNotFound as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job {job_id} not found, therefore it couldn't be deleted.",
+            detail=f"Job {job_id} not found, therefore it couldn't be aborted.",
         ) from e
     except Exception as e:
         raise HTTPException(
