@@ -363,7 +363,7 @@ resource "aws_route53_record" "alb" {
 }
 
 # Listener rule for path-based routing to API
-# All API routes are prefixed with /api to avoid conflicts with UI routes
+# Routes specific API paths to avoid conflicts with UI routes
 resource "aws_lb_listener_rule" "api_path_routing" {
   listener_arn = module.alb.listeners["https-listener"].arn
   priority     = 100
@@ -375,7 +375,43 @@ resource "aws_lb_listener_rule" "api_path_routing" {
 
   condition {
     path_pattern {
-      values = ["/api/*"]
+      values = ["/cohort/*", "/files/*", "/fl/*", "/model/*", "/health"]
+    }
+  }
+}
+
+# Additional listener rule for API documentation and other paths
+resource "aws_lb_listener_rule" "api_docs_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 101
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/docs", "/openapi.json", "/redoc", "/prompts/*", "/roles/*", "/trust/*", "/site/*"]
+    }
+  }
+}
+
+# Listener rule for user and project API endpoints (priority 99 - higher priority)
+# Note: /users and /projects in UI are frontend routes, not API endpoints
+# API endpoints for users/projects should use more specific paths or HTTP methods
+resource "aws_lb_listener_rule" "api_user_project_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 99
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/user/*", "/project/*"]
     }
   }
 }
