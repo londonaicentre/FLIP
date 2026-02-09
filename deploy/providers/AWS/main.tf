@@ -248,7 +248,7 @@ module "alb_security_group" {
   description = "Security group for FLIP ALB"
   ingress_rules = [
     {
-      port        = 443
+      port        = var.ALB_HTTPS_PORT
       description = "HTTPS traffic"
     },
     {
@@ -264,7 +264,7 @@ module "alb_security_group" {
       description = "FL Server traffic"
     },
     {
-      port        = 80
+      port        = var.ALB_HTTP_PORT
       description = "HTTP traffic (redirect to HTTPS)"
     }
   ]
@@ -280,7 +280,7 @@ module "alb" {
 
   listeners = {
     "https-listener" = {
-      port            = 443
+      port            = var.ALB_HTTPS_PORT
       protocol        = "HTTPS"
       certificate_arn = aws_acm_certificate.flip.arn
       forward = {
@@ -288,10 +288,10 @@ module "alb" {
       }
     },
     "http-redirect" = {
-      port     = 80
+      port     = var.ALB_HTTP_PORT
       protocol = "HTTP"
       redirect = {
-        port        = "443"
+        port        = tostring(var.ALB_HTTPS_PORT)
         protocol    = "HTTPS"
         status_code = "HTTP_301"
       }
@@ -363,6 +363,7 @@ resource "aws_route53_record" "alb" {
 }
 
 # Listener rule for path-based routing to API
+# All API routes are prefixed with /api to avoid conflicts with UI routes
 resource "aws_lb_listener_rule" "api_path_routing" {
   listener_arn = module.alb.listeners["https-listener"].arn
   priority     = 100
@@ -374,24 +375,7 @@ resource "aws_lb_listener_rule" "api_path_routing" {
 
   condition {
     path_pattern {
-      values = ["/cohort/*", "/files/*", "/fl/*", "/model/*", "/health"]
-    }
-  }
-}
-
-# Additional listener rule for API documentation paths
-resource "aws_lb_listener_rule" "api_docs_routing" {
-  listener_arn = module.alb.listeners["https-listener"].arn
-  priority     = 101
-
-  action {
-    type             = "forward"
-    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
-  }
-
-  condition {
-    path_pattern {
-      values = ["/docs", "/openapi.json", "/redoc"]
+      values = ["/api/*"]
     }
   }
 }
