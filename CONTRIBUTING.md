@@ -265,7 +265,6 @@ The root `Makefile` provides commands for managing all services:
 | `make restart` | Stop and start all services |
 | `make clean` | Remove stopped containers, networks, and images |
 | `make tests` | Run tests for all services |
-| `make ci` | Run the CI pipeline locally using `act` |
 | `make debug SERVICE=<name>` | Start debug mode for a specific service |
 | `make debug-off SERVICE=<name>` | Stop debug mode for a specific service |
 
