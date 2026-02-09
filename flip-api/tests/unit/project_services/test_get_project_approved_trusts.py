@@ -19,8 +19,10 @@ from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import Projects
-from flip_api.domain.interfaces.trust import ITrust
+from flip_api.db.models.main_models import (
+    Projects,
+    Trust,
+)
 from flip_api.domain.schemas.status import ProjectStatus
 from flip_api.project_services.get_project_approved_trusts import router as get_project_approved_trusts_router
 
@@ -210,8 +212,8 @@ def test_get_project_approved_trusts_success_with_data(
 
     mock_project.status = ProjectStatus.APPROVED
     expected_trusts_data = [
-        ITrust(id=uuid.uuid4(), name="Trust 1", endpoint="https://t1.com"),
-        ITrust(id=uuid.uuid4(), name="Trust 2", endpoint="https://t2.com"),
+        Trust(id=uuid.uuid4(), name="Trust 1", endpoint="https://t1.com"),
+        Trust(id=uuid.uuid4(), name="Trust 2", endpoint="https://t2.com"),
     ]
     # Convert Pydantic models to dicts for comparison with JSON response
     expected_trusts_json = [trust.model_dump(mode="json") for trust in expected_trusts_data]

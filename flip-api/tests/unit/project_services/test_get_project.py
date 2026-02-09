@@ -22,10 +22,6 @@ from flip_api.db.database import get_session
 from flip_api.domain.schemas.status import ProjectStatus
 from flip_api.main import app
 
-# from flip_api.project_services.services.project_services import (
-#     get_approved_trusts_for_project,
-# )
-
 # Test constants
 TEST_PROJECT_ID = UUID("11111111-1111-1111-1111-111111111111")
 TEST_USER_ID = UUID("22222222-2222-2222-2222-222222222222")
@@ -76,22 +72,22 @@ def mock_owner():
     return owner
 
 
-@pytest.fixture
-def mock_approved_trusts():
-    """Mock approved trusts returned from get_approved_trusts_for_project"""
-    return [
-        {"id": "trust1", "name": "Trust 1", "status": "APPROVED"},
-        {"id": "trust2", "name": "Trust 2", "status": "PENDING"},
-    ]
+# @pytest.fixture
+# def mock_approved_trusts():
+#     """Mock approved trusts returned from get_approved_trusts_for_project"""
+#     return [
+#         {"id": "trust1", "name": "Trust 1", "status": "APPROVED"},
+#         {"id": "trust2", "name": "Trust 2", "status": "PENDING"},
+#     ]
 
 
-@pytest.fixture
-def mock_users_with_access():
-    """Mock users with access returned from get_users_with_access"""
-    return [
-        {"id": str(TEST_USER_ID), "email": "user@example.com", "name": "Test User"},
-        {"id": str(TEST_OWNER_ID), "email": "owner@example.com", "name": "Owner User"},
-    ]
+# @pytest.fixture
+# def mock_users_with_access():
+#     """Mock users with access returned from get_users_with_access"""
+#     return [
+#         {"id": str(TEST_USER_ID), "email": "user@example.com", "name": "Test User"},
+#         {"id": str(TEST_OWNER_ID), "email": "owner@example.com", "name": "Owner User"},
+#     ]
 
 
 def test_get_project_details_no_access(client, mock_db):

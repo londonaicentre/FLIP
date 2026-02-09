@@ -33,6 +33,7 @@ from flip_api.domain.interfaces.project import (
     IProjectResponse,
     IReimportQuery,
 )
+from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.domain.schemas.status import (
     ProjectStatus,
@@ -141,7 +142,12 @@ class TestDeleteProject:
             assert sample_project.deleted is True
             mock_db_session.add.assert_called_with(sample_project)
             mock_db_session.flush.assert_called_once()
-            mock_audit.assert_called_once()
+            mock_audit.assert_called_once_with(
+                project_id=project_id,
+                action=ProjectAuditAction.DELETE,
+                user_id=current_user_id,
+                session=mock_db_session,
+            )
             mock_delete_models.assert_called_once()
 
     def test_delete_project_not_found(self, mock_db_session: MagicMock):
@@ -198,7 +204,12 @@ class TestEditProjectService:
             mock_db_session.add.assert_called_with(sample_project)
             mock_db_session.flush.assert_called_once()
             mock_update_access.assert_called_once()
-            mock_audit.assert_called_once()
+            mock_audit.assert_called_once_with(
+                project_id=project_id,
+                action=ProjectAuditAction.EDIT,
+                user_id=current_user_id,
+                session=mock_db_session,
+            )
 
     def test_edit_project_service_not_found(self, mock_db_session: MagicMock):
         project_id = uuid4()
@@ -261,7 +272,12 @@ class TestApproveProject:
             assert mock_intersect.approved is True
             mock_db_session.add.assert_called()
             mock_update_status.assert_called_once()
-            mock_audit.assert_called_once()
+            mock_audit.assert_called_once_with(
+                project_id=project_approval.project_id,
+                action=ProjectAuditAction.APPROVE,
+                user_id=user_id,
+                session=mock_db_session,
+            )
             mock_db_session.commit.assert_called_once()
 
     def test_approve_project_not_found(self, mock_db_session: MagicMock, sample_trust_ids: List[UUID]):
@@ -303,7 +319,12 @@ class TestStageProjectService:
             mock_db_session.execute.assert_called()  # For delete statement
             mock_db_session.add_all.assert_called()
             mock_db_session.flush.assert_called()
-            mock_audit.assert_called_once()
+            mock_audit.assert_called_once_with(
+                project_id=project_id,
+                action=ProjectAuditAction.STAGE,
+                user_id=current_user_id,
+                session=mock_db_session,
+            )
 
     def test_stage_project_service_not_found(self, mock_db_session: MagicMock, sample_trust_ids: List[UUID]):
         project_id = uuid4()
@@ -342,8 +363,17 @@ class TestUnstageProjectService:
             unstage_project_service(project_id, current_user_id, mock_db_session)
 
             mock_db_session.execute.assert_called()
-            mock_update_status.assert_called_once_with(project_id, ProjectStatus.UNSTAGED, mock_db_session)
-            mock_audit.assert_called_once()
+            mock_update_status.assert_called_once_with(
+                project_id=project_id,
+                new_status=ProjectStatus.UNSTAGED,
+                session=mock_db_session,
+            )
+            mock_audit.assert_called_once_with(
+                project_id=project_id,
+                action=ProjectAuditAction.UNSTAGE,
+                user_id=current_user_id,
+                session=mock_db_session,
+            )
 
     def test_unstage_project_service_not_found(self, mock_db_session: MagicMock):
         project_id = uuid4()

@@ -36,6 +36,9 @@ def validate_query(query: str) -> bool | HTTPException:
 
     Returns:
         bool: True if the query is valid, False otherwise.
+
+    Raises:
+        HTTPException: If the query is invalid or contains unsafe elements.
     """
     # TODO: Implement more comprehensive validation logic.
     # Check if the user is using PostgreSQL internal functions that are not allowed.
@@ -63,6 +66,9 @@ def get_records(query: str) -> pd.DataFrame:
 
     Returns:
         pd.DataFrame: The results of the query as a DataFrame.
+
+    Raises:
+        HTTPException: If the query is invalid or if there is an error during execution.
     """
     logger.info(f"Executing SQL query: {query}")
 
@@ -232,6 +238,9 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
 
     Returns:
         StatisticsResponse: Contains the aggregated statistics.
+
+    Raises:
+        HTTPException: If the request cannot be processed.
     """
     record_count = len(df)
 

@@ -36,6 +36,9 @@ def get_details(db: Session = Depends(get_session), user_id: UUID = Depends(veri
 
     Returns:
         SiteDetails: Current site details including banner and deployment mode.
+
+    Raises:
+        HTTPException: If site details cannot be fetched due to an error.
     """
     try:
         return get_site_details(db)
@@ -62,6 +65,9 @@ def update_details(
 
     Returns:
         SiteDetails: Updated site details including banner and deployment mode.
+
+    Raises:
+        HTTPException: If site details cannot be updated due to an error.
     """
     try:
         update_site_details(site_details, db)

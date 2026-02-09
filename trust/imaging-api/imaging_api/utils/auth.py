@@ -23,7 +23,10 @@ xnat_token_factory = XnatTokenFactory(
 
 def get_xnat_auth_headers() -> dict[str, str]:
     """
-    Returns a dictionary of headers for authenticating with XNAT.
+    Retrieves the XNAT authentication token and formats it into the appropriate headers for API requests.
+
+    Returns:
+        dict[str, str]: A dictionary containing XNAT authentication headers.
     """
     token = xnat_token_factory.get_xnat_cookie()
     return {"Cookie": f"JSESSIONID={token}", "Content-Type": "application/json"}
