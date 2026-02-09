@@ -466,13 +466,13 @@ def main(
 
     # Check S3 bucket
     print_status("INFO", "Checking S3 bucket...")
-    success, _ = run_aws_command(["s3", "ls", f"s3://{flipket_name}"])
+    success, _ = run_aws_command(["s3", "ls", f"s3://{flip_bucket_name}"])
     if success:
-        print_status("PASS", f"S3 bucket '{flipket_name}' is accessible")
+        print_status("PASS", f"S3 bucket '{flip_bucket_name}' is accessible")
     else:
         print_status(
             "WARN",
-            f"S3 bucket '{flipket_name}' not accessible (may need different name or permissions)",
+            f"S3 bucket '{flip_bucket_name}' not accessible (may need different name or permissions)",
         )
 
     # Check Secrets Manager
@@ -489,6 +489,102 @@ def main(
         print_status("PASS", "Secrets Manager secret found")
     else:
         print_status("WARN", "Secrets Manager secret not found")
+
+    # HTTPS/Certificate checks
+    print_section("HTTPS & Certificate Status")
+
+    # Get certificate ARN and domain from Terraform
+    cert_arn = get_terraform_output("CertificateArn")
+    alb_subdomain = os.getenv("ALB_SUBDOMAIN", "stag.flip.aicentre.co.uk")
+
+    if cert_arn:
+        print_status("INFO", f"Checking ACM certificate: {cert_arn}")
+
+        # Check certificate status
+        success, cert_output = run_aws_command([
+            "acm",
+            "describe-certificate",
+            "--certificate-arn",
+            cert_arn,
+            "--query",
+            "Certificate.{Status:Status,DomainName:DomainName,ValidationStatus:DomainValidationOptions[0].ValidationStatus,FailureReason:FailureReason}",
+            "--output",
+            "json",
+        ])
+
+        if success:
+            try:
+                cert_data = json.loads(cert_output)
+                status = cert_data.get("Status", "UNKNOWN")
+                domain = cert_data.get("DomainName", "N/A")
+                validation_status = cert_data.get("ValidationStatus", "N/A")
+                failure_reason = cert_data.get("FailureReason", "")
+
+                if status == "ISSUED":
+                    print_status("PASS", f"Certificate for {domain} is ISSUED")
+                elif status == "PENDING_VALIDATION":
+                    print_status("WARN", f"Certificate is pending validation (Status: {validation_status})")
+                elif status == "FAILED":
+                    print_status("FAIL", f"Certificate failed: {failure_reason or 'Unknown reason'}")
+                    if failure_reason == "CAA_ERROR":
+                        print_status(
+                            "INFO",
+                            "CAA_ERROR: Domain has CAA records that block AWS ACM. Contact domain admin to add 'amazon.com' to CAA records.",
+                        )
+                else:
+                    print_status("WARN", f"Certificate status: {status}")
+            except (json.JSONDecodeError, KeyError) as e:
+                print_status("WARN", f"Could not parse certificate data: {e}")
+        else:
+            print_status("WARN", "Could not retrieve certificate status")
+
+        # Check HTTPS endpoint connectivity
+        https_url = f"https://{alb_subdomain}"
+        print_status("INFO", f"Testing HTTPS connection to {https_url}...")
+
+        try:
+            import socket
+            import ssl
+
+            # Test SSL/TLS handshake
+            context = ssl.create_default_context()
+            with socket.create_connection((alb_subdomain, 443), timeout=10) as sock:
+                with context.wrap_socket(sock, server_hostname=alb_subdomain) as ssock:
+                    cert = ssock.getpeercert()
+                    print_status(
+                        "PASS",
+                        f"HTTPS connection successful - Certificate issued to: {cert.get('subject', [[('commonName', 'N/A')]])[0][0][1]}",
+                    )
+
+                    # Check certificate expiry
+                    not_after = cert.get("notAfter", "")
+                    if not_after:
+                        print_status("INFO", f"Certificate expires: {not_after}")
+        except ssl.SSLError as e:
+            print_status("FAIL", f"SSL/TLS handshake failed: {e}")
+        except socket.timeout:
+            print_status("FAIL", f"Connection to {alb_subdomain}:443 timed out")
+        except socket.gaierror:
+            print_status("WARN", f"DNS resolution failed for {alb_subdomain} (may not be configured yet)")
+        except ConnectionRefusedError:
+            print_status("FAIL", f"Connection refused on port 443 for {alb_subdomain}")
+        except Exception as e:
+            print_status("WARN", f"HTTPS check failed: {e}")
+
+        # Try HTTP request over HTTPS
+        try:
+            req = urllib.request.Request(https_url, method="HEAD")
+            with urllib.request.urlopen(req, timeout=10) as response:
+                print_status("PASS", f"HTTPS endpoint responding (HTTP {response.status})")
+        except urllib.error.URLError as e:
+            if hasattr(e, "reason") and "CERTIFICATE" in str(e.reason).upper():
+                print_status("FAIL", f"Certificate validation failed: {e.reason}")
+            else:
+                print_status("INFO", f"HTTPS endpoint check: {e}")
+        except Exception as e:
+            print_status("INFO", f"HTTPS request failed (may not be deployed yet): {e}")
+    else:
+        print_status("INFO", "No ACM certificate found in Terraform outputs (HTTPS may not be configured)")
 
     # Network connectivity checks
     if not skip_network:
@@ -536,6 +632,9 @@ def main(
     if not skip_endpoints:
         print_section("Application Endpoint Checks")
 
+        # Get ALB subdomain for HTTPS checks
+        alb_subdomain = os.getenv("ALB_SUBDOMAIN", "stag.flip.aicentre.co.uk")
+
         # Central Hub EC2 ports
         UI_PORT = os.getenv("UI_PORT", "")
         API_PORT = os.getenv("API_PORT", "")
@@ -556,8 +655,8 @@ def main(
         # IMAGING_API_PORT = os.getenv("IMAGING_API_PORT", "")
         # DATA_ACCESS_API_PORT = os.getenv("DATA_ACCESS_API_PORT", "")
 
-        # Check UI
-        check_http_endpoint(f"http://{central_hub_ip}:{UI_PORT}", "FLIP UI", 200)
+        # Check UI via HTTPS domain alias
+        check_http_endpoint(f"https://{alb_subdomain}", "FLIP UI", 200)
 
         # Check API health endpoint
         check_http_endpoint(f"http://{central_hub_ip}:{API_PORT}/health", "FLIP API Health", 200)
@@ -668,7 +767,7 @@ def main(
             else:
                 # Check each expected container
                 expected_containers = [
-                    "flip,
+                    "flip",
                     "flip",
                 ]
                 # Add only configured FL server containers
@@ -880,7 +979,7 @@ def main(
     print_section("CloudWatch Logs")
 
     print_status("INFO", "Checking Central Hub CloudWatch log groups...")
-    log_group = "/aws/ec2/flip
+    log_group = "/aws/ec2/flip"
     success, output = run_aws_command(["logs", "describe-log-groups", "--log-group-name-prefix", log_group])
     if success and log_group in output:
         print_status("PASS", f"CloudWatch log group '{log_group}' exists")

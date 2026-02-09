@@ -39,7 +39,7 @@ export default defineConfig({
         setupNodeEvents(on, config) {
             return require("./test/cypress/plugins/index.ts").default(on, config);
         },
-        baseUrl: "http://localhost:44357",
+        baseUrl: "https://localhost:443",
         specPattern: "test/cypress/integration/**/*.spec.ts",
         supportFile: "test/cypress/support/index.ts",
         excludeSpecPattern: ["**/__snapshots__/*", "**/__image_snapshots__/*"]

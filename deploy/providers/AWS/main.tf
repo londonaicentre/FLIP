@@ -44,11 +44,6 @@ module "ec2_security_group" {
   description = "Security group for FLIP EC2 instance"
   ingress_rules = [
     {
-      port        = 443
-      description = "HTTPS traffic"
-    },
-    # TODO: Remove this and replace the pod-based UI with CloudFront
-    {
       port        = var.UI_PORT
       description = "FLIP UI"
     },
@@ -267,6 +262,10 @@ module "alb_security_group" {
     {
       port        = 8002
       description = "FL Server traffic"
+    },
+    {
+      port        = 80
+      description = "HTTP traffic (redirect to HTTPS)"
     }
   ]
 }
@@ -280,11 +279,21 @@ module "alb" {
   enable_deletion_protection = false
 
   listeners = {
-    "ui-listener" = {
-      port     = var.UI_PORT
-      protocol = "HTTP"
+    "https-listener" = {
+      port            = 443
+      protocol        = "HTTPS"
+      certificate_arn = aws_acm_certificate.flip.arn
       forward = {
         target_group_key = "ec2-instance-ui"
+      }
+    },
+    "http-redirect" = {
+      port     = 80
+      protocol = "HTTP"
+      redirect = {
+        port        = "443"
+        protocol    = "HTTPS"
+        status_code = "HTTP_301"
       }
     },
     "api-listener" = {
