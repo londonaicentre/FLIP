@@ -27,6 +27,9 @@ def get_site_details(db: Session) -> ISiteDetails:
 
     Returns:
         SiteDetails: Current site details including banner and deployment mode.
+
+    Raises:
+        HTTPException: If site details cannot be fetched due to an error.
     """
     # Always get the first banner. Ideally there should only be one banner.
     banner = db.get(SiteBanner, 1)
@@ -69,6 +72,9 @@ def update_site_details(site_details: ISiteDetails, db: Session) -> None:
 
     Returns:
         None
+
+    Raises:
+        HTTPException: If site details cannot be updated due to an error.
     """
     try:
         # Update or insert the banner

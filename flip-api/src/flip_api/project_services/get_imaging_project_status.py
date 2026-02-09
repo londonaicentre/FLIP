@@ -67,6 +67,10 @@ async def get_imaging_project_status(
 
     Returns:
         ImagingProject: The status of the imaging project.
+
+    Raises:
+        HTTPException: If the user does not have permission to access the project, if the project is not found, or if
+        there is an error retrieving the imaging project status.
     """
     logger.info(f"Getting imaging project status for project {project_id}")
 

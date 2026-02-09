@@ -83,6 +83,11 @@ def update_trust_status(
 
     Returns:
         dict[str, str]: Success message.
+
+    Raises:
+        HTTPException: If the user does not have permission to update the trust status, if the model or trust does not
+        exist, if the trust status is invalid, if there is an error communicating with the trust, or if there is an
+        error updating the trust status in the database.
     """
     try:
         # Extract user ID from request context if available

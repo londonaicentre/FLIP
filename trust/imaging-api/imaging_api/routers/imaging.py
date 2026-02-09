@@ -39,6 +39,9 @@ def ping_pacs_endpoint(pacs_id: int, headers: XNATAuthHeaders) -> PacsStatus:
 
     Returns:
         PacsStatus: Status of the PACS system.
+
+    Raises:
+        HTTPException: If PACS is not found or if there is an error during the ping operation.
     """
     try:
         return ping_pacs(pacs_id, headers)
@@ -62,6 +65,9 @@ def query_by_accession_number_endpoint(accession_number: str, headers: XNATAuthH
 
     Returns:
         List[Study]: List of studies associated with the provided accession number.
+
+    Raises:
+        HTTPException: If no studies are found for the given accession number or if there is an error during the query.
     """
     try:
         return query_by_accession_number(accession_number, headers)
@@ -87,6 +93,10 @@ def queue_image_import_request_endpoint(
 
     Returns:
         List[ImportStudyResponse]: List of import responses for the queued studies.
+
+    Raises:
+        HTTPException: If there is an error during the queuing of the image import request or if the request cannot be
+        processed.
     """
     try:
         return queue_image_import_request(import_request, headers)

@@ -35,6 +35,15 @@ class XnatTokenFactory:
         """
         Retrieves a new XNAT authentication token if expired or not set.
         Caches the token for reuse.
+
+        Args:
+            None
+
+        Returns:
+            str: A valid XNAT session token.
+
+        Raises:
+            HTTPException: If there is an error during the authentication process or if the token cannot be retrieved.
         """
         # Check token validity by making a lightweight request to XNAT
         if self.is_token_valid(self.xnat_cookie.get("token", "")):

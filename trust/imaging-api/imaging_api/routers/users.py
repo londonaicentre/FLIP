@@ -51,6 +51,9 @@ def create_user_endpoint(user: CreateUser, headers: XNATAuthHeaders) -> User:
 
     Returns:
         imaging_api.routers.schemas.User: The created user profile.
+
+    Raises:
+        HTTPException: If there is an error during the creation of the user.
     """
     try:
         return create_user(user, headers)
@@ -69,6 +72,9 @@ def update_user_profile(update_profile_request: UpdateUser, headers: XNATAuthHea
 
     Returns:
         imaging_api.routers.schemas.User: The updated user profile.
+
+    Raises:
+        HTTPException: If there is an error during the update of the user profile or if the request cannot be processed.
     """
     # Get user
     try:
@@ -124,6 +130,10 @@ def add_user_to_project_endpoint(username: str, project_id: str, headers: XNATAu
 
     Returns:
         imaging_api.routers.schemas.User: The updated user profile.
+
+    Raises:
+        HTTPException: If there is an error getting the user profile or if there is an error adding the user to the
+        project.
     """
     try:
         user = get_user_profile_by("username", username, headers)

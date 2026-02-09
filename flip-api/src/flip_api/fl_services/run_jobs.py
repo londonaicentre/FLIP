@@ -103,6 +103,9 @@ def run_jobs_scheduled_task():
     """
     Scheduled task to run jobs every minute.
     This function is called by the scheduler.
+
+    Raises:
+        HTTPException: If there is an error while running jobs.
     """
     logger.info("Running scheduled run_jobs execution... ⏰")
     try:

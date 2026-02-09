@@ -30,6 +30,9 @@ async def get_queued_pacs_request_by_project(project_id: str, session: AsyncSess
 
     Returns:
         List[QueuedPacsRequest]: A list of queued PACS requests for the project.
+
+    Raises:
+        HTTPException: If project_id is empty.
     """
     if not project_id.strip():
         raise HTTPException(status_code=400, detail="project_id cannot be empty")

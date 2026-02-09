@@ -43,7 +43,7 @@ def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
         PacsStatus: Status of the PACS system.
 
     Raises:
-        NotFoundError: If the PACS with the given ID is not found.
+        imaging_api.utils.exceptions.NotFoundError: If the PACS with the given ID is not found.
         Exception: If there is an error during the ping request.
     """
     response = requests.get(
@@ -70,7 +70,7 @@ def check_pacs(headers: dict[str, str], pacs_id: int = PACS_ID) -> None:
         None
 
     Raises:
-        NotFoundError: If the PACS with the given ID is not found.
+        imaging_api.utils.exceptions.NotFoundError: If the PACS with the given ID is not found.
         Exception: If there is an error during the ping request or if the PACS is not reachable or is disabled.
     """
     try:
@@ -98,7 +98,6 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
         List[Study]: A list of Study objects that match the accession number.
 
     Raises:
-        NotFoundError: If no studies are found for the given accession number.
         Exception: If there is an error during the query request.
     """
     # Construct DQR Query
@@ -147,7 +146,8 @@ def queue_image_import_request(
         List[ImportStudyResponse]: A list of ImportStudyResponse objects representing the queued import requests.
 
     Raises:
-        NotFoundError: If the project with the given ID is not found or if no studies are found on PACS.
+        imaging_api.utils.exceptions.NotFoundError: If the project with the given ID is not found or if no studies are
+        found on PACS.
         Exception: If there is an error during the import request.
     """
     logger.info(f"Queuing image import request: {import_request}")

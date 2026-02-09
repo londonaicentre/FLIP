@@ -97,6 +97,9 @@ def get_dataframe(query_input: DataframeQuery) -> Dict[str, List[Any]]:
 
     Returns:
         Dict[str, List[Any]]: The query results in a DataFrame-like structure.
+
+    Raises:
+        HTTPException: If there is an error during the execution of the query or if the query returns too few records.
     """
     project_id = decrypt(query_input.encrypted_project_id)
 

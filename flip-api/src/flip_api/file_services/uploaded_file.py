@@ -54,6 +54,18 @@ def process_scanned_file(
 
     This endpoint receives SNS notifications about scanned files,
     updates the database, and manages the files in S3 buckets.
+
+    Args:
+        model_id: The ID of the model the file belongs to, extracted from the file's key
+        file: The name of the file, extracted from the file's key
+        db: Database session
+        user_id: ID of the user making the request, obtained from authentication
+
+    Returns:
+        dict[str, str]: A message indicating the result of the file processing
+
+    Raises:
+        HTTPException: If the file cannot be processed.
     """
     try:
         s3 = S3Client()
