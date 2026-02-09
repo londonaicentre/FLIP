@@ -62,10 +62,6 @@ async def upload_data_to_xnat(
 
     Raises:
         FileNotFoundError: If any of the files to be uploaded are not found.
-        NotFoundError: If the project with the given ID is not found or if no studies are found on PACS.
-        AlreadyExistsError: If exist_ok is False and a file with the same name already exists in the specified XNAT
-        resource.
-        Exception: If there is an error during the upload process.
     """
     # Get base directory from configuration
     upload_directory = os.path.join(BASE_IMAGES_DOWNLOAD_DIR, net_id, "upload")
@@ -166,6 +162,9 @@ def create_xnat_scan(
 
     Returns:
         None
+
+    Raises:
+        Exception: If there is an error during the creation of the scan.
     """
     scan_url = (
         f"{XNAT_URL}/data/projects/{project_id}/subjects/{subject_id}/"
@@ -201,6 +200,10 @@ def create_xnat_resource(
 
     Returns:
         None
+
+    Raises:
+        AlreadyExistsError: If the resource already exists in XNAT.
+        Exception: If there is an error during the creation of the resource.
     """
     resource_url = (
         f"{XNAT_URL}/data/projects/{project_id}/subjects/{subject_id}/"
@@ -256,6 +259,11 @@ def upload_file_to_xnat(
 
     Returns:
         str: The URL of the uploaded file.
+
+    Raises:
+        AlreadyExistsError: If exist_ok is False and a file with the same name already exists in the specified XNAT
+        resource.
+        Exception: If there is an error during the upload process.
     """
     file_name = Path(file_path).name
 

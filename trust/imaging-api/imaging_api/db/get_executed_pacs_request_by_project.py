@@ -30,6 +30,9 @@ async def get_executed_pacs_request_by_project(project_id: str, session: AsyncSe
 
     Returns:
         List[ExecutedPacsRequest]: A list of executed PACS requests.
+
+    Raises:
+        HTTPException: If project_id is empty.
     """
     if not project_id.strip():
         raise HTTPException(status_code=400, detail="project_id cannot be empty")

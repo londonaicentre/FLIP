@@ -56,6 +56,9 @@ def send_xnat_login_to_new_users(
         trust (ITrust): Trust information.
         created_users (List[ICreatedImagingUser]): List of users with their credentials.
 
+    Returns:
+         None
+
     Raises:
         HTTPException: If there is an error sending the email.
     """
@@ -125,6 +128,11 @@ async def start_project_imaging_creation(
 
     Returns:
         dict[str, str]: Success message if the imaging project creation process is initiated successfully.
+
+    Raises:
+        HTTPException: If the user does not have permission to start the imaging project creation, if the project is not
+        found, if there is an error communicating with the trust, or if there is an error saving the imaging project
+        status to the database.
     """
     try:
         # Permissions check

@@ -31,15 +31,14 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
     Uses PyJWT and PyJWKClient to verify credential token with AWS Cognito
 
     Args:
-        credentials: HTTPAuthorizationCredentials
-            The HTTP authorization credentials in the result of using `HTTPBearer` or
-            `HTTPDigest` in a dependency.
+        credentials (HTTPAuthorizationCredentials): The HTTP authorization credentials in the result of using
+        `HTTPBearer` or `HTTPDigest` in a dependency.
 
     Returns:
-        UUID: The user ID (sub claim) from the verified token
+        UUID: The user ID (sub claim) from the verified token.
 
     Raises:
-        HTTPException: If token is invalid, expired, or verification fails
+        HTTPException: If token is invalid, expired, or verification fails.
     """
     token = credentials.credentials
 
@@ -116,10 +115,13 @@ def get_token_payload(credentials: HTTPAuthorizationCredentials = Depends(securi
     Alternative function to get the full token payload if needed elsewhere.
 
     Args:
-        credentials: HTTPAuthorizationCredentials from the Bearer token
+        credentials (HTTPAuthorizationCredentials): The HTTP authorization credentials from the Bearer token.
 
     Returns:
-        Dict[str, Any]: The decoded JWT payload
+        Dict[str, Any]: The decoded JWT payload.
+
+    Raises:
+        HTTPException: If the credentials are invalid or if there is an error during decoding.
     """
     token = credentials.credentials
 

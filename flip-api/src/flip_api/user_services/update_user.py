@@ -54,6 +54,13 @@ def update_user_endpoint(
         request (Request): The FastAPI request object
         db (Session): The database session
         token_id (UUID): The ID of the token used for authentication
+
+    Returns:
+        Disabled: The updated disabled status of the user
+
+    Raises:
+        HTTPException: If the user does not have permission to update a user, if the user is not found, or if there is
+        an error updating the user in Cognito or the database.
     """
     try:
         # Check if user has permission to manage users

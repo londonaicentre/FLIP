@@ -46,6 +46,10 @@ def get_net_status(
 
     Returns:
         INetStatus: Object containing the network name and status of connected clients.
+
+    Raises:
+        HTTPException: If the net is not found, if there is no response from the FL API, or if there is an error
+        retrieving the net status.
     """
     request_id = str(request.scope.get("request_id", "req-id"))
 
