@@ -111,6 +111,10 @@ def submit_cohort_query(
 
     Returns:
         SubmitCohortQueryOutput: The result of the submission to each trust
+
+    Raises:
+        HTTPException: If the query contains forbidden commands, if the SQL syntax is invalid, if no trusts are found,
+        or if there is an
     """
     try:
         # Validation of inputs is handled by Pydantic

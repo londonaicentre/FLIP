@@ -57,6 +57,13 @@ async def download_and_unzip_images(
 
     Returns:
         str: The path to the unzipped folder containing the downloaded images.
+
+    Raises:
+        imaging_api.utils.exceptions.NotFoundError: If the project with the given ID is not found, if no experiments are
+        found for the given accession ID, if no data is found at the download URL, or if the ZIP file is not found after
+        download.
+        Exception: If there is an error during any of the requests to XNAT, during the download process, or during the
+        unzipping process.
     """
     # Get project ID from central hub project ID
     try:
@@ -165,6 +172,10 @@ def download_file(url: str, destination_path: str, headers: dict[str, str]):
 
     Returns:
         str: Path to the downloaded file.
+
+    Raises:
+        imaging_api.utils.exceptions.NotFoundError: If no data is found at the given URL.
+        Exception: If there is an error during the download request.
     """
     response = requests.get(url, headers=headers, stream=True)
 
