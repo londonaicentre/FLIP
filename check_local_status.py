@@ -413,11 +413,11 @@ def main(
         # Check UI
         check_http_endpoint(f"http://localhost:{UI_PORT}", "FLIP UI", 200)
 
-        # Check API health endpoint (with /api prefix)
-        check_http_endpoint(f"http://localhost:{API_PORT}/api/health", "FLIP API Health", 200)
+        # Check API health endpoint
+        check_http_endpoint(f"http://localhost:{API_PORT}/health", "FLIP API Health", 200)
 
-        # Check API docs endpoint (with /api prefix)
-        check_http_endpoint(f"http://localhost:{API_PORT}/api/docs", "FLIP API Docs", 200)
+        # Check API docs endpoint
+        check_http_endpoint(f"http://localhost:{API_PORT}/docs", "FLIP API Docs", 200)
 
         print_section("FL container running and endpoint checks on the expected ports")
         for net_num in configured_net_numbers:
