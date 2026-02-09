@@ -380,7 +380,7 @@ resource "aws_lb_listener_rule" "api_path_routing" {
   }
 }
 
-# Additional listener rule for API documentation and other paths
+# Additional listener rule for API documentation paths
 resource "aws_lb_listener_rule" "api_docs_routing" {
   listener_arn = module.alb.listeners["https-listener"].arn
   priority     = 101
@@ -392,7 +392,24 @@ resource "aws_lb_listener_rule" "api_docs_routing" {
 
   condition {
     path_pattern {
-      values = ["/docs", "/openapi.json", "/redoc", "/prompts/*", "/roles/*", "/trust/*", "/site/*"]
+      values = ["/docs", "/openapi.json", "/redoc", "/prompts/*", "/roles/*"]
+    }
+  }
+}
+
+# Additional listener rule for trust and site API paths
+resource "aws_lb_listener_rule" "api_trust_site_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 102
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/trust/*", "/site/*"]
     }
   }
 }
