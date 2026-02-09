@@ -16,5 +16,13 @@ from fl_api.utils.flip_session import FLIP_Session
 
 
 def get_session(request: Request) -> FLIP_Session:
-    """Return the NVFlare session stored in app.state."""
+    """
+    Return the NVFlare session stored in app.state.
+
+    Args:
+        request (Request): The incoming HTTP request.
+
+    Returns:
+        FLIP_Session: The NVFlare session instance.
+    """
     return request.app.state.session

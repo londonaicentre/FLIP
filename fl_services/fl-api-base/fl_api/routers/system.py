@@ -31,12 +31,14 @@ def check_status(
     targets: Optional[List[str]] = Query(None),
     session: FLIP_Session = Depends(get_session),
 ):
-    """Checks the status of the server, clients or full FL system.
+    """
+    Checks the status of the server, clients or full FL system.
 
     Args:
         target_type (TargetType): type of target (can be server, client or all)
-        targets (List[str]): if target_type is client, this is a list of client names. If
-        a target is not in the actual list of clients, it will be ignored.
+        targets (Optional[List[str]]): if target_type is client, this is a list of specific clients you want to check
+        the status of. If not specified, the status of all clients will be checked.
+        session (FLIP_Session): the FLIP session instance.
 
     Returns:
         List[ClientInfoModel] | ServerInfo | SystemInfo: status information about the specified target(s).
@@ -64,7 +66,8 @@ def check_status(
 
 @router.get("/cat_target/{target}")
 def cat_target(target: str, file: str, options: str = "", session: FLIP_Session = Depends(get_session)) -> str:
-    """Runs the cat command on a file of the specified target.
+    """
+    Runs the cat command on a file of the specified target.
 
     Args:
         target (str): target (e.g. site-1)
@@ -86,7 +89,8 @@ def cat_target(target: str, file: str, options: str = "", session: FLIP_Session 
 
 @router.get("/get_connected_client_list")
 def get_connected_client_list(session: FLIP_Session = Depends(get_session)):
-    """List of the connected clients.
+    """
+    List of the connected clients.
 
     Returns:
         List[ClientInfo]: a list of ClientInfo objects.
@@ -103,7 +107,8 @@ def get_connected_client_list(session: FLIP_Session = Depends(get_session)):
 
 @router.get("/get_working_directory/{target}")
 def get_working_directory(target: str, session: FLIP_Session = Depends(get_session)) -> str:
-    """Returns the working directory of the specified target.
+    """
+    Returns the working directory of the specified target.
 
     Args:
         target (str): target (e.g. site-1).
@@ -129,16 +134,21 @@ def grep_target(
     file: str,
     session: FLIP_Session = Depends(get_session),
 ) -> str:
-    """Runs the grep command on a file in the specified target.
+    """
+    Runs the grep command on a file in the specified target.
 
     Args:
         target (str): name of target
         options (str): options for the grep command. Note that only -n and -i are supported.
         pattern (str): pattern to search for.
         file (str): file name where search is performed. Only exact files are supported (e.g. no wildcards * ).
+        session (FLIP_Session): the FLIP session instance.
 
     Returns:
         str: the output of the grep command.
+
+    Raises:
+        HTTPException: if there is an error during the grep process.
     """
     try:
         return session.grep_target(
@@ -158,12 +168,15 @@ def grep_target(
 @router.post("/restart/{target_type}")
 @router.post("/restart/{target_type}/{targets}")
 def restart(target_type: TargetType, targets: Optional[str] = None, session: FLIP_Session = Depends(get_session)):
-    """Restart specified system target(s). [CAREFUL]: restarting the server might cause the session to drop. You'll
+    """
+    Restart specified system target(s). [CAREFUL]: restarting the server might cause the session to drop. You'll
     need to re-start the API.
 
     Args:
-        target_type (str): what system target (server, client, or all) to restart
-        client_names (List[str]): clients to be restarted if target_type is client. If not specified, all clients.
+        target_type (TargetType): type of target to restart. Can be server, client or all.
+        targets (Optional[str]): if target_type is client, this is a comma-separated list of client names. If a target
+        is not in the actual list of clients, it will be ignored.
+        session (FLIP_Session): the FLIP session instance.
 
     Returns:
         dict: contains detailed info about the restart request:
@@ -171,7 +184,6 @@ def restart(target_type: TargetType, targets: Optional[str] = None, session: FLI
             server_status - whether the server is restarted successfully - only if target_type is "all" or "server".
             client_status - a dict (keyed on client name) that specifies status of each client - only if target_type
                 is "all" or "client".
-
     """
     try:
         return session.restart(target_type, (targets.split(",") if targets else targets))
@@ -185,14 +197,16 @@ def restart(target_type: TargetType, targets: Optional[str] = None, session: FLI
 
 @router.post("/set_timeout/{timeout}")
 def set_timeout(timeout: float, session: FLIP_Session = Depends(get_session)):
-    """Set a session-specific command timeout.
+    """
+    Set a session-specific command timeout.
 
     This is the amount of time the server will wait for responses after sending commands to FL clients.
 
     Note that this value is only effective for the current API session.
 
     Args:
-        value (float): a positive float number for the timeout in seconds
+        timeout (float): a positive float number for the timeout in seconds.
+        session (FLIP_Session): the FLIP session instance.
 
     Returns:
         None
@@ -210,14 +224,19 @@ def set_timeout(timeout: float, session: FLIP_Session = Depends(get_session)):
 
 @router.get("/tail_target_log/{target}")
 def tail_target_log(target: str, options: Optional[str] = None, session: FLIP_Session = Depends(get_session)):
-    """Run the "tail log.txt" command on the specified target and return the result.
+    """
+    Run the "tail log.txt" command on the specified target and return the result.
 
     Args:
         target: the target (server or a client name) the command will be run on
         options: options of the "tail" command
+        session (FLIP_Session): the FLIP session instance.
 
-    Returns: result of "tail" command
+    Returns:
+        str: the output of the tail command.
 
+    Raises:
+        HTTPException: if there is an error during the tailing process.
     """
     try:
         return session.tail_target_log(target, options=options)
@@ -236,7 +255,8 @@ def wait_until_server_status(
     fail_attempts: int = 3,
     session: FLIP_Session = Depends(get_session),
 ):
-    """Function borrowed from the old FLAdminAPI (fl_admin_api.py). Checks the server status at regular intervals.
+    """
+    Function borrowed from the old FLAdminAPI (fl_admin_api.py). Checks the server status at regular intervals.
     If the status check succeeds, we call the callback function and return success. Otherwise, continue polling.
     If the status check does not succeed, we increment the number of failed attempts, in the end returning error.
 
@@ -246,6 +266,7 @@ def wait_until_server_status(
         callback (Callable[[FLAdminAPIResponse, Optional[List]], bool], optional): Status check function. Defaults to
         default_server_status_handling_cb.
         fail_attempts (int, optional): Maximum consecutive failures allowed. Defaults to 3.
+        session (FLIP_Session): the FLIP session instance.
 
     Returns:
         FLAdminAPIResponse: _description_
@@ -271,15 +292,20 @@ def shutdown(
     targets: Optional[str] = None,
     session: FLIP_Session = Depends(get_session),
 ) -> None:
-    """Shut down specific services that are part of the FL system.
+    """
+    Shut down specific services that are part of the FL system.
 
     Args:
         target_type (TargetType): type of target. Either server, client or all.
         targets (Optional[str], optional): for target_type client, this is a list of specific clients you want to shut
-        down.
+        down. If not specified, all clients will be shut down.
+        session (FLIP_Session): the FLIP session instance.
 
     Returns:
         None
+
+    Raises:
+        HTTPException: if there is an error during the shutdown process.
     """
     try:
         return session.shutdown(target_type, (targets.split(",") if targets else targets))
@@ -293,10 +319,17 @@ def shutdown(
 
 @router.post("/shutdown_system")
 def shutdown_system(session: FLIP_Session = Depends(get_session)) -> None:
-    """Shuts down the whole FL system.
+    """
+    Shuts down the whole FL system.
+
+    Args:
+        session (FLIP_Session): the FLIP session instance.
 
     Returns:
         None
+
+    Raises:
+        HTTPException: if there is an error during the shutdown process.
     """
     try:
         return session.shutdown_system()
