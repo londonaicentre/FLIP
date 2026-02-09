@@ -47,15 +47,16 @@ async def download_and_unzip_images(
     to unzip the folder and delete the existing .zip file.
 
     Args:
-        project_id (str): The central hub project ID which the experiment belongs to. Corresponds to XNAT secondary ID
-        accession_id (str): The unique value for a study stored in PACS. Corresponds to XNAT experiment label
-        net_id (str): The ID of the NVFlare net that will run the training
-        resource_type (str): XNAT Resource type e.g DICOM/NIFTI. ALL will download all resources. Custom value is
-        allowed if researcher has added their own custom XNAT resource type into scans
-        headers (dict[str, str]): XNAT authentication headers
+        central_hub_project_id (str): Central Hub project ID. Corresponds to XNAT secondary ID.
+        accession_id (str): The unique value for a study stored in PACS. Corresponds to XNAT experiment label.
+        net_id (str): The ID of the NVFlare net that will run the training.
+        assessor_type (str): The type of assessor to use for the download ("scan" or "assessor").
+        resource_type (str): XNAT resource type e.g DICOM/NIFTI. ALL will download all resources. Custom value is
+        allowed if researcher has added their own custom XNAT resource type into scans.
+        headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        str: The path to the unzipped folder containing the downloaded images
+        str: The path to the unzipped folder containing the downloaded images.
     """
     # Get project ID from central hub project ID
     try:
@@ -133,13 +134,14 @@ def format_download_url(
     Formats the XNAT API URL to download experiment scan images.
 
     Args:
-        project_id (str): XNAT project ID
-        subject_id (str): XNAT subject ID
-        experiment_id_or_label (str): XNAT experiment ID or its label
-        assessor_type (str): Type of assessor (scan or assessor)
-        resource_type (str): Resource type (e.g. `NIFTI`, `DICOM`, etc.)
+        project_id (str): XNAT project ID.
+        subject_id (str): XNAT subject ID.
+        experiment_id_or_label (str): XNAT experiment ID or its label.
+        assessor_type (str): Type of assessor (scan or assessor).
+        resource_type (str): Resource type (e.g. `NIFTI`, `DICOM`, etc.).
+
     Returns:
-        str: Formatted URL for downloading images
+        str: Formatted URL for downloading images.
     """
     assert assessor_type.lower() in [
         "scan",
@@ -157,10 +159,12 @@ def download_file(url: str, destination_path: str, headers: dict[str, str]):
     Downloads a file from the given URL using an XNAT auth headers.
 
     Args:
-        url (str): URL to download the file from
-        destination_path (str): Path to save the downloaded file
+        url (str): URL to download the file from.
+        destination_path (str): Path to save the downloaded file.
+        headers (dict[str, str]): XNAT authentication headers.
+
     Returns:
-        str: Path to the downloaded file
+        str: Path to the downloaded file.
     """
     response = requests.get(url, headers=headers, stream=True)
 
@@ -185,11 +189,12 @@ def unzip_file(zip_path: str, extract_dir: str, new_name: str):
     Extracts a ZIP file and renames the directory.
 
     Args:
-        zip_path (str): Path to the ZIP file
-        extract_dir (str): Directory to extract the contents
-        new_name (str): New name for the extracted directory
+        zip_path (str): Path to the ZIP file.
+        extract_dir (str): Directory to extract the contents.
+        new_name (str): New name for the extracted directory.
+
     Returns:
-        str: Path to the renamed directory
+        str: Path to the renamed directory.
     """
     if not os.path.exists(zip_path):
         raise FileNotFoundError(f"ZIP file not found: {zip_path}")

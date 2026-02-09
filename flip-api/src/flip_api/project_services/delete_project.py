@@ -31,6 +31,7 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
     "/{project_id}",
     summary="Delete a project.",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
 )
 def delete_project_endpoint(
     request: Request,
@@ -42,12 +43,13 @@ def delete_project_endpoint(
     Deletes a project with the provided ID.
 
     Args:
+        request (Request): FastAPI request object.
         project_id (UUID): The ID of the project to delete.
         user_id (UUID): The ID of the user making the request.
         db (Session): The database session.
 
     Returns:
-        ProjectDetails: The details of the deleted project.
+        None
 
     Raises:
         HTTPException: If the user does not have permission to delete projects, if the project does not exist, or if
@@ -76,5 +78,3 @@ def delete_project_endpoint(
 
     # Call delete project service
     delete_project(project_id, user_id, db)
-
-    return

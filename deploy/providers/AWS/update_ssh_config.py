@@ -262,6 +262,7 @@ def verify_if_ssh_can_connect(hostname: str) -> bool:
 
     Args:
         hostname: Hostname or IP address
+
     Returns:
         True if SSH can connect, False otherwise
     """

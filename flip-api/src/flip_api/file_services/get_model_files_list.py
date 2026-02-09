@@ -26,7 +26,7 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 
 
 # TODO [#114] This endpoint was not defined in the old repo.
-@router.get("/model/{model_id}/get/files")
+@router.get("/model/{model_id}/get/files", response_model=List[Dict[str, Any]])
 def get_model_files_list(
     model_id: UUID,
     db: Session = Depends(get_session),

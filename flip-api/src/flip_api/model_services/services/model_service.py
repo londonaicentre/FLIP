@@ -110,10 +110,11 @@ def add_log(
     Add a log entry to the database
 
     Args:
-        model_id (UUID): The ID of the model
-        log (str): The log message to be added
-        session (Session): The database session
-        success (bool): Indicates if the log entry is a success or failure
+        model_id (UUID): The ID of the model.
+        log (str): The log message to be added.
+        session (Session): The database session.
+        transaction (Optional[Any]): Optional transaction to control commit behavior.
+        success (bool): Indicates if the log entry is a success or failure.
 
     Returns:
         None

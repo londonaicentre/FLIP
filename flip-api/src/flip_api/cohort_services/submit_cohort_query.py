@@ -93,7 +93,7 @@ def validate_query(query: str) -> None:
 
 # TODO [#114] This endpoint was not defined in the old repo. The old repo defined a step function that ran the
 # following steps: (1) getProject, (2) save_cohort_query, (3) submit_cohort_query
-@router.post("/submit")
+@router.post("/submit", response_model=SubmitCohortQueryOutput)
 def submit_cohort_query(
     request: Request,
     cohort_query: SubmitCohortQuery = Body(...),
@@ -104,9 +104,10 @@ def submit_cohort_query(
     Submit a cohort query to all available trusts.
 
     Args:
-        request: HTTP request object
-        cohort_query: SubmitCohortQuery object containing the query details
-        db: Database session
+        request (Request): HTTP request object.
+        cohort_query (SubmitCohortQuery): Query details payload.
+        db (Session): Database session.
+        user_id (UUID): ID of the authenticated user.
 
     Returns:
         SubmitCohortQueryOutput: The result of the submission to each trust

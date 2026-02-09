@@ -42,4 +42,5 @@ scheduler.add_job(
 
 
 def start_scheduler():
+    """Start the background scheduler to run periodic tasks."""
     scheduler.start()

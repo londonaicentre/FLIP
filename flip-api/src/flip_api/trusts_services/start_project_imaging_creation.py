@@ -16,7 +16,7 @@ from uuid import UUID
 import boto3
 import httpx
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
@@ -101,9 +101,10 @@ def send_xnat_login_to_new_users(
 # 'approveProject' (Approves project and starts images creation on trusts).
 @router.post(
     "/projects/{project_id}/trusts/imaging",
-    status_code=204,
     summary="Start imaging project creation",
     description="Initiates the creation of imaging project in the trust system",
+    status_code=status.HTTP_201_CREATED,
+    response_model=dict[str, str],
 )
 async def start_project_imaging_creation(
     request: Request,
@@ -111,7 +112,7 @@ async def start_project_imaging_creation(
     trust: ITrust = Body(..., description="Trust information"),
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> dict[str, str]:
     """
     Initiates the creation of an imaging project in the trust system.
 
@@ -123,7 +124,7 @@ async def start_project_imaging_creation(
         user_id (str): User ID from the request context.
 
     Returns:
-        Dict[str, Any]: Empty response with 204 status code.
+        dict[str, str]: Success message if the imaging project creation process is initiated successfully.
     """
     try:
         # Permissions check
@@ -218,7 +219,7 @@ async def start_project_imaging_creation(
             query_id=project.query.id if project.query else None,
         )
 
-        # Return empty response with 204 status
+        # Return success response
         return {"success": "Imaging project creation started successfully"}
 
     except HTTPException:

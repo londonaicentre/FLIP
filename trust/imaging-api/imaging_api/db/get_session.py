@@ -30,5 +30,6 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 # Dependency: get DB session
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    """Provide an asynchronous database session."""
     async with SessionLocal() as session:
         yield session

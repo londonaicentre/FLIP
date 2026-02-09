@@ -27,13 +27,13 @@ from flip_api.utils.logger import logger
 router = APIRouter(prefix="/users", tags=["user_services"])
 
 
-@router.post("/{user_id}/roles")
+@router.post("/{user_id}/roles", response_model=IRoles)
 def set_user_roles(
     user_id: UUID,
     roles_data: IRoles,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
-):
+) -> IRoles:
     """
     Set roles for a user.
 
@@ -43,11 +43,11 @@ def set_user_roles(
         db (Session): The database session.
         token_id (UUID): The ID of the user making the request, used for permission checks.
 
+    Returns:
+        IRoles: The updated roles data for the user.
+
     Raises:
         HTTPException: If the user does not have permission to update roles or if any role does not exist.
-
-    Returns:
-        Updated roles data
     """
     try:
         # Check permissions

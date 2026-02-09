@@ -27,7 +27,7 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 
 
 # [#114] ✅
-@router.post("/preSignedUrl/model/{model_id}")
+@router.post("/preSignedUrl/model/{model_id}", response_model=str)
 def get_presigned_url_for_upload(
     model_id: str,
     body: UploadFileBody,
@@ -41,6 +41,7 @@ def get_presigned_url_for_upload(
         model_id (str): The ID of the model to which the file will be uploaded.
         body (UploadFileBody): The request body containing the file name.
         db (Session): Database session dependency.
+        user_id (UUID): ID of the authenticated user.
 
     Returns:
         str: A pre-signed URL for uploading the file to S3.
