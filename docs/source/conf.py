@@ -38,16 +38,16 @@ project = "FLIP"
 copyright = "2025, The London Medical Imaging & AI Centre for Value Based Healthcare (AIC)"
 author = "The London Medical Imaging & AI Centre for Value Based Healthcare (AIC)"
 
-# The full version, including alpha/beta/rc tags
+# The full version of the documentation, including alpha/beta/rc tags
 release = "1.0"
 
 # The full version of the FLIP platform, including alpha/beta/rc tags
 # The rst_epilog list makes items within it globally-available to compiled .rst files.
-rst_epilog = """
-.. |flip_version| replace:: {flip_version}
-""".format(
-    flip_version="1.0",
-)
+# rst_epilog = """
+# .. |flip_version| replace:: {flip_version}
+# """.format(
+#     flip_version="1.0",
+# )
 
 # -- General configuration ---------------------------------------------------
 
