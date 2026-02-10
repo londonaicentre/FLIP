@@ -44,3 +44,4 @@ xnat/plugins/*.jar
 
 # Image data folder
 data/trust-*/**/*.nii.gz
+data/trust-*/**/*.dcm

@@ -346,8 +346,8 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
         logger.debug("Attempting to prepare and start training...")
 
         # Copies base application + user-uploaded model files into a destination bucket on S3
-        expected_file_count, job_type = bundle_application(str(model_id))
-        logger.info(f"Bundled the application with {expected_file_count} files for job_type '{job_type}'.")
+        job_type = bundle_application(model_id)
+        logger.info(f"Bundled the application for '{model_id}' and job_type '{job_type}'.")
 
         net_details = get_net_by_model_id(model_id, session)
         if not net_details.endpoint:
@@ -356,7 +356,7 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
         validate_client_availability(clients, net_details.endpoint, request_id)
 
         # Get presigned URLs from the files in the destination bucket on S3
-        bundle_urls = get_bundle_urls(str(model_id), expected_file_count)
+        bundle_urls = get_bundle_urls(model_id)
 
         start_training(model_id, fl_job_id, clients, net_details.endpoint, bundle_urls, request_id, session, job_type)
 
