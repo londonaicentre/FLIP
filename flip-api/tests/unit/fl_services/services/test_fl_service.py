@@ -307,7 +307,8 @@ def test_bundle_application_model_files_overwrite(
     mock_logger, mock_s3, mock_required, mock_verify, model_id, mocked_settings
 ):
     """
-    Test that if a destination key exists, the file is not copied and logger logs the correct message.
+    Test that if a file in the model files has the same name as a file in the base application, the model file is not
+    copied and a warning is logged.
     """
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
@@ -325,23 +326,24 @@ def test_bundle_application_model_files_overwrite(
         f"{model_bucket}/{model_id}/validator.py",
         f"{model_bucket}/{model_id}/config.json",
         f"{model_bucket}/{model_id}/meta.json",
+        f"{model_bucket}/{model_id}/flip.py",  # user trying to overwrite the flip.py in base with one in model files
     ]
     base_files = [
-        f"{base_bucket}/src/standard/app_site1/custom/flip.py",
-        f"{base_bucket}/src/standard/app_site1/config/config_fed_client.json",
+        f"{base_bucket}/src/standard/app/custom/flip.py",
+        f"{base_bucket}/src/standard/app/config/config_fed_client.json",
     ]
     # Destination bucket is empty at first
     mock_client.list_objects.side_effect = [
         model_files,  # model bucket
-        base_files,   # base bucket
-        [],           # dest bucket (empty)
+        base_files,  # base bucket
+        [],  # dest bucket (empty)
     ]
     mock_client.copy_object.return_value = None
     mock_verify.return_value = None
 
-    # Simulate object_exists: trainer.py for app_site1 exists, others do not
+    # Simulate flip.py already exists when copying model files
     def object_exists_side_effect(key):
-        if "trainer.py" in key and "app_site1" in key:
+        if key.endswith("flip.py"):
             return True
         return False
 
@@ -349,17 +351,22 @@ def test_bundle_application_model_files_overwrite(
 
     fl_service.bundle_application(model_id)
 
-    # Check that logger.info was called with the "already exists" message for the skipped file
-    expected_dst_key = f"{dest_bucket}/{model_id}/app_site1/custom/trainer.py"
-    mock_logger.info.assert_any_call(
-        f"File {expected_dst_key} already exists, skipping upload from model files."
+    # Check that logger.warning was called with the message for the file
+    mock_logger.warning.assert_any_call(
+        "The file name flip.py is reserved for this base application, which contains a file with the same name. The "
+        "researcher can't overwrite it. Skipping upload from model files."
     )
 
-    # Verify copy_object was NOT called for the skipped file
+    # Verify flip.py was NOT copied from model files to destination
+    model_flip_src_path = f"{model_bucket}/{model_id}/flip.py"
+    model_flip_dst_path = f"{dest_bucket}/{model_id}/app/custom/flip.py"
+
     for call in mock_client.copy_object.call_args_list:
         args, _ = call
-        if len(args) >= 2 and "trainer.py" in args[1] and "app_site1" in args[1]:
-            pytest.fail("copy_object was called for a file that should have been skipped.")
+        if len(args) >= 2:
+            assert not (args[0] == model_flip_src_path and args[1] == model_flip_dst_path), (
+                "Model flip.py should not have been copied when destination already exists"
+            )
 
 
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
