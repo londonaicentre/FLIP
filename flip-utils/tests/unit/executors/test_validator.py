@@ -80,3 +80,29 @@ class TestRunValidator:
 
         # Verify it used the existing validator
         mock_validator_instance.execute.assert_called_once_with("validate", shareable, fl_ctx, abort_signal)
+
+    def test_execute_exception_handling(self):
+        """Test that execute handles exceptions properly"""
+        validator = RUN_VALIDATOR()
+        validator.log_info = MagicMock()
+        validator.log_error = MagicMock()
+
+        # Create a mock validator that raises an exception
+        mock_validator_instance = MagicMock()
+        mock_validator_instance.execute.side_effect = Exception("Test exception")
+
+        mock_validator_class = MagicMock(return_value=mock_validator_instance)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        fl_ctx.get_job_id.return_value = "test_job"
+        fl_ctx.get_identity_name.return_value = "test_client"
+        abort_signal = MagicMock()
+        shareable = MagicMock()
+
+        with patch.dict("sys.modules", {"validator": MagicMock(FLIP_VALIDATOR=mock_validator_class)}):
+            result = validator.execute("validate", shareable, fl_ctx, abort_signal)
+
+            # Verify exception was logged
+            validator.log_info.assert_called()
+            validator.log_error.assert_called()

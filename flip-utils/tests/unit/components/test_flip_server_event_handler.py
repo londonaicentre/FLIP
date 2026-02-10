@@ -261,6 +261,69 @@ class TestServerEventHandler:
         assert handler.final_status == ModelStatus.ERROR
         flip.update_status.assert_called_with(model_id, ModelStatus.ERROR)
 
+    def test_handle_event_training_finished(self):
+        """Test handle_event with TRAINING_FINISHED event"""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=ValidationJsonGenerator)
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(AppEventType.TRAINING_FINISHED, fl_ctx)
+
+        # Should log info but not change status
+
+    def test_handle_event_results_upload_completed(self):
+        """Test handle_event with RESULTS_UPLOAD_COMPLETED event"""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=ValidationJsonGenerator)
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(FlipEvents.RESULTS_UPLOAD_COMPLETED, fl_ctx)
+
+        # Should log info but not change status
+
+    def test_handle_event_start_run(self):
+        """Test handle_event with START_RUN event"""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=ValidationJsonGenerator)
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(EventType.START_RUN, fl_ctx)
+
+        # Should log info but not change status
+
     def test_handle_event_invalid_json_generator_component(self):
         """Test handle_event when validation_json_generator is not correct type"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
