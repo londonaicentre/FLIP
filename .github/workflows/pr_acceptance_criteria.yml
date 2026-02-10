@@ -14,7 +14,7 @@ name: Import Acceptance Criteria from Issues
 
 on:
     pull_request:
-        types: [opened, edited]
+        types: [opened]
 
 jobs:
     import-acceptance-criteria:
