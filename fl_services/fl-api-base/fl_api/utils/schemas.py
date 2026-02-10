@@ -11,12 +11,26 @@
 #
 
 import time
+from enum import Enum
 from typing import List
 
 from pydantic import BaseModel
 
 
+class FLAggregators(Enum):
+    """Enumeration for different FL aggregators"""
+
+    IN_TIME_ACCUMULATE_WEIGHTED_AGGREGATOR = "InTimeAccumulateWeightedAggregator"
+    ACCUMULATE_WEIGHTED_AGGREGATOR = "AccumulateWeightedAggregator"
+
+
 class UploadAppRequest(BaseModel):
+    """
+    Defines the body of the request to upload an application to the server.
+
+    See full list of aggregators in https://nvflare.readthedocs.io/en/2.7.1/apidocs/nvflare.app_common.aggregators.html
+    """
+
     project_id: str
     cohort_query: str
     local_rounds: int
@@ -24,7 +38,7 @@ class UploadAppRequest(BaseModel):
     trusts: List[str]
     bundle_urls: List[str]
     ignore_result_error: bool = False
-    aggregator: str = "InTimeAccumulateWeightedAggregator"
+    aggregator: str = FLAggregators.IN_TIME_ACCUMULATE_WEIGHTED_AGGREGATOR.value
     aggregation_weights: dict = {}
 
 
