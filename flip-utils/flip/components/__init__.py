@@ -13,18 +13,32 @@
 """
 FLIP Components module containing reusable FL components.
 
-Components include event handlers, model locators, and persistence utilities.
+Components include event handlers, model locators, JSON generators, and persistence utilities.
 
 Exports:
     - ClientEventHandler: Client-side event handler
     - ServerEventHandler: Server-side event handler
     - PTModelLocator: PyTorch model locator
     - ValidationJsonGenerator: Validation results JSON generator
+    - PersistToS3AndCleanup: S3 persistence and cleanup component
+    - PercentilePrivacy: Percentile-based privacy filter
+    - CleanupImages: Image cleanup executor
 """
 
-# Components will be imported here after extraction
-# from flip.components.event_handlers import ClientEventHandler, ServerEventHandler
-# from flip.components.model_locator import PTModelLocator
-# from flip.components.json_generators import ValidationJsonGenerator
+from flip.components.cleanup import CleanupImages
+from flip.components.custom_percentile_privacy import PercentilePrivacy
+from flip.components.flip_client_event_handler import ClientEventHandler
+from flip.components.flip_server_event_handler import ServerEventHandler
+from flip.components.persist_and_cleanup import PersistToS3AndCleanup
+from flip.components.pt_model_locator import PTModelLocator
+from flip.components.validation_json_generator import ValidationJsonGenerator
 
-__all__ = []
+__all__ = [
+    "ClientEventHandler",
+    "ServerEventHandler",
+    "PTModelLocator",
+    "ValidationJsonGenerator",
+    "PersistToS3AndCleanup",
+    "PercentilePrivacy",
+    "CleanupImages",
+]
