@@ -72,7 +72,7 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
             session=fake_session,
         )
 
-        mock_bundle.assert_called_once_with(str(model_id))
+        mock_bundle.assert_called_once_with(model_id)
         mock_validate_clients.assert_called_once()
         mock_start.assert_called_once()
         mock_log.assert_called()
