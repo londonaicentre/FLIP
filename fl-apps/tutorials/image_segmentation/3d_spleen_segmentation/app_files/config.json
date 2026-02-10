@@ -1,4 +1,5 @@
 {
+  "job_type": "standard",
   "LOCAL_ROUNDS": 4,
   "GLOBAL_ROUNDS": 2,
   "LEARNING_RATE": 5e-5,
