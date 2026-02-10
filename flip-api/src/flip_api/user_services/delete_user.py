@@ -31,7 +31,7 @@ router = APIRouter(prefix="/users", tags=["user_services"])
 
 
 # TODO [#114] This endpoint was not defined in the old repo, it was run as part of the 'registerUser' step function.
-@router.delete("/{user_id}")
+@router.delete("/{user_id}", response_model=dict[str, Any])
 def delete_user(
     user_id: str,
     request: Request,

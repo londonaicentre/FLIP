@@ -63,6 +63,19 @@ def get_project_details_endpoint(
     Retrieves detailed information for a given project ID.
     This includes owner details, query information, approved trusts,
     and users with access, similar to the getProject.ts lambda.
+
+    Args:
+        request (Request): The incoming HTTP request object.
+        project_id (UUID): The ID of the project to retrieve details for.
+        db (Session): The database session.
+        current_user_id (UUID): The ID of the currently authenticated user.
+
+    Returns:
+        IReturnedProject: An object containing detailed information about the project.
+
+    Raises:
+        HTTPException: If the user does not have permission to access the project, if the project is not found, or if
+        there is an error retrieving the project details.
     """
     logger.info(f"User {current_user_id} attempting to access details for project {project_id}")
 

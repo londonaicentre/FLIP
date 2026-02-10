@@ -33,8 +33,12 @@ def validate_query(query: str) -> bool | HTTPException:
 
     Args:
         query (str): The SQL query to validate.
+
     Returns:
         bool: True if the query is valid, False otherwise.
+
+    Raises:
+        HTTPException: If the query is invalid or contains unsafe elements.
     """
     # TODO: Implement more comprehensive validation logic.
     # Check if the user is using PostgreSQL internal functions that are not allowed.
@@ -59,8 +63,12 @@ def get_records(query: str) -> pd.DataFrame:
 
     Args:
         query (str): The SQL query to execute.
+
     Returns:
         pd.DataFrame: The results of the query as a DataFrame.
+
+    Raises:
+        HTTPException: If the query is invalid or if there is an error during execution.
     """
     logger.info(f"Executing SQL query: {query}")
 
@@ -201,6 +209,7 @@ def make_other_category(results: list[dict], min_count: int = COHORT_QUERY_THRES
     Args:
         results (list of dict): List of dictionaries with 'value' and 'count' keys.
         min_count (int): Minimum count threshold to avoid grouping into "Other".
+
     Returns:
         list of dict: Updated list with low-count entries grouped into "Other".
     """
@@ -223,10 +232,15 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
     If the number of records is less than the threshold, an empty response is returned.
 
     Args:
+        df (pd.DataFrame): Query results dataframe.
         query_input (data_access_api.routers.schema.CohortQueryInput): Input object containing the query and metadata.
         threshold (int): Minimum number of records required to return results.
+
     Returns:
         StatisticsResponse: Contains the aggregated statistics.
+
+    Raises:
+        HTTPException: If the request cannot be processed.
     """
     record_count = len(df)
 

@@ -34,10 +34,10 @@ def get_pool_id(request: Request) -> str:
     Extract the user pool ID from the request context.
 
     Args:
-        request: FastAPI request object
+        request (Request): FastAPI request object
 
     Returns:
-        User pool ID string
+        str: The user pool ID extracted from the request context
 
     Raises:
         HTTPException: If the user pool ID is not found
@@ -74,11 +74,13 @@ def get_cognito_users(params: Optional[Dict[str, Any]] = None) -> List[CognitoUs
     Get users from Cognito user pool.
 
     Args:
-        user_pool_id: Cognito user ID
-        params: Additional parameters to pass to ListUsers API call
+        params (Optional[Dict[str, Any]]): Additional parameters to pass to the ListUsers API call.
 
     Returns:
-        List of CognitoUser objects
+        List[CognitoUser]: List of CognitoUser objects.
+
+    Raises:
+        HTTPException: If there is an error fetching users from Cognito or if the user pool ID is not found.
     """
     user_pool_id = get_settings().AWS_COGNITO_USER_POOL_ID
     client = boto3.client("cognito-idp", region_name=get_settings().AWS_REGION)
@@ -123,12 +125,12 @@ def get_user_by_email_or_id(
     Get a user from Cognito by email or ID.
 
     Args:
-        user_pool_id: Cognito user pool ID
-        email: User email (optional)
-        user_id: User ID (optional)
+        user_pool_id (str): Cognito user pool ID
+        email (Optional[str]): User email (optional)
+        user_id (Optional[UUID]): User ID (optional)
 
     Returns:
-        CognitoUser object or None if not found
+        CognitoUser: The user matching the email or ID.
 
     Raises:
         HTTPException: If neither email nor user_id is provided
@@ -168,11 +170,14 @@ def get_username(user_id: str, user_pool_id: str) -> Optional[str]:
     Get a username from Cognito by user ID.
 
     Args:
-        user_id: User ID
-        user_pool_id: Cognito user pool ID
+        user_id (str): User ID (sub in Cognito)
+        user_pool_id (str): Cognito user pool ID
 
     Returns:
-        Username (email) or empty string if not found
+        Optional[str]: The username (email) associated with the user ID, or None if not found.
+
+    Raises:
+        HTTPException: If the request cannot be processed.
     """
     params = {
         "UserPoolId": user_pool_id,
@@ -196,12 +201,15 @@ def update_user(username: str, user_pool_id: str, disabled: bool) -> Disabled:
     Enable or disable a user in Cognito.
 
     Args:
-        username: Username (email)
-        user_pool_id: Cognito user pool ID
-        disabled: Whether to disable the user
+        username (str): Username (email)
+        user_pool_id (str): Cognito user pool ID
+        disabled (bool): Whether to disable the user
 
     Returns:
-        Disabled object with the updated disabled status
+        Disabled: An object indicating the disabled status of the user after the update.
+
+    Raises:
+        HTTPException: If the request cannot be processed.
     """
     client = boto3.client("cognito-idp", region_name=get_settings().AWS_REGION)
 
@@ -228,11 +236,14 @@ def delete_cognito_user(username: str, user_pool_id: str) -> None:
     Delete a user from Cognito.
 
     Args:
-        username: Username (email)
-        user_pool_id: Cognito user pool ID
+        username (str): Username (email)
+        user_pool_id (str): Cognito user pool ID
+
+    Returns:
+        None
 
     Raises:
-        HTTPException: If deletion fails
+        HTTPException: If there is an error deleting the user from Cognito.
     """
     logger.debug(f"Attempting to delete user: {username}")
 
@@ -254,8 +265,11 @@ def revoke_token(refresh_token: str, client_id: str) -> None:
     Revoke a refresh token in Cognito.
 
     Args:
-        refresh_token: Refresh token to revoke
-        client_id: Cognito app client ID
+        refresh_token (str): Refresh token to revoke
+        client_id (str): Cognito app client ID
+
+    Returns:
+        None
 
     Raises:
         HTTPException: If token revocation fails
@@ -334,10 +348,10 @@ def get_all_roles(db: Session) -> List[UUID]:
     Get all role IDs from the database.
 
     Args:
-        db: Database session
+        db (Session): Database session
 
     Returns:
-        List of role IDs
+        List[UUID]: List of role IDs
     """
     logger.debug("Attempting to get the list of roles from the database...")
 
@@ -355,8 +369,11 @@ def validate_roles(user_roles: List[UUID], roles_from_db: List[UUID]) -> None:
     Validate that all user roles exist in the database.
 
     Args:
-        user_roles: List of role IDs to validate
-        roles_from_db: List of valid role IDs from the database
+        user_roles (List[UUID]): List of role IDs to validate
+        roles_from_db (List[UUID]): List of valid role IDs from the database
+
+    Returns:
+        None
 
     Raises:
         HTTPException: If any role is invalid
@@ -375,11 +392,11 @@ def create_cognito_user(email: str, user_pool_id: str) -> UUID:
     Create a new user in Cognito.
 
     Args:
-        email: User email
-        user_pool_id: Cognito user pool ID
+        email (str): User email
+        user_pool_id (str): Cognito user pool ID
 
     Returns:
-        User ID (sub)
+        UUID: The ID of the created user
 
     Raises:
         HTTPException: If user creation fails
@@ -427,11 +444,11 @@ def filter_enabled_users(user_pool_id: str, users: List[UUID]) -> List[UUID]:
     Filter out disabled users from a list of user IDs.
 
     Args:
-        user_pool_id: Cognito user pool ID
-        users: List of user IDs to filter
+        user_pool_id (str): Cognito user pool ID
+        users (List[UUID]): List of user IDs to filter
 
     Returns:
-        List of enabled user IDs
+        List[UUID]: List of enabled user IDs
     """
     if not users:
         return []

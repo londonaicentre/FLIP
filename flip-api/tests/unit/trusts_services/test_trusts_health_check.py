@@ -11,6 +11,7 @@
 #
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -30,14 +31,14 @@ client = TestClient(app)
 @pytest.fixture
 def mock_trusts_data():
     return [
-        Trust(id=1, name="Trust A", endpoint="http://trust-a.com"),
-        Trust(id=2, name="Trust B", endpoint="http://trust-b.com"),
+        Trust(id=uuid4(), name="Trust A", endpoint="http://trust-a.com"),
+        Trust(id=uuid4(), name="Trust B", endpoint="http://trust-b.com"),
     ]
 
 
 @pytest.fixture
 def mock_trust():
-    return Trust(id=1, name="Trust A", endpoint="http://trust-a.com")
+    return Trust(id=uuid4(), name="Trust A", endpoint="http://trust-a.com")
 
 
 @pytest.fixture
@@ -155,7 +156,7 @@ async def test_check_trust_health_success(mock_trust, mock_headers):
     response = await check_trust_health(client=mock_client, trust=mock_trust, headers=mock_headers)
 
     assert isinstance(response, ITrustHealth)
-    assert response.trust_id == str(mock_trust.id)
+    assert response.trust_id == mock_trust.id
     assert response.trust_name == mock_trust.name
     assert response.online is True
 
@@ -168,7 +169,7 @@ async def test_check_trust_health_unhealthy_status_code(mock_trust, mock_headers
     response = await check_trust_health(client=mock_client, trust=mock_trust, headers=mock_headers)
 
     assert isinstance(response, ITrustHealth)
-    assert response.trust_id == str(mock_trust.id)
+    assert response.trust_id == mock_trust.id
     assert response.trust_name == mock_trust.name
     assert response.online is False
 
@@ -181,6 +182,6 @@ async def test_check_trust_health_exception(mock_trust, mock_headers):
     response = await check_trust_health(client=mock_client, trust=mock_trust, headers=mock_headers)
 
     assert isinstance(response, ITrustHealth)
-    assert response.trust_id == str(mock_trust.id)
+    assert response.trust_id == mock_trust.id
     assert response.trust_name == mock_trust.name
     assert response.online is False

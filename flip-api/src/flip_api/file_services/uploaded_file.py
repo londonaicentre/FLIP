@@ -42,18 +42,30 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 
 
 # TODO [#114] This endpoint was not defined in the old repo.
-@router.post("/process-scanned-file/{model_id}/{file}")
+@router.post("/process-scanned-file/{model_id}/{file}", response_model=dict[str, str])
 def process_scanned_file(
     model_id: str,
     file: str,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> dict[str, str]:
     """
     Process a scanned file message from SNS.
 
     This endpoint receives SNS notifications about scanned files,
     updates the database, and manages the files in S3 buckets.
+
+    Args:
+        model_id: The ID of the model the file belongs to, extracted from the file's key
+        file: The name of the file, extracted from the file's key
+        db: Database session
+        user_id: ID of the user making the request, obtained from authentication
+
+    Returns:
+        dict[str, str]: A message indicating the result of the file processing
+
+    Raises:
+        HTTPException: If the file cannot be processed.
     """
     try:
         s3 = S3Client()
@@ -201,7 +213,7 @@ def process_scanned_file(
         # logger.info(f"Output: {json.dumps(message)}")
 
         # return message
-        return {"File processed successfully"}
+        return {"message": "File processed successfully"}
 
     except HTTPException:
         raise

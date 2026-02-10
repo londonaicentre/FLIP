@@ -40,6 +40,9 @@ async def upload_data(net_id: str, request_data: UploadDataRequest, headers: XNA
 
     Returns:
         list[str]: List of URLs of the uploaded files.
+
+    Raises:
+        HTTPException: If there is an error during the upload process or if the request cannot be processed.
     """
     # Decrypt project ID
     logger.info("Trying to decrypt Central Hub Project ID")

@@ -30,12 +30,27 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 
 
 # [#114] ✅
-@router.get("/{model_id}/trusts", status_code=status.HTTP_200_OK)
+@router.get("/{model_id}/trusts", status_code=status.HTTP_200_OK, response_model=None)
 def retrieve_trusts_in_model_endpoint(
     model_id: UUID = Path(..., title="Model ID"),
     db: Session = Depends(get_session),
     user_id: Optional[UUID] = Depends(verify_token),
-):
+) -> None:
+    """
+    Retrieve trusts associated with a specific model.
+
+    Args:
+        model_id (UUID): The ID of the model to retrieve trusts for.
+        db (Session): Database session.
+        user_id (Optional[UUID]): User ID from authentication, if available.
+
+    Returns:
+        None
+
+    Raises:
+        HTTPException: If the user does not have access to the model, if the model does not exist, or if there is a
+                       database error.
+    """
     try:
         logger.info(f"Retrieving trusts for model {model_id} with user {user_id}")
 

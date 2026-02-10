@@ -24,7 +24,8 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 
 @router.get("/job-types", response_model=Dict[str, List[str]])
 def get_job_types_endpoint() -> Dict[str, List[str]]:
-    """Retrieve all available job types and their required files.
+    """
+    Retrieve all available job types and their required files.
 
     This endpoint returns a dictionary mapping each job type name to its
     list of required files. This allows the UI to dynamically determine
@@ -36,12 +37,16 @@ def get_job_types_endpoint() -> Dict[str, List[str]]:
             file names (e.g., ['trainer.py', 'validator.py', 'config.json']).
 
     Example Response:
-        {
-            "standard": ["trainer.py", "validator.py", "models.py", "config.json"],
-            "evaluation": ["config.json", "evaluator.py"],
-            "fed_opt": ["trainer.py", "validator.py", "config.json"],
-            "diffusion_model": ["trainer.py", "validator.py", "config.json", "models.py"]
-        }
+
+        .. code-block:: json
+
+            {
+                "standard": ["trainer.py", "validator.py", "models.py", "config.json"],
+                "evaluation": ["config.json", "evaluator.py"],
+                "fed_opt": ["trainer.py", "validator.py", "config.json"],
+                "diffusion_model": ["trainer.py", "validator.py", "config.json", "models.py"]
+            }
+
     """
 
     logger.info("[API] /model/job-types endpoint called")

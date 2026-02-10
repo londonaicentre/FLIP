@@ -27,14 +27,32 @@ router = APIRouter(prefix="/users", tags=["user_services"])
 
 
 def has_role(user_id: UUID, db: Session) -> bool:
-    """Check if a user has at least one role assigned."""
+    """
+    Check if a user has at least one role assigned.
+
+    Args:
+        user_id (UUID): The unique identifier of the user.
+        db (Session): The database session.
+
+    Returns:
+        bool: True if the user has at least one role, False otherwise.
+    """
     statement = select(UserRole).where(UserRole.user_id == user_id)
     user_role = db.exec(statement).first()
     return user_role is not None
 
 
 def get_user_permissions(user_id: UUID, db: Session) -> List[Permission]:
-    """Retrieve all permissions for a given user based on their roles."""
+    """
+    Retrieve all permissions for a given user based on their roles.
+
+    Args:
+        user_id (UUID): The unique identifier of the user.
+        db (Session): The database session.
+
+    Returns:
+        List[Permission]: A list of Permission objects associated with the user's roles.
+    """
     # Get user roles
     user_roles = db.exec(select(UserRole).where(col(UserRole.user_id) == user_id)).all()
 
@@ -65,8 +83,18 @@ def retrieve_user_permissions(
     """
     Retrieves the list of permissions associated with a specific user ID.
 
-    - **user_id**: The unique identifier of the user whose permissions are to be retrieved.
-    - **token_id**: The unique identifier of the authenticated user making the request (obtained from token).
+    Args:
+        user_id (UUID): The unique identifier of the user whose permissions are being retrieved.
+        db (Session): The database session, provided by dependency injection.
+        token_id (UUID): The unique identifier of the authenticated user making the request.
+
+    Returns:
+        UserPermissionsResponse: An object containing a list of permissions associated with the user.
+
+    Raises:
+        HTTPException: If the user ID does not match the token ID (i.e., users can only access their own permissions),
+        if the user does not exist or has no roles assigned, or if there is an unexpected error while retrieving
+        permissions.
     """
     # Verify the requesting user matches the user ID being queried
     # Note: This assumes users can only fetch their own permissions.

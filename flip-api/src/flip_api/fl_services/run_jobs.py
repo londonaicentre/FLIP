@@ -28,12 +28,35 @@ router = APIRouter(prefix="/fl", tags=["fl_services"])
 
 
 # [#114] ✅
-@router.post("/jobs")
-def run_jobs(db: Session = Depends(get_session), user_id: UUID = Depends(verify_token)):
+@router.post("/jobs", response_model=None)
+def run_jobs(db: Session = Depends(get_session), user_id: UUID = Depends(verify_token)) -> None:
+    """
+    Endpoint to run FL jobs. Calls the core logic to check for available nets, retrieve queued jobs, and start training.
+
+    Args:
+        db (Session): Database session.
+        user_id (UUID): User ID from authentication.
+
+    Returns:
+        None
+    """
     return run_jobs_core(db)
 
 
 def run_jobs_core(db: Session) -> None:
+    """
+    Core logic to run FL jobs. This function is called by both the API endpoint and the scheduled task. It checks for
+    available nets, retrieves queued jobs, and starts training.
+
+    Args:
+        db (Session): Database session.
+
+    Returns:
+        None
+
+    Raises:
+        HTTPException: If there is an error while running jobs.
+    """
     try:
         # Step 1: Find an available net
         scheduler = check_for_available_net(db)
@@ -80,6 +103,9 @@ def run_jobs_scheduled_task():
     """
     Scheduled task to run jobs every minute.
     This function is called by the scheduler.
+
+    Raises:
+        HTTPException: If there is an error while running jobs.
     """
     logger.info("Running scheduled run_jobs execution... ⏰")
     try:
