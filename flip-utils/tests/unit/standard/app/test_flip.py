@@ -12,15 +12,16 @@
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
 
+from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
+
 # Import from the new flip package
 from flip.core.base import FLIPBase
 from flip.core.standard import FLIPStandardDev, FLIPStandardProd
-from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
 
 # Aliases for backward compatibility with test names
 FLIP_Parent = FLIPBase
