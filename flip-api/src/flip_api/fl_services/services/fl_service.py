@@ -581,6 +581,10 @@ def bundle_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -
 
         for app in app_folders:
             dst_key = f"{dest_bucket_s3_path}/{app}/custom/{rel}"
+            # Check if destination key exists
+            if s3.object_exists(dst_key):
+                logger.info(f"File {dst_key} already exists, skipping upload from model files.")
+                continue
             logger.debug(f"Copying model file {src_key} -> {dst_key}")
             s3.copy_object(src_key, dst_key)
 
