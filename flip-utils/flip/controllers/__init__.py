@@ -21,9 +21,8 @@ Exports:
     - CrossSiteModelEval: Cross-site model evaluation controller
 """
 
-# Controllers will be imported here after extraction
-# from flip.controllers.init_training import InitTraining
-# from flip.controllers.scatter_and_gather import ScatterAndGather
-# from flip.controllers.cross_site_model_eval import CrossSiteModelEval
+from flip.controllers.cross_site_model_eval import CrossSiteModelEval
+from flip.controllers.init_training import InitTraining
+from flip.controllers.scatter_and_gather import ScatterAndGather
 
-__all__ = []
+__all__ = ["InitTraining", "ScatterAndGather", "CrossSiteModelEval"]
