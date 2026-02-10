@@ -48,7 +48,8 @@ def default_server_status_handling_cb(reply) -> bool:
 def new_secure_Flip_session(
     username: str, startup_kit_location: str, debug: bool = False, timeout: float = 20.0
 ) -> "FLIP_Session":
-    """Create a new secure FLARE API Flip with the NVFLARE system.
+    """
+    Create a new secure FLARE API Flip with the NVFLARE system.
 
     Args:
         username (str): username assigned to the user
@@ -57,8 +58,8 @@ def new_secure_Flip_session(
         debug (bool): enable debug mode
         timeout (float): how long to try to establish the session, in seconds
 
-    Returns: a Flip_Session object
-
+    Returns:
+        FLIP_Session: a FLIP_Session instance connected to the NVFLARE system.
     """
     session = FLIP_Session(
         username=username,
@@ -82,6 +83,8 @@ class FLIP_Session(Session):
         self._error_buffer = None
 
     def _do_command(self, cmd: str):
+        """Override the _do_command method to add error handling for session inactivity. If a session_inactive error is
+        caught, the method will attempt to reconnect and retry the command once."""
         try:
             return super()._do_command(cmd)
         except InternalError as e:
@@ -92,15 +95,17 @@ class FLIP_Session(Session):
             raise e
 
     def _validate_required_target_string(self, target: str) -> str:
-        """Returns the target if it exists and it is valid.
+        """
+        Returns the target if it exists and it is valid.
 
         Args:
             target (str): name of the target
 
-        Raises:
-            APISyntaxError: if the target is not valid or does not exist.
         Returns:
             str: target name if it exists and is valid, otherwise error.
+
+        Raises:
+            APISyntaxError: if the target is not valid or does not exist.
         """
         if not target:
             raise APISyntaxError("target is required but not specified.")
@@ -116,11 +121,11 @@ class FLIP_Session(Session):
         Args:
             file (str): file name
 
-        Raises:
-            APISyntaxError: returns an error if the file name does not exist or is invalid.
-
         Returns:
             str: file name if it exists and is valid, otherwise error.
+
+        Raises:
+            APISyntaxError: returns an error if the file name does not exist or is invalid.
         """
         if not isinstance(file, str):
             raise APISyntaxError("file is not str.")
@@ -139,6 +144,7 @@ class FLIP_Session(Session):
         return file
 
     def _validate_sp_string(self, sp_string) -> str:
+        """Returns the sp_string if it is valid."""
         if re.match(
             type_pattern_mapping.get("sp_end_point"),
             sp_string,
@@ -148,16 +154,21 @@ class FLIP_Session(Session):
             raise APISyntaxError("sp_string must be of the format example.com:8002:8003")
 
     def check_server_status(self) -> ServerInfo:
-        """Checks the status of the server. NOTE that this API considers one server only. For multiple servers systems,
+        """
+        Checks the status of the server.
+
+        NOTE that this API considers one server only. For multiple servers systems,
         this function should accommodate a list of servers as argument, similar to how the client status is handled.
 
         Returns:
             ServerInfo: a ServerInfo object containing the server status and start time.
         """
-        return self.get_system_info().server_info
+        server_info = self.get_system_info().server_info
+        return ServerInfo(server_info.status, server_info.start_time)
 
     def check_client_status(self, target: Optional[List[str]] = None) -> List[ClientInfoModel]:
-        """Check status of every client or specific clients.
+        """
+        Check status of every client or specific clients.
 
         Args:
             target (List[str]): list of client names to check status for. If empty, all clients will be returned.
@@ -196,12 +207,11 @@ class FLIP_Session(Session):
         Raises:
             JobNotFound: if the job ID is not found.
 
-        Returns: folder path to the location of the job result.
-
-        If the job size is smaller than the maximum size set on the server, the job will download to the download_dir
-        set in Session through the admin config, and the path to the downloaded result will be returned. If the size
-        of the job is larger than the maximum size, the location to download the job will be returned.
-
+        Returns:
+            str: If the job size is smaller than the maximum size set on the server, the job will download to the
+            download_dir set in Session through the admin config, and the path to the downloaded result will be
+            returned. If the size of the job is larger than the maximum size, the location to download the job will be
+            returned.
         """
         try:
             self._validate_job_id(job_id)

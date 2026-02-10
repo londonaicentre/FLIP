@@ -1,4 +1,5 @@
 {
+  "job_type": "standard",
   "LOCAL_ROUNDS": 3,
   "LR_START": 0.001,
   "LR_END": 0.0001,

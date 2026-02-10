@@ -13,9 +13,9 @@
 from types import SimpleNamespace
 
 import pytest
-from fl_api.utils.flip_session import FLIP_Session
 
 from fl_api.core.dependencies import get_session
+from fl_api.utils.flip_session import FLIP_Session
 
 
 class DummySession(FLIP_Session):
