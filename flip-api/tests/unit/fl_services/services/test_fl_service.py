@@ -137,10 +137,6 @@ def test_upload_app_calls_http_post(mock_post, model_id):
     assert result == {"status": "ok"}
 
 
-@patch("flip_api.fl_services.services.fl_service.logger")
-@patch("flip_api.fl_services.services.fl_service.S3Client")
-@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
-@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 def test_get_nvflare_job_id_by_model_id(model_id, fake_session):
     result_proxy = MagicMock()
     result_proxy.one_or_none.return_value = "job-id"
@@ -286,6 +282,7 @@ def test_bundle_application_success(mock_s3, mock_required, mock_verify, model_i
         [],  # Destination bucket
     ]
     mock_client.copy_object.return_value = None
+    mock_client.object_exists.return_value = False  # No files exist yet
     mock_verify.return_value = None
 
     job_type = fl_service.bundle_application(model_id)
@@ -413,6 +410,7 @@ def test_bundle_application_file_wrong_job_type_in_config(
         [],  # Destination bucket
     ]
     mock_client.copy_object.return_value = None
+    mock_client.object_exists.return_value = False  # No files exist yet
     mock_verify.return_value = None
 
     if job_type == "invalid":
