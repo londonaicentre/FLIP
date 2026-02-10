@@ -25,7 +25,7 @@ router = APIRouter(tags=["private_services"])
 
 
 # [#114] ✅
-@router.post("/model/{model_id}/logs")
+@router.post("/model/{model_id}/logs", response_model=dict[str, str])
 def add_log_endpoint(
     model_id: UUID,
     training_log: TrainingLog,

@@ -12,7 +12,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import check_authorization_token
@@ -30,6 +30,7 @@ router = APIRouter(tags=["private_services"])
     "/model/{model_id}/metrics",
     summary="Save training metrics for a model from a specific trust.",
     status_code=status.HTTP_204_NO_CONTENT,  # Returns 204 No Content on success
+    response_model=None,
 )
 def save_training_metrics_endpoint(
     model_id: UUID,
@@ -37,7 +38,7 @@ def save_training_metrics_endpoint(
     request: Request,
     db: Session = Depends(get_session),
     token: str = Depends(check_authorization_token),  # Enforces authorization
-):
+) -> None:
     """
     Receives and saves training metrics for a given model ID and trust.
 
@@ -88,10 +89,6 @@ def save_training_metrics_endpoint(
 
         # 3. Save Metrics
         save_training_metrics(model_id=model_id, training_metrics=training_metrics, db=db)
-
-        # 4. Return 204 No Content
-        # FastAPI handles this automatically if status_code is set in decorator and None or Response is returned.
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     except HTTPException as http_exc:
         # Log and re-raise HTTPExceptions (e.g., from validate_trusts or auth)

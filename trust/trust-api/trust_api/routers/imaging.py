@@ -98,7 +98,7 @@ async def update_profile(update_profile_request: UpdateProfileRequest):
     Update the profile of a user.
 
     Args:
-        update_profiled_request_data (UpdateProfileRequest): The request data for updating the profile.
+        update_profile_request (UpdateProfileRequest): The request data for updating the profile.
     """
     logger.info(f"Updating profile with input: {update_profile_request}")
     return await make_request(

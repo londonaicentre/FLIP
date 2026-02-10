@@ -195,12 +195,13 @@ app.include_router(update_user.router)
 
 
 # Root endpoint
-@app.get("/")
+@app.get("/", response_model=dict[str, str])
 def root():
+    """Root endpoint to verify the API is running."""
     return {"message": "Welcome to flip"}
 
 
-@app.get("/health")
+@app.get("/health", response_model=dict[str, str])
 def health_check():
     """Health check endpoint to verify the API is running"""
     return {"status": "ok", "message": "flip is running"}

@@ -25,16 +25,19 @@ router = APIRouter(prefix="/users", tags=["user_services"])
 
 
 # [#114] ✅
-@router.post("/access", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/access", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def request_access(request: IAccessRequest):
     """
     Send an access request email to administrators.
 
     Args:
-        request: The access request details
+        request (IAccessRequest): The access request details
 
     Returns:
-        204 No Content on success
+        None
+
+    Raises:
+        HTTPException: If there is an error sending the email or if there is an internal server error.
     """
     logger.info(request)
     try:

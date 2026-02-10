@@ -31,6 +31,19 @@ def get_roles(
     session: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
 ) -> IRolesResponse:
+    """
+    Retrieve all roles in the system.
+
+    Args:
+        session (Session): Database session for executing queries.
+        token_id (UUID): User ID from authentication token.
+
+    Returns:
+        IRolesResponse: An object containing a list of roles in the system.
+
+    Raises:
+        HTTPException: If the user does not have permission to manage users, or if there is a database error.
+    """
     # Check permissions
     if not has_permissions(token_id, [PermissionRef.CAN_MANAGE_USERS], session):
         error_msg = f"User with ID: {token_id} does not have permission"

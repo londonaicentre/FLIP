@@ -23,6 +23,7 @@ from imaging_api.config import get_settings
 
 # --- Step 1: Load AES key from environment file ---
 def get_aes_key() -> bytes:
+    """Retrieve the AES key from the environment file and return it as bytes."""
     key_b64 = get_settings().AES_KEY_BASE64
     if not key_b64:
         raise ValueError("AES key not found in environment file")
@@ -35,6 +36,7 @@ def get_aes_key() -> bytes:
 
 # --- Step 2: AES-CBC encryption ---
 def encrypt(plaintext: str, key: Optional[bytes] = None) -> str:
+    """Encrypt plaintext using AES-CBC with PKCS7 padding. Returns Base64-encoded ciphertext."""
     if key is None:
         key = get_aes_key()
 
@@ -55,6 +57,7 @@ def encrypt(plaintext: str, key: Optional[bytes] = None) -> str:
 
 # --- Step 3: AES-CBC decryption ---
 def decrypt(encoded_payload: str, key: Optional[bytes] = None) -> str:
+    """Decrypt Base64-encoded ciphertext using AES-CBC with PKCS7 padding. Returns the original plaintext."""
     if key is None:
         key = get_aes_key()
 

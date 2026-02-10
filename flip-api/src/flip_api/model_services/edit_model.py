@@ -27,13 +27,29 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 
 
 # [#114] ✅
-@router.put("/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.put("/{model_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def edit_model_endpoint(
     model_id: UUID,
     model_details: IModelDetails,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> None:
+    """
+    Edit a specific model.
+
+    Args:
+        model_id (UUID): The ID of the model to edit.
+        model_details (IModelDetails): The new details for the model.
+        db (Session): Database session.
+        user_id (UUID): User ID from authentication.
+
+    Returns:
+        None
+
+    Raises:
+        HTTPException: If the user does not have access to the model, if the model does not exist, if the model is
+                       already deleted, if the model status does not allow editing, or if there is a database error.
+    """
     # Access control
     if not can_access_model(user_id, model_id, db):
         raise HTTPException(

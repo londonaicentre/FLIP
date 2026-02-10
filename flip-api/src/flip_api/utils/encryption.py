@@ -23,12 +23,14 @@ from flip_api.utils.get_secrets import get_secret
 
 # --- Step 1: Get AES key from AWS Secrets Manager ---
 def get_aes_key() -> bytes:
+    """Retrieve the AES key from AWS Secrets Manager and return it as bytes."""
     aes_key_b64 = get_secret("aes_key")
     return base64.b64decode(aes_key_b64)  # Return as bytes
 
 
 # --- Step 2: AES-CBC encryption ---
 def encrypt(plaintext: str, key: Optional[bytes] = None) -> str:
+    """Encrypt plaintext using AES-CBC with PKCS7 padding. Returns Base64-encoded ciphertext."""
     if key is None:
         key = get_aes_key()
 
@@ -49,6 +51,7 @@ def encrypt(plaintext: str, key: Optional[bytes] = None) -> str:
 
 # --- Step 3: AES-CBC decryption ---
 def decrypt(encoded_payload: str, key: Optional[bytes] = None) -> str:
+    """Decrypt Base64-encoded ciphertext using AES-CBC with PKCS7 padding. Returns the original plaintext."""
     if key is None:
         key = get_aes_key()
 

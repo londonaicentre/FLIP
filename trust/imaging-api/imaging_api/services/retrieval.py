@@ -57,6 +57,9 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
 
     Returns:
         bool: True if all studies were successfully queued, False otherwise.
+
+    Raises:
+        HTTPException: If the request cannot be processed.
     """
     # Check if project exists
     try:
@@ -152,6 +155,9 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
 
     Returns:
         ImportStatus: An object containing the status of study imports.
+
+    Raises:
+        HTTPException: If the request cannot be processed.
     """
     # Encrypt project ID to send to the data access API
     encrypted_project_id = encrypt(project_id)
@@ -257,6 +263,9 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
 
     Returns:
         bool: True if all studies were successfully queued, False otherwise.
+
+    Raises:
+        HTTPException: If the request cannot be processed.
     """
 
     # Check if project exists
