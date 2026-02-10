@@ -137,6 +137,10 @@ def test_upload_app_calls_http_post(mock_post, model_id):
     assert result == {"status": "ok"}
 
 
+@patch("flip_api.fl_services.services.fl_service.logger")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 def test_get_nvflare_job_id_by_model_id(model_id, fake_session):
     result_proxy = MagicMock()
     result_proxy.one_or_none.return_value = "job-id"
@@ -296,6 +300,69 @@ def test_bundle_application_success(mock_s3, mock_required, mock_verify, model_i
         f"{model_bucket}/{model_id}/validator.py",
         f"{dest_bucket}/{model_id}/app/custom/validator.py",
     )
+
+
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+@patch("flip_api.fl_services.services.fl_service.logger")
+def test_bundle_application_model_files_overwrite(
+    mock_logger, mock_s3, mock_required, mock_verify, model_id, mocked_settings
+):
+    """
+    Test that if a destination key exists, the file is not copied and logger logs the correct message.
+    """
+    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+    dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    mock_client = mock_s3.return_value
+    # config.json with job_type standard
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_required.return_value = ["trainer.py", "validator.py", "config.json"]
+    # Model files and base files
+    model_files = [
+        f"{model_bucket}/{model_id}/trainer.py",
+        f"{model_bucket}/{model_id}/validator.py",
+        f"{model_bucket}/{model_id}/config.json",
+        f"{model_bucket}/{model_id}/meta.json",
+    ]
+    base_files = [
+        f"{base_bucket}/src/standard/app_site1/custom/flip.py",
+        f"{base_bucket}/src/standard/app_site1/config/config_fed_client.json",
+    ]
+    # Destination bucket is empty at first
+    mock_client.list_objects.side_effect = [
+        model_files,  # model bucket
+        base_files,   # base bucket
+        [],           # dest bucket (empty)
+    ]
+    mock_client.copy_object.return_value = None
+    mock_verify.return_value = None
+
+    # Simulate object_exists: trainer.py for app_site1 exists, others do not
+    def object_exists_side_effect(key):
+        if "trainer.py" in key and "app_site1" in key:
+            return True
+        return False
+
+    mock_client.object_exists.side_effect = object_exists_side_effect
+
+    fl_service.bundle_application(model_id)
+
+    # Check that logger.info was called with the "already exists" message for the skipped file
+    expected_dst_key = f"{dest_bucket}/{model_id}/app_site1/custom/trainer.py"
+    mock_logger.info.assert_any_call(
+        f"File {expected_dst_key} already exists, skipping upload from model files."
+    )
+
+    # Verify copy_object was NOT called for the skipped file
+    for call in mock_client.copy_object.call_args_list:
+        args, _ = call
+        if len(args) >= 2 and "trainer.py" in args[1] and "app_site1" in args[1]:
+            pytest.fail("copy_object was called for a file that should have been skipped.")
 
 
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
