@@ -35,10 +35,14 @@ async def make_request(
         json_body (dict | None): Request body content
         params (dict | None): Query parameters for the request
         headers (dict | None): Headers for the request
-        timeout_seconds (int): Timeout for the request in seconds
+        timeout_seconds (float): Timeout for the request in seconds
         follow_redirects (bool): Whether to follow redirects
+
     Returns:
         dict[str, str]: JSON response from the external API
+
+    Raises:
+        HTTPException: If there is an error during the request or if the response is not JSON
     """
     params = params or {}
     headers = dict(headers or {})  # copy so we don't mutate callers

@@ -47,6 +47,10 @@ def register_user(
 
     Returns:
         Created user data with ID
+
+    Raises:
+        HTTPException: If the user does not have permission to register a user, if the email is already registered, or
+        if there is an error registering the user in Cognito or the database.
     """
     try:
         # Check permissions

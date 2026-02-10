@@ -269,6 +269,7 @@ def check_endpoint_over_ssh(host: str, endpoint: str, expected_status: int = 200
     Args:
         host: Host address (user@ip)
         endpoint: URL to check
+
     Returns:
         True if endpoint is accessible, False otherwise
     """

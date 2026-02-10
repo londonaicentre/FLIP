@@ -35,6 +35,9 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
 
     Returns:
         StatisticsResponse: The aggregated statistics from the query results.
+
+    Raises:
+        HTTPException: If there is an error during the execution of the query or if the query returns too few records.
     """
     logger.info(f"Received cohort query: {query_input}")
 
@@ -91,8 +94,12 @@ def get_dataframe(query_input: DataframeQuery) -> Dict[str, List[Any]]:
 
     Args:
         query_input (DataframeQuery): The input data for the DataFrame query.
+
     Returns:
         Dict[str, List[Any]]: The query results in a DataFrame-like structure.
+
+    Raises:
+        HTTPException: If there is an error during the execution of the query or if the query returns too few records.
     """
     project_id = decrypt(query_input.encrypted_project_id)
 

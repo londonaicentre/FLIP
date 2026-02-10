@@ -12,7 +12,7 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
 from flip_api.auth.auth_utils import has_permissions
@@ -31,6 +31,7 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
     "/{project_id}/unstage",
     summary="Unstage a project that is currently staged for approval.",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
     responses={
         status.HTTP_400_BAD_REQUEST: {"description": "Project is not in STAGED status and cannot be unstaged."},
         status.HTTP_403_FORBIDDEN: {"description": "User does not have permission to unstage projects."},
@@ -42,7 +43,7 @@ def unstage_project_endpoint(
     project_id: UUID,
     session: Session = Depends(get_session),
     current_user_id: UUID = Depends(verify_token),
-):
+) -> None:
     """
     Unstages a project, removing it from the approval process.
     The project must be in 'STAGED' status.
@@ -54,7 +55,7 @@ def unstage_project_endpoint(
         current_user_id (UUID): The ID of the current user.
 
     Returns:
-        Response: HTTP 204 No Content on success.
+        None
 
     Raises:
         HTTPException: Various exceptions for permission issues, not found, bad request, or server errors.
@@ -93,7 +94,6 @@ def unstage_project_endpoint(
             session=session,
         )
         logger.info(f"Project ({project_id}) status set to unstaged, audit entry added and transaction committed.")
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     except ValueError as ve:  # Catch specific business logic errors from services
         logger.error(f"ValueError during unstaging project {project_id}: {ve}", exc_info=True)

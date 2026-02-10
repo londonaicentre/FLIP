@@ -1,6 +1,9 @@
-###########################
-flip |flip_version|
-###########################
+:github_url: https://github.com/londonaicentre/FLIP
+
+FLIP
+====
+
+*Federated Learning Interoperability Platform*
 
 .. .. image:: assets/flip-logo.png
 ..    :width: 300

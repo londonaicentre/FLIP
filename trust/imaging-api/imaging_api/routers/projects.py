@@ -51,10 +51,13 @@ def get_projects(headers: XNATAuthHeaders) -> list[Project]:
     Retrieves a list of all projects in XNAT.
 
     Args:
-        headers (XNATAuthHeaders): XNAT authentication headers
+        headers (XNATAuthHeaders): XNAT authentication headers.
 
     Returns:
-        list[imaging_api.routers.schemas.Project]: List of projects in XNAT
+        list[imaging_api.routers.schemas.Project]: List of projects in XNAT.
+
+    Raises:
+        HTTPException: If there is an error during the retrieval of projects.
     """
     try:
         return get_all_projects(headers)
@@ -75,12 +78,17 @@ def create_project_endpoint(
     Creates a new project in XNAT.
 
     Args:
-        project_id (str): Unique identifier for the project
-        project_secondary_id (str): Secondary identifier for the project
-        project_name (str): Name of the project
-        project_description (str, optional): Description of the project
+        project_id (str): Unique identifier for the project.
+        project_secondary_id (str): Secondary identifier for the project.
+        project_name (str): Name of the project.
+        project_description (str, optional): Description of the project.
+        headers (XNATAuthHeaders): XNAT authentication headers.
+
     Returns:
-        imaging_api.routers.schemas.Project: The created project object
+        imaging_api.routers.schemas.Project: The created project object.
+
+    Raises:
+        HTTPException: If there is an error during the creation of the project.
     """
     try:
         return create_project(project_id, project_secondary_id, project_name, project_description, headers)
@@ -108,11 +116,15 @@ async def create_project_from_central_hub_project(
 
     Args:
         central_hub_project (imaging_api.routers.schemas.CentralHubProject): Central Hub project object including its
-        ID, name, and users
-        headers (XNATAuthHeaders): XNAT authentication headers
+        ID, name, and users.
+        headers (XNATAuthHeaders): XNAT authentication headers.
+        background_tasks (BackgroundTasks): Background task manager for retrieval scheduling.
 
     Returns:
-        CreatedProject (imaging_api.routers.schemas.CreatedProject): The created project object
+        CreatedProject (imaging_api.routers.schemas.CreatedProject): The created project object.
+
+    Raises:
+        HTTPException: If there is an error during the creation of the project.
     """
     # Map central hub project to XNAT project 'create' request object
     project_data = to_create_project(central_hub_project)
@@ -165,10 +177,14 @@ async def delete_project_endpoint(project_id: str, headers: XNATAuthHeaders) -> 
     Deletes an existing project in XNAT.
 
     Args:
-        project_id (str): Unique identifier for the project
+        project_id (str): Unique identifier for the project.
+        headers (XNATAuthHeaders): XNAT authentication headers.
 
     Returns:
-        Project: The deleted project object
+        Project: The deleted project object.
+
+    Raises:
+        HTTPException: If there is an error during the deletion of the project.
     """
     try:
         return await delete_project(project_id, headers)
@@ -219,9 +235,14 @@ def get_project_endpoint(project_id: str, headers: XNATAuthHeaders) -> Project:
         }
 
     Args:
-        project_id (str): Unique identifier for the project
+        project_id (str): Unique identifier for the project.
+        headers (XNATAuthHeaders): XNAT authentication headers.
+
     Returns:
-        Project: The project object
+        Project: The project object.
+
+    Raises:
+        HTTPException: If there is an error during the retrieval of the project.
     """
     try:
         return get_project(project_id, headers)
@@ -237,9 +258,14 @@ def get_project_subjects_endpoint(project_id: str, headers: XNATAuthHeaders) -> 
     Retrieves a list of subjects in a specific project in XNAT.
 
     Args:
-        project_id (str): Unique identifier for the project
+        project_id (str): Unique identifier for the project.
+        headers (XNATAuthHeaders): XNAT authentication headers.
+
     Returns:
-        List[Subject]: List of subjects in the project
+        List[Subject]: List of subjects in the project.
+
+    Raises:
+        HTTPException: If there is an error during the retrieval of subjects for the project.
     """
     try:
         return get_subjects(project_id, headers)
@@ -256,9 +282,14 @@ def get_project_experiments_endpoint(project_id: str, headers: XNATAuthHeaders) 
     Retrieves a list of experiments in a specific project in XNAT.
 
     Args:
-        project_id (str): Unique identifier for the project
+        project_id (str): Unique identifier for the project.
+        headers (XNATAuthHeaders): XNAT authentication headers.
+
     Returns:
-        List[Experiment]: List of experiments in the project
+        List[Experiment]: List of experiments in the project.
+
+    Raises:
+        HTTPException: If there is an error during the retrieval of experiments for the project.
     """
     try:
         return get_experiments(project_id, headers)
@@ -273,16 +304,23 @@ def get_project_experiments_endpoint(project_id: str, headers: XNATAuthHeaders) 
 @router.get(
     "/{project_id}/experiment/{experiment_id_or_label}",
     summary="Get XNAT Project Experiment",
+    description="Get details of a specific experiment in a project in XNAT from the experiment ID or label.",
+    response_model=dict,
 )
-def get_project_experiment_endpoint(project_id: str, experiment_id_or_label: str, headers: XNATAuthHeaders):
+def get_project_experiment_endpoint(project_id: str, experiment_id_or_label: str, headers: XNATAuthHeaders) -> dict:
     """
     Retrieves details of a specific experiment in a project in XNAT.
 
     Args:
-        project_id (str): Unique identifier for the project
-        experiment_id_or_label (str): Unique identifier for the experiment
+        project_id (str): Unique identifier for the project.
+        experiment_id_or_label (str): Unique identifier for the experiment.
+        headers (XNATAuthHeaders): XNAT authentication headers.
+
     Returns:
-        dict: The experiment object
+        dict: The experiment object.
+
+    Raises:
+        HTTPException: If there is an error during the retrieval of the experiment.
     """
     try:
         return get_experiment(project_id, experiment_id_or_label, headers)

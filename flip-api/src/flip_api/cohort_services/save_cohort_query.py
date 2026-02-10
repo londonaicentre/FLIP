@@ -52,6 +52,10 @@ def save_cohort_query(
 
     Returns:
         SubmitCohortQueryInput: The saved cohort query details including the query ID
+
+    Raises:
+        HTTPException: If the project is not in UNSTAGED status, if the query could not be created, or if there is an
+        internal server error
     """
     try:
         # Validation is handled automatically by Pydantic
