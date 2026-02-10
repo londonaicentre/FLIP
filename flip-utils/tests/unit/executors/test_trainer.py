@@ -93,3 +93,30 @@ class TestRunTrainer:
 
         # Verify it used the existing trainer
         mock_trainer_instance.execute.assert_called_once_with("train", shareable, fl_ctx, abort_signal)
+
+    def test_execute_exception_handling(self):
+        """Test that execute handles exceptions properly"""
+        trainer = RUN_TRAINER()
+        trainer.log_info = MagicMock()
+        trainer.log_error = MagicMock()
+
+        # Create a mock trainer that raises an exception
+        mock_trainer_instance = MagicMock()
+        mock_trainer_instance.get_num_epochs.return_value = 5
+        mock_trainer_instance.execute.side_effect = Exception("Test exception")
+
+        mock_trainer_class = MagicMock(return_value=mock_trainer_instance)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        fl_ctx.get_job_id.return_value = "test_job"
+        fl_ctx.get_identity_name.return_value = "test_client"
+        abort_signal = MagicMock()
+        shareable = MagicMock()
+
+        with patch.dict("sys.modules", {"trainer": MagicMock(FLIP_TRAINER=mock_trainer_class)}):
+            result = trainer.execute("train", shareable, fl_ctx, abort_signal)
+
+            # Verify exception was logged
+            trainer.log_info.assert_called()
+            trainer.log_error.assert_called()

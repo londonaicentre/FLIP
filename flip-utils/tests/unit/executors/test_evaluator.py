@@ -11,7 +11,10 @@
 #
 
 import sys
-from unittest.mock import MagicMock
+import tempfile
+from unittest.mock import MagicMock, patch
+
+from nvflare.apis.fl_constant import ReturnCode
 
 from flip.constants import PTConstants
 
@@ -90,3 +93,193 @@ class TestRunEvaluator:
         assert evaluator._evaluate_task_name == "custom_eval"
         assert evaluator._project_id == "proj_111"
         assert evaluator._query == "SELECT * FROM eval_data"
+
+    @patch("flip.executors.evaluator.UPLOADED_EVALUATOR")
+    @patch("flip.executors.evaluator.from_shareable")
+    @patch("os.listdir")
+    @patch("os.remove")
+    def test_execute_without_config_file(self, mock_remove, mock_listdir, mock_from_shareable, mock_uploaded_evaluator):
+        """Test execute method without config.json file"""
+        evaluator = RUN_EVALUATOR()
+        evaluator.log_info = MagicMock()
+        evaluator.log_error = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        shareable = MagicMock()
+        abort_signal = MagicMock()
+
+        # Setup mocks
+        mock_listdir.return_value = []  # No config.json
+        mock_evaluator_instance = MagicMock()
+        mock_output = MagicMock()
+        mock_evaluator_instance.execute.return_value = mock_output
+        mock_uploaded_evaluator.return_value = mock_evaluator_instance
+
+        mock_dxo = MagicMock()
+        mock_dxo.data = {"model1": {"accuracy": 0.95}}
+        mock_from_shareable.return_value = mock_dxo
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("flip.executors.evaluator.Path") as mock_path:
+                mock_path_instance = MagicMock()
+                mock_path_instance.parent.resolve.return_value = tmpdir
+                mock_path.return_value = mock_path_instance
+
+                result = evaluator.execute("eval", shareable, fl_ctx, abort_signal)
+
+        assert result == mock_output
+        mock_evaluator_instance.execute.assert_called_once()
+
+    @patch("flip.executors.evaluator.UPLOADED_EVALUATOR")
+    @patch("flip.executors.evaluator.from_shareable")
+    @patch("builtins.open", create=True)
+    @patch("os.listdir")
+    @patch("os.remove")
+    def test_execute_with_config_file(
+        self, mock_remove, mock_listdir, mock_open, mock_from_shareable, mock_uploaded_evaluator
+    ):
+        """Test execute method with config.json file"""
+        evaluator = RUN_EVALUATOR()
+        evaluator.log_info = MagicMock()
+        evaluator.log_error = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        shareable = MagicMock()
+        abort_signal = MagicMock()
+
+        # Setup config file content
+        config_content = {"evaluation_output": {"accuracy": 0.0}, "models": {"model1": {}, "model2": {}}}
+
+        mock_listdir.return_value = ["config.json"]
+        mock_file = MagicMock()
+        mock_open.return_value.__enter__.return_value = mock_file
+
+        mock_evaluator_instance = MagicMock()
+        mock_output = MagicMock()
+        mock_evaluator_instance.execute.return_value = mock_output
+        mock_uploaded_evaluator.return_value = mock_evaluator_instance
+
+        mock_dxo = MagicMock()
+        mock_dxo.data = {"model1": {"accuracy": 0.95}, "model2": {"accuracy": 0.93}}
+        mock_from_shareable.return_value = mock_dxo
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("flip.executors.evaluator.Path") as mock_path:
+                with patch("json.load", return_value=config_content):
+                    mock_path_instance = MagicMock()
+                    mock_path_instance.parent.resolve.return_value = tmpdir
+                    mock_path.return_value = mock_path_instance
+
+                    result = evaluator.execute("eval", shareable, fl_ctx, abort_signal)
+
+        assert result == mock_output
+
+    @patch("flip.executors.evaluator.UPLOADED_EVALUATOR")
+    @patch("flip.executors.evaluator.from_shareable")
+    @patch("os.listdir")
+    @patch("os.remove")
+    def test_execute_removes_pytorch_files(
+        self, mock_remove, mock_listdir, mock_from_shareable, mock_uploaded_evaluator
+    ):
+        """Test execute method removes .pt and .pth files"""
+        evaluator = RUN_EVALUATOR()
+        evaluator.log_info = MagicMock()
+        evaluator.log_error = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        shareable = MagicMock()
+        abort_signal = MagicMock()
+
+        # os.listdir is called twice - once for config check, once for weight files
+        mock_listdir.return_value = ["model.pt", "weights.pth", "config.json", "data.txt"]
+
+        mock_evaluator_instance = MagicMock()
+        mock_output = MagicMock()
+        mock_evaluator_instance.execute.return_value = mock_output
+        mock_uploaded_evaluator.return_value = mock_evaluator_instance
+
+        mock_dxo = MagicMock()
+        mock_dxo.data = {"model1": {"accuracy": 0.95}}
+        mock_from_shareable.return_value = mock_dxo
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("flip.executors.evaluator.Path") as mock_path:
+                with patch("builtins.open", create=True):
+                    with patch("json.load", return_value={"evaluation_output": {}, "models": {}}):
+                        mock_path_instance = MagicMock()
+                        mock_path_instance.parent.resolve.return_value = tmpdir
+                        mock_path.return_value = mock_path_instance
+
+                        result = evaluator.execute("eval", shareable, fl_ctx, abort_signal)
+
+        # Should have removed 2 pytorch files (model.pt and weights.pth)
+        assert mock_remove.call_count == 2
+
+    @patch("flip.executors.evaluator.UPLOADED_EVALUATOR")
+    @patch("flip.executors.evaluator.from_shareable")
+    @patch("builtins.open", create=True)
+    @patch("os.listdir")
+    @patch("os.remove")
+    def test_execute_validation_failure(
+        self, mock_remove, mock_listdir, mock_open, mock_from_shareable, mock_uploaded_evaluator
+    ):
+        """Test execute method with validation failure"""
+        evaluator = RUN_EVALUATOR()
+        evaluator.log_info = MagicMock()
+        evaluator.log_error = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        shareable = MagicMock()
+        abort_signal = MagicMock()
+
+        config_content = {"evaluation_output": {"accuracy": 0.0}, "models": {"model1": {}}}
+
+        mock_listdir.return_value = ["config.json"]
+
+        mock_evaluator_instance = MagicMock()
+        mock_output = MagicMock()
+        mock_evaluator_instance.execute.return_value = mock_output
+        mock_uploaded_evaluator.return_value = mock_evaluator_instance
+
+        # Return data for wrong model
+        mock_dxo = MagicMock()
+        mock_dxo.data = {"model_wrong": {"accuracy": 0.95}}
+        mock_from_shareable.return_value = mock_dxo
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch("flip.executors.evaluator.Path") as mock_path:
+                with patch("json.load", return_value=config_content):
+                    mock_path_instance = MagicMock()
+                    mock_path_instance.parent.resolve.return_value = tmpdir
+                    mock_path.return_value = mock_path_instance
+
+                    result = evaluator.execute("eval", shareable, fl_ctx, abort_signal)
+
+        # Should still return output but log error
+        assert result == mock_output
+        evaluator.log_error.assert_called()
+
+    @patch("flip.executors.evaluator.UPLOADED_EVALUATOR")
+    def test_execute_exception_handling(self, mock_uploaded_evaluator):
+        """Test execute method exception handling"""
+        evaluator = RUN_EVALUATOR()
+        evaluator.log_info = MagicMock()
+        evaluator.log_error = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        shareable = MagicMock()
+        abort_signal = MagicMock()
+
+        # Force an exception
+        mock_uploaded_evaluator.side_effect = Exception("Test exception")
+
+        result = evaluator.execute("eval", shareable, fl_ctx, abort_signal)
+
+        assert result.get_return_code() == ReturnCode.EXECUTION_EXCEPTION
+        assert result.get_header("exception") is not None
+        evaluator.log_error.assert_called()
