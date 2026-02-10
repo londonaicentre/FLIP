@@ -12,8 +12,24 @@
 
 services:
   nvflare-simulator-test:
-    extends:
-      file: ./compose.dev.yml
-      service: nvflare-simulator-dev
+    image: fl-base:dev
+    build:
+      context: ../
+      dockerfile: fl_services/fl-base/Dockerfile
+      args:
+        LOCAL_DEV: ${LOCAL_DEV:-false}
+    env_file:
+      - ../.env.development
+    environment:
+      - DEV_IMAGES_DIR=/images
+      - DEV_DATAFOLDER=/datafolder
+      - DEV_DATAFRAME=/dataframe_file
     volumes:
       - ${JOB_DIR}:/app/job
+      - ${RUNS_DIR}:/runs
+      - ${DEV_IMAGES_DIR}:/images
+      - ${DEV_DATAFOLDER}:/datafolder
+      - ${DEV_DATAFRAME}:/dataframe_file:ro
+    shm_size: "32gb"
+    # Note: No 'gpus: all' for test environment (may not have GPU in CI)
+    command: nvflare simulator -n 2 -w /runs/workspace job
