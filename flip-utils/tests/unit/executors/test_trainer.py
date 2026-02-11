@@ -63,7 +63,7 @@ class TestRunTrainer:
         abort_signal = MagicMock()
 
         with patch.dict("sys.modules", {"trainer": MagicMock(FLIP_TRAINER=mock_trainer_class)}):
-            result = trainer.execute("train", shareable, fl_ctx, abort_signal)
+            trainer.execute("train", shareable, fl_ctx, abort_signal)
 
             # Verify trainer was initialized
             assert trainer._flip_trainer is not None
@@ -89,7 +89,7 @@ class TestRunTrainer:
         fl_ctx.get_identity_name.return_value = "test_client"
         abort_signal = MagicMock()
 
-        result = trainer.execute("train", shareable, fl_ctx, abort_signal)
+        trainer.execute("train", shareable, fl_ctx, abort_signal)
 
         # Verify it used the existing trainer
         mock_trainer_instance.execute.assert_called_once_with("train", shareable, fl_ctx, abort_signal)
@@ -115,7 +115,7 @@ class TestRunTrainer:
         shareable = MagicMock()
 
         with patch.dict("sys.modules", {"trainer": MagicMock(FLIP_TRAINER=mock_trainer_class)}):
-            result = trainer.execute("train", shareable, fl_ctx, abort_signal)
+            trainer.execute("train", shareable, fl_ctx, abort_signal)
 
             # Verify exception was logged
             trainer.log_info.assert_called()

@@ -30,14 +30,14 @@ class TestPercentilePrivacy:
         filter = PercentilePrivacy()
         assert filter.percentile == 10
         assert filter.gamma == 0.01
-        assert filter.off == False
+        assert not filter.off
 
     def test_init_custom_values(self):
         """Test initialization with custom values"""
         filter = PercentilePrivacy(percentile=20, gamma=0.05, off=True)
         assert filter.percentile == 20
         assert filter.gamma == 0.05
-        assert filter.off == True
+        assert filter.off
 
     def test_process_dxo_when_off(self):
         """Test that filter returns DXO unchanged when off=True"""
