@@ -53,7 +53,7 @@ class TestRunValidator:
         abort_signal = MagicMock()
 
         with patch.dict("sys.modules", {"validator": MagicMock(FLIP_VALIDATOR=mock_validator_class)}):
-            result = validator.execute("validate", shareable, fl_ctx, abort_signal)
+            validator.execute("validate", shareable, fl_ctx, abort_signal)
 
             # Verify validator was initialized
             assert validator._validator is not None
@@ -76,7 +76,7 @@ class TestRunValidator:
         fl_ctx.get_identity_name.return_value = "test_client"
         abort_signal = MagicMock()
 
-        result = validator.execute("validate", shareable, fl_ctx, abort_signal)
+        validator.execute("validate", shareable, fl_ctx, abort_signal)
 
         # Verify it used the existing validator
         mock_validator_instance.execute.assert_called_once_with("validate", shareable, fl_ctx, abort_signal)
@@ -101,7 +101,7 @@ class TestRunValidator:
         shareable = MagicMock()
 
         with patch.dict("sys.modules", {"validator": MagicMock(FLIP_VALIDATOR=mock_validator_class)}):
-            result = validator.execute("validate", shareable, fl_ctx, abort_signal)
+            validator.execute("validate", shareable, fl_ctx, abort_signal)
 
             # Verify exception was logged
             validator.log_info.assert_called()

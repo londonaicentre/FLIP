@@ -94,7 +94,7 @@ class TestRunEvaluator:
         assert evaluator._project_id == "proj_111"
         assert evaluator._query == "SELECT * FROM eval_data"
 
-    @patch("flip.executors.evaluator.UPLOADED_EVALUATOR")
+    @patch("evaluator.FLIP_EVALUATOR")
     @patch("flip.executors.evaluator.from_shareable")
     @patch("os.listdir")
     @patch("os.remove")
@@ -131,7 +131,7 @@ class TestRunEvaluator:
         assert result == mock_output
         mock_evaluator_instance.execute.assert_called_once()
 
-    @patch("flip.executors.evaluator.UPLOADED_EVALUATOR")
+    @patch("evaluator.FLIP_EVALUATOR")
     @patch("flip.executors.evaluator.from_shareable")
     @patch("builtins.open", create=True)
     @patch("os.listdir")
@@ -176,7 +176,7 @@ class TestRunEvaluator:
 
         assert result == mock_output
 
-    @patch("flip.executors.evaluator.UPLOADED_EVALUATOR")
+    @patch("evaluator.FLIP_EVALUATOR")
     @patch("flip.executors.evaluator.from_shareable")
     @patch("os.listdir")
     @patch("os.remove")
@@ -213,12 +213,12 @@ class TestRunEvaluator:
                         mock_path_instance.parent.resolve.return_value = tmpdir
                         mock_path.return_value = mock_path_instance
 
-                        result = evaluator.execute("eval", shareable, fl_ctx, abort_signal)
+                        evaluator.execute("eval", shareable, fl_ctx, abort_signal)
 
         # Should have removed 2 pytorch files (model.pt and weights.pth)
         assert mock_remove.call_count == 2
 
-    @patch("flip.executors.evaluator.UPLOADED_EVALUATOR")
+    @patch("evaluator.FLIP_EVALUATOR")
     @patch("flip.executors.evaluator.from_shareable")
     @patch("builtins.open", create=True)
     @patch("os.listdir")
@@ -263,7 +263,7 @@ class TestRunEvaluator:
         assert result == mock_output
         evaluator.log_error.assert_called()
 
-    @patch("flip.executors.evaluator.UPLOADED_EVALUATOR")
+    @patch("evaluator.FLIP_EVALUATOR")
     def test_execute_exception_handling(self, mock_uploaded_evaluator):
         """Test execute method exception handling"""
         evaluator = RUN_EVALUATOR()

@@ -246,7 +246,7 @@ class TestPersistToS3AndCleanup:
         mock_isdir.return_value = False
 
         with patch("shutil.make_archive", side_effect=FileNotFoundError("test")):
-            with pytest.raises(Exception):
+            with pytest.raises(FileNotFoundError, match="test"):
                 component.upload_results_to_s3_bucket(fl_ctx)
 
     @patch("flip.components.persist_and_cleanup.FlipConstants")
