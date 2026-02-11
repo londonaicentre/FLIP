@@ -18,7 +18,6 @@ import numpy as np
 import pydicom
 import torch
 from data_utils import Lesion, LesionDict, get_labels_from_radiology_row, get_lesion_label, get_xray_transforms
-from flip import FLIP
 from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
 from models import get_model
 from monai.data import DataLoader, Dataset
@@ -28,15 +27,13 @@ from nvflare.apis.fl_constant import ReservedKey, ReturnCode
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
-from nvflare.app_common.abstract.model import (
-    make_model_learnable,
-    model_learnable_to_dxo,
-)
+from nvflare.app_common.abstract.model import make_model_learnable, model_learnable_to_dxo
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_opt.pt.model_persistence_format_manager import PTModelPersistenceFormatManager
-from pt_constants import PTConstants
-from utils.flip_constants import ResourceType
 from utils.model_weights_handling import get_model_weights_diff
+
+from flip import FLIP
+from flip.constants import PTConstants, ResourceType
 
 
 class FLIP_TRAINER(Executor):
