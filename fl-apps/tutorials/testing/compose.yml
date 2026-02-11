@@ -24,4 +24,4 @@ services:
       - ./tmp/app:/app/job
     shm_size: 32gb
     gpus: all
-    command: nvflare simulator -n ${NUM_CLIENTS} -w runs/workspace job
+    command: nvflare simulator -t 2 -n ${NUM_CLIENTS} -w runs/workspace job
