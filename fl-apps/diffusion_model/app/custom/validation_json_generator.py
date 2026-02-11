@@ -46,7 +46,7 @@ class ValidationJsonGenerator(FLComponent):
                 old_results[key] = value
         return old_results
 
-    def handle_validation_events(self, event_type: str, fl_ctx: FLContext):
+    def handle_evaluation_events(self, event_type: str, fl_ctx: FLContext):
         if event_type == EventType.START_RUN:
             self._val_results.clear()
         elif event_type == AppEventType.VALIDATION_RESULT_RECEIVED:
