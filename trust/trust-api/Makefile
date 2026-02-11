@@ -47,3 +47,4 @@ local_mypy:
 local_test:
 	@export BASE_IMAGES_DOWNLOAD_DIR=/tmp/images; \
 	$(lint_command) && $(mypy_command) && $(test_coverage_html_command)
+unit_test: local_test
