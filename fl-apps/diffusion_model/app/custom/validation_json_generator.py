@@ -19,7 +19,8 @@ from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
-from pt_constants import PTConstants
+
+from flip.constants import PTConstants
 
 
 class ValidationJsonGenerator(FLComponent):
@@ -39,11 +40,7 @@ class ValidationJsonGenerator(FLComponent):
 
     def update_results(self, old_results: dict, new_results: dict):
         for key, value in new_results.items():
-            if (
-                key in old_results
-                and isinstance(old_results[key], dict)
-                and isinstance(value, dict)
-            ):
+            if key in old_results and isinstance(old_results[key], dict) and isinstance(value, dict):
                 self.update_results(old_results[key], value)
             else:
                 old_results[key] = value
