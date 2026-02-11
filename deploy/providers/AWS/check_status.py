@@ -774,8 +774,8 @@ def main(
             else:
                 # Check each expected container
                 expected_containers = [
-                    "flip",
-                    "flip",
+                    "flip-api",
+                    "flip-ui",
                 ]
                 # Add only configured FL server containers
                 for net_num in configured_net_numbers:
