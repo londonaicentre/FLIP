@@ -44,19 +44,19 @@
     },
     {
       "id": "json_generator",
-      "path": "validation_json_generator.ValidationJsonGenerator",
+      "path": "flip.components.ValidationJsonGenerator",
       "args": {}
     },
     {
       "id": "flip_server_event_handler",
-      "path": "flip_server_event_handler.ServerEventHandler",
+      "path": "flip.components.ServerEventHandler",
       "args": {
         "model_id": "{model_id}"
       }
     },
     {
       "id": "persist_and_cleanup",
-      "path": "persist_and_cleanup.PersistToS3AndCleanup",
+      "path": "flip.components.PersistToS3AndCleanup",
       "args": {
         "model_id": "{model_id}",
         "persistor_id": "persistor"
@@ -66,7 +66,7 @@
   "workflows": [
     {
       "id": "init_training",
-      "path": "init_training.InitTraining",
+      "path": "flip.controllers.InitTraining",
       "args": {
         "model_id": "{model_id}",
         "min_clients": "{min_clients}"
@@ -74,7 +74,7 @@
     },
     {
       "id": "scatter_and_gather_ae",
-      "path": "scatter_and_gather.ScatterAndGather",
+      "path": "flip.controllers.ScatterAndGather",
       "args": {
         "min_clients": "{min_clients}",
         "start_round": 0,
@@ -92,7 +92,7 @@
     {
       "id": "cross_site_validate_ae",
       "name": "CrossSiteModelEvalLDM",
-      "path": "cross_site_model_eval.CrossSiteModelEval",
+      "path": "flip.controllers.CrossSiteModelEval",
       "args": {
         "validation_task_name": "validate_ae",
         "model_locator_id": "model_locator",
@@ -103,7 +103,7 @@
     },
     {
       "id": "scatter_and_gather_dm",
-      "path": "scatter_and_gather.ScatterAndGather",
+      "path": "flip.controllers.ScatterAndGather",
       "args": {
         "min_clients": "{min_clients}",
         "start_round": 0,
@@ -121,7 +121,7 @@
     {
       "id": "cross_site_validate_dm",
       "name": "CrossSiteModelEvalLDM",
-      "path": "cross_site_model_eval.CrossSiteModelEval",
+      "path": "flip.controllers.CrossSiteModelEval",
       "args": {
         "model_locator_id": "model_locator",
         "validation_task_name": "validate_dm",

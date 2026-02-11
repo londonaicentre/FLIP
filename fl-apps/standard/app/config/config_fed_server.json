@@ -33,24 +33,24 @@
     },
     {
       "id": "model_locator",
-      "path": "pt_model_locator.PTModelLocator",
+      "path": "flip.components.PTModelLocator",
       "args": {}
     },
     {
       "id": "json_generator",
-      "path": "validation_json_generator.ValidationJsonGenerator",
+      "path": "flip.components.ValidationJsonGenerator",
       "args": {}
     },
     {
       "id": "flip_server_event_handler",
-      "path": "flip_server_event_handler.ServerEventHandler",
+      "path": "flip.components.ServerEventHandler",
       "args": {
         "model_id": "{model_id}"
       }
     },
     {
       "id": "persist_and_cleanup",
-      "path": "persist_and_cleanup.PersistToS3AndCleanup",
+      "path": "flip.components.PersistToS3AndCleanup",
       "args": {
         "model_id": "{model_id}",
         "persistor_id": "persistor"
@@ -60,7 +60,7 @@
   "workflows": [
     {
       "id": "init_training",
-      "path": "init_training.InitTraining",
+      "path": "flip.controllers.InitTraining",
       "args": {
         "model_id": "{model_id}",
         "min_clients": "{min_clients}"
@@ -68,7 +68,7 @@
     },
     {
       "id": "scatter_and_gather",
-      "path": "scatter_and_gather.ScatterAndGather",
+      "path": "flip.controllers.ScatterAndGather",
       "args": {
         "min_clients": "{min_clients}",
         "num_rounds": "{global_rounds}",
@@ -86,7 +86,7 @@
     {
       "id": "cross_site_validate",
       "name": "CrossSiteModelEval",
-      "path": "cross_site_model_eval.CrossSiteModelEval",
+      "path": "flip.controllers.CrossSiteModelEval",
       "args": {
         "model_locator_id": "model_locator",
         "participating_clients": "{participating_clients}",
