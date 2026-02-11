@@ -15,7 +15,6 @@ import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from evaluator import FLIP_EVALUATOR as UPLOADED_EVALUATOR
 from nvflare.apis.dxo import from_shareable
 from nvflare.apis.executor import Executor
 from nvflare.apis.fl_constant import ReturnCode
@@ -82,6 +81,10 @@ class RUN_EVALUATOR(Executor):
     ) -> Shareable:
         try:
             if self._evaluator is None:
+                # Lazy import to avoid importing user's evaluator.py at module load time
+                # This allows standard/fed_opt jobs (which don't have evaluator.py) to import flip.executors
+                from evaluator import FLIP_EVALUATOR as UPLOADED_EVALUATOR
+
                 self._evaluator = UPLOADED_EVALUATOR(
                     evaluate_task_name=PTConstants.EvalTaskName,
                     project_id=self._project_id,
