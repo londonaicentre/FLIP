@@ -23,7 +23,7 @@
     },
     {
       "id": "model_locator",
-      "path": "flip.components.PTModelLocator",
+      "path": "pt_model_locator.PTModelLocator",
       "args": {}
     },
     {

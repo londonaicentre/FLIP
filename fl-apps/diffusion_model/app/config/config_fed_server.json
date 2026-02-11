@@ -32,7 +32,7 @@
     },
     {
       "id": "model_locator",
-      "path": "pt_model_locator.PTModelLocator",
+      "path": "flip.components.PTModelLocator",
       "args": {
       }
     },
@@ -74,7 +74,7 @@
     },
     {
       "id": "scatter_and_gather_ae",
-      "path": "flip.controllers.ScatterAndGather",
+      "path": "scatter_and_gather.ScatterAndGather",
       "args": {
         "min_clients": "{min_clients}",
         "start_round": 0,
@@ -103,7 +103,7 @@
     },
     {
       "id": "scatter_and_gather_dm",
-      "path": "flip.controllers.ScatterAndGather",
+      "path": "scatter_and_gather.ScatterAndGather",
       "args": {
         "min_clients": "{min_clients}",
         "start_round": 0,
