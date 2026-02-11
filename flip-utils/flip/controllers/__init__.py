@@ -19,10 +19,14 @@ Exports:
     - InitTraining: Initialization controller for training setup
     - ScatterAndGather: Main training loop controller with FedAvg aggregation
     - CrossSiteModelEval: Cross-site model evaluation controller
+    - InitEvaluation: Initialization controller for evaluation setup
+    - ModelEval: Main evaluation loop controller
 """
 
 from flip.controllers.cross_site_model_eval import CrossSiteModelEval
+from flip.controllers.fed_evaluation import ModelEval
+from flip.controllers.init_evaluation import InitEvaluation
 from flip.controllers.init_training import InitTraining
 from flip.controllers.scatter_and_gather import ScatterAndGather
 
-__all__ = ["InitTraining", "ScatterAndGather", "CrossSiteModelEval"]
+__all__ = ["InitTraining", "ScatterAndGather", "CrossSiteModelEval", "InitEvaluation", "ModelEval"]
