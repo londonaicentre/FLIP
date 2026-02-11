@@ -50,6 +50,10 @@ variable "FLIP_BUCKET_NAME" {
   type = string
 }
 
+variable "AICENTRE_BUCKET_NAME" {
+  type = string
+}
+
 variable "flip_user_pool_name" {
   description = "Cognito User Pool name for FLIP"
   type        = string
@@ -84,7 +88,19 @@ variable "DB_PORT" {
 variable "UI_PORT" {
   description = "Port for FLIP UI"
   type        = number
-  default     = 44357
+  default     = 443
+}
+
+variable "ALB_HTTPS_PORT" {
+  description = "HTTPS port for ALB external access"
+  type        = number
+  default     = 443
+}
+
+variable "ALB_HTTP_PORT" {
+  description = "HTTP port for ALB redirect to HTTPS"
+  type        = number
+  default     = 80
 }
 
 variable "API_PORT" {

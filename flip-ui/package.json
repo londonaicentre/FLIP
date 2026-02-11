@@ -2,7 +2,7 @@
     "name": "flip-ui",
     "version": "0.0.7",
     "scripts": {
-        "dev": "vite --host 0.0.0.0 --port 44357 --mode development",
+        "dev": "vite --host 0.0.0.0 --port 443 --mode development",
         "build": "vue-tsc --noEmit && vite build",
         "serve": "vite preview",
         "test:unit": "vitest run --silent --coverage",
@@ -10,10 +10,10 @@
         "prepare": "husky install",
         "test:unit:update": "vitest run -u --silent --coverage",
         "test:unit:watch": "vitest watch --silent",
-        "start-test": "vite --host 127.0.0.1 --port 44357 --mode development",
+        "start-test": "vite --host 127.0.0.1 --port 443 --mode development",
         "test:ui": "cypress run --browser chrome",
-        "test:start": "vite --port 44357 --mode development",
-        "test:ci": "start-server-and-test test:start http-get://localhost:44357 test:ui"
+        "test:start": "vite --port 443 --mode development",
+        "test:ci": "start-server-and-test test:start http-get://localhost:443 test:ui"
     },
     "dependencies": {
         "echarts": "^5.2.2",

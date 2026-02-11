@@ -51,6 +51,28 @@ resource "aws_s3_object" "uploaded_federated_data" {
 }
 
 ############################
+# AI Centre S3 Bucket
+############################
+
+resource "aws_s3_bucket" "aicentre_bucket" {
+  bucket = var.AICENTRE_BUCKET_NAME
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "aicentre_bucket_cors" {
+  bucket = aws_s3_bucket.aicentre_bucket.id
+
+  cors_rule {
+    allowed_headers = ["*"]
+    allowed_methods = ["PUT", "GET"]
+    allowed_origins = ["*"]
+    expose_headers  = []
+  }
+}
+
+############################
 # Cognito
 ############################
 
@@ -112,8 +134,8 @@ resource "aws_cognito_user_pool_client" "client" {
   # login page
   allowed_oauth_flows          = ["code", "implicit"]
   allowed_oauth_scopes         = ["email", "openid", "profile"]
-  callback_urls                = ["https://localhost:44357"]
-  logout_urls                  = ["https://localhost:44357"]
+  callback_urls                = ["https://localhost:443"]
+  logout_urls                  = ["https://localhost:443"]
   supported_identity_providers = ["COGNITO"]
 
   lifecycle {
