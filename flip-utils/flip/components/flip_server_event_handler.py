@@ -63,7 +63,7 @@ class ServerEventHandler(FLComponent):
     def handle_event(self, event_type: str, fl_ctx: FLContext):
         self.__set_dependencies(fl_ctx)
 
-        self.validation_json_generator.handle_validation_events(event_type, fl_ctx)
+        self.validation_json_generator.handle_evaluation_events(event_type, fl_ctx)
 
         if event_type == EventType.FATAL_SYSTEM_ERROR:
             self.log_error(fl_ctx, "Fatal system error event received")
