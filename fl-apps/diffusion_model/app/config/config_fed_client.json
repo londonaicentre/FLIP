@@ -6,7 +6,7 @@
     {
       "tasks": ["init_training", "post_validation"],
       "executor": {
-        "path": "cleanup.CleanupImages",
+        "path": "flip.components.CleanupImages",
         "args": {}
       }
     },
@@ -75,7 +75,7 @@
   "components": [
     {
       "id": "flip_client_event_handler",
-      "path": "flip_client_event_handler.ClientEventHandler",
+      "path": "flip.components.ClientEventHandler",
       "args": {}
     }
   ]

@@ -7,14 +7,14 @@
     {
       "tasks": ["init_training", "post_validation"],
       "executor": {
-        "path": "cleanup.CleanupImages",
+        "path": "flip.components.CleanupImages",
         "args": {}
       }
     },
     {
       "tasks": ["train", "submit_model"],
       "executor": {
-        "path": "flip_trainer.RUN_TRAINER",
+        "path": "flip.executors.RUN_TRAINER",
         "args": {
           "project_id": "{project_id}",
           "query": "{query}"
@@ -24,7 +24,7 @@
     {
       "tasks": ["validate"],
       "executor": {
-        "path": "flip_validator.RUN_VALIDATOR",
+        "path": "flip.executors.RUN_VALIDATOR",
         "args": {
           "project_id": "{project_id}",
           "query": "{query}"
@@ -38,7 +38,7 @@
       "filters": [
         {
         "id": "percentile_privacy",
-        "path": "custom_percentile_privacy.PercentilePrivacy",
+        "path": "flip.components.PercentilePrivacy",
         "args": {
           "gamma": 2.0,
           "percentile": 95
@@ -51,7 +51,7 @@
   "components": [
     {
       "id": "flip_client_event_handler",
-      "path": "flip_client_event_handler.ClientEventHandler",
+      "path": "flip.components.ClientEventHandler",
       "args": {}
     }
   ]

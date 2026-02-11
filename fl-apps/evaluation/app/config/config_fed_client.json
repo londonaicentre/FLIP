@@ -7,14 +7,14 @@
     {
       "tasks": ["post_task", "init_task"],
       "executor": {
-        "path": "cleanup.CleanupImages",
+        "path": "flip.components.CleanupImages",
         "args": {}
       }
     },
     {
       "tasks": ["evaluation"],
       "executor": {
-        "path": "flip_evaluator.RUN_EVALUATOR",
+        "path": "flip.executors.RUN_EVALUATOR",
         "args": {
           "project_id": "{project_id}",
           "query": "{query}"
@@ -27,7 +27,7 @@
   "components": [
     {
       "id": "flip_client_event_handler",
-      "path": "flip_client_event_handler.ClientEventHandler",
+      "path": "flip.components.ClientEventHandler",
       "args": {}
     }
   ]
