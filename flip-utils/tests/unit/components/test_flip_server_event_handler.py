@@ -80,7 +80,7 @@ class TestServerEventHandler:
         handler.handle_event(FlipEvents.TRAINING_INITIATED, fl_ctx)
 
         # Verify
-        json_generator.handle_validation_events.assert_called_once()
+        json_generator.handle_evaluation_events.assert_called_once()
         flip.update_status.assert_called_with(model_id, ModelStatus.INITIATED)
 
     def test_handle_event_initial_model_loaded(self):

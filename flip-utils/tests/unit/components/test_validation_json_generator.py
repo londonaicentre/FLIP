@@ -47,7 +47,7 @@ class TestValidationJsonGenerator:
         """Test that START_RUN event clears results"""
         self.generator._val_results = {"client1": {"model1": {"accuracy": 0.9}}}
 
-        self.generator.handle_validation_events(EventType.START_RUN, self.fl_ctx)
+        self.generator.handle_evaluation_events(EventType.START_RUN, self.fl_ctx)
 
         assert len(self.generator._val_results) == 0
 
@@ -67,7 +67,7 @@ class TestValidationJsonGenerator:
             AppConstants.VALIDATION_RESULT: shareable,
         }.get(key, default)
 
-        self.generator.handle_validation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
         assert data_client in self.generator._val_results
         assert model_owner in self.generator._val_results[data_client]
@@ -81,7 +81,7 @@ class TestValidationJsonGenerator:
             AppConstants.VALIDATION_RESULT: MagicMock(),
         }.get(key, default)
 
-        self.generator.handle_validation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
         # Should log error, results should remain empty
         assert len(self.generator._val_results) == 0
@@ -94,7 +94,7 @@ class TestValidationJsonGenerator:
             AppConstants.VALIDATION_RESULT: MagicMock(),
         }.get(key, default)
 
-        self.generator.handle_validation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
         assert len(self.generator._val_results) == 0
 
@@ -113,7 +113,7 @@ class TestValidationJsonGenerator:
             AppConstants.VALIDATION_RESULT: shareable,
         }.get(key, default)
 
-        self.generator.handle_validation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
         # Should not add to results due to wrong data kind
         assert data_client not in self.generator._val_results
@@ -126,7 +126,7 @@ class TestValidationJsonGenerator:
             AppConstants.VALIDATION_RESULT: None,
         }.get(key, default)
 
-        self.generator.handle_validation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
         assert len(self.generator._val_results) == 0
 
@@ -139,7 +139,7 @@ class TestValidationJsonGenerator:
         }.get(key, default)
 
         # Should handle exception gracefully
-        self.generator.handle_validation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+        self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
         assert len(self.generator._val_results) == 0
 
@@ -163,7 +163,7 @@ class TestValidationJsonGenerator:
                 "site2": {"site1_model": {"accuracy": 0.90}, "site2_model": {"accuracy": 0.93}},
             }
 
-            self.generator.handle_validation_events(EventType.END_RUN, self.fl_ctx)
+            self.generator.handle_evaluation_events(EventType.END_RUN, self.fl_ctx)
 
             # Check that JSON file was created
             val_dir = os.path.join(run_dir, self.generator._results_dir)
@@ -195,7 +195,7 @@ class TestValidationJsonGenerator:
             val_dir = os.path.join(run_dir, self.generator._results_dir)
             assert not os.path.exists(val_dir)
 
-            self.generator.handle_validation_events(EventType.END_RUN, self.fl_ctx)
+            self.generator.handle_evaluation_events(EventType.END_RUN, self.fl_ctx)
 
             assert os.path.exists(val_dir)
 
@@ -217,7 +217,7 @@ class TestValidationJsonGenerator:
                     AppConstants.VALIDATION_RESULT: shareable,
                 }.get(key, default)
 
-                self.generator.handle_validation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+                self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
         # Should have results for all sites
         assert len(self.generator._val_results) == 3
@@ -242,7 +242,7 @@ class TestValidationJsonGenerator:
                 AppConstants.VALIDATION_RESULT: shareable,
             }.get(key, default)
 
-            self.generator.handle_validation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
+            self.generator.handle_evaluation_events(AppEventType.VALIDATION_RESULT_RECEIVED, self.fl_ctx)
 
         assert data_client in self.generator._val_results
         assert len(self.generator._val_results[data_client]) == 3
