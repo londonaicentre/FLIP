@@ -115,11 +115,11 @@ class ServerEventHandler(FLComponent):
             engine = fl_ctx.get_engine()
             self.validation_json_generator = engine.get_component(self.validation_json_generator_id)
 
-            if self.validation_json_generator is None or not isinstance(
-                self.validation_json_generator, ValidationJsonGenerator
+            if self.validation_json_generator is None or not hasattr(
+                self.validation_json_generator, "handle_evaluation_events"
             ):
                 self.system_panic(
-                    f"'validation_json_generator_id' component must be ValidationJsonGenerator. "
+                    f"'validation_json_generator_id' component must have 'handle_evaluation_events' method. "
                     f"But got: {type(self.validation_json_generator)}",
                     fl_ctx,
                 )

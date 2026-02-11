@@ -111,10 +111,15 @@ class InitEvaluation(Controller):
             self.log_info(fl_ctx, "Initial cleanup task completed")
             self.log_info(fl_ctx, "Checking config.json file...")
 
-            working_dir = Path(__file__).parent.resolve()
-            if not os.path.isfile(os.path.join(working_dir, "config.json")):
-                self.log_error(fl_ctx, "config.json is a mandatory file, which need to be uploaded.")
-            with open(os.path.join(working_dir, "config.json"), "r") as file:
+            # Look for config.json in the custom directory where user files are placed
+            engine = fl_ctx.get_engine()
+            job_id = fl_ctx.get_job_id()
+            app_root = engine.get_workspace().get_app_dir(job_id)
+            config_path = os.path.join(app_root, "custom", "config.json")
+            
+            if not os.path.isfile(config_path):
+                self.log_error(fl_ctx, f"config.json is a mandatory file at: {config_path}")
+            with open(config_path, "r") as file:
                 config = json.load(file)
             if "models" not in config.keys():
                 self.log_error(
