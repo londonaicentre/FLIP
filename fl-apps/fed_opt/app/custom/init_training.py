@@ -12,7 +12,6 @@
 
 import traceback
 
-from flip import FLIP
 from nvflare.apis.client import Client
 from nvflare.apis.controller_spec import ClientTask, Task
 from nvflare.apis.fl_constant import ReturnCode
@@ -21,8 +20,10 @@ from nvflare.apis.impl.controller import Controller
 from nvflare.apis.shareable import Shareable
 from nvflare.apis.signal import Signal
 from nvflare.app_common.app_constant import AppConstants
-from utils.flip_constants import FlipConstants, FlipEvents, FlipTasks, ModelStatus
 from utils.utils import Utils
+
+from flip import FLIP
+from flip.constants import FlipConstants, FlipEvents, FlipTasks, ModelStatus
 
 
 class InitTraining(Controller):

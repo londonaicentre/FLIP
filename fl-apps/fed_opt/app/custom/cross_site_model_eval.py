@@ -15,7 +15,6 @@ import os
 import shutil
 import time
 
-from flip import FLIP
 from nvflare.apis.client import Client
 from nvflare.apis.controller_spec import ClientTask, Task
 from nvflare.apis.dxo import DXO, from_file, from_shareable
@@ -31,8 +30,10 @@ from nvflare.app_common.app_constant import AppConstants, ModelName
 from nvflare.app_common.app_event_type import AppEventType
 from nvflare.security.logging import secure_format_exception
 from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
-from utils.flip_constants import FlipTasks
 from utils.utils import Utils
+
+from flip import FLIP
+from flip.constants import FlipTasks
 
 
 class CrossSiteModelEval(Controller):

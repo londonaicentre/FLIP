@@ -17,6 +17,7 @@ try:
     from typing import override
 except ImportError:  # typing-extensions fallback
     from typing_extensions import override
+
 import json
 import logging
 import os
@@ -30,8 +31,9 @@ from nvflare.apis.fl_constant import EventScope, FedEventHeader, FLContextKey
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 from requests import HTTPError
-from utils.flip_constants import FlipConstants, FlipEvents, ModelStatus, ResourceType
 from utils.utils import Utils
+
+from flip.constants import FlipConstants, FlipEvents, ModelStatus, ResourceType
 
 
 class FLIP_Parent(ABC):
@@ -661,4 +663,6 @@ class _FLIPDev(FLIP_Parent):
 # ======================================================
 # Environment-based Alias
 # ======================================================
+FLIP = _FLIPDev if FlipConstants.LOCAL_DEV else _FLIPProd
+FLIP = _FLIPDev if FlipConstants.LOCAL_DEV else _FLIPProd
 FLIP = _FLIPDev if FlipConstants.LOCAL_DEV else _FLIPProd

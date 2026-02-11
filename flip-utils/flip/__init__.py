@@ -28,8 +28,8 @@ Example usage:
     df = flip.get_dataframe(project_id, query)
 """
 
-from flip.core.factory import FLIP
 from flip.core.base import FLIPBase
+from flip.core.factory import FLIP
 
 __all__ = ["FLIP", "FLIPBase"]
 
