@@ -39,6 +39,16 @@ if [[ -d "${BASE_APP_DIR}/config" ]]; then
     cp -r "${BASE_APP_DIR}/config"/* "${OUTPUT_DIR}/config/" 2>/dev/null || true
 fi
 
+# Copy pt_constants.py and utils/ from base app custom directory if they exist
+# (needed for custom trainer/validator imports)
+if [[ -f "${BASE_APP_DIR}/custom/pt_constants.py" ]]; then
+    cp "${BASE_APP_DIR}/custom/pt_constants.py" "${OUTPUT_DIR}/custom/" 2>/dev/null || true
+fi
+
+if [[ -d "${BASE_APP_DIR}/custom/utils" ]]; then
+    cp -r "${BASE_APP_DIR}/custom/utils" "${OUTPUT_DIR}/custom/" 2>/dev/null || true
+fi
+
 # Copy test app files into custom subdirectory
 if [[ -d "${TEST_APP_DIR}" ]]; then
     cp -r "${TEST_APP_DIR}"/* "${OUTPUT_DIR}/custom/" 2>/dev/null || true
