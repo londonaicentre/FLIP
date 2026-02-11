@@ -23,7 +23,8 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
 from nvflare.security.logging import secure_format_traceback
-from pt_constants import PTConstants
+
+from flip.constants import PTConstants
 
 
 class MetricsValidator:

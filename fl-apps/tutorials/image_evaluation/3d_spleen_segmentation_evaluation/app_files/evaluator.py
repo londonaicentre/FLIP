@@ -16,7 +16,6 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import torch
-from flip import FLIP
 from models import model_paths
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.metrics import DiceMetric
@@ -31,6 +30,8 @@ from nvflare.apis.signal import Signal
 from pt_constants import PTConstants
 from transforms import get_eval_transforms, get_sliding_window_inferer
 from utils.flip_constants import ResourceType
+
+from flip import FLIP
 
 
 class FLIP_EVALUATOR(Executor):

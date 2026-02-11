@@ -20,7 +20,8 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
 from nvflare.security.logging import secure_format_traceback
-from utils.flip_constants import FlipConstants, FlipTasks
+
+from flip.constants import FlipConstants, FlipTasks
 
 
 class CleanupImages(Executor):

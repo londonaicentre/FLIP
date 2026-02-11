@@ -17,14 +17,14 @@ from datetime import datetime
 from urllib.parse import urlparse
 
 import boto3
-from flip import FLIP
 from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
-from pt_constants import PTConstants
-from utils.flip_constants import FlipConstants, FlipEvents, ModelStatus
 from utils.utils import Utils
+
+from flip import FLIP
+from flip.constants import FlipConstants, FlipEvents, ModelStatus, PTConstants
 
 
 class PersistToS3AndCleanup(FLComponent):

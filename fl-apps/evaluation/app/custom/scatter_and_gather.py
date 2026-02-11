@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from flip import FLIP
 from nvflare.apis.client import Client
 from nvflare.apis.controller_spec import ClientTask
 from nvflare.apis.event_type import EventType
@@ -26,8 +25,10 @@ from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
 from nvflare.security.logging import secure_format_exception
 from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
-from utils.flip_constants import FlipEvents, ModelStatus
 from utils.utils import Utils
+
+from flip import FLIP
+from flip.constants import FlipEvents, ModelStatus
 
 
 def _check_non_neg_int(data, name: str):

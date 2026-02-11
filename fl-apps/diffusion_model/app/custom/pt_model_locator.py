@@ -19,17 +19,17 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.abstract.model import model_learnable_to_dxo
 from nvflare.app_common.abstract.model_locator import ModelLocator
 from nvflare.app_opt.pt import PTModelPersistenceFormatManager
-from pt_constants import PTConstants
-from utils.flip_constants import FlipConstants
+
+from flip.constants import FlipConstants, PTConstants
 
 
 class InitialPTModelLocator(ModelLocator):
-
     def __init__(self, exclude_vars=None, model=None):
         super(InitialPTModelLocator, self).__init__()
 
         if model is None:
             from models import get_model
+
             model = get_model()
 
         self.model = model
@@ -43,22 +43,24 @@ class InitialPTModelLocator(ModelLocator):
         self.log_info(fl_ctx, f"Trying to locate the model {model_name}")
         if model_name == PTConstants.PTServerName:
             try:
-                server_run_dir = (
-                    fl_ctx.get_engine().get_workspace().get_app_dir(fl_ctx.get_job_id())
-                )
+                server_run_dir = fl_ctx.get_engine().get_workspace().get_app_dir(fl_ctx.get_job_id())
                 model_path = os.path.join(server_run_dir, PTConstants.PTFileModelName)
                 self.log_info(fl_ctx, model_path)
                 if not os.path.exists(model_path):
                     self.log_info(fl_ctx, f"Model does not exist at {model_path}")
                     # Safe house: constant safehouse should be defined. Here we are just getting it directly.
-                    model_path = os.path.join('/safehouse', fl_ctx.get_job_id(), PTConstants.PTFileModelName)
+                    model_path = os.path.join("/safehouse", fl_ctx.get_job_id(), PTConstants.PTFileModelName)
                     if not os.path.exists(model_path):
                         self.log_info(fl_ctx, f"Model does not exist at safehouse ({model_path})")
                         return None
 
                 # Load the torch model
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-                data = torch.load(model_path, map_location=device, weights_only=True,)
+                data = torch.load(
+                    model_path,
+                    map_location=device,
+                    weights_only=True,
+                )
 
                 # Setup the persistence manager.
                 if self.model:
@@ -69,9 +71,7 @@ class InitialPTModelLocator(ModelLocator):
 
                 # Use persistence manager to get learnable
                 try:
-                    persistence_manager = PTModelPersistenceFormatManager(
-                        data, default_train_conf=default_train_conf
-                    )
+                    persistence_manager = PTModelPersistenceFormatManager(data, default_train_conf=default_train_conf)
                     ml = persistence_manager.to_model_learnable(exclude_vars=None)
                 except RuntimeError:
                     self.log_info(fl_ctx, f"Could not load the weights from {model_path} into the model. ")
@@ -80,9 +80,7 @@ class InitialPTModelLocator(ModelLocator):
                 # Create dxo and return
                 return ml
             except Exception as e:
-                self.log_error(
-                    fl_ctx, f"Error in retrieving {model_name}: {e}", fire_event=False
-                )
+                self.log_error(fl_ctx, f"Error in retrieving {model_name}: {e}", fire_event=False)
                 return None
         else:
             self.log_error(

@@ -21,6 +21,7 @@ Exports:
     - ModelStatus: Enum for model training status
     - FlipEvents: Event name constants
     - FlipTasks: Task name constants
+    - FlipMetaKey: Metadata key constants
     - FlipMetricsLabel: Metrics label constants
     - PTConstants: PyTorch-related constants
     - JobType: Enum for FLIP job types
@@ -30,14 +31,15 @@ from flip.constants.flip_constants import (
     DevSettings,
     FlipConstants,
     FlipEvents,
+    FlipMetaKey,
     FlipMetricsLabel,
     FlipTasks,
     ModelStatus,
     ProdSettings,
     ResourceType,
 )
-from flip.constants.pt_constants import PTConstants
 from flip.constants.job_types import JobType
+from flip.constants.pt_constants import PTConstants
 
 __all__ = [
     "FlipConstants",
@@ -47,6 +49,7 @@ __all__ = [
     "ModelStatus",
     "FlipEvents",
     "FlipTasks",
+    "FlipMetaKey",
     "FlipMetricsLabel",
     "PTConstants",
     "JobType",

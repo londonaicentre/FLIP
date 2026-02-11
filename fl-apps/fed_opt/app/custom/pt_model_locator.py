@@ -19,8 +19,8 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.abstract.model import model_learnable_to_dxo
 from nvflare.app_common.abstract.model_locator import ModelLocator
 from nvflare.app_opt.pt import PTModelPersistenceFormatManager
-from pt_constants import PTConstants
-from utils.flip_constants import FlipConstants
+
+from flip.constants import FlipConstants, PTConstants
 
 
 class PTModelLocator(ModelLocator):

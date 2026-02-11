@@ -10,15 +10,16 @@
 # limitations under the License.
 #
 
-from flip import FLIP
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.app_event_type import AppEventType
 from persist_and_cleanup import PersistToS3AndCleanup
-from utils.flip_constants import FlipEvents, ModelStatus
 from utils.utils import Utils
 from validation_json_generator import ValidationJsonGenerator
+
+from flip import FLIP
+from flip.constants import FlipEvents, ModelStatus
 
 
 class ServerEventHandler(FLComponent):

@@ -17,7 +17,6 @@ import einops
 import nibabel as nib
 import numpy as np
 import torch
-from flip import FLIP
 from models import get_model
 from monai.data import DataLoader, Dataset
 from monai.inferers import LatentDiffusionInferer
@@ -32,11 +31,12 @@ from nvflare.apis.signal import Signal
 from nvflare.app_common.abstract.model import make_model_learnable, model_learnable_to_dxo
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.pt.pt_fed_utils import PTModelPersistenceFormatManager
-from pt_constants import PTConstants
 from torch.amp import GradScaler, autocast
 from transforms import get_train_transforms, get_val_transforms
-from utils.flip_constants import FlipConstants, ResourceType
 from utils.model_weights_handling import get_model_weights_diff
+
+from flip import FLIP
+from flip.constants import FlipConstants, PTConstants, ResourceType
 
 
 class KLDivergenceLoss:
@@ -320,7 +320,8 @@ class FLIP_TRAINER(Executor):
                         if perceptual_slices is None:
                             perceptual_slices = np.random.randint(0, images.shape[-1], size=self.perceptual_slices)
                         logits_fake = self.model.discriminator(
-                            einops.rearrange(reconstruction[..., perceptual_slices], "b c h w d -> (b d) c h w")
+                            einops
+                            .rearrange(reconstruction[..., perceptual_slices], "b c h w d -> (b d) c h w")
                             .contiguous()
                             .float()
                         )[-1]
@@ -359,12 +360,14 @@ class FLIP_TRAINER(Executor):
                         perceptual_slices = np.random.randint(0, images.shape[-1], size=self.perceptual_slices)
 
                     logits_fake = self.model.discriminator(
-                        einops.rearrange(reconstruction.detach()[..., perceptual_slices], "b c h w d -> (b d) c h w")
+                        einops
+                        .rearrange(reconstruction.detach()[..., perceptual_slices], "b c h w d -> (b d) c h w")
                         .contiguous()
                         .float()
                     )[-1]
                     logits_real = self.model.discriminator(
-                        einops.rearrange(images[..., perceptual_slices], "b c h w d -> (b d) c h w")
+                        einops
+                        .rearrange(images[..., perceptual_slices], "b c h w d -> (b d) c h w")
                         .contiguous()
                         .float()
                     )[-1]
@@ -756,4 +759,6 @@ class FLIP_TRAINER(Executor):
             data=torch.load(model_path), default_train_conf=self._default_train_conf
         )
         ml = self.persistence_manager.to_model_learnable(exclude_vars=self._exclude_vars)
+        return ml
+        return ml
         return ml
