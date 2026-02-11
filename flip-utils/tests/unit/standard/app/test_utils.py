@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-import pytest
 
 # Import from the new flip package
 from flip.utils.utils import Utils

@@ -19,7 +19,8 @@ from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
-from pt_constants import PTConstants
+
+from flip.constants import PTConstants
 
 
 class EvaluationJsonGenerator(FLComponent):

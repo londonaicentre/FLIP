@@ -11,7 +11,8 @@
 #
 
 import torch
-from utils.flip_constants import FlipConstants
+
+from flip.constants import FlipConstants
 
 if FlipConstants.LOCAL_DEV:
     # Matplotlib not available in production

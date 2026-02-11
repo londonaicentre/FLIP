@@ -33,7 +33,8 @@ from nvflare.apis.dxo import DXO, DataKind, MetaKey
 from nvflare.apis.dxo_filter import DXOFilter
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
-from utils.flip_constants import FlipMetaKey
+
+from flip.constants import FlipMetaKey
 
 
 class StagePercentilePrivacy(DXOFilter):
