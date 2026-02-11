@@ -8,7 +8,7 @@
             "name": "UI",
             "type": "chrome",
             "request": "launch",
-            "url": "http://localhost:44357",
+            "url": "https://localhost:443",
             // Ignore node_modules on debugging. DO NOT REMOVE, otherwise debugging will stop in every internal
             // functions from the dependencies.
             "skipFiles": [

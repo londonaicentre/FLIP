@@ -77,7 +77,7 @@
             "name": "UI",
             "type": "chrome",
             "request": "launch",
-            "url": "http://localhost:44357",
+            "url": "http://localhost:443",
             "webRoot": "${workspaceFolder}/flip-ui/",
             "skipFiles": [
                 "${workspaceFolder}/flip-ui/<node_internals>/**",
