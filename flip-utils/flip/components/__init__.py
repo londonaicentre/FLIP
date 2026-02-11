@@ -20,6 +20,7 @@ Exports:
     - ServerEventHandler: Server-side event handler
     - PTModelLocator: PyTorch model locator
     - ValidationJsonGenerator: Validation results JSON generator
+    - EvaluationJsonGenerator: Evaluation results JSON generator
     - PersistToS3AndCleanup: S3 persistence and cleanup component
     - PercentilePrivacy: Percentile-based privacy filter
     - CleanupImages: Image cleanup executor
@@ -27,6 +28,7 @@ Exports:
 
 from flip.components.cleanup import CleanupImages
 from flip.components.custom_percentile_privacy import PercentilePrivacy
+from flip.components.evaluation_json_generator import EvaluationJsonGenerator
 from flip.components.flip_client_event_handler import ClientEventHandler
 from flip.components.flip_server_event_handler import ServerEventHandler
 from flip.components.persist_and_cleanup import PersistToS3AndCleanup
@@ -38,6 +40,7 @@ __all__ = [
     "ServerEventHandler",
     "PTModelLocator",
     "ValidationJsonGenerator",
+    "EvaluationJsonGenerator",
     "PersistToS3AndCleanup",
     "PercentilePrivacy",
     "CleanupImages",
