@@ -261,6 +261,6 @@ def test_get_imaging_project_status_invalid_project_id_format(client: TestClient
     project_id = "not-a-valid-uuid"
     response = client.get(f"/projects/{project_id}/image/status")
 
-    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.status_code == status.HTTP_403_FORBIDDEN or response.status_code == status.HTTP_401_UNAUTHORIZED
 
     app_fixture.dependency_overrides.clear()

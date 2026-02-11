@@ -18,6 +18,7 @@ readme = "README.md"
 authors = [
     { name = "R. Garcia-Dias", email = "rafaelagd@gmail.com" },
     { name = "A. Triay Bagur", email = "alexandre.triay_bagur@kcl.ac.uk" },
+    { name = "V. Fernandez", email = "virginia.fernandez@kcl.ac.uk" },
 ]
 requires-python = ">=3.10"
 dependencies = [
