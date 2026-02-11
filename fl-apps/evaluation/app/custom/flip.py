@@ -664,5 +664,3 @@ class _FLIPDev(FLIP_Parent):
 # Environment-based Alias
 # ======================================================
 FLIP = _FLIPDev if FlipConstants.LOCAL_DEV else _FLIPProd
-FLIP = _FLIPDev if FlipConstants.LOCAL_DEV else _FLIPProd
-FLIP = _FLIPDev if FlipConstants.LOCAL_DEV else _FLIPProd
