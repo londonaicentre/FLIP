@@ -40,7 +40,7 @@ class CleanupImages(Executor):
 
     def execute(self, task_name: str, shareable: Shareable, fl_ctx: FLContext, abort_signal: Signal):
         try:
-            if task_name == FlipTasks.POST_VALIDATION:
+            if task_name in (FlipTasks.POST_VALIDATION, FlipTasks.POST_TASK):
                 cwd = os.getcwd()
                 job_dir = os.path.join(cwd, fl_ctx.get_job_id())
 
@@ -51,7 +51,12 @@ class CleanupImages(Executor):
                     else:
                         self.log_info(fl_ctx, f"[DEV] Running in local dev mode, skipping deletion of {job_dir}")
 
-            if task_name == FlipTasks.INIT_TRAINING or task_name == FlipTasks.POST_VALIDATION:
+            if task_name in (
+                FlipTasks.INIT_TRAINING,
+                FlipTasks.POST_VALIDATION,
+                FlipTasks.INIT_TASK,
+                FlipTasks.POST_TASK,
+            ):
                 if not FlipConstants.LOCAL_DEV:
                     net_directory = os.path.join(FlipConstants.IMAGES_DIR, FlipConstants.NET_ID)
 
