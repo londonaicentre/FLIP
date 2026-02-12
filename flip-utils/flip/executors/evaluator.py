@@ -91,11 +91,14 @@ class RUN_EVALUATOR(Executor):
                     query=self._query,
                 )
 
-            working_dir = Path(__file__).parent.resolve()
+            # working_dir should be current directory where the job runs, not the flip package location
+            working_dir = Path.cwd()
 
             # We load the config
-            if "config.json" in os.listdir(working_dir):
-                with open(os.path.join(working_dir, "config.json"), "r") as f:
+            metrics_validator = None
+            config_path = working_dir / "config.json"
+            if config_path.exists():
+                with open(config_path, "r") as f:
                     config_content = json.load(f)
                 metrics_validator = MetricsValidator(
                     input_evaluation=config_content["evaluation_output"],
@@ -109,12 +112,16 @@ class RUN_EVALUATOR(Executor):
                 os.remove(os.path.join(working_dir, wf))
             output = self._evaluator.execute(task_name, shareable, fl_ctx, abort_signal)
             output_dxo = from_shareable(output)
-            try:
-                success, message = metrics_validator.validate(input_evaluation=output_dxo.data)
-                if not success:
-                    self.log_error(fl_ctx, f"Could not load output properly: {message}.")
-            except Exception:
-                self.log_error(fl_ctx, "The output of the validation is not permitted.")
+
+            # Validate output if metrics_validator was created
+            if metrics_validator is not None:
+                try:
+                    success, message = metrics_validator.validate(input_evaluation=output_dxo.data)
+                    if not success:
+                        self.log_error(fl_ctx, f"Could not load output properly: {message}.")
+                except Exception as e:
+                    self.log_error(fl_ctx, f"The output validation failed with exception: {type(e).__name__}: {str(e)}")
+                    self.log_error(fl_ctx, f"Output data: {output_dxo.data}")
 
             return output
 
