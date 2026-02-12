@@ -2,6 +2,7 @@
   "format_version": 2,
   "project_id": "",
   "query": "SELECT * FROM Table;",
+  "python_path": [".", "custom"],
   "local_rounds": 1,
   "executors": [
     {
