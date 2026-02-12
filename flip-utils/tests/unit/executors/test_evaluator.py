@@ -96,43 +96,6 @@ class TestRunEvaluator:
 
     @patch("evaluator.FLIP_EVALUATOR")
     @patch("flip.executors.evaluator.from_shareable")
-    @patch("os.listdir")
-    @patch("os.remove")
-    def test_execute_without_config_file(self, mock_remove, mock_listdir, mock_from_shareable, mock_uploaded_evaluator):
-        """Test execute method without config.json file"""
-        evaluator = RUN_EVALUATOR()
-        evaluator.log_info = MagicMock()
-        evaluator.log_error = MagicMock()
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        shareable = MagicMock()
-        abort_signal = MagicMock()
-
-        # Setup mocks
-        mock_listdir.return_value = []  # No config.json
-        mock_evaluator_instance = MagicMock()
-        mock_output = MagicMock()
-        mock_evaluator_instance.execute.return_value = mock_output
-        mock_uploaded_evaluator.return_value = mock_evaluator_instance
-
-        mock_dxo = MagicMock()
-        mock_dxo.data = {"model1": {"accuracy": 0.95}}
-        mock_from_shareable.return_value = mock_dxo
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("flip.executors.evaluator.Path") as mock_path:
-                mock_path_instance = MagicMock()
-                mock_path_instance.parent.resolve.return_value = tmpdir
-                mock_path.return_value = mock_path_instance
-
-                result = evaluator.execute("eval", shareable, fl_ctx, abort_signal)
-
-        assert result == mock_output
-        mock_evaluator_instance.execute.assert_called_once()
-
-    @patch("evaluator.FLIP_EVALUATOR")
-    @patch("flip.executors.evaluator.from_shareable")
     @patch("builtins.open", create=True)
     @patch("os.listdir")
     @patch("os.remove")

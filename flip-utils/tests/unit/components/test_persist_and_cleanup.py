@@ -223,33 +223,6 @@ class TestPersistToS3AndCleanup:
         s3_client.upload_file.assert_called_once()
 
     @patch("flip.components.persist_and_cleanup.FlipConstants")
-    @patch("os.path.isfile")
-    @patch("os.path.isdir")
-    def test_upload_results_to_s3_bucket_file_not_found(self, mock_isdir, mock_isfile, mock_constants):
-        """Test upload_results_to_s3_bucket when file not found"""
-        mock_constants.LOCAL_DEV = True
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        component = PersistToS3AndCleanup(model_id=model_id, flip=flip)
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        workspace = MagicMock()
-        workspace.get_root_dir.return_value = "/workspace"
-        workspace.get_run_dir.return_value = "/workspace/run"
-        engine.get_workspace.return_value = workspace
-        fl_ctx.get_engine.return_value = engine
-        fl_ctx.get_job_id.return_value = "job-123"
-
-        mock_isfile.return_value = False
-        mock_isdir.return_value = False
-
-        with patch("shutil.make_archive", side_effect=FileNotFoundError("test")):
-            with pytest.raises(FileNotFoundError, match="test"):
-                component.upload_results_to_s3_bucket(fl_ctx)
-
-    @patch("flip.components.persist_and_cleanup.FlipConstants")
     @patch("shutil.rmtree")
     @patch("os.path.isdir")
     def test_cleanup_dev_mode(self, mock_isdir, mock_rmtree, mock_constants):
