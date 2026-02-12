@@ -94,7 +94,7 @@ class InitEvaluation(Controller):
             self.log_info(fl_ctx, "Beginning initial evaluation cleanup task...")
 
             cleanup_task = Task(
-                name=FlipTasks.INIT_TASK,
+                name=FlipTasks.INIT_TASK.value,
                 data=Shareable(),
                 timeout=self._cleanup_timeout,
                 result_received_cb=self._process_cleanup_result,
@@ -116,18 +116,18 @@ class InitEvaluation(Controller):
                 self.log_error(fl_ctx, "config.json is a mandatory file, which need to be uploaded.")
             with open(os.path.join(working_dir, "config.json"), "r") as file:
                 config = json.load(file)
-            if 'models' not in config.keys():
+            if "models" not in config.keys():
                 self.log_error(
                     fl_ctx,
                     "In the evaluation pipeline, a models key has to be present in config.json, "
-                    "mapping the models to their checkpoint and path."
+                    "mapping the models to their checkpoint and path.",
                 )
-            for key, model_info in config['models'].items():
-                if 'checkpoint' not in model_info or 'path' not in model_info:
+            for key, model_info in config["models"].items():
+                if "checkpoint" not in model_info or "path" not in model_info:
                     self.log_error(
                         fl_ctx,
                         "Each model in config.json must have 'checkpoint' and 'path' keys."
-                         f"Issue found in model: {key}."
+                        f"Issue found in model: {key}.",
                     )
 
                     self.fire_event(EventType.END_RUN, fl_ctx)

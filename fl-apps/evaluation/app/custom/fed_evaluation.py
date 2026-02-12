@@ -258,7 +258,7 @@ class ModelEval(Controller):
 
             self.log_info(fl_ctx, "Beginning post validation cleanup task...")
 
-            cleanup_task = Task(name=FlipTasks.POST_TASK, data=Shareable(), timeout=self._cleanup_timeout)
+            cleanup_task = Task(name=FlipTasks.POST_TASK.value, data=Shareable(), timeout=self._cleanup_timeout)
 
             self.broadcast_and_wait(
                 task=cleanup_task,
