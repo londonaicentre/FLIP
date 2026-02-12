@@ -90,7 +90,7 @@ class InitTraining(Controller):
             self.log_info(fl_ctx, "Beginning initial training cleanup task...")
 
             cleanup_task = Task(
-                name=FlipTasks.INIT_TRAINING,
+                name=FlipTasks.INIT_TRAINING.value,
                 data=Shareable(),
                 timeout=self._cleanup_timeout,
                 result_received_cb=self._process_cleanup_result,

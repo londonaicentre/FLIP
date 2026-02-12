@@ -203,7 +203,8 @@ class CrossSiteModelEval(Controller):
             self._formatter = engine.get_component(self._formatter_id)
             if not isinstance(self._formatter, Formatter):
                 self.system_panic(
-                    reason=f"formatter {self._formatter_id} is not an instance of Formatter.", fl_ctx=fl_ctx,
+                    reason=f"formatter {self._formatter_id} is not an instance of Formatter.",
+                    fl_ctx=fl_ctx,
                 )
                 return
 
@@ -222,9 +223,7 @@ class CrossSiteModelEval(Controller):
             while not self._participating_clients:
                 self._participating_clients = engine.get_clients()
                 if time.time() - start_time > self._wait_for_clients_timeout:
-                    self.log_info(
-                        fl_ctx, "No clients available - quit model validation."
-                    )
+                    self.log_info(fl_ctx, "No clients available - quit model validation.")
                     return
 
                 self.log_info(fl_ctx, "No clients available - waiting ...")
@@ -275,7 +274,7 @@ class CrossSiteModelEval(Controller):
 
             self.log_info(fl_ctx, "Beginning post validation cleanup task...")
 
-            cleanup_task = Task(name=FlipTasks.POST_VALIDATION, data=Shareable(), timeout=self._cleanup_timeout)
+            cleanup_task = Task(name=FlipTasks.POST_VALIDATION.value, data=Shareable(), timeout=self._cleanup_timeout)
 
             self.broadcast_and_wait(
                 task=cleanup_task,
@@ -339,15 +338,9 @@ class CrossSiteModelEval(Controller):
         model_shareable.add_cookie(AppConstants.MODEL_OWNER, model_name)
         client_task.task.data = model_shareable
 
-        fl_ctx.set_prop(
-            AppConstants.DATA_CLIENT, client_task.client, private=True, sticky=False
-        )
-        fl_ctx.set_prop(
-            AppConstants.MODEL_OWNER, model_name, private=True, sticky=False
-        )
-        fl_ctx.set_prop(
-            AppConstants.MODEL_TO_VALIDATE, model_shareable, private=True, sticky=False
-        )
+        fl_ctx.set_prop(AppConstants.DATA_CLIENT, client_task.client, private=True, sticky=False)
+        fl_ctx.set_prop(AppConstants.MODEL_OWNER, model_name, private=True, sticky=False)
+        fl_ctx.set_prop(AppConstants.MODEL_TO_VALIDATE, model_shareable, private=True, sticky=False)
         fl_ctx.set_prop(
             AppConstants.PARTICIPATING_CLIENTS,
             self._participating_clients,
@@ -389,9 +382,7 @@ class CrossSiteModelEval(Controller):
             unique_name = "SRV_" + name
             unique_names.append(unique_name)
             try:
-                save_path = self._save_validation_content(
-                    unique_name, self._cross_val_models_dir, dxo, fl_ctx
-                )
+                save_path = self._save_validation_content(unique_name, self._cross_val_models_dir, dxo, fl_ctx)
             except Exception:
                 self.log_exception(
                     fl_ctx,
@@ -412,9 +403,7 @@ class CrossSiteModelEval(Controller):
             self.log_info(fl_ctx, "no server models to validate!")
         return True
 
-    def _accept_local_model(
-        self, client_name: str, result: Shareable, fl_ctx: FLContext
-    ):
+    def _accept_local_model(self, client_name: str, result: Shareable, fl_ctx: FLContext):
         fl_ctx.set_prop(AppConstants.RECEIVED_MODEL, result, private=False, sticky=False)
         fl_ctx.set_prop(AppConstants.RECEIVED_MODEL_OWNER, client_name, private=False, sticky=False)
         fl_ctx.set_prop(AppConstants.CROSS_VAL_DIR, self._cross_val_dir, private=False, sticky=False)
@@ -456,8 +445,9 @@ class CrossSiteModelEval(Controller):
                 dxo = from_shareable(result)
                 save_path = self._save_validation_content(client_name, self._cross_val_models_dir, dxo, fl_ctx)
             except ValueError as v_e:
-                self.log_error(fl_ctx,
-                               f"Unable to save shareable contents of {client_name}'s model. Exception: {str(v_e)}")
+                self.log_error(
+                    fl_ctx, f"Unable to save shareable contents of {client_name}'s model. Exception: {str(v_e)}"
+                )
                 self.log_warning(fl_ctx, f"Ignoring client {client_name}'s model.")
                 return
 
@@ -504,9 +494,7 @@ class CrossSiteModelEval(Controller):
                 wait_time_after_min_received=0,
             )
 
-    def _accept_val_result(
-        self, client_name: str, result: Shareable, fl_ctx: FLContext
-    ):
+    def _accept_val_result(self, client_name: str, result: Shareable, fl_ctx: FLContext):
         model_owner = result.get_cookie(AppConstants.MODEL_OWNER, "")
 
         # Fire event. This needs to be a new local context per each client
@@ -528,7 +516,9 @@ class CrossSiteModelEval(Controller):
                 if formatted_exception is not None:
                     self.log_error(fl_ctx, formatted_exception)
                     self.flip.send_handled_exception(
-                        formatted_exception=formatted_exception, client_name=client_name, model_id=self._model_id,
+                        formatted_exception=formatted_exception,
+                        client_name=client_name,
+                        model_id=self._model_id,
                     )
 
                 self.log_error(fl_ctx, "Execution Exception in model validation.")
@@ -537,7 +527,10 @@ class CrossSiteModelEval(Controller):
                 ReturnCode.TASK_DATA_FILTER_ERROR,
                 ReturnCode.TASK_RESULT_FILTER_ERROR,
             ]:
-                self.log_error(fl_ctx, "Execution result is not a shareable. Validation results will be ignored.",)
+                self.log_error(
+                    fl_ctx,
+                    "Execution result is not a shareable. Validation results will be ignored.",
+                )
             else:
                 self.log_error(
                     fl_ctx,
@@ -551,12 +544,8 @@ class CrossSiteModelEval(Controller):
 
             try:
                 dxo = from_shareable(result)
-                self._save_validation_content(
-                    save_file_name, self._cross_val_results_dir, dxo, fl_ctx
-                )
-                self._val_results[client_name][model_owner] = os.path.join(
-                    self._cross_val_results_dir, save_file_name
-                )
+                self._save_validation_content(save_file_name, self._cross_val_results_dir, dxo, fl_ctx)
+                self._val_results[client_name][model_owner] = os.path.join(self._cross_val_results_dir, save_file_name)
 
                 self.log_info(
                     fl_ctx,
@@ -569,9 +558,7 @@ class CrossSiteModelEval(Controller):
                 )
                 self.log_exception(fl_ctx, reason)
 
-    def _save_validation_content(
-        self, name: str, save_dir: str, dxo: DXO, fl_ctx: FLContext
-    ) -> str:
+    def _save_validation_content(self, name: str, save_dir: str, dxo: DXO, fl_ctx: FLContext) -> str:
         """Saves shareable to given directory within the app_dir.
 
         Args:
@@ -589,9 +576,7 @@ class CrossSiteModelEval(Controller):
         try:
             bytes_to_save = dxo.to_bytes()
         except Exception as e:
-            raise ValueError(
-                f"Unable to extract shareable contents. Exception: {secure_format_exception(e)}"
-            )
+            raise ValueError(f"Unable to extract shareable contents. Exception: {secure_format_exception(e)}")
 
         # Save contents to path
         try:
@@ -604,9 +589,7 @@ class CrossSiteModelEval(Controller):
 
         return data_filename
 
-    def _load_validation_content(
-        self, name: str, load_dir: str, fl_ctx: FLContext
-    ) -> Union[DXO, None]:
+    def _load_validation_content(self, name: str, load_dir: str, fl_ctx: FLContext) -> Union[DXO, None]:
         # Load shareable from disk
         shareable_filename = os.path.join(load_dir, name)
         dxo: DXO = None
@@ -632,11 +615,7 @@ class CrossSiteModelEval(Controller):
                 self.log_info(fl_ctx, "Collector!")
                 if collector:
                     if not isinstance(collector, GroupInfoCollector):
-                        raise TypeError(
-                            "collector must be GroupInfoCollector but got {}".format(
-                                type(collector)
-                            )
-                        )
+                        raise TypeError("collector must be GroupInfoCollector but got {}".format(type(collector)))
 
                     fl_ctx.set_prop(AppConstants.VALIDATION_RESULT, self._val_results, private=True, sticky=False)
                     val_info = self._formatter.format(fl_ctx)
@@ -649,7 +628,8 @@ class CrossSiteModelEval(Controller):
                 self.log_warning(fl_ctx, "No formatter provided. Validation results can't be printed.")
 
     def process_result_of_unknown_task(
-        self, client: Client, task_name: str, client_task_id: str, result: Shareable, fl_ctx: FLContext):
+        self, client: Client, task_name: str, client_task_id: str, result: Shareable, fl_ctx: FLContext
+    ):
         if task_name == self._submit_model_task_name:
             self._accept_local_model(client_name=client.name, result=result, fl_ctx=fl_ctx)
         elif task_name == self._validation_task_name:

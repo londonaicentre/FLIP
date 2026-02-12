@@ -13,7 +13,6 @@
 import json
 import os
 import traceback
-from pathlib import Path
 
 from nvflare.apis.client import Client
 from nvflare.apis.controller_spec import ClientTask, Task
@@ -94,7 +93,7 @@ class InitEvaluation(Controller):
             self.log_info(fl_ctx, "Beginning initial evaluation cleanup task...")
 
             cleanup_task = Task(
-                name=FlipTasks.INIT_TASK,
+                name=FlipTasks.INIT_TASK.value,
                 data=Shareable(),
                 timeout=self._cleanup_timeout,
                 result_received_cb=self._process_cleanup_result,
@@ -116,7 +115,7 @@ class InitEvaluation(Controller):
             job_id = fl_ctx.get_job_id()
             app_root = engine.get_workspace().get_app_dir(job_id)
             config_path = os.path.join(app_root, "custom", "config.json")
-            
+
             if not os.path.isfile(config_path):
                 self.log_error(fl_ctx, f"config.json is a mandatory file at: {config_path}")
             with open(config_path, "r") as file:

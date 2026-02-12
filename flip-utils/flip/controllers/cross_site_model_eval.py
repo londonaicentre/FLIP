@@ -262,7 +262,7 @@ class CrossSiteModelEval(Controller):
 
             self.log_info(fl_ctx, "Beginning post validation cleanup task...")
 
-            cleanup_task = Task(name=FlipTasks.POST_VALIDATION, data=Shareable(), timeout=self._cleanup_timeout)
+            cleanup_task = Task(name=FlipTasks.POST_VALIDATION.value, data=Shareable(), timeout=self._cleanup_timeout)
 
             self.broadcast_and_wait(
                 task=cleanup_task,
