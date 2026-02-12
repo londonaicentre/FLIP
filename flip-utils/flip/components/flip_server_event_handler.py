@@ -17,7 +17,6 @@ from nvflare.app_common.app_event_type import AppEventType
 
 from flip import FLIP
 from flip.components.persist_and_cleanup import PersistToS3AndCleanup
-from flip.components.validation_json_generator import ValidationJsonGenerator
 from flip.constants import FlipEvents, ModelStatus
 from flip.utils import Utils
 
