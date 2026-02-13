@@ -1,5 +1,40 @@
 {
     "python.useEnvironmentsExtension": true,
+    "[jsonc]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "cSpell.autoFormatConfigFile": true,
+    "cSpell.words": [
+        "DICOM",
+        "flip",
+        "NIFTI",
+        "NVFLARE",
+        "OMOP",
+        "ORTHANC",
+        "XNAT"
+    ],
+    "editor.codeActionsOnSave": {
+        "source.fixAll": "explicit",
+        "source.organizeImports": "explicit"
+    },
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.inlineSuggest.enabled": true,
+    "editor.inlineSuggest.showToolbar": "always",
+    "editor.rulers": [
+        120
+    ],
+    "files.autoSave": "afterDelay",
+    "git.autofetch": true,
+    "git.confirmSync": false,
+    "interactiveWindow.executeWithShiftEnter": true,
+    "makefile.configureOnOpen": true,
+    "problems.showCurrentInStatus": true,
+    "python.analysis.autoFormatStrings": true,
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}"
+    ],
+    "python.defaultInterpreterPath": "${workspaceFolder}/flip-api/.venv/bin/python",
     "python.envFile": "${workspaceFolder}/.env.development",
     "python.testing.pytestPath": ".venv/bin/pytest",
     "python.testing.unittestEnabled": false,
@@ -37,4 +72,18 @@
     //     "--tb=short",
     //     "--disable-warnings",
     // ],
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "remote.autoForwardPortsSource": "hybrid",
+    "ruff.configuration": "${workspaceFolder}/flip-api/pyproject.toml",
+    "ruff.format.preview": true,
+    "terminal.integrated.accessibleViewPreserveCursorPosition": true,
+    "terminal.integrated.allowChords": false,
+    "terminal.integrated.env.linux": {
+        "PATH": "${workspaceFolder}/flip-api/.venv/bin:${env:PATH}",
+        "VIRTUAL_ENV": "${workspaceFolder}/flip-api/.venv"
+    },
+    // deactivate pylance error checking
+    "python.analysis.typeCheckingMode": "off",
+    // deactivate mypy missing library stubs errors
 }
