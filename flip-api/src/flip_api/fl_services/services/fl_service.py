@@ -596,7 +596,7 @@ def bundle_application(model_id: str, job_type: JobTypes = JobTypes.standard) ->
             logger.debug(f"Copying {file} to {dest_file_path}")
             s3.copy_object(file, dest_file_path)
 
-    return len(unique_files), job_type  # type: ignore[attr-defined]
+    return len(base_files) + len(model_files), job_type  # type: ignore[attr-defined]
 
 
 def get_bundle_urls(model_id: str, expected_count: int, retry_count: int = 1) -> List[str]:
