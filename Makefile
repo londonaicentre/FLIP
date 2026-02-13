@@ -11,7 +11,7 @@
 #
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
-		restart restart-no-trust ci tests debug create-networks
+		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -176,6 +176,16 @@ debug-off-all:
 create-networks:
 	@{ docker network inspect central-hub-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-network || true; }
 	$(MAKE) -C trust create-networks
+
+remove-networks:
+	@echo "🗑️  Removing all networks..."
+	@docker network rm central-hub-network 2>/dev/null || true
+	$(MAKE) -C trust remove-networks
+	@echo "✅ All networks removed!"
+
+recreate-networks: remove-networks create-networks
+	@echo "🔄 All networks recreated for swarm deployment!"
+	@echo "ℹ️  Trust networks now use overlay driver for swarm compatibility"
 
 # Add a parameterized debug command
 debug:
