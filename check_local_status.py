@@ -280,6 +280,10 @@ def main(
     IMAGING_API_PORT = env_vars.get("IMAGING_API_PORT", "8200")
     DATA_ACCESS_API_PORT = env_vars.get("DATA_ACCESS_API_PORT", "8300")
     POSTGRES_PORT = env_vars.get("POSTGRES_PORT", "5432")
+    XNAT_PORT_TRUST_1 = env_vars.get("XNAT_PORT_TRUST_1", "8104")
+    XNAT_PORT_TRUST_2 = env_vars.get("XNAT_PORT_TRUST_2", "8106")
+    PACS_UI_PORT_TRUST_1 = env_vars.get("PACS_UI_PORT_TRUST_1", "8042")
+    PACS_UI_PORT_TRUST_2 = env_vars.get("PACS_UI_PORT_TRUST_2", "8044")
 
     # Parse NET_ENDPOINTS to determine which FL networks are configured
     NET_ENDPOINTS = env_vars.get("NET_ENDPOINTS", "{}")
@@ -327,11 +331,90 @@ def main(
                         print_status("FAIL", f"Container '{container}' is not running")
 
                 # Check for any exited containers
-                success, exited = run_command(["docker", "ps", "-a", "--filter", "status=exited", "--format", "{{.Names}}"])
+                success, exited = run_command([
+                    "docker",
+                    "ps",
+                    "-a",
+                    "--filter",
+                    "status=exited",
+                    "--format",
+                    "{{.Names}}",
+                ])
                 if success and exited:
                     print_status("WARN", f"Exited containers found: {exited}")
         except Exception as e:
             print_status("FAIL", f"Could not check Docker containers: {e}")
+
+        # Check Docker Swarm services (XNAT)
+        print_section("Docker Swarm Services (XNAT)")
+        print_status("INFO", "Checking Docker Swarm mode and XNAT stacks...")
+        try:
+            # Check if swarm is active
+            success, swarm_info = run_command(["docker", "info", "--format", "{{.Swarm.LocalNodeState}}"])
+            if success and "active" in swarm_info.lower():
+                print_status("PASS", "Docker Swarm mode is active")
+
+                # Check for XNAT stacks
+                success, stacks = run_command(["docker", "stack", "ls", "--format", "{{.Name}}"])
+                if success:
+                    xnat_stacks = ["xnat1", "xnat2"]
+                    for stack_name in xnat_stacks:
+                        if stack_name in stacks:
+                            print_status("PASS", f"XNAT stack '{stack_name}' is deployed")
+
+                            # Check services in the stack
+                            success, services = run_command([
+                                "docker",
+                                "stack",
+                                "services",
+                                stack_name,
+                                "--format",
+                                "{{.Name}}:{{.Replicas}}",
+                            ])
+                            if success:
+                                for service_line in services.split("\n"):
+                                    if service_line:
+                                        service_name, replicas = service_line.split(":")
+                                        if "/" in replicas:
+                                            running, desired = replicas.split("/")
+                                            if running == desired and int(running) > 0:
+                                                print_status(
+                                                    "PASS", f"Service '{service_name}' is running ({replicas})"
+                                                )
+                                            else:
+                                                print_status(
+                                                    "FAIL",
+                                                    f"Service '{service_name}' is not fully running ({replicas})",
+                                                )
+                        else:
+                            print_status("FAIL", f"XNAT stack '{stack_name}' is not deployed")
+                else:
+                    print_status("WARN", "Could not retrieve Docker stack list")
+            else:
+                print_status("WARN", "Docker Swarm mode is not active - XNAT may not be running in swarm mode")
+                print_status("INFO", "Checking for XNAT containers in regular docker compose mode...")
+
+                # Check for XNAT containers running in compose mode
+                xnat_compose_containers = [
+                    "xnat1-xnat-web-1",
+                    "xnat1-xnat-db-1",
+                    "xnat1-xnat-nginx-1",
+                    "xnat2-xnat-web-1",
+                    "xnat2-xnat-db-1",
+                    "xnat2-xnat-nginx-1",
+                ]
+
+                for container in xnat_compose_containers:
+                    container_found = False
+                    for line in containers.split("\n"):
+                        if line.startswith(f"{container}:") and "Up" in line:
+                            print_status("PASS", f"XNAT container '{container}' is running")
+                            container_found = True
+                            break
+                    if not container_found:
+                        print_status("WARN", f"XNAT container '{container}' is not running")
+        except Exception as e:
+            print_status("WARN", f"Could not check Docker Swarm services: {e}")
 
         # Check Docker networks
         print_section("Docker Networks")
@@ -430,7 +513,7 @@ def main(
                     ],
                     timeout=10,
                 )
-                if success and "200" in output: 
+                if success and "200" in output:
                     print_status("PASS", f"FL API Net-{net_num} is responding (HTTP 200)")
                 else:
                     print_status("FAIL", f"FL API Net-{net_num} is NOT responding at port {fl_port}: {output}")
@@ -460,10 +543,13 @@ def main(
                     print_status("PASS", f"FL API Net-{net_num} is reachable from '{container_name}' (HTTP 200)")
                 else:
                     print_status(
-                        "FAIL", f"FL API Net-{net_num} is NOT reachable from '{container_name}' at {fl_api_url}: {output}"
+                        "FAIL",
+                        f"FL API Net-{net_num} is NOT reachable from '{container_name}' at {fl_api_url}: {output}",
                     )
             except Exception as e:
-                print_status( "FAIL", f"FL API Net-{net_num} is NOT reachable from '{container_name}' at {fl_api_url}: {e}" )
+                print_status(
+                    "FAIL", f"FL API Net-{net_num} is NOT reachable from '{container_name}' at {fl_api_url}: {e}"
+                )
 
         # Check Trust endpoints if they exist
         print_section("Trust Service Endpoint Checks")
@@ -476,6 +562,16 @@ def main(
 
         check_http_endpoint(f"http://localhost:{DATA_ACCESS_API_PORT}/health", "Data Access API Health", 200)
         check_http_endpoint(f"http://localhost:{DATA_ACCESS_API_PORT}/docs", "Data Access API Docs", 200)
+
+        # Check XNAT endpoints
+        print_section("XNAT Service Endpoint Checks")
+
+        # XNAT Trust 1 endpoint - use 127.0.0.1 to avoid IPv6 routing issues with Docker Swarm
+        check_http_endpoint(f"http://127.0.0.1:{XNAT_PORT_TRUST_1}", "XNAT Trust 1 Web UI", [200, 302])
+
+        # XNAT Trust 2 endpoint - use 127.0.0.1 to avoid IPv6 routing issues with Docker Swarm
+        check_http_endpoint(f"http://127.0.0.1:{XNAT_PORT_TRUST_2}", "XNAT Trust 2 Web UI", [200, 302])
+        check_http_endpoint(f"http://localhost:{PACS_UI_PORT_TRUST_2}", "Orthanc PACS Trust 2", [200, 401])
 
     # Database connectivity check
     print_section("Database Connectivity")
@@ -512,6 +608,52 @@ def main(
                 print_status("WARN", f"Could not retrieve logs for container '{container}'")
         except Exception as e:
             print_status("WARN", f"Could not retrieve logs for container '{container}': {e}")
+
+    # XNAT-specific checks
+    print_section("XNAT Database Connectivity")
+
+    print_status("INFO", "Checking XNAT database connectivity...")
+    # Try to find XNAT database containers (both swarm and compose modes)
+    # In swarm mode, names contain dots: xnat1_xnat-db.1.HASH
+    # In compose mode, names are: xnat1-xnat-db-1
+
+    success, db_containers_output = run_command(
+        ["docker", "ps", "--filter", "name=xnat", "--filter", "name=db", "--format", "{{.Names}}"], timeout=5
+    )
+
+    if success and db_containers_output:
+        found_db = False
+        for db_container_name in db_containers_output.strip().split("\n"):
+            if "xnat-db" in db_container_name and db_container_name.strip():
+                found_db = True
+                try:
+                    # Try to query the database
+                    success, output = run_command(
+                        [
+                            "docker",
+                            "exec",
+                            db_container_name,
+                            "psql",
+                            "-U",
+                            "xnat",
+                            "-d",
+                            "xnat",
+                            "-c",
+                            "SELECT version();",
+                        ],
+                        timeout=10,
+                    )
+                    if success and "PostgreSQL" in output:
+                        print_status("PASS", f"XNAT database '{db_container_name}' is accessible and responsive")
+                    else:
+                        print_status("WARN", f"XNAT database '{db_container_name}' connection failed")
+                except Exception as e:
+                    print_status("WARN", f"Could not check XNAT database '{db_container_name}': {e}")
+
+        if not found_db:
+            print_status("INFO", "No XNAT database containers found (this is OK if XNAT is not deployed)")
+    else:
+        print_status("INFO", "No XNAT database containers found (this is OK if XNAT is not deployed)")
 
     # Final summary
     print_section("Summary")
@@ -579,7 +721,9 @@ if __name__ == "__main__":
 
     # Validate project directory exists
     if not args.project_dir.exists() or not args.project_dir.is_dir():
-        print(f"{Colors.RED}Error: Project directory '{args.project_dir}' does not exist or is not a directory{Colors.NC}")
+        print(
+            f"{Colors.RED}Error: Project directory '{args.project_dir}' does not exist or is not a directory{Colors.NC}"
+        )
         sys.exit(1)
 
     # Validate env file if provided
