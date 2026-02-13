@@ -45,7 +45,8 @@ Fixes #
 <!-- Provide instructions so reviewers can reproduce the tests -->
 I did the following tests to verify my changes:
 
-- [ ] Quick tests passed locally by running `make unit_test`.
+- [ ] Quick tests passed locally by running `make unit-test`.
+- [ ] Integration tests pass (if applicable) by running `make integration-test`.
 
 ## Additional Notes
 

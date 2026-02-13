@@ -234,14 +234,4 @@ unit_test:
 	$(MAKE) -C flip-ui unit_test
 	$(MAKE) -C trust/data-access-api unit_test
 	$(MAKE) -C trust/imaging-api unit_test
-	$(MAKE) -C trust/trust-api unit_test
-
-.PHONY: consolidate-deps
-consolidate-deps:  ## Consolidate dependencies from sub-projects into root pyproject.toml
-	@echo "Consolidating dependencies from sub-projects..."
-	@python3 consolidate_deps.py
-
-.PHONY: consolidate-deps-dry-run
-consolidate-deps-dry-run:  ## Show what dependencies would be consolidated (dry run)
-	@echo "Dry run - showing what would be consolidated..."
-	@python3 consolidate_deps.py --dry-run 
+	$(MAKE) -C trust/trust-api unit_test 
