@@ -296,7 +296,16 @@ def cleanup_debug_projects() -> bool:
         return False
 
     # Convert project IDs to list and filter out empty ones
-    project_ids = [pid for pid in projects.values() if pid]
+    # Handle both string IDs and dict objects (e.g., approved_project_with_model)
+    project_ids = []
+    for pid in projects.values():
+        if pid:
+            if isinstance(pid, dict):
+                # Extract project_id from dict
+                if "project_id" in pid:
+                    project_ids.append(pid["project_id"])
+            elif isinstance(pid, str):
+                project_ids.append(pid)
 
     if not project_ids:
         print("❌ No valid project IDs found.")
@@ -308,12 +317,18 @@ def cleanup_debug_projects() -> bool:
         "unstaged_project_with_query_id": "Unstaged Project with Query",
         "staged_project_id": "Staged Project",
         "approved_project_id": "Approved Project",
+        "approved_project_with_model": "Approved Project with Model",
     }
 
     for key, project_id in projects.items():
         if project_id:
             project_name = project_names.get(key, key)
-            print(f"  - {project_name}: {project_id}")
+            # Handle dict values (e.g., approved_project_with_model)
+            if isinstance(project_id, dict):
+                pid = project_id.get("project_id", "N/A")
+                print(f"  - {project_name}: {pid}")
+            else:
+                print(f"  - {project_name}: {project_id}")
 
     # Perform database cleanup
     try:
