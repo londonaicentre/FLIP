@@ -37,8 +37,6 @@
     "python.defaultInterpreterPath": "${workspaceFolder}/flip-api/.venv/bin/python",
     "python.envFile": "${workspaceFolder}/.env.development",
     "python.testing.pytestPath": ".venv/bin/pytest",
-    "python.testing.unittestEnabled": false,
-    "python.testing.pytestEnabled": true,
 
     // ========== FLIP-API (ACTIVE) ==========
     "python.testing.pytestArgs": [
