@@ -62,3 +62,4 @@ local_test:
 	@export XNAT_PORT=1111; \
 	export BASE_IMAGES_DOWNLOAD_DIR=/tmp/images; \
 	$(lint_command) && $(mypy_command) && $(test_coverage_html_command)
+unit_test: local_test

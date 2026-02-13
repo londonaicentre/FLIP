@@ -36,18 +36,13 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = "trust_api"
 python_files = ["test_*.py", "*_test.py"]
-addopts = []
+addopts = ["--import-mode=importlib"]
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
 [tool.coverage.report]
 exclude_lines = ["if __name__ == .__main__.:"]
 omit = ["*.venv/*", "*/tests/*", "*/__init__.py"]
-
-[tool.pytest.ini_options_debug]
-python_files = ["test_*.py", "*_test.py"]
-filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
 [tool.ruff]
 line-length = 120

@@ -12,5 +12,5 @@
 
 docker_command = docker compose -f ../deploy/compose.yml 
 
-tests:
+unit_test:
 	$(docker_command) run --rm --remove-orphans --name flip-ui-test flip-ui npm run test:unit

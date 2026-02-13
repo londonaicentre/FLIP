@@ -11,7 +11,7 @@
 #
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
-		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks
+		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -228,3 +228,20 @@ print-docker-tag:  ## Print the current DOCKER_TAG value
 
 up-pgadmin:
 	${DOCKER_COMMAND} up -d pgadmin
+
+unit_test:
+	$(MAKE) -C flip-api unit_test
+	$(MAKE) -C flip-ui unit_test
+	$(MAKE) -C trust/data-access-api unit_test
+	$(MAKE) -C trust/imaging-api unit_test
+	$(MAKE) -C trust/trust-api unit_test
+
+.PHONY: consolidate-deps
+consolidate-deps:  ## Consolidate dependencies from sub-projects into root pyproject.toml
+	@echo "Consolidating dependencies from sub-projects..."
+	@python3 consolidate_deps.py
+
+.PHONY: consolidate-deps-dry-run
+consolidate-deps-dry-run:  ## Show what dependencies would be consolidated (dry run)
+	@echo "Dry run - showing what would be consolidated..."
+	@python3 consolidate_deps.py --dry-run 

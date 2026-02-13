@@ -28,7 +28,7 @@
         "${workspaceFolder}"
     ],
     "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-    "python.envFile": "${workspaceFolder}/.env.development",
+    "python.envFile": "${workspaceFolder}/../../.env.development",
     "python.terminal.activateEnvInCurrentTerminal": true,
     "python.terminal.shellIntegration.enabled": true,
     "python.testing.autoTestDiscoverOnSaveEnabled": true,

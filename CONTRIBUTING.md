@@ -11,6 +11,8 @@
     limitations under the License.
 -->
 
+# Contributing to FLIP
+
 - [Introduction](#introduction)
 - [The contribution process](#the-contribution-process)
   - [Preparing pull requests](#preparing-pull-requests)
@@ -32,6 +34,7 @@ When creating issues, please use the appropriate issue template:
 - [**Bug Report**](https://github.com/londonaicentre/FLIP/issues/new?template=BUG-REPORT-FORM.yml) -- for reporting bugs and unexpected behaviour
 - [**Feature Request**](https://github.com/londonaicentre/FLIP/issues/new?template=FEATURE-ISSUE-FORM.yml) -- for proposing new features or enhancements
 - [**Task**](https://github.com/londonaicentre/FLIP/issues/new?template=TASK-ISSUE-FORM.yml) -- for general tasks that would not require any coding.
+- [**Documentation**](https://github.com/londonaicentre/FLIP/issues/new?template=DOCUMENTATION-ISSUE-FORM.yml) -- for reporting documentation issues or proposing improvements to documentation.
 
 ### Project overview
 
@@ -46,7 +49,7 @@ The project spans two repositories:
 
 The main FLIP repository follows a mono-repo structure with these key services:
 
-```
+```bash
 FLIP/
 ├── deploy/             # Docker deployment files
 ├── docs/               # Sphinx documentation
@@ -63,7 +66,10 @@ FLIP/
 
 ## The contribution process
 
-*Pull request early*
+*Fork the repository before making changes* [Learn how to fork](https://help.github.com/en/github/getting-started-with-github/fork-a-repo). All contributions to the `develop` branch must be made via pull requests. This allows us to review your changes and ensure they meet our quality standards before merging them into the main codebase.
+
+*Pull request early*, *commit often*. Don't wait until your changes are perfect before creating a pull request.
+Commit your changes in small, logical chunks with clear commit messages. This makes it easier for reviewers to understand your changes and provide feedback.
 
 We encourage you to create pull requests early. It helps us track the contributions under development, whether they are ready to be merged or not. [Create a draft pull request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/changing-the-stage-of-a-pull-request) until it is ready for formal review.
 
@@ -74,9 +80,7 @@ To ensure code quality, FLIP relies on linting tools ([ruff](https://docs.astral
 This section highlights all the necessary preparation steps required before sending a pull request. To collaborate efficiently, please read through this section and follow them. Make sure you configure your coding environment to follow the configurations in the `pyproject.toml` files so these are automatically enforced.
 
 - [Checking the coding style](#checking-the-coding-style)
-- [Licensing information](#licensing-information)
 - [Unit testing](#unit-testing)
-- [Building the documentation](#building-the-documentation)
 - [Signing your work](#signing-your-work)
 
 #### Checking the coding style
@@ -116,8 +120,9 @@ Documentation follows the [Google style guide](https://google.github.io/stylegui
 
 If your PR contains code inspired by other code bases, you MUST inform us in your PR so we can add proper references to the original code and evaluate whether it can be incorporated into our License framework.
 
-
 #### Unit testing
+
+*If it's not tested, it's broken*, so all new functionality should be accompanied by an appropriate set of tests. Existing tests throughout the services can serve as examples.
 
 FLIP uses [pytest](https://docs.pytest.org/) for testing and [coverage.py](https://coverage.readthedocs.io/) for measuring code coverage.
 
@@ -153,8 +158,6 @@ Integration tests for the FL base application are also available (see the [flip-
 
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 
-*If it's not tested, it's broken*
-
 All new functionality should be accompanied by an appropriate set of tests. Existing tests throughout the services can serve as examples.
 
 #### Signing your work
@@ -169,7 +172,7 @@ git commit -s -m 'a new commit'
 
 The commit message will be:
 
-```
+```bash
     a new commit
 
     Signed-off-by: Your Name <yourname@example.org>
@@ -209,6 +212,4 @@ Key points:
 
 Environment variables are defined centrally in the [`.env.development`](.env.development) file for the development environment. Docker services receive these variables via `env_file` in the Docker Compose file. Avoid hardcoding values in Dockerfiles, source code, or compose files.
 
-<p align="right">
-  <a href="#introduction">Back to Top</a>
-</p>
+[back to top](#the-contribution-process)
