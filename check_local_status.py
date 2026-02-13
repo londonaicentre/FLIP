@@ -34,6 +34,7 @@ EXIT CODES:
   1 - One or more checks failed
 """
 
+import argparse
 import json
 import os
 import subprocess
@@ -42,8 +43,6 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
-
-import click
 
 
 # Color codes for terminal output
@@ -92,7 +91,7 @@ def print_status(status: str, message: str) -> None:
     }
 
     symbol = symbols.get(status, "")
-    click.echo(f"{symbol} - {message}")
+    print(f"{symbol} - {message}")
 
     if status == "PASS":
         counters.passed += 1
@@ -108,10 +107,10 @@ def print_section(title: str) -> None:
     Args:
         title: Section title
     """
-    click.echo()
-    click.echo(f"{Colors.BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{Colors.NC}")
-    click.echo(f"{Colors.BLUE}{title}{Colors.NC}")
-    click.echo(f"{Colors.BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{Colors.NC}")
+    print()
+    print(f"{Colors.BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{Colors.NC}")
+    print(f"{Colors.BLUE}{title}{Colors.NC}")
+    print(f"{Colors.BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━{Colors.NC}")
 
 
 def check_command(command: str) -> bool:
@@ -223,29 +222,6 @@ def load_env_file(env_file: Path) -> dict:
     return env_vars
 
 
-@click.command()
-@click.option(
-    "--project-dir",
-    type=click.Path(exists=True, file_okay=False, path_type=Path),
-    default=Path.cwd(),
-    help="Project root directory",
-)
-@click.option(
-    "--skip-endpoints",
-    is_flag=True,
-    help="Skip HTTP endpoint checks",
-)
-@click.option(
-    "--skip-docker",
-    is_flag=True,
-    help="Skip Docker container checks",
-)
-@click.option(
-    "--env-file",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    default=None,
-    help="Path to .env file (defaults to .env.development)",
-)
 def main(
     project_dir: Path,
     skip_endpoints: bool,
@@ -255,6 +231,12 @@ def main(
     """FLIP Local Development Status Checker.
 
     Verifies that the local development environment is functioning correctly.
+
+    Args:
+        project_dir: Project root directory
+        skip_endpoints: Skip HTTP endpoint checks
+        skip_docker: Skip Docker container checks
+        env_file: Path to .env file (defaults to .env.development)
     """
     # Change to project directory
     os.chdir(project_dir)
@@ -315,96 +297,108 @@ def main(
         print_status("INFO", "Checking Docker containers...")
 
         # Get container status
-        success, containers = run_command(["docker", "ps", "--format", "{{.Names}}:{{.Status}}"])
+        try:
+            success, containers = run_command(["docker", "ps", "--format", "{{.Names}}:{{.Status}}"])
 
-        if not success:
-            print_status("FAIL", "Could not retrieve Docker container status")
-        else:
-            # Check each expected container
-            expected_containers = [
-                "flip-ui",
-                "flip-api",
-                "flip-db",
-            ]
+            if not success:
+                print_status("FAIL", "Could not retrieve Docker container status")
+            else:
+                # Check each expected container
+                expected_containers = [
+                    "flip-ui",
+                    "flip-api",
+                    "flip-db",
+                ]
 
-            # Add configured FL server and API containers
-            for net_num in configured_net_numbers:
-                expected_containers.append(f"fl-server-net-{net_num}")
-                expected_containers.append(f"flip-fl-api-net-{net_num}")
+                # Add configured FL server and API containers
+                for net_num in configured_net_numbers:
+                    expected_containers.append(f"fl-server-net-{net_num}")
+                    expected_containers.append(f"flip-fl-api-net-{net_num}")
 
-            for container in expected_containers:
-                container_found = False
-                for line in containers.split("\n"):
-                    if line.startswith(f"{container}:") and "Up" in line:
-                        status = line.split(":", 1)[1] if ":" in line else ""
-                        print_status("PASS", f"Container '{container}' is running ({status})")
-                        container_found = True
-                        break
-                if not container_found:
-                    print_status("FAIL", f"Container '{container}' is not running")
+                for container in expected_containers:
+                    container_found = False
+                    for line in containers.split("\n"):
+                        if line.startswith(f"{container}:") and "Up" in line:
+                            status = line.split(":", 1)[1] if ":" in line else ""
+                            print_status("PASS", f"Container '{container}' is running ({status})")
+                            container_found = True
+                            break
+                    if not container_found:
+                        print_status("FAIL", f"Container '{container}' is not running")
 
-            # Check for any exited containers
-            success, exited = run_command(["docker", "ps", "-a", "--filter", "status=exited", "--format", "{{.Names}}"])
-            if success and exited:
-                print_status("WARN", f"Exited containers found: {exited}")
+                # Check for any exited containers
+                success, exited = run_command(["docker", "ps", "-a", "--filter", "status=exited", "--format", "{{.Names}}"])
+                if success and exited:
+                    print_status("WARN", f"Exited containers found: {exited}")
+        except Exception as e:
+            print_status("FAIL", f"Could not check Docker containers: {e}")
 
         # Check Docker networks
         print_section("Docker Networks")
         print_status("INFO", "Checking Docker networks...")
-        success, networks = run_command(["docker", "network", "ls", "--format", "{{.Name}}"])
+        try:
+            success, networks = run_command(["docker", "network", "ls", "--format", "{{.Name}}"])
 
-        expected_networks = ["central-hub-network"]
-        for net_num in configured_net_numbers:
-            expected_networks.append(f"deploy_shared-net-{net_num}")
+            expected_networks = ["central-hub-network"]
+            for net_num in configured_net_numbers:
+                expected_networks.append(f"deploy_shared-net-{net_num}")
 
-        if success:
-            for network in expected_networks:
-                if network in networks:
-                    print_status("PASS", f"Docker network '{network}' exists")
-                else:
-                    print_status("WARN", f"Docker network '{network}' not found")
+            if success:
+                for network in expected_networks:
+                    if network in networks:
+                        print_status("PASS", f"Docker network '{network}' exists")
+                    else:
+                        print_status("WARN", f"Docker network '{network}' not found")
+        except Exception as e:
+            print_status("WARN", f"Could not check Docker networks: {e}")
 
         # Check system resources
         print_section("System Resources")
 
         # Check disk space
         print_status("INFO", "Checking disk space...")
-        success, disk_output = run_command(["df", "-h", str(project_dir)])
-        if success:
-            lines = disk_output.split("\n")
-            if len(lines) > 1:
-                fields = lines[1].split()
-                if len(fields) >= 5:
-                    disk_usage = fields[4].rstrip("%")
-                    try:
-                        disk_usage_int = int(disk_usage)
-                        if disk_usage_int < 80:
-                            print_status("PASS", f"Disk usage is {disk_usage}%")
-                        else:
-                            print_status("WARN", f"Disk usage is {disk_usage}% (consider cleanup if >80%)")
-                    except ValueError:
-                        print_status("WARN", "Could not parse disk usage")
+        try:
+            success, disk_output = run_command(["df", "-h", str(project_dir)])
+            if success:
+                lines = disk_output.split("\n")
+                if len(lines) > 1:
+                    fields = lines[1].split()
+                    if len(fields) >= 5:
+                        disk_usage = fields[4].rstrip("%")
+                        try:
+                            disk_usage_int = int(disk_usage)
+                            if disk_usage_int < 80:
+                                print_status("PASS", f"Disk usage is {disk_usage}%")
+                            else:
+                                print_status("WARN", f"Disk usage is {disk_usage}% (consider cleanup if >80%)")
+                        except ValueError:
+                            print_status("WARN", "Could not parse disk usage")
+        except Exception as e:
+            print_status("WARN", f"Could not check disk space: {e}")
 
         # Check memory usage
         print_status("INFO", "Checking memory usage...")
-        success, mem_output = run_command(["free"])
-        if success:
-            lines = mem_output.split("\n")
-            for line in lines:
-                if line.startswith("Mem:"):
-                    fields = line.split()
-                    if len(fields) >= 3:
-                        try:
-                            total = int(fields[1])
-                            used = int(fields[2])
-                            mem_usage = int((used / total) * 100)
-                            if mem_usage < 90:
-                                print_status("PASS", f"Memory usage is {mem_usage}%")
-                            else:
-                                print_status("WARN", f"Memory usage is {mem_usage}% (high memory usage detected)")
-                        except (ValueError, ZeroDivisionError):
-                            print_status("WARN", "Could not parse memory usage")
-                    break
+        try:
+            success, mem_output = run_command(["free"])
+            if success:
+                lines = mem_output.split("\n")
+                for line in lines:
+                    if line.startswith("Mem:"):
+                        fields = line.split()
+                        if len(fields) >= 3:
+                            try:
+                                total = int(fields[1])
+                                used = int(fields[2])
+                                mem_usage = int((used / total) * 100)
+                                if mem_usage < 90:
+                                    print_status("PASS", f"Memory usage is {mem_usage}%")
+                                else:
+                                    print_status("WARN", f"Memory usage is {mem_usage}% (high memory usage detected)")
+                            except (ValueError, ZeroDivisionError):
+                                print_status("WARN", "Could not parse memory usage")
+                        break
+        except Exception as e:
+            print_status("WARN", f"Could not check memory usage: {e}")
 
     # HTTP/HTTPS endpoint checks
     if not skip_endpoints:
@@ -424,21 +418,24 @@ def main(
             fl_port = FL_API_PORT  # Use the same FL API port for all nets
             fl_service_name = f"flip-fl-api-net-{net_num}"
             print_status("INFO", f"Checking FL API Net-{net_num} health endpoint inside container...")
-            success, output = run_command(
-                [
-                    "docker",
-                    "exec",
-                    fl_service_name,
-                    "python",
-                    "-c",
-                    f"import httpx; print(httpx.get('http://localhost:{fl_port}/health', follow_redirects=True).status_code)",
-                ],
-                timeout=10,
-            )
-            if success and "200" in output:
-                print_status("PASS", f"FL API Net-{net_num} is responding (HTTP 200)")
-            else:
-                print_status("FAIL", f"FL API Net-{net_num} is NOT responding at port {fl_port}: {output}")
+            try:
+                success, output = run_command(
+                    [
+                        "docker",
+                        "exec",
+                        fl_service_name,
+                        "python",
+                        "-c",
+                        f"import httpx; print(httpx.get('http://localhost:{fl_port}/health', follow_redirects=True).status_code)",
+                    ],
+                    timeout=10,
+                )
+                if success and "200" in output: 
+                    print_status("PASS", f"FL API Net-{net_num} is responding (HTTP 200)")
+                else:
+                    print_status("FAIL", f"FL API Net-{net_num} is NOT responding at port {fl_port}: {output}")
+            except Exception as e:
+                print_status("FAIL", f"FL API Net-{net_num} is NOT responding at port {fl_port}: {e}")
 
         # Check that FL API can be reached from flip-api container
         for net_num in configured_net_numbers:
@@ -447,23 +444,26 @@ def main(
             container_name = "flip-api"
             fl_api_url = f"http://{fl_service_name}:{fl_port}/check_status/server"
             print_status("INFO", f"Checking FL API Net-{net_num} from '{container_name}' container...")
-            success, output = run_command(
-                [
-                    "docker",
-                    "exec",
-                    container_name,
-                    "python",
-                    "-c",
-                    f"import httpx; print(httpx.get('{fl_api_url}', follow_redirects=True).status_code)",
-                ],
-                timeout=10,
-            )
-            if success and "200" in output:
-                print_status("PASS", f"FL API Net-{net_num} is reachable from '{container_name}' (HTTP 200)")
-            else:
-                print_status(
-                    "FAIL", f"FL API Net-{net_num} is NOT reachable from '{container_name}' at {fl_api_url}: {output}"
+            try:
+                success, output = run_command(
+                    [
+                        "docker",
+                        "exec",
+                        container_name,
+                        "python",
+                        "-c",
+                        f"import httpx; print(httpx.get('{fl_api_url}', follow_redirects=True).status_code)",
+                    ],
+                    timeout=10,
                 )
+                if success and "200" in output:
+                    print_status("PASS", f"FL API Net-{net_num} is reachable from '{container_name}' (HTTP 200)")
+                else:
+                    print_status(
+                        "FAIL", f"FL API Net-{net_num} is NOT reachable from '{container_name}' at {fl_api_url}: {output}"
+                    )
+            except Exception as e:
+                print_status( "FAIL", f"FL API Net-{net_num} is NOT reachable from '{container_name}' at {fl_api_url}: {e}" )
 
         # Check Trust endpoints if they exist
         print_section("Trust Service Endpoint Checks")
@@ -494,35 +494,38 @@ def main(
     print_status("INFO", "Checking for container errors in recent logs...")
     critical_containers = ["flip-api", "flip-ui"]
     for container in critical_containers:
-        success, logs = run_command(["docker", "logs", "--tail", "50", container], timeout=10)
-        if success:
-            # Check for common error patterns
-            error_patterns = ["ERROR", "CRITICAL", "Exception", "Traceback"]
-            found_errors = []
-            for pattern in error_patterns:
-                if pattern in logs:
-                    found_errors.append(pattern)
+        try:
+            success, logs = run_command(["docker", "logs", "--tail", "50", container], timeout=10)
+            if success:
+                # Check for common error patterns
+                error_patterns = ["ERROR", "CRITICAL", "Exception", "Traceback"]
+                found_errors = []
+                for pattern in error_patterns:
+                    if pattern in logs:
+                        found_errors.append(pattern)
 
-            if found_errors:
-                print_status("WARN", f"Container '{container}' has errors in logs: {', '.join(found_errors)}")
+                if found_errors:
+                    print_status("WARN", f"Container '{container}' has errors in logs: {', '.join(found_errors)}")
+                else:
+                    print_status("PASS", f"Container '{container}' logs look clean")
             else:
-                print_status("PASS", f"Container '{container}' logs look clean")
-        else:
-            print_status("WARN", f"Could not retrieve logs for container '{container}'")
+                print_status("WARN", f"Could not retrieve logs for container '{container}'")
+        except Exception as e:
+            print_status("WARN", f"Could not retrieve logs for container '{container}': {e}")
 
     # Final summary
     print_section("Summary")
 
-    click.echo()
-    click.echo(f"{Colors.GREEN}Passed:   {counters.passed}/{counters.total}{Colors.NC}")
-    click.echo(f"{Colors.RED}Failed:   {counters.failed}/{counters.total}{Colors.NC}")
-    click.echo(f"{Colors.YELLOW}Warnings: {counters.warnings}/{counters.total}{Colors.NC}")
-    click.echo()
+    print()
+    print(f"{Colors.GREEN}Passed:   {counters.passed}/{counters.total}{Colors.NC}")
+    print(f"{Colors.RED}Failed:   {counters.failed}/{counters.total}{Colors.NC}")
+    print(f"{Colors.YELLOW}Warnings: {counters.warnings}/{counters.total}{Colors.NC}")
+    print()
 
     if counters.failed == 0:
-        click.echo(f"{Colors.GREEN}✓ Local development verification completed successfully!{Colors.NC}")
+        print(f"{Colors.GREEN}✓ Local development verification completed successfully!{Colors.NC}")
         if counters.warnings > 0:
-            click.echo(
+            print(
                 f"{Colors.YELLOW}⚠ However, there are {counters.warnings} "
                 f"warning(s) that should be reviewed.{Colors.NC}"
             )
@@ -536,8 +539,8 @@ def main(
             pass
         sys.exit(0)
     else:
-        click.echo(f"{Colors.RED}✗ Local development verification failed with {counters.failed} error(s).{Colors.NC}")
-        click.echo(
+        print(f"{Colors.RED}✗ Local development verification failed with {counters.failed} error(s).{Colors.NC}")
+        print(
             f"{Colors.YELLOW}Please review the failed checks and ensure all "
             f"services are properly started with 'docker-compose up'.{Colors.NC}"
         )
@@ -545,4 +548,48 @@ def main(
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description="FLIP Local Development Status Checker. "
+        "Verifies that the local development environment is functioning correctly."
+    )
+    parser.add_argument(
+        "--project-dir",
+        type=Path,
+        default=Path.cwd(),
+        help="Project root directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--skip-endpoints",
+        action="store_true",
+        help="Skip HTTP endpoint checks",
+    )
+    parser.add_argument(
+        "--skip-docker",
+        action="store_true",
+        help="Skip Docker container checks",
+    )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Path to .env file (defaults to .env.development)",
+    )
+
+    args = parser.parse_args()
+
+    # Validate project directory exists
+    if not args.project_dir.exists() or not args.project_dir.is_dir():
+        print(f"{Colors.RED}Error: Project directory '{args.project_dir}' does not exist or is not a directory{Colors.NC}")
+        sys.exit(1)
+
+    # Validate env file if provided
+    if args.env_file and not args.env_file.exists():
+        print(f"{Colors.RED}Error: Environment file '{args.env_file}' does not exist{Colors.NC}")
+        sys.exit(1)
+
+    main(
+        project_dir=args.project_dir,
+        skip_endpoints=args.skip_endpoints,
+        skip_docker=args.skip_docker,
+        env_file=args.env_file,
+    )
