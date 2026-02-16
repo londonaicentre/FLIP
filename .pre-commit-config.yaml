@@ -13,10 +13,6 @@ repos:
         pass_filenames: false
         files: ^\.env\.development(\.example)?$
         always_run: false
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.30.0
-    hooks:
-      - id: gitleaks
 
   - repo: https://github.com/trufflesecurity/trufflehog
     rev: v3.93.3

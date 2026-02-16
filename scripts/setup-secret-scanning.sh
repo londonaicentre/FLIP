@@ -67,20 +67,8 @@ else
 fi
 echo ""
 
-# Install Gitleaks
-echo -e "${BLUE}Step 3: Installing Gitleaks...${NC}"
-if [[ "$OSTYPE" == "darwin"* ]] && command -v brew &> /dev/null; then
-    brew install gitleaks
-    echo -e "${GREEN}✓ Gitleaks installed via Homebrew${NC}"
-else
-    echo -e "${YELLOW}To install Gitleaks:${NC}"
-    echo "  • macOS: brew install gitleaks"
-    echo "  • Linux: Download from https://github.com/gitleaks/gitleaks/releases"
-fi
-echo ""
-
 # Initialize pre-commit
-echo -e "${BLUE}Step 4: Setting up pre-commit hooks...${NC}"
+echo -e "${BLUE}Step 3: Setting up pre-commit hooks...${NC}"
 if command -v pre-commit &> /dev/null; then
     pre-commit install
     echo -e "${GREEN}✓ Pre-commit hooks installed${NC}"
@@ -103,7 +91,7 @@ fi
 echo ""
 
 # Update .gitignore
-echo -e "${BLUE}Step 5: Updating .gitignore...${NC}"
+echo -e "${BLUE}Step 4: Updating .gitignore...${NC}"
 if ! grep -q ".security-reports" .gitignore 2>/dev/null; then
     echo "" >> .gitignore
     echo "# Security scan reports" >> .gitignore
@@ -137,10 +125,7 @@ echo ""
 echo "  4. Scan with TruffleHog directly:"
 echo "     trufflehog git file://. --only-verified"
 echo ""
-echo "  5. Scan with Gitleaks directly:"
-echo "     gitleaks detect --source . --verbose"
-echo ""
-echo "  6. Scan specific subdirectories (e.g., flip-api):"
+echo "  5. Scan specific subdirectories (e.g., flip-api):"
 echo "     cd flip-api && trufflehog git file://. --only-verified"
 echo ""
 echo "GitHub Actions workflow should be added to:"

@@ -22,7 +22,7 @@ Run the setup script once to install and configure all secret scanning tools:
 
 This will:
 
-- Install `pre-commit`, `detect-secrets`, `trufflehog`, and `gitleaks`
+- Install `pre-commit`, `detect-secrets`, and `trufflehog`
 - Set up pre-commit hooks
 - Create a baseline for detect-secrets
 - Update .gitignore to exclude security reports
@@ -54,7 +54,6 @@ pre-commit run --all-files
 **Available Pre-commit Hooks:**
 
 - **check-env-vars**: Verifies that all variables in `.env.development.example` exist in `.env.development`. This ensures the example file stays up to date and developers are aware of new required environment variables.
-- **gitleaks**: Detects secrets and sensitive information
 - **trufflehog**: Scans for high-entropy strings and verified secrets
 - **detect-secrets**: Pattern-based secret detection with baseline support
 - **check-added-large-files**: Prevents committing files larger than 1MB
@@ -104,16 +103,6 @@ High-entropy string and secret scanner with built-in detector patterns.
 trufflehog git file://. --only-verified --json
 ```
 
-### Gitleaks
-
-Fast secret scanner with customizable rules.
-
-**Direct usage:**
-
-```bash
-gitleaks detect --source . --verbose
-```
-
 ### detect-secrets
 
 Pattern-based scanner with baseline support.
@@ -150,10 +139,6 @@ To audit the baseline:
 detect-secrets audit .secrets.baseline
 ```
 
-### Gitleaks Configuration
-
-Create a `.gitleaks.toml` file in the repo root to customize Gitleaks rules and add allowlists.
-
 ## Troubleshooting
 
 ### uv Not Found
@@ -182,7 +167,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Or reinstall the tools globally via Homebrew:
 
 ```bash
-brew install pre-commit gitleaks
+brew install pre-commit
 pip install detect-secrets  # Only if using pipx or virtual environment
 ```
 
@@ -200,21 +185,11 @@ Or use Docker:
 docker pull trufflesecurity/trufflehog:latest
 ```
 
-### Gitleaks Not Found
-
-Install via Homebrew:
-
-```bash
-brew install gitleaks
-```
-
-Or download from: <https://github.com/gitleaks/gitleaks/releases>
-
 ### Pre-commit Hook Failures
 
 If pre-commit hooks fail due to missing tools:
 
-1. Ensure tools are installed: `which trufflehog gitleaks`
+1. Ensure tools are installed: `which trufflehog`
 2. Reinstall pre-commit hooks: `pre-commit install`
 3. Update pre-commit: `pre-commit autoupdate`
 
@@ -234,5 +209,5 @@ Scan reports are saved to `.security-reports/` (gitignored). Review these carefu
 
 For issues or questions about secret scanning:
 
-- Check tool documentation: [TruffleHog](https://github.com/trufflesecurity/trufflehog), [Gitleaks](https://github.com/gitleaks/gitleaks), [detect-secrets](https://github.com/Yelp/detect-secrets)
+- Check tool documentation: [TruffleHog](https://github.com/trufflesecurity/trufflehog), [detect-secrets](https://github.com/Yelp/detect-secrets)
 - Review [CONTRIBUTING.md](../CONTRIBUTING.md) for security guidelines
