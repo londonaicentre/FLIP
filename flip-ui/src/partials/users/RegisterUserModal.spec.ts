@@ -21,13 +21,13 @@ import RegisterUserModal from "@/partials/users/RegisterUserModal.vue";
 
 describe("Register User Modal", () => {
     it("renders the component successfully", () => {
-        const component = mount(RegisterUserModal, { 
-            global: { 
+        const component = mount(RegisterUserModal, {
+            global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false
                 })]
-            } 
+            }
         });
 
         expect(component.exists()).toBe(true);

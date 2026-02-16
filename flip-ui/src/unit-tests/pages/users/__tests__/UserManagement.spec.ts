@@ -21,13 +21,13 @@ import UserManagement from "@/pages/admin/users.vue";
 
 describe("User Management", () => {
     it("renders the component successfully", () => {
-        const component = mount(UserManagement, { 
-            global: { 
+        const component = mount(UserManagement, {
+            global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false
                 })]
-            } 
+            }
         });
 
         expect(component.exists()).toBe(true);

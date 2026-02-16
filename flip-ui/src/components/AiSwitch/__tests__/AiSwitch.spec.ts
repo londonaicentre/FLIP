@@ -27,7 +27,7 @@ describe("AiSwitch", () => {
 
         const comp = mount(AiSwitch, {
             props: { name: "something", value: "test" },
-            global: { 
+            global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false

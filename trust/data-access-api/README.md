@@ -13,7 +13,7 @@
 
 # Data Access API
 
-Service to query the OMOP database and return dataframes, statistics. The query is SQL and given by the researcher. 
+Service to query the OMOP database and return dataframes, statistics. The query is SQL and given by the researcher.
 
 ## Run
 

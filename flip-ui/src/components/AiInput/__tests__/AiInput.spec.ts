@@ -27,7 +27,7 @@ describe("Ai Input", () => {
 
         const comp = mount(AiInput, {
             props: { name: "something" },
-            global: { 
+            global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false

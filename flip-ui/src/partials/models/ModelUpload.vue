@@ -24,10 +24,10 @@
                             <template v-if="loading">
                                 <AiSkeleton class="w-full h-32 border-2 border-dashed rounded-lg border-primary-300" />
                             </template>
-                            <FileUpload 
-                                :required-files="requiredFiles" 
-                                :job-type="jobType" 
-                                @new-files="uploadFile" 
+                            <FileUpload
+                                :required-files="requiredFiles"
+                                :job-type="jobType"
+                                @new-files="uploadFile"
                             />
                         </div>
                     </div>
@@ -186,11 +186,11 @@ const uploadFile = async (fileList: FileList) => {
     const devMode = process.env.NODE_ENV === "development";
 
     const blacklistedEnvVar = devMode ? process.env.VITE_BLACKLISTED_MODEL_FILES : window.BLACKLISTED_MODEL_FILES;
-    
+
     let blacklistedModelFiles: string[] = [];
-    
+
     if (blacklistedEnvVar) {
-        // Handling model files: before, this was using JSON parsing. Now it takes a simple string of files. 
+        // Handling model files: before, this was using JSON parsing. Now it takes a simple string of files.
         blacklistedModelFiles = blacklistedEnvVar.split(',').map(file => file.trim());
     }
 
@@ -238,7 +238,7 @@ const uploadFile = async (fileList: FileList) => {
             if(fileToUpdate) {
                 fileToUpdate.status = FileUploadStatus.SCANNING;
             }
-            
+
             // Process the scanned file after upload
 
             // wait 3 seconds

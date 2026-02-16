@@ -135,13 +135,13 @@ const missingFiles = computed(() => {
  */
 const missingFilesMessage = computed(() => {
     const requiredList = props.requiredFiles.map(f => `<code>${f}</code>`).join(", ");
-    
+
     if (missingFiles.value.length === 0) {
         return "";
     }
-    
+
     const missingList = missingFiles.value.map(f => `<code>${f}</code>`).join(", ");
-    
+
     return `For job type <strong><code>${props.jobType}</code></strong>, required files are: ${requiredList}.<br/>Missing: ${missingList}`;
 });
 

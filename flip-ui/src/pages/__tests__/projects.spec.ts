@@ -21,13 +21,13 @@ import Page from "../projects.vue";
 
 describe("Projects Page", () => {
     test("Renders Component", () => {
-        const comp = mount(Page, { 
-            global: { 
+        const comp = mount(Page, {
+            global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false
                 })]
-            } 
+            }
         });
 
         expect(comp.exists()).toBe(true);

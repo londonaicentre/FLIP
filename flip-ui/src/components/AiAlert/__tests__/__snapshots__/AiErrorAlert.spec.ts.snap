@@ -51,7 +51,7 @@ exports[`AiErrorAlert > Renders Component 1`] = `
           type="button"
         >
           <!--v-if-->
-          
+
           <svg
             class="w-5 h-5 text-red-500 dark:text-red-200 dark:group-hover:text-red-100 transition group-hover:text-red-800"
             height="1.2em"
@@ -63,7 +63,7 @@ exports[`AiErrorAlert > Renders Component 1`] = `
               fill="currentColor"
             />
           </svg>
-          
+
         </button>
       </div>
     </div>

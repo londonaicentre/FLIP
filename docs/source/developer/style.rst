@@ -14,4 +14,3 @@ Docstrings
 
 Design patterns
 ===============
-

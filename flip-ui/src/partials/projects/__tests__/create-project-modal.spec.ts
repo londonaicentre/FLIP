@@ -22,11 +22,11 @@ import { CreateProjectModal } from "../selectors";
 
 describe("Create Project Modal", () => {
     let component: any;
-    
+
     beforeEach(() => {
         component = mount(NewProject, {
             props: { open: true }, // Set modal as open
-            global: { 
+            global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false

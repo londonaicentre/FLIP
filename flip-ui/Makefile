@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-docker_command = docker compose -f ../deploy/compose.yml 
+docker_command = docker compose -f ../deploy/compose.yml
 
 tests:
 	$(docker_command) run --rm --remove-orphans --name flip-ui-test flip-ui npm run test:unit

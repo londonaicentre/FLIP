@@ -14,10 +14,10 @@
 
 
 # This script configures the XNAT instance
-# 
+#
 # Note the rest of the environment variables are available from the file
 # - trust/xnat/xnat-docker-compose/.env
-# 
+#
 
 # The below are fixed values for now
 XNAT_URL="http://xnat-web:8080" # internal to Docker network

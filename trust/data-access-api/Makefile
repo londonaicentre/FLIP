@@ -26,7 +26,7 @@ endif
 
 service_name = data-access-api
 lint_command = uv run ruff check . --fix
-test_coverage_html_command = uv run pytest --tb=short --disable-warnings --cov=data_access_api/ --cov-report=html --cov-report=term-missing 
+test_coverage_html_command = uv run pytest --tb=short --disable-warnings --cov=data_access_api/ --cov-report=html --cov-report=term-missing
 docker_command = docker compose -f ../compose_trust.yml
 run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports

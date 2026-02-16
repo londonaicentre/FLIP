@@ -211,7 +211,7 @@ onMounted(() => {
                         name: element.seriesLabel,
                         type: "line",
                         // total animation duration for each point
-                        animationDuration: perPointDelay, 
+                        animationDuration: perPointDelay,
                         // staggered start for each point
                         animationDelay: (idx) => idx * perPointDelay,
                         data: sortedData.map(d => [d.xValue, d.yValue])

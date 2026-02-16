@@ -12,7 +12,7 @@
  */
 
 
-const AWS_BASE_URL = "http://localhost:8080/"; 
+const AWS_BASE_URL = "http://localhost:8080/";
 const AWS_USER_POOL_ID = "eu-west-2_4QdpwX1GW";
 const AWS_CLIENT_ID = "5hcskgab29jpmti0esd655lfsv";
 const BLACKLISTED_MODEL_FILES = "";

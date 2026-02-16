@@ -4,11 +4,11 @@ exports[`Ai Select > renders the correct markups 1`] = `
 <div
   data-v-app=""
 >
-  
+
   <!-- &lt;div
         class="inline-block w-full text-left"
     &gt; -->
-  
+
   <div
     data-headlessui-state=""
   >
@@ -55,7 +55,7 @@ exports[`Ai Select > renders the correct markups 1`] = `
       <!--teleport end-->
     </div>
   </div>
-  
-  
+
+
 </div>
 `;

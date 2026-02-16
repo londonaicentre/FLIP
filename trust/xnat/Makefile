@@ -103,7 +103,7 @@ xnat-war-download:
 		ls -lh "xnat-docker-compose/xnat/build-artifacts/xnat-web-$(XNAT_VERSION).war"; \
 	fi
 
-# Plugin versions (see the compatibility matrices for each plugin, e.g. for the container service plugin, 
+# Plugin versions (see the compatibility matrices for each plugin, e.g. for the container service plugin,
 # see https://wiki.xnat.org/container-service/container-service-compatibility-matrix)
 xnat-plugins-download:
 	@echo "📦 Downloading required XNAT plugins if missing..."
