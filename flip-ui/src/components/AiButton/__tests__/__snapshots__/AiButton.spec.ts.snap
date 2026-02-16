@@ -12,8 +12,8 @@ exports[`Ai Buttons > Renders Component 1`] = `
     type="button"
   >
     <!--v-if-->
-
-
+    
+    
   </button>
 </div>
 `;

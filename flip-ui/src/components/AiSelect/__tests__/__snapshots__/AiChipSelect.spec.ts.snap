@@ -4,9 +4,9 @@ exports[`AI Chip Select > renders the component successfully 1`] = `
 <div
   data-v-app=""
 >
-
-
-
+  
+  
+  
   <button
     aria-expanded="false"
     aria-haspopup="listbox"
@@ -38,15 +38,15 @@ exports[`AI Chip Select > renders the component successfully 1`] = `
     </span>
   </button>
   <!---->
-
-
+  
+  
   <!--v-if-->
   <div
     class="flex flex-wrap"
   >
-
-
+    
+    
   </div>
-
+  
 </div>
 `;

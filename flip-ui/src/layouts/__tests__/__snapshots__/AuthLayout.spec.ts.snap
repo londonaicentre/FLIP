@@ -4,7 +4,7 @@ exports[`Auth Layout > Renders component 1`] = `
 <div
   data-v-app=""
 >
-
+  
   <!--v-if-->
   <div
     class="bg-body dark:bg-gray-900"
@@ -77,7 +77,7 @@ exports[`Auth Layout > Renders component 1`] = `
                     fill="currentColor"
                   />
                 </svg>
-                 Back to log in
+                 Back to log in 
               </router-link>
               <div
                 class="flex-grow"
@@ -94,6 +94,6 @@ exports[`Auth Layout > Renders component 1`] = `
       </div>
     </div>
   </div>
-
+  
 </div>
 `;

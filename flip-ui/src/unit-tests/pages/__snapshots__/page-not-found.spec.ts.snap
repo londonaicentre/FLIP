@@ -27,13 +27,13 @@ exports[`Page Not Found > renders the component successfully 1`] = `
     <p
       class="text-2xl font-bold max-w-7xl"
     >
-       We can't find the page you have requested.
+       We can't find the page you have requested. 
     </p>
     <p
       class="pt-4 text-lg"
       data-test="subtitle"
     >
-       Double check the address and try again. If the issue persists please contact the service desk.
+       Double check the address and try again. If the issue persists please contact the service desk. 
     </p>
   </div>
   <div
