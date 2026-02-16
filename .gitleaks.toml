@@ -1,0 +1,10 @@
+# Gitleaks configuration file
+# This file configures which files and patterns to ignore when scanning for secrets
+
+[allowlist]
+description = "Allowlist for known safe patterns and files"
+
+# Ignore the detect-secrets baseline file which contains hashed secrets
+paths = [
+  '''.secrets\.baseline$''',
+]
