@@ -345,3 +345,7 @@ CLAUDE.md
 # Security scan reports
 .security-reports/
 .secrets.baseline
+
+scripts/remove-env-from-history.sh
+
+SECURITY_INCIDENT.md
