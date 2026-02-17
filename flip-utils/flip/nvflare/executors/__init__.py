@@ -21,8 +21,8 @@ Exports:
     - RUN_EVALUATOR: Wrapper executor for user's FLIP_EVALUATOR class
 """
 
-from flip.executors.evaluator import RUN_EVALUATOR
-from flip.executors.trainer import RUN_TRAINER
-from flip.executors.validator import RUN_VALIDATOR
+from flip.nvflare.executors.evaluator import RUN_EVALUATOR
+from flip.nvflare.executors.trainer import RUN_TRAINER
+from flip.nvflare.executors.validator import RUN_VALIDATOR
 
 __all__ = ["RUN_TRAINER", "RUN_VALIDATOR", "RUN_EVALUATOR"]
