@@ -11,7 +11,7 @@
 #
 
 # Job functions: upload, monitor, delete and handle jobs
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, status
 from nvflare.fuel.hci.client.fl_admin_api import TargetType
@@ -57,12 +57,23 @@ def download_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> s
 
 @router.get("/list_jobs", response_model=list[dict])
 def list_jobs(
+    detailed: bool = False,
+    limit: Optional[int] = None,
+    id_prefix: Union[str, None] = None,
+    name_prefix: Union[str, None] = None,
+    reverse: bool = False,
     session: FLIP_Session = Depends(get_session),
 ) -> list[dict]:
     """
     Returns a list of available jobs on the server.
 
     Args:
+        detailed (bool, optional): whether extensive description is demanded. Defaults to False.
+        limit (Optional[int], optional): maximum number of jobs to display. Defaults to None.
+        id_prefix (str, optional): prefix for job ID search. Defaults to None.
+        name_prefix (str, optional): prefix for the job NAME search. Defaults to None.
+        reverse (bool, optional): if True, the order will be the reverse of submission time (otherwise it's the
+        opposite). Defaults to False.
         session (FLIP_Session): FLIP session instance.
 
     Returns:
@@ -71,7 +82,13 @@ def list_jobs(
     Raises:
         HTTPException: if an error occurs while listing jobs.
     """
-    return session.list_jobs()
+    return session.list_jobs(
+        detailed=detailed,
+        limit=limit,
+        id_prefix=id_prefix,
+        name_prefix=name_prefix,
+        reverse=reverse,
+    )
 
 
 @router.post("/{job_id}/show_errors/{target_type}")
