@@ -98,8 +98,14 @@ Each CI workflow follows this pattern:
   run: |
     cp .env.development.example .env.development
     # Override sensitive values with GitHub secrets
-    echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 || 'fallback-value' }}" >> .env.development
-    echo "PRIVATE_API_KEY=${{ secrets.PRIVATE_API_KEY || 'fallback-value' }}" >> .env.development
+    echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 }}" >> .env.development
+    echo "PRIVATE_API_KEY=${{ secrets.PRIVATE_API_KEY }}" >> .env.development
+    echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
+    echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
+    echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
+    echo "SES_VERIFIED_EMAIL=${{ secrets.SES_VERIFIED_EMAIL }}" >> .env.development
+    echo "AWS_SES_ADMIN_EMAIL_ADDRESS=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../../.env.development
+    echo "AWS_SES_SENDER_EMAIL_ADDRESS=${{ secrets.SES_VERIFIED_EMAIL }}"
 ```
 
 This approach:

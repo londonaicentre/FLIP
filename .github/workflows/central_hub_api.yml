@@ -27,7 +27,7 @@ on:
 jobs:
   flip-api:
     runs-on: ubuntu-latest
-
+    environment: flip
     services:
       # label used to access the service container
       postgres:
@@ -75,9 +75,14 @@ jobs:
         run: |
           cp ../.env.development.example ../.env.development
           # Override sensitive values with GitHub secrets
-          echo "PRIVATE_API_KEY=${{ secrets.PRIVATE_API_KEY || 'test-private-api-key-for-ci' }}" >> ../.env.development
-          echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=' }}" >> ../.env.development
-          echo "POSTGRES_PASSWORD=test_password" >> ../.env.development
+          echo "PRIVATE_API_KEY=${{ secrets.PRIVATE_API_KEY }}" >> ../.env.development
+          echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 }}" >> ../.env.development
+          echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
+          echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
+          echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
+          echo "SES_VERIFIED_EMAIL=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../.env.development
+          echo "AWS_SES_ADMIN_EMAIL_ADDRESS=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../../.env.development
+          echo "AWS_SES_SENDER_EMAIL_ADDRESS=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../../.env.development
 
       - name: Run unit tests
         run: make unit_test
