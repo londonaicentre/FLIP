@@ -47,3 +47,26 @@ class Utils:
             bool: True if empty or whitespace-only, False otherwise
         """
         return val.strip() == ""
+
+
+def convert_weights_to_diff(global_weights: dict, local_weights: dict) -> dict:
+    """
+    Convert model weights to weight differences.
+
+    Args:
+        global_weights (dict): The global model weights.
+        local_weights (dict): The new model weights after local training.
+
+    Returns:
+        dict: The weight differences.
+    """
+
+    local_weights = {wn: w.detach().cpu() for wn, w in local_weights.items()}
+    weight_diff = {}
+    for name in local_weights:
+        if name not in global_weights:
+            print(f"Warning: weight {name} not found in global model weights.")
+            continue
+        diff_tensor = local_weights[name] - global_weights[name]
+        weight_diff[name] = diff_tensor.numpy()
+        return weight_diff

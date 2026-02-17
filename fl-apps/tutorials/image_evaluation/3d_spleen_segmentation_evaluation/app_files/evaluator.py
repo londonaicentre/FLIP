@@ -29,9 +29,9 @@ from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
 from pt_constants import PTConstants
 from transforms import get_eval_transforms, get_sliding_window_inferer
-from utils.flip_constants import ResourceType
 
 from flip import FLIP
+from flip.constants import ResourceType
 
 
 class FLIP_EVALUATOR(Executor):
