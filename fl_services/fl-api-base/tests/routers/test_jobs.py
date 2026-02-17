@@ -73,6 +73,15 @@ def test_list_jobs_success(client):
     assert all("status" in job for job in jobs)
 
 
+def test_list_jobs_with_limit(client):
+    response = client.get("/list_jobs", params={"limit": 1})
+    assert response.status_code == status.HTTP_200_OK
+
+    jobs = response.json()
+    assert len(jobs) == 1
+    assert jobs[0]["id"] == "1234"
+
+
 def test_list_jobs_internal_error(client, override_session):
     # Simulate an unexpected failure
     override_session.list_jobs.side_effect = Exception("DB connection lost")
