@@ -18,7 +18,7 @@ from nvflare.app_common.abstract.aggregator import Aggregator
 from nvflare.app_common.abstract.shareable_generator import ShareableGenerator
 from nvflare.app_common.app_constant import AppConstants
 
-from flip.controllers.scatter_and_gather import ScatterAndGather
+from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
 
 
 class TestScatterAndGather:

@@ -21,7 +21,7 @@ from flip.constants import PTConstants
 # Mock the evaluator module before importing
 sys.modules["evaluator"] = MagicMock()
 
-from flip.executors.evaluator import RUN_EVALUATOR, MetricsValidator
+from flip.nvflare.executors.evaluator import RUN_EVALUATOR, MetricsValidator
 
 
 class TestMetricsValidator:
@@ -95,7 +95,7 @@ class TestRunEvaluator:
         assert evaluator._query == "SELECT * FROM eval_data"
 
     @patch("evaluator.FLIP_EVALUATOR")
-    @patch("flip.executors.evaluator.from_shareable")
+    @patch("flip.nvflare.executors.evaluator.from_shareable")
     @patch("builtins.open", create=True)
     @patch("os.listdir")
     @patch("os.remove")
@@ -129,7 +129,7 @@ class TestRunEvaluator:
         mock_from_shareable.return_value = mock_dxo
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("flip.executors.evaluator.Path") as mock_path:
+            with patch("flip.nvflare.executors.evaluator.Path") as mock_path:
                 with patch("json.load", return_value=config_content):
                     mock_path_instance = MagicMock()
                     mock_path_instance.parent.resolve.return_value = tmpdir
@@ -140,7 +140,7 @@ class TestRunEvaluator:
         assert result == mock_output
 
     @patch("evaluator.FLIP_EVALUATOR")
-    @patch("flip.executors.evaluator.from_shareable")
+    @patch("flip.nvflare.executors.evaluator.from_shareable")
     @patch("os.listdir")
     @patch("os.remove")
     def test_execute_removes_pytorch_files(
@@ -169,7 +169,7 @@ class TestRunEvaluator:
         mock_from_shareable.return_value = mock_dxo
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("flip.executors.evaluator.Path") as mock_path:
+            with patch("flip.nvflare.executors.evaluator.Path") as mock_path:
                 with patch("builtins.open", create=True):
                     with patch("json.load", return_value={"evaluation_output": {}, "models": {}}):
                         mock_path_instance = MagicMock()
@@ -182,7 +182,7 @@ class TestRunEvaluator:
         assert mock_remove.call_count == 2
 
     @patch("evaluator.FLIP_EVALUATOR")
-    @patch("flip.executors.evaluator.from_shareable")
+    @patch("flip.nvflare.executors.evaluator.from_shareable")
     @patch("builtins.open", create=True)
     @patch("os.listdir")
     @patch("os.remove")
@@ -214,7 +214,7 @@ class TestRunEvaluator:
         mock_from_shareable.return_value = mock_dxo
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("flip.executors.evaluator.Path") as mock_path:
+            with patch("flip.nvflare.executors.evaluator.Path") as mock_path:
                 with patch("json.load", return_value=config_content):
                     mock_path_instance = MagicMock()
                     mock_path_instance.parent.resolve.return_value = tmpdir

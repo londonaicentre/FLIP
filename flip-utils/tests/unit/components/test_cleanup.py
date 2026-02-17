@@ -16,8 +16,8 @@ from unittest.mock import MagicMock, patch
 
 from nvflare.apis.fl_constant import ReturnCode
 
-from flip.components.cleanup import CleanupImages
 from flip.constants import FlipTasks
+from flip.nvflare.components.cleanup import CleanupImages
 
 
 class TestCleanupImages:
@@ -26,7 +26,7 @@ class TestCleanupImages:
         cleanup = CleanupImages()
         assert cleanup is not None
 
-    @patch("flip.components.cleanup.FlipConstants")
+    @patch("flip.nvflare.components.cleanup.FlipConstants")
     def test_execute_post_validation_dev_mode(self, mock_constants):
         """Test POST_VALIDATION task in dev mode"""
         mock_constants.LOCAL_DEV = True
@@ -50,7 +50,7 @@ class TestCleanupImages:
             # In dev mode, directory should NOT be deleted
             assert os.path.exists(job_dir)
 
-    @patch("flip.components.cleanup.FlipConstants")
+    @patch("flip.nvflare.components.cleanup.FlipConstants")
     def test_execute_init_training_dev_mode(self, mock_constants):
         """Test INIT_TRAINING task in dev mode"""
         mock_constants.LOCAL_DEV = True
@@ -81,7 +81,7 @@ class TestCleanupImages:
 
         assert result.get_return_code() == ReturnCode.TASK_UNKNOWN
 
-    @patch("flip.components.cleanup.FlipConstants")
+    @patch("flip.nvflare.components.cleanup.FlipConstants")
     @patch("shutil.rmtree")
     def test_execute_post_validation_production_mode(self, mock_rmtree, mock_constants):
         """Test POST_VALIDATION task in production mode deletes job directory"""
@@ -107,7 +107,7 @@ class TestCleanupImages:
             # In production mode, rmtree should be called to delete job_dir
             mock_rmtree.assert_called()
 
-    @patch("flip.components.cleanup.FlipConstants")
+    @patch("flip.nvflare.components.cleanup.FlipConstants")
     def test_execute_init_training_production_mode_no_directory(self, mock_constants):
         """Test INIT_TRAINING in production mode when net_directory doesn't exist"""
         mock_constants.LOCAL_DEV = False
@@ -127,7 +127,7 @@ class TestCleanupImages:
 
         assert result.get_return_code() == ReturnCode.OK
 
-    @patch("flip.components.cleanup.FlipConstants")
+    @patch("flip.nvflare.components.cleanup.FlipConstants")
     @patch("shutil.rmtree")
     @patch("os.unlink")
     def test_execute_init_training_production_mode_with_files(self, mock_unlink, mock_rmtree, mock_constants):
@@ -163,7 +163,7 @@ class TestCleanupImages:
                             mock_isfile.side_effect = [True, False]
                             mock_isdir.side_effect = [False, True]
 
-                            with patch("flip.components.cleanup.Path") as mock_path:
+                            with patch("flip.nvflare.components.cleanup.Path") as mock_path:
                                 mock_path_instance = MagicMock()
                                 mock_path_instance.glob.return_value = []
                                 mock_path.return_value = mock_path_instance
@@ -174,7 +174,7 @@ class TestCleanupImages:
             # Verify cleanup functions were called
             assert mock_unlink.called or mock_rmtree.called
 
-    @patch("flip.components.cleanup.FlipConstants")
+    @patch("flip.nvflare.components.cleanup.FlipConstants")
     @patch("shutil.rmtree")
     @patch("os.unlink")
     def test_execute_post_validation_production_mode_with_files(self, mock_unlink, mock_rmtree, mock_constants):
@@ -201,7 +201,7 @@ class TestCleanupImages:
                     with patch("os.path.exists", return_value=True):
                         with patch("os.listdir", return_value=["file1.txt"]):
                             with patch("os.path.isfile", return_value=True):
-                                with patch("flip.components.cleanup.Path") as mock_path:
+                                with patch("flip.nvflare.components.cleanup.Path") as mock_path:
                                     mock_path_instance = MagicMock()
                                     mock_path_instance.glob.return_value = []
                                     mock_path.return_value = mock_path_instance
@@ -210,7 +210,7 @@ class TestCleanupImages:
 
             assert result.get_return_code() == ReturnCode.OK
 
-    @patch("flip.components.cleanup.FlipConstants")
+    @patch("flip.nvflare.components.cleanup.FlipConstants")
     def test_execute_exception_handling(self, mock_constants):
         """Test exception handling in execute method"""
         mock_constants.LOCAL_DEV = False

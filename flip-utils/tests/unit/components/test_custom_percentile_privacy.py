@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import numpy as np
 from nvflare.apis.dxo import DXO, DataKind, MetaKey
 
-from flip.components.custom_percentile_privacy import PercentilePrivacy
+from flip.nvflare.components.custom_percentile_privacy import PercentilePrivacy
 
 
 class TestPercentilePrivacy:

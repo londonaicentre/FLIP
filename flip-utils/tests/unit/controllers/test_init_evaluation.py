@@ -17,7 +17,7 @@ from nvflare.apis.shareable import ReturnCode
 
 from flip.constants import FlipConstants
 from flip.constants.flip_constants import FlipEvents
-from flip.controllers.init_evaluation import InitEvaluation
+from flip.nvflare.controllers.init_evaluation import InitEvaluation
 
 
 class TestInitEvaluation:
@@ -90,10 +90,10 @@ class TestInitEvaluation:
 
         controller.log_info.assert_called()
 
-    @patch("flip.controllers.init_evaluation.Task")
-    @patch("flip.controllers.init_evaluation.json.load")
+    @patch("flip.nvflare.controllers.init_evaluation.Task")
+    @patch("flip.nvflare.controllers.init_evaluation.json.load")
     @patch("builtins.open", create=True)
-    @patch("flip.controllers.init_evaluation.os.path.isfile")
+    @patch("flip.nvflare.controllers.init_evaluation.os.path.isfile")
     def test_control_flow_success(self, mock_isfile, mock_open, mock_json_load, mock_task):
         """Test successful control_flow"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
@@ -117,10 +117,10 @@ class TestInitEvaluation:
         controller.fire_event.assert_called_with(FlipEvents.TASK_INITIATED, fl_ctx)
         controller.broadcast_and_wait.assert_called_once()
 
-    @patch("flip.controllers.init_evaluation.Task")
-    @patch("flip.controllers.init_evaluation.json.load")
+    @patch("flip.nvflare.controllers.init_evaluation.Task")
+    @patch("flip.nvflare.controllers.init_evaluation.json.load")
     @patch("builtins.open", create=True)
-    @patch("flip.controllers.init_evaluation.os.path.isfile")
+    @patch("flip.nvflare.controllers.init_evaluation.os.path.isfile")
     def test_control_flow_with_abort_signal(self, mock_isfile, mock_open, mock_json_load, mock_task):
         """Test control_flow with abort signal"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"

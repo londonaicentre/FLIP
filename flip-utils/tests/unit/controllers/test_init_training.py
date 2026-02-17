@@ -15,7 +15,7 @@ import pytest
 from nvflare.apis.fl_constant import ReturnCode
 
 from flip.constants import FlipConstants, FlipEvents
-from flip.controllers.init_training import InitTraining
+from flip.nvflare.controllers.init_training import InitTraining
 
 
 class TestInitTraining:
@@ -88,7 +88,7 @@ class TestInitTraining:
 
         controller.log_info.assert_called()
 
-    @patch("flip.controllers.init_training.Task")
+    @patch("flip.nvflare.controllers.init_training.Task")
     def test_control_flow_success(self, mock_task):
         """Test successful control_flow"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
@@ -107,7 +107,7 @@ class TestInitTraining:
         controller.fire_event.assert_called_with(FlipEvents.TRAINING_INITIATED, fl_ctx)
         controller.broadcast_and_wait.assert_called_once()
 
-    @patch("flip.controllers.init_training.Task")
+    @patch("flip.nvflare.controllers.init_training.Task")
     def test_control_flow_with_abort_signal(self, mock_task):
         """Test control_flow with abort signal"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"

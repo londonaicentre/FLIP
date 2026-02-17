@@ -12,7 +12,7 @@
 
 from unittest.mock import MagicMock
 
-from flip.components.flip_client_event_handler import ClientEventHandler
+from flip.nvflare.components.flip_client_event_handler import ClientEventHandler
 
 
 class TestClientEventHandler:

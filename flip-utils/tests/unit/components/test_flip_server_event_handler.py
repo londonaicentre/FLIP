@@ -16,10 +16,10 @@ import pytest
 from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_event_type import AppEventType
 
-from flip.components.flip_server_event_handler import ServerEventHandler
-from flip.components.persist_and_cleanup import PersistToS3AndCleanup
-from flip.components.validation_json_generator import ValidationJsonGenerator
 from flip.constants import FlipEvents, ModelStatus
+from flip.nvflare.components.flip_server_event_handler import ServerEventHandler
+from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
+from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
 
 
 class TestServerEventHandler:

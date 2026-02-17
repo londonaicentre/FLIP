@@ -5,7 +5,7 @@ from nvflare.apis.fl_constant import ReturnCode
 from nvflare.apis.shareable import Shareable
 from nvflare.app_common.app_constant import AppConstants
 
-from flip.controllers.cross_site_model_eval import CrossSiteModelEval
+from flip.nvflare.controllers.cross_site_model_eval import CrossSiteModelEval
 
 
 class TestCrossSiteModelEval:
@@ -129,7 +129,7 @@ class TestCrossSiteModelEval:
         controller._send_validation_task = MagicMock()
 
         # patch from_shareable to return a DXO-like object
-        with patch("flip.controllers.cross_site_model_eval.from_shareable", return_value=MagicMock()):
+        with patch("flip.nvflare.controllers.cross_site_model_eval.from_shareable", return_value=MagicMock()):
             with patch.object(controller, "_save_validation_content", return_value="/models/c1"):
                 share = Shareable()
                 share.get_return_code = MagicMock(return_value=ReturnCode.OK)
@@ -179,7 +179,7 @@ class TestCrossSiteModelEval:
         controller._model_locator.get_model_names.return_value = ["m1"]
         controller._model_locator.locate_model.return_value = MagicMock()
 
-        with patch("flip.controllers.cross_site_model_eval.DXO", MagicMock):
+        with patch("flip.nvflare.controllers.cross_site_model_eval.DXO", MagicMock):
             with patch.object(controller, "_save_validation_content", return_value="/models/SRV_m1"):
                 controller.log_info = MagicMock()
                 controller.fire_event = MagicMock()

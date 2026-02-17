@@ -16,8 +16,8 @@ import pytest
 from nvflare.apis.shareable import Shareable
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 
-from flip.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.constants import PTConstants
+from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 
 
 class TestPersistToS3AndCleanup:
@@ -49,7 +49,7 @@ class TestPersistToS3AndCleanup:
 
         assert component.persistor_id == "custom_persistor"
 
-    @patch("flip.components.persist_and_cleanup.FlipConstants")
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     def test_execute_no_engine(self, mock_constants):
         """Test execute when engine is not found"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
@@ -66,7 +66,7 @@ class TestPersistToS3AndCleanup:
         component.system_panic.assert_called_once()
         assert "Engine not found" in str(component.system_panic.call_args)
 
-    @patch("flip.components.persist_and_cleanup.FlipConstants")
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     def test_execute_invalid_persistor_component(self, mock_constants):
         """Test execute when persistor component is not PTFileModelPersistor"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
@@ -87,7 +87,7 @@ class TestPersistToS3AndCleanup:
         component.system_panic.assert_called_once()
         assert "must be PTFileModelPersistor" in str(component.system_panic.call_args)
 
-    @patch("flip.components.persist_and_cleanup.FlipConstants")
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     def test_execute_success_with_model_inventory(self, mock_constants):
         """Test successful execute with model inventory"""
         mock_constants.LOCAL_DEV = True
@@ -119,7 +119,7 @@ class TestPersistToS3AndCleanup:
 
         assert component.model_dir == "/path/to/model"
 
-    @patch("flip.components.persist_and_cleanup.FlipConstants")
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     def test_execute_without_model_inventory(self, mock_constants):
         """Test execute when model inventory doesn't have model"""
         mock_constants.LOCAL_DEV = True
@@ -150,7 +150,7 @@ class TestPersistToS3AndCleanup:
         component.log_warning.assert_called_once()
         assert "Unable to retrieve" in str(component.log_warning.call_args)
 
-    @patch("flip.components.persist_and_cleanup.FlipConstants")
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     @patch("shutil.make_archive")
     @patch("shutil.move")
     @patch("shutil.rmtree")
@@ -184,7 +184,7 @@ class TestPersistToS3AndCleanup:
         mock_make_archive.assert_called_once()
         mock_move.assert_called_once()
 
-    @patch("flip.components.persist_and_cleanup.FlipConstants")
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     @patch("boto3.client")
     @patch("shutil.make_archive")
     @patch("shutil.move")
@@ -222,7 +222,7 @@ class TestPersistToS3AndCleanup:
         # In production mode, should upload to S3
         s3_client.upload_file.assert_called_once()
 
-    @patch("flip.components.persist_and_cleanup.FlipConstants")
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     @patch("shutil.rmtree")
     @patch("os.path.isdir")
     def test_cleanup_dev_mode(self, mock_isdir, mock_rmtree, mock_constants):
@@ -247,7 +247,7 @@ class TestPersistToS3AndCleanup:
         # In dev mode, should not delete directories
         mock_rmtree.assert_not_called()
 
-    @patch("flip.components.persist_and_cleanup.FlipConstants")
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     @patch("shutil.rmtree")
     @patch("os.path.isdir")
     def test_cleanup_production_mode(self, mock_isdir, mock_rmtree, mock_constants):
@@ -272,7 +272,7 @@ class TestPersistToS3AndCleanup:
         # In production mode, should delete directories
         assert mock_rmtree.call_count == 2  # transfer and save dirs
 
-    @patch("flip.components.persist_and_cleanup.FlipConstants")
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     @patch("shutil.rmtree")
     @patch("os.path.isdir")
     def test_cleanup_exception_handling(self, mock_isdir, mock_rmtree, mock_constants):
@@ -299,7 +299,7 @@ class TestPersistToS3AndCleanup:
 
         component.log_error.assert_called()
 
-    @patch("flip.components.persist_and_cleanup.FlipConstants")
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     def test_execute_base_exception_handling(self, mock_constants):
         """Test execute with BaseException"""
         mock_constants.LOCAL_DEV = True
@@ -323,8 +323,8 @@ class TestPersistToS3AndCleanup:
         with pytest.raises(Exception):
             component.execute("task", shareable, fl_ctx, MagicMock())
 
-    @patch("flip.components.persist_and_cleanup.FlipConstants")
-    @patch("flip.components.persist_and_cleanup.os.path.exists")
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
+    @patch("flip.nvflare.components.persist_and_cleanup.os.path.exists")
     @patch("builtins.open")
     def test_upload_results_with_general_exception(self, mock_open, mock_exists, mock_constants):
         """Test upload_results_to_s3_bucket with general exception"""

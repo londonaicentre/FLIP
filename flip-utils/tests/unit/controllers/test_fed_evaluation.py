@@ -12,7 +12,7 @@
 
 import pytest
 
-from flip.controllers.fed_evaluation import ModelEval
+from flip.nvflare.controllers.fed_evaluation import ModelEval
 
 
 class TestModelEval:
