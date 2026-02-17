@@ -18,15 +18,24 @@ Controllers orchestrate federated learning workflows.
 Exports:
     - InitTraining: Initialization controller for training setup
     - ScatterAndGather: Main training loop controller with FedAvg aggregation
+    - ScatterAndGatherLDM: Dual-phase training controller for LDM (autoencoder + diffusion model)
     - CrossSiteModelEval: Cross-site model evaluation controller
     - InitEvaluation: Initialization controller for evaluation setup
     - ModelEval: Main evaluation loop controller
 """
 
-from flip.controllers.cross_site_model_eval import CrossSiteModelEval
-from flip.controllers.fed_evaluation import ModelEval
-from flip.controllers.init_evaluation import InitEvaluation
-from flip.controllers.init_training import InitTraining
-from flip.controllers.scatter_and_gather import ScatterAndGather
+from flip.nvflare.controllers.cross_site_model_eval import CrossSiteModelEval
+from flip.nvflare.controllers.fed_evaluation import ModelEval
+from flip.nvflare.controllers.init_evaluation import InitEvaluation
+from flip.nvflare.controllers.init_training import InitTraining
+from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
+from flip.nvflare.controllers.scatter_and_gather_ldm import ScatterAndGatherLDM
 
-__all__ = ["InitTraining", "ScatterAndGather", "CrossSiteModelEval", "InitEvaluation", "ModelEval"]
+__all__ = [
+    "InitTraining",
+    "ScatterAndGather",
+    "ScatterAndGatherLDM",
+    "CrossSiteModelEval",
+    "InitEvaluation",
+    "ModelEval",
+]

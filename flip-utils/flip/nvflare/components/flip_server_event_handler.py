@@ -16,8 +16,8 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.app_event_type import AppEventType
 
 from flip import FLIP
-from flip.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.constants import FlipEvents, ModelStatus
+from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.utils import Utils
 
 
