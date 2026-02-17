@@ -12,11 +12,10 @@
 
 # Application: upload, monitor
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status
 
 from fl_api.core.dependencies import get_session
 from fl_api.utils.flip_session import FLIP_Session
-from fl_api.utils.logger import logger
 from fl_api.utils.schemas import UploadAppRequest
 from fl_api.utils.upload import upload_application
 
@@ -35,24 +34,11 @@ def upload_app(model_id: str, body: UploadAppRequest, session: FLIP_Session = De
 
     Returns:
         dict[str, str]: A dictionary containing the status of the upload.
-
-    Raises:
-        HTTPException: If there is an error during the upload process.
     """
-    try:
-        response = upload_application(model_id, body, upload_dir=session.upload_dir)
-        return response
-    except FileNotFoundError as err:
-        error_message = f"File not found error uploading application: {err}"
-        logger.error(error_message)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error_message)
-    except Exception as err:
-        error_message = f"Error uploading application: {err}"
-        logger.error(error_message)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+    return upload_application(model_id, body, upload_dir=session.upload_dir)
 
 
-@router.get("/get_available_apps_to_upload")
+@router.get("/get_available_apps_to_upload", status_code=status.HTTP_200_OK, response_model=list[str])
 def get_available_apps_to_upload(session: FLIP_Session = Depends(get_session)) -> list[str]:
     """
     Get list of available apps to upload (list the contents of the upload directory that are directories).
@@ -63,9 +49,4 @@ def get_available_apps_to_upload(session: FLIP_Session = Depends(get_session)) -
     Returns:
         list[str]: list of available directories to upload.
     """
-    try:
-        return session.get_available_apps_to_upload()
-    except Exception as err:
-        error_message = f"Error getting available apps to upload: {err}"
-        logger.error(error_message)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+    return session.get_available_apps_to_upload()

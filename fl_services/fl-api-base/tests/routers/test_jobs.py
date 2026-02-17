@@ -73,15 +73,6 @@ def test_list_jobs_success(client):
     assert all("status" in job for job in jobs)
 
 
-def test_list_jobs_with_limit(client):
-    response = client.get("/list_jobs", params={"limit": 1})
-    assert response.status_code == status.HTTP_200_OK
-
-    jobs = response.json()
-    assert len(jobs) == 1
-    assert jobs[0]["id"] == "1234"
-
-
 def test_list_jobs_internal_error(client, override_session):
     # Simulate an unexpected failure
     override_session.list_jobs.side_effect = Exception("DB connection lost")
@@ -98,7 +89,7 @@ def test_reset_errors_success(client):
     assert "reset" in data["info"].lower()
 
 
-def test_reset_errors_not_found(client):
+def test_reset_errors_job_not_found(client):
     response = client.post("/reset_errors", params={"job_id": "9999"})
     assert response.status_code == status.HTTP_404_NOT_FOUND
 

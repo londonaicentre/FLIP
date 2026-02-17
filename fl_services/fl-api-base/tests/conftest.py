@@ -32,7 +32,7 @@ def mock_session():
 @pytest.fixture
 def client(mock_session):
     with patch("fl_api.app.create_fl_session", return_value=mock_session):
-        with TestClient(app) as test_client:
+        with TestClient(app, raise_server_exceptions=False) as test_client:
             yield test_client
 
 
