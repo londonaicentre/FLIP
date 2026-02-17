@@ -20,6 +20,8 @@ class Settings(BaseSettings):
 
     FL_ADMIN_DIRECTORY: str
 
+    TIMEOUT_SESSION_CONNECT: float = 20.0
+
     # GPU resources that the submitted NVFLARE jobs need in order to schedule correctly.
     # TODO Currently this is set globally for all jobs, but we should allow per-job overrides in the future.
     # See https://github.com/londonaicentre/flip/issues/41
@@ -28,6 +30,10 @@ class Settings(BaseSettings):
     # https://github.com/londonaicentre/flip/issues/488. We need a setup with >0 GPUs to test this properly.
     JOB_RESOURCE_SPEC_NUM_GPUS: int = 0
     JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB: int = 0
+
+    # Job configuration defaults, used when the user-provided config is missing these values.
+    JOB_CONFIG_DEFAULT_LOCAL_ROUNDS: int = 1
+    JOB_CONFIG_DEFAULT_GLOBAL_ROUNDS: int = 1
 
 
 # Eager load once (for app use)

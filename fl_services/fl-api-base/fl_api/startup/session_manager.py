@@ -10,21 +10,24 @@
 # limitations under the License.
 #
 
-import os
-
-from fastapi import HTTPException, status
-from nvflare.apis.workspace import Workspace
-from nvflare.fuel.common.excepts import ConfigError
-from nvflare.fuel.hci.client.config import secure_load_admin_config
-from nvflare.security.logging import secure_format_exception
 
 from fl_api.config import get_settings
-from fl_api.utils.flip_session import new_secure_Flip_session
+from fl_api.utils.flip_session import FLIP_Session
 from fl_api.utils.logger import logger
 
 
-def create_fl_session():
-    """Initialize NVFlare admin workspace and return a secure session."""
+def create_fl_session(username: str = "admin", secure_mode: bool = False, debug: bool = False) -> FLIP_Session:
+    """
+    Initialize NVFlare admin workspace and return a secure session.
+
+    Args:
+        username: The username for the FLIP session (default: "admin").
+        secure_mode: Whether to enable secure mode for the session (default: False).
+        debug: Whether to enable debug mode for the session (default: False).
+
+    Returns:
+        FLIP_Session: An initialized FLIP_Session object.
+    """
     admin_dir = get_settings().FL_ADMIN_DIRECTORY
 
     logger.info(f"Admin directory set to: {admin_dir}")
@@ -34,50 +37,18 @@ def create_fl_session():
     )
     logger.info(f"Using LOG_LEVEL: {get_settings().LOG_LEVEL}")
 
-    try:
-        os.chdir(admin_dir)
-        workspace = Workspace(root_dir=admin_dir)
-        conf = secure_load_admin_config(workspace)
-        logger.info("secure_load_admin_config ran successfully:")
-        logger.info(conf.config_data)
-    except ConfigError as e:
-        error_message = f"ConfigError: {secure_format_exception(e)}"
-        logger.error(error_message)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=error_message,
-        ) from e
-    except Exception as e:
-        error_message = f"Unexpected error during configuration: {secure_format_exception(e)}"
-        logger.error(error_message)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=error_message,
-        ) from e
-
-    try:
-        admin_config = conf.config_data["admin"]
-    except KeyError:
-        error_message = "Missing 'admin' section in fed_admin configuration."
-        logger.error(error_message)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=error_message,
-        )
-
-    upload_dir = admin_config.get("upload_dir")
-    download_dir = admin_config.get("download_dir")
-    if not os.path.isdir(download_dir):
-        os.makedirs(download_dir)
-
-    logger.info(f"Upload directory set to: {upload_dir}")
-    logger.info(f"Download directory set to: {download_dir}")
-
-    assert os.path.isdir(admin_dir), f"admin directory does not exist at {admin_dir}"
-
-    # We set up the session in the admin directory.
-    session = new_secure_Flip_session(
-        username="admin",
-        startup_kit_location=admin_dir,
+    # Set up the session
+    session = FLIP_Session(
+        username=username,
+        startup_path=admin_dir,
+        secure_mode=secure_mode,
+        debug=debug,
     )
+
+    # Try connecting the session here, so that we can catch any connection issues at startup
+    session.try_connect(get_settings().TIMEOUT_SESSION_CONNECT)
+
+    logger.info(f"Upload directory set to: {session.upload_dir}")
+    logger.info(f"Download directory set to: {session.download_dir}")
+
     return session

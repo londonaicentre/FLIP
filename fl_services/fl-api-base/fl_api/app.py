@@ -11,10 +11,20 @@
 #
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from nvflare.fuel.flare_api.api_spec import JobNotFound
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from fl_api.routers import application, health, jobs, system
 from fl_api.startup.session_manager import create_fl_session
-from fl_api.utils.exception_handlers import bad_request_handler, not_found_handler, server_error_handler
+from fl_api.utils.exception_handlers import (
+    file_not_found_handler,
+    http_exception_handler,
+    job_not_found_handler,
+    server_error_handler,
+    validation_exception_handler,
+    value_error_handler,
+)
 from fl_api.utils.logger import logger
 
 app = FastAPI(
@@ -26,9 +36,14 @@ app = FastAPI(
 )
 
 # Register exception handlers
-app.add_exception_handler(400, bad_request_handler)
-app.add_exception_handler(404, not_found_handler)
-app.add_exception_handler(500, server_error_handler)
+app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
+app.add_exception_handler(FileNotFoundError, file_not_found_handler)  # type: ignore[arg-type]
+app.add_exception_handler(JobNotFound, job_not_found_handler)
+app.add_exception_handler(ValueError, value_error_handler)  # type: ignore[arg-type]
+
+# Catch-all MUST be Exception (not 500)
+app.add_exception_handler(Exception, server_error_handler)
 
 # Include routers
 app.include_router(health.router, tags=["Health"])

@@ -109,7 +109,7 @@ _Who calls it_: Central Hub API (abort_job in fl_service)
 
 #### check_status
 
-It provides the status of the clients and Central Hub nodes. It calls FLARE’s get_server_info, get_system_info and get_client_info. 
+It provides the status of the Central Hub FL server, FL clients, or both, depending on the parameters.
 
 Method type: GET
 
@@ -117,11 +117,31 @@ Parameters:
 - `target_type`: type of target (client or server)
 - `targets`: list of specific targets
 
-_Who calls it_: Central Hub API (check_status in fl_service, and in AWS)
+_Who calls it_: Central Hub API in fl_services
+
+
+#### check_server_status
+
+It provides the status of the Central Hub FL server.
+
+Method type: GET
+
+_Who calls it_: Central Hub API in fl_services
+
+
+#### check_client_status
+
+It provides the status of the FL clients.
+
+Method type: GET
+
+Parameters:
+- `targets`: list of specific targets (e.g. client-1)
+
+_Who calls it_: Central Hub API in fl_services
+
 
 3) **FL-API endpoints that are not used in FLIP**
-
-target_type or targets (list of targets - e.g. server, client 1 etc.) 
 
 #### show_errors
 
@@ -131,10 +151,9 @@ Method type: POST
 
 Parameters:
 - `job_id`: Job ID to show errors for
-- `target_type` or `targets`: (list of targets - e.g. server, client 1 etc.)
+- `target_type`: (e.g. server, client, all)
+- `targets`: (list of targets - e.g. server, client 1 etc.)
 
-
-target_type or targets (list of targets - e.g. server, client 1 etc.) 
 
 #### show_stats
 
@@ -144,9 +163,9 @@ Method type: POST
 
 Parameters:
 - `job_id`: Job ID to show stats for
-- `target_type` or `targets`: (list of targets - e.g. server, client 1 etc.)
+- `target_type`: (e.g. server, client, all)
+- `targets`: (list of targets - e.g. server, client 1 etc.)
 
-target_type or targets (list of targets - e.g. server, client 1 etc.) 
 
 #### reset_errors
 
@@ -156,7 +175,7 @@ Method type: POST
 
 Parameters:
 - `job_id`: Job ID to reset errors for
-- `target_type` or `targets`: (list of targets - e.g. server, client 1 etc.)
+
 
 #### delete_job
 
@@ -187,18 +206,6 @@ Parameters:
 - `job_id`: NVFLARE job ID
 
 
-#### cat_target
-
-Runs the cat command on a target.
-
-Method type: GET
-
-Parameters:
-- `target`: target where to run the cat command
-- `file`: file within the target to check
-- `options`: options for the cat command
-
-
 #### get_connected_client_list
 
 Gets a list of connected clients.
@@ -218,19 +225,6 @@ Parameters:
 - `target`: target where you want to run this
 
 
-#### grep_target
-
-Runs grep on a file in a target.
-
-Method type: GET
-
-Parameters:
-- `target`: target where to run the grep command
-- `pattern`: pattern to search with grep
-- `file`: file where you want to run grep
-- `options`: options for the grep command
-- `target` or target_type: targets that you want to restart
-
 #### restart
 
 Restarts the specified targets.
@@ -238,42 +232,8 @@ Restarts the specified targets.
 Method type: POST
 
 Parameters:
-- `target` or `target_type`: targets that you want to restart
-- `timeout`
-
-
-#### set_timeout
-
-Sets a timeout value for the Session.
-
-Method type: POST
-
-Parameters:
-- `timeout`: timeout value to set
-- `target`: target where to run the cat command 
-
-#### tail_target
-
-Runs tail on a target log file.
-
-Method type: GET
-
-Parameters:
-- `target`: target where to run the tail command
-- `options`: options for the tail command 
-- `timeout`: maximum waiting time to get an answer from server
-
-#### wait_until_server_status
-
-Waits until the server reaches a certain status.
-
-Method type: GET
-
-Parameters:
-- `interval`: interval of time to poll the server
-- `timeout`: maximum waiting time to get an answer from server
-- `fail_attempts`: number of failed attempts before giving up
-- `target` or target type
+- `target_type`: targets that you want to restart
+- `client_names`: for target_type client, this is a list of specific clients you want to restart
 
 #### shutdown
 
@@ -282,7 +242,8 @@ Shuts down the specified targets.
 Method type: POST
 
 Parameters:
-- `target` or `target_type`: targets to shut down
+- `target_type`: targets that you want to shut down (e.g. server, client, all)
+- `client_names`: for target_type client, this is a list of specific clients you want to shut down
 
 #### shutdown_system
 
