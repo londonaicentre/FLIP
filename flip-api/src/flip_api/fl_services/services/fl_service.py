@@ -225,7 +225,7 @@ def check_server_status(request_id: str, endpoint: str) -> IServerStatus | None:
     Returns:
         IServerStatus: The server status.
     """
-    url = f"{endpoint}/check_server_status"
+    url = f"{endpoint}/check_status/server"
     logger.debug(f"Checking server status at '{url}' with request_id '{request_id}'")
     response = http_get(url, request_id)
     logger.debug(f"Server status response: {response}")
@@ -247,7 +247,7 @@ def check_client_status(request_id: str, endpoint: str) -> List[ClientInfoModel]
     Returns:
         List[ClientInfoModel] | None: A list of client statuses if available, otherwise None.
     """
-    url = f"{endpoint}/check_client_status"
+    url = f"{endpoint}/check_status/client"
     logger.debug(f"Checking client status at '{url}' with request_id '{request_id}'")
     response = http_get(url, request_id)
     logger.debug(f"Client status response: {response}")
