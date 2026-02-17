@@ -7,14 +7,14 @@
     {
       "tasks": ["init_training", "post_validation"],
       "executor": {
-        "path": "flip.components.CleanupImages",
+        "path": "flip.nvflare.components.CleanupImages",
         "args": {}
       }
     },
     {
       "tasks": ["train", "submit_model"],
       "executor": {
-        "path": "flip.executors.RUN_TRAINER",
+        "path": "flip.nvflare.executors.RUN_TRAINER",
         "args": {
           "project_id": "{project_id}",
           "query": "{query}"
@@ -24,7 +24,7 @@
     {
       "tasks": ["validate"],
       "executor": {
-        "path": "flip.executors.RUN_VALIDATOR",
+        "path": "flip.nvflare.executors.RUN_VALIDATOR",
         "args": {
           "project_id": "{project_id}",
           "query": "{query}"
@@ -38,7 +38,7 @@
       "filters": [
         {
         "id": "percentile_privacy",
-        "path": "flip.components.PercentilePrivacy",
+        "path": "flip.nvflare.components.PercentilePrivacy",
         "args": {
           "gamma": 2.0,
           "percentile": 95
@@ -51,7 +51,7 @@
   "components": [
     {
       "id": "flip_client_event_handler",
-      "path": "flip.components.ClientEventHandler",
+      "path": "flip.nvflare.components.ClientEventHandler",
       "args": {}
     }
   ]
