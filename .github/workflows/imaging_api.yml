@@ -45,7 +45,12 @@ jobs:
       - name: Install uv (if used for dependency management)
         run: pip install uv
 
+      - name: Setup environment file
+        run: |
+          cp ../../.env.development.example ../../.env.development
+          # Override sensitive values with GitHub secrets
+          echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=' }}" >> ../../.env.development
+          echo "PRIVATE_API_KEY=${{ secrets.PRIVATE_API_KEY || 'test-private-api-key-for-ci' }}" >> ../../.env.development
+
       - name: Run tests with pytest (example)
         run: make local_test
-        env:
-          AES_KEY_BASE64: ${{ secrets.AES_KEY_BASE64 }}

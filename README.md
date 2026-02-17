@@ -445,6 +445,17 @@ To install `act`, I recommend using [Homebrew](https://brew.sh/):
 brew install act
 ```
 
+#### GitHub Secrets for CI
+
+The CI/CD pipeline requires certain GitHub repository secrets to be configured for running tests. These secrets provide
+sensitive values like encryption keys and API keys. See [.github/SECRETS.md](.github/SECRETS.md) for:
+
+- Complete list of required secrets
+- How to generate and configure them
+- Security best practices
+
+For local development, copy `.env.development.example` to `.env.development` and update the placeholder values.
+
 ## Setting up the AWS configuration
 
 Some services (e.g. `flip-api`) interact with AWS services (e.g. via `boto3`). You'll need an AWS account in the AI
