@@ -33,24 +33,24 @@
     },
     {
       "id": "model_locator",
-      "path": "flip.components.PTModelLocator",
+      "path": "flip.nvflare.components.PTModelLocator",
       "args": {}
     },
     {
       "id": "json_generator",
-      "path": "flip.components.ValidationJsonGenerator",
+      "path": "flip.nvflare.components.ValidationJsonGenerator",
       "args": {}
     },
     {
       "id": "flip_server_event_handler",
-      "path": "flip.components.ServerEventHandler",
+      "path": "flip.nvflare.components.ServerEventHandler",
       "args": {
         "model_id": "{model_id}"
       }
     },
     {
       "id": "persist_and_cleanup",
-      "path": "flip.components.PersistToS3AndCleanup",
+      "path": "flip.nvflare.components.PersistToS3AndCleanup",
       "args": {
         "model_id": "{model_id}",
         "persistor_id": "persistor"
@@ -60,7 +60,7 @@
   "workflows": [
     {
       "id": "init_training",
-      "path": "flip.controllers.InitTraining",
+      "path": "flip.nvflare.controllers.InitTraining",
       "args": {
         "model_id": "{model_id}",
         "min_clients": "{min_clients}"
@@ -68,7 +68,7 @@
     },
     {
       "id": "scatter_and_gather",
-      "path": "flip.controllers.ScatterAndGather",
+      "path": "flip.nvflare.controllers.ScatterAndGather",
       "args": {
         "min_clients": "{min_clients}",
         "num_rounds": "{global_rounds}",
@@ -86,7 +86,7 @@
     {
       "id": "cross_site_validate",
       "name": "CrossSiteModelEval",
-      "path": "flip.controllers.CrossSiteModelEval",
+      "path": "flip.nvflare.controllers.CrossSiteModelEval",
       "args": {
         "model_locator_id": "model_locator",
         "participating_clients": "{participating_clients}",
