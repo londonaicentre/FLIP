@@ -20,7 +20,7 @@ from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
 
-from flip.components.validation_json_generator import ValidationJsonGenerator
+from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
 
 
 class TestValidationJsonGenerator:

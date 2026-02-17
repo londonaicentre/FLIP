@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 from nvflare.app_common.app_constant import AppConstants
 
-from flip.executors.trainer import RUN_TRAINER
+from flip.nvflare.executors.trainer import RUN_TRAINER
 
 
 class TestRunTrainer:

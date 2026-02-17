@@ -12,8 +12,8 @@
 
 from unittest.mock import MagicMock, patch
 
-from flip.components.pt_model_locator import PTModelLocator
 from flip.constants import PTConstants
+from flip.nvflare.components.pt_model_locator import PTModelLocator
 
 
 class TestPTModelLocator:
@@ -62,10 +62,10 @@ class TestPTModelLocator:
         assert names == [PTConstants.PTServerName]
         assert len(names) == 1
 
-    @patch("flip.components.pt_model_locator.FlipConstants.LOCAL_DEV", True)
-    @patch("flip.components.pt_model_locator.torch")
-    @patch("flip.components.pt_model_locator.PTModelPersistenceFormatManager")
-    @patch("flip.components.pt_model_locator.model_learnable_to_dxo")
+    @patch("flip.nvflare.components.pt_model_locator.FlipConstants.LOCAL_DEV", True)
+    @patch("flip.nvflare.components.pt_model_locator.torch")
+    @patch("flip.nvflare.components.pt_model_locator.PTModelPersistenceFormatManager")
+    @patch("flip.nvflare.components.pt_model_locator.model_learnable_to_dxo")
     @patch("os.path.exists")
     def test_locate_model_local_dev_success(self, mock_exists, mock_to_dxo, mock_persistence_manager_cls, mock_torch):
         """Test locate_model in local dev mode with existing model"""
@@ -105,10 +105,10 @@ class TestPTModelLocator:
         mock_persistence_manager.to_model_learnable.assert_called_once_with(exclude_vars=None)
         mock_to_dxo.assert_called_once_with(mock_ml)
 
-    @patch("flip.components.pt_model_locator.FlipConstants.LOCAL_DEV", False)
-    @patch("flip.components.pt_model_locator.torch")
-    @patch("flip.components.pt_model_locator.PTModelPersistenceFormatManager")
-    @patch("flip.components.pt_model_locator.model_learnable_to_dxo")
+    @patch("flip.nvflare.components.pt_model_locator.FlipConstants.LOCAL_DEV", False)
+    @patch("flip.nvflare.components.pt_model_locator.torch")
+    @patch("flip.nvflare.components.pt_model_locator.PTModelPersistenceFormatManager")
+    @patch("flip.nvflare.components.pt_model_locator.model_learnable_to_dxo")
     @patch("os.path.exists")
     def test_locate_model_production_mode_success(
         self, mock_exists, mock_to_dxo, mock_persistence_manager_cls, mock_torch
@@ -149,7 +149,7 @@ class TestPTModelLocator:
         assert "/test/run/dir/model" in mock_exists.call_args[0][0]
         mock_torch.load.assert_called_once()
 
-    @patch("flip.components.pt_model_locator.FlipConstants.LOCAL_DEV", True)
+    @patch("flip.nvflare.components.pt_model_locator.FlipConstants.LOCAL_DEV", True)
     @patch("os.path.exists")
     def test_locate_model_file_not_found(self, mock_exists):
         """Test locate_model returns None when model file doesn't exist"""
@@ -176,8 +176,8 @@ class TestPTModelLocator:
         locator.log_error.assert_called_once()
         assert "Model file not found" in str(locator.log_error.call_args)
 
-    @patch("flip.components.pt_model_locator.FlipConstants.LOCAL_DEV", True)
-    @patch("flip.components.pt_model_locator.torch")
+    @patch("flip.nvflare.components.pt_model_locator.FlipConstants.LOCAL_DEV", True)
+    @patch("flip.nvflare.components.pt_model_locator.torch")
     @patch("os.path.exists")
     def test_locate_model_exception_during_load(self, mock_exists, mock_torch):
         """Test locate_model returns None when exception occurs during model load"""
@@ -223,10 +223,10 @@ class TestPTModelLocator:
         locator.log_error.assert_called_once()
         assert "doesn't recognize name" in str(locator.log_error.call_args)
 
-    @patch("flip.components.pt_model_locator.FlipConstants.LOCAL_DEV", True)
-    @patch("flip.components.pt_model_locator.torch")
-    @patch("flip.components.pt_model_locator.PTModelPersistenceFormatManager")
-    @patch("flip.components.pt_model_locator.model_learnable_to_dxo")
+    @patch("flip.nvflare.components.pt_model_locator.FlipConstants.LOCAL_DEV", True)
+    @patch("flip.nvflare.components.pt_model_locator.torch")
+    @patch("flip.nvflare.components.pt_model_locator.PTModelPersistenceFormatManager")
+    @patch("flip.nvflare.components.pt_model_locator.model_learnable_to_dxo")
     @patch("os.path.exists")
     @patch("builtins.__import__")
     def test_locate_model_without_model_instance(

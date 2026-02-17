@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 from nvflare.app_common.app_constant import AppConstants
 
-from flip.executors.validator import RUN_VALIDATOR
+from flip.nvflare.executors.validator import RUN_VALIDATOR
 
 
 class TestRunValidator:
