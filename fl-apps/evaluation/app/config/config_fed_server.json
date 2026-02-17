@@ -23,24 +23,24 @@
     },
     {
       "id": "model_locator",
-      "path": "pt_model_locator.PTModelLocator",
+      "path": "flip.nvflare.components.EvaluationPTModelLocator",
       "args": {}
     },
     {
       "id": "json_generator",
-      "path": "flip.components.EvaluationJsonGenerator",
+      "path": "flip.nvflare.components.EvaluationJsonGenerator",
       "args": {}
     },
     {
       "id": "flip_server_event_handler",
-      "path": "flip.components.ServerEventHandler",
+      "path": "flip.nvflare.components.ServerEventHandler",
       "args": {
         "model_id": "{model_id}"
       }
     },
     {
       "id": "persist_and_cleanup",
-      "path": "flip.components.PersistToS3AndCleanup",
+      "path": "flip.nvflare.components.PersistToS3AndCleanup",
       "args": {
         "model_id": "{model_id}",
         "persistor_id": "persistor"
@@ -50,7 +50,7 @@
   "workflows": [
     {
       "id": "init_evaluation",
-      "path": "flip.controllers.InitEvaluation",
+      "path": "flip.nvflare.controllers.InitEvaluation",
       "args": {
         "model_id": "{model_id}",
         "min_clients": "{min_clients}"
@@ -59,7 +59,7 @@
     {
       "id": "site_validate",
       "name": "ModelEval",
-      "path": "flip.controllers.ModelEval",
+      "path": "flip.nvflare.controllers.ModelEval",
       "args": {
         "model_locator_id": "model_locator",
         "participating_clients": "{participating_clients}",
