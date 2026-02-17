@@ -33,7 +33,7 @@ async def upload_data(net_id: str, request_data: UploadDataRequest, headers: XNA
     Upload data to XNAT for a given accession ID and central hub project ID
 
     Args:
-        net_id (str): The NVFlare net ID.
+        net_id (str): The FL net ID.
         request_data (UploadDataRequest): The request data containing the encrypted central hub project ID and the
         accession ID.
         headers (XNATAuthHeaders): The XNAT authentication headers.

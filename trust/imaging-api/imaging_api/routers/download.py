@@ -45,7 +45,7 @@ async def download_images_by_accession_number(
     unzip the folder and delete the existing .zip file.
 
     Args:
-        net_id (str): The ID of the NVFlare net that will run the training.
+        net_id (str): The ID of the FL net that will run the training.
         request_data (DownloadImagesRequestData): Contains encrypted central hub project ID and accession ID.
         assessor_type (str): The type of assessor to use for the download. Default is "scan". Can be "assessor".
         resource_type (str): XNAT resource type e.g DICOM/NIFTI. ALL will download all resources. Custom value is

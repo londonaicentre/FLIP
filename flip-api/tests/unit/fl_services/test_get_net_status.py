@@ -43,7 +43,7 @@ def mock_get_net_by_name():
 
 
 @pytest.fixture
-def mock_get_status():
+def mock_fetch_client_status():
     with patch("flip_api.fl_services.get_net_status.fetch_client_status") as mock:
         mock.return_value = [
             IClientStatus(name="client1", online=True, status=ClientStatus.NO_JOBS),
@@ -64,7 +64,7 @@ def mock_get_trusts():
         yield mock
 
 
-def test_get_net_status_success(fake_request, mock_db, mock_get_net_by_name, mock_get_status, mock_get_trusts):
+def test_get_net_status_success(fake_request, mock_db, mock_get_net_by_name, mock_fetch_client_status, mock_get_trusts):
     result = get_net_status("net-name", fake_request, mock_db)
     assert result.name == "net-name"
     assert len(result.clients) == 3

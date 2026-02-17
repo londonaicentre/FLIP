@@ -209,7 +209,7 @@ docker compose -f deploy/compose.yml run --rm < service name >
 
 ### Federated Learning Setup
 
-The project uses NVIDIA FLARE (NVFLARE) for federated learning, which requires provisioned certificates and configuration files. These files are generated in the separate repository [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) (see that repository for instructions on how to provision the workspace).
+The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for federated learning. FLARE requires provisioned certificates and configuration files that are generated in the separate repository [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) (see that repository for instructions on how to provision the workspace).
 
 #### FL_PROVISIONED_DIR Configuration
 

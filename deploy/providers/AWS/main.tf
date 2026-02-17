@@ -81,7 +81,7 @@ resource "aws_security_group_rule" "fl_server_ingress" {
   protocol          = "tcp"
   cidr_blocks       = ["${module.trust_ec2.public_ip}/32"]
   security_group_id = module.ec2_security_group.security_group.id
-  description       = "NVFlare FL Server from Trust EC2"
+  description       = "FL Server from Trust EC2"
 }
 
 resource "aws_security_group_rule" "fl_admin_ingress" {
@@ -91,7 +91,7 @@ resource "aws_security_group_rule" "fl_admin_ingress" {
   protocol          = "tcp"
   cidr_blocks       = ["${module.trust_ec2.public_ip}/32"]
   security_group_id = module.ec2_security_group.security_group.id
-  description       = "NVFlare Admin Port from Trust EC2"
+  description       = "FL Admin Port from Trust EC2"
 }
 
 # RDS

@@ -12,14 +12,17 @@
 
 import json
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
 from flip_api.config import Settings
 from flip_api.domain.interfaces.fl import (
+    IJobMetaData,
+    IServerStatus,
     IStartTrainingBody,
 )
+from flip_api.domain.schemas.fl import ClientInfoModel
 from flip_api.domain.schemas.status import ClientStatus
 from flip_api.fl_services.services import fl_service
 
@@ -30,12 +33,12 @@ def fake_session():
 
 
 @pytest.fixture
-def model_id():
+def model_id() -> UUID:
     return uuid4()
 
 
 @pytest.fixture
-def fl_job_id():
+def fl_job_id() -> UUID:
     return uuid4()
 
 
@@ -137,21 +140,21 @@ def test_upload_app_calls_http_post(mock_post, model_id):
     assert result == {"status": "ok"}
 
 
-def test_get_nvflare_job_id_by_model_id(model_id, fake_session):
+def test_get_fl_backend_job_id_by_model_id(model_id, fake_session):
     result_proxy = MagicMock()
     result_proxy.one_or_none.return_value = "job-id"
     fake_session.exec.return_value = result_proxy
-    job_id = fl_service.get_nvflare_job_id_by_model_id(model_id, fake_session)
+    job_id = fl_service.get_fl_backend_job_id_by_model_id(model_id, fake_session)
     assert job_id == "job-id"
 
 
-def test_add_nvflare_job_id_updates_db(fl_job_id, fake_session):
+def test_add_fl_backend_job_id_updates_db(fl_job_id, fake_session):
     job = MagicMock()
     result_proxy = MagicMock()
     result_proxy.scalar_one_or_none.return_value = job
     fake_session.execute.return_value = result_proxy
 
-    fl_service.add_nvflare_job_id(fl_job_id, str(uuid4()), fake_session)
+    fl_service.add_fl_backend_job_id(fl_job_id, str(uuid4()), fake_session)
 
     fake_session.commit.assert_called_once()
 
@@ -159,49 +162,62 @@ def test_add_nvflare_job_id_updates_db(fl_job_id, fake_session):
 @patch("flip_api.fl_services.services.fl_service.http_post")
 def test_submit_job_raises_when_no_job_id(mock_post, fl_job_id, model_id, fake_session):
     mock_post.return_value = ""
-    with pytest.raises(ValueError, match="No nvflare job id returned"):
+    with pytest.raises(ValueError, match="No backend job id returned"):
         fl_service.submit_job("req-id", fl_job_id, "endpoint", model_id, fake_session)
 
 
-@patch("flip_api.fl_services.services.fl_service.http_get")
-def test_get_status_with_clients(mock_get):
-    details = MagicMock()
-    details.target.value = "SERVER"
-    details.clients = "client1"
-    fl_service.get_status(details, "req-id", "endpoint")
-    mock_get.assert_called_with("endpoint/check_status/SERVER/client1", "req-id")
+# TODO add tests for fetch_server_status, fetch_client_status
+@patch("flip_api.fl_services.services.fl_service.check_server_status")
+def test_fetch_server_status_success(mock_check_server):
+    mock_check_server.return_value = IServerStatus(status="running", start_time=12345.0)
+    status = fl_service.fetch_server_status("req-id", "endpoint")
+    assert status.status == "running"
+    assert status.start_time == 12345.0
 
 
-def test_get_nvflare_job_id_by_model_id_not_found(model_id, fake_session):
+@patch("flip_api.fl_services.services.fl_service.check_client_status")
+def test_fetch_client_status_success(mock_check_client):
+    mock_check_client.return_value = [
+        ClientInfoModel(name="Trust_1", last_connect_time="12345", status=ClientStatus.NO_JOBS),
+        ClientInfoModel(name="Trust_2", last_connect_time="12456", status=ClientStatus.NO_REPLY),
+    ]
+    status = fl_service.fetch_client_status("req-id", "endpoint")
+    assert status[0].name == "Trust_1"
+    assert status[0].status == ClientStatus.NO_JOBS
+    assert status[1].name == "Trust_2"
+    assert status[1].status == ClientStatus.NO_REPLY
+
+
+def test_get_fl_backend_job_id_by_model_id_not_found(model_id, fake_session):
     result_proxy = MagicMock()
     result_proxy.one_or_none.return_value = None
     fake_session.exec.return_value = result_proxy
-    with pytest.raises(ValueError, match=f"No nvflare_job_id found for modelId: {model_id}"):
-        fl_service.get_nvflare_job_id_by_model_id(model_id, fake_session)
+    with pytest.raises(ValueError, match=f"No backend job ID found for model_id {model_id}"):
+        fl_service.get_fl_backend_job_id_by_model_id(model_id, fake_session)
 
 
-def test_add_nvflare_job_id_raises_if_job_missing(fl_job_id, fake_session):
+def test_add_fl_backend_job_id_raises_if_job_missing(fl_job_id, fake_session):
     fake_session.get.return_value = None
     with pytest.raises(ValueError, match=f"FLJob with id {fl_job_id} not found"):
-        fl_service.add_nvflare_job_id(fl_job_id, str(uuid4()), fake_session)
+        fl_service.add_fl_backend_job_id(fl_job_id, str(uuid4()), fake_session)
 
 
-@patch("flip_api.fl_services.services.fl_service.get_status")
+@patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_validate_client_availability_all_offline(mock_get_status):
     mock_get_status.return_value = [
-        {"name": "Trust_2", "last_connect_time": "12345", "status": ClientStatus.NO_REPLY},
-        {"name": "Trust_1", "last_connect_time": "12456", "status": ClientStatus.NO_JOBS},
+        ClientInfoModel(name="Trust_2", last_connect_time="12345", status=ClientStatus.NO_REPLY),
+        ClientInfoModel(name="Trust_1", last_connect_time="12456", status=ClientStatus.NO_JOBS),
     ]
 
     with pytest.raises(ValueError, match="Clients unavailable: trust-1"):
         fl_service.validate_client_availability(["trust-1"], "endpoint", "req-id")
 
 
-@patch("flip_api.fl_services.services.fl_service.get_status")
+@patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_validate_client_availability_some_online(mock_get_status):
     mock_get_status.return_value = [
-        {"name": "Trust_2", "last_connect_time": "12345", "status": ClientStatus.NO_REPLY},
-        {"name": "Trust_1", "last_connect_time": "12456", "status": ClientStatus.NO_JOBS},
+        ClientInfoModel(name="Trust_2", last_connect_time="12345", status=ClientStatus.NO_REPLY),
+        ClientInfoModel(name="Trust_1", last_connect_time="12456", status=ClientStatus.NO_JOBS),
     ]
 
     # This has to raise an error for Trust_2 only.
@@ -209,11 +225,11 @@ def test_validate_client_availability_some_online(mock_get_status):
         fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint", "req-id")
 
 
-@patch("flip_api.fl_services.services.fl_service.get_status")
+@patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_validate_client_availability_empty_statuses(mock_get_status):
     mock_get_status.return_value = []
 
-    with pytest.raises(ValueError, match="No clients are available"):
+    with pytest.raises(ValueError, match="Unable to fetch client statuses"):
         fl_service.validate_client_availability(["trust-1"], "endpoint", "req-id")
 
 
@@ -640,19 +656,19 @@ def test_extract_current_job_data_success(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
     net_endpoint = "http://flare-endpoint"
-    nvflare_job_id = "job123"
+    fl_backend_job_id = "job123"
 
-    # Mock NVFlare job list response
+    # Mock backend job list response
     mock_http_get.return_value = [
         {"job_id": "job123", "status": "RUNNING", "job_name": "myjob"},
         {"job_id": "job999", "status": "FINISHED", "job_name": "oldjob"},
     ]
 
-    result = extract_current_job_data(net_endpoint, nvflare_job_id)
+    result = extract_current_job_data(net_endpoint, fl_backend_job_id)
 
     # Ensure the correct job was returned
-    assert result["job_id"] == "job123"
-    assert result["status"] == "RUNNING"
+    assert result.job_id == "job123"
+    assert result.status == "RUNNING"
 
     # Verify correct HTTP endpoint called
     mock_http_get.assert_called_once_with(f"{net_endpoint}/list_jobs")
@@ -662,12 +678,12 @@ def test_extract_current_job_data_success(mock_http_get):
 def test_extract_current_job_data_not_found(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
-    mock_http_get.return_value = [{"job_id": "other", "status": "RUNNING"}]
+    mock_http_get.return_value = [{"job_id": "other", "status": "RUNNING", "job_name": "otherjob"}]
     net_endpoint = "http://flare-endpoint"
-    nvflare_job_id = "missing-job"
+    fl_backend_job_id = "missing-job"
 
-    with pytest.raises(ValueError, match=f"Could not find job ID {nvflare_job_id}"):
-        extract_current_job_data(net_endpoint, nvflare_job_id)
+    with pytest.raises(ValueError, match=f"Could not find job ID {fl_backend_job_id}"):
+        extract_current_job_data(net_endpoint, fl_backend_job_id)
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
@@ -675,19 +691,19 @@ def test_extract_current_job_data_multiple_found(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
     net_endpoint = "http://flare-endpoint"
-    nvflare_job_id = "duplicate-job"
+    fl_backend_job_id = "duplicate-job"
 
     mock_http_get.return_value = [
-        {"job_id": "duplicate-job", "status": "RUNNING"},
-        {"job_id": "duplicate-job", "status": "RUNNING"},
+        {"job_id": "duplicate-job", "status": "RUNNING", "job_name": "duplicate-job"},
+        {"job_id": "duplicate-job", "status": "RUNNING", "job_name": "duplicate-job"},
     ]
 
     with pytest.raises(ValueError, match="Multiple running jobs found"):
-        extract_current_job_data(net_endpoint, nvflare_job_id)
+        extract_current_job_data(net_endpoint, fl_backend_job_id)
 
 
 @patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
-@patch("flip_api.fl_services.services.fl_service.get_nvflare_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
 @patch("flip_api.fl_services.services.fl_service.fetch_server_status")
 @patch("flip_api.fl_services.services.fl_service.abort_job")
 @patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
@@ -697,21 +713,15 @@ def test_abort_model_training_success(
     mock_get_net,
     mock_abort,
     mock_fetch_server_status,
-    mock_get_nvflare_job_id_by_model_id,
+    mock_get_fl_backend_job_id_by_model_id,
     mock_extract_current_job_data,
     model_id,
     fake_session,
 ):
-    mock_get_nvflare_job_id_by_model_id.return_value = "job123"
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
     mock_get_net.return_value = MagicMock(endpoint="http://endpoint", name="net1")
     mock_fetch_server_status.return_value = {"status": "stopped", "start_time": 1760009291.0072687}
-    mock_extract_current_job_data.return_value = {
-        "job_id": "job123",
-        "job_name": str(model_id),
-        "status": "RUNNING",
-        "submit_time": "2025-10-08T14:25:47.119547+00:00",
-        "duration": "2:38:26.597705",
-    }
+    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", job_name=str(model_id), status="RUNNING")
 
     request = MagicMock()
     request.scope = {"request_id": "req-id"}
