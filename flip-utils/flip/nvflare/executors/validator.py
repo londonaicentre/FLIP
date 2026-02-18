@@ -88,7 +88,7 @@ class RUN_VALIDATOR(Executor):
                 from validator import FLIP_VALIDATOR as UPLOADED_VALIDATOR
 
                 self._validator = UPLOADED_VALIDATOR(
-                    validate_task_name=AppConstants.TASK_VALIDATION,
+                    validate_task_name=self._validate_task_name,
                     project_id=self._project_id,
                     query=self._query,
                 )

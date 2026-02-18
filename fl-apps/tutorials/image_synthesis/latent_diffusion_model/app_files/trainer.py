@@ -164,6 +164,10 @@ class FLIP_TRAINER(Executor):
 
         self.plot_images_every_local = 5
 
+    def get_num_epochs(self):
+        """Returns the maximum number of epochs for either training phase."""
+        return max(self.params_autoencoder["epochs"], self.params_diffusion["epochs"])
+
     def config_batch_accumulation(self, phase: str):
         # Set batch accumulation
         if self.config[phase] < 8:
@@ -655,6 +659,13 @@ class FLIP_TRAINER(Executor):
         fl_ctx: FLContext,
         abort_signal: Signal,
     ) -> Shareable:
+        # Diagnostic logging: confirm this trainer file and what task it's handling
+        self.log_info(
+            fl_ctx,
+            f"[FLIP_TRAINER] Loaded from {__file__}; configured _train_task_name='{self._train_task_name}', "
+            f"_submit_model_task_name='{self._submit_model_task_name}'; incoming task_name='{task_name}'",
+        )
+
         site_name = fl_ctx.get_prop(FLContextKey.CLIENT_NAME, "")
         if "site1" == site_name:
             train_dict = self.train_dict[: int(len(self.train_dict) // 2)]
@@ -666,7 +677,11 @@ class FLIP_TRAINER(Executor):
         self._train_dataset = Dataset(train_dict, transform=self._transforms)
         self._val_dataset = Dataset(self.val_dict, transform=self._val_transforms)
 
-        if task_name == self._train_task_name:
+        # Accept either the exact configured task name (e.g. "train_ae"/"train_dm")
+        # or a more generic "train*" task name coming from the controller.
+        if task_name == self._train_task_name or (
+            task_name.startswith("train") and str(self._train_task_name).startswith("train")
+        ):
             # Get model weights
             dxo = from_shareable(shareable)
 
@@ -759,6 +774,8 @@ class FLIP_TRAINER(Executor):
             data=torch.load(model_path), default_train_conf=self._default_train_conf
         )
         ml = self.persistence_manager.to_model_learnable(exclude_vars=self._exclude_vars)
+        return ml
+        return ml
         return ml
         return ml
         return ml
