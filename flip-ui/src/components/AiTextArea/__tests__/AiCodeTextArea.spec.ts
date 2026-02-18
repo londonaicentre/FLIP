@@ -21,12 +21,12 @@ import AiCodeTextArea from "../AiCodeTextArea.vue";
 
 describe("Ai Code TextArea", () => {
     test("Renders Component", () => {
-        const comp = mountComponent(AiCodeTextArea, { 
+        const comp = mountComponent(AiCodeTextArea, {
             props: {
                 name: "test-code-textarea",
                 label: "Test Code Label"
             },
-            global: { plugins: [createPinia()] } 
+            global: { plugins: [createPinia()] }
         });
 
         expect(comp.exists()).toBe(true);

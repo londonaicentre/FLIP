@@ -25,7 +25,3 @@ Connectivity
 
 Logs
 ====
-
-
-
-

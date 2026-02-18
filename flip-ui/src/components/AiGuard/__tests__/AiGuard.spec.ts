@@ -22,12 +22,12 @@ describe("AiGuard", () => {
 
     test("Renders Component with permissions", () => {
         const wrapper = mount(AiGuard, {
-            props: { 
+            props: {
                 permissions: ["CanManageProjects"],
                 bypass: true  // Use bypass to skip permission check
             },
             slots: { default: "<div class=\"fake-msg\">Test Content</div>" },
-            global: { 
+            global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false

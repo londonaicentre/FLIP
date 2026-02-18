@@ -22,4 +22,3 @@ Minor releases
 ***************
 Patch releases
 ***************
-

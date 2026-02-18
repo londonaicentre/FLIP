@@ -21,13 +21,13 @@ import QueryResultCharts from "@/partials/cohort-query/QueryResultCharts.vue";
 
 describe("QueryResultCharts", () => {
     test("Renders Component", () => {
-        const comp = mount(QueryResultCharts, { 
-            global: { 
+        const comp = mount(QueryResultCharts, {
+            global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false
                 })]
-            } 
+            }
         });
 
         expect(comp.exists()).toBe(true);

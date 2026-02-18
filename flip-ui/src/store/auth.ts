@@ -90,7 +90,7 @@ export const useAuthStore = defineStore("auth", {
         user: null,
         signInStep: null
     }),
-    
+
     getters: {
         getUser: (state) => state.user,
         confirmedUser: (state) => state.signInStep === "DONE" && !!state.user
@@ -163,7 +163,7 @@ export const useAuthStore = defineStore("auth", {
             this.$reset();
             routeChange.gotoLogin();
         },
-        
+
         async resetPassword(email: string) {
             const response = await resetPassword({
                 username: email,

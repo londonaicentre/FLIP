@@ -34,5 +34,3 @@ export enum CohortResultHeader {
 export enum CohortResultContinuous {
     MEAN_AGE = "Mean Age"
 }
-
-

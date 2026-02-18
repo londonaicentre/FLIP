@@ -15,14 +15,14 @@
 
 # This script configures the dcm2niix container service in XNAT
 # It is intended to be run after the XNAT container has been started
-# for the first time. 
-# 
+# for the first time.
+#
 # This needs that configure-xnat.sh has been run, otherwise it will fail
-# because the password of the admin user has not been changed yet. 
-# 
+# because the password of the admin user has not been changed yet.
+#
 # Note the rest of the environment variables are available from the file
 # - trust/xnat/xnat-docker-compose/.env
-# 
+#
 
 # The below are fixed values for now
 XNAT_URL="http://xnat-web:8080" # internal to Docker network
@@ -36,7 +36,7 @@ until $(curl --output /dev/null --silent --head --fail $XNAT_URL/app/template/Lo
 done
 echo "XNAT is up!"
 
-# Path translation for container service plugin 
+# Path translation for container service plugin
 # This is so that the container service can access the data
 echo "Adding path translation for container service..."
 

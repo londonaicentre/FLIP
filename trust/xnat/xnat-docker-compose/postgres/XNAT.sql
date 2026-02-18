@@ -17,4 +17,3 @@ create role :"xnat_user" with login password :'xnat_user_pw';
 
 -- add missing grants for database
 ALTER DATABASE :"xnat_user" OWNER TO :"xnat_db";
-

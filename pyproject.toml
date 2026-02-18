@@ -9,6 +9,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+[project]
+name = "flip-dev"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+authors = [
+    { name = "R. Garcia-Dias", email = "rafaelagd@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+flip-dev = "flip_dev:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
 
 [tool.coverage.report]
 exclude_lines = ["if __name__ == .__main__.:"]
@@ -35,6 +52,3 @@ exclude = [
 
 [tool.mypy]
 ignore_missing_imports = true
-exclude = [
-    "src/flip_api/translation/*",
-]

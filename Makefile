@@ -71,7 +71,7 @@ get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -f deploy/compose.yml
 OVERRIDE_COMPOSE_COMMAND=docker compose -f deploy/compose.yml -f deploy/compose.debug.override.yml
-SHOW_LOGS_CENTRAL_HUB=docker logs -f flip-api --tail 100 --timestamps --follow 
+SHOW_LOGS_CENTRAL_HUB=docker logs -f flip-api --tail 100 --timestamps --follow
 GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
 # Build the Docker images
@@ -138,7 +138,7 @@ down:
 	@echo "🛌 All services stopped successfully!"
 
 # Clean Docker resources
-clean:	
+clean:
 	${DOCKER_COMMAND} down --rmi local && \
 	docker system prune -f && \
 	rm -rf ./flip-fl-api/*/transfer/*/

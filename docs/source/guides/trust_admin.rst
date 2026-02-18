@@ -25,13 +25,3 @@ Ongoing projects
 ***************
 Troubleshooting
 ***************
-
-
-
-
-
-
-
-
-
-

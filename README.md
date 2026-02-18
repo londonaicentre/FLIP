@@ -22,7 +22,7 @@ Federated Learning Interoperability Platform
 
 FLIP is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
-FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London. 
+FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London.
 
 ## Docker Deployment Setup
 
@@ -444,6 +444,17 @@ To install `act`, I recommend using [Homebrew](https://brew.sh/):
 ```bash
 brew install act
 ```
+
+#### GitHub Secrets for CI
+
+The CI/CD pipeline requires certain GitHub repository secrets to be configured for running tests. These secrets provide
+sensitive values like encryption keys and API keys. See [.github/SECRETS.md](.github/SECRETS.md) for:
+
+- Complete list of required secrets
+- How to generate and configure them
+- Security best practices
+
+For local development, copy `.env.development.example` to `.env.development` and update the placeholder values.
 
 ## Setting up the AWS configuration
 

@@ -41,7 +41,7 @@ resource "aws_vpc_security_group_ingress_rule" "trust_api" {
   to_port           = var.TRUST_API_PORT
 }
 
-# NOTE This is opening XNAT for the whole internet. Since these are 'open' trusts for testing, we can leave them as is. 
+# NOTE This is opening XNAT for the whole internet. Since these are 'open' trusts for testing, we can leave them as is.
 # TODO Restrict these to the trust's IP ranges in the future.
 resource "aws_vpc_security_group_ingress_rule" "xnat" {
   count             = length(var.security_group_ids) == 0 ? 1 : 0

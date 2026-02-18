@@ -23,9 +23,9 @@ import { AddProjectUsers } from "../selectors";
 
 describe("Project Users Modal", () => {
     let component: any;
-    
+
     beforeEach(() => {
-        component = mount(AddUser, { 
+        component = mount(AddUser, {
             props: { users: [] },
             global: {
                 plugins: [createTestingPinia({

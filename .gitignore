@@ -330,6 +330,8 @@ flip-fl-api/transfer/*/*
 
 *.tfplan
 
+# Environment files with sensitive credentials
+.env.development    
 .env.stag
 .env.production
 
@@ -341,3 +343,11 @@ CLAUDE.md
 *.gz
 
 .plans/
+
+# Security scan reports
+.security-reports/
+.secrets.baseline
+
+scripts/remove-env-from-history.sh
+
+SECURITY_INCIDENT.md

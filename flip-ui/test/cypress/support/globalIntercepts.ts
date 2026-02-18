@@ -65,4 +65,3 @@ beforeEach(() => {
         fixture: "project/imagingProjectStatus"
     }).as("imagingStatusGlobal");
 });
-
