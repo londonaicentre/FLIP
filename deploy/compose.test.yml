@@ -22,13 +22,11 @@ services:
       - ../.env.development
     environment:
       - DEV_IMAGES_DIR=/images
-      - DEV_DATAFOLDER=/datafolder
       - DEV_DATAFRAME=/dataframe_file
     volumes:
       - ${JOB_DIR}:/app/job
       - ${RUNS_DIR}:/runs
       - ${DEV_IMAGES_DIR}:/images
-      - ${DEV_DATAFOLDER}:/datafolder
       - ${DEV_DATAFRAME}:/dataframe_file:ro
     shm_size: "32gb"
     deploy:

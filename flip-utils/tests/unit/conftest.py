@@ -39,7 +39,6 @@ def pytest_sessionstart(session):
     os.environ.setdefault("MIN_CLIENTS", "1")
     os.environ.setdefault("DEV_DATAFRAME", "/data/local_dev/dev_dataframe.csv")
     os.environ.setdefault("DEV_IMAGES_DIR", "/data/local_dev/dev_images")
-    os.environ.setdefault("DEV_DATAFOLDER", "/data/local_dev/")
 
     # Set production environment variables for testing prod mode (fallback)
     os.environ.setdefault("CENTRAL_HUB_API_URL", "https://hub.example.com")
