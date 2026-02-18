@@ -182,7 +182,9 @@ class TestPersistToS3AndCleanup:
 
         # In dev mode, should not upload to S3
         mock_make_archive.assert_called_once()
-        mock_move.assert_called_once()
+        # Should move global model, trainer.py, and validator.py if they exist
+        assert mock_move.call_count == 3
+        mock_rmtree.assert_called_once()
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     @patch("boto3.client")
@@ -221,6 +223,9 @@ class TestPersistToS3AndCleanup:
 
         # In production mode, should upload to S3
         s3_client.upload_file.assert_called_once()
+        # Should move global model, trainer.py, and validator.py if they exist
+        assert mock_move.call_count == 3
+        mock_rmtree.assert_called_once()
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     @patch("shutil.rmtree")
