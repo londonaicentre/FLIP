@@ -293,6 +293,26 @@ def fetch_client_status(request_id: str, endpoint: str) -> List[IClientStatus] |
     return client_statuses
 
 
+def is_client_available(client_name: str, client_statuses: List[IClientStatus]) -> bool:
+    """
+    Check if a specific client is available based on its status.
+
+    Args:
+        client_name (str): The name of the client to check.
+        client_statuses (List[IClientStatus]): A list of client statuses to check against.
+
+    Returns:
+        bool: True if the client is available, False otherwise.
+    """
+    logger.debug(f"Checking availability of client '{client_name}' against statuses: {client_statuses}")
+    for client in client_statuses:
+        if client.name == client_name:
+            return client.online
+    # If the client is not found in the statuses, we consider it unavailable
+    logger.warning(f"Client {client_name} not found in client statuses")
+    return False
+
+
 def validate_client_availability(clients: List[str], endpoint: str, request_id: str) -> None:
     """
     Validate the availability of clients by checking their status.
@@ -316,15 +336,6 @@ def validate_client_availability(clients: List[str], endpoint: str, request_id: 
         raise ValueError("Unable to fetch client statuses to validate client availability")
 
     logger.info(f"Client status: {client_statuses}")
-
-    def is_client_available(client_name: str, client_statuses: List[IClientStatus]) -> bool:
-        """Check if a specific client is available based on its status."""
-        for client in client_statuses:
-            if client.name == client_name:
-                return client.online
-        # If the client is not found in the statuses, we consider it unavailable
-        logger.warning(f"Client {client_name} not found in client statuses")
-        return False
 
     unavailable = [client for client in clients if not is_client_available(client, client_statuses)]
 
