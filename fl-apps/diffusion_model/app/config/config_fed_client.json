@@ -13,7 +13,7 @@
     {
       "tasks": ["train_ae"],
       "executor": {
-        "path": "trainer.FLIP_TRAINER",
+        "path": "flip.nvflare.executors.RUN_TRAINER",
         "args": {
           "train_task_name": "train_ae",
           "project_id": "{project_id}",
@@ -24,7 +24,7 @@
     {
       "tasks": ["train_dm", "submit_model"],
       "executor": {
-        "path": "trainer.FLIP_TRAINER",
+        "path": "flip.nvflare.executors.RUN_TRAINER",
         "args": {
           "train_task_name": "train_dm",
           "project_id": "{project_id}",
@@ -35,7 +35,7 @@
     {
       "tasks": ["validate_ae"],
       "executor": {
-        "path": "validator.FLIP_VALIDATOR",
+        "path": "flip.nvflare.executors.RUN_VALIDATOR",
         "args": {
           "validate_task_name": "validate_ae",
           "project_id": "{project_id}",
@@ -46,7 +46,7 @@
       {
       "tasks": ["validate_dm"],
       "executor": {
-        "path": "validator.FLIP_VALIDATOR",
+        "path": "flip.nvflare.executors.RUN_VALIDATOR",
         "args": {
           "validate_task_name": "validate_dm",
           "project_id": "{project_id}",
