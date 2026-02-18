@@ -94,6 +94,7 @@
       "name": "CrossSiteModelEvalLDM",
       "path": "flip.nvflare.controllers.CrossSiteModelEval",
       "args": {
+        "submit_model_task_name": "",
         "validation_task_name": "validate_ae",
         "model_locator_id": "model_locator",
         "participating_clients": "{participating_clients}",
@@ -123,6 +124,7 @@
       "name": "CrossSiteModelEvalLDM",
       "path": "flip.nvflare.controllers.CrossSiteModelEval",
       "args": {
+        "submit_model_task_name": "",
         "model_locator_id": "model_locator",
         "validation_task_name": "validate_dm",
         "participating_clients": "{participating_clients}",
