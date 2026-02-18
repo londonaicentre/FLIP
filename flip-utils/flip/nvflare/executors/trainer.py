@@ -102,7 +102,8 @@ class RUN_TRAINER(Executor):
                 import trainer as trainer_module
                 from trainer import FLIP_TRAINER as UPLOADED_TRAINER
 
-                self.log_info(fl_ctx, f"[RUN_TRAINER] Imported FLIP_TRAINER from: {trainer_module.__file__}")
+                trainer_file = getattr(trainer_module, "__file__", "unknown")
+                self.log_info(fl_ctx, f"[RUN_TRAINER] Imported FLIP_TRAINER from: {trainer_file}")
 
                 self._flip_trainer = UPLOADED_TRAINER(
                     train_task_name=self._train_task_name,
