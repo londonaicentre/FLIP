@@ -27,11 +27,10 @@ from nvflare.apis.fl_constant import ReturnCode
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
-from pt_constants import PTConstants
 from transforms import get_eval_transforms, get_sliding_window_inferer
 
 from flip import FLIP
-from flip.constants import ResourceType
+from flip.constants import PTConstants, ResourceType
 
 
 class FLIP_EVALUATOR(Executor):
