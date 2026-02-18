@@ -124,9 +124,27 @@ class PersistToS3AndCleanup(FLComponent):
             else:
                 fl_global_model_filepath = os.path.join(app_server_path, "model", PTConstants.PTFileModelName)
 
+            # Move global model to run_dir
             if os.path.isfile(fl_global_model_filepath):
                 self.log_info(fl_ctx, f"Found global model: {fl_global_model_filepath}")
                 shutil.move(fl_global_model_filepath, run_dir)
+
+            # For certain workflows (e.g., diffusion_model), also move trainer.py and validator.py
+            trainer_path = os.path.join(app_server_path, "custom", "trainer.py")
+            validator_path = os.path.join(app_server_path, "custom", "validator.py")
+
+            if os.path.isfile(trainer_path):
+                self.log_info(fl_ctx, f"Found trainer.py: {trainer_path}")
+                shutil.move(trainer_path, run_dir)
+
+            if os.path.isfile(validator_path):
+                self.log_info(fl_ctx, f"Found validator.py: {validator_path}")
+                shutil.move(validator_path, run_dir)
+
+            # Remove app_server directory before zipping
+            if os.path.isdir(app_server_path):
+                self.log_info(fl_ctx, f"Removing app_server directory: {app_server_path}")
+                shutil.rmtree(app_server_path)
 
             self.log_info(fl_ctx, "Zipping the final model and the reports...")
             zip_name = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -134,12 +152,6 @@ class PersistToS3AndCleanup(FLComponent):
             self.log_info(fl_ctx, f"Source folder to be zipped: {run_dir}")
             shutil.make_archive(zip_path, "zip", run_dir)
             self.log_info(fl_ctx, f"Zip file created at: {zip_path}.zip")
-
-            if os.path.isdir(run_dir):
-                self.log_info(fl_ctx, f"Removing app_server directory: {app_server_path}")
-                shutil.rmtree(app_server_path)
-            else:
-                self.log_error(fl_ctx, f"Run directory {run_dir} does not exist")
 
             if not FlipConstants.LOCAL_DEV:
                 self.bucket_name = FlipConstants.UPLOADED_FEDERATED_DATA_BUCKET
