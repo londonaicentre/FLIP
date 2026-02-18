@@ -74,8 +74,8 @@ class NetStatus(Enum):
     BUSY = "BUSY"
 
 
-class NVFlareTargets(str, Enum):
-    """Targets for NVFlare."""
+class FLTargets(str, Enum):
+    """Targets for FL backend."""
 
     SERVER = "server"
     CLIENT = "client"

@@ -62,7 +62,7 @@ def get_net_status(
 
         logger.info(f"Retrieving status for net: {net_name} with info {net_info}")
 
-        # Get NVFlare client status
+        # Get FL client status
         clients = fetch_client_status(request_id, net_info.endpoint)
 
         if not clients:

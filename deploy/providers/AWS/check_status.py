@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -685,20 +685,19 @@ def main(
             success, message = run_ssh_command(
                 ssh_key=ssh_key_path,
                 host=f"ubuntu@{central_hub_ip}",
-                command=f"docker exec flip httpx http://fl-api-net-{nets}:8000/check_status/all",
+                command=f"docker exec flip httpx http://fl-api-net-{nets}:8000/check_status/client",
             )
-            # Extract JSON part from the message
-            start = message.find("{")
+            # Extract JSON part from the message (list of client info)
+            start = message.find("[")
             json_part = message[start:]
             try:
-                data = json.loads(json_part)
+                client_info = json.loads(json_part)
             except json.JSONDecodeError:
                 print_status(
                     "FAIL",
                     f"FL API Net {nets} clients returned invalid JSON from flip container:\n{message}",
                 )
                 continue
-            client_info = data.get("client_info", [])
             if success and ("200" in message) and client_info != []:
                 print_status("PASS", f"FL API Net {nets} clients are reachable inside flip container")
             else:

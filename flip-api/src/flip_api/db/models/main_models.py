@@ -60,7 +60,7 @@ class FLJob(SQLModel, table=True):
     started: Optional[datetime] = Field(default=None)
     completed: Optional[datetime] = Field(default=None)
     clients: List[str] = Field(sa_column=Column(JSON), default=[])
-    nvflare_job_id: Optional[str] = None
+    fl_backend_job_id: Optional[str] = None
 
     scheduler: Optional["FLScheduler"] = Relationship(back_populates="job")
 

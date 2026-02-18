@@ -25,7 +25,7 @@ from flip_api.domain.interfaces.fl import (
     AggregationWeights,
     FLAggregators,
     IClientStatus,
-    INVFlareTargetPathParameters,
+    IJobMetaData,
     IOverridableConfig,
     IServerStatus,
     IStartTrainingBody,
@@ -34,7 +34,7 @@ from flip_api.domain.interfaces.fl import (
 )
 from flip_api.domain.interfaces.shared import TrainingRound
 from flip_api.domain.schemas.fl import ClientInfoModel
-from flip_api.domain.schemas.status import ClientStatus, NVFlareTargets
+from flip_api.domain.schemas.status import ClientStatus, FLTargets
 from flip_api.model_services.services.model_service import add_log
 from flip_api.utils.encryption import encrypt
 from flip_api.utils.http import http_delete, http_get, http_post
@@ -126,7 +126,7 @@ def download_config(bundle_urls: List[str], model_id: UUID) -> Optional[IOverrid
 
 def upload_app(model_id: UUID, body: IStartTrainingBody, request_id: str, endpoint: str) -> Any:
     """
-    Upload the application to the NVFlare server.
+    Upload the application to the FL server.
 
     It sends a POST request to the FL API service with the model ID and payload containing the project ID, cohort query,
     local rounds, global rounds, trusts, ignore result error, aggregator, and aggregation weights.
@@ -147,37 +147,37 @@ def upload_app(model_id: UUID, body: IStartTrainingBody, request_id: str, endpoi
     return response
 
 
-def get_nvflare_job_id_by_model_id(model_id: UUID, session: Session) -> str:
+def get_fl_backend_job_id_by_model_id(model_id: UUID, session: Session) -> str:
     """
-    Get the NVFlare job ID associated with a given model ID
+    Get the FL backend job ID associated with a given model ID
 
     Args:
-        model_id: The ID of the model
-        session: SQLModel session object
+        model_id (UUID): The ID of the model
+        session (Session): SQLModel session object
 
     Returns:
-        str: The NVFlare job ID associated with the model ID
+        str: The FL backend job ID associated with the model ID
 
     Raises:
         ValueError: If the model ID is not found in the database
     """
-    statement = select(FLJob.nvflare_job_id).where(FLJob.model_id == model_id)
+    statement = select(FLJob.fl_backend_job_id).where(FLJob.model_id == model_id)
     result = session.exec(statement)
-    nvflare_job_id = result.one_or_none()
+    fl_backend_job_id = result.one_or_none()
 
-    if nvflare_job_id is None:
-        raise ValueError(f"No nvflare_job_id found for modelId: {model_id}")
+    if fl_backend_job_id is None:
+        raise ValueError(f"No backend job ID found for model_id {model_id}")
 
-    return nvflare_job_id
+    return fl_backend_job_id
 
 
-def add_nvflare_job_id(fl_job_id: UUID, nvflare_job_id: str, session: Session):
+def add_fl_backend_job_id(fl_job_id: UUID, fl_backend_job_id: str, session: Session):
     """
-    Add the NVFlare job ID to the FLJob entry in the database
+    Add the FL backend job ID to the FLJob entry in the database
 
     Args:
         fl_job_id (UUID): The ID of the FLJob entry
-        nvflare_job_id (str): The NVFlare job ID to add. Needs to be a string as NVFlare job IDs are strings.
+        fl_backend_job_id (str): The FL backend job ID to add. Needs to be a string as backend job IDs are strings.
         session (Session): SQLModel session object
 
     Raises:
@@ -187,8 +187,8 @@ def add_nvflare_job_id(fl_job_id: UUID, nvflare_job_id: str, session: Session):
     if fl_job is None:
         raise ValueError(f"FLJob with id {fl_job_id} not found")
 
-    # NVFLARE job IDs are strings
-    fl_job.nvflare_job_id = nvflare_job_id
+    # FL backend job IDs are strings
+    fl_job.fl_backend_job_id = fl_backend_job_id
     session.commit()
 
 
@@ -198,45 +198,69 @@ def submit_job(request_id: str, fl_job_id: UUID, endpoint: str, model_id: UUID, 
 
     Args:
         request_id (str): The request ID of the request that triggered the function.
-        fl_job_id (UUID): The ID of the FL job to add the nvflare job id given successful job submission
+        fl_job_id (UUID): The ID of the FL job to add the backend job id given successful job submission
         endpoint (str): The endpoint of the Flare Loader service.
         model_id (UUID): The ID of the model to start submit the job for.
         session (Session): An instance of the database connection.
 
     Raises:
-        ValueError: If the NVFlare job ID is not returned in the response.
+        ValueError: If the backend job ID is not returned in the response.
     """
     url = f"{endpoint}/submit_job/{model_id}"
-    nvflare_job_id = http_post(url, request_id)
-    # Validate that the nvflare_job_id is returned and is a string
-    if not nvflare_job_id or not isinstance(nvflare_job_id, str):
-        raise ValueError("No nvflare job id returned or invalid format")
-    add_nvflare_job_id(fl_job_id, nvflare_job_id, session)
+    fl_backend_job_id = http_post(url, request_id)
+    # Validate that the fl_backend_job_id is returned and is a string
+    if not fl_backend_job_id or not isinstance(fl_backend_job_id, str):
+        raise ValueError("No backend job id returned or invalid format")
+    add_fl_backend_job_id(fl_job_id, fl_backend_job_id, session)
 
 
-def get_status(details: INVFlareTargetPathParameters, request_id: str, endpoint: str):
+def check_server_status(request_id: str, endpoint: str) -> IServerStatus | None:
     """
-    It takes in a target and a client, and returns the status of the target.
-    It sends a GET request to the Flare Loader service to check the status of the target.
-    The target can be a server or a client, and the client can be a specific client or all clients.
+    Fetch the status of the server from the FL API.
 
     Args:
-        details (INVFlareTargetPathParameters): The target and clients to check the status of.
-        request_id (str): The request ID of the request that triggered the function.
-        endpoint (str): The endpoint of the Flare Loader service.
+        request_id (str): The request ID for logging purposes.
+        endpoint (str): The endpoint of the server to check the status from.
+
+    Returns:
+        IServerStatus: The server status.
     """
-    url = f"{endpoint}/check_status/{details.target.value}"
-    if details.clients:
-        url += f"/{details.clients}"
-    logger.debug(f"Checking status at '{url}' with request_id '{request_id}'")
+    url = f"{endpoint}/check_status/server"
+    logger.debug(f"Checking server status at '{url}' with request_id '{request_id}'")
     response = http_get(url, request_id)
-    logger.debug(f"Status response: {response}")
-    return response
+    logger.debug(f"Server status response: {response}")
+    if not response:
+        logger.error(f"No response from FL API for server at endpoint {endpoint}")
+        return None
+    server_status = IServerStatus.model_validate(response)
+    return server_status
+
+
+def check_client_status(request_id: str, endpoint: str) -> List[ClientInfoModel] | None:
+    """
+    Fetch the status of all clients from the FL API.
+
+    Args:
+        request_id (str): The request ID for logging purposes.
+        endpoint (str): The endpoint of the server to check the status from.
+
+    Returns:
+        List[ClientInfoModel] | None: A list of client statuses if available, otherwise None.
+    """
+    url = f"{endpoint}/check_status/client"
+    logger.debug(f"Checking client status at '{url}' with request_id '{request_id}'")
+    response = http_get(url, request_id)
+    logger.debug(f"Client status response: {response}")
+    if not response:
+        logger.error(f"No response from FL API for clients at endpoint {endpoint}")
+        return None
+    client_statuses = [ClientInfoModel.model_validate(c) for c in response]
+    return client_statuses
 
 
 def fetch_server_status(request_id: str, endpoint: str) -> IServerStatus | None:
     """
-    Fetch the status of the server from the NVFlare wrapper.
+    Fetch the status of the server from the FL API.
 
     Args:
         request_id (str): The request ID for logging purposes.
@@ -245,43 +269,40 @@ def fetch_server_status(request_id: str, endpoint: str) -> IServerStatus | None:
     Returns:
         IServerStatus | None: The server status if available, otherwise None.
     """
-    payload = INVFlareTargetPathParameters(target=NVFlareTargets.SERVER)
-    server_status = get_status(payload, request_id, endpoint)
+    server_status = check_server_status(request_id, endpoint)
     if not server_status:
         logger.error(f"No response from FL API for server at endpoint {endpoint}")
         return None
-    server_status = IServerStatus.model_validate(server_status)
     return server_status
 
 
-def fetch_client_status(request_id: str, endpoint: str) -> List[IClientStatus]:
+def fetch_client_status(request_id: str, endpoint: str) -> List[IClientStatus] | None:
     """
-    Fetch the status of the clients from the NVFlare wrapper.
+    Fetch the status of the clients from the FL API.
 
     Args:
         request_id (str): The request ID for logging purposes.
         endpoint (str): The endpoint of the server to fetch the status from.
 
     Returns:
-        List[IClientStatus]: A list of client statuses.
+        List[IClientStatus] | None: A list of client statuses if available, otherwise None.
     """
-    payload = INVFlareTargetPathParameters(target=NVFlareTargets.CLIENT)
-    client_status = get_status(payload, request_id, endpoint)
-    logger.debug({"client status response": client_status})
+    client_statuses = check_client_status(request_id, endpoint)
+    if not client_statuses:
+        logger.error(f"No response from FL API for clients at endpoint {endpoint}")
+        return None
 
-    if not client_status:
-        logger.error(f"No response from FLARE API for clients at endpoint {endpoint}")
-        return []
-
+    # Convert ClientInfoModel to IClientStatus and determine online status based on the status field
+    # TODO Merge ClientInfoModel and IClientStatus into a single model to avoid redundant parsing and validation
     clients = []
-    for client in client_status:
-        is_online = client["status"] != ClientStatus.NO_REPLY
+    for client in client_statuses:
+        is_online = client.status != ClientStatus.NO_REPLY
         clients.append(
             IClientStatus(
-                name=client["name"],
+                name=client.name,
                 online=is_online,
-                status=client["status"],
-                last_connected=client["last_connect_time"],
+                status=client.status,
+                last_connected=client.last_connect_time,
             )
         )
 
@@ -305,11 +326,11 @@ def validate_client_availability(clients: List[str], endpoint: str, request_id: 
     Raises:
         ValueError: If any client is unavailable.
     """
-    client_statuses = get_status(INVFlareTargetPathParameters(target=NVFlareTargets.CLIENT), request_id, endpoint)
-    client_statuses = [ClientInfoModel.model_validate(c) for c in client_statuses]
-
+    client_statuses = check_client_status(request_id, endpoint)
     if not client_statuses:
-        raise ValueError("No clients are available")
+        logger.error(f"No response from FL API for clients at endpoint {endpoint}")
+        raise ValueError("Unable to fetch client statuses to validate client availability")
+
     logger.info(f"Client status: {client_statuses}")
 
     def is_client_available(client_name: str, client_statuses: List[ClientInfoModel]) -> bool:
@@ -331,7 +352,7 @@ def validate_client_availability(clients: List[str], endpoint: str, request_id: 
 
 def abort_job(request_id: str, endpoint: str, job_id: str) -> dict:
     """
-    Aborts a job on the NVFlare server.
+    Aborts a job on the FL server.
 
     Args:
         request_id (str): The request ID of the request that triggered the function.
@@ -363,7 +384,7 @@ def start_training(
 
     Args:
         model_id (UUID): The ID of the model to start training for.
-        fl_job_id (UUID): The ID of the FL job to add the nvflare job id given successful job submission.
+        fl_job_id (UUID): The ID of the FL job to add the backend job id given successful job submission.
         clients (List[str]): A list of client names to start training on.
         endpoint (str): The endpoint of the Flare Loader service.
         bundle_urls (List[str]): A list of URLs for the application bundle.
@@ -372,7 +393,7 @@ def start_training(
         job_type (JobTypes): The type of job (e.g., 'standard', 'evaluation'). Defaults to 'standard'.
 
     Raises:
-        ValueError: If the NVFlare job ID is not returned in the response.
+        ValueError: If the backend job ID is not returned in the response.
     """
     from flip_api.fl_services.services import fl_scheduler_service
 
@@ -708,50 +729,46 @@ def get_bundle_urls(model_id: UUID) -> List[str]:
         raise RuntimeError(error_msg)
 
 
-def extract_current_job_data(net_endpoint: str, nvflare_job_id: str) -> dict:
+def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData:
     """
-    Extract the current job data from the server status response.
+    Extract the current job data from the FL server status response.
 
     Args:
         net_endpoint (str): The endpoint of the Flare Loader service.
-        nvflare_job_id (str): The NVFlare job ID to look for.
+        fl_backend_job_id (str): The FL job ID to look for.
 
     Returns:
-        dict: The current job data if found.
+        IJobMetaData: The current job data if found.
     """
     url = f"{net_endpoint}/list_jobs"
     current_job_data = http_get(url)
     logger.debug(f"Current job data: {current_job_data}")
 
-    # Note this will be a list of job details in the form:
-    # current_job_data =
-    # [
-    # {
-    #     "job_id": "59ea671e-6551-49cf-a81b-0c5011a7401b",
-    #     "job_name": "665dcd35-7dbf-4ad1-93dc-1773a7b44de1",
-    #     "status": "RUNNING",
-    #     "submit_time": "2025-10-08T14:25:47.119547+00:00",
-    #     "duration": "2:38:26.597705"
-    # }
-    # ]
-
-    # Get the running jobs only
-    current_job_data = [j for j in current_job_data if j.get("status") == "RUNNING"]
-    logger.debug(f"Running jobs: {current_job_data}")
-
-    # Filter the nvflare_job_id
-    current_job_data = [j for j in current_job_data if j.get("job_id") == nvflare_job_id]
-    logger.debug(f"Current job data for job ID {nvflare_job_id}: {current_job_data}")
-
-    if not current_job_data:
-        error_msg = f"Could not find job ID {nvflare_job_id} on NVFLARE server {net_endpoint}."
+    # Validate the response format
+    if not isinstance(current_job_data, list):
+        error_msg = f"Unexpected response format from {url}: {current_job_data}"
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    # assert that there is only 1 running job with the nvflare_job_id
+    current_job_data = [IJobMetaData.model_validate(j) for j in current_job_data]
+
+    # Get the running jobs only
+    current_job_data = [j for j in current_job_data if j.status == "RUNNING"]
+    logger.debug(f"Running jobs: {current_job_data}")
+
+    # Filter the fl_backend_job_id
+    current_job_data = [j for j in current_job_data if j.job_id == fl_backend_job_id]
+    logger.debug(f"Current job data for job ID {fl_backend_job_id}: {current_job_data}")
+
+    if not current_job_data:
+        error_msg = f"Could not find job ID {fl_backend_job_id} on FL server {net_endpoint}."
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    # assert that there is only 1 running job with the fl_backend_job_id
     # this should not happen, but just in case
     if len(current_job_data) > 1:
-        error_msg = f"Multiple running jobs found on NVFlare server for job ID {nvflare_job_id}. Cannot abort."
+        error_msg = f"Multiple running jobs found on FL server for job ID {fl_backend_job_id}. Cannot abort."
         logger.error(error_msg)
         raise ValueError(error_msg)
 
@@ -760,7 +777,7 @@ def extract_current_job_data(net_endpoint: str, nvflare_job_id: str) -> dict:
 
 def abort_model_training(request: Request, model_id: UUID, session: Session) -> None:
     """
-    Check if the model is currently running training, and if it is, send an abort request to the NVFLARE server.
+    Check if the model is currently running training, and if it is, send an abort request to the FL server.
 
     Args:
         request: The FastAPI request object
@@ -775,7 +792,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         # Always try to remove the job from queue
         fl_scheduler_service.remove_job_from_queue(model_id, session)
 
-        nvflare_job_id = get_nvflare_job_id_by_model_id(model_id, session)
+        fl_backend_job_id = get_fl_backend_job_id_by_model_id(model_id, session)
         net_details = fl_scheduler_service.get_net_by_model_id(model_id, session)
         net_endpoint = net_details.endpoint
         net_name = net_details.name
@@ -791,15 +808,15 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     logger.debug(f"Server status: {server_status}")
 
     if not server_status:  # or server_status.status != FLStatus.SUCCESS.value:
-        error_msg = f"NVFlare Server not running for {model_id=}. Server status: {server_status}"
+        error_msg = f"FL Server not running for {model_id=}. Server status: {server_status}"
         logger.error(error_msg)
         raise ValueError(error_msg)
 
     # Extracting current job data from the server status
-    current_job_data = extract_current_job_data(net_endpoint, nvflare_job_id)
+    current_job_data = extract_current_job_data(net_endpoint, fl_backend_job_id)
 
     # Current server job name (i.e. app_name) must match the model_id in order to abort
-    current_app_name = current_job_data.get("job_name")
+    current_app_name = current_job_data.job_name
 
     if current_app_name != str(model_id):
         error_msg = (
@@ -815,13 +832,13 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     clients = path_params.get("clients")
 
     # Checking if the target provided is valid
-    if target and target not in NVFlareTargets:
+    if target and target not in FLTargets:
         logger.error(f"Invalid target: {target}")
         raise ValueError(f"Invalid target: {target}")
 
-    logger.debug(f"Attempting abort request for model ID: {model_id} on {net_name} (job ID: {nvflare_job_id})")
+    logger.debug(f"Attempting abort request for model ID: {model_id} on {net_name} (job ID: {fl_backend_job_id})")
 
-    response = abort_job(request_id, net_endpoint, nvflare_job_id)
+    response = abort_job(request_id, net_endpoint, fl_backend_job_id)
 
     logger.info(f"Abort job response ({target=}, {clients=}): {response}")
 
@@ -856,19 +873,21 @@ def add_fl_job(model_id: UUID, clients: List[str], session: Session) -> None:
 
 def keep_fl_api_session_alive() -> None:
     """
-    A periodic function to keep the FL API NVFLARE session alive by making a simple request.
+    A periodic function to keep the FL API session alive by making a simple request.
     This is useful to prevent the session from going idle or being shut down by the server.
+
+    TODO This was developed for the NVFLARE backend and might need to be revisited for the Flower backend.
     See https://github.com/NVIDIA/NVFlare/discussions/3526#discussioncomment-13574644
     """
     from flip_api.fl_services.get_status import fetch_server_status
     from flip_api.fl_services.services import fl_scheduler_service
 
-    logger.info("🛟 Keeping FL API NVFLARE session alive ...")
+    logger.info("🛟 Keeping FL API session alive ...")
 
     with Session(engine) as db:
         nets = fl_scheduler_service.get_nets(db)
 
-    # For each FL Net in the database, call its check_status endpoint, which in turn calls the NVFLARE session.
+    # For each FL Net in the database, call its check_status endpoint, which in turn calls the FL session.
     # NOTE In the old implementation, we had 3 'nets' in the database, each with its own FLAdminAPI. So each net had a
     # separate FLAdminAPI endpoint. Here, there should just be 1 net for now. If we add more nets in the future, they
     # might all have the same FLARE_API endpoint, if the FLARE_API controls all controllers/clients.

@@ -49,7 +49,7 @@ async def upload_data_to_xnat(
         central_hub_project_id (str): The central hub project ID in which the experiment belongs to. Corresponds to
         XNAT secondary ID.
         accession_id (str): The unique value for a study stored in PACS. Corresponds to XNAT experiment label.
-        net_id (str): The ID of the NVFlare net that will run the training.
+        net_id (str): The ID of the FL net that will run the training.
         scan_id (str): The ID of the scan in XNAT. Will be created if it does not exist.
         resource_id (str): XNAT resource type e.g DICOM/NIFTI. Custom value is allowed. Will be created if it does not
         exist.
