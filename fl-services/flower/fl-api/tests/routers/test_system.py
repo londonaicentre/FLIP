@@ -71,8 +71,8 @@ def test_check_client_status_without_targets(client, mock_session):
     """✅ Should call check_client_status(None) when target_type=client and no targets given"""
     app.dependency_overrides[system.get_session] = lambda: mock_session
     mock_session.check_client_status.return_value = [
-        {"name": "site-1", "last_connect_time": 123.0, "status": "connected"},
-        {"name": "site-2", "last_connect_time": 456.0, "status": "not set"},
+        {"name": "site-1", "status": "connected"},
+        {"name": "site-2", "status": "not set"},
     ]
 
     resp = client.get("/check_client_status")
@@ -84,7 +84,7 @@ def test_check_client_status_with_targets(client, mock_session):
     """✅ Should call check_client_status(targets) when target_type=client and targets given"""
     app.dependency_overrides[system.get_session] = lambda: mock_session
     mock_session.check_client_status.return_value = [
-        {"name": "site-1", "last_connect_time": 123.0, "status": "connected"},
+        {"name": "site-1", "status": "connected"},
     ]
 
     resp = client.get("/check_client_status", params={"targets": ["site-1"]})

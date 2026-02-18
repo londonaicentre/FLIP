@@ -112,7 +112,7 @@ class FLIP_Session:
         # TODO add logic to check the status of every client or specific clients and return a list of ClientInfoModel
         # objects
         mock_client_info = [
-            ClientInfoModel(name="client1", last_connect_time=1701000000.0, status="CONNECTED"),
-            ClientInfoModel(name="client2", last_connect_time=1701000000.0, status="DISCONNECTED"),
+            ClientInfoModel(name="client1", status="CONNECTED"),
+            ClientInfoModel(name="client2", status="DISCONNECTED"),
         ]
         return mock_client_info

@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-import time
 from typing import List
 
 from pydantic import BaseModel, ConfigDict
@@ -55,11 +54,12 @@ class ServerInfoModel(BaseModel):
 class ClientInfoModel(BaseModel):
     """Pydantic model for client status information."""
 
+    model_config = ConfigDict(extra="ignore")
+
     name: str
-    last_connect_time: float
     status: str
 
     def __str__(self) -> str:
         return f"""
-        {self.name}(last_connect_time: {time.asctime(time.localtime(self.last_connect_time))}, status: {self.status})
+        {self.name}(status: {self.status})
         """
