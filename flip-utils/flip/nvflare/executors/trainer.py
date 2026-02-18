@@ -89,10 +89,20 @@ class RUN_TRAINER(Executor):
             Shareable: The result of the training task
         """
         try:
+            # Diagnostic logging: log incoming task name
+            self.log_info(
+                fl_ctx,
+                f"[RUN_TRAINER] Received task_name='{task_name}', configured train_task_name='{self._train_task_name}'",
+            )
+
             if self._flip_trainer is None:
                 # Import the user-provided trainer module dynamically
                 # The 'trainer' module should be in the Python path (job's custom folder)
+                # Diagnostic logging: confirm which trainer file was imported
+                import trainer as trainer_module
                 from trainer import FLIP_TRAINER as UPLOADED_TRAINER
+
+                self.log_info(fl_ctx, f"[RUN_TRAINER] Imported FLIP_TRAINER from: {trainer_module.__file__}")
 
                 self._flip_trainer = UPLOADED_TRAINER(
                     train_task_name=self._train_task_name,
@@ -101,7 +111,22 @@ class RUN_TRAINER(Executor):
                     project_id=self._project_id,
                     query=self._query,
                 )
-                self._epochs = self._flip_trainer.get_num_epochs()
+                # Some user-provided trainers implement `get_num_epochs()`, others expose
+                # an `_epochs` attribute. Be tolerant and fallback to a sensible default
+                # if neither is present to avoid crashing the executor.
+                if hasattr(self._flip_trainer, "get_num_epochs") and callable(
+                    getattr(self._flip_trainer, "get_num_epochs")
+                ):
+                    try:
+                        self._epochs = self._flip_trainer.get_num_epochs()
+                    except Exception:
+                        self._epochs = getattr(self._flip_trainer, "_epochs", None)
+                else:
+                    self._epochs = getattr(self._flip_trainer, "_epochs", None)
+
+                if self._epochs is None:
+                    # Last resort default to 1 epoch and log the condition via info.
+                    self._epochs = 1
 
             return self._flip_trainer.execute(task_name, shareable, fl_ctx, abort_signal)
         except Exception:
