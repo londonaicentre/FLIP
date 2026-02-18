@@ -31,11 +31,10 @@ from nvflare.apis.signal import Signal
 from nvflare.app_common.abstract.model import make_model_learnable, model_learnable_to_dxo
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_opt.pt.model_persistence_format_manager import PTModelPersistenceFormatManager
-from pt_constants import PTConstants
 from transforms import get_sliding_window_inferer, get_train_transforms, get_val_transforms
 
 from flip import FLIP
-from flip.constants import ResourceType
+from flip.constants import PTConstants, ResourceType
 from flip.utils import get_model_weights_diff
 
 
