@@ -44,11 +44,12 @@ class JobMetaData(BaseModel):
 class ServerInfoModel(BaseModel):
     """Pydantic model for server status information."""
 
+    model_config = ConfigDict(extra="ignore")
+
     status: str
-    start_time: float
 
     def __str__(self) -> str:
-        return f"status: {self.status}, start_time: {time.asctime(time.localtime(self.start_time))}"
+        return f"status: {self.status}"
 
 
 class ClientInfoModel(BaseModel):

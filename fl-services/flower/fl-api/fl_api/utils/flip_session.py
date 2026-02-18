@@ -92,10 +92,10 @@ class FLIP_Session:
         Checks the status of the server.
 
         Returns:
-            ServerInfoModel: a ServerInfoModel object containing the server status and start time.
+            ServerInfoModel: a ServerInfoModel object containing the server status.
         """
         # TODO add logic to check the status of the server and return a ServerInfoModel object
-        mock_server_info = ServerInfoModel(status="RUNNING", start_time=1701000000.0)
+        mock_server_info = ServerInfoModel(status="RUNNING")
         return mock_server_info
 
     def check_client_status(self, target: Optional[List[str]] = None) -> List[ClientInfoModel]:

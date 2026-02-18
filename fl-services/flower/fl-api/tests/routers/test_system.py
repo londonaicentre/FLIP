@@ -26,7 +26,7 @@ def override_session(client):
     fake_session = MagicMock()
 
     def check_server_status_side_effect():
-        return {"status": "running", "start_time": 123.0}
+        return {"status": "running"}
 
     def check_client_status_side_effect(targets):
         if targets is None:
@@ -53,14 +53,13 @@ def override_session(client):
 def test_check_server_status(client, mock_session):
     """✅ GET /check_server_status should call check_server_status"""
     app.dependency_overrides[system.get_session] = lambda: mock_session
-    mock_session.check_server_status.return_value = {"status": "running", "start_time": 123.0}
+    mock_session.check_server_status.return_value = {"status": "running"}
 
     resp = client.get("/check_server_status")
     assert resp.status_code == status.HTTP_200_OK
     mock_session.check_server_status.assert_called_once()
     resp_json = resp.json()
     assert resp_json["status"] == "running"
-    assert resp_json["start_time"] == 123.0
 
 
 # ---------------------------------------------------------------------
