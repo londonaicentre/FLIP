@@ -19,6 +19,7 @@ from sqlmodel import Session
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.fl import IClientStatus, INetStatus
+from flip_api.domain.schemas.status import ClientStatus
 from flip_api.fl_services.get_status import fetch_client_status
 from flip_api.fl_services.services.fl_scheduler_service import get_net_by_name
 from flip_api.trusts_services.services.trust import get_trusts
@@ -83,9 +84,7 @@ def get_net_status(
                     break
             else:
                 logger.warning(f"Trust {trust.name} not found in client statuses")
-                trust_client_statuses.append(
-                    IClientStatus(name=trust.name, online=False, status="Client not connected")
-                )
+                trust_client_statuses.append(IClientStatus(name=trust.name, status=ClientStatus.NO_REPLY.value))
                 continue
 
             # Log the trust and connected client information

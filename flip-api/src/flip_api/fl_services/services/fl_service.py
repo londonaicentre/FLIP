@@ -33,8 +33,7 @@ from flip_api.domain.interfaces.fl import (
     JobTypes,
 )
 from flip_api.domain.interfaces.shared import TrainingRound
-from flip_api.domain.schemas.fl import ClientInfoModel
-from flip_api.domain.schemas.status import ClientStatus, FLTargets
+from flip_api.domain.schemas.status import FLTargets
 from flip_api.model_services.services.model_service import add_log
 from flip_api.utils.encryption import encrypt
 from flip_api.utils.http import http_delete, http_get, http_post
@@ -236,7 +235,7 @@ def check_server_status(request_id: str, endpoint: str) -> IServerStatus | None:
     return server_status
 
 
-def check_client_status(request_id: str, endpoint: str) -> List[ClientInfoModel] | None:
+def check_client_status(request_id: str, endpoint: str) -> List[IClientStatus] | None:
     """
     Fetch the status of all clients from the FL API.
 
@@ -245,7 +244,7 @@ def check_client_status(request_id: str, endpoint: str) -> List[ClientInfoModel]
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        List[ClientInfoModel] | None: A list of client statuses if available, otherwise None.
+        List[IClientStatus] | None: A list of client statuses if available, otherwise None.
     """
     url = f"{endpoint}/check_status/client"
     logger.debug(f"Checking client status at '{url}' with request_id '{request_id}'")
@@ -254,7 +253,7 @@ def check_client_status(request_id: str, endpoint: str) -> List[ClientInfoModel]
     if not response:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
         return None
-    client_statuses = [ClientInfoModel.model_validate(c) for c in response]
+    client_statuses = [IClientStatus.model_validate(c) for c in response]
     return client_statuses
 
 
@@ -291,22 +290,7 @@ def fetch_client_status(request_id: str, endpoint: str) -> List[IClientStatus] |
     if not client_statuses:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
         return None
-
-    # Convert ClientInfoModel to IClientStatus and determine online status based on the status field
-    # TODO Merge ClientInfoModel and IClientStatus into a single model to avoid redundant parsing and validation
-    clients = []
-    for client in client_statuses:
-        is_online = client.status != ClientStatus.NO_REPLY
-        clients.append(
-            IClientStatus(
-                name=client.name,
-                online=is_online,
-                status=client.status,
-                last_connected=client.last_connect_time,
-            )
-        )
-
-    return clients
+    return client_statuses
 
 
 def validate_client_availability(clients: List[str], endpoint: str, request_id: str) -> None:
@@ -333,15 +317,13 @@ def validate_client_availability(clients: List[str], endpoint: str, request_id: 
 
     logger.info(f"Client status: {client_statuses}")
 
-    def is_client_available(client_name: str, client_statuses: List[ClientInfoModel]) -> bool:
+    def is_client_available(client_name: str, client_statuses: List[IClientStatus]) -> bool:
         """Check if a specific client is available based on its status."""
-        for status in client_statuses:
-            logger.info(f"Checking client status: {status}")
-            logger.info(f"Client name: {client_name}")
-            name = status.name
-            state = status.status
-            if name == client_name and state != ClientStatus.NO_REPLY:
-                return True
+        for client in client_statuses:
+            if client.name == client_name:
+                return client.online
+        # If the client is not found in the statuses, we consider it unavailable
+        logger.warning(f"Client {client_name} not found in client statuses")
         return False
 
     unavailable = [client for client in clients if not is_client_available(client, client_statuses)]
