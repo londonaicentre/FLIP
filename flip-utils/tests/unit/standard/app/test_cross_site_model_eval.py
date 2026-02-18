@@ -14,8 +14,9 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from cross_site_model_eval import CrossSiteModelEval  # noqa: E402
 from nvflare.apis.dxo import DXO, DataKind  # noqa: E402
+
+from flip.nvflare.controllers import CrossSiteModelEval  # noqa: E402
 
 
 @pytest.mark.parametrize(

@@ -23,12 +23,6 @@ def pytest_sessionstart(session):
     sys.path.insert(0, str(project_root))
     print(f"[pytest setup] Added to sys.path:\n  {project_root}")
 
-    # Add custom path for legacy modules that haven't been migrated yet
-    # (e.g., cross_site_model_eval, init_training, etc.)
-    custom_path = project_root / "src" / "standard" / "app" / "custom"
-    sys.path.append(str(custom_path))
-    print(f"[pytest setup] Added to sys.path:\n  {custom_path}")
-
     # Load environment variables from .env.test if it exists
     env_test_file = project_root / ".env.test"
     if env_test_file.exists():
