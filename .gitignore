@@ -339,3 +339,5 @@ trust/terraform.tfstate
 CLAUDE.md
 
 *.gz
+
+.plans/
