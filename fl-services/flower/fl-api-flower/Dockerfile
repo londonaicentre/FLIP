@@ -12,34 +12,28 @@
 
 FROM python:3.12-slim-bookworm AS development
 
-RUN apt-get update && apt-get install -y gettext-base \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-ARG UID
-ARG GID
-ARG UNAME
-RUN groupadd -g ${GID} ${UNAME}
-# Create a user with the same UID and GID as the host user with home directory at /home/${UNAME}
-RUN useradd -u ${UID} -g ${GID} -m -d /home/${UNAME} -s /bin/bash ${UNAME}
+RUN useradd -u 1000 -m -d /home/app -s /bin/bash app
+
 WORKDIR /app
-RUN chown -R ${UNAME}:${UNAME} /app
 
 # Add uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Sync the project into a new environment, using the frozen lockfile
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml ./
 
 COPY ./entrypoint.sh /app/entrypoint.sh
-# COPY ./admin /app/admin
 RUN chown -R ${UNAME}:${UNAME} /app
 
 RUN chmod +x /app/entrypoint.sh
-WORKDIR /app
+
 USER ${UNAME}
 
 # Sync dependencies using uv
-RUN uv sync
+RUN uv sync --no-dev
 
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"
@@ -53,9 +47,5 @@ CMD ["bash", "-c", "/app/entrypoint.sh"]
 
 FROM development AS production
 COPY --chown=${UNAME}:${UNAME} fl_api/ /app/fl_api/
-
-# NOTE the transfer dir in the new provisioning is not straightforward to configure - for now, we keep "transfer"
-# as both the download_dir and upload_dir in fed_admin.json
-RUN mkdir -p /app/admin/transfer && chown -R ${UNAME}:${UNAME} /app/admin
 
 CMD ["bash", "-c", "/app/entrypoint.sh"]
