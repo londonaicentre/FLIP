@@ -9,7 +9,7 @@ def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
     monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,monai")
     mock_flwr_run(
         stdout=(
-            '{'
+            "{"
             '"success": true,'
             '"run-id":"5489160741982607593",'
             '"fab-id":"flwrlabs/quickstart-numpy",'
@@ -17,7 +17,7 @@ def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
             '"fab-version":"1.0.0",'
             '"fab-hash":"9fcfbb69",'
             '"fab-filename":"flwrlabs.quickstart-numpy.1-0-0.9fcfbb69.fab"'
-            '}'
+            "}"
         )
     )
 

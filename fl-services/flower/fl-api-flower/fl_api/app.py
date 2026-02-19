@@ -102,14 +102,12 @@ def _check_health(address: str, timeout: float) -> bool:
         with grpc.insecure_channel(address) as channel:
             stub = HealthStub(channel)
             response = stub.Check(HealthCheckRequest(), timeout=timeout)
-        return response.status == HealthCheckResponse.SERVING
+        return bool(response.status == HealthCheckResponse.SERVING)
     except grpc.RpcError as err:
         logger.info("Health check failed for %s: %s", address, err)
         return False
     except Exception as err:  # pragma: no cover - defensive guard
-        logger.warning(
-            "Unexpected error while checking health for %s: %s", address, err
-        )
+        logger.warning("Unexpected error while checking health for %s: %s", address, err)
         return False
 
 
@@ -124,9 +122,7 @@ def _extract_json_from_stdout(stdout: str) -> dict[str, Any]:
         start = cleaned.find("{")
         end = cleaned.rfind("}")
         if start < 0 or end < 0 or end <= start:
-            raise ValueError(
-                f"Output does not contain a JSON object: {cleaned}"
-            ) from None
+            raise ValueError(f"Output does not contain a JSON object: {cleaned}") from None
         parsed = json.loads(cleaned[start : end + 1])
 
     if not isinstance(parsed, dict):
@@ -135,9 +131,7 @@ def _extract_json_from_stdout(stdout: str) -> dict[str, Any]:
     return parsed
 
 
-def _run_flwr_command(
-    command: list[str], cwd: Path, action_name: str
-) -> subprocess.CompletedProcess[str]:
+def _run_flwr_command(command: list[str], cwd: Path, action_name: str) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             command,
@@ -154,9 +148,7 @@ def _run_flwr_command(
         ) from err
 
 
-def _parse_flwr_payload(
-    result: subprocess.CompletedProcess[str], action_name: str
-) -> dict[str, Any]:
+def _parse_flwr_payload(result: subprocess.CompletedProcess[str], action_name: str) -> dict[str, Any]:
     if result.returncode != 0:
         stderr = result.stderr.strip()
         stdout = result.stdout.strip()
@@ -164,8 +156,7 @@ def _parse_flwr_payload(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
-                f"Flower {action_name} command failed with code {result.returncode}. "
-                f"stderr: {stderr} stdout: {stdout}"
+                f"Flower {action_name} command failed with code {result.returncode}. stderr: {stderr} stdout: {stdout}"
             ),
         )
 
@@ -184,10 +175,7 @@ def _validate_app_folder(app_folder: str) -> Path:
     if app_folder not in allowed_job_folders:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Invalid app folder '{app_folder}'. "
-                f"Allowed values: {sorted(allowed_job_folders)}"
-            ),
+            detail=(f"Invalid app folder '{app_folder}'. Allowed values: {sorted(allowed_job_folders)}"),
         )
 
     job_dir = _get_src_root() / app_folder
@@ -248,13 +236,18 @@ def check_client_status(
     supernode_health_addresses = _get_supernode_health_addresses()
     timeout_seconds = _get_healthcheck_timeout_seconds()
 
-    target_names = (
-        targets if targets is not None else list(supernode_health_addresses.keys())
-    )
+    target_names = targets if targets is not None else list(supernode_health_addresses.keys())
 
     result: list[ClientInfoModel] = []
     for name in target_names:
         address = supernode_health_addresses.get(name)
+        if address is None:
+            logger.warning(
+                "Requested health status for unknown target '%s'. Marking as DISCONNECTED.",
+                name,
+            )
+            result.append(ClientInfoModel(name=name, status="DISCONNECTED"))
+            continue
         is_connected = bool(address) and _check_health(address, timeout_seconds)
         result.append(
             ClientInfoModel(
@@ -275,9 +268,7 @@ def list_runs() -> list[RunRecord]:
     return _parse_runs_payload(payload)
 
 
-@app.post(
-    "/submit_run", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse
-)
+@app.post("/submit_run", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse)
 def submit_run(app_folder: str) -> FlowerCommandResponse:
     job_dir = _validate_app_folder(app_folder)
 
@@ -315,9 +306,7 @@ def submit_run(app_folder: str) -> FlowerCommandResponse:
             _submission_in_progress = False
 
 
-@app.delete(
-    "/abort_run", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse
-)
+@app.delete("/abort_run", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse)
 def abort_run(run_id: str) -> FlowerCommandResponse:
     src_root = _get_src_root()
     command = ["uvx", "flwr", "stop", run_id, "local", "--format", "json"]

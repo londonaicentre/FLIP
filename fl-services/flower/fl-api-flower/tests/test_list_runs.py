@@ -6,7 +6,7 @@ from fl_api.schemas import RunRecord
 def test_list_runs_success(client, src_root, mock_flwr_run):
     mock_flwr_run(
         stdout=(
-            '{'
+            "{"
             '"success": true,'
             '"runs": ['
             '{"run-id":"9478652229627629048","fab-name":"quickstart-numpy","status":"finished:completed"},'

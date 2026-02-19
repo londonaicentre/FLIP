@@ -20,30 +20,20 @@ def test_docs_and_openapi_contract(client):
     ):
         assert path in spec["paths"]
 
-    health_schema = spec["paths"]["/health"]["get"]["responses"]["200"]["content"][
+    health_schema = spec["paths"]["/health"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    server_status_schema = spec["paths"]["/check_server_status"]["get"]["responses"]["200"]["content"][
         "application/json"
     ]["schema"]
-    server_status_schema = spec["paths"]["/check_server_status"]["get"]["responses"][
-        "200"
-    ]["content"]["application/json"]["schema"]
-    client_status_schema = spec["paths"]["/check_client_status"]["get"]["responses"][
-        "200"
-    ]["content"]["application/json"]["schema"]
-    list_schema = spec["paths"]["/list_runs"]["get"]["responses"]["200"]["content"][
+    client_status_schema = spec["paths"]["/check_client_status"]["get"]["responses"]["200"]["content"][
         "application/json"
     ]["schema"]
-    submit_schema = spec["paths"]["/submit_run"]["post"]["responses"]["200"]["content"][
-        "application/json"
-    ]["schema"]
-    abort_schema = spec["paths"]["/abort_run"]["delete"]["responses"]["200"]["content"][
-        "application/json"
-    ]["schema"]
+    list_schema = spec["paths"]["/list_runs"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
+    submit_schema = spec["paths"]["/submit_run"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]
+    abort_schema = spec["paths"]["/abort_run"]["delete"]["responses"]["200"]["content"]["application/json"]["schema"]
 
     assert health_schema["$ref"] == "#/components/schemas/HealthResponse"
     assert server_status_schema["$ref"] == "#/components/schemas/ServerInfoModel"
-    assert (
-        client_status_schema["items"]["$ref"] == "#/components/schemas/ClientInfoModel"
-    )
+    assert client_status_schema["items"]["$ref"] == "#/components/schemas/ClientInfoModel"
     assert list_schema["items"]["$ref"] == "#/components/schemas/RunRecord"
     assert submit_schema["$ref"] == "#/components/schemas/FlowerCommandResponse"
     assert abort_schema["$ref"] == "#/components/schemas/FlowerCommandResponse"
