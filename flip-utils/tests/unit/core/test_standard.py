@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -18,6 +18,13 @@ from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
+from nvflare.apis.dxo import DXO, DataKind
+from nvflare.apis.fl_constant import FedEventHeader
+from nvflare.apis.fl_context import FLContext
+from nvflare.apis.shareable import Shareable
+
+from flip.constants import ModelStatus, ResourceType
+from flip.core.standard import FLIPStandardDev, FLIPStandardProd
 
 
 class TestFLIPStandardDevGetDataframe:
@@ -26,8 +33,6 @@ class TestFLIPStandardDevGetDataframe:
     @pytest.fixture
     def flip_dev(self):
         """Create a FLIPStandardDev instance."""
-        from flip.core.standard import FLIPStandardDev
-
         return FLIPStandardDev()
 
     def test_get_dataframe_reads_from_csv(self, flip_dev, tmp_path):
@@ -66,8 +71,6 @@ class TestFLIPStandardDevGetByAccessionNumber:
     @pytest.fixture
     def flip_dev(self):
         """Create a FLIPStandardDev instance."""
-        from flip.core.standard import FLIPStandardDev
-
         return FLIPStandardDev()
 
     def test_get_by_accession_number_returns_path(self, flip_dev, tmp_path):
@@ -107,8 +110,6 @@ class TestFLIPStandardDevAddResource:
     @pytest.fixture
     def flip_dev(self):
         """Create a FLIPStandardDev instance."""
-        from flip.core.standard import FLIPStandardDev
-
         return FLIPStandardDev()
 
     def test_add_resource_runs_without_error_in_dev_mode(self, flip_dev, tmp_path):
@@ -132,14 +133,10 @@ class TestFLIPStandardDevUpdateStatus:
     @pytest.fixture
     def flip_dev(self):
         """Create a FLIPStandardDev instance."""
-        from flip.core.standard import FLIPStandardDev
-
         return FLIPStandardDev()
 
     def test_update_status_runs_without_error_in_dev_mode(self, flip_dev):
         """update_status should run without error in dev mode (no-op)."""
-        from flip.constants import ModelStatus
-
         # Should not raise any exception - it's a no-op in dev mode
         flip_dev.update_status(model_id="model-123", new_model_status=ModelStatus.TRAINING_STARTED)
 
@@ -150,8 +147,6 @@ class TestFLIPStandardDevSendHandledException:
     @pytest.fixture
     def flip_dev(self):
         """Create a FLIPStandardDev instance."""
-        from flip.core.standard import FLIPStandardDev
-
         return FLIPStandardDev()
 
     def test_send_handled_exception_runs_without_error_in_dev_mode(self, flip_dev):
@@ -168,8 +163,6 @@ class TestFLIPStandardProdGetDataframe:
     @pytest.fixture
     def flip_prod(self):
         """Create a FLIPStandardProd instance."""
-        from flip.core.standard import FLIPStandardProd
-
         return FLIPStandardProd()
 
     def test_get_dataframe_makes_api_request(self, flip_prod):
@@ -206,14 +199,10 @@ class TestFLIPStandardProdGetByAccessionNumber:
     @pytest.fixture
     def flip_prod(self):
         """Create a FLIPStandardProd instance."""
-        from flip.core.standard import FLIPStandardProd
-
         return FLIPStandardProd()
 
     def test_get_by_accession_number_downloads_resources(self, flip_prod, tmp_path):
         """get_by_accession_number should download resources from API."""
-        from flip.constants import ResourceType
-
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"path": str(tmp_path / "data")}
@@ -242,8 +231,6 @@ class TestFLIPStandardProdAddResource:
     @pytest.fixture
     def flip_prod(self):
         """Create a FLIPStandardProd instance."""
-        from flip.core.standard import FLIPStandardProd
-
         return FLIPStandardProd()
 
     def test_add_resource_uploads_to_api(self, flip_prod, tmp_path):
@@ -282,14 +269,10 @@ class TestFLIPStandardProdUpdateStatus:
     @pytest.fixture
     def flip_prod(self):
         """Create a FLIPStandardProd instance."""
-        from flip.core.standard import FLIPStandardProd
-
         return FLIPStandardProd()
 
     def test_update_status_calls_api_with_valid_uuid(self, flip_prod):
         """update_status should call API to update model status with valid UUID."""
-        from flip.constants import ModelStatus
-
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.text = "OK"
@@ -316,8 +299,6 @@ class TestFLIPStandardProdUpdateStatus:
 
     def test_update_status_rejects_invalid_uuid(self, flip_prod):
         """update_status should reject invalid model IDs."""
-        from flip.constants import ModelStatus
-
         with pytest.raises(ValueError, match="Invalid model ID"):
             flip_prod.update_status("model-123", ModelStatus.TRAINING_STARTED)
 
@@ -328,8 +309,6 @@ class TestFLIPStandardProdSendHandledException:
     @pytest.fixture
     def flip_prod(self):
         """Create a FLIPStandardProd instance."""
-        from flip.core.standard import FLIPStandardProd
-
         return FLIPStandardProd()
 
     def test_send_handled_exception_calls_api_with_valid_uuid(self, flip_prod):
@@ -370,8 +349,6 @@ class TestFLIPStandardDevSendMetricsValue:
     @pytest.fixture
     def flip_dev(self):
         """Create a FLIPStandardDev instance."""
-        from flip.core.standard import FLIPStandardDev
-
         return FLIPStandardDev()
 
     def test_send_metrics_value_validates_label(self, flip_dev):
@@ -387,8 +364,6 @@ class TestFLIPStandardDevSendMetricsValue:
 
     def test_send_metrics_value_handles_missing_engine(self, flip_dev):
         """send_metrics_value should handle missing engine gracefully."""
-        from nvflare.apis.fl_context import FLContext
-
         fl_ctx = Mock(spec=FLContext)
         fl_ctx.get_engine.return_value = None
 
@@ -397,8 +372,6 @@ class TestFLIPStandardDevSendMetricsValue:
 
     def test_send_metrics_value_fires_event(self, flip_dev):
         """send_metrics_value should fire event when engine is available."""
-        from nvflare.apis.fl_context import FLContext
-
         fl_ctx = Mock(spec=FLContext)
         mock_engine = Mock()
         fl_ctx.get_engine.return_value = mock_engine
@@ -414,15 +387,10 @@ class TestFLIPStandardDevHandleMetricsEvent:
     @pytest.fixture
     def flip_dev(self):
         """Create a FLIPStandardDev instance."""
-        from flip.core.standard import FLIPStandardDev
-
         return FLIPStandardDev()
 
     def test_handle_metrics_event_extracts_data(self, flip_dev):
         """handle_metrics_event should extract and process metrics data."""
-        from nvflare.apis.dxo import DXO, DataKind
-        from nvflare.apis.fl_constant import FedEventHeader
-
         # Create mock event_data
         dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "round": 1})
         event_data = dxo.to_shareable()
@@ -438,22 +406,16 @@ class TestFLIPStandardProdHandleMetricsEvent:
     @pytest.fixture
     def flip_prod(self):
         """Create a FLIPStandardProd instance."""
-        from flip.core.standard import FLIPStandardProd
-
         return FLIPStandardProd()
 
     def test_handle_metrics_event_validates_model_id(self, flip_prod):
         """handle_metrics_event should validate model_id is a valid UUID."""
-        from nvflare.apis.shareable import Shareable
-
         event_data = Shareable()
         with pytest.raises(ValueError, match="Invalid model ID"):
             flip_prod.handle_metrics_event(event_data, 1, "not-a-uuid")
 
     def test_handle_metrics_event_validates_global_round(self, flip_prod):
         """handle_metrics_event should validate global_round type."""
-        from nvflare.apis.shareable import Shareable
-
         event_data = Shareable()
         with pytest.raises(TypeError, match="global_round must be type int"):
             flip_prod.handle_metrics_event(event_data, "1", "123e4567-e89b-12d3-a456-426614174000")
@@ -465,9 +427,6 @@ class TestFLIPStandardProdHandleMetricsEvent:
 
     def test_handle_metrics_event_success(self, flip_prod):
         """handle_metrics_event should make API call successfully."""
-        from nvflare.apis.dxo import DXO, DataKind
-        from nvflare.apis.fl_constant import FedEventHeader
-
         dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "round": 1})
         event_data = dxo.to_shareable()
         event_data.set_header(FedEventHeader.ORIGIN, "site-1")

@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -13,14 +13,13 @@
 import os
 
 from fastapi import HTTPException, status
+from fl_api.config import get_settings
+from fl_api.utils.flip_session import new_secure_Flip_session
+from fl_api.utils.logger import logger
 from nvflare.apis.workspace import Workspace
 from nvflare.fuel.common.excepts import ConfigError
 from nvflare.fuel.hci.client.config import secure_load_admin_config
 from nvflare.security.logging import secure_format_exception
-
-from fl_api.config import get_settings
-from fl_api.utils.flip_session import new_secure_Flip_session
-from fl_api.utils.logger import logger
 
 
 def create_fl_session():

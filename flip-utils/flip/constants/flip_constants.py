@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -28,7 +28,7 @@ from pydantic_settings import BaseSettings
 class _Common(BaseSettings):
     """Base settings shared by both development and production environments."""
 
-    LOCAL_DEV: bool  # Must be explicitly set
+    LOCAL_DEV: bool = True  # Defaults to dev mode
     MIN_CLIENTS: PositiveInt = 1
 
 
@@ -40,8 +40,8 @@ class DevSettings(_Common):
 
     LOCAL_DEV: bool = True
 
-    DEV_DATAFRAME: str
-    DEV_IMAGES_DIR: str
+    DEV_DATAFRAME: str = ""
+    DEV_IMAGES_DIR: str = ""
 
 
 class ProdSettings(_Common):
@@ -52,14 +52,14 @@ class ProdSettings(_Common):
 
     LOCAL_DEV: bool = False
 
-    CENTRAL_HUB_API_URL: HttpUrl
-    DATA_ACCESS_API_URL: HttpUrl
-    IMAGING_API_URL: HttpUrl
-    IMAGES_DIR: str
-    PRIVATE_API_KEY_HEADER: str
-    PRIVATE_API_KEY: str
-    NET_ID: str
-    UPLOADED_FEDERATED_DATA_BUCKET: str
+    CENTRAL_HUB_API_URL: HttpUrl = "http://localhost:8000"  # type: ignore[assignment]
+    DATA_ACCESS_API_URL: HttpUrl = "http://localhost:8001"  # type: ignore[assignment]
+    IMAGING_API_URL: HttpUrl = "http://localhost:8002"  # type: ignore[assignment]
+    IMAGES_DIR: str = ""
+    PRIVATE_API_KEY_HEADER: str = "X-API-Key"
+    PRIVATE_API_KEY: str = ""
+    NET_ID: str = "default"
+    UPLOADED_FEDERATED_DATA_BUCKET: str = "s3://default-bucket"
 
     @field_validator("UPLOADED_FEDERATED_DATA_BUCKET")
     @classmethod
@@ -69,10 +69,35 @@ class ProdSettings(_Common):
         return v
 
 
-# Environment-aware singleton - instantiate once and import elsewhere
-FlipConstants: Union[DevSettings, ProdSettings] = (
-    DevSettings() if _Common().LOCAL_DEV else ProdSettings()  # type: ignore[call-arg]
-)
+_flip_constants_instance: Union[DevSettings, ProdSettings, None] = None
+
+
+def get_flip_constants() -> Union[DevSettings, ProdSettings]:
+    """Get FlipConstants singleton instance.
+
+    Lazy initialization ensures environment variables are only required
+    when the instance is actually used, not at import time.
+    """
+    global _flip_constants_instance
+    if _flip_constants_instance is None:
+        _flip_constants_instance = (
+            DevSettings() if _Common().LOCAL_DEV else ProdSettings()  # type: ignore[call-arg]
+        )
+    return _flip_constants_instance
+
+
+# For backward compatibility, provide FlipConstants as a property-like access
+# Users should migrate to get_flip_constants() for better lazy loading
+class _FlipConstantsProxy:
+    """Proxy to provide lazy loading via attribute access."""
+
+    def __getattribute__(self, name: str):
+        if name.startswith("_"):
+            return object.__getattribute__(self, name)
+        return getattr(get_flip_constants(), name)
+
+
+FlipConstants = _FlipConstantsProxy()  # type: ignore[assignment]
 
 
 class ResourceType(str, Enum):

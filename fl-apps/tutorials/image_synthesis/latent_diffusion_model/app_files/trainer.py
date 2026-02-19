@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -324,8 +324,7 @@ class FLIP_TRAINER(Executor):
                         if perceptual_slices is None:
                             perceptual_slices = np.random.randint(0, images.shape[-1], size=self.perceptual_slices)
                         logits_fake = self.model.discriminator(
-                            einops
-                            .rearrange(reconstruction[..., perceptual_slices], "b c h w d -> (b d) c h w")
+                            einops.rearrange(reconstruction[..., perceptual_slices], "b c h w d -> (b d) c h w")
                             .contiguous()
                             .float()
                         )[-1]
@@ -364,14 +363,12 @@ class FLIP_TRAINER(Executor):
                         perceptual_slices = np.random.randint(0, images.shape[-1], size=self.perceptual_slices)
 
                     logits_fake = self.model.discriminator(
-                        einops
-                        .rearrange(reconstruction.detach()[..., perceptual_slices], "b c h w d -> (b d) c h w")
+                        einops.rearrange(reconstruction.detach()[..., perceptual_slices], "b c h w d -> (b d) c h w")
                         .contiguous()
                         .float()
                     )[-1]
                     logits_real = self.model.discriminator(
-                        einops
-                        .rearrange(images[..., perceptual_slices], "b c h w d -> (b d) c h w")
+                        einops.rearrange(images[..., perceptual_slices], "b c h w d -> (b d) c h w")
                         .contiguous()
                         .float()
                     )[-1]
@@ -774,6 +771,7 @@ class FLIP_TRAINER(Executor):
             data=torch.load(model_path), default_train_conf=self._default_train_conf
         )
         ml = self.persistence_manager.to_model_learnable(exclude_vars=self._exclude_vars)
+        return ml
         return ml
         return ml
         return ml

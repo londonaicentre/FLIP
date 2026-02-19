@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -13,7 +13,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from fl_api.utils.schemas import UploadAppRequest
 from fl_api.utils.upload import upload_application
 

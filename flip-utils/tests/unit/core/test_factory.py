@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -12,9 +12,13 @@
 
 """Tests for flip.core.factory module."""
 
+import importlib
 from unittest.mock import patch
 
 import pytest
+
+import flip.constants.flip_constants
+from flip.core.factory import FLIP
 
 
 class TestFLIPFactory:
@@ -23,14 +27,9 @@ class TestFLIPFactory:
     @patch.dict("os.environ", {"LOCAL_DEV": "true"})
     def test_factory_creates_standard_dev(self):
         """Factory should create FLIPStandardDev for standard job type in dev mode."""
-        import importlib
-
-        import flip.constants.flip_constants
-
         importlib.reload(flip.constants.flip_constants)
 
         from flip.constants import JobType
-        from flip.core.factory import FLIP
         from flip.core.standard import FLIPStandardDev
 
         result = FLIP(JobType.STANDARD)
@@ -39,14 +38,9 @@ class TestFLIPFactory:
     @patch.dict("os.environ", {"LOCAL_DEV": "true"})
     def test_factory_creates_evaluation_dev(self):
         """Factory should create FLIPStandardDev for evaluation job type."""
-        import importlib
-
-        import flip.constants.flip_constants
-
         importlib.reload(flip.constants.flip_constants)
 
         from flip.constants import JobType
-        from flip.core.factory import FLIP
         from flip.core.standard import FLIPStandardDev
 
         result = FLIP(JobType.EVALUATION)
@@ -55,14 +49,9 @@ class TestFLIPFactory:
     @patch.dict("os.environ", {"LOCAL_DEV": "true"})
     def test_factory_creates_fed_opt_dev(self):
         """Factory should create FLIPStandardDev for fed_opt job type."""
-        import importlib
-
-        import flip.constants.flip_constants
-
         importlib.reload(flip.constants.flip_constants)
 
         from flip.constants import JobType
-        from flip.core.factory import FLIP
         from flip.core.standard import FLIPStandardDev
 
         result = FLIP(JobType.FED_OPT)
@@ -71,14 +60,9 @@ class TestFLIPFactory:
     @patch.dict("os.environ", {"LOCAL_DEV": "true"})
     def test_factory_creates_diffusion_dev(self):
         """Factory should create FLIPStandardDev for diffusion_model job type."""
-        import importlib
-
-        import flip.constants.flip_constants
-
         importlib.reload(flip.constants.flip_constants)
 
         from flip.constants import JobType
-        from flip.core.factory import FLIP
         from flip.core.standard import FLIPStandardDev
 
         result = FLIP(JobType.DIFFUSION)
@@ -102,14 +86,9 @@ class TestFLIPFactory:
     )
     def test_factory_creates_prod_when_not_local_dev(self):
         """Factory should create FLIPStandardProd when LOCAL_DEV=false."""
-        import importlib
-
-        import flip.constants.flip_constants
-
         importlib.reload(flip.constants.flip_constants)
 
         from flip.constants import JobType
-        from flip.core.factory import FLIP
         from flip.core.standard import FLIPStandardProd
 
         result = FLIP(JobType.STANDARD)
@@ -121,21 +100,14 @@ class TestFLIPFactory:
 
     def test_factory_rejects_invalid_job_type(self):
         """Factory should raise ValueError for invalid job type string."""
-        from flip.core.factory import FLIP
-
         with pytest.raises(ValueError, match="Unknown job_type"):
             FLIP("invalid_job_type")
 
     @patch.dict("os.environ", {"LOCAL_DEV": "true"})
     def test_factory_accepts_string_job_types(self):
         """Factory should accept job type as string."""
-        import importlib
-
-        import flip.constants.flip_constants
-
         importlib.reload(flip.constants.flip_constants)
 
-        from flip.core.factory import FLIP
         from flip.core.standard import FLIPStandardDev
 
         result = FLIP("standard")
