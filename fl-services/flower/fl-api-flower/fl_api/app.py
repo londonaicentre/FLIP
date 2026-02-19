@@ -215,11 +215,14 @@ def health() -> HealthResponse:
     status_code=status.HTTP_200_OK,
     response_model=ServerInfoModel | list[ClientInfoModel],
 )
-def check_status(target: str) -> ServerInfoModel | list[ClientInfoModel]:
+def check_status(
+    target: str,
+    targets: list[str] | None = Query(None),
+) -> ServerInfoModel | list[ClientInfoModel]:
     if target == "server":
         return check_server_status()
     elif target == "client":
-        return check_client_status()
+        return check_client_status(targets=targets)
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
