@@ -362,3 +362,125 @@ class TestFLIPStandardProdSendHandledException:
         """send_handled_exception should reject invalid model IDs."""
         with pytest.raises(ValueError, match="Invalid model ID"):
             flip_prod.send_handled_exception("Error message", "client-1", "model-123")
+
+
+class TestFLIPStandardDevSendMetricsValue:
+    """Test FLIPStandardDev.send_metrics_value method."""
+
+    @pytest.fixture
+    def flip_dev(self):
+        """Create a FLIPStandardDev instance."""
+        from flip.core.standard import FLIPStandardDev
+
+        return FLIPStandardDev()
+
+    def test_send_metrics_value_validates_label(self, flip_dev):
+        """send_metrics_value should raise TypeError for non-string label."""
+        fl_ctx = Mock()
+        with pytest.raises(TypeError, match="expect label to be string"):
+            flip_dev.send_metrics_value(123, 0.5, 1, fl_ctx)
+
+    def test_send_metrics_value_validates_fl_ctx(self, flip_dev):
+        """send_metrics_value should raise TypeError for invalid fl_ctx."""
+        with pytest.raises(TypeError, match="expect fl_ctx to be FLContext"):
+            flip_dev.send_metrics_value("loss", 0.5, 1, "not_a_context")
+
+    def test_send_metrics_value_handles_missing_engine(self, flip_dev):
+        """send_metrics_value should handle missing engine gracefully."""
+        from nvflare.apis.fl_context import FLContext
+
+        fl_ctx = Mock(spec=FLContext)
+        fl_ctx.get_engine.return_value = None
+
+        # Should not raise, just logs error
+        flip_dev.send_metrics_value("loss", 0.5, fl_ctx, round=1)
+
+    def test_send_metrics_value_fires_event(self, flip_dev):
+        """send_metrics_value should fire event when engine is available."""
+        from nvflare.apis.fl_context import FLContext
+
+        fl_ctx = Mock(spec=FLContext)
+        mock_engine = Mock()
+        fl_ctx.get_engine.return_value = mock_engine
+
+        flip_dev.send_metrics_value("loss", 0.5, fl_ctx, round=1)
+
+        mock_engine.fire_event.assert_called_once()
+
+
+class TestFLIPStandardDevHandleMetricsEvent:
+    """Test FLIPStandardDev.handle_metrics_event method."""
+
+    @pytest.fixture
+    def flip_dev(self):
+        """Create a FLIPStandardDev instance."""
+        from flip.core.standard import FLIPStandardDev
+
+        return FLIPStandardDev()
+
+    def test_handle_metrics_event_extracts_data(self, flip_dev):
+        """handle_metrics_event should extract and process metrics data."""
+        from nvflare.apis.dxo import DXO, DataKind
+        from nvflare.apis.fl_constant import FedEventHeader
+
+        # Create mock event_data
+        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "round": 1})
+        event_data = dxo.to_shareable()
+        event_data.set_header(FedEventHeader.ORIGIN, "site-1")
+
+        # Should not raise, processes data
+        flip_dev.handle_metrics_event(event_data, 1, "123e4567-e89b-12d3-a456-426614174000")
+
+
+class TestFLIPStandardProdHandleMetricsEvent:
+    """Test FLIPStandardProd.handle_metrics_event method."""
+
+    @pytest.fixture
+    def flip_prod(self):
+        """Create a FLIPStandardProd instance."""
+        from flip.core.standard import FLIPStandardProd
+
+        return FLIPStandardProd()
+
+    def test_handle_metrics_event_validates_model_id(self, flip_prod):
+        """handle_metrics_event should validate model_id is a valid UUID."""
+        from nvflare.apis.shareable import Shareable
+
+        event_data = Shareable()
+        with pytest.raises(ValueError, match="Invalid model ID"):
+            flip_prod.handle_metrics_event(event_data, 1, "not-a-uuid")
+
+    def test_handle_metrics_event_validates_global_round(self, flip_prod):
+        """handle_metrics_event should validate global_round type."""
+        from nvflare.apis.shareable import Shareable
+
+        event_data = Shareable()
+        with pytest.raises(TypeError, match="global_round must be type int"):
+            flip_prod.handle_metrics_event(event_data, "1", "123e4567-e89b-12d3-a456-426614174000")
+
+    def test_handle_metrics_event_validates_event_data(self, flip_prod):
+        """handle_metrics_event should validate event_data type."""
+        with pytest.raises(TypeError, match="event_data must be type Shareable"):
+            flip_prod.handle_metrics_event("not_shareable", 1, "123e4567-e89b-12d3-a456-426614174000")
+
+    def test_handle_metrics_event_success(self, flip_prod):
+        """handle_metrics_event should make API call successfully."""
+        from nvflare.apis.dxo import DXO, DataKind
+        from nvflare.apis.fl_constant import FedEventHeader
+
+        dxo = DXO(data_kind=DataKind.METRICS, data={"label": "loss", "value": 0.5, "round": 1})
+        event_data = dxo.to_shareable()
+        event_data.set_header(FedEventHeader.ORIGIN, "site-1")
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response),
+        ):
+            mock_constants.CENTRAL_HUB_API_URL = "https://hub.example.com"
+            mock_constants.PRIVATE_API_KEY_HEADER = "x-api-key"
+            mock_constants.PRIVATE_API_KEY = "test-key"
+
+            flip_prod.handle_metrics_event(event_data, 1, "123e4567-e89b-12d3-a456-426614174000")
