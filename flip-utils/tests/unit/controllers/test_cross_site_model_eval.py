@@ -52,7 +52,10 @@ class TestCrossSiteModelEval:
         mock_rmtree.assert_called()
         mock_makedirs.assert_called()
 
-    def test_start_controller_bad_model_locator(self):
+    @patch("os.path.exists", return_value=True)
+    @patch("shutil.rmtree")
+    @patch("os.makedirs")
+    def test_start_controller_bad_model_locator(self, mock_makedirs, mock_rmtree, mock_exists):
         controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000", model_locator_id="mloc")
         fl_ctx = MagicMock()
         fl_ctx.get_peer_context.return_value = None
@@ -68,6 +71,8 @@ class TestCrossSiteModelEval:
         controller.start_controller(fl_ctx)
 
         controller.system_panic.assert_called_once()
+        mock_rmtree.assert_called()
+        mock_makedirs.assert_called()
 
     def test_control_flow_no_clients_timeout(self):
         controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000")

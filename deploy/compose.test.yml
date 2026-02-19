@@ -12,30 +12,19 @@
 
 services:
   nvflare-simulator-test:
-    image: fl-base:dev
-    build:
-      context: ../
-      dockerfile: fl_services/fl-base/Dockerfile
-      args:
-        LOCAL_DEV: ${LOCAL_DEV:-false}
+    extends:
+      file: ./compose.yml
+      service: fl-base
     env_file:
       - ../.env.development
     environment:
       - DEV_IMAGES_DIR=/images
-      - DEV_DATAFOLDER=/datafolder
       - DEV_DATAFRAME=/dataframe_file
     volumes:
       - ${JOB_DIR}:/app/job
       - ${RUNS_DIR}:/runs
       - ${DEV_IMAGES_DIR}:/images
-      - ${DEV_DATAFOLDER}:/datafolder
       - ${DEV_DATAFRAME}:/dataframe_file:ro
     shm_size: "32gb"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    gpus: all
     command: nvflare simulator -t 2 -n 2 -w /runs/workspace job

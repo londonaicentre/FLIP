@@ -16,10 +16,9 @@ FLIP Utilities module containing helper functions.
 Exports:
     - Utils: Utility class with static helper methods
     - get_model_weights_diff: Compute weight differences for federated updates
-    - convert_weights_to_diff: Convert local weights to weight differences
 """
 
 from flip.utils.model_weights_handling import get_model_weights_diff
-from flip.utils.utils import Utils, convert_weights_to_diff
+from flip.utils.utils import Utils
 
-__all__ = ["Utils", "get_model_weights_diff", "convert_weights_to_diff"]
+__all__ = ["Utils", "get_model_weights_diff"]
