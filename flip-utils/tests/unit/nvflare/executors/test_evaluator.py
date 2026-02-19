@@ -21,10 +21,7 @@ from flip.constants import PTConstants
 # Mock the evaluator module before importing
 sys.modules["evaluator"] = MagicMock()
 
-from flip.nvflare.executors.evaluator import (
-    RUN_EVALUATOR,
-    MetricsValidator,
-)  # noqa: E402
+from flip.nvflare.executors.evaluator import RUN_EVALUATOR, MetricsValidator  # noqa: E402
 
 
 class TestMetricsValidator:
