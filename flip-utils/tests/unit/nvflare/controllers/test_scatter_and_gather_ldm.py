@@ -2,6 +2,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from nvflare.app_common.abstract.aggregator import Aggregator
+from nvflare.app_common.abstract.learnable_persistor import LearnablePersistor
 from nvflare.app_common.abstract.shareable_generator import ShareableGenerator
 from nvflare.app_common.app_constant import AppConstants
 
@@ -119,8 +120,6 @@ class TestScatterAndGatherLDM:
         fl_ctx.get_peer_context.return_value = None
         engine = MagicMock()
         fl_ctx.get_engine.return_value = engine
-
-        from nvflare.app_common.abstract.learnable_persistor import LearnablePersistor
 
         mock_aggregator = MagicMock(spec=Aggregator)
         mock_shareable_gen = MagicMock(spec=ShareableGenerator)

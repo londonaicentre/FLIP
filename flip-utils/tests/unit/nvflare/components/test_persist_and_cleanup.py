@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -299,7 +299,8 @@ class TestPersistToS3AndCleanup:
         mock_isdir.return_value = True
         mock_rmtree.side_effect = Exception("Test exception")
 
-        with pytest.raises(Exception):
+        # Implementation catches and re-raises Exception() with no message
+        with pytest.raises(Exception):  # noqa: PT011
             component.cleanup(fl_ctx)
 
         component.log_error.assert_called()
@@ -325,7 +326,8 @@ class TestPersistToS3AndCleanup:
 
         shareable = Shareable()
 
-        with pytest.raises(Exception):
+        # system_panic raises BaseException - we're testing the exception is raised, not the message
+        with pytest.raises(BaseException):  # noqa: PT011
             component.execute("task", shareable, fl_ctx, MagicMock())
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
@@ -354,7 +356,8 @@ class TestPersistToS3AndCleanup:
         mock_exists.return_value = True
 
         with patch("shutil.make_archive", side_effect=Exception("Upload failed")):
-            with pytest.raises(Exception):
+            # Implementation catches and re-raises Exception() with no message
+            with pytest.raises(Exception):  # noqa: PT011
                 component.upload_results_to_s3_bucket(fl_ctx)
 
         component.cleanup.assert_called_once()

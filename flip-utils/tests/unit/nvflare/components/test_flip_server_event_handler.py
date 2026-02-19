@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -363,5 +363,7 @@ class TestServerEventHandler:
         handler.validation_json_generator = json_generator
         handler.handle_event(FlipEvents.TRAINING_INITIATED, fl_ctx)
 
+        handler.system_panic.assert_called_once()
+        assert "must be PersistToS3AndCleanup" in str(handler.system_panic.call_args)
         handler.system_panic.assert_called_once()
         assert "must be PersistToS3AndCleanup" in str(handler.system_panic.call_args)
