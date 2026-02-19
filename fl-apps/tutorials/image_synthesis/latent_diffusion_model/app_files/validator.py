@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -16,7 +16,6 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import torch
-from flip import FLIP
 from models import get_model
 from monai.data import DataLoader, Dataset
 from monai.inferers import LatentDiffusionInferer
@@ -31,7 +30,9 @@ from nvflare.apis.signal import Signal
 from nvflare.app_common.app_constant import AppConstants
 from torch.amp import autocast
 from transforms import get_val_transforms
-from utils.flip_constants import FlipConstants, ResourceType
+
+from flip import FLIP
+from flip.constants import FlipConstants, ResourceType
 
 
 class FLIP_VALIDATOR(Executor):

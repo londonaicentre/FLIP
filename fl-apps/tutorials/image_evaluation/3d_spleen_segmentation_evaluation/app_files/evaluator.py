@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -16,7 +16,6 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import torch
-from flip import FLIP
 from models import model_paths
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.metrics import DiceMetric
@@ -28,9 +27,10 @@ from nvflare.apis.fl_constant import ReturnCode
 from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
-from pt_constants import PTConstants
 from transforms import get_eval_transforms, get_sliding_window_inferer
-from utils.flip_constants import ResourceType
+
+from flip import FLIP
+from flip.constants import PTConstants, ResourceType
 
 
 class FLIP_EVALUATOR(Executor):

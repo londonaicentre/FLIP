@@ -2,19 +2,20 @@
   "format_version": 2,
   "project_id": "",
   "query": "SELECT * FROM Table;",
+  "python_path": [".", "custom"],
   "local_rounds": 1,
   "executors": [
     {
       "tasks": ["post_task", "init_task"],
       "executor": {
-        "path": "cleanup.CleanupImages",
+        "path": "flip.nvflare.components.CleanupImages",
         "args": {}
       }
     },
     {
       "tasks": ["evaluation"],
       "executor": {
-        "path": "flip_evaluator.RUN_EVALUATOR",
+        "path": "flip.nvflare.executors.RUN_EVALUATOR",
         "args": {
           "project_id": "{project_id}",
           "query": "{query}"
@@ -27,7 +28,7 @@
   "components": [
     {
       "id": "flip_client_event_handler",
-      "path": "flip_client_event_handler.ClientEventHandler",
+      "path": "flip.nvflare.components.ClientEventHandler",
       "args": {}
     }
   ]
