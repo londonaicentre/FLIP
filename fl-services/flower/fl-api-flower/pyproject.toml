@@ -24,8 +24,11 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "grpcio>=1.60",
+    "grpcio-health-checking>=1.60",
     "httpx>=0.28.1",
     "mypy>=1.19.1",
+    "pytest-cov>=6.0.0",
     "pytest>=8.3.5",
     "ruff>=0.15.0",
 ]
@@ -39,16 +42,9 @@ python_files = ["test_*.py", "*_test.py"]
 addopts = []
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
-[tool.pytest.ini_options_debug]
-python_files = ["test_*.py", "*_test.py"]
-filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
-
 [tool.ruff]
 line-length = 120
  
 [tool.ruff.lint]
 preview = true
 select = ['I', 'F', 'E', 'W', 'PT']
-
-[tool.mypy]
-exclude = '^transfer_upload/'
