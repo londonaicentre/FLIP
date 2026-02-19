@@ -208,6 +208,25 @@ def health() -> HealthResponse:
     return HealthResponse(status="ok")
 
 
+# Thin routing endpoint "/check_status/{target}" that delegates to specific handlers for server and client status
+# checks, for temporary backwards compatibility
+@app.get(
+    "/check_status/{target}",
+    status_code=status.HTTP_200_OK,
+    response_model=ServerInfoModel | list[ClientInfoModel],
+)
+def check_status(target: str) -> ServerInfoModel | list[ClientInfoModel]:
+    if target == "server":
+        return check_server_status()
+    elif target == "client":
+        return check_client_status()
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid target '{target}'. Must be 'server' or 'client'.",
+        )
+
+
 @app.get(
     "/check_server_status",
     status_code=status.HTTP_200_OK,
