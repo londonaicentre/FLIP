@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
+
 from fl_api.app import app
 from fl_api.routers import system  # import router module to access get_session
 

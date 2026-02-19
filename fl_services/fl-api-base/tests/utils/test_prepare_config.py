@@ -14,6 +14,7 @@ import json
 from unittest.mock import mock_open, patch
 
 import pytest
+
 from fl_api.utils.prepare_config import (
     configure_client,
     configure_config,

@@ -14,9 +14,10 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import status
+from nvflare.fuel.flare_api.api_spec import JobNotFound
+
 from fl_api.app import app
 from fl_api.core.dependencies import get_session
-from nvflare.fuel.flare_api.api_spec import JobNotFound
 
 
 @pytest.fixture(autouse=True)

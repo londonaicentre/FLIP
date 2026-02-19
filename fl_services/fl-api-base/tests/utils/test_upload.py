@@ -13,6 +13,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from fl_api.utils.schemas import UploadAppRequest
 from fl_api.utils.upload import upload_application
 

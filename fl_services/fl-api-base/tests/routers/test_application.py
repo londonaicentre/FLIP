@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import status
+
 from fl_api.app import app
 from fl_api.core.dependencies import get_session
 
