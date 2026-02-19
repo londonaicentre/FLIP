@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -15,9 +15,7 @@ from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from nvflare.fuel.flare_api.api_spec import JobNotFound
-from nvflare.fuel.hci.client.fl_admin_api import (
-    TargetType,
-)
+from nvflare.fuel.hci.client.fl_admin_api import TargetType
 
 from fl_api.core.dependencies import get_session
 from fl_api.utils.flip_session import FLIP_Session

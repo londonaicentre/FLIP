@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -23,9 +23,7 @@ from nvflare.fuel.hci.client.fl_admin_api import TargetType
 from nvflare.fuel.hci.client.fl_admin_api_spec import APISyntaxError, FLAdminAPIResponse
 from nvflare.fuel.hci.proto import MetaKey
 
-from fl_api.utils.flip_session import (
-    new_secure_Flip_session,
-)
+from fl_api.utils.flip_session import new_secure_Flip_session
 
 MODULE_DIR = Path(__file__).parents[2]
 FL_ADMIN_DIR = f"{MODULE_DIR}/admin"

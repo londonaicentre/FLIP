@@ -1,4 +1,4 @@
-# # Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -13,7 +13,18 @@
 services:
   nvflare-simulator-test:
     extends:
-      file: ./compose.dev.yml
-      service: nvflare-simulator-dev
+      file: ./compose.yml
+      service: fl-base
+    env_file:
+      - ../.env.development
+    environment:
+      - DEV_IMAGES_DIR=/images
+      - DEV_DATAFRAME=/dataframe_file
     volumes:
       - ${JOB_DIR}:/app/job
+      - ${RUNS_DIR}:/runs
+      - ${DEV_IMAGES_DIR}:/images
+      - ${DEV_DATAFRAME}:/dataframe_file:ro
+    shm_size: "32gb"
+    gpus: all
+    command: nvflare simulator -t 2 -n 2 -w /runs/workspace job

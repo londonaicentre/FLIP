@@ -5,7 +5,7 @@
   "LR_END": 0.0001,
   "VAL_SPLIT": 0.2,
   "TEST_SPLIT": 0.2,
-  "BATCH_SIZE": 24,
+  "BATCH_SIZE": 1,
   "LESIONS": {
     "0": "Effusion",
     "1": "Edema",

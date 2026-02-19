@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -16,17 +16,11 @@ from typing import Callable, List, Optional, Union
 
 from nvflare.apis.fl_constant import AdminCommandNames
 from nvflare.apis.utils.format_check import type_pattern_mapping
-from nvflare.fuel.flare_api.api_spec import (
-    InternalError,
-    JobNotFound,
-    ServerInfo,
-)
+from nvflare.fuel.flare_api.api_spec import InternalError, JobNotFound, ServerInfo
 from nvflare.fuel.flare_api.flare_api import Session
 from nvflare.fuel.hci.client.api import ResultKey
 from nvflare.fuel.hci.client.api_status import APIStatus
-from nvflare.fuel.hci.client.fl_admin_api import (
-    TargetType,
-)
+from nvflare.fuel.hci.client.fl_admin_api import TargetType
 from nvflare.fuel.hci.client.fl_admin_api_spec import APISyntaxError, FLAdminAPIResponse
 from nvflare.fuel.hci.cmd_arg_utils import validate_text_file_name
 from nvflare.fuel.hci.proto import MetaKey
