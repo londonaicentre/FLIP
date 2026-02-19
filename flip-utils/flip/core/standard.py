@@ -36,8 +36,7 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 from requests import HTTPError
 
-from flip.constants.flip_constants import (FlipConstants, FlipEvents,
-                                           ModelStatus, ResourceType)
+from flip.constants.flip_constants import FlipConstants, FlipEvents, ModelStatus, ResourceType
 from flip.core.base import FLIPBase
 from flip.utils.utils import Utils
 

@@ -11,6 +11,7 @@
 #
 
 from fastapi import FastAPI
+
 from fl_api.routers import application, health, jobs, system
 from fl_api.startup.session_manager import create_fl_session
 from fl_api.utils.exception_handlers import bad_request_handler, not_found_handler, server_error_handler

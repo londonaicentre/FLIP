@@ -13,6 +13,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+
 from fl_api.app import app
 from fl_api.core.dependencies import get_session
 

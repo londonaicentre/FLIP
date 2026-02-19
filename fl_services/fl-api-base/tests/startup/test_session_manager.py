@@ -15,8 +15,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from fl_api.startup.session_manager import create_fl_session
 from nvflare.fuel.common.excepts import ConfigError
+
+from fl_api.startup.session_manager import create_fl_session
 
 
 @pytest.fixture

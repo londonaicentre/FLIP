@@ -14,6 +14,8 @@ import json
 import os
 from typing import List
 
+from nvflare.app_common.app_constant import EnvironmentKey
+
 from fl_api.config import get_settings
 from fl_api.utils.constants import (
     CONFIG,
@@ -25,7 +27,6 @@ from fl_api.utils.constants import (
     META,
 )
 from fl_api.utils.logger import logger
-from nvflare.app_common.app_constant import EnvironmentKey
 
 
 def configure_config(job_dir: str, global_rounds_override: int = 1, local_rounds_override: int = 1):

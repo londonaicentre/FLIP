@@ -15,7 +15,6 @@ from typing import NamedTuple
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fl_api.utils.flip_session import new_secure_Flip_session
 from nvflare.apis.fl_constant import AdminCommandNames
 from nvflare.fuel.flare_api.api_spec import JobNotFound, NoConnection
 from nvflare.fuel.hci.client.api import ResultKey
@@ -23,6 +22,8 @@ from nvflare.fuel.hci.client.api_status import APIStatus
 from nvflare.fuel.hci.client.fl_admin_api import TargetType
 from nvflare.fuel.hci.client.fl_admin_api_spec import APISyntaxError, FLAdminAPIResponse
 from nvflare.fuel.hci.proto import MetaKey
+
+from fl_api.utils.flip_session import new_secure_Flip_session
 
 MODULE_DIR = Path(__file__).parents[2]
 FL_ADMIN_DIR = f"{MODULE_DIR}/admin"
