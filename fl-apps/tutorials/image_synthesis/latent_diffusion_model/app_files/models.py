@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -98,4 +98,5 @@ def get_model() -> nn.Module:
     NOTE: This function needs to exist and cannot take any input arguments. If you would like to parameterize the
     configuration of your model, for example loaded from a config file, do it when instantiating the model above.
     """
+    return _net
     return _net

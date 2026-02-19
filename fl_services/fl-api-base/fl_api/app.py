@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -11,7 +11,6 @@
 #
 
 from fastapi import FastAPI
-
 from fl_api.routers import application, health, jobs, system
 from fl_api.startup.session_manager import create_fl_session
 from fl_api.utils.exception_handlers import bad_request_handler, not_found_handler, server_error_handler
@@ -43,4 +42,5 @@ def on_startup():
     """FL API startup event: initializes the FL session."""
     logger.info("Running FL startup initialization...")
     app.state.session = create_fl_session()
+    logger.info("FL session initialized successfully.")
     logger.info("FL session initialized successfully.")

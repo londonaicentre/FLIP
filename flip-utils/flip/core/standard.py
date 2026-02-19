@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -36,7 +36,8 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable
 from requests import HTTPError
 
-from flip.constants.flip_constants import FlipConstants, FlipEvents, ModelStatus, ResourceType
+from flip.constants.flip_constants import (FlipConstants, FlipEvents,
+                                           ModelStatus, ResourceType)
 from flip.core.base import FLIPBase
 from flip.utils.utils import Utils
 
@@ -550,4 +551,5 @@ class FLIPStandardDev(FLIPBase):
         self.logger.info(
             "[DEV] send_handled_exception is not supported in LOCAL_DEV mode."
             f"Details of the function call: sending {formatted_exception} for {client_name}."
+        )
         )

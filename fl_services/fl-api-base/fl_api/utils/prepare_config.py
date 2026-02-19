@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -14,8 +14,6 @@ import json
 import os
 from typing import List
 
-from nvflare.app_common.app_constant import EnvironmentKey
-
 from fl_api.config import get_settings
 from fl_api.utils.constants import (
     CONFIG,
@@ -27,6 +25,7 @@ from fl_api.utils.constants import (
     META,
 )
 from fl_api.utils.logger import logger
+from nvflare.app_common.app_constant import EnvironmentKey
 
 
 def configure_config(job_dir: str, global_rounds_override: int = 1, local_rounds_override: int = 1):

@@ -1,4 +1,4 @@
-# # Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -22,7 +22,19 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [
-    { name = "Guy's and St Thomas' NHS Foundation Trust & King's College London" }
+    { name = "AI Centre for Value Based Healthcare" },
+    { name = "Guy's and St Thomas' NHS Foundation Trust" },
+    { name = "King's College London" },
+    { name = "A. Triay Bagur", email = "alexandre.triay_bagur@kcl.ac.uk" },
+    { name = "P. Wright", email = "p.wright@kcl.ac.uk" },
+    { name = "R. Garcia-Dias", email = "r.gaciadias@gmail.com" },
+    { name = "V. Fernandez", email = "virginia.fernandez@kcl.ac.uk" },
+]
+maintainers = [
+    { name = "A. Triay Bagur", email = "alexandre.triay_bagur@kcl.ac.uk" },
+    { name = "P. Wright", email = "p.wright@kcl.ac.uk" },
+    { name = "R. Garcia-Dias", email = "r.gaciadias@gmail.com" },
+    { name = "V. Fernandez", email = "virginia.fernandez@kcl.ac.uk" },
 ]
 keywords = ["federated-learning", "medical-imaging", "nvflare", "flip"]
 classifiers = [
@@ -43,6 +55,12 @@ dependencies = [
     "requests>=2.31.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/londonaicentre/flip-fl-base"
+Repository = "https://github.com/londonaicentre/flip-fl-base"
+Documentation = "https://github.com/londonaicentre/flip-fl-base#readme"
+Issues = "https://github.com/londonaicentre/flip-fl-base/issues"
+
 [project.optional-dependencies]
 # Full dependencies for running FL jobs (includes ML frameworks)
 full = [
@@ -57,6 +75,21 @@ full = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["flip"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/flip",
+    "/README.md",
+    "/LICENSE.md",
+    "/NOTICE.md",
+    "/pyproject.toml",
+]
+exclude = [
+    "*.pyc",
+    "__pycache__",
+    ".coverage",
+    "*.coverage",
+]
 
 [dependency-groups]
 dev = [

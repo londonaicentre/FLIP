@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -39,20 +39,20 @@ class TestDevSettings:
             assert settings.LOCAL_DEV is True
             assert settings.MIN_CLIENTS == 1
 
-    def test_dev_settings_requires_dataframe_path(self):
-        """DevSettings should require DEV_DATAFRAME."""
+    def test_dev_settings_uses_default_dataframe_path(self):
+        """DevSettings should use empty string default for DEV_DATAFRAME if not provided."""
         with patch.dict(os.environ, {"DEV_IMAGES_DIR": "/test/images"}, clear=True):
             # Remove LOCAL_DEV to avoid interference
             os.environ.pop("DEV_DATAFRAME", None)
-            with pytest.raises(ValidationError):
-                DevSettings()
+            settings = DevSettings()
+            assert settings.DEV_DATAFRAME == ""
 
-    def test_dev_settings_requires_images_dir(self):
-        """DevSettings should require DEV_IMAGES_DIR."""
+    def test_dev_settings_uses_default_images_dir(self):
+        """DevSettings should use empty string default for DEV_IMAGES_DIR if not provided."""
         with patch.dict(os.environ, {"DEV_DATAFRAME": "/test/df.csv"}, clear=True):
             os.environ.pop("DEV_IMAGES_DIR", None)
-            with pytest.raises(ValidationError):
-                DevSettings()
+            settings = DevSettings()
+            assert settings.DEV_IMAGES_DIR == ""
 
     def test_dev_settings_accepts_custom_values(self):
         """DevSettings should accept custom values from environment."""
@@ -93,13 +93,13 @@ class TestProdSettings:
             assert str(settings.CENTRAL_HUB_API_URL) == "https://central-hub.example.com/"
             assert settings.NET_ID == "net-1"
 
-    def test_prod_settings_requires_central_hub_url(self):
-        """ProdSettings should require CENTRAL_HUB_API_URL."""
+    def test_prod_settings_uses_default_central_hub_url(self):
+        """ProdSettings should use default for CENTRAL_HUB_API_URL if not provided."""
         env = self.get_valid_prod_env()
         del env["CENTRAL_HUB_API_URL"]
         with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValidationError):
-                ProdSettings()
+            settings = ProdSettings()
+            assert str(settings.CENTRAL_HUB_API_URL) == "http://localhost:8000/"
 
     def test_prod_settings_validates_http_urls(self):
         """ProdSettings should validate HTTP URLs."""
@@ -129,11 +129,13 @@ class TestProdSettings:
 class TestCommonSettings:
     """Test _Common base settings class."""
 
-    def test_common_requires_local_dev(self):
-        """_Common should require LOCAL_DEV to be set."""
-        with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValidationError):
-                _Common()
+    def test_common_uses_default_local_dev(self):
+        """_Common should default LOCAL_DEV to True if not set (dev mode by default)."""
+        # Explicitly test with minimal environment
+        env = {"MIN_CLIENTS": "1"}  # Don't include LOCAL_DEV to test default
+        with patch.dict(os.environ, env, clear=True):
+            settings = _Common()
+            assert settings.LOCAL_DEV is True
 
     def test_common_min_clients_default(self):
         """_Common should default MIN_CLIENTS to 1."""
