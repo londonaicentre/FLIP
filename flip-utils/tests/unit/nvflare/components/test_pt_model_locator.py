@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import os
 from unittest.mock import MagicMock, patch
 
 from flip.constants import PTConstants
@@ -62,13 +63,18 @@ class TestPTModelLocator:
         assert names == [PTConstants.PTServerName]
         assert len(names) == 1
 
-    @patch("flip.nvflare.components.pt_model_locator.FlipConstants.LOCAL_DEV", True)
+    @patch.dict(os.environ, {"LOCAL_DEV": "true"}, clear=False)
     @patch("flip.nvflare.components.pt_model_locator.torch")
     @patch("flip.nvflare.components.pt_model_locator.PTModelPersistenceFormatManager")
     @patch("flip.nvflare.components.pt_model_locator.model_learnable_to_dxo")
     @patch("os.path.exists")
     def test_locate_model_local_dev_success(self, mock_exists, mock_to_dxo, mock_persistence_manager_cls, mock_torch):
         """Test locate_model in local dev mode with existing model"""
+        # Reset FlipConstants to pick up the environment change
+        import flip.constants.flip_constants as fc_module
+
+        fc_module._flip_constants_instance = None
+
         # Setup mocks
         mock_model = MagicMock()
         mock_model.__class__.__name__ = "TestModel"
@@ -105,7 +111,7 @@ class TestPTModelLocator:
         mock_persistence_manager.to_model_learnable.assert_called_once_with(exclude_vars=None)
         mock_to_dxo.assert_called_once_with(mock_ml)
 
-    @patch("flip.nvflare.components.pt_model_locator.FlipConstants.LOCAL_DEV", False)
+    @patch.dict(os.environ, {"LOCAL_DEV": "false"}, clear=False)
     @patch("flip.nvflare.components.pt_model_locator.torch")
     @patch("flip.nvflare.components.pt_model_locator.PTModelPersistenceFormatManager")
     @patch("flip.nvflare.components.pt_model_locator.model_learnable_to_dxo")
@@ -114,6 +120,11 @@ class TestPTModelLocator:
         self, mock_exists, mock_to_dxo, mock_persistence_manager_cls, mock_torch
     ):
         """Test locate_model in production mode with existing model"""
+        # Reset FlipConstants to pick up the environment change
+        import flip.constants.flip_constants as fc_module
+
+        fc_module._flip_constants_instance = None
+
         # Setup mocks
         mock_model = MagicMock()
         mock_model.__class__.__name__ = "TestModel"
@@ -149,10 +160,15 @@ class TestPTModelLocator:
         assert "/test/run/dir/model" in mock_exists.call_args[0][0]
         mock_torch.load.assert_called_once()
 
-    @patch("flip.nvflare.components.pt_model_locator.FlipConstants.LOCAL_DEV", True)
+    @patch.dict(os.environ, {"LOCAL_DEV": "true"}, clear=False)
     @patch("os.path.exists")
     def test_locate_model_file_not_found(self, mock_exists):
         """Test locate_model returns None when model file doesn't exist"""
+        # Reset FlipConstants to pick up the environment change
+        import flip.constants.flip_constants as fc_module
+
+        fc_module._flip_constants_instance = None
+
         mock_model = MagicMock()
         locator = PTModelLocator(model=mock_model)
         locator.log_error = MagicMock()
@@ -176,11 +192,16 @@ class TestPTModelLocator:
         locator.log_error.assert_called_once()
         assert "Model file not found" in str(locator.log_error.call_args)
 
-    @patch("flip.nvflare.components.pt_model_locator.FlipConstants.LOCAL_DEV", True)
+    @patch.dict(os.environ, {"LOCAL_DEV": "true"}, clear=False)
     @patch("flip.nvflare.components.pt_model_locator.torch")
     @patch("os.path.exists")
     def test_locate_model_exception_during_load(self, mock_exists, mock_torch):
         """Test locate_model returns None when exception occurs during model load"""
+        # Reset FlipConstants to pick up the environment change
+        import flip.constants.flip_constants as fc_module
+
+        fc_module._flip_constants_instance = None
+
         mock_model = MagicMock()
         locator = PTModelLocator(model=mock_model)
         locator.log_error = MagicMock()
@@ -223,7 +244,7 @@ class TestPTModelLocator:
         locator.log_error.assert_called_once()
         assert "doesn't recognize name" in str(locator.log_error.call_args)
 
-    @patch("flip.nvflare.components.pt_model_locator.FlipConstants.LOCAL_DEV", True)
+    @patch.dict(os.environ, {"LOCAL_DEV": "true"}, clear=False)
     @patch("flip.nvflare.components.pt_model_locator.torch")
     @patch("flip.nvflare.components.pt_model_locator.PTModelPersistenceFormatManager")
     @patch("flip.nvflare.components.pt_model_locator.model_learnable_to_dxo")
@@ -233,6 +254,11 @@ class TestPTModelLocator:
         self, mock_import, mock_exists, mock_to_dxo, mock_persistence_manager_cls, mock_torch
     ):
         """Test locate_model when initialized without model instance"""
+        # Reset FlipConstants to pick up the environment change
+        import flip.constants.flip_constants as fc_module
+
+        fc_module._flip_constants_instance = None
+
         mock_models_module = MagicMock()
         mock_model = MagicMock()
         mock_models_module.get_model.return_value = mock_model

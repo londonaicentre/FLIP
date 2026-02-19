@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -29,4 +29,5 @@ class TestClientEventHandler:
 
         # Should not raise any exception
         result = handler.handle_event("some_event", fl_ctx)
+        assert result is None
         assert result is None

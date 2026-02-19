@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -21,7 +21,10 @@ from flip.constants import PTConstants
 # Mock the evaluator module before importing
 sys.modules["evaluator"] = MagicMock()
 
-from flip.nvflare.executors.evaluator import RUN_EVALUATOR, MetricsValidator
+from flip.nvflare.executors.evaluator import (
+    RUN_EVALUATOR,
+    MetricsValidator,
+)  # noqa: E402
 
 
 class TestMetricsValidator:
@@ -245,4 +248,5 @@ class TestRunEvaluator:
 
         assert result.get_return_code() == ReturnCode.EXECUTION_EXCEPTION
         assert result.get_header("exception") is not None
+        evaluator.log_error.assert_called()
         evaluator.log_error.assert_called()
