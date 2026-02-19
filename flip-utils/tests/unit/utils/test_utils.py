@@ -10,8 +10,10 @@
 # limitations under the License.
 #
 
+"""Tests for flip.utils.utils module."""
 
-# Import from the new flip package
+import pytest
+
 from flip.utils.utils import Utils
 
 
@@ -22,22 +24,30 @@ class TestUtilsIsValidUuid:
         """Should return True for valid UUID v4."""
         assert Utils.is_valid_uuid("123e4567-e89b-12d3-a456-426614174000") is True
 
+    def test_valid_uuid_v4_alternative(self):
+        """Should return True for another valid UUID v4."""
+        assert Utils.is_valid_uuid("550e8400-e29b-41d4-a716-446655440000") is True
+
     def test_valid_uuid_uppercase(self):
         """Should return True for uppercase UUID."""
         assert Utils.is_valid_uuid("123E4567-E89B-12D3-A456-426614174000") is True
+        assert Utils.is_valid_uuid("550E8400-E29B-41D4-A716-446655440000") is True
 
     def test_valid_uuid_without_hyphens(self):
         """Should return True for UUID without hyphens."""
         assert Utils.is_valid_uuid("123e4567e89b12d3a456426614174000") is True
+        assert Utils.is_valid_uuid("550e8400e29b41d4a716446655440000") is True
 
     def test_invalid_uuid_too_short(self):
         """Should return False for UUID that is too short."""
         assert Utils.is_valid_uuid("123e4567-e89b-12d3-a456") is False
+        assert Utils.is_valid_uuid("550e8400-e29b") is False
 
     def test_invalid_uuid_random_string(self):
         """Should return False for random strings."""
         assert Utils.is_valid_uuid("not-a-uuid") is False
         assert Utils.is_valid_uuid("hello-world") is False
+        assert Utils.is_valid_uuid("model-123") is False
 
     def test_invalid_uuid_empty_string(self):
         """Should return False for empty string."""
@@ -54,6 +64,7 @@ class TestUtilsIsValidUuid:
     def test_invalid_uuid_special_characters(self):
         """Should return False for strings with invalid characters."""
         assert Utils.is_valid_uuid("123e4567-e89b-12d3-a456-4266141740zz") is False
+        assert Utils.is_valid_uuid("550e8400-ZZZZ-41d4-a716-446655440000") is False
 
 
 class TestUtilsIsStringEmpty:
@@ -69,6 +80,7 @@ class TestUtilsIsStringEmpty:
         assert Utils.is_string_empty("\t") is True
         assert Utils.is_string_empty("\n") is True
         assert Utils.is_string_empty("  \t\n  ") is True
+        assert Utils.is_string_empty(" \t\n ") is True
 
     def test_non_empty_string(self):
         """Should return False for non-empty strings."""
@@ -79,3 +91,8 @@ class TestUtilsIsStringEmpty:
     def test_string_with_leading_trailing_whitespace(self):
         """Should return False for strings with content after stripping."""
         assert Utils.is_string_empty("  content  ") is False
+
+    def test_none_value_raises_error(self):
+        """Should raise AttributeError for None value."""
+        with pytest.raises(AttributeError):
+            Utils.is_string_empty(None)
