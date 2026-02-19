@@ -10,10 +10,15 @@
 # limitations under the License.
 #
 
-from collections import OrderedDict
+from __future__ import annotations
 
-import torch
+from collections import OrderedDict
+from typing import TYPE_CHECKING
+
 from nvflare.apis.dxo import DXO, DataKind, MetaKey
+
+if TYPE_CHECKING:
+    pass
 
 
 def get_model_weights_diff(original_weights: OrderedDict, new_weights: OrderedDict, iterations: int) -> DXO:
@@ -27,6 +32,8 @@ def get_model_weights_diff(original_weights: OrderedDict, new_weights: OrderedDi
     Returns:
         DXO: DXO containing the weight updates for the server.
     """
+
+    import torch
 
     first_key = next(iter(new_weights))
     first_val = new_weights[first_key]
