@@ -58,7 +58,6 @@ __all__ = [
     "PercentilePrivacy",
     "StagePercentilePrivacy",
     "CleanupImages",
-]
     "ValidationJsonGenerator",
     "EvaluationJsonGenerator",
     "PersistToS3AndCleanup",
