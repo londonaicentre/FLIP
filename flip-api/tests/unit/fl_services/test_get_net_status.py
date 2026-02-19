@@ -46,9 +46,9 @@ def mock_get_net_by_name():
 def mock_fetch_client_status():
     with patch("flip_api.fl_services.get_net_status.fetch_client_status") as mock:
         mock.return_value = [
-            IClientStatus(name="client1", online=True, status=ClientStatus.NO_JOBS),
-            IClientStatus(name="client2", online=False, status=ClientStatus.NO_REPLY),
-            IClientStatus(name="client3", online=False, status=ClientStatus.NO_REPLY),
+            IClientStatus(name="client1", status=ClientStatus.NO_JOBS.value),
+            IClientStatus(name="client2", status=ClientStatus.NO_REPLY.value),
+            IClientStatus(name="client3", status=ClientStatus.NO_REPLY.value),
         ]
         yield mock
 

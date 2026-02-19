@@ -112,7 +112,7 @@ services:
 
   fl-api-net-1:
     container_name: flip-fl-api-net-1
-    image: ghcr.io/londonaicentre/flare-fl-api:${DOCKER_FL_TAG}
+    image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/local:/app/admin/local
@@ -135,7 +135,7 @@ services:
 
   fl-api-net-2:
     container_name: flip-fl-api-net-2
-    image: ghcr.io/londonaicentre/flare-fl-api:${DOCKER_FL_TAG}
+    image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/local:/app/admin/local
@@ -156,7 +156,7 @@ services:
   # Reuse common fl-server config
   fl-server-net-1:
     container_name: fl-server-net-1
-    image: ghcr.io/londonaicentre/flare-fl-server:${DOCKER_FL_TAG}
+    image: ghcr.io/londonaicentre/${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/local:/app/local
@@ -184,7 +184,7 @@ services:
 
   fl-server-net-2:
     container_name: fl-server-net-2
-    image: ghcr.io/londonaicentre/flare-fl-server:${DOCKER_FL_TAG}
+    image: ghcr.io/londonaicentre/${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/local:/app/local

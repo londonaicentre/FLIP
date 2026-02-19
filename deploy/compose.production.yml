@@ -63,7 +63,7 @@ services:
 
   fl-api-net-1:
     container_name: flip-fl-api-net-1
-    image: ghcr.io/londonaicentre/flare-fl-api:${DOCKER_TAG}
+    image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
     ports:
@@ -79,7 +79,7 @@ services:
   # TODO add second FL network when needed
   # fl-api-net-2:
   #   container_name: flip-fl-api-net-2
-  #   image: ghcr.io/londonaicentre/flare-fl-api:${DOCKER_FL_TAG}
+  #   image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
   #   environment:
   #     - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
   #   volumes:
@@ -93,7 +93,7 @@ services:
   # Reuse common fl-server config
   fl-server-net-1:
     container_name: flip-fl-server-net-1
-    image: ghcr.io/londonaicentre/flare-fl-server:${DOCKER_FL_TAG}
+    image: ghcr.io/londonaicentre/${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)
       - /opt/flip/services/fl-server-net-1/local:/app/local
@@ -120,7 +120,7 @@ services:
   # TODO add second FL network when needed
   # fl-server-net-2:
   #   container_name: flip-fl-server-net-2
-  #   image: ghcr.io/londonaicentre/flare-fl-server:${DOCKER_FL_TAG}
+  #   image: ghcr.io/londonaicentre/${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
   #   volumes:
   #     # Provisioned NVFLARE secrets (certificates, fed_server.json)
   #     - /opt/flip/services/fl-server-net-2/local:/app/local

@@ -65,7 +65,6 @@ def mock_fetch_server_status():
     with patch("flip_api.fl_services.get_status.fetch_server_status") as mock:
         mock.return_value = IServerStatus(
             status="started",
-            start_time=1750067408.3509645,
         )
         yield mock
 
@@ -74,7 +73,7 @@ def mock_fetch_server_status():
 def mock_fetch_client_status():
     with patch("flip_api.fl_services.get_status.fetch_client_status") as mock:
         mock.return_value = [
-            IClientStatus(name="trust-1", online=True, status="no_jobs", last_connected=1750086492.088829),
+            IClientStatus(name="trust-1", status="no_jobs"),
         ]
         yield mock
 
@@ -116,7 +115,6 @@ def test_get_status_endpoint_client_status_none(
 ):
     mock_fetch_server_status.return_value = IServerStatus(
         status="stopped",
-        start_time=1750067408.3509645,
     )
     mock_fetch_client_status.return_value = []
 

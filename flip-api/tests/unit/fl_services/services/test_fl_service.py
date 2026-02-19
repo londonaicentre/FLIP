@@ -18,11 +18,11 @@ import pytest
 
 from flip_api.config import Settings
 from flip_api.domain.interfaces.fl import (
+    IClientStatus,
     IJobMetaData,
     IServerStatus,
     IStartTrainingBody,
 )
-from flip_api.domain.schemas.fl import ClientInfoModel
 from flip_api.domain.schemas.status import ClientStatus
 from flip_api.fl_services.services import fl_service
 
@@ -169,23 +169,22 @@ def test_submit_job_raises_when_no_job_id(mock_post, fl_job_id, model_id, fake_s
 # TODO add tests for fetch_server_status, fetch_client_status
 @patch("flip_api.fl_services.services.fl_service.check_server_status")
 def test_fetch_server_status_success(mock_check_server):
-    mock_check_server.return_value = IServerStatus(status="running", start_time=12345.0)
+    mock_check_server.return_value = IServerStatus(status="running")
     status = fl_service.fetch_server_status("req-id", "endpoint")
     assert status.status == "running"
-    assert status.start_time == 12345.0
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_fetch_client_status_success(mock_check_client):
     mock_check_client.return_value = [
-        ClientInfoModel(name="Trust_1", last_connect_time="12345", status=ClientStatus.NO_JOBS),
-        ClientInfoModel(name="Trust_2", last_connect_time="12456", status=ClientStatus.NO_REPLY),
+        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS.value),
+        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY.value),
     ]
     status = fl_service.fetch_client_status("req-id", "endpoint")
     assert status[0].name == "Trust_1"
-    assert status[0].status == ClientStatus.NO_JOBS
+    assert status[0].status == ClientStatus.NO_JOBS.value
     assert status[1].name == "Trust_2"
-    assert status[1].status == ClientStatus.NO_REPLY
+    assert status[1].status == ClientStatus.NO_REPLY.value
 
 
 def test_get_fl_backend_job_id_by_model_id_not_found(model_id, fake_session):
@@ -205,8 +204,8 @@ def test_add_fl_backend_job_id_raises_if_job_missing(fl_job_id, fake_session):
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_validate_client_availability_all_offline(mock_get_status):
     mock_get_status.return_value = [
-        ClientInfoModel(name="Trust_2", last_connect_time="12345", status=ClientStatus.NO_REPLY),
-        ClientInfoModel(name="Trust_1", last_connect_time="12456", status=ClientStatus.NO_JOBS),
+        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY.value),
+        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS.value),
     ]
 
     with pytest.raises(ValueError, match="Clients unavailable: trust-1"):
@@ -216,8 +215,8 @@ def test_validate_client_availability_all_offline(mock_get_status):
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_validate_client_availability_some_online(mock_get_status):
     mock_get_status.return_value = [
-        ClientInfoModel(name="Trust_2", last_connect_time="12345", status=ClientStatus.NO_REPLY),
-        ClientInfoModel(name="Trust_1", last_connect_time="12456", status=ClientStatus.NO_JOBS),
+        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY.value),
+        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS.value),
     ]
 
     # This has to raise an error for Trust_2 only.
@@ -720,7 +719,7 @@ def test_abort_model_training_success(
 ):
     mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
     mock_get_net.return_value = MagicMock(endpoint="http://endpoint", name="net1")
-    mock_fetch_server_status.return_value = {"status": "stopped", "start_time": 1760009291.0072687}
+    mock_fetch_server_status.return_value = {"status": "stopped"}
     mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", job_name=str(model_id), status="RUNNING")
 
     request = MagicMock()
