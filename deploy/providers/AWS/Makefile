@@ -41,7 +41,6 @@ export TF_VAR_FLIP_BUCKET_NAME=${FLIP_BUCKET_NAME}
 export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
 export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
-export TF_VAR_NET_ENDPOINTS=${NET_ENDPOINTS}
 export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
 export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
 export TF_VAR_POSTGRES_USER=${POSTGRES_USER}

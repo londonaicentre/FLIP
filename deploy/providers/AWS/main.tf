@@ -168,7 +168,6 @@ module "flip_api_secret" {
 
   secret_string = jsonencode({
     aes_key               = var.AES_KEY_BASE64
-    net-endpoints         = var.NET_ENDPOINTS
     Trust_1-endpoint      = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
     Trust_2-endpoint      = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
   })
