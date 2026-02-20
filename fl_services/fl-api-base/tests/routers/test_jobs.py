@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -98,7 +98,7 @@ def test_reset_errors_success(client):
     assert "reset" in data["info"].lower()
 
 
-def test_reset_errors_not_found(client):
+def test_reset_errors_job_not_found(client):
     response = client.post("/reset_errors", params={"job_id": "9999"})
     assert response.status_code == status.HTTP_404_NOT_FOUND
 
