@@ -224,7 +224,7 @@ def check_server_status(request_id: str, endpoint: str) -> IServerStatus | None:
     Returns:
         IServerStatus: The server status.
     """
-    url = f"{endpoint}/check_status/server"
+    url = f"{endpoint}/check_server_status"
     logger.debug(f"Checking server status at '{url}' with request_id '{request_id}'")
     response = http_get(url, request_id)
     logger.debug(f"Server status response: {response}")
@@ -246,7 +246,7 @@ def check_client_status(request_id: str, endpoint: str) -> List[IClientStatus] |
     Returns:
         List[IClientStatus] | None: A list of client statuses if available, otherwise None.
     """
-    url = f"{endpoint}/check_status/client"
+    url = f"{endpoint}/check_client_status"
     logger.debug(f"Checking client status at '{url}' with request_id '{request_id}'")
     response = http_get(url, request_id)
     logger.debug(f"Client status response: {response}")
@@ -880,7 +880,8 @@ def keep_fl_api_session_alive() -> None:
     with Session(engine) as db:
         nets = fl_scheduler_service.get_nets(db)
 
-    # For each FL Net in the database, call its check_status endpoint, which in turn calls the FL session.
+    # For each FL Net in the database, call its check_server_status endpoint to keep the session alive.
+    # NOTE this was created for FLARE and might need to be revisited for Flower, depending on session management.
     # NOTE In the old implementation, we had 3 'nets' in the database, each with its own FLAdminAPI. So each net had a
     # separate FLAdminAPI endpoint. Here, there should just be 1 net for now. If we add more nets in the future, they
     # might all have the same FLARE_API endpoint, if the FLARE_API controls all controllers/clients.

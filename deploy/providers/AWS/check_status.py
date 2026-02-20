@@ -685,7 +685,7 @@ def main(
             success, message = run_ssh_command(
                 ssh_key=ssh_key_path,
                 host=f"ubuntu@{central_hub_ip}",
-                command=f"docker exec flip httpx http://fl-api-net-{nets}:8000/check_status/client",
+                command=f"docker exec flip httpx http://fl-api-net-{nets}:8000/check_client_status",
             )
             # Extract JSON part from the message (list of client info)
             start = message.find("[")
