@@ -15,7 +15,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "flip"
+name = "flip-utils"
 version = "0.1.0"
 description = "FLIP - Federated Learning for Imaging Platform library built on NVIDIA FLARE"
 readme = "README.md"
