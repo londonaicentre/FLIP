@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -10,8 +10,7 @@
 # limitations under the License.
 #
 
-import json
-import os
+from pathlib import Path
 from typing import List
 
 from nvflare.app_common.app_constant import EnvironmentKey
@@ -26,126 +25,177 @@ from fl_api.utils.constants import (
     LOCAL_ROUNDS,
     META,
 )
+from fl_api.utils.io_utils import read_config, write_config
 from fl_api.utils.logger import logger
 
 
-def configure_config(job_dir: str, global_rounds_override: int = 1, local_rounds_override: int = 1):
-    """Looks into the config.json file, which should be in the custom folder of the application.
+# TODO Validation of config.json could be used to avoid some of the logic implemented here.
+def configure_config(
+    job_dir: Path,
+    global_rounds_override: int = get_settings().JOB_CONFIG_DEFAULT_GLOBAL_ROUNDS,
+    local_rounds_override: int = get_settings().JOB_CONFIG_DEFAULT_LOCAL_ROUNDS,
+) -> Path:
+    """
+    Configures the config.json file for the job.
+
+    Looks into the config.json file, which should be in the custom folder of the application.
 
     Args:
-        job_dir (str): path to the job directory.
-        global_rounds_override (int): number of global rounds to set if not present [default=1]
-        local_rounds_override (int): number of local rounds to set if not present [default=1]
+        job_dir (Path): path to the job directory.
+        global_rounds_override (int): number of global rounds to set if not present
+        local_rounds_override (int): number of local rounds to set if not present
+
+    Returns:
+        Path: path to the config file that was updated.
 
     Raises:
         ValueError: if the config.json file does not have the LOCAL_ROUNDS and GLOBAL_ROUNDS keys, or
         sub-versions of these.
-
-    Returns:
-        None
     """
-    config_json = os.path.join(job_dir, "custom", CONFIG)
+    config_json = job_dir / "custom" / CONFIG
 
     # If no config.json is uploaded, this is no issue.
-    if not os.path.isfile(config_json):
+    if not config_json.is_file():
         logger.warning(f"No {CONFIG} file found in {job_dir}/custom. Skipping configuration.")
-        return
+        return config_json
 
     # Load the config.json file.
-    with open(config_json, "r") as f:
-        config = json.load(f)
+    user_config = read_config(config_json)
 
     # Two sets: generative model or normal model.
     # This should be made more generalisable in the future, with perhaps passing to this function what type of training
     # this is and hence, what is the name of the local or global round.
 
-    found_local_round = [i for i in config.keys() if LOCAL_ROUNDS in i]
+    # Find any keys that START WITH the local rounds keyword, to check if there are any local rounds specified in the
+    # config, e.g. LOCAL_ROUNDS, LOCAL_ROUNDS_STAGE1, LOCAL_ROUNDS_STAGE2, etc.
+    found_local_round = [i for i in user_config.keys() if i.startswith(LOCAL_ROUNDS)]
 
-    save_changes = False
+    # Create a copy of the user-provided config to update with any missing keys, and then save it back to the same path
+    # if any changes are made.
+    updated_config = user_config.copy()
+
+    # If no local rounds are found, we override the config with the default local rounds. If there are no global rounds,
+    # we override the config with the default global rounds.
+    # FIXME What if this is multi-stage and there are no local rounds? Could lead to bugs.
     if len(found_local_round) == 0:
-        config[LOCAL_ROUNDS] = local_rounds_override
-        save_changes = True
+        logger.warning(f"No {LOCAL_ROUNDS} found in config. Overriding with default value = {local_rounds_override}.")
+        updated_config[LOCAL_ROUNDS] = local_rounds_override
         logger.debug(
-            f"{CONFIG} has to have a {LOCAL_ROUNDS} number and a {GLOBAL_ROUNDS} number. Overriding {LOCAL_ROUNDS}."
+            f"{CONFIG} must have a {LOCAL_ROUNDS} number and a {GLOBAL_ROUNDS} number. Overriding {LOCAL_ROUNDS} with "
+            f"default value = {local_rounds_override}."
         )
 
-    if LOCAL_ROUNDS in found_local_round and len(found_local_round) == 1:
-        if GLOBAL_ROUNDS not in config.keys():
-            config[GLOBAL_ROUNDS] = global_rounds_override
-            save_changes = True
+        if GLOBAL_ROUNDS not in user_config.keys():
+            updated_config[GLOBAL_ROUNDS] = global_rounds_override
             logger.debug(
-                f"{CONFIG} has encountered {LOCAL_ROUNDS} but not {GLOBAL_ROUNDS}. Overriding {GLOBAL_ROUNDS}."
+                f"{CONFIG} has encountered no {LOCAL_ROUNDS} and no {GLOBAL_ROUNDS}. Overriding {GLOBAL_ROUNDS} with "
+                f"default value = {global_rounds_override}."
             )
 
-    elif len(found_local_round) > 1:
-        # We look for multi stage local and global rounds
+    # Overall LOCAL_ROUNDS and GLOBAL_ROUNDS keys
+    # If there is exactly 1 local rounds key, we check if there is a global rounds key. If not, we override the config
+    # with the default global rounds.
+    if len(found_local_round) == 1:
+        # This needs to be called LOCAL_ROUNDS, otherwise we can error
+        if found_local_round[0] != LOCAL_ROUNDS:
+            raise ValueError(
+                f"{CONFIG} has encountered 1 local rounds key ({found_local_round[0]}). When only 1 local rounds key "
+                f"is present, it must be called {LOCAL_ROUNDS}. Please change the name of the local rounds key to "
+                f"{LOCAL_ROUNDS}."
+            )
+
+        # FIXME this key could be e.g. LOCAL_ROUNDS_STAGE1, in which case we should check for GLOBAL_ROUNDS_STAGE1, but
+        # for now we just check for GLOBAL_ROUNDS?
+        # The above should probably be 'if' and not 'elif'
+        if GLOBAL_ROUNDS not in user_config.keys():
+            updated_config[GLOBAL_ROUNDS] = global_rounds_override
+            logger.debug(
+                f"{CONFIG} has encountered {LOCAL_ROUNDS} but not {GLOBAL_ROUNDS}. Overriding {GLOBAL_ROUNDS}. with "
+                f"default value = {global_rounds_override}."
+            )
+
+    # Multi-stage
+    # If there are more than 1 local rounds keys, we check that for each of them there is a corresponding global rounds
+    # key. If not, we raise an error as we don't know how to override the config in this case, since we don't know which
+    # global rounds key corresponds to which local rounds key.
+    if len(found_local_round) > 1:
         for local_key in found_local_round:
             if local_key == LOCAL_ROUNDS:
+                # Skip as we have already checked this case above
                 continue
+            # If there are multiple local rounds keys, there must be a global rounds key that corresponds to each of
+            # them, with the same sub-key. For example, if there is a local rounds key called "local_rounds_stage1",
+            # there must be a global rounds key called "global_rounds_stage1". If this is not the case, we raise an
+            # error as we don't know how to override the config in this case, since we don't know which global rounds
+            # key corresponds to which local rounds key.
             stage_keyword = local_key.split(f"{LOCAL_ROUNDS}_")[1]
-            if f"{GLOBAL_ROUNDS}_{stage_keyword}" not in config.keys():
+            if f"{GLOBAL_ROUNDS}_{stage_keyword}" not in user_config.keys():
                 raise ValueError(
-                    f"{CONFIG} has encountered {LOCAL_ROUNDS} for stage {stage_keyword} but not the equivalent "
-                    f"{GLOBAL_ROUNDS}."
+                    f"{CONFIG} has encountered {LOCAL_ROUNDS} for {stage_keyword=} but not the "
+                    f"equivalent {GLOBAL_ROUNDS}. You must provide a global rounds key that corresponds to each "
+                    f"local rounds key, with the same sub-key."
                 )
 
-    if save_changes:
-        with open(config_json, "w") as f:
-            json.dump(config, f, indent=4)
+    # Compare the user-provided config with the updated config, and if there are any differences, save the updated
+    # config back to the same path.
+    if user_config != updated_config:
+        write_config(updated_config, config_json)
+        logger.info(f"Updated file {config_json} with default values.")
 
-        logger.info(f"Updated {CONFIG} in {job_dir} with {LOCAL_ROUNDS} and {GLOBAL_ROUNDS}.")
+    return config_json
 
 
-def configure_client(job_dir: str, app_name: str, project_id: str, cohort_query: str):
+def configure_client(job_dir: Path, app_name: str, project_id: str, cohort_query: str) -> Path:
     """
-    Populates config_fed_client.json, necessary to modulate the client controllers in nvflare jobs.
+    Populates config_fed_client.json, necessary to modulate the client controllers in NVFLARE jobs, with the project_id
+    and cohort_query.
 
     Args:
-        job_dir (str): job directory, where the config and custom folders will be
+        job_dir (Path): job directory, where the config and custom folders will be
         app_name (str): name of the job (corresponds to model_id)
         project_id (str): unique project_id identifier
         cohort_query (str): cohort query identifying the project (SQL query used to obtain the data)
 
+    Returns:
+        Path: path to the client config file that was updated.
+
     Raises:
         FileNotFoundError: if config_fed_client.json is not there, FileNotFound error arises.
-
-    Returns:
-        None
     """
-    config_file = os.path.join(job_dir, "config", CONFIG_FED_CLIENT)
+    config_file = job_dir / "config" / CONFIG_FED_CLIENT
 
-    if not os.path.isfile(config_file):
+    if not config_file.is_file():
         err_msg = f"No {CONFIG_FED_CLIENT} found in app '{app_name}'"
         raise FileNotFoundError(err_msg)
 
-    with open(config_file) as outfile:
-        client_config = json.load(outfile)
+    config = read_config(config_file)
 
-        client_config["project_id"] = project_id
-        client_config["query"] = cohort_query
+    # The client config must have the project_id and cohort_query to be able to run the job.
+    config["project_id"] = project_id
+    config["query"] = cohort_query
 
-    logger.debug(f"Client config to be written: {client_config}")
+    logger.debug(f"Client config to be written: {config}")
 
-    with open(config_file, "w") as outfile:
-        json.dump(client_config, outfile, indent=2)
+    write_config(config, config_file)
 
     logger.info(f"Successfully updated {CONFIG_FED_CLIENT} for app '{app_name}'")
+    return config_file
 
 
 def configure_server(
-    job_dir: str,
+    job_dir: Path,
     app_name: str,
     global_rounds: int,
     trusts: List[str],
     ignore_result_error: bool,
     aggregator: str,
     aggregation_weights: dict,
-):
-    """Configures the server config file. Making sure the app name, global rounds,
-    trusts, and other variables are set correctly.
+) -> Path:
+    """
+    Configures the server config file. Making sure the app name, global rounds, and other variables are set correctly.
 
     Args:
-        job_dir (str): directory where the job is stored (includes the application name)
+        job_dir (Path): directory where the job is stored (includes the application name)
         app_name (str): application name
         global_rounds (int): number of global rounds
         trusts (List[str]): list of trusts that will be part of the job
@@ -153,54 +203,82 @@ def configure_server(
         aggregator (str): name of the aggregator to be used
         aggregation_weights (dict): aggregation weights to be used in the job (per trust)
 
+    Returns:
+        Path: path to the server config file that was updated.
+
     Raises:
         FileNotFoundError: if the config file does not exist.
 
-    Returns:
-        None
-    """
-    config_file = os.path.join(job_dir, "config", CONFIG_FED_SERVER)
+    .. code-block:: json
 
-    if not os.path.isfile(config_file):
+        {
+            "model_id": "...",
+            "global_rounds": 10,
+            "min_clients": 2,
+            "workflows": [
+                {
+                    "id": "scatter_and_gather",
+                    "args": {
+                        "participating_clients": [...],
+                        "ignore_result_error": false
+                    }
+                }
+            ],
+            "components": [
+                {
+                    "id": "aggregator",
+                    "name": "FedAvg",
+                    "args": {
+                        "aggregation_weights": {...}
+                    }
+                }
+            ]
+        }
+
+    """
+    config_file = job_dir / "config" / CONFIG_FED_SERVER
+
+    if not config_file.is_file():
         err_msg = f"No {CONFIG_FED_SERVER} found in app '{app_name}'"
         raise FileNotFoundError(err_msg)
 
-    with open(config_file) as outfile:
-        server_config = json.load(outfile)
+    config = read_config(config_file)
 
-        server_config["model_id"] = app_name
-        server_config["global_rounds"] = global_rounds
-        server_config["min_clients"] = len(trusts)
+    # Add server configuration variables that are needed to run the job
+    config["model_id"] = app_name
+    config["global_rounds"] = global_rounds
+    config["min_clients"] = len(trusts)
 
-        for workflow in server_config["workflows"]:
-            if "args" in workflow and "participating_clients" in workflow["args"]:
-                workflow["args"]["participating_clients"] = trusts
-            if "args" in workflow and "ignore_result_error" in workflow["args"]:
-                workflow["args"]["ignore_result_error"] = ignore_result_error
+    for workflow in config["workflows"]:
+        if "args" in workflow and "participating_clients" in workflow["args"]:
+            workflow["args"]["participating_clients"] = trusts
+        if "args" in workflow and "ignore_result_error" in workflow["args"]:
+            workflow["args"]["ignore_result_error"] = ignore_result_error
 
-        for component in server_config["components"]:
-            if (
-                "name" in component.keys()
-                and "aggregator" in component["name"]
-                or "id" in component.keys()
-                and "aggregator" in component["id"]
-            ):
-                component["name"] = aggregator
-                component["args"]["aggregation_weights"] = aggregation_weights
+    for component in config["components"]:
+        if ("name" in component and "aggregator" in component["name"]) or (
+            "id" in component and "aggregator" in component["id"]
+        ):
+            component["name"] = aggregator  # override the aggregator if specified in the config, otherwise use default
+            component["args"]["aggregation_weights"] = aggregation_weights  # override the aggregation weights
 
-    with open(config_file, "w") as outfile:
-        json.dump(server_config, outfile, indent=2)
+    write_config(config, config_file)
 
     logger.info(f"Successfully updated {CONFIG_FED_SERVER} for app '{app_name}'")
+    return config_file
 
 
-def configure_meta(job_dir: str, app_name: str, trusts: List[str]):
-    """Writes the meta.json file, which is part of the NVFLARE application.
+def configure_meta(job_dir: Path, app_name: str, trusts: List[str]) -> Path:
+    """
+    Creates a meta.json file, which is part of the NVFLARE application.
 
     Args:
-        job_dir (str): job directory
+        job_dir (Path): job directory
         app_name (str): name of this specific application, under which the config and custom folders will be saved.
         trusts (List[str]): list of trusts that are part of this training (site names)
+
+    Returns:
+        Path: path to the meta file that was created.
     """
     # Resources required to perform this job at each site
     # See https://nvflare.readthedocs.io/en/2.4/real_world_fl/job.html#job
@@ -234,28 +312,34 @@ def configure_meta(job_dir: str, app_name: str, trusts: List[str]):
     }
     logger.debug(f"Meta config to be written: {meta_config}")
 
-    meta_path = os.path.join(job_dir, META)
+    meta_path = job_dir / META
 
-    with open(meta_path, "w") as outfile:
-        json.dump(meta_config, outfile, indent=2)
+    write_config(meta_config, meta_path)
 
     logger.info(f"Successfully wrote {META} to {meta_path}")
+    return meta_path
 
 
-def configure_environment(job_dir: str):
-    """Inside the config folder, you can have an optional environment.json which defines the EnvironmentKey variables.
-    In this case, we define the CHECKPOINT_DIR as "model"
+def configure_environment(job_dir: Path) -> Path:
+    """
+    Configures the environment.json file, which is part of the NVFLARE application. This file is used to set environment
+    variables for the job.
+
+    Inside the config folder, you can have an optional environment.json which defines the EnvironmentKey variables.
+    In this case, we define the CHECKPOINT_DIR as "model".
 
     Args:
-        job_dir (str): job directory (including name of the federated learning app).
-    """
+        job_dir (Path): job directory (including name of the federated learning app).
 
+    Returns:
+        Path: path to the environment file that was created.
+    """
     env_config = {EnvironmentKey.CHECKPOINT_DIR: "model"}
     logger.debug(f"Environment config to be written: {env_config}")
 
-    env_path = os.path.join(job_dir, "config", ENVIRONMENT)
+    env_path = job_dir / "config" / ENVIRONMENT
 
-    with open(env_path, "w") as outfile:
-        json.dump(env_config, outfile, indent=2)
+    write_config(env_config, env_path)
 
     logger.info(f"Successfully wrote {ENVIRONMENT} to {env_path}")
+    return env_path

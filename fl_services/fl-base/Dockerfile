@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -29,9 +29,12 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 
 # Sync the project into a new environment, using the frozen lockfile
-COPY pyproject.toml uv.lock ./
+# Copy necessary files for building the flip package
+COPY pyproject.toml uv.lock README.md ./
+COPY flip/ ./flip/
 
 # Sync dependencies using uv
 # If LOCAL_DEV is set to true, install dev dependencies as well, else --no-dev
 # --frozen ensures exact versions from uv.lock are used
-RUN uv sync --frozen --no-cache $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi)
+# Install with full optional dependencies for ML frameworks
+RUN uv sync --frozen --no-cache --extra full $(if [ "$LOCAL_DEV" = "true" ]; then echo "--dev"; else echo "--no-dev"; fi)

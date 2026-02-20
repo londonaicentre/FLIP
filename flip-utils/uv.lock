@@ -602,20 +602,25 @@ wheels = [
 ]
 
 [[package]]
-name = "flip-fl-base"
+name = "flip-utils"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
+    { name = "nvflare" },
+    { name = "pandas" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "requests" },
+]
+
+[package.optional-dependencies]
+full = [
     { name = "boto3" },
     { name = "einops" },
     { name = "gdown" },
     { name = "lpips" },
     { name = "monai" },
     { name = "nibabel" },
-    { name = "nvflare" },
-    { name = "pandas" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
     { name = "pydicom" },
 ]
 
@@ -632,18 +637,20 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "boto3", specifier = ">=1.38.31" },
-    { name = "einops", specifier = "==0.8.1" },
-    { name = "gdown", specifier = "==5.2.0" },
-    { name = "lpips", specifier = "==0.1.4" },
-    { name = "monai", specifier = ">=1.5.1" },
-    { name = "nibabel", specifier = ">=5.3.2" },
+    { name = "boto3", marker = "extra == 'full'", specifier = ">=1.38.31" },
+    { name = "einops", marker = "extra == 'full'", specifier = "==0.8.1" },
+    { name = "gdown", marker = "extra == 'full'", specifier = "==5.2.0" },
+    { name = "lpips", marker = "extra == 'full'", specifier = "==0.1.4" },
+    { name = "monai", marker = "extra == 'full'", specifier = ">=1.5.1" },
+    { name = "nibabel", marker = "extra == 'full'", specifier = ">=5.3.2" },
     { name = "nvflare", specifier = "==2.7.1" },
     { name = "pandas", specifier = ">=2.3.0" },
     { name = "pydantic", specifier = ">=2.11.7" },
     { name = "pydantic-settings", specifier = ">=2.10.1" },
-    { name = "pydicom", specifier = ">=3.0.1" },
+    { name = "pydicom", marker = "extra == 'full'", specifier = ">=3.0.1" },
+    { name = "requests", specifier = ">=2.31.0" },
 ]
+provides-extras = ["full"]
 
 [package.metadata.requires-dev]
 dev = [
