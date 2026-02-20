@@ -48,6 +48,16 @@ export DOCKER_TAG
 # override DOCKER_TAG := $(shell gh pr view --json number -q '"pr-" + (.number | tostring)' 2>/dev/null || echo "stag")
 # export DOCKER_TAG
 
+# ---- FL backend selection (flower | nvflare) ----
+FL_BACKEND ?= flower
+VALID_FL_BACKENDS := flower nvflare
+
+ifeq (,$(filter $(FL_BACKEND),$(VALID_FL_BACKENDS)))
+$(error Invalid FL_BACKEND '$(FL_BACKEND)'. Must be one of: $(VALID_FL_BACKENDS))
+endif
+
+FL_BACKEND_COMPOSE_FILE := deploy/compose.$(FL_BACKEND).yml
+
 # Override FL_PROVISIONED_DIR to use absolute path resolved relative to this Makefile
 # This allows the repo to work on any machine without hardcoding paths
 override FL_PROVISIONED_DIR := $(shell realpath $(dir $(lastword $(MAKEFILE_LIST)))/../flip-fl-base/workspace)
@@ -69,8 +79,8 @@ get_service_type = $(word 2,$(subst :, ,$(filter $1:%,$(SERVICE_CONFIG))))
 get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central FL ,$1)))
 
 export COMPOSE_BAKE=true
-DOCKER_COMMAND=docker compose -f deploy/compose.yml
-OVERRIDE_COMPOSE_COMMAND=docker compose -f deploy/compose.yml -f deploy/compose.debug.override.yml
+DOCKER_COMMAND=docker compose -f deploy/compose.yml -f $(FL_BACKEND_COMPOSE_FILE)
+OVERRIDE_COMPOSE_COMMAND=docker compose -f deploy/compose.yml -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.debug.override.yml
 SHOW_LOGS_CENTRAL_HUB=docker logs -f flip-api --tail 100 --timestamps --follow
 GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
@@ -88,6 +98,7 @@ build:
 up: create-networks
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
+	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d --pull always
 	@echo "🚢 Starting trust services..."
 	$(MAKE) -C trust up
@@ -97,6 +108,8 @@ up: create-networks
 
 # Minimal $(MAKE) up
 up-no-trust: create-networks
+	@echo "🚢 Starting central hub API services..."
+	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d --pull always
 
 up-trusts: create-networks

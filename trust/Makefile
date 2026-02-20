@@ -26,6 +26,16 @@ include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
+# ---- FL backend selection (flower | nvflare) ----
+FL_BACKEND ?= flower
+VALID_FL_BACKENDS := flower nvflare
+
+ifeq (,$(filter $(FL_BACKEND),$(VALID_FL_BACKENDS)))
+$(error Invalid FL_BACKEND '$(FL_BACKEND)'. Must be one of: $(VALID_FL_BACKENDS))
+endif
+
+FL_BACKEND_COMPOSE_FILE := compose_trust.$(FL_BACKEND).yml
+
 # Override FL_PROVISIONED_DIR to use absolute path resolved relative to the parent Makefile
 # This allows the repo to work on any machine without hardcoding paths
 override FL_PROVISIONED_DIR := $(shell realpath ../../flip-fl-base/workspace)
@@ -37,9 +47,9 @@ trust1 = trust1
 trust2 = trust2
 
 OMOP_DB_CMD=make -C ./omop-db
-DOCKER_COMPOSE_CMD=docker compose -f compose_trust.yml
-DOCKER_COMPOSE_PROD_CMD=docker compose -f compose_trust.production.yml
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f compose_trust.yml -f compose.debug.override.yml
+DOCKER_COMPOSE_CMD=docker compose -f compose_trust.yml -f $(FL_BACKEND_COMPOSE_FILE)
+DOCKER_COMPOSE_PROD_CMD=docker compose -f compose_trust.production.yml -f $(FL_BACKEND_COMPOSE_FILE)
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f compose_trust.yml -f $(FL_BACKEND_COMPOSE_FILE) -f compose.debug.override.yml
 
 TRUST_1_VARS = \
 	TRUST_NUMBER=1 \
@@ -80,6 +90,7 @@ build:
 up-trust-1: update-omop-data
 	@echo "🚢 Starting Trust 1 services..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
+	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST1}
 	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f compose_trust-1_override.yml -p ${trust1} up -d --pull always
 
@@ -106,6 +117,7 @@ down-trust-1-stag:
 up-trust-2: update-omop-data
 	@echo "🚢 Starting Trust 2 services..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
+	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST2}
 	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d --pull always
 
