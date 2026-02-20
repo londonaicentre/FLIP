@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     POSTGRES_USER: str
     POSTGRES_DB: str
 
+    # Variables used during database seeding
+    NET_ENDPOINTS: dict[str, str]
+
     # Variables only used in testing
     FLIP_API_URL: str = "http://localhost:8080/"  # this is currently only used in tests (TODO review)
     ADMIN_USER_PASSWORD: SecretStr | None = None  # only used in integration tests to make actual logins

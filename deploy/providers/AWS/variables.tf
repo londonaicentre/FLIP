@@ -56,10 +56,6 @@ variable "AES_KEY_BASE64" {
   type = string
 }
 
-variable "NET_ENDPOINTS" {
-  type = string
-}
-
 variable "FLIP_BUCKET_NAME" {
   type = string
 }

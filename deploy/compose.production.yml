@@ -56,6 +56,7 @@ services:
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - FL_APP_BASE_BUCKET=${FL_APP_BASE_BUCKET}
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
+      - NET_ENDPOINTS=${NET_ENDPOINTS}
     restart: unless-stopped
     container_name: flip-api
 
