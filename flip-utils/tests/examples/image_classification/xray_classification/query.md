@@ -73,4 +73,5 @@ FROM
     JOIN omop.concept modality_concept ON modality_concept.concept_id = io.modality_concept_id
     JOIN omop.concept io_anatomic_site_concept ON io.anatomic_site_concept_id = io_anatomic_site_concept.concept_id
     JOIN omop.concept ife_anatomic_site_concept ON ov.anatomic_site_concept_id = ife_anatomic_site_concept.concept_id
+LIMIT 100
 ```
