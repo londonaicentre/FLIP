@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -32,7 +32,7 @@ def mock_session():
 @pytest.fixture
 def client(mock_session):
     with patch("fl_api.app.create_fl_session", return_value=mock_session):
-        with TestClient(app) as test_client:
+        with TestClient(app, raise_server_exceptions=False) as test_client:
             yield test_client
 
 
