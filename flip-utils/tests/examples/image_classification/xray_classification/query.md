@@ -57,7 +57,7 @@ observation_value AS (
 )
 SELECT
     -- image occurrence
-    io.accession_id AS "Accession number",
+    io.accession_id,
     io.image_occurrence_date AS "Image date",
     modality_concept.concept_name AS "Modality",
     io_anatomic_site_concept.concept_name AS "Image occurrence anatomy",
