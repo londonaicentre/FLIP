@@ -1,9 +1,0 @@
-{
-  "LOCAL_ROUNDS": 4,
-  "GLOBAL_ROUNDS": 2,
-  "LEARNING_RATE": 5e-5,
-  "VAL_SPLIT": 0.1,
-  "net_config": {
-    "spatial_dims": 3
-  }
-}

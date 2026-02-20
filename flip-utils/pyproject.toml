@@ -1,4 +1,4 @@
-# # Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -10,24 +10,85 @@
 # limitations under the License.
 #
 
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "flip-fl-base"
+name = "flip-utils"
 version = "0.1.0"
-description = "Add your description here"
+description = "FLIP - Federated Learning for Imaging Platform library built on NVIDIA FLARE"
 readme = "README.md"
 requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [
+    { name = "AI Centre for Value Based Healthcare" },
+    { name = "Guy's and St Thomas' NHS Foundation Trust" },
+    { name = "King's College London" },
+    { name = "A. Triay Bagur", email = "alexandre.triay_bagur@kcl.ac.uk" },
+    { name = "P. Wright", email = "p.wright@kcl.ac.uk" },
+    { name = "R. Garcia-Dias", email = "r.gaciadias@gmail.com" },
+    { name = "V. Fernandez", email = "virginia.fernandez@kcl.ac.uk" },
+]
+maintainers = [
+    { name = "A. Triay Bagur", email = "alexandre.triay_bagur@kcl.ac.uk" },
+    { name = "P. Wright", email = "p.wright@kcl.ac.uk" },
+    { name = "R. Garcia-Dias", email = "r.gaciadias@gmail.com" },
+    { name = "V. Fernandez", email = "virginia.fernandez@kcl.ac.uk" },
+]
+keywords = ["federated-learning", "medical-imaging", "nvflare", "flip"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Healthcare Industry",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Medical Science Apps.",
+]
 dependencies = [
+    "nvflare==2.7.1",
+    "pandas>=2.3.0",
+    "pydantic>=2.11.7",
+    "pydantic-settings>=2.10.1",
+    "requests>=2.31.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/londonaicentre/flip-fl-base"
+Repository = "https://github.com/londonaicentre/flip-fl-base"
+Documentation = "https://github.com/londonaicentre/flip-fl-base#readme"
+Issues = "https://github.com/londonaicentre/flip-fl-base/issues"
+
+[project.optional-dependencies]
+# Full dependencies for running FL jobs (includes ML frameworks)
+full = [
     "boto3>=1.38.31",
     "einops==0.8.1",
     "gdown==5.2.0",
     "lpips==0.1.4",
     "monai>=1.5.1",
     "nibabel>=5.3.2",
-    "nvflare==2.7.1",
-    "pandas>=2.3.0",
-    "pydantic>=2.11.7",
-    "pydantic-settings>=2.10.1",
     "pydicom>=3.0.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["flip"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/flip",
+    "/README.md",
+    "/LICENSE.md",
+    "/NOTICE.md",
+    "/pyproject.toml",
+]
+exclude = [
+    "*.pyc",
+    "__pycache__",
+    ".coverage",
+    "*.coverage",
 ]
 
 [dependency-groups]

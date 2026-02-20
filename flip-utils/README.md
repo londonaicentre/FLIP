@@ -1,5 +1,5 @@
 <!--
-    Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
     You may obtain a copy of the License at
@@ -219,6 +219,22 @@ app/
 ```
 
 For different configurations per client/server, use multiple app folders with a `meta.json` containing a `deploy_map`. See [NVFLARE documentation](https://nvflare.readthedocs.io/en/2.6/real_world_fl/job.html).
+
+## Application and tutorials
+
+Applications that will run on FLIP will take files from the `app` of choice (contained in both the `custom` and `config` folders described above), and files that are uploaded by the user to the UI. These files are customisable by the user, and examples compatible with different types of apps will be available in `tutorials`. 
+
+![image.png](./assets/fl_app_structure.png)
+
+These are the following app / tutorial compatibilities:
+
+| App | Tutorial | 
+|-----|----------|
+|`standard`|`image_segmentation/3d_spleen_segmentation`|
+|`diffusion_model`|`image_synthesis/latent_diffusion_model`|
+|`fed_opt`|`image_segmentation/3d_spleen_segmentation`|
+|`evaluation`|`image_evaluation/3d_spleen_segmentation`|
+|`standard`|`image_classification/xray_classification`|
 
 ## User Application Requirements
 
