@@ -98,7 +98,7 @@ def test_reset_errors_success(client):
     assert "reset" in data["info"].lower()
 
 
-def test_reset_errors_not_found(client):
+def test_reset_errors_job_not_found(client):
     response = client.post("/reset_errors", params={"job_id": "9999"})
     assert response.status_code == status.HTTP_404_NOT_FOUND
 
