@@ -22,7 +22,7 @@ from fl_api.schemas import (
 logger = logging.getLogger("uvicorn")
 
 app = FastAPI(
-    title="Flower FL API",
+    title="FLIP FL API (Flower)",
     description="FL API for Flower deployment runtime.",
     version="0.1.0",
     docs_url="/docs",
