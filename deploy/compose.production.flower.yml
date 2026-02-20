@@ -20,7 +20,9 @@ services:
     container_name: flip-fl-api-net-1
     image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     environment:
-      - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+      - SUPERLINK_ADDRESS=fl-server-net-1:9093
+      - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
+      - SUPERNODE_HEALTH_ADDRESSES=Trust_1=trust1-fl-client-net-1-1:9098,Trust_2=trust2-fl-client-net-1-1:9098
     ports:
       - "${FL_API_PORT}:8000"
     depends_on:
