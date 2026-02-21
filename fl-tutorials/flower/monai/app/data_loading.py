@@ -37,44 +37,40 @@ logger.setLevel(logging.INFO)
 
 def get_train_transforms() -> Compose:
     """Get transforms for training data."""
-    return Compose(
-        [
-            LoadImaged(keys=["image", "label"]),
-            EnsureChannelFirstd(keys=["image", "label"]),
-            Orientationd(keys=["image", "label"], axcodes="RAS"),
-            Spacingd(
-                keys=["image", "label"],
-                pixdim=(1.5, 1.5, 2.0),
-                mode=("bilinear", "nearest"),
-            ),
-            ResizeWithPadOrCropd(keys=["image", "label"], spatial_size=None),
-            ScaleIntensityRanged(
-                keys=["image"],
-                a_min=-57,
-                a_max=164,
-                b_min=0.0,
-                b_max=1.0,
-                clip=True,
-            ),
-            CropForegroundd(keys=["image", "label"], source_key="image"),
-            RandCropByPosNegLabeld(
-                keys=["image", "label"],
-                label_key="label",
-                spatial_size=(96, 96, 96),
-                pos=1,
-                neg=1,
-                num_samples=4,
-                image_key="image",
-                image_threshold=0,
-            ),
-            EnsureTyped(keys=["image", "label"]),
-        ]
-    )
+    return Compose([
+        LoadImaged(keys=["image", "label"]),
+        EnsureChannelFirstd(keys=["image", "label"]),
+        Orientationd(keys=["image", "label"], axcodes="RAS"),
+        Spacingd(
+            keys=["image", "label"],
+            pixdim=(1.5, 1.5, 2.0),
+            mode=("bilinear", "nearest"),
+        ),
+        ResizeWithPadOrCropd(keys=["image", "label"], spatial_size=None),
+        ScaleIntensityRanged(
+            keys=["image"],
+            a_min=-57,
+            a_max=164,
+            b_min=0.0,
+            b_max=1.0,
+            clip=True,
+        ),
+        CropForegroundd(keys=["image", "label"], source_key="image"),
+        RandCropByPosNegLabeld(
+            keys=["image", "label"],
+            label_key="label",
+            spatial_size=(96, 96, 96),
+            pos=1,
+            neg=1,
+            num_samples=4,
+            image_key="image",
+            image_threshold=0,
+        ),
+        EnsureTyped(keys=["image", "label"]),
+    ])
 
 
-def get_datalist(
-    val_split: float = 0.25, test_split: float = 0.0, is_test: bool = False
-) -> List[Dict[str, str]]:
+def get_datalist(val_split: float = 0.25, test_split: float = 0.0, is_test: bool = False) -> List[Dict[str, str]]:
     """Get data list for training, validation, or testing."""
     df_accession_ids = get_data()
     accession_ids = df_accession_ids["accession_id"].tolist()
@@ -82,16 +78,12 @@ def get_datalist(
     for accession_id in accession_ids:
         image_path, label_path = get_images_from_accession_id(accession_id)
         if image_path and label_path:
-            data_dict.append(
-                {
-                    "image": str(image_path),
-                    "label": str(label_path),
-                }
-            )
+            data_dict.append({
+                "image": str(image_path),
+                "label": str(label_path),
+            })
         else:
-            logger.warning(
-                "Skipping accession_id %s due to missing data.", accession_id
-            )
+            logger.warning("Skipping accession_id %s due to missing data.", accession_id)
 
     n_images_val = int(val_split * len(data_dict))
     n_images_test = int(test_split * len(data_dict))
@@ -105,7 +97,5 @@ def get_datalist(
         print(f"Found {len(test_datalist)} test samples.")
         return list(test_datalist)
 
-    print(
-        f"Found {len(train_datalist)} training samples and {len(val_datalist)} validation samples."
-    )
+    print(f"Found {len(train_datalist)} training samples and {len(val_datalist)} validation samples.")
     return list(train_datalist), list(val_datalist)

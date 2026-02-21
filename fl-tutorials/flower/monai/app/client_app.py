@@ -46,9 +46,7 @@ def train(msg: Message, context: Context) -> Message:
     logger.info("Training on device: %s", device)
 
     # Get data
-    train_datalist, val_datalist = get_datalist(
-        val_split=val_split, test_split=test_split, is_test=False
-    )
+    train_datalist, val_datalist = get_datalist(val_split=val_split, test_split=test_split, is_test=False)
     dataset_train = Dataset(train_datalist, transform=get_train_transforms())
     dataset_val = Dataset(val_datalist, transform=get_train_transforms())
     train_loader = DataLoader(dataset_train, batch_size=batch_size, shuffle=True)
@@ -88,9 +86,7 @@ def train(msg: Message, context: Context) -> Message:
         dice["val"].append(val_dice)
 
     # Get average metrics across all epochs (handle empty lists)
-    avg_train_loss = (
-        sum(losses["train"]) / len(losses["train"]) if losses["train"] else -1
-    )
+    avg_train_loss = sum(losses["train"]) / len(losses["train"]) if losses["train"] else -1
     avg_val_loss = sum(losses["val"]) / len(losses["val"]) if losses["val"] else -1
     avg_val_dice = sum(dice["val"]) / len(dice["val"]) if dice["val"] else -1
 

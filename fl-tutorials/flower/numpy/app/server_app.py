@@ -15,6 +15,7 @@
 from flwr.app import ArrayRecord, Context
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
+
 from app.task import get_dummy_model
 
 # Create ServerApp

@@ -169,8 +169,6 @@ def validate_func(
     running_loss /= max(1, len(val_loader.dataset))
     dice_metric.reset()
 
-    logger.info(
-        f"Validation completed. Mean Dice score: {dice_score:.4f}, Average Loss: {running_loss:.4f}"
-    )
+    logger.info(f"Validation completed. Mean Dice score: {dice_score:.4f}, Average Loss: {running_loss:.4f}")
 
     return dice_score, running_loss

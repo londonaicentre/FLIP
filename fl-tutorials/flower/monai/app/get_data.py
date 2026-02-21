@@ -10,12 +10,13 @@
 # limitations under the License.
 #
 
-import pandas as pd
 import os
-from pathlib import Path
 from enum import Enum
-import pydicom
+from pathlib import Path
+
 import nibabel as nib
+import pandas as pd
+import pydicom
 
 
 class ResourceType(str, Enum):
@@ -38,15 +39,11 @@ def get_data():
             "No dataframe path provided. Please set the DATAFRAME environment variable or provide an input_dataframe argument."
         )
     if not os.path.exists(dataframe):
-        raise FileNotFoundError(
-            f"Dataframe file not found at {dataframe}. Please check the path and try again."
-        )
+        raise FileNotFoundError(f"Dataframe file not found at {dataframe}. Please check the path and try again.")
     try:
         df = pd.read_csv(dataframe)
         if "accession_id" not in df.columns:
-            raise ValueError(
-                "Dataframe must contain an 'accession_id' column. Please check the dataframe format."
-            )
+            raise ValueError("Dataframe must contain an 'accession_id' column. Please check the dataframe format.")
         return df
     except Exception as e:
         raise ValueError(f"Error loading dataframe from {dataframe}: {e}")
@@ -55,9 +52,7 @@ def get_data():
 def get_images_from_accession_id(accession_id: str, attempt_loading: bool = True):
     data_dir = os.environ.get("DEV_IMAGES_DIR", None)
     if not data_dir:
-        raise ValueError(
-            "No data directory provided. Please set the DEV_IMAGES_DIR environment variable."
-        )
+        raise ValueError("No data directory provided. Please set the DEV_IMAGES_DIR environment variable.")
     try:
         accession_folder_path = Path(data_dir) / accession_id
         # Makes sure that resource type matches
@@ -69,9 +64,7 @@ def get_images_from_accession_id(accession_id: str, attempt_loading: bool = True
         for ext in resource_type_dict[ResourceType.SEGMENTATION]:
             input_segmentation.extend(accession_folder_path.rglob(f"label_*{ext}"))
         if len(input_image) > 1 or len(input_segmentation) > 1:
-            print(
-                f"Ambiguous data found for {accession_id}: more than one image and segmentation results."
-            )
+            print(f"Ambiguous data found for {accession_id}: more than one image and segmentation results.")
 
         elif len(input_image) == 0 or len(input_segmentation) == 0:
             print(f"No data found for {accession_id}.")
