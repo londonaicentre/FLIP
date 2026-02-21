@@ -16,7 +16,6 @@
 import logging
 
 import torch
-from flip.constants import FlipConstants
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from monai.data import DataLoader, Dataset
@@ -49,11 +48,9 @@ def train(msg: Message, context: Context) -> Message:
     flip_utils = FLIP_BASE()
     flip_utils.project_id = run_config.get("flip-project-id", "monai-flower-tutorial")
     flip_utils.query = run_config.get("flip-query", "*")
-    logger.info(f"Fetching FLIP dataframe from {FlipConstants.DEV_DATAFRAME}")
+    logger.info("Fetching FLIP dataframe ...")
     flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
-    logger.info(
-        f"FLIP dataframe for project {flip_utils.project_id} with query {flip_utils.query} has {len(flip_utils.dataframe)} rows."
-    )
+    logger.info(f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
 
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
