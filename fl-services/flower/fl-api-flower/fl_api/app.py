@@ -30,7 +30,9 @@ from fl_api.schemas import (
     HealthResponse,
     RunRecord,
     ServerInfoModel,
+    UploadAppRequest,
 )
+from fl_api.utils.upload import upload_application
 
 logger = logging.getLogger("uvicorn")
 
@@ -359,3 +361,20 @@ def abort_run(run_id: str) -> FlowerCommandResponse:
 
     payload = _parse_flwr_payload(result, "stop")
     return FlowerCommandResponse.model_validate(payload)
+
+
+@app.post("/upload_app/{model_id}", status_code=status.HTTP_200_OK)
+def upload_app(model_id: str, body: UploadAppRequest) -> dict[str, str]:
+    """
+    Upload an application to the server.
+
+    Args:
+        model_id (str): The ID of the model to associate the application with.
+        body (UploadAppRequest): The request body containing the application details.
+        session (FLIP_Session): The NVFlare session instance.
+
+    Returns:
+        dict[str, str]: A dictionary containing the status of the upload.
+    """
+    upload_dir = _get_src_root()
+    return upload_application(model_id, body, upload_dir=upload_dir)

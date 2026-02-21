@@ -11,6 +11,7 @@
 # limitations under the License.
 #
 
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -37,3 +38,17 @@ class ClientInfoModel(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class UploadAppRequest(BaseModel):
+    """Defines the body of the request to upload an application to the server."""
+
+    project_id: str
+    cohort_query: str
+    local_rounds: int
+    global_rounds: int
+    trusts: list[str]
+    bundle_urls: list[str]
+    ignore_result_error: bool = False
+    aggregator: str = "InTimeAccumulateWeightedAggregator"
+    aggregation_weights: dict = {}
