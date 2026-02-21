@@ -306,8 +306,8 @@ def list_runs() -> list[RunRecord]:
     return _parse_runs_payload(payload)
 
 
-@app.post("/submit_run", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse)
-@app.post("/submit_job", include_in_schema=False)  # alias, hide from docs
+@app.post("/submit_run/{app_folder}", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse)
+@app.post("/submit_job/{app_folder}", include_in_schema=False)  # alias, hide from docs
 def submit_run(app_folder: str) -> FlowerCommandResponse:
     job_dir = _validate_app_folder(app_folder)
 
@@ -345,8 +345,8 @@ def submit_run(app_folder: str) -> FlowerCommandResponse:
             _submission_in_progress = False
 
 
-@app.delete("/abort_run", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse)
-@app.delete("/abort_job", include_in_schema=False)  # alias, hide from docs
+@app.delete("/abort_run/{run_id}", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse)
+@app.delete("/abort_job/{run_id}", include_in_schema=False)  # alias, hide from docs
 def abort_run(run_id: str) -> FlowerCommandResponse:
     src_root = _get_src_root()
     command = ["uvx", "flwr", "stop", run_id, "local", "--format", "json"]
