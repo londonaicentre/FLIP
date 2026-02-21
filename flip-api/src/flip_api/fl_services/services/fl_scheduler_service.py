@@ -391,7 +391,7 @@ def get_required_training_details(model_id: UUID, session: Session) -> IRequired
         # Fetch the model and associated project ID
         model = session.exec(select(Model).where(Model.id == model_id)).first()
         if not model:
-            raise Exception("Model not found")
+            raise NotFoundError(f"Model with ID {model_id} not found")
 
         project_id = model.project_id
 

@@ -302,7 +302,7 @@ def test_get_required_training_details(fake_session, model_id):
 def test_get_required_training_details_no_model(fake_session, model_id):
     fake_session.exec.return_value.first.return_value = None
 
-    with pytest.raises(Exception, match="Model not found"):
+    with pytest.raises(NotFoundError, match=f"Model with ID {model_id} not found"):
         fl_scheduler_service.get_required_training_details(model_id, fake_session)
 
 
