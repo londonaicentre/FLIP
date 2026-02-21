@@ -186,12 +186,12 @@ def _parse_flwr_payload(result: subprocess.CompletedProcess[str], action_name: s
 
 
 def _validate_app_folder(app_folder: str) -> Path:
-    allowed_job_folders = _get_allowed_job_folders()
-    if app_folder not in allowed_job_folders:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(f"Invalid app folder '{app_folder}'. Allowed values: {sorted(allowed_job_folders)}"),
-        )
+    # allowed_job_folders = _get_allowed_job_folders()
+    # if app_folder not in allowed_job_folders:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_400_BAD_REQUEST,
+    #         detail=(f"Invalid app folder '{app_folder}'. Allowed values: {sorted(allowed_job_folders)}"),
+    #     )
 
     job_dir = _get_src_root() / app_folder
     if not job_dir.is_dir():
