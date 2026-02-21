@@ -45,10 +45,5 @@ class UploadAppRequest(BaseModel):
 
     project_id: str
     cohort_query: str
-    local_rounds: int
-    global_rounds: int
     trusts: list[str]
     bundle_urls: list[str]
-    ignore_result_error: bool = False
-    aggregator: str = "InTimeAccumulateWeightedAggregator"
-    aggregation_weights: dict = {}
