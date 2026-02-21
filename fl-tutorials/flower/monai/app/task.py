@@ -1,4 +1,5 @@
 # Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -18,47 +19,12 @@ import torch
 from monai.data import DataLoader
 from monai.losses import DiceLoss
 from monai.metrics import DiceMetric
-from monai.networks.nets import UNet
 from monai.networks.utils import one_hot
-from torch import nn
+
+from app.transforms import get_sliding_window_inferer
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-
-
-class SegmentationNetwork(nn.Module):
-    """
-    Wraps a MONAI BasicUNet allowing the choice of returning the logits or sigmoided logits. This is useful
-    because we train on patches, but evaluate on full images using a sliding window approach. We need to return
-    logits for the sliding window approach, but sigmoided logits for the patch training approach.
-    """
-
-    def __init__(self, num_classes: int = 1):
-        super().__init__()
-
-        self.net = UNet(
-            spatial_dims=3,
-            in_channels=1,
-            out_channels=num_classes + 1,
-            channels=(16, 32, 64, 128, 256),
-            strides=(2, 2, 2, 2),
-        )
-
-    def forward(self, x: torch.Tensor, do_sigmoid: bool = True):
-        logits = self.net(x)
-        if do_sigmoid:
-            return torch.sigmoid(logits)
-        else:
-            return logits
-
-
-def get_model() -> nn.Module:
-    """
-    Returns a new instance of the model defined in this file.
-    NOTE: This function needs to exist and cannot take any input arguments. If you would like to parameterize the
-    configuration of your model, for example loaded from a config file, do it when instantiating the model.
-    """
-    return SegmentationNetwork()
 
 
 def train_func(
@@ -146,11 +112,15 @@ def validate_func(
         return -1, -1
 
     running_loss = 0.0
+    inferer = get_sliding_window_inferer(sw_device=device)
+
     with torch.no_grad():
         for i, batch in enumerate(val_loader):
             images = batch["image"].to(device)
             labels = batch["label"].to(device)
-            predictions = model(images)
+
+            predictions = inferer(inputs=images, network=model)
+
             loss = loss_fn(predictions, labels).item()
             running_loss += loss
 

@@ -1,4 +1,5 @@
 # Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -13,89 +14,101 @@
 """Spleen Segmentation: Data loading and transform functions (training-only)."""
 
 import logging
-from typing import Dict, List
+from pathlib import Path
 
-from monai.transforms import (
-    Compose,
-    CropForegroundd,
-    EnsureChannelFirstd,
-    EnsureTyped,
-    LoadImaged,
-    Orientationd,
-    RandCropByPosNegLabeld,
-    ResizeWithPadOrCropd,
-    ScaleIntensityRanged,
-    Spacingd,
-)
-
-from app.get_data import get_data, get_images_from_accession_id
-
-# Logger
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+import nibabel as nib
+import numpy as np
+from flip import FLIP
+from flip.constants import ResourceType
 
 
-def get_train_transforms() -> Compose:
-    """Get transforms for training data."""
-    return Compose([
-        LoadImaged(keys=["image", "label"]),
-        EnsureChannelFirstd(keys=["image", "label"]),
-        Orientationd(keys=["image", "label"], axcodes="RAS"),
-        Spacingd(
-            keys=["image", "label"],
-            pixdim=(1.5, 1.5, 2.0),
-            mode=("bilinear", "nearest"),
-        ),
-        ResizeWithPadOrCropd(keys=["image", "label"], spatial_size=None),
-        ScaleIntensityRanged(
-            keys=["image"],
-            a_min=-57,
-            a_max=164,
-            b_min=0.0,
-            b_max=1.0,
-            clip=True,
-        ),
-        CropForegroundd(keys=["image", "label"], source_key="image"),
-        RandCropByPosNegLabeld(
-            keys=["image", "label"],
-            label_key="label",
-            spatial_size=(96, 96, 96),
-            pos=1,
-            neg=1,
-            num_samples=4,
-            image_key="image",
-            image_threshold=0,
-        ),
-        EnsureTyped(keys=["image", "label"]),
-    ])
+class FLIP_BASE:
+    def __init__(self):
+        self.project_id = ""
+        self.query = ""
+        self.dataframe = None
 
+        # --- Core FLIP object ---
+        self.flip = FLIP()
 
-def get_datalist(val_split: float = 0.25, test_split: float = 0.0, is_test: bool = False) -> List[Dict[str, str]]:
-    """Get data list for training, validation, or testing."""
-    df_accession_ids = get_data()
-    accession_ids = df_accession_ids["accession_id"].tolist()
-    data_dict: List[Dict[str, str]] = []
-    for accession_id in accession_ids:
-        image_path, label_path = get_images_from_accession_id(accession_id)
-        if image_path and label_path:
-            data_dict.append({
-                "image": str(image_path),
-                "label": str(label_path),
-            })
-        else:
-            logger.warning("Skipping accession_id %s due to missing data.", accession_id)
+        # --- Logging setup ---
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self.logger.setLevel(logging.INFO)
 
-    n_images_val = int(val_split * len(data_dict))
-    n_images_test = int(test_split * len(data_dict))
-    n_images_train = len(data_dict) - n_images_val - n_images_test
+    def get_image_and_label_list(self, _val_split):
+        """Returns a list of dicts, each dict containing the path to an image and its corresponding label."""
 
-    train_datalist = data_dict[:n_images_train]
-    val_datalist = data_dict[n_images_train : n_images_train + n_images_val]
-    test_datalist = data_dict[n_images_train + n_images_val :]
+        datalist = []
+        # loop over each accession id in the train set
+        for accession_id in self.dataframe["accession_id"]:
+            try:
+                accession_folder_path = self.flip.get_by_accession_number(
+                    self.project_id,
+                    accession_id,
+                    resource_type=[
+                        ResourceType.NIFTI,
+                        # ResourceType.SEGMENTATION,
+                    ],
+                )
+            except Exception as err:
+                print(f"Could not get image data folder path for {accession_id}: {err}")
+                continue
 
-    if is_test:
-        print(f"Found {len(test_datalist)} test samples.")
-        return list(test_datalist)
+            print(accession_folder_path)
 
-    print(f"Found {len(train_datalist)} training samples and {len(val_datalist)} validation samples.")
-    return list(train_datalist), list(val_datalist)
+            all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
+            print(all_images)
+
+            this_accession_matches = 0
+            print(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
+            for img in all_images:
+                # for each image, find the corresponding segmentation mask
+                seg = str(img).replace("/input_", "/label_")
+
+                if not Path(seg).exists():
+                    print(f"No matching segmentation mask for {img}.")
+                    continue
+
+                try:
+                    img_header = nib.load(str(img))
+                except nib.filebasedimages.ImageFileError as err:
+                    print(f"Problem loading header of base image {str(img)}.")
+                    print(f"{err=}")
+                    print(f"{type(err)=}")
+                    print(f"{err.args=}")
+                    continue
+
+                try:
+                    seg_header = nib.load(seg)
+                except nib.filebasedimages.ImageFileError as err:
+                    print(f"Problem loading header of segmentation {str(seg)}.")
+                    print(f"{err=}")
+                    print(f"{type(err)=}")
+                    print(f"{err.args=}")
+                    continue
+
+                # Some QC checks to ensure the image and segmentation are valid and match
+                # check is 3D and at least 128x128x128 in size and seg is the same
+                if len(img_header.shape) != 3:
+                    print(f"Image has other than 3 dimensions (it has {len(img_header.shape)}.)")
+                    continue
+                elif any([img_dim != seg_dim for img_dim, seg_dim in zip(img_header.shape, seg_header.shape)]):
+                    print(
+                        f"Image dimensions do not match segmentation dimensions"
+                        f"({img_header.shape}) vs ({seg_header.shape})."
+                    )
+                    continue
+                else:
+                    # defines keys for image and segmentation
+                    datalist.append({"image": str(img), "label": seg})
+                    print("Matching base image and segmentation added.")
+                    this_accession_matches += 1
+
+            print(f"Added {this_accession_matches} matched image + segmentation pairs for {accession_id}.")
+
+        print(f"Found {len(datalist)} files in total.")
+
+        # split into the training and testing data
+        train_datalist, val_datalist = np.split(datalist, [int((1 - _val_split) * len(datalist))])
+
+        return train_datalist, val_datalist

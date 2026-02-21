@@ -16,7 +16,7 @@ FROM flwr/base:${FLWR_VERSION:-1.26.1-py3.12-ubuntu24.04}
 WORKDIR /app
 
 # Copy only what we need for dependency install (keeps build cache efficient)
-COPY --chown=app:app pyproject.toml .
+COPY --chown=app:app tutorials/monai/pyproject.toml .
 
 # Only the non-Flower dependencies are needed.
 # Remove the flwr[simulation] dependency from pyproject.toml before installing, since it's only needed for the 

@@ -1,4 +1,5 @@
 # Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -16,7 +17,7 @@ from flwr.app import ArrayRecord, Context
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
 
-from app.task import get_model
+from app.models import get_model
 
 # Create ServerApp
 app = ServerApp()

@@ -1,4 +1,5 @@
 # Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -15,13 +16,16 @@
 import logging
 
 import torch
+from flip.constants import FlipConstants
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from monai.data import DataLoader, Dataset
 from monai.losses import DiceLoss
 
-from app.data_loading import get_datalist, get_train_transforms
-from app.task import get_model, train_func, validate_func
+from app.data_loading import FLIP_BASE
+from app.models import get_model
+from app.task import train_func, validate_func
+from app.transforms import get_train_transforms, get_val_transforms
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -38,17 +42,27 @@ def train(msg: Message, context: Context) -> Message:
     local_epochs = int(run_config.get("local-epochs", 1))
     learning_rate = float(run_config.get("learning-rate", 1e-4))
     val_split = float(run_config.get("val-split", 0.2))
-    test_split = float(run_config.get("test-split", 0.2))
+    # test_split = float(run_config.get("test-split", 0.2))
     batch_size = int(run_config.get("batch-size", 2))
+
+    # Configure FLIP
+    flip_utils = FLIP_BASE()
+    flip_utils.project_id = run_config.get("flip-project-id", "monai-flower-tutorial")
+    flip_utils.query = run_config.get("flip-query", "*")
+    logger.info(f"Fetching FLIP dataframe from {FlipConstants.DEV_DATAFRAME}")
+    flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
+    logger.info(
+        f"FLIP dataframe for project {flip_utils.project_id} with query {flip_utils.query} has {len(flip_utils.dataframe)} rows."
+    )
 
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Training on device: %s", device)
 
     # Get data
-    train_datalist, val_datalist = get_datalist(val_split=val_split, test_split=test_split, is_test=False)
+    train_datalist, val_datalist = flip_utils.get_image_and_label_list(_val_split=val_split)
     dataset_train = Dataset(train_datalist, transform=get_train_transforms())
-    dataset_val = Dataset(val_datalist, transform=get_train_transforms())
+    dataset_val = Dataset(val_datalist, transform=get_val_transforms())
     train_loader = DataLoader(dataset_train, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(dataset_val, batch_size=1, shuffle=False)
 
