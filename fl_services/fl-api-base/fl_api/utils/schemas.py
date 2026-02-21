@@ -11,35 +11,21 @@
 #
 
 import time
-from enum import Enum
-from typing import List
+from enum import Enum, IntEnum
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
-
-
-class FLAggregators(Enum):
-    """Enumeration for different FL aggregators"""
-
-    IN_TIME_ACCUMULATE_WEIGHTED_AGGREGATOR = "InTimeAccumulateWeightedAggregator"
-    ACCUMULATE_WEIGHTED_AGGREGATOR = "AccumulateWeightedAggregator"
 
 
 class UploadAppRequest(BaseModel):
     """
     Defines the body of the request to upload an application to the server.
-
-    See full list of aggregators in https://nvflare.readthedocs.io/en/2.7.1/apidocs/nvflare.app_common.aggregators.html
     """
 
     project_id: str
     cohort_query: str
-    local_rounds: int
-    global_rounds: int
     trusts: List[str]
     bundle_urls: List[str]
-    ignore_result_error: bool = False
-    aggregator: str = FLAggregators.IN_TIME_ACCUMULATE_WEIGHTED_AGGREGATOR.value
-    aggregation_weights: dict = {}
 
 
 class ServerInfoModel(BaseModel):
@@ -88,3 +74,32 @@ class SystemInfoModel(BaseModel):
         return (
             f"SystemInfo\nserver_info:\n{self.server_info}\nclient_info:\n{client_info_str}\njob_info:\n{job_info_str}"
         )
+
+
+class FLAggregators(Enum):
+    """Enumeration for different FL aggregators"""
+
+    InTimeAccumulateWeightedAggregator = "InTimeAccumulateWeightedAggregator"
+    AccumulateWeightedAggregator = "AccumulateWeightedAggregator"
+
+
+class AggregationWeights:
+    MinimumAggregationWeight = 0
+    MaximumAggregationWeight = 1
+
+
+# TODO Decide if we want to keep this or not
+# The original value of MAX was 100, but this was increased to 1000 due to
+# https://github.com/londonaicentre/flipe-application/pull/47, where 'global round' can be something else, e.g.
+# a combined value of global round and local round.
+class TrainingRound(IntEnum):
+    MIN = 1
+    MAX = 1000
+
+
+class IOverridableConfig(BaseModel):
+    LOCAL_ROUNDS: Optional[int] = None
+    GLOBAL_ROUNDS: Optional[int] = None
+    IGNORE_RESULT_ERROR: Optional[bool] = None
+    AGGREGATOR: Optional[str] = None
+    AGGREGATION_WEIGHTS: Optional[Dict[str, float]] = None

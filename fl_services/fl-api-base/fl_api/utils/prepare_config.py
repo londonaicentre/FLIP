@@ -27,6 +27,7 @@ from fl_api.utils.constants import (
 )
 from fl_api.utils.io_utils import read_config, write_config
 from fl_api.utils.logger import logger
+from fl_api.utils.schemas import AggregationWeights, FLAggregators, IOverridableConfig, TrainingRound
 
 
 # TODO Validation of config.json could be used to avoid some of the logic implemented here.
@@ -53,11 +54,6 @@ def configure_config(
         sub-versions of these.
     """
     config_json = job_dir / "custom" / CONFIG
-
-    # If no config.json is uploaded, this is no issue.
-    if not config_json.is_file():
-        logger.warning(f"No {CONFIG} file found in {job_dir}/custom. Skipping configuration.")
-        return config_json
 
     # Load the config.json file.
     user_config = read_config(config_json)
@@ -343,3 +339,58 @@ def configure_environment(job_dir: Path) -> Path:
 
     logger.info(f"Successfully wrote {ENVIRONMENT} to {env_path}")
     return env_path
+
+
+def validate_config(config: dict) -> IOverridableConfig:
+    """
+    Validate the provided configuration dictionary.
+
+    Args:
+        config (IOverridableConfig): The configuration dictionary to validate.
+
+    Returns:
+        IOverridableConfig: The validated configuration dictionary.
+
+    Raises:
+        ValueError: If any of the checks fail, a ValueError is raised with an appropriate message.
+    """
+    validated = IOverridableConfig()
+
+    def is_valid(value):
+        return isinstance(value, (int, float)) and TrainingRound.MIN <= value <= TrainingRound.MAX
+
+    if not isinstance(config, dict):
+        raise ValueError("Provided config is not a valid dictionary")
+
+    if is_valid(config.get("LOCAL_ROUNDS")):
+        validated.LOCAL_ROUNDS = config["LOCAL_ROUNDS"]
+
+    if is_valid(config.get("GLOBAL_ROUNDS")):
+        validated.GLOBAL_ROUNDS = config["GLOBAL_ROUNDS"]
+
+    if isinstance(config.get("IGNORE_RESULT_ERROR"), bool):
+        validated.IGNORE_RESULT_ERROR = config["IGNORE_RESULT_ERROR"]
+
+    agg = config.get("AGGREGATOR")
+    if agg:
+        if agg in FLAggregators:
+            validated.AGGREGATOR = agg
+        else:
+            raise ValueError(f"Unknown aggregator: {agg}")
+
+    weights = config.get("AGGREGATION_WEIGHTS")
+    if weights:
+        if not isinstance(weights, dict):
+            raise ValueError("AGGREGATION_WEIGHTS must be a dictionary")
+
+        for key, val in weights.items():
+            logger.info(f"Validating aggregation weight: {key} -> {val}")
+            if not (
+                isinstance(val, (int, float))
+                and AggregationWeights.MinimumAggregationWeight <= val <= AggregationWeights.MaximumAggregationWeight
+            ):
+                raise ValueError(f"Invalid weight: {val}")
+
+        validated.AGGREGATION_WEIGHTS = weights
+
+    return validated
