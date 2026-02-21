@@ -18,6 +18,7 @@ from sqlalchemy import Column
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
+from flip_api.config import get_settings
 from flip_api.db.models.main_models import (
     FLJob,
     FLNets,
@@ -328,7 +329,7 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> Optional[IJob
         raise DatabaseError("Error checking for queued jobs") from e
 
 
-def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[str], request_id: str, session: Session):
+def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[str], session: Session):
     """
     Prepares and starts the training process for a given model.
 
@@ -336,7 +337,6 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
         model_id (UUID): The ID of the model to train.
         fl_job_id (UUID): The ID of the federated learning job.
         clients (list[str]): The list of client IDs participating in the training.
-        request_id (str): The ID of the request.
         session (Session): The database session.
 
     Returns:
@@ -345,20 +345,44 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
     try:
         logger.debug("Attempting to prepare and start training...")
 
-        # Copies base application + user-uploaded model files into a destination bucket on S3
-        job_type = bundle_application(model_id)
-        logger.info(f"Bundled the application for '{model_id}' and job_type '{job_type}'.")
+        # NOTE folder structure of the bundle will be different depending on whether it's a FLARE / Flower app
+        fl_backend = get_settings().FL_BACKEND
+
+        if fl_backend == "nvflare":
+            # Copies base application + user-uploaded model files into a destination bucket on S3
+            dest_bucket_s3_path = bundle_application(model_id)
+            logger.info(f"Bundled the app for [nvflare] to '{dest_bucket_s3_path}'.")
+
+        elif fl_backend == "flower":
+            # Flower model files are already in the correct structure, so we just point to the model files bucket
+            # without needing to copy them to a different location on S3
+            # NOTE Flower currently does not have a list of supported job types
+            dest_bucket_s3_path = f"{get_settings().SCANNED_MODEL_FILES_BUCKET}/{model_id}"
+            logger.info(f"Set the bundle path for [flower] to '{dest_bucket_s3_path}'.")
+
+        else:
+            # If the FL_BACKEND setting is typed/ constrained correctly, this should never be hit
+            error_msg = f"Unsupported FL backend: {fl_backend}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
 
         net_details = get_net_by_model_id(model_id, session)
         if not net_details.endpoint:
             raise Exception("Failed to get the net endpoint")
 
-        validate_client_availability(clients, net_details.endpoint, request_id)
+        validate_client_availability(clients, net_details.endpoint)
 
         # Get presigned URLs from the files in the destination bucket on S3
-        bundle_urls = get_bundle_urls(model_id)
+        bundle_urls = get_bundle_urls(dest_bucket_s3_path)
 
-        start_training(model_id, fl_job_id, clients, net_details.endpoint, bundle_urls, request_id, session, job_type)
+        start_training(
+            model_id=model_id,
+            fl_job_id=fl_job_id,
+            clients=clients,
+            endpoint=net_details.endpoint,
+            bundle_urls=bundle_urls,
+            session=session,
+        )
 
         add_log(model_id, f"Model training assigned to '{net_details.name}'", session)
 

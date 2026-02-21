@@ -93,6 +93,7 @@ services:
       - FL_APP_BASE_BUCKET=${FL_APP_BASE_BUCKET}
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
+      - FL_BACKEND=${FL_BACKEND}
       - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
     restart: unless-stopped
     container_name: flip-api

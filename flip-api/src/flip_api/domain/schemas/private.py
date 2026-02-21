@@ -15,8 +15,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, validator
 
-from flip_api.domain.interfaces.shared import TrainingRound
-
 
 class Results(BaseModel):
     value: str
@@ -42,19 +40,13 @@ class OmopCohortResults(BaseModel):
         return value
 
 
-class Updateretrieve_image_status(BaseModel):
-    trust_id: UUID
-    xnat_project_id: UUID
-
-
 class TrainingMetrics(BaseModel):
     trust: str
     global_round: int = Field(
         ...,
         ge=0,
-        le=TrainingRound.MAX,
         title="global_round",
-        description="'global_round' must be between 0 and MAX",
+        description="'global_round' must be greater than 0",
         alias="globalRound",
     )
     label: str

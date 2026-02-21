@@ -13,9 +13,9 @@
 from typing import Annotated, Any, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, conlist, field_validator
+from pydantic import BaseModel, Field, conlist
 
-from flip_api.domain.schemas.status import BucketStatus, FileUploadStatus
+from flip_api.domain.schemas.status import BucketAction, BucketStatus, FileUploadStatus
 
 
 class ModelFiles(BaseModel):
@@ -32,17 +32,20 @@ class ModelFilesList(BaseModel):
     files: ModelFiles
 
 
+class ScannedFileSns(BaseModel):
+    """Model for SNS message when a file is scanned."""
+
+    message: str
+
+
 class ScannedFileMessage(BaseModel):
+    """Model for the message received when a file is scanned."""
+
     bucket: str
     key: str
     status: BucketStatus
-
-    @field_validator("key")
-    def validate_key(cls, v):
-        parts = v.split("/")
-        if len(parts) < 2:
-            raise ValueError("Key must be in format 'modelId/fileName'")
-        return v
+    action: BucketAction
+    finding: str
 
 
 class ScannedFileInput(BaseModel):

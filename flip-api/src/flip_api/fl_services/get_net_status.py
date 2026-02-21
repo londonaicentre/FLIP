@@ -13,7 +13,7 @@
 from typing import List
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
@@ -32,7 +32,6 @@ router = APIRouter(prefix="/fl", tags=["fl_services"])
 @router.get("/{net_name}/status", response_model=INetStatus)
 def get_net_status(
     net_name: str,
-    request: Request,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
 ):
@@ -41,7 +40,6 @@ def get_net_status(
 
     Args:
         net_name (str): The name of the network to get status for.
-        request (Request): FastAPI request object.
         db (Session): Database session.
         user_id (UUID): ID of the authenticated user.
 
@@ -52,7 +50,6 @@ def get_net_status(
         HTTPException: If the net is not found, if there is no response from the FL API, or if there is an error
         retrieving the net status.
     """
-    request_id = str(request.scope.get("request_id", "req-id"))
 
     try:
         # Get network information by name
@@ -64,7 +61,7 @@ def get_net_status(
         logger.info(f"Retrieving status for net: {net_name} with info {net_info}")
 
         # Get FL client status
-        clients = fetch_client_status(request_id, net_info.endpoint)
+        clients = fetch_client_status(net_info.endpoint)
 
         if not clients:
             error_message = f"No response from FL API for net {net_name}"

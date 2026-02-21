@@ -56,7 +56,6 @@ def get_status_endpoint(
     Raises:
         HTTPException: If there is an error while retrieving the net statuses.
     """
-    request_id = request.scope.get("request_id", "req-id")
 
     try:
         nets = get_nets(db)
@@ -64,7 +63,7 @@ def get_status_endpoint(
         net_statuses: List[INetStatus] = []
 
         for net in nets:
-            server_status = fetch_server_status(request_id, net.endpoint)
+            server_status = fetch_server_status(net.endpoint)
             logger.info({"server status response": server_status})
 
             if not server_status:
@@ -81,7 +80,7 @@ def get_status_endpoint(
             server_status = IServerStatus(status=server_status.status)
 
             # Fetch client statuses
-            clients = fetch_client_status(request_id, net.endpoint)
+            clients = fetch_client_status(net.endpoint)
 
             if not clients:
                 logger.error(f"{net.name}: No clients connected")
