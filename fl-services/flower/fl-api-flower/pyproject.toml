@@ -20,6 +20,7 @@ dependencies = [
     "fastapi>=0.115.11",
     "flwr>=1.26.1",
     "pydantic>=2.11.0",
+    "pydantic-settings>=2.11.0",
     "uvicorn>=0.34.0",
 ]
 
@@ -32,6 +33,7 @@ dev = [
     "pytest-cov>=6.0.0",
     "pytest>=8.3.5",
     "ruff>=0.15.0",
+    "types-requests>=2.32.0.20250515",
 ]
 
 [tool.coverage.report]

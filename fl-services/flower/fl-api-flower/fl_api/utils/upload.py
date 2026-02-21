@@ -29,7 +29,7 @@ def _key_after_model_id(url: str, model_id: str) -> Path:
     return Path(*parts[index + 1 :])
 
 
-def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -> dict[str, str]:
+def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) -> dict[str, str]:
     """
     Handles the logic of uploading an application to the server. This involves downloading the files uploaded by the
     user to a specific location on the server, and then returning a success message.
@@ -38,7 +38,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         model_id (str): The unique identifier for the model/app being uploaded. This is used to determine where to
         store the uploaded files.
         body (UploadAppRequest): The body of the upload request, containing details such as project_id, cohort_query.
-        upload_dir (str): The base directory on the server where uploaded applications should be stored.
+        upload_dir (Path): The base directory on the server where uploaded applications should be stored.
 
     Returns:
         dict[str, str]: A dictionary containing a success message and the location where the application was uploaded.
