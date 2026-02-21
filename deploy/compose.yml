@@ -83,9 +83,6 @@ services:
       # as both the download_dir and upload_dir in fed_admin.json
       # - ../flip-fl-api/transfer_upload:/app/admin/transfer_upload:rw
       - ../fl_services/fl-api-base/.vscode:/app/.vscode
-      # AWS SSO credentials for accessing S3 buckets
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
     command: ["/bin/bash", "/app/entrypoint.sh"]
 
   fl-client-1:
