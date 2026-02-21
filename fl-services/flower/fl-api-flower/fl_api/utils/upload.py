@@ -13,8 +13,8 @@ def _key_after_model_id(url: str, model_id: str) -> Path:
     """
     Extract only the path portion (query string is ignored automatically)
 
-    For example, if the URL is https://example.com/model_id/app/config.yaml?version=1, and model_id is "model_id",
-    this function will return Path("app/config.yaml")
+    For example, if the URL is https://example.com/model_id/config.json?version=1, and model_id is "model_id",
+    this function will return Path("config.json")
     """
     path = urlparse(url).path.lstrip("/")
 
@@ -50,7 +50,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     bundle_urls = body.bundle_urls  # Retrieve the files that the user has uploaded to the platform.
 
     # We create the job app in the upload dir folder
-    job_dir = Path.cwd() / upload_dir / model_id
+    job_dir = upload_dir / model_id
 
     # If the job directory already exists, we remove it to avoid conflicts with previous uploads.
     if job_dir.exists():
@@ -67,8 +67,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         logger.info(f"Downloading file from {url}")
 
         # Reconstruct structure under app_dir using the URL path after model_id
-        relative_path = _key_after_model_id(url, model_id)  # e.g. app/config.yaml
-        dest_path = app_dir / relative_path  # job_dir/app/app/config.yaml (see note below)
+        relative_path = _key_after_model_id(url, model_id)  # e.g. config.json
+        dest_path = app_dir / relative_path  # job_dir/app/config.json
 
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
