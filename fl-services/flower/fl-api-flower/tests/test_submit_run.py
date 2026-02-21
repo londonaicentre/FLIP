@@ -14,7 +14,6 @@
 import pytest
 
 from fl_api import app as app_module
-from fl_api.schemas import FlowerCommandResponse
 
 
 def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
@@ -37,7 +36,6 @@ def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
     response = client.post("/submit_run/numpy")
 
     assert response.status_code == 200
-    FlowerCommandResponse.model_validate(response.json())
 
 
 @pytest.mark.parametrize("app_folder", ["invalid", "numpy"])

@@ -12,7 +12,7 @@
 #
 
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HealthResponse(BaseModel):
@@ -25,6 +25,10 @@ class RunRecord(BaseModel):
 
 class FlowerCommandResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
+
+
+class FlowerSubmitRunCommandResponse(FlowerCommandResponse):
+    run_id: str = Field(alias="run-id")
 
 
 class ServerInfoModel(BaseModel):

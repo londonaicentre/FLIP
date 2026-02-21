@@ -52,7 +52,7 @@ def test_docs_and_openapi_contract(client):
     assert server_status_schema["$ref"] == "#/components/schemas/ServerInfoModel"
     assert client_status_schema["items"]["$ref"] == "#/components/schemas/ClientInfoModel"
     assert list_schema["items"]["$ref"] == "#/components/schemas/RunRecord"
-    assert submit_schema["$ref"] == "#/components/schemas/FlowerCommandResponse"
+    assert submit_schema["type"] == "string"
     assert abort_schema["$ref"] == "#/components/schemas/FlowerCommandResponse"
 
 

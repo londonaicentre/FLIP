@@ -27,6 +27,7 @@ from grpc_health.v1.health_pb2_grpc import HealthStub
 from fl_api.schemas import (
     ClientInfoModel,
     FlowerCommandResponse,
+    FlowerSubmitRunCommandResponse,
     HealthResponse,
     RunRecord,
     ServerInfoModel,
@@ -284,9 +285,9 @@ def list_runs() -> list[RunRecord]:
     return _parse_runs_payload(payload)
 
 
-@app.post("/submit_run/{app_folder}", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse)
+@app.post("/submit_run/{app_folder}", status_code=status.HTTP_200_OK, response_model=str)
 @app.post("/submit_job/{app_folder}", include_in_schema=False)  # alias, hide from docs
-def submit_run(app_folder: str) -> FlowerCommandResponse:
+def submit_run(app_folder: str) -> str:
     job_dir = _validate_app_folder(app_folder)
 
     global _submission_in_progress
@@ -311,13 +312,14 @@ def submit_run(app_folder: str) -> FlowerCommandResponse:
             ) from err
 
         response_payload = _parse_flwr_payload(result, "submit")
+        resp = FlowerSubmitRunCommandResponse.model_validate(response_payload)
 
         logger.info(
             "Submitted Flower job from '%s' using command: %s",
             app_folder,
             " ".join(command),
         )
-        return FlowerCommandResponse.model_validate(response_payload)
+        return resp.run_id
     finally:
         with _state_lock:
             _submission_in_progress = False
