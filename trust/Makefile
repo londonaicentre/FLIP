@@ -14,10 +14,13 @@
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=../.env.production
+__DCKR_SUFFIX=production
 else ifeq ($(PROD),stag)
 MAIN_ENV_FILE=../.env.stag
+__DCKR_SUFFIX=production
 else
 MAIN_ENV_FILE=../.env.development
+__DCKR_SUFFIX=development
 endif
 
 # replace environment variables by the values from the .env files
@@ -34,7 +37,8 @@ ifeq (,$(filter $(FL_BACKEND),$(VALID_FL_BACKENDS)))
 $(error Invalid FL_BACKEND '$(FL_BACKEND)'. Must be one of: $(VALID_FL_BACKENDS))
 endif
 
-FL_BACKEND_COMPOSE_FILE := compose_trust.$(FL_BACKEND).yml
+COMMON_COMPOSE_FILE := compose_trust.$(__DCKR_SUFFIX).yml
+FL_BACKEND_COMPOSE_FILE := compose_trust.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
 # Override FL_PROVISIONED_DIR to use absolute path resolved relative to the parent Makefile
 # This allows the repo to work on any machine without hardcoding paths
@@ -47,9 +51,8 @@ trust1 = trust1
 trust2 = trust2
 
 OMOP_DB_CMD=make -C ./omop-db
-DOCKER_COMPOSE_CMD=docker compose -f compose_trust.yml -f $(FL_BACKEND_COMPOSE_FILE)
-DOCKER_COMPOSE_PROD_CMD=docker compose -f compose_trust.production.yml -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f compose_trust.yml -f $(FL_BACKEND_COMPOSE_FILE) -f compose.debug.override.yml
+DOCKER_COMPOSE_CMD=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f compose_trust.debug.override.yml
 
 TRUST_1_VARS = \
 	TRUST_NUMBER=1 \
@@ -106,11 +109,12 @@ up-trust-1-stag:
 # NOTE eventually if we get AWSCLI on the ec2 instance by default then we could run update-omop-data here too.
 	@echo "🚢 Starting Trust 1 services..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
-	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_PROD_CMD} -p ${trust1} up -d --pull always
+	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
+	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p ${trust1} up -d --pull always
 
 down-trust-1-stag:
 	@echo "🛑 Stopping Trust 1 services..."
-	$(TRUST_1_VARS) ${DOCKER_COMPOSE_PROD_CMD} -p ${trust1} down --remove-orphans
+	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust1} down --remove-orphans
 
 # Uses --pull always to ensure the latest FL images and omop-db image are used
 # ensure omop data is up to date before bringing up trust 2

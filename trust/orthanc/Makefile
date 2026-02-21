@@ -25,7 +25,7 @@ export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
 service_name = orthanc
-docker_command = docker compose -f ../compose_trust.yml
+docker_command = docker compose -f ../compose_trust.development.yml
 run_clean = run --rm --remove-orphans
 
 network1 = deploy_trust-network-1

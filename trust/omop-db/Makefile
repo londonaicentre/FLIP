@@ -29,7 +29,7 @@ network1 = deploy_trust-network-1
 # network2 = deploy_trust-network-2
 
 service_name = omop-db
-docker_command = docker compose -f ../compose_trust.yml
+docker_command = docker compose -f ../compose_trust.development.yml
 run_clean = run --rm --remove-orphans
 
 # Using the run command ignores the port mapping
