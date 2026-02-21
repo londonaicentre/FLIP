@@ -1,6 +1,3 @@
-/* 
-/* potentially add "project_id" and "query" here during start of the job (e.g. upload_application)
-*/
 {
     "job_type": "standard"
 }
