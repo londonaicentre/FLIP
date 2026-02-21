@@ -40,7 +40,7 @@ def test_abort_run_success_and_failures(
 ):
     mock_flwr_run(returncode=returncode, stdout=stdout, stderr=stderr)
 
-    response = client.delete("/abort_run", params={"run_id": "9478652229627629048"})
+    response = client.delete("/abort_run/9478652229627629048")
 
     assert response.status_code == expected_status
     if expected_status == 200:

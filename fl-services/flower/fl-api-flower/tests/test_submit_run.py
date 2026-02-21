@@ -34,7 +34,7 @@ def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
         )
     )
 
-    response = client.post("/submit_run", params={"app_folder": "numpy"})
+    response = client.post("/submit_run/numpy")
 
     assert response.status_code == 200
     FlowerCommandResponse.model_validate(response.json())
@@ -44,7 +44,7 @@ def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
 def test_submit_run_input_validation(client, src_root, monkeypatch, app_folder):
     monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,monai")
 
-    response = client.post("/submit_run", params={"app_folder": app_folder})
+    response = client.post(f"/submit_run/{app_folder}")
 
     assert response.status_code == 400
 
@@ -54,7 +54,7 @@ def test_submit_run_conflict_when_submission_in_progress(client, src_root, monke
     monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,monai")
     app_module._submission_in_progress = True
 
-    response = client.post("/submit_run", params={"app_folder": "numpy"})
+    response = client.post("/submit_run/numpy")
 
     assert response.status_code == 409
 
@@ -85,6 +85,6 @@ def test_submit_run_execution_failures(
     else:
         mock_flwr_run(returncode=returncode, stdout=stdout, stderr=stderr)
 
-    response = client.post("/submit_run", params={"app_folder": "numpy"})
+    response = client.post("/submit_run/numpy")
 
     assert response.status_code == 500
