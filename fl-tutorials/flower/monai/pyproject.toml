@@ -37,13 +37,6 @@ dependencies = [
     "torch>=2.10.0",
 ]
 
-[tool.ruff]
-line-length = 120
-
-[tool.ruff.lint]
-preview = true
-select = ['I', 'F', 'E', 'W', 'PT']
-
 [tool.hatch.build.targets.wheel]
 packages = ["."]
 
@@ -66,3 +59,11 @@ test-split = 0.3
 batch-size = 2
 # Model configuration
 spatial-dims = 3 # This is currently unused but can be passed to get_model()
+
+# Linter
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+preview = true
+select = ['I', 'F', 'E', 'W', 'PT']
