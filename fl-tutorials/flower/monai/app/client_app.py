@@ -1,0 +1,108 @@
+# Copyright (c) 2026 Flower Labs GmbH
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+"""quickstart-monai: A Flower / MONAI training-only app."""
+
+import logging
+
+import torch
+from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
+from flwr.clientapp import ClientApp
+from monai.data import DataLoader, Dataset
+from monai.losses import DiceLoss
+
+from app.data_loading import get_datalist, get_train_transforms
+from app.task import get_model, train_func, validate_func
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Flower ClientApp
+app = ClientApp()
+
+
+@app.train()
+def train(msg: Message, context: Context) -> Message:
+    """Train the model on local data (no evaluation)."""
+    # Configure training parameters
+    run_config = context.run_config
+    local_epochs = int(run_config.get("local-epochs", 1))
+    learning_rate = float(run_config.get("learning-rate", 1e-4))
+    val_split = float(run_config.get("val-split", 0.2))
+    test_split = float(run_config.get("test-split", 0.2))
+    batch_size = int(run_config.get("batch-size", 2))
+
+    # Setup device
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info("Training on device: %s", device)
+
+    # Get data
+    train_datalist, val_datalist = get_datalist(
+        val_split=val_split, test_split=test_split, is_test=False
+    )
+    dataset_train = Dataset(train_datalist, transform=get_train_transforms())
+    dataset_val = Dataset(val_datalist, transform=get_train_transforms())
+    train_loader = DataLoader(dataset_train, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(dataset_val, batch_size=1, shuffle=False)
+
+    # Initialize model and load received weights
+    model = get_model()
+    state_dict = msg.content["arrays"].to_torch_state_dict()
+    model.load_state_dict(state_dict=state_dict, strict=False)
+    model.to(device)
+
+    # Initialize optimizer and loss function
+    loss_fn = DiceLoss(to_onehot_y=True, softmax=True)
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+
+    # Perform training
+    losses: dict[str, list[float]] = {"train": [], "val": []}
+    dice: dict[str, list[float]] = {"val": []}
+    for epoch in range(local_epochs):
+        logger.info(f"Starting epoch {epoch + 1}/{local_epochs}")
+        train_loss = train_func(
+            model=model,
+            train_loader=train_loader,
+            optimizer=optimizer,
+            loss_fn=loss_fn,
+            device=device,
+        )
+
+        val_dice, val_loss = validate_func(
+            model=model,
+            val_loader=val_loader,
+            device=device,
+            loss_fn=loss_fn,
+        )
+        losses["train"].append(train_loss)
+        losses["val"].append(val_loss)
+        dice["val"].append(val_dice)
+
+    # Get average metrics across all epochs (handle empty lists)
+    avg_train_loss = (
+        sum(losses["train"]) / len(losses["train"]) if losses["train"] else -1
+    )
+    avg_val_loss = sum(losses["val"]) / len(losses["val"]) if losses["val"] else -1
+    avg_val_dice = sum(dice["val"]) / len(dice["val"]) if dice["val"] else -1
+
+    # Construct and return the reply Message
+    model_record = ArrayRecord(model.state_dict())
+    metrics = {
+        "train_loss": avg_train_loss,
+        "val_loss": avg_val_loss,
+        "val_dice": avg_val_dice,
+        "num-examples": len(train_loader.dataset),
+        "num-iterations": len(train_loader) * local_epochs,
+    }
+    metric_record = MetricRecord(metrics)
+    content = RecordDict({"arrays": model_record, "metrics": metric_record})
+    return Message(content=content, reply_to=msg)
