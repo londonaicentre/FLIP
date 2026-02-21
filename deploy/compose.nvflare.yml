@@ -19,19 +19,16 @@ services:
   fl-api-net-1:
     container_name: flip-fl-api-net-1
     image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
-    volumes:
-      # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
-      - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/local:/app/admin/local
-      - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/startup:/app/admin/startup
-      # Mount the AWS credentials
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       - DEBUG=${DEBUG}
     ports:
       - "${FL_API_PORT}:8000"
       - "5679:5679"
+    volumes:
+      # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
+      - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/local:/app/admin/local
+      - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/startup:/app/admin/startup
     depends_on:
       - fl-server-net-1
     networks:
@@ -42,16 +39,13 @@ services:
   fl-api-net-2:
     container_name: flip-fl-api-net-2
     image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    environment:
+      - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+      - DEBUG=${DEBUG}
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/local:/app/admin/local
       - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/startup:/app/admin/startup
-      # Mount the AWS credentials
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
-    environment:
-      - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
-      - DEBUG=${DEBUG}
     depends_on:
       - fl-server-net-2
     networks:
@@ -67,7 +61,7 @@ services:
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/transfer:/app/transfer
-      # Mount the AWS credentials
+      # Mount the AWS credentials (needed to upload model results to S3)
       - ~/.aws/config:/root/.aws/config:ro
       - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
     environment:
@@ -95,7 +89,7 @@ services:
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/transfer:/app/transfer
-      # Mount the AWS credentials
+      # Mount the AWS credentials (needed to upload model results to S3)
       - ~/.aws/config:/root/.aws/config:ro
       - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
     environment:

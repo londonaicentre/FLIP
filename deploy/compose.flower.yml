@@ -19,13 +19,8 @@ services:
   fl-api-net-1:
     container_name: flip-fl-api-net-1
     image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
-    volumes:
-      # Mount the AWS credentials
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
     environment:
       - DEBUG=${DEBUG}
-      # Flower variables
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - SUPERNODE_HEALTH_ADDRESSES=Trust_1=trust1-fl-client-net-1-1:9098,Trust_2=trust2-fl-client-net-1-1:9098
@@ -43,7 +38,7 @@ services:
     container_name: fl-server-net-1
     image: ghcr.io/londonaicentre/${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
-      # Mount the AWS credentials
+      # Mount the AWS credentials (needed to upload model results to S3)
       - ~/.aws/config:/root/.aws/config:ro
       - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
     environment:
