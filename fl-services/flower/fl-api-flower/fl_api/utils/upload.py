@@ -97,6 +97,16 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
 
     write_config(config, config_path)
 
+    # Now, among the uploaded files, there should be a pyproject.toml file which needs to go 1 folder above app_dir
+    # i.e. to job_dir, so we move it there.
+    pyproject_src = app_dir / "pyproject.toml"
+    pyproject_dest = job_dir / "pyproject.toml"
+    if pyproject_src.exists():
+        shutil.move(str(pyproject_src), str(pyproject_dest))
+        logger.info(f"Moved pyproject.toml from {pyproject_src} to {pyproject_dest}")
+    else:
+        logger.error(f"pyproject.toml not found at expected location: {pyproject_src}")
+
     response = {"message": f"Application uploaded successfully to: {job_dir}"}
 
     logger.info(response)
