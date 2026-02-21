@@ -70,7 +70,7 @@ def test_stop_training_success(
 ):
     result = stop_training(model_id, fake_request, mock_db, user_id)
 
-    assert result == ({}, 204)
+    assert result is None
     mock_abort_model_training.assert_called_once_with(fake_request, model_id, mock_db)
     mock_update_status.assert_called_once_with(model_id, ModelStatus.STOPPED, mock_db)
 

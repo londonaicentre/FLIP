@@ -26,15 +26,30 @@ router = APIRouter(prefix="/fl", tags=["fl_services"])
 
 
 # [#114] ✅
-@router.post("/stop/{model_id}")
-@router.post("/stop/{model_id}/{target}")
-@router.post("/stop/{model_id}/{target}/{clients}")
+@router.post("/stop/{model_id}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+@router.post("/stop/{model_id}/{target}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+@router.post("/stop/{model_id}/{target}/{clients}", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
 def stop_training(
     model_id: UUID,
     request: Request,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> None:
+    """
+    Stop the training of a specific model.
+
+    Args:
+        model_id (UUID): The ID of the model to stop training.
+        request (Request): The incoming HTTP request.
+        db (Session): Database session.
+        user_id (UUID): User ID from authentication.
+
+    Returns:
+        None
+
+    Raises:
+        HTTPException: If the user does not have access to the model or if there is an error while stopping training.
+    """
     if not can_access_model(user_id, model_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -50,5 +65,3 @@ def stop_training(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while stopping model training: {str(e)}",
         )
-
-    return {}, status.HTTP_204_NO_CONTENT

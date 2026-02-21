@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 create-networks tests
+.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 create-networks remove-networks recreate-networks tests
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=../.env.production
@@ -140,6 +140,18 @@ create-networks-trust-2:
 	@{ docker network inspect deploy_trust-network-2 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-2 || true; }
 
 create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2
+
+remove-networks:
+	@echo "🗑️  Removing all trust networks..."
+	@docker network rm central-hub-trust-apis-network 2>/dev/null || true
+	@docker network rm deploy_trust-network-1 2>/dev/null || true
+	@docker network rm deploy_trust-network-2 2>/dev/null || true
+	@docker network rm deploy_shared-net-1 2>/dev/null || true
+	@docker network rm deploy_shared-net-2 2>/dev/null || true
+	@echo "✅ Trust networks removed!"
+
+recreate-networks: remove-networks create-networks
+	@echo "✅ All trust networks recreated with swarm support!"
 
 debug:
 	$(MAKE) DEBUG=true restart-trust-1

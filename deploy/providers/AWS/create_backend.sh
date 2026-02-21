@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -33,17 +33,17 @@ else
         --bucket "$BUCKET_NAME" \
         --region "$REGION" \
         --create-bucket-configuration LocationConstraint="$REGION"
-    
+
     echo "🔒 Enabling versioning..."
     aws s3api put-bucket-versioning \
         --bucket "$BUCKET_NAME" \
         --versioning-configuration Status=Enabled
-        
+
     echo "🛡️  Blocking public access..."
     aws s3api put-public-access-block \
         --bucket "$BUCKET_NAME" \
         --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
-    
+
     echo "✅ S3 bucket created."
 fi
 

@@ -10,9 +10,9 @@
 # limitations under the License.
 #
 
-The XNAT docker-compose project is written and maintained by the 
-Neuroinformatics Research Group at the Washington University School of 
-Medicine. It is made available for general use under the 2-clause or 
+The XNAT docker-compose project is written and maintained by the
+Neuroinformatics Research Group at the Washington University School of
+Medicine. It is made available for general use under the 2-clause or
 Simplified BSD license:
 
 ==============================================================================
@@ -43,4 +43,3 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 The views and conclusions contained in the software and documentation are those
 of the authors and should not be interpreted as representing official policies,
 either expressed or implied, of the FreeBSD Project.
-

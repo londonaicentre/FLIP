@@ -10,21 +10,18 @@
 # limitations under the License.
 #
 
-import json
-from typing import Dict, List
 
 from sqlmodel import Session, select
 
+from flip_api.config import get_settings
 from flip_api.db.database import engine
 from flip_api.db.models.main_models import FLNets
-from flip_api.utils.get_secrets import get_secret
 from flip_api.utils.logger import logger
 
 
-def seed_fl_nets(session: Session) -> List[FLNets]:
+def seed_fl_nets(session: Session) -> list[FLNets]:
     """Seed FL nets into the database."""
-    net_secret = get_secret("net-endpoints")
-    nets: Dict[str, str] = json.loads(net_secret.replace("'", '"'))
+    nets = get_settings().NET_ENDPOINTS
 
     fl_nets = session.exec(select(FLNets)).all()
 

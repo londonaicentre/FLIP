@@ -202,6 +202,10 @@ def add_user_to_project(user: User, project_id: str, headers: dict[str, str]) ->
 
     Returns:
         imaging_api.routers.schemas.User: The user profile.
+
+    Raises:
+        HTTPException: If there is an error during the addition of the user to the project.
+        imaging_api.utils.exceptions.NotFoundError: If the user or project is not found.
     """
     if not user_exists(user.username, headers):
         raise NotFoundError(f"User '{user.username}' not found on XNAT")

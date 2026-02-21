@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -21,12 +21,12 @@ import AiCodeTextArea from "../AiCodeTextArea.vue";
 
 describe("Ai Code TextArea", () => {
     test("Renders Component", () => {
-        const comp = mountComponent(AiCodeTextArea, { 
+        const comp = mountComponent(AiCodeTextArea, {
             props: {
                 name: "test-code-textarea",
                 label: "Test Code Label"
             },
-            global: { plugins: [createPinia()] } 
+            global: { plugins: [createPinia()] }
         });
 
         expect(comp.exists()).toBe(true);

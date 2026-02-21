@@ -1,5 +1,5 @@
 <!--
-    Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
     You may obtain a copy of the License at
@@ -13,7 +13,7 @@
 
 # Data Access API
 
-Service to query the OMOP database and return dataframes, statistics. The query is SQL and given by the researcher. 
+Service to query the OMOP database and return dataframes, statistics. The query is SQL and given by the researcher.
 
 ## Run
 

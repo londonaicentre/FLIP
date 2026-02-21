@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -26,7 +26,7 @@ endif
 
 service_name = data-access-api
 lint_command = uv run ruff check . --fix
-test_coverage_html_command = uv run pytest --tb=short --disable-warnings --cov=data_access_api/ --cov-report=html --cov-report=term-missing 
+test_coverage_html_command = uv run pytest --tb=short --disable-warnings --cov=data_access_api/ --cov-report=html --cov-report=term-missing
 docker_command = docker compose -f ../compose_trust.yml
 run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
@@ -56,3 +56,4 @@ local_mypy:
 local_test:
 	BASE_IMAGES_DOWNLOAD_DIR="/tmp/images" \
 	$(lint_command) && $(mypy_command) && $(test_coverage_html_command)
+unit_test: local_test

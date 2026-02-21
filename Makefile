@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -11,7 +11,7 @@
 #
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
-		restart restart-no-trust ci tests debug create-networks
+		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -71,7 +71,7 @@ get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -f deploy/compose.yml
 OVERRIDE_COMPOSE_COMMAND=docker compose -f deploy/compose.yml -f deploy/compose.debug.override.yml
-SHOW_LOGS_CENTRAL_HUB=docker logs -f flip-api --tail 100 --timestamps --follow 
+SHOW_LOGS_CENTRAL_HUB=docker logs -f flip-api --tail 100 --timestamps --follow
 GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
 # Build the Docker images
@@ -138,7 +138,7 @@ down:
 	@echo "🛌 All services stopped successfully!"
 
 # Clean Docker resources
-clean:	
+clean:
 	${DOCKER_COMMAND} down --rmi local && \
 	docker system prune -f && \
 	rm -rf ./flip-fl-api/*/transfer/*/
@@ -176,6 +176,16 @@ debug-off-all:
 create-networks:
 	@{ docker network inspect central-hub-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-network || true; }
 	$(MAKE) -C trust create-networks
+
+remove-networks:
+	@echo "🗑️  Removing all networks..."
+	@docker network rm central-hub-network 2>/dev/null || true
+	$(MAKE) -C trust remove-networks
+	@echo "✅ All networks removed!"
+
+recreate-networks: remove-networks create-networks
+	@echo "🔄 All networks recreated for swarm deployment!"
+	@echo "ℹ️  Trust networks now use overlay driver for swarm compatibility"
 
 # Add a parameterized debug command
 debug:
@@ -218,3 +228,10 @@ print-docker-tag:  ## Print the current DOCKER_TAG value
 
 up-pgadmin:
 	${DOCKER_COMMAND} up -d pgadmin
+
+unit_test:
+	$(MAKE) -C flip-api unit_test
+	$(MAKE) -C flip-ui unit_test
+	$(MAKE) -C trust/data-access-api unit_test
+	$(MAKE) -C trust/imaging-api unit_test
+	$(MAKE) -C trust/trust-api unit_test 

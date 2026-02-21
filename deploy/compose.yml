@@ -24,7 +24,7 @@ services:
       dockerfile: Dockerfile
       target: development
     ports:
-      - "${UI_PORT}:44357"
+      - "${UI_PORT}:443"
     volumes:
       - ../flip-ui:/app
       - /app/node_modules
@@ -92,6 +92,7 @@ services:
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - FL_APP_BASE_BUCKET=${FL_APP_BASE_BUCKET}
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
+      - NET_ENDPOINTS=${NET_ENDPOINTS}
       - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
     restart: unless-stopped
     container_name: flip-api
@@ -112,11 +113,11 @@ services:
 
   fl-api-net-1:
     container_name: flip-fl-api-net-1
-    image: ghcr.io/londonaicentre/flare-fl-api:${DOCKER_FL_TAG}
+    image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
-      - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/admin/local:/app/admin/local
-      - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/admin/startup:/app/admin/startup
+      - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/local:/app/admin/local
+      - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/startup:/app/admin/startup
       # Mount the AWS credentials
       - ~/.aws/config:/root/.aws/config:ro
       - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
@@ -135,11 +136,11 @@ services:
 
   fl-api-net-2:
     container_name: flip-fl-api-net-2
-    image: ghcr.io/londonaicentre/flare-fl-api:${DOCKER_FL_TAG}
+    image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
-      - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/admin/local:/app/admin/local
-      - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/admin/startup:/app/admin/startup
+      - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/local:/app/admin/local
+      - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/startup:/app/admin/startup
       # Mount the AWS credentials
       - ~/.aws/config:/root/.aws/config:ro
       - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
@@ -156,12 +157,12 @@ services:
   # Reuse common fl-server config
   fl-server-net-1:
     container_name: fl-server-net-1
-    image: ghcr.io/londonaicentre/flare-fl-server:${DOCKER_FL_TAG}
+    image: ghcr.io/londonaicentre/${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)
-      - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/fl-server/local:/app/local
-      - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/fl-server/startup:/app/startup
-      - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/fl-server/transfer:/app/transfer
+      - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/local:/app/local
+      - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/startup:/app/startup
+      - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/transfer:/app/transfer
       # Mount the AWS credentials
       - ~/.aws/config:/root/.aws/config:ro
       - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
@@ -184,12 +185,12 @@ services:
 
   fl-server-net-2:
     container_name: fl-server-net-2
-    image: ghcr.io/londonaicentre/flare-fl-server:${DOCKER_FL_TAG}
+    image: ghcr.io/londonaicentre/${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)
-      - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/fl-server/local:/app/local
-      - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/fl-server/startup:/app/startup
-      - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/fl-server/transfer:/app/transfer
+      - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/local:/app/local
+      - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/startup:/app/startup
+      - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/transfer:/app/transfer
       # Mount the AWS credentials
       - ~/.aws/config:/root/.aws/config:ro
       - ~/.aws/sso/cache:/root/.aws/sso/cache:rw

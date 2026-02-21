@@ -20,6 +20,7 @@ def extract_missing_identifier(error_msg: str, pattern: str) -> str:
     Args:
         error_msg (str): The original error message from psycopg2.
         pattern (str): The regex pattern to extract the identifier.
+
     Returns:
         str: The extracted identifier or fallback message.
     """

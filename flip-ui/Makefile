@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -10,7 +10,26 @@
 # limitations under the License.
 #
 
-docker_command = docker compose -f ../deploy/compose.yml 
+ifeq ($(PROD),true)
+MAIN_ENV_FILE=../.env.production
+else ifeq ($(PROD),stag)
+MAIN_ENV_FILE=../.env.stag
+else
+MAIN_ENV_FILE=../.env.development
+endif
 
-tests:
-	$(docker_command) run --rm --remove-orphans --name flip-ui-test flip-ui npm run test:unit
+$(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
+
+# replace environment variables by the values from the .env files
+ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
+include $(MAIN_ENV_FILE)
+# Export all variables except DOCKER_TAG (which we'll set dynamically below)
+# export $(shell sed 's/=.*//' $(MAIN_ENV_FILE) | grep -v '^DOCKER_TAG$$')
+# NOTE The above no longer works as CICD tags are not based on PR numbers anymore since github actions are run manually.
+export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+endif
+
+docker_command = docker compose -f ../deploy/compose.yml
+
+unit_test:
+	$(docker_command) run --rm --remove-orphans --name flip-ui-test flip-ui npm run test:unit:update

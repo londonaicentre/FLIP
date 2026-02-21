@@ -25,13 +25,23 @@ router = APIRouter(prefix="/trust", tags=["trusts_services"])
 
 
 # [#114] ✅
-@router.get("/health", status_code=status.HTTP_200_OK)
+@router.get("/health", status_code=status.HTTP_200_OK, response_model=list[ITrustHealth])
 async def check_trusts_health(
     request: Request,
     db: Session = Depends(get_session),
-):
+) -> list[ITrustHealth]:
     """
-    Retrieves health status of all trusts by checking their health endpoints
+    Retrieves health status of all trusts by checking their health endpoints.
+
+    Args:
+        request (Request): The incoming HTTP request, used to pass headers to trust health endpoints.
+        db (Session): Database session for querying trusts.
+
+    Returns:
+        list[ITrustHealth]: A list of ITrustHealth objects representing the health status of each trust.
+
+    Raises:
+        HTTPException: If no trusts are found in the database or if there is an error during the operation.
     """
     try:
         logger.debug("Attempting to retrieve trusts from the database...")
@@ -46,7 +56,6 @@ async def check_trusts_health(
             logger.warning("No trusts found in the database")
             raise HTTPException(status_code=404, detail="No trusts found")
 
-        response = []
         logger.debug("Sending a request to each of the trusts...")
 
         # Make concurrent requests to all trusts
@@ -60,7 +69,7 @@ async def check_trusts_health(
             trust_health_results = await asyncio.gather(*tasks, return_exceptions=True)
 
             # Filter out any exception results
-            response = [res.model_dump() for res in trust_health_results if isinstance(res, ITrustHealth)]
+            response: list[ITrustHealth] = [res for res in trust_health_results if isinstance(res, ITrustHealth)]
 
         logger.info(f"Successfully retrieved health status for {len(response)} trusts")
         logger.debug(f"Trusts health status: {response}")
@@ -80,9 +89,9 @@ async def check_trust_health(client: httpx.AsyncClient, trust: Trust, headers: d
     Check health of a single trust
 
     Args:
-        client: AsyncClient for HTTP requests
-        trust: Trust model instance
-        auth_header: Authorization header value
+        client (httpx.AsyncClient): AsyncClient for HTTP requests
+        trust (Trust): Trust model instance
+        headers (dict): Headers to include in the request to the trust's health endpoint
 
     Returns:
         ITrustHealth: Trust health status
@@ -93,13 +102,13 @@ async def check_trust_health(client: httpx.AsyncClient, trust: Trust, headers: d
 
         # If the request was successful (status code 200)
         if response.status_code == 200:
-            return ITrustHealth(trust_id=str(trust.id), trust_name=trust.name, online=True)
+            return ITrustHealth(trust_id=trust.id, trust_name=trust.name, online=True)  # type: ignore[call-arg]
         else:
             # If the response was not 200, treat it as unhealthy
-            return ITrustHealth(trust_id=str(trust.id), trust_name=trust.name, online=False)
+            return ITrustHealth(trust_id=trust.id, trust_name=trust.name, online=False)  # type: ignore[call-arg]
 
     except Exception as e:
         logger.error(f"{trust.name} failed to report back. Error message: {str(e)}")
 
         # If an exception is raised during the request, mark the trust as offline
-        return ITrustHealth(trust_id=str(trust.id), trust_name=trust.name, online=False)
+        return ITrustHealth(trust_id=trust.id, trust_name=trust.name, online=False)  # type: ignore[call-arg]

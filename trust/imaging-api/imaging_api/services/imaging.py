@@ -36,9 +36,15 @@ def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
     Pings the imaging provider (PACS) to check if it is reachable.
 
     Args:
-        pacs_id (int): PACS ID to ping
+        pacs_id (int): PACS ID to ping.
+        headers (dict[str, str]): XNAT authentication headers.
+
     Returns:
-        PacsStatus: Status of the PACS system
+        PacsStatus: Status of the PACS system.
+
+    Raises:
+        imaging_api.utils.exceptions.NotFoundError: If the PACS with the given ID is not found.
+        Exception: If there is an error during the ping request.
     """
     response = requests.get(
         f"{XNAT_URL}/xapi/pacs/{pacs_id}/status",
@@ -55,7 +61,17 @@ def ping_pacs(pacs_id: int, headers: dict[str, str]) -> PacsStatus:
 def check_pacs(headers: dict[str, str], pacs_id: int = PACS_ID) -> None:
     """
     Checks if the PACS system is reachable by pinging it.
-    Raises an exception if the PACS system is not reachable or is disabled.
+
+    Args:
+        headers (dict[str, str]): XNAT authentication headers.
+        pacs_id (int): PACS ID to check. Default is the PACS_ID from settings.
+
+    Returns:
+        None
+
+    Raises:
+        imaging_api.utils.exceptions.NotFoundError: If the PACS with the given ID is not found.
+        Exception: If there is an error during the ping request or if the PACS is not reachable or is disabled.
     """
     try:
         pacs_status = ping_pacs(pacs_id, headers)
@@ -76,8 +92,13 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
 
     Args:
         accession_number (str): The accession number to query.
+        headers (dict[str, str]): XNAT authentication headers.
+
     Returns:
         List[Study]: A list of Study objects that match the accession number.
+
+    Raises:
+        Exception: If there is an error during the query request.
     """
     # Construct DQR Query
     study_query = StudyQuery(accessionNumber=accession_number, pacsId=PACS_ID)
@@ -119,8 +140,15 @@ def queue_image_import_request(
 
     Args:
         import_request (ImportStudyRequest): The import request containing project ID and study details.
+        headers (dict[str, str]): XNAT authentication headers.
+
     Returns:
         List[ImportStudyResponse]: A list of ImportStudyResponse objects representing the queued import requests.
+
+    Raises:
+        imaging_api.utils.exceptions.NotFoundError: If the project with the given ID is not found or if no studies are
+        found on PACS.
+        Exception: If there is an error during the import request.
     """
     logger.info(f"Queuing image import request: {import_request}")
 

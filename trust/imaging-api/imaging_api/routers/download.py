@@ -44,15 +44,20 @@ async def download_images_by_accession_number(
     All data is downloaded in a single .zip file. Once the file download is complete, this method will then attempt to
     unzip the folder and delete the existing .zip file.
 
-    Parameters:
-        net_id (str): The ID of the NVFlare net that will run the training
-        request_data (DownloadImagesRequestData): Contains encrypted central hub project ID and accession ID
-        assessor_type (str): The type of assessor to use for the download. Default is "scan". Can be "assessor"
-        resource_type (str): XNAT Resource type e.g DICOM/NIFTI. ALL will download all resources. Custom value is
-        allowed if researcher has added their own custom XNAT resource type into scans
+    Args:
+        net_id (str): The ID of the FL net that will run the training.
+        request_data (DownloadImagesRequestData): Contains encrypted central hub project ID and accession ID.
+        assessor_type (str): The type of assessor to use for the download. Default is "scan". Can be "assessor".
+        resource_type (str): XNAT resource type e.g DICOM/NIFTI. ALL will download all resources. Custom value is
+        allowed if researcher has added their own custom XNAT resource type into scans.
+        headers (XNATAuthHeaders): XNAT authentication headers.
 
     Returns:
-        str: The path where the downloaded and unzipped images are stored.
+        DownloadImagesResponse: The path where the downloaded and unzipped images are stored.
+
+    Raises:
+        HTTPException: If there is an error during decryption, if the resource is not found, or if there is an error
+                       during download/unzipping.
     """
     # Decrypt project ID
     logger.info("Trying to decrypt Central Hub Project ID")

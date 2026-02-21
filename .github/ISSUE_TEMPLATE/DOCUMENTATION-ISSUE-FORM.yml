@@ -1,0 +1,80 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Documentation
+description: Propose documentation changes, additions, or improvements
+title: "[Docs]: "
+labels: ["documentation"]
+type: Documentation
+projects: ["londonaicentre/10"]
+body:
+  - type: dropdown
+    id: documentation-type
+    attributes:
+      label: Type of documentation change
+      description: What type of documentation change are you proposing?
+      options:
+        - New documentation
+        - Update existing documentation
+        - Fix documentation error
+        - Improve clarity/readability
+        - Add examples or tutorials
+        - API documentation
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: short-description
+    attributes:
+      label: Description
+      placeholder: ex. Add documentation for the new trust API endpoint for retrieving patient cohorts
+    validations:
+      required: true
+  - type: textarea
+    id: location
+    attributes:
+      label: Documentation location
+      description: Where should this documentation be added or updated?
+      placeholder: ex. docs/source/guides/trust-api.rst, or flip-api/README.md, or create new file docs/source/guides/cohort-management.rst
+    validations:
+      required: true
+  - type: textarea
+    id: content-details
+    attributes:
+      label: Content details
+      description: What specific content should be included or changed? Provide as much detail as possible.
+      placeholder: ex. Document the /api/v1/cohort endpoint including request parameters, response format, authentication requirements, and provide example usage
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: What are one or more acceptance criteria that would be used to verify this documentation change is complete?
+      placeholder: ex. Documentation includes all endpoint parameters, response codes, and at least one working example
+    validations:
+      required: true
+  - type: textarea
+    id: related-code
+    attributes:
+      label: Related code or features
+      description: Are there specific code files, features, or PRs this documentation relates to?
+      placeholder: ex. Relates to PR #123 which added the cohort management feature in flip-api/src/flip_api/routers/cohorts.py
+    validations:
+      required: false
+  - type: checkboxes
+    id: project-admin
+    attributes:
+      label: Assign the relevant label(s) and, if known, Milestone to this documentation issue
+      options:
+        - label: I confirm I have assigned the relevant label(s) and, if known, Milestone to this documentation issue
+          required: true

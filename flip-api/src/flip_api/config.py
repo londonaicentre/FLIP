@@ -13,11 +13,17 @@
 from typing import Literal, Optional
 
 from pydantic import EmailStr, SecretStr
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     """Common settings shared across all environments (development and production)."""
+
+    model_config = SettingsConfigDict(
+        env_file="../.env.development",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # Environment flag
     ENV: Literal["development", "production"] = "development"
@@ -59,6 +65,9 @@ class Settings(BaseSettings):
     DB_HOST: str = "localhost"
     POSTGRES_USER: str
     POSTGRES_DB: str
+
+    # Variables used during database seeding
+    NET_ENDPOINTS: dict[str, str]
 
     # Variables only used in testing
     FLIP_API_URL: str = "http://localhost:8080/"  # this is currently only used in tests (TODO review)

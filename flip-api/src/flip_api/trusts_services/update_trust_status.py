@@ -59,7 +59,7 @@ def check_trust_exists(trust_id: str, db: Session) -> bool:
 
 
 # [#114] ✅
-@router.put("/{trust_id}/model/{model_id}/status/{trust_status}")
+@router.put("/{trust_id}/model/{model_id}/status/{trust_status}", response_model=dict[str, str])
 def update_trust_status(
     request: Request,
     trust_id: str = Path(..., description="ID of the trust"),
@@ -68,20 +68,26 @@ def update_trust_status(
     data: Optional[UpdateTrustStatusSchema] = Body(None),
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> dict[str, str]:
     """
     Update the status of a trust intersect with a model.
 
     Args:
-        model_id (UUID): ID of the model.
-        trust_id (str): ID of the trust.
-        trust_status (str): New status to set.
         request (Request): FastAPI request object.
+        trust_id (str): ID of the trust.
+        model_id (UUID): ID of the model.
+        trust_status (str): New status to set.
         data (Optional[UpdateTrustStatusSchema]): Request body containing additional data.
         db (Session): Database session.
+        user_id (UUID): ID of the authenticated user.
 
     Returns:
-        Dict[str, str]: Success message.
+        dict[str, str]: Success message.
+
+    Raises:
+        HTTPException: If the user does not have permission to update the trust status, if the model or trust does not
+        exist, if the trust status is invalid, if there is an error communicating with the trust, or if there is an
+        error updating the trust status in the database.
     """
     try:
         # Extract user ID from request context if available

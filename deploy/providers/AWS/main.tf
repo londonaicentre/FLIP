@@ -1,3 +1,17 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 terraform {
   required_version = ">= 1.13.1"
   required_providers {
@@ -44,11 +58,6 @@ module "ec2_security_group" {
   description = "Security group for FLIP EC2 instance"
   ingress_rules = [
     {
-      port        = 443
-      description = "HTTPS traffic"
-    },
-    # TODO: Remove this and replace the pod-based UI with CloudFront
-    {
       port        = var.UI_PORT
       description = "FLIP UI"
     },
@@ -86,7 +95,7 @@ resource "aws_security_group_rule" "fl_server_ingress" {
   protocol          = "tcp"
   cidr_blocks       = ["${module.trust_ec2.public_ip}/32"]
   security_group_id = module.ec2_security_group.security_group.id
-  description       = "NVFlare FL Server from Trust EC2"
+  description       = "FL Server from Trust EC2"
 }
 
 resource "aws_security_group_rule" "fl_admin_ingress" {
@@ -96,7 +105,7 @@ resource "aws_security_group_rule" "fl_admin_ingress" {
   protocol          = "tcp"
   cidr_blocks       = ["${module.trust_ec2.public_ip}/32"]
   security_group_id = module.ec2_security_group.security_group.id
-  description       = "NVFlare Admin Port from Trust EC2"
+  description       = "FL Admin Port from Trust EC2"
 }
 
 # RDS
@@ -159,7 +168,6 @@ module "flip_api_secret" {
 
   secret_string = jsonencode({
     aes_key               = var.AES_KEY_BASE64
-    net-endpoints         = var.NET_ENDPOINTS
     Trust_1-endpoint      = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
     Trust_2-endpoint      = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
   })
@@ -253,8 +261,8 @@ module "alb_security_group" {
   description = "Security group for FLIP ALB"
   ingress_rules = [
     {
-      port        = var.UI_PORT
-      description = "UI traffic"
+      port        = var.ALB_HTTPS_PORT
+      description = "HTTPS traffic"
     },
     {
       port        = var.API_PORT
@@ -267,6 +275,10 @@ module "alb_security_group" {
     {
       port        = 8002
       description = "FL Server traffic"
+    },
+    {
+      port        = var.ALB_HTTP_PORT
+      description = "HTTP traffic (redirect to HTTPS)"
     }
   ]
 }
@@ -280,11 +292,21 @@ module "alb" {
   enable_deletion_protection = false
 
   listeners = {
-    "ui-listener" = {
-      port     = var.UI_PORT
-      protocol = "HTTP"
+    "https-listener" = {
+      port            = var.ALB_HTTPS_PORT
+      protocol        = "HTTPS"
+      certificate_arn = aws_acm_certificate.flip.arn
       forward = {
         target_group_key = "ec2-instance-ui"
+      }
+    },
+    "http-redirect" = {
+      port     = var.ALB_HTTP_PORT
+      protocol = "HTTP"
+      redirect = {
+        port        = tostring(var.ALB_HTTPS_PORT)
+        protocol    = "HTTPS"
+        status_code = "HTTP_301"
       }
     },
     "api-listener" = {
@@ -353,6 +375,77 @@ resource "aws_route53_record" "alb" {
   }
 }
 
+# Listener rule for path-based routing to API
+# Routes specific API paths to avoid conflicts with UI routes
+resource "aws_lb_listener_rule" "api_path_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 100
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/cohort/*", "/files/*", "/fl/*", "/model/*", "/health"]
+    }
+  }
+}
+
+# Additional listener rule for API documentation paths
+resource "aws_lb_listener_rule" "api_docs_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 101
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/docs", "/openapi.json", "/redoc", "/prompts/*", "/roles/*"]
+    }
+  }
+}
+
+# Additional listener rule for trust and site API paths
+resource "aws_lb_listener_rule" "api_trust_site_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 102
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/trust/*", "/site/*"]
+    }
+  }
+}
+
+# Listener rule for user and project API endpoints (priority 99 - higher priority)
+# Note: /users and /projects in UI are frontend routes, not API endpoints
+# API endpoints for users/projects should use more specific paths or HTTP methods
+resource "aws_lb_listener_rule" "api_user_project_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 99
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/user/*", "/project/*"]
+    }
+  }
+}
+
 # Outputs
 output "Keypair" {
   value = var.flip_keypair
@@ -414,10 +507,6 @@ output "CognitoAppClientId" {
 
 resource "aws_ses_email_identity" "flip_sender" {
   email = var.SES_VERIFIED_EMAIL
-
-  lifecycle {
-    prevent_destroy = true
-  }
 }
 
 resource "aws_ses_template" "flip_access_request" {

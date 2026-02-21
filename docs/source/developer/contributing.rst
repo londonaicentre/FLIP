@@ -17,10 +17,3 @@ Raising pull requests
 ***********
 Code review
 ***********
-
-
-
-
-
-
-

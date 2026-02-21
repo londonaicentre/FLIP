@@ -211,6 +211,26 @@ class S3Client:
             logger.error(f"Error getting object metadata for {key} from bucket {bucket}: {e}")
             raise Exception(f"Unable to get object metadata for {key} from bucket {bucket}")
 
+    def object_exists(self, s3_path: str) -> bool:
+        """
+        Check if an object exists in S3.
+
+        Args:
+            s3_path: Full S3 path (e.g., s3://bucket-name/key)
+
+        Returns:
+            bool: True if the object exists, False otherwise.
+        """
+        bucket, key = parse_s3_path(s3_path)
+        try:
+            self.client.head_object(Bucket=bucket, Key=key)
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                return False
+            logger.error(f"Error checking if object {key} exists in bucket {bucket}: {e}")
+            raise
+
     def copy_object(self, source_s3_path: str, dest_s3_path: str) -> None:
         """
         Copy object from source to destination bucket.

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -17,13 +17,13 @@ import { afterAll, afterEach, beforeAll, vi } from 'vitest'
 // Global test setup
 beforeAll(async () => {
   console.log('Setting up test environment...')
-  
+
   // Configure Vue Test Utils globally
   config.global.stubs = {
     // Vue Router components
     'router-link': true,
     'router-view': true,
-    
+
     // Headless UI components
     'Dialog': true,
     'DialogOverlay': true,
@@ -32,14 +32,14 @@ beforeAll(async () => {
     'DialogDescription': true,
     'TransitionRoot': true,
     'TransitionChild': true,
-    
+
     // Vue built-in components
     'Teleport': true,
-    
+
     // CodeMirror component
     'Codemirror': true,
   }
-  
+
   // Mock window.matchMedia for responsive components
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
@@ -54,14 +54,14 @@ beforeAll(async () => {
       dispatchEvent: vi.fn(),
     })),
   })
-  
+
   // Mock ResizeObserver
   global.ResizeObserver = vi.fn().mockImplementation(() => ({
     observe: vi.fn(),
     unobserve: vi.fn(),
     disconnect: vi.fn(),
   }))
-  
+
   // Mock IntersectionObserver
   global.IntersectionObserver = vi.fn().mockImplementation(() => ({
     observe: vi.fn(),

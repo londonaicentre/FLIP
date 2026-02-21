@@ -42,9 +42,3 @@ Checking progress
 
 On-site data augmentation
 =========================
-
-
-
-
-
-

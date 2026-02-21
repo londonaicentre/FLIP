@@ -111,19 +111,19 @@ def create_payload_for_project_creation(
     project_secondary_id: str,
     project_name: str,
     project_description: str = "",
-):
+) -> str:
     """
     Creates the payload for creating a new project in XNAT.
 
     Args:
-        xnat_projects_uri (str): XNAT projects URI
-        project_id (str): Unique identifier for the project
-        project_secondary_id (str): Secondary ID for the project
-        project_name (str): Name of the project
-        project_description (str, optional): Description of the project
+        xnat_projects_uri (str): XNAT projects URI.
+        project_id (str): Unique identifier for the project.
+        project_secondary_id (str): Secondary ID for the project.
+        project_name (str): Name of the project.
+        project_description (str, optional): Description of the project.
 
     Returns:
-        str: XML payload for creating the project
+        str: XML payload for creating the project.
     """
     payload = f"""
     <xnat:projectData xmlns:xnat="{xnat_projects_uri}">
@@ -152,13 +152,18 @@ def create_project(
     See also https://wiki.xnat.org/xnat-api/project-api#ProjectAPI-Createoneormoreprojects
 
     Args:
-        project_id (str): Unique identifier for the project
-        project_secondary_id (str): Secondary ID for the project
-        project_name (str): Name of the project
-        project_description (str): Description of the project
+        project_id (str): Unique identifier for the project.
+        project_secondary_id (str): Secondary ID for the project.
+        project_name (str): Name of the project.
+        project_description (str): Description of the project.
+        headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        Project: XNAT project object
+        Project: XNAT project object.
+
+    Raises:
+        AlreadyExistsError: If a project with the same ID already exists in XNAT.
+        Exception: If there is an error during the creation of the project.
     """
     xnat_projects_uri = f"{XNAT_URL}/data/projects"
 
@@ -196,9 +201,10 @@ def to_create_project(imaging_project: CentralHubProject) -> CreateProject:
     Maps Central Hub project information to XNAT project input to make a request to create a project.
 
     Args:
-        imaging_project (imaging_api.routers.schemas.CentralHubProject): Central Hub project object
+        imaging_project (imaging_api.routers.schemas.CentralHubProject): Central Hub project object.
+
     Returns:
-        CreateProject: XNAT create project request object
+        CreateProject: XNAT create project request object.
     """
     return CreateProject(
         id=str(uuid.uuid4()),
@@ -219,6 +225,9 @@ def set_project_prearchive_settings(project_id: str, headers: dict[str, str]) ->
 
     Returns:
         None
+
+    Raises:
+        Exception: If there is an error during the process of setting the project prearchive settings.
     """
     response = requests.put(
         f"{XNAT_URL}/data/projects/{project_id}/prearchive_code/{ProjectPreArchiveSettings.SEND_ALL_TO_ARCHIVE_AND_IGNORE_EXISTING}",
@@ -243,6 +252,9 @@ def enable_project_command(project_id: str, container: str, headers: dict[str, s
 
     Returns:
         None
+
+    Raises:
+        Exception: If there is an error during the process of enabling the command for the project.
     """
     container_name_formatted = urllib.parse.quote(container)
     response = requests.get(f"{XNAT_URL}/xapi/commands?image={container_name_formatted}", headers=headers)
@@ -280,7 +292,7 @@ def add_central_hub_users_to_project(
 
     Returns:
         Tuple[List[imaging_api.routers.schemas.CreatedUser], List[imaging_api.routers.schemas.User]]: List of created
-        users and added users
+        users and added users.
     """
     created_users: List[CreatedUser] = []
     added_users: List[User] = []
@@ -412,18 +424,16 @@ def get_subjects(project_id: str, headers: dict[str, str]) -> List[Subject]:
     Retrieves a list of subjects in a specific project in XNAT.
 
     Args:
-        project_id (str): Unique identifier for the project
-        headers (dict[str, str]): XNAT authentication headers
+        project_id (str): Unique identifier for the project.
+        headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        List[Subject]: List of XNAT subject objects
+        List[Subject]: List of XNAT subject objects.
+
+    Raises:
+        Exception: If there is an error while fetching the subjects from XNAT.
     """
-    try:
-        get_project(project_id, headers)
-    except NotFoundError as e:
-        raise NotFoundError(str(e))
-    except Exception as e:
-        raise Exception(str(e))
+    get_project(project_id, headers)
 
     response = requests.get(f"{XNAT_URL}/data/projects/{project_id}/subjects", headers=headers)
     subjects = [Subject(**subject) for subject in response.json()["ResultSet"]["Result"]]
@@ -439,18 +449,16 @@ def get_experiments(project_id: str, headers: dict[str, str]) -> List[Experiment
     Fetches all XNAT experiments from a project.
 
     Args:
-        project_id (str): Unique identifier for the project
-        headers (dict[str, str]): XNAT authentication headers
+        project_id (str): Unique identifier for the project.
+        headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        List[Experiment]: List of XNAT experiment objects
+        List[Experiment]: List of XNAT experiment objects.
+
+    Raises:
+        Exception: If there is an error while fetching the experiments from XNAT.
     """
-    try:
-        get_project(project_id, headers)
-    except NotFoundError as e:
-        raise NotFoundError(str(e))
-    except Exception as e:
-        raise Exception(str(e))
+    get_project(project_id, headers)
 
     response = requests.get(f"{XNAT_URL}/data/projects/{project_id}/experiments", headers=headers)
     experiments = [Experiment(**experiment) for experiment in response.json()["ResultSet"]["Result"]]
@@ -470,19 +478,19 @@ def get_experiment(project_id: str, experiment_id_or_label: str, headers: dict[s
         ``GET - /data/projects/{project-id}/experiments/{experiment-label | experiment-id}``
 
     Args:
-        project_id (str): Unique identifier for the project
-        experiment_id_or_label (str): Unique identifier or label for the experiment
-        headers (dict[str, str]): XNAT authentication headers
+        project_id (str): Unique identifier for the project.
+        experiment_id_or_label (str): Unique identifier or label for the experiment.
+        headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
         dict: XNAT experiment dictionary response
+
+    Raises:
+        imaging_api.utils.exceptions.NotFoundError: If the experiment with the given ID or label is not found in the
+        project.
+        Exception: If there is an error during the fetch process.
     """
-    try:
-        get_project(project_id, headers)
-    except NotFoundError as e:
-        raise NotFoundError(str(e))
-    except Exception as e:
-        raise Exception(str(e))
+    get_project(project_id, headers)
 
     response = requests.get(
         f"{XNAT_URL}/data/projects/{project_id}/experiments/{experiment_id_or_label}?format=json",
@@ -505,10 +513,13 @@ def get_subject_id_from_experiment_response(experiment_response: Dict[str, Any])
     Extracts the XNAT subject ID from the XNAT experiment response JSON.
 
     Args:
-        experiment_response (Dict[str, Any]): XNAT experiment response JSON
+        experiment_response (Dict[str, Any]): XNAT experiment response JSON.
 
     Returns:
         str: Subject ID
+
+    Raises:
+        Exception: If there is an error during the parsing of the experiment response JSON.
     """
     try:
         subject_id = experiment_response["items"][0]["data_fields"]["subject_ID"]

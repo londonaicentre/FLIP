@@ -1,4 +1,5 @@
 {
+    "python.useEnvironmentsExtension": true,
     "[jsonc]": {
         "editor.defaultFormatter": "vscode.json-language-features"
     },
@@ -35,13 +36,40 @@
     ],
     "python.defaultInterpreterPath": "${workspaceFolder}/flip-api/.venv/bin/python",
     "python.envFile": "${workspaceFolder}/.env.development",
-    "python.terminal.activateEnvInCurrentTerminal": true,
-    "python.terminal.shellIntegration.enabled": true,
-    "python.testing.autoTestDiscoverOnSaveEnabled": true,
-    "python.testing.autoTestDiscoverOnSavePattern": "**/*.py",
+    "python.testing.pytestPath": ".venv/bin/pytest",
+
+    // ========== FLIP-API (ACTIVE) ==========
     "python.testing.pytestArgs": [
-        "flip-api/tests",
+        "flip-api/tests/",
+        "--tb=short",
+        "--disable-warnings",
+        "--cov=src/",
+        "--cov-report=html",
+        "--cov-report=term-missing",
+        "--skip-client",
+        "--skip-db",
     ],
+
+    // ========== IMAGING-API (COMMENT OUT ABOVE, UNCOMMENT BELOW) ==========
+    // "python.testing.pytestArgs": [
+    //     "trust/imaging-api/tests/",
+    //     "--tb=short",
+    //     "--disable-warnings",
+    // ],
+
+    // ========== TRUST-API (COMMENT OUT ABOVE, UNCOMMENT BELOW) ==========
+    // "python.testing.pytestArgs": [
+    //     "trust/trust-api/tests/",
+    //     "--tb=short",
+    //     "--disable-warnings",
+    // ],
+
+    // ========== DATA-ACCESS-API (COMMENT OUT ABOVE, UNCOMMENT BELOW) ==========
+    // "python.testing.pytestArgs": [
+    //     "trust/data-access-api/tests/",
+    //     "--tb=short",
+    //     "--disable-warnings",
+    // ],
     "python.testing.pytestEnabled": true,
     "python.testing.unittestEnabled": false,
     "remote.autoForwardPortsSource": "hybrid",

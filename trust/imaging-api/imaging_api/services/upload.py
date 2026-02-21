@@ -48,15 +48,20 @@ async def upload_data_to_xnat(
     Args:
         central_hub_project_id (str): The central hub project ID in which the experiment belongs to. Corresponds to
         XNAT secondary ID.
-        accession_id (str): The unique value for a study stored in PACS. Corresponds to XNAT experiment label
-        net_id (str): The ID of the NVFlare net that will run the training.
+        accession_id (str): The unique value for a study stored in PACS. Corresponds to XNAT experiment label.
+        net_id (str): The ID of the FL net that will run the training.
         scan_id (str): The ID of the scan in XNAT. Will be created if it does not exist.
-        resource_id (str): XNAT Resource type e.g DICOM/NIFTI. Custom value is allowed. Will be created if it does not
+        resource_id (str): XNAT resource type e.g DICOM/NIFTI. Custom value is allowed. Will be created if it does not
         exist.
         files_relative_paths_to_upload (list[str]): List of relative file paths to be uploaded.
+        exist_ok (bool): Whether to overwrite the file if it already exists.
+        headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
         list[str]: List of URLs of the uploaded files.
+
+    Raises:
+        FileNotFoundError: If any of the files to be uploaded are not found.
     """
     # Get base directory from configuration
     upload_directory = os.path.join(BASE_IMAGES_DOWNLOAD_DIR, net_id, "upload")
@@ -153,8 +158,13 @@ def create_xnat_scan(
         subject_id (str): The ID of the subject in XNAT.
         experiment_id_or_label (str): The ID or label of the experiment in XNAT.
         scan_id (str): The ID of the scan in XNAT.
+        headers (dict[str, str]): XNAT authentication headers.
+
     Returns:
         None
+
+    Raises:
+        Exception: If there is an error during the creation of the scan.
     """
     scan_url = (
         f"{XNAT_URL}/data/projects/{project_id}/subjects/{subject_id}/"
@@ -186,8 +196,14 @@ def create_xnat_resource(
         experiment_id_or_label (str): The ID or label of the experiment in XNAT.
         scan_id (str): The ID of the scan in XNAT.
         resource_id (str): The ID of the resource in XNAT.
+        headers (dict[str, str]): XNAT authentication headers.
+
     Returns:
         None
+
+    Raises:
+        AlreadyExistsError: If the resource already exists in XNAT.
+        Exception: If there is an error during the creation of the resource.
     """
     resource_url = (
         f"{XNAT_URL}/data/projects/{project_id}/subjects/{subject_id}/"
@@ -209,6 +225,8 @@ def check_file_exists_in_xnat(check_url: str, headers: dict[str, str]) -> bool:
 
     Args:
         check_url (str): The URL to check for the file.
+        headers (dict[str, str]): XNAT authentication headers.
+
     Returns:
         bool: True if the file exists, False otherwise.
     """
@@ -237,8 +255,15 @@ def upload_file_to_xnat(
         resource_id (str): The ID of the resource in XNAT, for example "DICOM" or "NIFTI".
         file_path (str): The path to the file to be uploaded.
         exist_ok (bool): Whether to overwrite the file if it already exists.
+        headers (dict[str, str]): XNAT authentication headers.
+
     Returns:
         str: The URL of the uploaded file.
+
+    Raises:
+        AlreadyExistsError: If exist_ok is False and a file with the same name already exists in the specified XNAT
+        resource.
+        Exception: If there is an error during the upload process.
     """
     file_name = Path(file_path).name
 

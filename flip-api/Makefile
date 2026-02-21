@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -23,7 +23,7 @@ endif
 
 service_name = flip-api
 lint_command = uv run ruff check . --fix
-test_args = --tb=short --disable-warnings --cov=src/ --cov-report=html --cov-report=term-missing 
+test_args = --tb=short --disable-warnings --cov=src/ --cov-report=html --cov-report=term-missing
 test_coverage_html_command = uv run pytest $(test_args)
 test_coverage_html_command_unit = uv run pytest ./tests/unit ./tests/step_functions_services $(test_args)
 test_coverage_html_command_integration = uv run pytest ./tests/integration $(test_args)
@@ -70,7 +70,7 @@ debug:
 	$(docker_command) restart --remove-orphans $(service_name)
 create_testing_projects:
 	@echo "🔢 Creating projects for debugging..."
-	DB_HOST=localhost uv run python -m tests.debug_prelaunch_task
+	env DB_HOST=localhost uv run python -m tests.debug_prelaunch_task
 delete_testing_projects:
 	@echo "🔢 Removing projects created for debugging..."
-	DB_HOST=localhost uv run python -m tests.debug_post_debug_task
+	env DB_HOST=localhost uv run python -m tests.debug_post_debug_task

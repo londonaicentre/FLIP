@@ -1,3 +1,17 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 data "aws_ssm_parameter" "ubuntu" {
   name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
 }
@@ -27,7 +41,7 @@ resource "aws_vpc_security_group_ingress_rule" "trust_api" {
   to_port           = var.TRUST_API_PORT
 }
 
-# NOTE This is opening XNAT for the whole internet. Since these are 'open' trusts for testing, we can leave them as is. 
+# NOTE This is opening XNAT for the whole internet. Since these are 'open' trusts for testing, we can leave them as is.
 # TODO Restrict these to the trust's IP ranges in the future.
 resource "aws_vpc_security_group_ingress_rule" "xnat" {
   count             = length(var.security_group_ids) == 0 ? 1 : 0

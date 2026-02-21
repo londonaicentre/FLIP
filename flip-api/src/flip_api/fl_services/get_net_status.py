@@ -19,6 +19,7 @@ from sqlmodel import Session
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.fl import IClientStatus, INetStatus
+from flip_api.domain.schemas.status import ClientStatus
 from flip_api.fl_services.get_status import fetch_client_status
 from flip_api.fl_services.services.fl_scheduler_service import get_net_by_name
 from flip_api.trusts_services.services.trust import get_trusts
@@ -39,12 +40,17 @@ def get_net_status(
     Get the status of a net and its clients. A net consists of a central controller with a worker at each of the Trusts.
 
     Args:
-        net_name: The name of the network to get status for
-        request: FastAPI request object
-        db: Database session
+        net_name (str): The name of the network to get status for.
+        request (Request): FastAPI request object.
+        db (Session): Database session.
+        user_id (UUID): ID of the authenticated user.
 
     Returns:
-        INetStatus: Object containing the network name and status of connected clients
+        INetStatus: Object containing the network name and status of connected clients.
+
+    Raises:
+        HTTPException: If the net is not found, if there is no response from the FL API, or if there is an error
+        retrieving the net status.
     """
     request_id = str(request.scope.get("request_id", "req-id"))
 
@@ -57,7 +63,7 @@ def get_net_status(
 
         logger.info(f"Retrieving status for net: {net_name} with info {net_info}")
 
-        # Get NVFlare client status
+        # Get FL client status
         clients = fetch_client_status(request_id, net_info.endpoint)
 
         if not clients:
@@ -78,9 +84,7 @@ def get_net_status(
                     break
             else:
                 logger.warning(f"Trust {trust.name} not found in client statuses")
-                trust_client_statuses.append(
-                    IClientStatus(name=trust.name, online=False, status="Client not connected")
-                )
+                trust_client_statuses.append(IClientStatus(name=trust.name, status=ClientStatus.NO_REPLY.value))
                 continue
 
             # Log the trust and connected client information

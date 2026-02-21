@@ -19,7 +19,9 @@ from sqlmodel import Session
 from flip_api.auth.access_manager import can_access_project
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.domain.interfaces.trust import ITrust
+from flip_api.db.models.main_models import (
+    Trust,
+)
 from flip_api.domain.schemas.status import ProjectStatus
 from flip_api.project_services.services.project_services import get_approved_trusts_for_project, get_project
 from flip_api.utils.logger import logger
@@ -31,7 +33,7 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
 @router.get(
     "/{project_id}/trusts/approved",
     summary="Get approved trusts for a specific project.",
-    response_model=List[ITrust],
+    response_model=List[Trust],
     status_code=status.HTTP_200_OK,
     responses={
         status.HTTP_400_BAD_REQUEST: {"description": "Project has not been approved yet or invalid input."},
@@ -43,10 +45,21 @@ def get_project_approved_trusts_endpoint(
     project_id: UUID,
     session: Session = Depends(get_session),
     current_user_id: UUID = Depends(verify_token),
-):
+) -> List[Trust]:
     """
     Retrieves a list of trusts that have been approved for the specified project.
     The project must have a status of 'APPROVED'.
+
+    Args:
+        project_id (UUID): The ID of the project to retrieve approved trusts for.
+        session (Session): Database session, provided by dependency injection.
+        current_user_id (UUID): The ID of the currently authenticated user, provided by dependency injection.
+
+    Returns:
+         List[Trust]: A list of approved trusts for the project.
+
+    Raises:
+        HTTPException: If the request cannot be processed.
     """
     logger.info(f"User {current_user_id} requesting approved trusts for project {project_id}.")
 

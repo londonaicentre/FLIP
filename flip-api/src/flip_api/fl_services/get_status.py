@@ -23,7 +23,7 @@ from flip_api.domain.interfaces.fl import (
     INetStatus,
     IServerStatus,
 )
-from flip_api.domain.schemas.status import ServerEngineStatus
+from flip_api.domain.schemas.status import ClientStatus, ServerEngineStatus
 from flip_api.fl_services.services.fl_scheduler_service import get_nets
 from flip_api.fl_services.services.fl_service import fetch_client_status, fetch_server_status
 from flip_api.trusts_services.services.trust import get_trusts
@@ -78,10 +78,7 @@ def get_status_endpoint(
             # We assume the server is online if we get a response
             online = True
 
-            server_status = IServerStatus(
-                status=server_status.status,
-                start_time=server_status.start_time,
-            )
+            server_status = IServerStatus(status=server_status.status)
 
             # Fetch client statuses
             clients = fetch_client_status(request_id, net.endpoint)
@@ -106,9 +103,7 @@ def get_status_endpoint(
                         break
                 else:
                     logger.warning(f"Trust {trust.name} not found in client statuses")
-                    trust_client_statuses.append(
-                        IClientStatus(name=trust.name, online=False, status="Client not connected")
-                    )
+                    trust_client_statuses.append(IClientStatus(name=trust.name, status=ClientStatus.NO_REPLY.value))
                     continue
 
                 # Log the trust and connected client information

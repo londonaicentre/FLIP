@@ -16,10 +16,10 @@ from pathlib import Path
 from typing import Annotated, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from flip_api.domain.interfaces.shared import TrainingRound
-from flip_api.domain.schemas.status import NVFlareTargets
+from flip_api.domain.schemas.status import ClientStatus
 
 # Path to the JSON file containing job types and required files (relative to this file)
 REQUIRED_JOB_TYPES_FILE = Path(__file__).parent.parent.parent / "assets" / "required_job_types.json"
@@ -50,11 +50,6 @@ def _load_job_types_config() -> Dict[str, List[str]]:
 _JOB_TYPES_CONFIG = _load_job_types_config()
 
 
-class INVFlareTargetPathParameters(BaseModel):
-    target: NVFlareTargets
-    clients: Optional[str] = None
-
-
 class IStartTrainingBody(BaseModel):
     project_id: str
     cohort_query: str
@@ -77,6 +72,16 @@ class IJobResponse(BaseModel):
     id: UUID  # FLJob table primary key
     model_id: UUID
     clients: List[str]
+
+
+class IJobMetaData(BaseModel):
+    """Defines the meta data of a job."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    job_id: str
+    job_name: str
+    status: str
 
 
 class IRequiredTrainingInformation(BaseModel):
@@ -107,15 +112,27 @@ class INetDetails(BaseModel):
 
 
 class IServerStatus(BaseModel):
+    """Defines the status of the server."""
+
+    model_config = ConfigDict(extra="ignore")
+
     status: str
-    start_time: float
 
 
 class IClientStatus(BaseModel):
+    """Defines the status of a client."""
+
+    model_config = ConfigDict(extra="ignore")
+
     name: str
-    online: bool
     status: str
-    last_connected: Optional[float] = None
+
+    # set the online status based on the client status
+    # This property will be included in dumps / JSON schemas
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def online(self) -> bool:
+        return self.status != ClientStatus.NO_REPLY.value
 
 
 class INetStatus(BaseModel):

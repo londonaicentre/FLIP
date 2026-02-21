@@ -1,5 +1,5 @@
 <!--
-    Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
     You may obtain a copy of the License at
@@ -17,55 +17,49 @@
 
 This is a very simple development environment to enable new users of XNAT to interact with the tool in a local environment, using Orthanc as as the mock PACS.
 
-Extended from Haleema's repo <https://github.com/londonaicentre/xnat_explorer>.
-
 ## Setup
 
-This repo uses a [Alex edit]: (modified) fork of the [xnat-docker-compose](https://github.com/NrgXnat/xnat-docker-compose) repository to set up XNAT, adds Orthanc container on a shared network.
-
-[Alex edit] Had to change the ports in xnat-docker-compose/docker-compose.yml from the [xnat-docker-compose](https://github.com/NrgXnat/xnat-docker-compose)
-
-Note you need Orthanc running in order to startup XNAT and configure it properly (see [orthanc](../orthanc/) )
-
-Note you need to have started Orthanc and the APIs so that the Docker network exists.
+Note you need Orthanc running in order to startup XNAT and configure it properly (see [orthanc](../orthanc/)).
 
 ### Download plugins
 
-You will need to download the following plugins and place them in the `xnat/plugins` folder. Make sure to use the correct version of the plugins that are compatible the XNAT version. Check the plugins' compatibility matrix (for example, see [DQR Plugin Compatibility Matrix](https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix), [Container Service Compatibility Matrix](https://wiki.xnat.org/container-service/container-service-compatibility-matrix)).
+During development, you will need to download the following XNAT plugins. In production, the XNAT Docker image comes with the plugins installed.
 
-You can use the following Makefile command to download the plugins. From the folder 'xnat', run:
+Make sure to always use the correct version of the plugins that are compatible with the XNAT version specified. Check the plugin's compatibility matrix for more information (for example, see [DQR Plugin Compatibility Matrix](https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix)).
+
+You can use the Makefile command to download the plugins. From this folder, run
 
 ```sh
 make xnat-plugins-download
 ```
 
-The following table lists the compatible versions of the plugins for the XNAT version we are using.
+The following table lists the compatible versions of the plugins for the XNAT version `1.9.3` used in this environment.
 
-| Plugin                          | Compatible version for XNAT 1.9.1.1 |
-|---------------------------------|-------------------------------------|
-| Container Service Plugin        | [3.6.3](https://api.bitbucket.org/2.0/repositories/xnatdev/container-service/downloads/container-service-3.6.3-fat.jar)         |
-| Batch Launch Plugin             | [0.7.1](https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.7.1.jar)            |
-| DICOM Query-Retrieve Plugin     | [2.2.0](https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-2.2.0-xpl.jar)   |
-| OHIF Viewer Plugin              | [3.7.1](https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.7.1-fat.jar)                                               |
+| Plugin                          | Version for XNAT 1.9.3  |
+|---------------------------------|-------------------------|
+| Container Service Plugin        | 3.7.3                   |
+| Batch Launch Plugin             | 0.9.0                   |
+| DICOM Query-Retrieve Plugin     | 2.2.0                   |
+| OHIF Viewer Plugin              | 3.7.1                   |
 
 ###  Steps
 
-* Use the Makefile in this folder and run
+Use the Makefile in this folder and run
 
-    ```sh
-    make xnat-reset # this will cleanup previous data, plugins and configurations
-    make up
-    ```
+```sh
+make xnat-reset # this will cleanup previous data, plugins and configurations
+make up
+```
 
-* Once XNAT is up, configure XNAT using the below (only needs to be run once). In a separate terminal, run:
+Once XNAT is up, configure XNAT using the below (only needs to be run once). In a separate terminal, run:
 
-    ```sh
-    make xnat-configure
-    ```
+```sh
+make xnat-configure
+```
 
 The `xnat-configure` command will configure XNAT by creating the service account, changing the default admin password, configuring the SCP receiver, registering PACS, etc. It will also configure dcm2niix in the container service plugin.
 
-If successful, you will be able to log in to XNAT with the service account credentials.
+If successful, you will be able to log in to XNAT with the service account credentials (specified in the root `.env` file) and see the registered PACS in the DICOM Query-Retrieve plugin.
 
 ## Importing data
 
@@ -90,9 +84,9 @@ This can also be done manually from XNAT:
 
 Container service plugin 3.4.3 is incompatible with Docker version 25 and above. This is a known issue (<https://groups.google.com/g/xnat_discussion/c/2kh3J-p_8bE>). See plugin release notes for 3.5.0 <https://bitbucket.org/xnatdev/container-service/src/master/CHANGELOG.md>. I was running Docker version 28.0.1, build 068a01e.
 
-Fixed by installing newer version of the plugin (3.6.2). This meant installing a newer XNAT (1.9.1.1), after checking the compatibility matrix <https://wiki.xnat.org/container-service/container-service-compatibility-matrix#ContainerServiceCompatibilityMatrix-ContainerServiceCompatibilitywithXNAT>
+At the time this was fixed by installing newer version of the plugin (3.6.2). This meant installing a newer XNAT (1.9.1.1), after checking the compatibility matrix <https://wiki.xnat.org/container-service/container-service-compatibility-matrix#ContainerServiceCompatibilityMatrix-ContainerServiceCompatibilitywithXNAT>
 
-Also installed newer Batch Launch Plugin and DQR Plugin.
+Also installed newer Batch Launch Plugin and DQR Plugin due to compatibility matrices.
 
 ### [`FIXED`] Container can't find data
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -90,7 +90,7 @@ export const useAuthStore = defineStore("auth", {
         user: null,
         signInStep: null
     }),
-    
+
     getters: {
         getUser: (state) => state.user,
         confirmedUser: (state) => state.signInStep === "DONE" && !!state.user
@@ -163,7 +163,7 @@ export const useAuthStore = defineStore("auth", {
             this.$reset();
             routeChange.gotoLogin();
         },
-        
+
         async resetPassword(email: string) {
             const response = await resetPassword({
                 username: email,

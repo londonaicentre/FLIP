@@ -28,16 +28,29 @@ router = APIRouter(tags=["private_services"])
 @router.put(
     "/model/{model_id}/status/{model_status}",
     summary="Invoke model status update process",
+    response_model=dict[str, str],
 )
 def invoke_model_status_update_endpoint(
     model_id: UUID,
     model_status: ModelStatus = Path(..., title="New model status"),
     db: Session = Depends(get_session),
     token: str = Depends(check_authorization_token),  # Enforces authorization
-):
+) -> dict[str, str]:
     """
     Invokes the internal process for updating a model's status.
     This endpoint acts as a passthrough to the underlying model status update service.
+
+    Args:
+        model_id (UUID): The ID of the model whose status is to be updated.
+        model_status (ModelStatus): The new status to set for the model.
+        db (Session): The database session, provided by dependency injection.
+        token (str): The authorization token, validated by the dependency.
+
+    Returns:
+        dict[str, str]: A dictionary containing the result of the status update operation.
+
+    Raises:
+        HTTPException: If there is an error during the status update process.
     """
     del token  # Token is validated by the dependency
     endpoint_path = f"/model/{model_id}/status/{model_status.value}"

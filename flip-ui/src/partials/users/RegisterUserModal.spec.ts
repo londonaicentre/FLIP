@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -21,13 +21,13 @@ import RegisterUserModal from "@/partials/users/RegisterUserModal.vue";
 
 describe("Register User Modal", () => {
     it("renders the component successfully", () => {
-        const component = mount(RegisterUserModal, { 
-            global: { 
+        const component = mount(RegisterUserModal, {
+            global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false
                 })]
-            } 
+            }
         });
 
         expect(component.exists()).toBe(true);

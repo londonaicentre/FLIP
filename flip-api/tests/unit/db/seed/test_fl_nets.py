@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -35,23 +35,28 @@ def mock_fl_net():
 
 
 @pytest.fixture
-def sample_secret():
-    """Sample secrets data for testing."""
-    return "{'net1': 'http://net1.com', 'net2': 'http://net2.com'}"
+def sample_net_endpoints():
+    """Sample NET_ENDPOINTS dict for testing."""
+    return {"net1": "http://net1.com", "net2": "http://net2.com"}
 
 
-@patch("flip_api.db.seed.fl_nets.get_secret")
-def test_seed_fl_nets_creates_new_nets_when_none_exist(mock_get_secret, mock_session, sample_secret):
+def _mock_settings(net_endpoints: dict) -> SimpleNamespace:
+    """Helper to build a settings-like object."""
+    return SimpleNamespace(NET_ENDPOINTS=net_endpoints)
+
+
+@patch("flip_api.db.seed.fl_nets.get_settings")
+def test_seed_fl_nets_creates_new_nets_when_none_exist(mock_get_settings, mock_session, sample_net_endpoints):
     """Test that seed_fl_nets creates new nets when none exist."""
     # Arrange
-    mock_get_secret.return_value = sample_secret
+    mock_get_settings.return_value = _mock_settings(sample_net_endpoints)
     mock_session.exec.return_value.all.side_effect = [[], []]  # First call empty, second call empty for return
 
     # Act
     seed_fl_nets(mock_session)
 
     # Assert
-    mock_get_secret.assert_called_once()
+    mock_get_settings.assert_called_once()
     assert mock_session.exec.call_count == 2  # Once to check existing, once to return all
     assert mock_session.add.call_count == 2  # Two nets added
     assert mock_session.commit.call_count == 2  # Two commits
@@ -67,12 +72,12 @@ def test_seed_fl_nets_creates_new_nets_when_none_exist(mock_get_secret, mock_ses
     assert {added_net1.endpoint, added_net2.endpoint} == {"http://net1.com", "http://net2.com"}
 
 
-@patch("flip_api.db.seed.fl_nets.get_secret")
-def test_seed_fl_nets_skips_existing_nets(mock_get_secret, mock_session, sample_secret, mock_fl_net):
+@patch("flip_api.db.seed.fl_nets.get_settings")
+def test_seed_fl_nets_skips_existing_nets(mock_get_settings, mock_session, sample_net_endpoints, mock_fl_net):
     """Test that seed_fl_nets skips existing nets and only adds new ones."""
     # Arrange
-    sample_secret = "{'existing_net': 'http://existing.com', 'new_net': 'http://new.com'}"
-    mock_get_secret.return_value = sample_secret
+    sample_net_endpoints = {"existing_net": "http://existing.com", "new_net": "http://new.com"}
+    mock_get_settings.return_value = _mock_settings(sample_net_endpoints)
 
     existing_nets = [mock_fl_net]
     final_nets = [mock_fl_net, Mock(spec=FLNets)]
@@ -91,29 +96,11 @@ def test_seed_fl_nets_skips_existing_nets(mock_get_secret, mock_session, sample_
     assert added_net.endpoint == "http://new.com"
 
 
-@patch("flip_api.db.seed.fl_nets.get_secret")
-def test_seed_fl_nets_handles_json_with_single_quotes(mock_get_secret, mock_session):
-    """Test that seed_fl_nets correctly handles JSON with single quotes."""
-    # Arrange
-    secrets_with_single_quotes = "{'test_net': 'http://test.com'}"
-    mock_get_secret.return_value = secrets_with_single_quotes
-    mock_session.exec.return_value.all.side_effect = [[], []]
-
-    # Act
-    seed_fl_nets(mock_session)
-
-    # Assert
-    mock_session.add.assert_called_once()
-    added_net = mock_session.add.call_args[0][0]
-    assert added_net.name == "test_net"
-    assert added_net.endpoint == "http://test.com"
-
-
-@patch("flip_api.db.seed.fl_nets.get_secret")
-def test_seed_fl_nets_returns_all_nets(mock_get_secret, mock_session, sample_secret):
+@patch("flip_api.db.seed.fl_nets.get_settings")
+def test_seed_fl_nets_returns_all_nets(mock_get_settings, mock_session, sample_net_endpoints):
     """Test that seed_fl_nets returns all nets from database."""
     # Arrange
-    mock_get_secret.return_value = sample_secret
+    mock_get_settings.return_value = _mock_settings(sample_net_endpoints)
     mock_net1 = Mock(spec=FLNets)
     mock_net2 = Mock(spec=FLNets)
     final_nets = [mock_net1, mock_net2]
@@ -129,12 +116,12 @@ def test_seed_fl_nets_returns_all_nets(mock_get_secret, mock_session, sample_sec
     assert result == final_nets
 
 
-@patch("flip_api.db.seed.fl_nets.get_secret")
-def test_seed_fl_nets_with_empty_secrets(mock_get_secret, mock_session):
+@patch("flip_api.db.seed.fl_nets.get_settings")
+def test_seed_fl_nets_with_empty_secrets(mock_get_settings, mock_session):
     """Test that seed_fl_nets handles empty net endpoints."""
     # Arrange
-    empty_secrets = "{}"
-    mock_get_secret.return_value = empty_secrets
+    empty_secrets = {}
+    mock_get_settings.return_value = _mock_settings(empty_secrets)
     mock_session.exec.return_value.all.return_value = []
 
     # Act

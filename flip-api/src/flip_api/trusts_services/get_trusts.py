@@ -32,6 +32,9 @@ def get_trusts(
 ) -> List[IBasicTrust]:
     """
     Retrieve all trusts with their ID and name.
+
+    Raises:
+        HTTPException: If an error occurs while fetching trusts from the database.
     """
     try:
         # Using SQLModel select

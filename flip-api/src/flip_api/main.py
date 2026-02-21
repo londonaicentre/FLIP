@@ -105,7 +105,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 # Initialize the FastAPI app
-app = FastAPI(title="flip", description="flipflip hub API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(
+    title="FLIP CentralHub API",
+    description="Main API for FLIP CentralHub, providing communication between the frontend and backend services.",
+    version="0.1.0",
+    lifespan=lifespan,
+)
 
 # CORS middleware
 app.add_middleware(
@@ -190,12 +195,13 @@ app.include_router(update_user.router)
 
 
 # Root endpoint
-@app.get("/")
+@app.get("/", response_model=dict[str, str])
 def root():
+    """Root endpoint to verify the API is running."""
     return {"message": "Welcome to flip"}
 
 
-@app.get("/health")
+@app.get("/health", response_model=dict[str, str])
 def health_check():
     """Health check endpoint to verify the API is running"""
     return {"status": "ok", "message": "flip is running"}

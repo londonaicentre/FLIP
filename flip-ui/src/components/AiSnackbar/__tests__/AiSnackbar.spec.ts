@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -18,13 +18,13 @@ describe("Ai Snackbar", () => {
 
     test("handles empty message list", () => {
         const wrapper = mount(AiSnackbar);
-        
+
         expect(wrapper.findAll('[data-testid="snackbar-item"]')).toHaveLength(0);
     });
 
     test("renders component structure", () => {
         const wrapper = mount(AiSnackbar);
-        
+
         // Check basic structure exists
         expect(wrapper.find('.fixed.inset-0.z-10')).toBeTruthy();
         expect(wrapper.find('.w-full.max-w-md')).toBeTruthy();

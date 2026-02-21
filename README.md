@@ -1,5 +1,5 @@
 <!--
-    Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
     You may obtain a copy of the License at
@@ -11,9 +11,18 @@
     limitations under the License.
 -->
 
-# flip
+<p align="left">
+<img src="docs/images/flip-logo.png" height="200" alt='flip-logo' />
+</p>
 
-All services for the flip project are consolidated in this mono repository.
+Federated Learning Interoperability Platform
+
+[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
+... <!-- TODO add more badges here (readthedocs status, citations, etc) -->
+
+FLIP is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
+
+FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London.
 
 ## Docker Deployment Setup
 
@@ -70,7 +79,7 @@ overhead of testing things in your local machine and then deploying them to the 
 
 To be able to pull the FLIP docker images, configure your ghcr.io credentials as follows:
 
-1. Make sure you can see the images in [https://github.com/orgs/londonaicentre/packages](https://github.com/orgs/londonaicentre/packages).
+1. Make sure you can see the images in [https://github.com/londonaicentre/FLIP/packages](https://github.com/londonaicentre/FLIP/packages) and [https://github.com/londonaicentre/flip-fl-base/packages](https://github.com/londonaicentre/flip-fl-base/packages)
    - Contact a team member to be given permission if you cannot.
 2. Create a [Github public access token (classic)](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic) with these permissions:
    - `repo`
@@ -198,9 +207,9 @@ If you want to run a single service you can run:
 docker compose -f deploy/compose.yml run --rm < service name >
 ```
 
-### NVFLARE Federated Learning Setup
+### Federated Learning Setup
 
-The project uses NVIDIA FLARE (NVFLARE) for federated learning, which requires provisioned certificates and configuration files. These files are stored in a separate repository called `flip-fl-base`.
+The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for federated learning. FLARE requires provisioned certificates and configuration files that are generated in the separate repository [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) (see that repository for instructions on how to provision the workspace).
 
 #### FL_PROVISIONED_DIR Configuration
 
@@ -208,7 +217,7 @@ The `FL_PROVISIONED_DIR` environment variable points to the NVFLARE provisioned 
 
 - Certificates and keys for secure communication
 - `fed_client.json` and `fed_admin.json` configuration files
-- Network-specific startup kits for FL servers, FL APIs, and FL clients
+- Network-specific startup kits for FL APIs, FL servers, and FL clients
 
 **Important Notes:**
 
@@ -216,8 +225,8 @@ The `FL_PROVISIONED_DIR` environment variable points to the NVFLARE provisioned 
 
    ```bash
    parent-directory/
-   ├── flip/                      # This repository
-   └── flip-fl-base/     # Contains provisioned workspace
+   ├── flip/             # This repository
+   └── flip-fl-base/     # Contains the provisioned workspace
        └── workspace/
            ├── net-1/
            └── net-2/
@@ -235,7 +244,7 @@ The `FL_PROVISIONED_DIR` environment variable points to the NVFLARE provisioned 
 
 If you see errors like "fed_client.json does not exist" or "missing startup folder", verify that:
 
-- The `flip-fl-base` repository is cloned as a sibling directory
+- The [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) repository is cloned as a sibling directory
 - The workspace has been properly provisioned with NVFLARE certificates
 - The `FL_PROVISIONED_DIR` path is correctly resolved (check Makefile output)
 
@@ -257,7 +266,7 @@ The error `Additional property gpus is not allowed` may arise from the version o
 
 ## How to add a new service
 
-1. Add a new service definition to the services section:
+Add a new service definition to the services section in the docker compose files. For example:
 
 ```yml
 # deploy/compose.yml
@@ -280,7 +289,7 @@ services:
 
 ```
 
-Update the Makefile to include commands for the new services:
+Optionally update the Makefile to include commands for the new service:
 
 ```Makefile
 # Makefile
@@ -415,9 +424,9 @@ The project structure is as follows:
   - `data-access-api`: Contains the data access API service
   - `imaging-api`: Contains the imaging API service
   - `omop-db`: Contains a mocked OMOP database
-  - `orthanc`: Contains a mocked PACS (Orthanc)
+  - `orthanc`: Contains a mocked PACS service (uses [Orthanc](https://www.orthanc-server.com/))
   - `trust-api`: Contains the trust API service
-  - `xnat`: Contains a mocked XNAT service
+  - `xnat`: Contains a mocked [XNAT](https://www.xnat.org/) service
 
 ### PR creation
 
@@ -435,6 +444,17 @@ To install `act`, I recommend using [Homebrew](https://brew.sh/):
 ```bash
 brew install act
 ```
+
+#### GitHub Secrets for CI
+
+The CI/CD pipeline requires certain GitHub repository secrets to be configured for running tests. These secrets provide
+sensitive values like encryption keys and API keys. See [.github/SECRETS.md](.github/SECRETS.md) for:
+
+- Complete list of required secrets
+- How to generate and configure them
+- Security best practices
+
+For local development, copy `.env.development.example` to `.env.development` and update the placeholder values.
 
 ## Setting up the AWS configuration
 

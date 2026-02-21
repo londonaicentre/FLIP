@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -14,10 +14,10 @@
 
 
 # This script configures the XNAT instance
-# 
+#
 # Note the rest of the environment variables are available from the file
 # - trust/xnat/xnat-docker-compose/.env
-# 
+#
 
 # The below are fixed values for now
 XNAT_URL="http://xnat-web:8080" # internal to Docker network

@@ -1,4 +1,4 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down clean xnat-shell xnat-plugins-download xnat-plugins-clean \
+.PHONY: build up down clean xnat-shell xnat-plugins-download \
 	xnat-reset xnat-configure-trust-1 xnat-configure-trust-2 \
 	create-network-trust-1 create-network-trust-2 up-xnat-1 up-xnat-2
 
@@ -98,25 +98,27 @@ xnat-war-download:
 		echo "✅ XNAT WAR already exists locally."; \
 	else \
 		echo "📦 Downloading XNAT WAR from S3..."; \
-		aws s3 cp "s3://flipdev-artifacts/xnat/xnat-web-$(XNAT_VERSION).war" \
+		aws s3 cp "s3://$(FLIP_ARTIFACTS_BUCKET_NAME)/xnat/xnat-web-$(XNAT_VERSION).war" \
 			"xnat-docker-compose/xnat/build-artifacts/xnat-web-$(XNAT_VERSION).war"; \
 		ls -lh "xnat-docker-compose/xnat/build-artifacts/xnat-web-$(XNAT_VERSION).war"; \
 	fi
 
-# Remove any older plugin jars from the plugins folder
-xnat-plugins-clean:
-	@echo "🧹 Cleaning local XNAT plugin cache (keeping only desired versions)"
-	@cd xnat-docker-compose/xnat/plugins && rm -f *.jar && echo "✅ Plugin cache cleaned."
-
-# Plugin versions (see the compatibility matrices for each plugin, e.g. for the container service plugin, 
+# Plugin versions (see the compatibility matrices for each plugin, e.g. for the container service plugin,
 # see https://wiki.xnat.org/container-service/container-service-compatibility-matrix)
 xnat-plugins-download:
 	@echo "📦 Downloading required XNAT plugins if missing..."
-	@aws s3 sync s3://flipdev-artifacts/xnat/plugins/ xnat-docker-compose/xnat/plugins/
+	@aws s3 sync s3://$(FLIP_ARTIFACTS_BUCKET_NAME)/xnat/plugins/ xnat-docker-compose/xnat/plugins/ --delete --exclude "*" --include "*.jar"
+# 	Error if no *.jar files are found after sync (i.e. if the S3 bucket is empty or not accessible)
+	@if [ -z "$$(ls xnat-docker-compose/xnat/plugins/*.jar 2>/dev/null)" ]; then \
+		echo "❌ ERROR: No XNAT plugin files found after sync. Please check the S3 bucket and your AWS credentials."; \
+		exit 1; \
+	else \
+		echo "✅ Required plugins downloaded."; \
+	fi
 
 # Note this needs root privileges to run
 # Creates directory structure for XNAT (Docker Swarm requires them to exist beforehand)
-xnat-reset:
+xnat-reset: xnat-plugins-download
 	echo "Deleting previous XNAT data ..."; \
 	sudo rm -rf xnat-docker-compose/${XNAT_PORT_TRUST_1}; \
 	sudo rm -rf xnat-docker-compose/${XNAT_PORT_TRUST_2}; \

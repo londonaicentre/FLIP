@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -65,17 +65,17 @@ export const getJobTypeFromConfig = async (
         // Fetch job types if not provided
         const availableJobTypes = jobTypes ?? await fetchJobTypes();
         const config = await getModelConfig(modelId);
-        
+
         console.log("[getJobTypeFromConfig] Fetched config:", config);
         console.log("[getJobTypeFromConfig] job_type value:", config?.job_type);
         console.log("[getJobTypeFromConfig] Available job types:", Object.keys(availableJobTypes));
-        
+
         // If config exists and has a valid job_type, use it
         if (config && config.job_type && isValidJobType(availableJobTypes, config.job_type)) {
             console.log("[getJobTypeFromConfig] Using job_type from config:", config.job_type);
             return config.job_type;
         }
-        
+
         // Default to standard if:
         // - config.json couldn't be fetched
         // - config.json doesn't have job_type field

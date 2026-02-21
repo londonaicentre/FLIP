@@ -38,6 +38,7 @@ from flip_api.utils.logger import logger
 
 
 def to_utc_aware(dt: datetime | None) -> datetime:
+    """Convert a datetime to a timezone-aware UTC datetime. If the input is None, returns the minimum datetime."""
     if dt is None:
         return datetime.min.replace(tzinfo=timezone.utc)
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
@@ -45,10 +46,25 @@ def to_utc_aware(dt: datetime | None) -> datetime:
 
 # Helper for Base64 URL encoding
 def base64_url_encode(data: str) -> str:
+    """Encode a string using Base64 URL encoding without padding."""
     return base64.urlsafe_b64encode(data.encode("utf-8")).decode("utf-8").rstrip("=")
 
 
 def get_imaging_projects(project_id: UUID, db: Session) -> List[ImagingProject]:
+    """
+    Retrieve imaging projects associated with a given project ID.
+
+    Args:
+        project_id (UUID): The ID of the project to retrieve imaging projects for.
+        db (Session): The database session for executing queries.
+
+    Returns:
+        List[ImagingProject]: A list of ImagingProject objects associated with the given project ID.
+
+    Raises:
+        SQLAlchemyError: If there is an error executing the database query.
+        Exception: If there is an unexpected error during the retrieval process.
+    """
     try:
         # Columns must match the order expected by ImagingProject constructor or mapping logic
         statement = (
@@ -89,6 +105,16 @@ def get_imaging_projects(project_id: UUID, db: Session) -> List[ImagingProject]:
 
 
 def delete_imaging_project(imaging_project: ImagingProject, db: Session) -> bool:
+    """
+    Delete an imaging project via its API endpoint and update its status in the database.
+
+    Args:
+        imaging_project (ImagingProject): The imaging project to delete.
+        db (Session): The database session for executing queries.
+
+    Returns:
+        bool: True if the deletion and status update were successful, False otherwise.
+    """
     try:
         trust_endpoint = f"{imaging_project.endpoint}/imaging/{imaging_project.xnat_project_id}"
 
@@ -115,6 +141,21 @@ def delete_imaging_project(imaging_project: ImagingProject, db: Session) -> bool
 
 
 def get_xnat_project_status_info(xnat_project_id: UUID, db: Session) -> Optional[XnatProjectStatusInfo]:
+    """
+    Retrieve the XNAT project status information for a given XNAT project ID.
+
+    Args:
+        xnat_project_id (UUID): The ID of the XNAT project to retrieve status information for.
+        db (Session): The database session for executing queries.
+
+    Returns:
+        Optional[XnatProjectStatusInfo]: An object containing the XNAT project status information, or None if the
+                                         project status could not be found.
+
+    Raises:
+        SQLAlchemyError: If there is an error executing the database query.
+        Exception: If there is an unexpected error during the retrieval process.
+    """
     try:
         statement = select(XNATProjectStatus.retrieve_image_status, XNATProjectStatus.reimport_count).where(
             XNATProjectStatus.xnat_project_id == xnat_project_id
@@ -138,6 +179,17 @@ def get_xnat_project_status_info(xnat_project_id: UUID, db: Session) -> Optional
 def get_imaging_project_statuses(
     imaging_projects: List[ImagingProject], encoded_query: str, db: Session
 ) -> List[IImagingStatus]:
+    """
+    Retrieve the imaging project statuses for a list of imaging projects.
+
+    Args:
+        imaging_projects (List[ImagingProject]): The list of imaging projects to retrieve statuses for.
+        encoded_query (str): The Base64 URL encoded query to send to the imaging project endpoints.
+        db (Session): The database session for executing queries.
+
+    Returns:
+        List[IImagingStatus]: A list of IImagingStatus containing the status information for each imaging project.
+    """
     logger.debug(
         f"Attempting to retrieve the imaging project status. Trusts requested: {[ip.name for ip in imaging_projects]}"
     )
@@ -238,6 +290,20 @@ def reimport_failed_studies(
     db: Session,
     project_reimport_rate_minutes: int,
 ) -> bool:
+    """
+    Reimport failed studies for a list of reimport queries, ensuring that reimports are only attempted if the
+    specified time interval has passed since the last reimport.
+
+    Args:
+        reimport_queries (List[IReimportQuery]): A list of queries containing information about which projects and
+            trusts to reimport studies for, along with the last reimport time.
+        db (Session): The database session for updating reimport status.
+        project_reimport_rate_minutes (int): The minimum number of minutes that must have passed since the last
+            reimport before attempting another reimport for the same project and trust.
+
+    Returns:
+        bool: True if all eligible reimport attempts were successful, False if any eligible reimport attempt failed.
+    """
     successful_reimports_count = 0
     total_eligible_queries = 0
 

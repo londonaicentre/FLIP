@@ -1,5 +1,5 @@
 /*
- * Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -12,7 +12,7 @@
  */
 
 
-const AWS_BASE_URL = "http://localhost:8080/"; 
+const AWS_BASE_URL = "http://localhost:8080/";
 const AWS_USER_POOL_ID = "eu-west-2_4QdpwX1GW";
 const AWS_CLIENT_ID = "5hcskgab29jpmti0esd655lfsv";
 const BLACKLISTED_MODEL_FILES = "";

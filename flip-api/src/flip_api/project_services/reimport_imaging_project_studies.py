@@ -22,7 +22,7 @@ from flip_api.utils.logger import logger
 
 def reimport_imaging_project_studies(db: Session) -> None:
     """
-    Checks for projects with unimported studies and reimports them if they are elegible (i.e. enough time has passed
+    Checks for projects with unimported studies and reimports them if they are eligible (i.e. enough time has passed
     since the last reimport, and the max reimport count has not been reached).
 
     Args:
@@ -61,6 +61,9 @@ def reimport_imaging_project_studies_scheduled_task():
     """
     Scheduled task to reimport imaging project studies.
     This function is called by the scheduler.
+
+    Raises:
+        HTTPException: If an error occurs during the reimport process.
     """
     logger.info("🩻 Running scheduled reimport_imaging_project_studies execution...")
     try:

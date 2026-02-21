@@ -31,13 +31,29 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 
 # TODO [#114] This endpoint was not defined in the old repo. This functionality was called from the private service
 # (see private_services/invoke_model_status_update.py)
-@router.patch("/{model_id}/status/{model_status}", status_code=status.HTTP_200_OK)
+@router.patch("/{model_id}/status/{model_status}", status_code=status.HTTP_200_OK, response_model=dict[str, str])
 def update_model_status_endpoint(
     model_id: UUID = Path(..., title="Model ID"),
     model_status: ModelStatus = Path(..., title="New model status"),
     db: Session = Depends(get_session),
     user_id: Optional[UUID] = Depends(verify_token),
-):
+) -> dict[str, str]:
+    """
+    Update the status of a specific model.
+
+    Args:
+        model_id (UUID): The ID of the model to update.
+        model_status (ModelStatus): The new status to set for the model.
+        db (Session): Database session.
+        user_id (Optional[UUID]): User ID from authentication, if available.
+
+    Returns:
+        dict[str, str]: A success message indicating the status has been updated.
+
+    Raises:
+        HTTPException: If the user does not have access to the model, if the model does not exist, or if there is a
+                       database error.
+    """
     logger.info(f"Received request to update model {model_id} to status '{model_status}'")
 
     try:
