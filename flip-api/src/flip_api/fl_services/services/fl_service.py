@@ -122,7 +122,8 @@ def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session)
         ValueError: If the backend job ID is not returned in the response.
     """
     url = f"{endpoint}/submit_job/{model_id}"
-    fl_backend_job_id = http_post(url)
+    # NOTE we increased the timeout here as Flower submit takes slightly longer to return a response compared to FLARE.
+    fl_backend_job_id = http_post(url, timeout=30)
     # Validate that the fl_backend_job_id is returned and is a string
     if not fl_backend_job_id or not isinstance(fl_backend_job_id, str):
         raise ValueError("No backend job id returned or invalid format")

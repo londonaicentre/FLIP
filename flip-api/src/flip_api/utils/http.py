@@ -33,7 +33,9 @@ def http_get(url: str, request_id: Optional[str] = None) -> Any:
             raise
 
 
-def http_post(url: str, request_id: Optional[str] = None, data: Optional[Dict] = None) -> Any:
+def http_post(
+    url: str, request_id: Optional[str] = None, data: Optional[Dict] = None, timeout: Optional[float] = None
+) -> Any:
     """Perform an HTTP POST request to the specified URL with optional request ID for tracing."""
     headers = (
         {"Content-Type": "application/json", "x-request-id": request_id}
@@ -42,7 +44,11 @@ def http_post(url: str, request_id: Optional[str] = None, data: Optional[Dict] =
     )
     with httpx.Client() as client:
         try:
-            response = client.post(url, headers=headers, json=data)
+            if timeout is None:
+                response = client.post(url, headers=headers, json=data)
+            else:
+                response = client.post(url, headers=headers, json=data, timeout=timeout)
+
             response.raise_for_status()
             try:
                 return response.json()
