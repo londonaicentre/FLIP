@@ -33,8 +33,8 @@ def upsert_flwr_run_config(pyproject_path: Path, project_id: str, cohort_query: 
     """This function updates the pyproject.toml file with the provided project_id and cohort_query."""
     doc = parse(pyproject_path.read_text())
 
-    doc["tool"]["flwr"]["app"]["config"]["flip-project-id"] = project_id
-    doc["tool"]["flwr"]["app"]["config"]["flip-cohort-query"] = cohort_query
+    doc["tool"]["flwr"]["app"]["config"]["flip-project-id"] = project_id  # type: ignore[index]
+    doc["tool"]["flwr"]["app"]["config"]["flip-cohort-query"] = cohort_query  # type: ignore[index]
 
     pyproject_path.write_text(dumps(doc))
 
