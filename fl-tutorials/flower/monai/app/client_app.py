@@ -57,6 +57,7 @@ def send_metrics(client_name: str, model_id: str, label: str, value: float, roun
     logger.info(f"Attempting to handle metrics event raised by {client_name}...")
 
     try:
+        logger.info(f"Sending metrics to {endpoint} with payload: {payload}")
         response = requests.post(
             endpoint,
             json=payload,
