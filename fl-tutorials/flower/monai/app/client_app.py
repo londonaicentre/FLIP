@@ -38,8 +38,11 @@ app = ClientApp()
 
 # Send metrics function defined here temporarily
 # TODO make the flip package send_metrics function agnostic to FLARE objects so that we can use it here
-def send_metrics(client_name: str, model_id: str, label: str, value: float, round: int) -> None:
+def send_metrics(model_id: str, label: str, value: float, round: int) -> None:
     """Send metrics to the FLIP central hub."""
+
+    # NOTE this needs to match the name of the trust in the central hub database
+    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
 
     payload = {
         "trust": client_name,
@@ -54,7 +57,7 @@ def send_metrics(client_name: str, model_id: str, label: str, value: float, roun
 
     endpoint = f"{CENTRAL_HUB_API_URL}/model/{model_id}/metrics"
 
-    logger.info(f"Attempting to handle metrics event raised by {client_name}...")
+    logger.info(f"Attempting to send metrics event raised by {client_name}...")
 
     try:
         logger.info(f"Sending metrics to {endpoint} with payload: {payload}")
@@ -63,14 +66,6 @@ def send_metrics(client_name: str, model_id: str, label: str, value: float, roun
             json=payload,
             headers={PRIVATE_API_KEY_HEADER: PRIVATE_API_KEY},
         )
-
-        # debug 422 error
-        if response.status_code == 422:
-            try:
-                logger.error("422 detail: %s", response.json())
-            except Exception:
-                logger.error("422 raw body: %s", response.text)
-
         logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
         response.raise_for_status()
 
@@ -143,7 +138,7 @@ def train(msg: Message, context: Context) -> Message:
         )
         round = epoch + 1
         # round = global_round * (local_epochs) + epoch + 1
-        send_metrics(context.node_id, model_id, label="TRAIN_LOSS", value=train_loss, round=round)
+        send_metrics(model_id, label="TRAIN_LOSS", value=train_loss, round=round)
 
         val_dice, val_loss = validate_func(
             model=model,
@@ -151,8 +146,8 @@ def train(msg: Message, context: Context) -> Message:
             device=device,
             loss_fn=loss_fn,
         )
-        send_metrics(context.node_id, model_id, label="VAL_LOSS", value=val_loss, round=round)
-        send_metrics(context.node_id, model_id, label="VAL_DICE", value=val_dice, round=round)
+        send_metrics(model_id, label="VAL_LOSS", value=val_loss, round=round)
+        send_metrics(model_id, label="VAL_DICE", value=val_dice, round=round)
 
         losses["train"].append(train_loss)
         losses["val"].append(val_loss)
