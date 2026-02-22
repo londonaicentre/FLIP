@@ -18,7 +18,8 @@
 Federated Learning Interoperability Platform
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
-... <!-- TODO add more badges here (readthedocs status, citations, etc) -->
+[![Documentation Status](https://readthedocs.org/projects/londonaicentreflip/badge/?version=latest)](https://londonaicentreflip.readthedocs.io/en/latest/)
+... <!-- TODO add more badges here (citations, etc) -->
 
 FLIP is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
