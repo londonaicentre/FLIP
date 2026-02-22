@@ -14,12 +14,15 @@
 """quickstart-monai: A Flower / MONAI training-only app."""
 
 import logging
+import os
 
+import requests
 import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from monai.data import DataLoader, Dataset
 from monai.losses import DiceLoss
+from requests import HTTPError
 
 from app.data_loading import FLIP_BASE
 from app.models import get_model
@@ -33,6 +36,47 @@ logger.setLevel(logging.INFO)
 app = ClientApp()
 
 
+# Send metrics function defined here temporarily
+# TODO make the flip package send_metrics function agnostic to FLARE objects so that we can use it here
+def send_metrics(client_name: str, model_id: str, label: str, value: float, round: int) -> None:
+    """Send metrics to the FLIP central hub."""
+
+    payload = {
+        "trust": client_name,
+        "globalRound": round,
+        "label": label,
+        "result": value,
+    }
+
+    CENTRAL_HUB_API_URL = os.getenv("CENTRAL_HUB_API_URL", "https://central-hub.flip.ai/api/v1")
+    PRIVATE_API_KEY_HEADER = os.getenv("PRIVATE_API_KEY_HEADER", "X-API-Key")
+    PRIVATE_API_KEY = os.getenv("PRIVATE_API_KEY", "your_private_api_key_here")
+
+    endpoint = f"{CENTRAL_HUB_API_URL}/model/{model_id}/metrics"
+
+    logger.info(f"Attempting to handle metrics event raised by {client_name}...")
+
+    try:
+        response = requests.post(
+            endpoint,
+            json=payload,
+            headers={PRIVATE_API_KEY_HEADER: PRIVATE_API_KEY},
+        )
+        logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
+        response.raise_for_status()
+
+        logger.info(f"Successfully handled {client_name} metrics event")
+    except HTTPError as http_err:
+        logger.error(
+            f"An http error occurred when handling a metrics event, see exception below | status code "
+            f"{http_err.response.status_code}"
+        )
+        logger.exception(http_err)
+    except Exception as e:
+        logger.error("Something went wrong when handling metrics event, see exception below")
+        logger.exception(e)
+
+
 @app.train()
 def train(msg: Message, context: Context) -> Message:
     """Train the model on local data (no evaluation)."""
@@ -43,6 +87,9 @@ def train(msg: Message, context: Context) -> Message:
     val_split = float(run_config.get("val-split", 0.2))
     # test_split = float(run_config.get("test-split", 0.2))
     batch_size = int(run_config.get("batch-size", 2))
+
+    # FLIP variables
+    model_id = run_config.get("flip-model-id", "monai-flower-tutorial-model")
 
     # Configure FLIP
     flip_utils = FLIP_BASE()
@@ -85,6 +132,9 @@ def train(msg: Message, context: Context) -> Message:
             loss_fn=loss_fn,
             device=device,
         )
+        round = epoch + 1
+        # round = global_round * (local_epochs) + epoch + 1
+        send_metrics(context.node_id, model_id, label="TRAIN_LOSS", value=train_loss, round=round)
 
         val_dice, val_loss = validate_func(
             model=model,
@@ -92,6 +142,9 @@ def train(msg: Message, context: Context) -> Message:
             device=device,
             loss_fn=loss_fn,
         )
+        send_metrics(context.node_id, model_id, label="VAL_LOSS", value=val_loss, round=round)
+        send_metrics(context.node_id, model_id, label="VAL_DICE", value=val_dice, round=round)
+
         losses["train"].append(train_loss)
         losses["val"].append(val_loss)
         dice["val"].append(val_dice)
