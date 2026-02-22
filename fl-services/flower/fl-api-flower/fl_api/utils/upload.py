@@ -29,10 +29,11 @@ def _key_after_model_id(url: str, model_id: str) -> Path:
     return Path(*parts[index + 1 :])
 
 
-def upsert_flwr_run_config(pyproject_path: Path, project_id: str, cohort_query: str) -> None:
-    """This function updates the pyproject.toml file with the provided project_id and cohort_query."""
+def upsert_flwr_run_config(pyproject_path: Path, model_id: str, project_id: str, cohort_query: str) -> None:
+    """This function updates the pyproject.toml file with the provided model_id, project_id and cohort_query."""
     doc = parse(pyproject_path.read_text())
 
+    doc["tool"]["flwr"]["app"]["config"]["flip-model-id"] = model_id  # type: ignore[index]
     doc["tool"]["flwr"]["app"]["config"]["flip-project-id"] = project_id  # type: ignore[index]
     doc["tool"]["flwr"]["app"]["config"]["flip-cohort-query"] = cohort_query  # type: ignore[index]
 
@@ -107,7 +108,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         logger.error(f"pyproject.toml not found at expected location: {pyproject_src}")
 
     # Now we add project_id and query to flwr run config section in pyproject.toml
-    upsert_flwr_run_config(pyproject_dest, body.project_id, body.cohort_query)
+    upsert_flwr_run_config(pyproject_dest, model_id, body.project_id, body.cohort_query)
 
     response = {"message": f"Application uploaded successfully to: {job_dir}"}
 
