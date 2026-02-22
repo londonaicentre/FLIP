@@ -21,6 +21,7 @@ dependencies = [
     "flwr>=1.26.1",
     "pydantic>=2.11.0",
     "pydantic-settings>=2.11.0",
+    "tomlkit>=0.14.0",
     "uvicorn>=0.34.0",
 ]
 

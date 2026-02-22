@@ -3,9 +3,9 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+from tomlkit import dumps, parse
 
 from fl_api.schemas import UploadAppRequest
-from fl_api.utils.io_utils import read_config, write_config
 from fl_api.utils.logger import logger
 
 
@@ -27,6 +27,16 @@ def _key_after_model_id(url: str, model_id: str) -> Path:
 
     # Everything after model_id
     return Path(*parts[index + 1 :])
+
+
+def upsert_flwr_run_config(pyproject_path: Path, project_id: str, cohort_query: str) -> None:
+    """This function updates the pyproject.toml file with the provided project_id and cohort_query."""
+    doc = parse(pyproject_path.read_text())
+
+    doc["tool"]["flwr"]["app"]["config"]["flip-project-id"] = project_id
+    doc["tool"]["flwr"]["app"]["config"]["flip-cohort-query"] = cohort_query
+
+    pyproject_path.write_text(dumps(doc))
 
 
 def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) -> dict[str, str]:
@@ -85,19 +95,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
 
         logger.info(f"Downloaded file {dest_path}")
 
-    # Part 2: add project_id and query to config.json
-    config_path = app_dir / "config.json"
-    if config_path.exists():
-        config = read_config(config_path)
-    else:
-        config = {}
-
-    config["project_id"] = body.project_id
-    config["cohort_query"] = body.cohort_query
-
-    write_config(config, config_path)
-
-    # Now, among the uploaded files, there should be a pyproject.toml file which needs to go 1 folder above app_dir
+    # Part 2: pyproject.toml file
+    # among the uploaded files, there should be a pyproject.toml file which needs to go 1 folder above app_dir
     # i.e. to job_dir, so we move it there.
     pyproject_src = app_dir / "pyproject.toml"
     pyproject_dest = job_dir / "pyproject.toml"
@@ -106,6 +105,9 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         logger.info(f"Moved pyproject.toml from {pyproject_src} to {pyproject_dest}")
     else:
         logger.error(f"pyproject.toml not found at expected location: {pyproject_src}")
+
+    # Now we add project_id and query to flwr run config section in pyproject.toml
+    upsert_flwr_run_config(pyproject_dest, body.project_id, body.cohort_query)
 
     response = {"message": f"Application uploaded successfully to: {job_dir}"}
 

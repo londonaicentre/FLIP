@@ -47,8 +47,8 @@ def train(msg: Message, context: Context) -> Message:
     # Configure FLIP
     flip_utils = FLIP_BASE()
     flip_utils.project_id = run_config.get("flip-project-id", "monai-flower-tutorial")
-    flip_utils.query = run_config.get("flip-query", "*")
-    logger.info("Fetching FLIP dataframe ...")
+    flip_utils.query = run_config.get("flip-cohort-query", "*")
+    logger.info("Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
     flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
     logger.info(f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
 
