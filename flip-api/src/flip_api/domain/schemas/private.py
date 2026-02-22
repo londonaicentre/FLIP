@@ -46,7 +46,7 @@ class TrainingMetrics(BaseModel):
         ...,
         ge=0,
         title="global_round",
-        description="'global_round' must be greater than 0",
+        description="'global_round' must be >=0",
         alias="globalRound",
     )
     label: str
