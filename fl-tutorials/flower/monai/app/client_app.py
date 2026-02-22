@@ -63,6 +63,14 @@ def send_metrics(client_name: str, model_id: str, label: str, value: float, roun
             json=payload,
             headers={PRIVATE_API_KEY_HEADER: PRIVATE_API_KEY},
         )
+
+        # debug 422 error
+        if response.status_code == 422:
+            try:
+                logger.error("422 detail: %s", response.json())
+            except Exception:
+                logger.error("422 raw body: %s", response.text)
+
         logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
         response.raise_for_status()
 
