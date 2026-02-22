@@ -22,6 +22,7 @@ services:
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
     environment:
       - NET_ID=net-1
+      - SUPERNODE_NAME=Trust_${TRUST_NUMBER}
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
       - LOCAL_DEV=false
