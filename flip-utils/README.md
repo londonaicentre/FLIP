@@ -11,9 +11,13 @@
     limitations under the License.
 -->
 
-# flip-fl-base
+# FLIP-FL-base-FLARE
 
-This repository contains the FLIP federated learning base application built on NVIDIA FLARE (NVFLARE). It includes the FL services (server, clients, admin API) and the base application code that users extend with their own training logic.
+<p align="left">
+<img src="docs/images/flip-flare-logo.png" height="200" alt='flip-flare-logo' />
+</p>
+
+This repository contains the federated learning base code to create FLARE deployments with FLIP, as well as tutorials of apps using FLIP with FLARE. It includes the FL services Docker images (server, clients, FL API) and example applications for different job types (standard federated training, distributed evaluation, diffusion model training, and custom federated optimization).
 
 ## Quick Start
 
