@@ -15,7 +15,8 @@ FLIP
    :maxdepth: 2
 
    1_overview
-   2_requirements
-   3_guides
-   4_documentation
-   5_contributors
+   2_components
+   3_requirements
+   4_guides
+   5_documentation
+   6_contributors
