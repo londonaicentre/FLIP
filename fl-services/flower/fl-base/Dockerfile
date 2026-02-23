@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.4
+
 # Copyright (c) 2026 Flower Labs GmbH
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -11,7 +13,7 @@
 # limitations under the License.
 #
 
-FROM flwr/base:${FLWR_VERSION:-1.26.1-py3.12-ubuntu24.04}
+FROM flwr/base:${FLWR_VERSION:-1.26.1-py3.12-ubuntu24.04} AS base
 
 WORKDIR /app
 
@@ -23,3 +25,14 @@ COPY --chown=app:app tutorials/monai/pyproject.toml .
 # simulation service, and would pull in extra dependencies that aren't needed for the API service.
 RUN sed -i 's/.*flwr\[simulation\].*//' pyproject.toml \
   && python -m pip install -U --no-cache-dir .
+
+FROM base AS development
+
+COPY --from=fliputils_dist *.whl /wheels/
+
+# NOTE use --force-reinstall to always replace installed flip-utils from 'base' even if the version is unchanged
+# This allows us to overwrite the flip-utils package in 'base' (PyPI version) with the local dev version
+RUN python -m pip install --no-cache-dir --force-reinstall /wheels/*.whl
+
+FROM base AS production
+# base already ran `pip install .` so flip-utils comes from PyPI
