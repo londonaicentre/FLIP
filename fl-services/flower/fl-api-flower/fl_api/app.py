@@ -1,3 +1,16 @@
+# Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
 import json
 import logging
 import os
@@ -14,10 +27,13 @@ from grpc_health.v1.health_pb2_grpc import HealthStub
 from fl_api.schemas import (
     ClientInfoModel,
     FlowerCommandResponse,
+    FlowerSubmitRunCommandResponse,
     HealthResponse,
     RunRecord,
     ServerInfoModel,
+    UploadAppRequest,
 )
+from fl_api.utils.upload import upload_application
 
 logger = logging.getLogger("uvicorn")
 
@@ -171,12 +187,12 @@ def _parse_flwr_payload(result: subprocess.CompletedProcess[str], action_name: s
 
 
 def _validate_app_folder(app_folder: str) -> Path:
-    allowed_job_folders = _get_allowed_job_folders()
-    if app_folder not in allowed_job_folders:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(f"Invalid app folder '{app_folder}'. Allowed values: {sorted(allowed_job_folders)}"),
-        )
+    # allowed_job_folders = _get_allowed_job_folders()
+    # if app_folder not in allowed_job_folders:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_400_BAD_REQUEST,
+    #         detail=(f"Invalid app folder '{app_folder}'. Allowed values: {sorted(allowed_job_folders)}"),
+    #     )
 
     job_dir = _get_src_root() / app_folder
     if not job_dir.is_dir():
@@ -206,28 +222,6 @@ def _parse_runs_payload(payload: dict[str, Any]) -> list[RunRecord]:
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
-
-
-# Thin routing endpoint "/check_status/{target}" that delegates to specific handlers for server and client status
-# checks, for temporary backwards compatibility
-@app.get(
-    "/check_status/{target}",
-    status_code=status.HTTP_200_OK,
-    response_model=ServerInfoModel | list[ClientInfoModel],
-)
-def check_status(
-    target: str,
-    targets: list[str] | None = Query(None),
-) -> ServerInfoModel | list[ClientInfoModel]:
-    if target == "server":
-        return check_server_status()
-    elif target == "client":
-        return check_client_status(targets=targets)
-    else:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid target '{target}'. Must be 'server' or 'client'.",
-        )
 
 
 @app.get(
@@ -281,6 +275,7 @@ def check_client_status(
 
 
 @app.get("/list_runs", status_code=status.HTTP_200_OK, response_model=list[RunRecord])
+@app.get("/list_jobs", include_in_schema=False)  # alias, hide from docs
 def list_runs() -> list[RunRecord]:
     src_root = _get_src_root()
     command = ["uvx", "flwr", "list", "local", "--format", "json"]
@@ -290,8 +285,9 @@ def list_runs() -> list[RunRecord]:
     return _parse_runs_payload(payload)
 
 
-@app.post("/submit_run", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse)
-def submit_run(app_folder: str) -> FlowerCommandResponse:
+@app.post("/submit_run/{app_folder}", status_code=status.HTTP_200_OK, response_model=str)
+@app.post("/submit_job/{app_folder}", include_in_schema=False)  # alias, hide from docs
+def submit_run(app_folder: str) -> str:
     job_dir = _validate_app_folder(app_folder)
 
     global _submission_in_progress
@@ -316,19 +312,21 @@ def submit_run(app_folder: str) -> FlowerCommandResponse:
             ) from err
 
         response_payload = _parse_flwr_payload(result, "submit")
+        resp = FlowerSubmitRunCommandResponse.model_validate(response_payload)
 
         logger.info(
             "Submitted Flower job from '%s' using command: %s",
             app_folder,
             " ".join(command),
         )
-        return FlowerCommandResponse.model_validate(response_payload)
+        return resp.run_id
     finally:
         with _state_lock:
             _submission_in_progress = False
 
 
-@app.delete("/abort_run", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse)
+@app.delete("/abort_run/{run_id}", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse)
+@app.delete("/abort_job/{run_id}", include_in_schema=False)  # alias, hide from docs
 def abort_run(run_id: str) -> FlowerCommandResponse:
     src_root = _get_src_root()
     command = ["uvx", "flwr", "stop", run_id, "local", "--format", "json"]
@@ -343,3 +341,20 @@ def abort_run(run_id: str) -> FlowerCommandResponse:
 
     payload = _parse_flwr_payload(result, "stop")
     return FlowerCommandResponse.model_validate(payload)
+
+
+@app.post("/upload_app/{model_id}", status_code=status.HTTP_200_OK)
+def upload_app(model_id: str, body: UploadAppRequest) -> dict[str, str]:
+    """
+    Upload an application to the server.
+
+    Args:
+        model_id (str): The ID of the model to associate the application with.
+        body (UploadAppRequest): The request body containing the application details.
+        session (FLIP_Session): The NVFlare session instance.
+
+    Returns:
+        dict[str, str]: A dictionary containing the status of the upload.
+    """
+    upload_dir = _get_src_root()
+    return upload_application(model_id, body, upload_dir=upload_dir)

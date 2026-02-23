@@ -1,4 +1,5 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -26,11 +27,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY pyproject.toml ./
 
 COPY ./entrypoint.sh /app/entrypoint.sh
-RUN chown -R ${UNAME}:${UNAME} /app
+RUN chown -R app:app /app
 
 RUN chmod +x /app/entrypoint.sh
 
-USER ${UNAME}
+USER app
 
 # Sync dependencies using uv
 RUN uv sync --no-dev
@@ -46,6 +47,6 @@ EXPOSE 5679
 CMD ["bash", "-c", "/app/entrypoint.sh"]
 
 FROM development AS production
-COPY --chown=${UNAME}:${UNAME} fl_api/ /app/fl_api/
+COPY --chown=app:app fl_api/ /app/fl_api/
 
 CMD ["bash", "-c", "/app/entrypoint.sh"]

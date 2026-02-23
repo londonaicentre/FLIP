@@ -1,4 +1,5 @@
-# # Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -19,6 +20,8 @@ dependencies = [
     "fastapi>=0.115.11",
     "flwr>=1.26.1",
     "pydantic>=2.11.0",
+    "pydantic-settings>=2.11.0",
+    "tomlkit>=0.14.0",
     "uvicorn>=0.34.0",
 ]
 
@@ -31,6 +34,7 @@ dev = [
     "pytest-cov>=6.0.0",
     "pytest>=8.3.5",
     "ruff>=0.15.0",
+    "types-requests>=2.32.0.20250515",
 ]
 
 [tool.coverage.report]

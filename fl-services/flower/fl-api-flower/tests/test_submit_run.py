@@ -1,7 +1,19 @@
+# Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
 import pytest
 
 from fl_api import app as app_module
-from fl_api.schemas import FlowerCommandResponse
 
 
 def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
@@ -21,17 +33,16 @@ def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
         )
     )
 
-    response = client.post("/submit_run", params={"app_folder": "numpy"})
+    response = client.post("/submit_run/numpy")
 
     assert response.status_code == 200
-    FlowerCommandResponse.model_validate(response.json())
 
 
 @pytest.mark.parametrize("app_folder", ["invalid", "numpy"])
 def test_submit_run_input_validation(client, src_root, monkeypatch, app_folder):
     monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,monai")
 
-    response = client.post("/submit_run", params={"app_folder": app_folder})
+    response = client.post(f"/submit_run/{app_folder}")
 
     assert response.status_code == 400
 
@@ -41,7 +52,7 @@ def test_submit_run_conflict_when_submission_in_progress(client, src_root, monke
     monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,monai")
     app_module._submission_in_progress = True
 
-    response = client.post("/submit_run", params={"app_folder": "numpy"})
+    response = client.post("/submit_run/numpy")
 
     assert response.status_code == 409
 
@@ -72,6 +83,6 @@ def test_submit_run_execution_failures(
     else:
         mock_flwr_run(returncode=returncode, stdout=stdout, stderr=stderr)
 
-    response = client.post("/submit_run", params={"app_folder": "numpy"})
+    response = client.post("/submit_run/numpy")
 
     assert response.status_code == 500

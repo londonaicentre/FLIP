@@ -1,4 +1,3 @@
-# Copyright (c) 2026 Flower Labs GmbH
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,15 +10,25 @@
 # limitations under the License.
 #
 
-.PHONY: local_lint local_mypy local_test
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-test_coverage_html_command = uv run pytest --tb=short --disable-warnings --cov=fl_api/ --cov-report=html --cov-report=term-missing
-lint_command = uv run ruff check . --fix
-mypy_command = uv run mypy . --ignore-missing-imports
 
-local_lint:
-	$(lint_command)
-local_mypy:
-	$(mypy_command)
-local_test:
-	$(lint_command) && $(mypy_command) && $(test_coverage_html_command)
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict()
+
+    LOG_LEVEL: str = "INFO"
+
+
+# Eager load once (for app use)
+_settings = Settings()  # type: ignore
+
+
+# Accessor to allow override in tests
+def get_settings() -> Settings:
+    """
+    Get the application settings.
+
+    Returns:
+        Settings: An instance of the Settings class containing configuration values.
+    """
+    return _settings  # type: ignore
