@@ -51,6 +51,9 @@ def train(msg: Message, context: Context) -> Message:
     # NOTE this needs to match the name of the trust in the central hub database
     client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
 
+    # global_round from server
+    global_round = msg.content["config"]["server-round"]
+
     # Configure FLIP
     flip_utils = FLIP_BASE()
     flip_utils.project_id = run_config.get("flip-project-id", "monai-flower-tutorial")
@@ -92,8 +95,7 @@ def train(msg: Message, context: Context) -> Message:
             loss_fn=loss_fn,
             device=device,
         )
-        round = epoch + 1
-        # round = global_round * (local_epochs) + epoch + 1
+        round = global_round * (local_epochs) + epoch + 1
         flip_utils.flip.send_metrics(client_name, model_id, label="TRAIN_LOSS", value=train_loss, round=round)
 
         val_dice, val_loss = validate_func(
