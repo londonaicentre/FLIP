@@ -51,8 +51,8 @@ def train(msg: Message, context: Context) -> Message:
     # NOTE this needs to match the name of the trust in the central hub database
     client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
 
-    # global_round from server
-    global_round = msg.content["config"]["server-round"]
+    # global_round from server is 1-based - convert to 0-based for easier calculations of round numbers during training
+    global_round = int(msg.content["config"]["server-round"]) - 1
 
     # Configure FLIP
     flip_utils = FLIP_BASE()
