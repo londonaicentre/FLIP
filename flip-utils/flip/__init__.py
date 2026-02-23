@@ -11,7 +11,7 @@
 #
 
 """
-FLIP - Federated Learning for Imaging Platform
+FLIP - Federated Learning and Interoperability Platform
 
 This package provides the core functionality for federated learning in the FLIP platform,
 built on NVIDIA FLARE (NVFLARE).
