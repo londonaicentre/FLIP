@@ -38,6 +38,7 @@ app = ClientApp()
 
 # Send metrics function defined here temporarily
 # TODO make the flip package send_metrics function agnostic to FLARE objects so that we can use it here
+# See https://github.com/londonaicentre/flip-fl-base/issues/51
 def send_metrics(model_id: str, label: str, value: float, round: int) -> None:
     """Send metrics to the FLIP central hub."""
 
