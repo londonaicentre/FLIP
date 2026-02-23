@@ -16,13 +16,11 @@
 import logging
 import os
 
-import requests
 import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from monai.data import DataLoader, Dataset
 from monai.losses import DiceLoss
-from requests import HTTPError
 
 from app.data_loading import FLIP_BASE
 from app.models import get_model
@@ -34,52 +32,6 @@ logger.setLevel(logging.INFO)
 
 # Flower ClientApp
 app = ClientApp()
-
-
-# Send metrics function defined here temporarily
-# TODO make the flip package send_metrics function agnostic to FLARE objects so that we can use it here
-# See https://github.com/londonaicentre/flip-fl-base/issues/51
-def send_metrics(model_id: str, label: str, value: float, round: int) -> None:
-    """Send metrics to the FLIP central hub."""
-
-    # NOTE this needs to match the name of the trust in the central hub database
-    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
-
-    payload = {
-        "trust": client_name,
-        "globalRound": round,
-        "label": label,
-        "result": value,
-    }
-
-    CENTRAL_HUB_API_URL = os.getenv("CENTRAL_HUB_API_URL", "https://central-hub.flip.ai/api/v1")
-    PRIVATE_API_KEY_HEADER = os.getenv("PRIVATE_API_KEY_HEADER", "X-API-Key")
-    PRIVATE_API_KEY = os.getenv("PRIVATE_API_KEY", "your_private_api_key_here")
-
-    endpoint = f"{CENTRAL_HUB_API_URL}/model/{model_id}/metrics"
-
-    logger.info(f"Attempting to send metrics event raised by {client_name}...")
-
-    try:
-        logger.info(f"Sending metrics to {endpoint} with payload: {payload}")
-        response = requests.post(
-            endpoint,
-            json=payload,
-            headers={PRIVATE_API_KEY_HEADER: PRIVATE_API_KEY},
-        )
-        logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
-        response.raise_for_status()
-
-        logger.info(f"Successfully handled {client_name} metrics event")
-    except HTTPError as http_err:
-        logger.error(
-            f"An http error occurred when handling a metrics event, see exception below | status code "
-            f"{http_err.response.status_code}"
-        )
-        logger.exception(http_err)
-    except Exception as e:
-        logger.error("Something went wrong when handling metrics event, see exception below")
-        logger.exception(e)
 
 
 @app.train()
@@ -95,6 +47,9 @@ def train(msg: Message, context: Context) -> Message:
 
     # FLIP variables
     model_id = run_config.get("flip-model-id", "monai-flower-tutorial-model")
+
+    # NOTE this needs to match the name of the trust in the central hub database
+    client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
 
     # Configure FLIP
     flip_utils = FLIP_BASE()
@@ -139,7 +94,7 @@ def train(msg: Message, context: Context) -> Message:
         )
         round = epoch + 1
         # round = global_round * (local_epochs) + epoch + 1
-        send_metrics(model_id, label="TRAIN_LOSS", value=train_loss, round=round)
+        flip_utils.flip.send_metrics(client_name, model_id, label="TRAIN_LOSS", value=train_loss, round=round)
 
         val_dice, val_loss = validate_func(
             model=model,
@@ -147,8 +102,8 @@ def train(msg: Message, context: Context) -> Message:
             device=device,
             loss_fn=loss_fn,
         )
-        send_metrics(model_id, label="VAL_LOSS", value=val_loss, round=round)
-        send_metrics(model_id, label="VAL_DICE", value=val_dice, round=round)
+        flip_utils.flip.send_metrics(client_name, model_id, label="VAL_LOSS", value=val_loss, round=round)
+        flip_utils.flip.send_metrics(client_name, model_id, label="VAL_DICE", value=val_dice, round=round)
 
         losses["train"].append(train_loss)
         losses["val"].append(val_loss)
