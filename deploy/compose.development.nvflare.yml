@@ -18,7 +18,7 @@ services:
 
   fl-api-net-1:
     container_name: flip-fl-api-net-1
-    image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       - DEBUG=${DEBUG}
@@ -38,7 +38,7 @@ services:
 
   fl-api-net-2:
     container_name: flip-fl-api-net-2
-    image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       - DEBUG=${DEBUG}
@@ -55,7 +55,7 @@ services:
 
   fl-server-net-1:
     container_name: fl-server-net-1
-    image: ghcr.io/londonaicentre/${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/local:/app/local
@@ -83,7 +83,7 @@ services:
 
   fl-server-net-2:
     container_name: fl-server-net-2
-    image: ghcr.io/londonaicentre/${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Provisioned NVFLARE secrets (certificates, fed_server.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/local:/app/local

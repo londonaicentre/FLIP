@@ -16,7 +16,7 @@
 services:
 
   fl-client-net-1:
-    image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
@@ -44,7 +44,7 @@ services:
     gpus: all
 
   fl-client-net-2:
-    image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
