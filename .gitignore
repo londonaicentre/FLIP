@@ -343,6 +343,7 @@ CLAUDE.md
 *.gz
 
 .plans/
+plans/
 
 # Security scan reports
 .security-reports/
