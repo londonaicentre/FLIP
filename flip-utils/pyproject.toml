@@ -16,7 +16,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "flip-utils"
-version = "0.1.0"
+dynamic = ["version"]
 description = "FLIP - Federated Learning for Imaging Platform library built on NVIDIA FLARE"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -72,6 +72,9 @@ full = [
     "nibabel>=5.3.2",
     "pydicom>=3.0.1",
 ]
+
+[tool.hatch.version]
+path = "flip/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["flip"]
