@@ -11,6 +11,6 @@
 # limitations under the License.
 #
 
-ARG BASE_REF=flwr-base:dev
+ARG BASE_REF=flower-fl-base:dev
 FROM ${BASE_REF}
 ENTRYPOINT ["flower-superlink"]
