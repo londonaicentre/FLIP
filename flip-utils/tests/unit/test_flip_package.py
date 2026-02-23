@@ -12,13 +12,11 @@
 
 """Tests for the flip package."""
 
-import importlib
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
 
-import flip.constants.flip_constants
 from flip import FLIP, FLIPBase
 from flip.constants import FlipConstants, JobType, ModelStatus, PTConstants, ResourceType
 from flip.core.standard import FLIPStandardDev
@@ -102,20 +100,19 @@ class TestFLIPStandardDev:
         """Create a FLIPStandardDev instance."""
         return FLIPStandardDev()
 
-    @pytest.mark.skip(reason="FlipConstants is a singleton that cannot be easily reloaded in tests")
-    def test_get_dataframe_success(self, flip_dev, tmp_path):
+    @patch("flip.core.standard.FlipConstants")
+    def test_get_dataframe_success(self, mock_constants, tmp_path):
         """get_dataframe should return DataFrame from CSV file."""
         # Create a test CSV file
         csv_path = tmp_path / "test_dataframe.csv"
         test_data = pd.DataFrame({"accession_id": ["ACC001", "ACC002"], "label": [0, 1]})
         test_data.to_csv(csv_path, index=False)
 
-        # Need to reload constants to pick up new DEV_DATAFRAME value
-        with patch.dict("os.environ", {"DEV_DATAFRAME": str(csv_path)}):
-            importlib.reload(flip.constants.flip_constants)
+        # Mock the DEV_DATAFRAME constant to point to our test CSV file
+        mock_constants.DEV_DATAFRAME = str(csv_path)
 
-            flip_dev_new = FLIPStandardDev()
-            result = flip_dev_new.get_dataframe("project-id", "SELECT *")
+        flip_dev_new = FLIPStandardDev()
+        result = flip_dev_new.get_dataframe("project-id", "SELECT *")
 
         assert isinstance(result, pd.DataFrame)
         assert "accession_id" in result.columns
