@@ -35,6 +35,7 @@ from transforms import get_sliding_window_inferer, get_train_transforms, get_val
 
 from flip import FLIP
 from flip.constants import PTConstants, ResourceType
+from flip.nvflare.metrics import send_metrics_value
 from flip.utils import get_model_weights_diff
 
 
@@ -269,7 +270,7 @@ class FLIP_TRAINER(FLIP_BASE):
             self.log_info(fl_ctx, f"Epoch: {epoch + 1}, Finished, Average loss: {average_loss}")
 
             round = global_round * (self._epochs) + epoch + 1
-            self.flip.send_metrics_value(label="TRAIN_LOSS", value=average_loss, fl_ctx=fl_ctx, round=round)
+            send_metrics_value(label="TRAIN_LOSS", value=average_loss, fl_ctx=fl_ctx, round=round, flip=self.flip)
 
             # Validation loop
             if epoch % self.validation_step == 0:
@@ -310,14 +311,14 @@ class FLIP_TRAINER(FLIP_BASE):
 
                 # Compute round
                 round = global_round * (self._epochs) + epoch + 1
-                self.flip.send_metrics_value(label="VAL_LOSS", round=round, value=last_val_loss, fl_ctx=fl_ctx)
-                self.flip.send_metrics_value(label="VAL_DICE", round=round, value=last_val_dice, fl_ctx=fl_ctx)
+                send_metrics_value(label="VAL_LOSS", value=last_val_loss, fl_ctx=fl_ctx, round=round, flip=self.flip)
+                send_metrics_value(label="VAL_DICE", value=last_val_dice, fl_ctx=fl_ctx, round=round, flip=self.flip)
 
             else:
                 # Compute round
                 round = global_round * (self._epochs) + epoch + 1
-                self.flip.send_metrics_value(label="VAL_LOSS", round=round, value=last_val_loss, fl_ctx=fl_ctx)
-                self.flip.send_metrics_value(label="VAL_DICE", round=round, value=last_val_dice, fl_ctx=fl_ctx)
+                send_metrics_value(label="VAL_LOSS", value=last_val_loss, fl_ctx=fl_ctx, round=round, flip=self.flip)
+                send_metrics_value(label="VAL_DICE", value=last_val_dice, fl_ctx=fl_ctx, round=round, flip=self.flip)
 
             self.model.train()
 

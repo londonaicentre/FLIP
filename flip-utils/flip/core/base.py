@@ -22,8 +22,6 @@ from pathlib import Path
 from typing import List, Union
 
 import pandas as pd
-from nvflare.apis.fl_context import FLContext
-from nvflare.apis.shareable import Shareable
 
 from flip.constants.flip_constants import ModelStatus, ResourceType
 
@@ -115,26 +113,16 @@ class FLIPBase(ABC):
         """
 
     @abstractmethod
-    def send_metrics_value(self, label: str, value: float, fl_ctx: FLContext, round: int = 0) -> None:
+    def send_metrics(self, client_name: str, model_id: str, label: str, value: float, round: int) -> None:
         """
-        Sends metric value to the Central Hub.
+        Sends a metric value to the Central Hub.
 
         Args:
-            label: The metric label
-            value: The metric value
-            fl_ctx: The NVFLARE FLContext
-            round: The training round number (default: 0)
-        """
-
-    @abstractmethod
-    def handle_metrics_event(self, event_data: Shareable, global_round: int, model_id: str) -> None:
-        """
-        Handles FLIP metric firing event on the server side.
-
-        Args:
-            event_data: The event data shareable
-            global_round: The global round number
+            client_name: The client name sending the metric
             model_id: The model UUID
+            label: The label of the metric
+            value: The value of the metric
+            round: The local round number
         """
 
     @abstractmethod
