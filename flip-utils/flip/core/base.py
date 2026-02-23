@@ -56,8 +56,8 @@ class FLIPBase(ABC):
         Returns a dataframe for the project/query.
 
         Args:
-            project_id: The project identifier
-            query: SQL query string
+            project_id (str): The project identifier
+            query (str): SQL query string
 
         Returns:
             pd.DataFrame: Dataframe containing the query results
@@ -74,9 +74,9 @@ class FLIPBase(ABC):
         Returns the path to the data for the given accession number.
 
         Args:
-            project_id: The project identifier
-            accession_id: The accession ID of the imaging study
-            resource_type: Type(s) of resources to download
+            project_id (str): The project identifier
+            accession_id (str): The accession ID of the imaging study
+            resource_type (Union[ResourceType, List[ResourceType]]): Type(s) of resources to download
 
         Returns:
             Path: Path to the downloaded data
@@ -95,11 +95,11 @@ class FLIPBase(ABC):
         Adds specific image to XNAT for an accession ID.
 
         Args:
-            project_id: The project identifier
-            accession_id: The accession ID
-            scan_id: The scan ID
-            resource_id: The resource type ID
-            files: List of file paths to upload
+            project_id (str): The project identifier
+            accession_id (str): The accession ID
+            scan_id (str): The scan ID
+            resource_id (str): The resource type ID
+            files (List[str]): List of file paths to upload
         """
 
     @abstractmethod
@@ -108,8 +108,8 @@ class FLIPBase(ABC):
         Updates training status in Central Hub.
 
         Args:
-            model_id: The model UUID
-            new_model_status: The new status to set
+            model_id (str): The model UUID
+            new_model_status (ModelStatus): The new status to set
         """
 
     @abstractmethod
@@ -118,11 +118,11 @@ class FLIPBase(ABC):
         Sends a metric value to the Central Hub.
 
         Args:
-            client_name: The client name sending the metric
-            model_id: The model UUID
-            label: The label of the metric
-            value: The value of the metric
-            round: The local round number
+            client_name (str): The client name sending the metric
+            model_id (str): The model UUID
+            label (str): The label of the metric
+            value (float): The value of the metric
+            round (int): The local round number
         """
 
     @abstractmethod
@@ -131,9 +131,9 @@ class FLIPBase(ABC):
         Sends a training-related exception to Central Hub.
 
         Args:
-            formatted_exception: The formatted exception message
-            client_name: The client name that raised the exception
-            model_id: The model UUID
+            formatted_exception (str): The formatted exception message
+            client_name (str): The client name that raised the exception
+            model_id (str): The model UUID
         """
 
     # ======================================================
@@ -145,7 +145,7 @@ class FLIPBase(ABC):
         Check whether the query is a string type.
 
         Args:
-            query: The query to validate
+            query (str): The query to validate
 
         Raises:
             TypeError: If query is not a string
@@ -158,7 +158,7 @@ class FLIPBase(ABC):
         Checks whether the project id is a string type.
 
         Args:
-            project_id: The project ID to validate
+            project_id (str): The project ID to validate
 
         Raises:
             TypeError: If project_id is not a string
@@ -171,7 +171,7 @@ class FLIPBase(ABC):
         Checks whether accession_id is a string type.
 
         Args:
-            accession_id: The accession ID to validate
+            accession_id (str): The accession ID to validate
 
         Raises:
             TypeError: If accession_id is not a string
@@ -184,7 +184,7 @@ class FLIPBase(ABC):
         Check whether resource type is valid and returns them reformatted.
 
         Args:
-            resource_type: Single ResourceType or list of ResourceTypes
+            resource_type (Union[ResourceType, List[ResourceType]]): Single ResourceType or list of ResourceTypes
 
         Returns:
             List[ResourceType]: List of validated resource types
