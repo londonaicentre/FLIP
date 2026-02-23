@@ -13,6 +13,15 @@
 
 # flip-fl-base
 
+[![codecov](https://codecov.io/gh/londonaicentre/flip-fl-base/graph/badge.svg)](https://codecov.io/gh/londonaicentre/flip-fl-base)
+[![PyPI version](https://img.shields.io/pypi/v/flip-utils)](https://pypi.org/project/flip-utils/)
+[![Docker - flare-fl-base](https://img.shields.io/badge/docker-flare--fl--base-blue?logo=docker)](https://github.com/londonaicentre/flip-fl-base/pkgs/container/flare-fl-base)
+[![Docker - flare-fl-server](https://img.shields.io/badge/docker-flare--fl--server-blue?logo=docker)](https://github.com/londonaicentre/flip-fl-base/pkgs/container/flare-fl-server)
+[![Docker - flare-fl-client](https://img.shields.io/badge/docker-flare--fl--client-blue?logo=docker)](https://github.com/londonaicentre/flip-fl-base/pkgs/container/flare-fl-client)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Documentation](https://img.shields.io/badge/docs-README-informational)](https://github.com/londonaicentre/flip-fl-base#readme)
+[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](./LICENSE.md)
+
 This repository contains the [FLIP](https://github.com/londonaicentre/FLIP) (Federated Learning and Interoperability
 Platform) federated learning base application utilities. It is a monorepo that includes:
 
