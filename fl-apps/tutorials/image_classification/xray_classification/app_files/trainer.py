@@ -33,6 +33,7 @@ from nvflare.app_opt.pt.model_persistence_format_manager import PTModelPersisten
 
 from flip import FLIP
 from flip.constants import PTConstants, ResourceType
+from flip.nvflare.metrics import send_metrics_value
 from flip.utils import get_model_weights_diff
 
 
@@ -318,26 +319,36 @@ class FLIP_TRAINER(Executor):
 
             # Send metrics over to FLIP
             round = global_round * (self._epochs) + epoch + 1
-            self.flip.send_metrics_value(
-                label="TRAIN_LOSS", round=round, value=training_metrics["loss"]["train"][-1], fl_ctx=fl_ctx
+            send_metrics_value(
+                label="TRAIN_LOSS",
+                round=round,
+                value=training_metrics["loss"]["train"][-1],
+                fl_ctx=fl_ctx,
+                flip=self.flip,
             )
-            self.flip.send_metrics_value(
-                label="VAL_LOSS", round=round, value=training_metrics["loss"]["val"][-1], fl_ctx=fl_ctx
+            send_metrics_value(
+                label="VAL_LOSS",
+                round=round,
+                value=training_metrics["loss"]["val"][-1],
+                fl_ctx=fl_ctx,
+                flip=self.flip,
             )
 
             for metric in ["f1-score", "precision", "recall"]:
                 for lesion_name in self._lesions.get_lesion_list():
-                    self.flip.send_metrics_value(
+                    send_metrics_value(
                         label=f"{'train'.upper()}-{metric.upper()}",
                         round=round,
                         value=training_metrics[metric][lesion_name]["train"][-1],
                         fl_ctx=fl_ctx,
+                        flip=self.flip,
                     )
-                    self.flip.send_metrics_value(
+                    send_metrics_value(
                         label=f"{'val'.upper()}-{metric.upper()}",
                         round=round,
                         value=training_metrics[metric][lesion_name]["val"][-1],
                         fl_ctx=fl_ctx,
+                        flip=self.flip,
                     )
 
     def execute(
