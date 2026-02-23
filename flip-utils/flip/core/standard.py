@@ -54,8 +54,8 @@ class FLIPStandardProd(FLIPBase):
         Calls the FLIP data-access-api.
 
         Args:
-            project_id: Project identifier
-            query: SQL query
+            project_id (str): Project identifier
+            query (str): SQL query
 
         Returns:
             pd.DataFrame: Dataframe containing the resulting accession ids and additional data.
@@ -101,9 +101,10 @@ class FLIPStandardProd(FLIPBase):
         based on the accession number.
 
         Args:
-            project_id: The ID of the project.
-            accession_id: The accession ID of the imaging study.
-            resource_type: The type of resource to download. Defaults to ResourceType.NIFTI.
+            project_id (str): The ID of the project.
+            accession_id (str): The accession ID of the imaging study.
+            resource_type (Union[ResourceType, List[ResourceType]]): The type of resource to download. Defaults to
+            ResourceType.NIFTI.
 
         Returns:
             Path: Path to the downloaded data for that accession_id.
@@ -159,11 +160,11 @@ class FLIPStandardProd(FLIPBase):
         scan ID, and resource ID.
 
         Args:
-            project_id: Unique project identifier
-            accession_id: Accession ID to upload the resource to
-            scan_id: ID of the scan to upload
-            resource_id: Type of resource that is being uploaded (e.g. NIFTI)
-            files: List of files to upload
+            project_id (str): Unique project identifier
+            accession_id (str): Accession ID to upload the resource to
+            scan_id (str): ID of the scan to upload
+            resource_id (str): Type of resource that is being uploaded (e.g. NIFTI)
+            files (List[str]): List of files to upload
         """
         if not isinstance(project_id, str):
             raise TypeError(f"expect project id to be string, but got {type(project_id)}")
@@ -211,8 +212,8 @@ class FLIPStandardProd(FLIPBase):
         Updates the model status on the Central Hub.
 
         Args:
-            model_id: Unique model identifier.
-            new_model_status: New model status value.
+            model_id (str): Unique model identifier.
+            new_model_status (ModelStatus): New model status value.
         """
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, cant update model status")
@@ -248,11 +249,11 @@ class FLIPStandardProd(FLIPBase):
         Sends a metric value to the Central Hub.
 
         Args:
-            client_name: The name of the client.
-            model_id: The ID of the model.
-            label: The label of the metric.
-            value: The value of the metric.
-            round: The round number.
+            client_name (str): The name of the client.
+            model_id (str): The ID of the model.
+            label (str): The label of the metric.
+            value (float): The value of the metric.
+            round (int): The round number.
         """
         payload = {
             "trust": client_name,
@@ -291,9 +292,9 @@ class FLIPStandardProd(FLIPBase):
         Sends a handled exception to the Central Hub.
 
         Args:
-            formatted_exception: The formatted exception message.
-            client_name: The name of the client that raised the exception.
-            model_id: The ID of the model associated with the exception.
+            formatted_exception (str): The formatted exception message.
+            client_name (str): The name of the client that raised the exception.
+            model_id (str): The ID of the model associated with the exception.
         """
         if not isinstance(formatted_exception, str):
             raise TypeError(f"formatted_exception must be type str but got {type(formatted_exception)}")
@@ -350,8 +351,8 @@ class FLIPStandardDev(FLIPBase):
         Retrieves the dataframe from the specified CSV path.
 
         Args:
-            project_id: Project identifier (validated but not used in dev)
-            query: SQL query (validated but not used in dev)
+            project_id (str): Project identifier (validated but not used in dev)
+            query (str): SQL query (validated but not used in dev)
 
         Returns:
             pd.DataFrame: Dataframe from the DEV_DATAFRAME CSV file.
@@ -379,9 +380,9 @@ class FLIPStandardDev(FLIPBase):
         Returns the path to the image directory for a specific accession ID.
 
         Args:
-            project_id: Project identifier
-            accession_id: Accession ID to retrieve
-            resource_type: Type of imaging resource (not used in dev)
+            project_id (str): Project identifier
+            accession_id (str): Accession ID to retrieve
+            resource_type (Union[ResourceType, List[ResourceType]]): Type of imaging resource (not used in dev)
 
         Returns:
             Path: Path to the accession_id folder within the images folder.
