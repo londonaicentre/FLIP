@@ -13,6 +13,8 @@
 
 """quickstart-monai: A Flower / MONAI server app (training-only)."""
 
+from flip import FLIP
+from flip.constants.flip_constants import ModelStatus
 from flwr.app import ArrayRecord, Context
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
@@ -24,11 +26,18 @@ app = ServerApp()
 
 
 @app.main()
-def main(grid: Grid, context: Context) -> None:
+def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     """Main entry point for the ServerApp."""
-    num_rounds = int(context.run_config.get("num-server-rounds", 1))
+
+    run_config = context.run_config
+    num_rounds = int(run_config.get("num-server-rounds", 1))
+    model_id = run_config.get("flip-model-id", "monai-flower-tutorial-model")
+
+    flip.update_status(model_id, ModelStatus.INITIATED)
 
     model = get_model()
+    flip.update_status(model_id, ModelStatus.PREPARED)
+
     arrays = ArrayRecord(model.state_dict())
 
     strategy = FedAvg(
@@ -41,3 +50,6 @@ def main(grid: Grid, context: Context) -> None:
         initial_arrays=arrays,
         num_rounds=num_rounds,
     )
+
+    flip.update_status(model_id, ModelStatus.TRAINING_STARTED)
+    flip.update_status(model_id, ModelStatus.RESULTS_UPLOADED)
