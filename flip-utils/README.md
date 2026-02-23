@@ -13,187 +13,92 @@
 
 # flip-fl-base
 
-This repository contains the FLIP federated learning base application built on NVIDIA FLARE (NVFLARE). It includes the FL services (server, clients, admin API) and the base application code that users extend with their own training logic.
+[![codecov](https://codecov.io/gh/londonaicentre/flip-fl-base/graph/badge.svg)](https://codecov.io/gh/londonaicentre/flip-fl-base)
+[![PyPI version](https://img.shields.io/pypi/v/flip-utils)](https://pypi.org/project/flip-utils/)
+[![Docker - flare-fl-base](https://img.shields.io/badge/docker-flare--fl--base-blue?logo=docker)](https://github.com/londonaicentre/flip-fl-base/pkgs/container/flare-fl-base)
+[![Docker - flare-fl-server](https://img.shields.io/badge/docker-flare--fl--server-blue?logo=docker)](https://github.com/londonaicentre/flip-fl-base/pkgs/container/flare-fl-server)
+[![Docker - flare-fl-client](https://img.shields.io/badge/docker-flare--fl--client-blue?logo=docker)](https://github.com/londonaicentre/flip-fl-base/pkgs/container/flare-fl-client)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Documentation Status](https://readthedocs.org/projects/londonaicentreflip/badge/?version=latest)](https://londonaicentreflip.readthedocs.io/en/latest/)[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](./LICENSE.md)
 
-## Quick Start
+This repository contains the [FLIP](https://github.com/londonaicentre/FLIP) (Federated Learning and Interoperability
+Platform) federated learning base application utilities. It is a monorepo that includes:
 
-### Prerequisites
+- **[`flip`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, and utilities
+- **[`tutorials/`](./tutorials/)** — example applications you can run on the FLIP platform
+- **[`fl_services/`](./fl_services/)** — Docker services for running FL networks (server, clients, admin API)
 
-- Docker and Docker Compose
-- [uv](https://github.com/astral-sh/uv) (Python package manager)
-- AWS CLI configured (for downloading test data)
+## Table of Contents
 
-### 1. Provision an FL Network
+- [flip Python Package](#flip-python-package)
+  - [Installation](#installation)
+  - [Package Structure](#package-structure)
+  - [User Application Requirements](#user-application-requirements)
+  - [Job Types](#job-types)
+  - [Development Mode](#development-mode)
+  - [Unit Tests](#unit-tests)
+- [Tutorials](#tutorials)
+  - [App / Tutorial Compatibility](#app--tutorial-compatibility)
+- [FL Services API](#fl-services-api)
+  - [Prerequisites](#prerequisites)
+  - [Provisioning a Network](#provisioning-a-network)
+  - [Running the Network](#running-the-network)
+  - [Integration Testing](#integration-testing)
+  - [CI/CD](#cicd)
+  - [Makefile Reference](#makefile-reference)
 
-Before running anything, you need to provision a federated learning network. This generates the required certificates, keys, and configuration files:
+---
 
-```bash
-make nvflare-provision NET_NUMBER=1
-```
+## flip Python Package
 
-This creates:
+The [`flip`](./flip/) package is the core pip-installable library for the FLIP federated learning platform. It provides
+all platform logic core to training and evaluating FL applications.
 
-- Network-specific compose file: `deploy/compose-net-1.yml`
-- Service secrets in `workspace/net-1/services/` (gitignored)
-
-You can provision multiple networks with different ports:
-
-```bash
-make nvflare-provision NET_NUMBER=2 FL_PORT=8004 ADMIN_PORT=8005
-```
-
-**Warning**: Provisioned files contain cryptographic signatures. Any modification will cause errors. Always re-run provisioning if changes are needed.
-
-### 2. Build Docker Images
-
-```bash
-make build NET_NUMBER=1
-```
-
-### 3. Start the FL Network
-
-```bash
-make up NET_NUMBER=1
-```
-
-This starts:
-
-- `fl-server-net-1`: Aggregation server
-- `fl-client-1-net-1`, `fl-client-2-net-1`: Training clients
-- `flip-fl-api-net-1`: FastAPI admin interface
-
-To stop the network:
+### Installation
 
 ```bash
-make down NET_NUMBER=1
+uv sync
+# or
+pip install .
 ```
 
-To clean up images and containers:
+To build a distributable package:
 
 ```bash
-make clean NET_NUMBER=1
+uv build
 ```
 
-## Development Mode
-
-DEV mode lets you test your FL applications locally before deploying to production.
-
-### Configure Environment
-
-Edit `.env.development`:
-
-```bash
-LOCAL_DEV=true
-DEV_IMAGES_DIR=../data/accession-resources    # Path to your images
-DEV_DATAFRAME=../data/sample_get_dataframe.csv  # Path to your dataframe
-JOB_TYPE=standard
-```
-
-### Add Your Application Files
-
-Place your files in `src/<JOB_TYPE>/app/custom/`:
-
-- `trainer.py` - Training logic (FLIP_TRAINER executor)
-- `validator.py` - Validation logic (FLIP_VALIDATOR executor)
-- `models.py` - Model definitions (`get_model` function)
-- `config.json` - Hyperparameters (requires `LOCAL_ROUNDS` and `LEARNING_RATE`)
-- `transforms.py` - Data transforms (optional)
-
-### Run the Simulator
-
-```bash
-make run-container
-```
-
-This runs the NVFLARE simulator in Docker with 2 clients, mounting your app folder for live changes.
-
-## Testing
-
-### Download Test Data
-
-Download x-ray classification test data (requires AWS S3 access):
-
-```bash
-make download-xrays-data
-```
-
-Download spleen segmentation test data (requires AWS S3 access):
-
-```bash
-make download-spleen-data
-```
-
-Download model checkpoints for evaluation tests:
-
-```bash
-make download-checkpoints
-```
-
-### Run Integration Tests
-
-Test different job types with the spleen dataset:
-
-```bash
-# Standard federated training (classification task)
-make test-xrays-standard
-
-# Standard federated training (segmentation task)
-make test-spleen-standard
-
-# Model evaluation pipeline (requires model checkpoint file)
-make test-spleen-evaluation
-
-# Diffusion model training
-make test-spleen-diffusion
-
-# Run all integration tests
-make test
-```
-
-### Run Unit Tests
-
-```bash
-make unit-test
-```
-
-### Manage Test Applications
-
-Copy the spleen test app to your dev folder:
-
-```bash
-make copy-spleen-app
-```
-
-Save your changes back to the test folder:
-
-```bash
-make save-spleen-app
-```
-
-## Project Structure
+### Package Structure
 
 ```text
-├── src/                    # FL application types
-│   ├── standard/           # Standard FedAvg training
-│   ├── evaluation/         # Distributed model evaluation
-│   ├── diffusion_model/    # Two-stage VAE + diffusion training
-│   └── fed_opt/            # Custom federated optimization
-├── fl_services/            # NVFLARE service definitions
-│   ├── fl-base/            # Base Docker image
-│   ├── fl-api-base/        # FastAPI admin service
-│   ├── fl-client/          # Base FL client service
-│   └── fl-server/          # Base FL server service
-├── deploy/                 # Docker compose files and templates
-├── workspace/              # Provisioned secrets (gitignored)
-├── tests/                  # Integration test applications
-|  ├── examples/            # Example applications for integration testing
-|  └── unit/                # Unit tests
-└── .env.development        # Local environment configuration
+flip/
+├── core/         # FLIPBase, FLIPStandardProd/Dev implementations, FLIP() factory
+├── constants/    # FlipConstants (pydantic-settings), enums, PTConstants
+├── utils/        # General utilities: Utils, model weight helpers
+└── nvflare/      # NVFLARE-specific logic and components
+    ├── executors/    # RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
+    ├── controllers/  # Workflow controllers (ScatterAndGather, CrossSiteModelEval, …)
+    └── components/   # Event handlers, persistors, privacy filters, locators, …
 ```
 
-## Job Types
+The `FLIP()` factory selects `FLIPStandardDev` (local CSV/filesystem) or `FLIPStandardProd` (FLIP platform APIs) based
+on the `LOCAL_DEV` environment variable.
 
-Set via `JOB_TYPE` environment variable:
+### User Application Requirements
+
+User-provided files go in the job's `custom/` directory and are dynamically imported by the executor wrappers:
+
+| File | Description |
+| ------ | ------------- |
+| `trainer.py` | Training logic — must export `FLIP_TRAINER` class |
+| `validator.py` | Validation logic — must export `FLIP_VALIDATOR` class |
+| `models.py` | Model definitions — must export `get_model()` function |
+| `config.json` | Hyperparameters — must include `LOCAL_ROUNDS` and `LEARNING_RATE` |
+| `transforms.py` | Data transforms (optional) |
+
+### Job Types
+
+Set via the `JOB_TYPE` environment variable:
 
 | Type | Description |
 | ------ | ------------- |
@@ -202,105 +107,121 @@ Set via `JOB_TYPE` environment variable:
 | `diffusion_model` | Two-stage training (VAE encoder + diffusion) |
 | `fed_opt` | Custom federated optimization |
 
-## NVFLARE App Structure
+The corresponding configs live in `src/<job_type>/app/config/`.
 
-An NVFLARE app requires this structure:
+### Development Mode
 
-```text
-app/
-├── config/
-│   ├── config_fed_server.json
-│   └── config_fed_client.json
-└── custom/
-    ├── trainer.py
-    ├── validator.py
-    ├── models.py
-    └── config.json
-```
+DEV mode lets you test FL applications locally before deploying to production.
 
-For different configurations per client/server, use multiple app folders with a `meta.json` containing a `deploy_map`. See [NVFLARE documentation](https://nvflare.readthedocs.io/en/2.6/real_world_fl/job.html).
-
-## Application and tutorials
-
-Applications that will run on FLIP will take files from the `app` of choice (contained in both the `custom` and `config` folders described above), and files that are uploaded by the user to the UI. These files are customisable by the user, and examples compatible with different types of apps will be available in `tutorials`. 
-
-![image.png](./assets/fl_app_structure.png)
-
-These are the following app / tutorial compatibilities:
-
-| App | Tutorial | 
-|-----|----------|
-|`standard`|`image_segmentation/3d_spleen_segmentation`|
-|`diffusion_model`|`image_synthesis/latent_diffusion_model`|
-|`fed_opt`|`image_segmentation/3d_spleen_segmentation`|
-|`evaluation`|`image_evaluation/3d_spleen_segmentation`|
-|`standard`|`image_classification/xray_classification`|
-
-## User Application Requirements
-
-The standard application requires:
-
-| File | Description |
-|------|-------------|
-| `trainer.py` | Training logic with `FLIP_TRAINER` class inheriting from Executor |
-| `validator.py` | Validation logic with `FLIP_VALIDATOR` class inheriting from Executor |
-| `models.py` | Model definitions with `get_model()` function |
-| `config.json` | Must include `LOCAL_ROUNDS` and `LEARNING_RATE` |
-
-## Production Testing via GitHub Actions
-
-Pull requests automatically push to a dev S3 bucket for testing:
-
-```text
-s3://flipdev/base-application-dev/pull-requests/<PR_NUMBER>/src/
-```
-
-To test on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo environment variables](https://github.com/londonaicentre/FLIP/blob/main/.env.development) to point to your PR's bucket.
-
-## S3 Bucket Mounting (Optional)
-
-For automatic sync between local development and S3:
-
-1. Install [s3fs](https://github.com/s3fs-fuse/s3fs-fuse)
-
-2. Configure credentials:
+1. Edit `.env.development`:
 
    ```bash
-   echo ACCESS_KEY_ID:SECRET_ACCESS_KEY > ~/.passwd-s3fs
-   chmod 600 ~/.passwd-s3fs
+   LOCAL_DEV=true
+   DEV_IMAGES_DIR=../data/accession-resources
+   DEV_DATAFRAME=../data/sample_get_dataframe.csv
+   JOB_TYPE=standard
    ```
 
-3. Mount the bucket:
+2. Place your application files in `src/<JOB_TYPE>/app/custom/`.
+
+3. Run the simulator in Docker:
 
    ```bash
-   s3fs flip:/base-application-dev/src/standard/app/ ./app/ -o passwd_file=${HOME}/.passwd-s3fs
+   make run-container
    ```
 
-For automatic mounting on boot, add to `/etc/fstab`:
+### Unit Tests
 
 ```bash
-flip <PATH_TO_APP>/app fuse.s3fs _netdev,allow_other 0 0
+make unit-test
+# or
+uv run pytest -s -vv
 ```
 
-Test with `mount -a` before relying on it.
+---
 
-## CI/CD
+## Tutorials
 
-These workflows use GitHub OIDC to securely authenticate to AWS (no long-lived AWS keys required). They use an IAM role with a policy that allows S3 operations.
+The [`tutorials/`](./tutorials/) directory contains ready-to-use example applications that can be uploaded to the FLIP platform UI. Each tutorial is designed to work with a specific app type from `src/`.
 
-- **PR to any branch**: Pushes to dev S3 bucket for testing on AWS dev account:
-  - (dev) `s3://flipdev/base-application-dev/pull-requests/<PR_NUMBER>/src/`
-- **Merge to develop**: Syncs `src/` to S3 buckets on AWS dev and staging accounts:
-  - (dev) `s3://flipdev/base-application-dev/src/`
-  - (staging) `s3://flipstag/base-application/src/`
-- **Merge to main**: Syncs `src/` to S3 bucket in AWS prod account:
-  - (prod) `s3://flipprod/base-application/src/`
+![FL app structure](./assets/fl_app_structure.png)
+
+### App / Tutorial Compatibility
+
+| App | Tutorial |
+|-----|----------|
+| `standard` | `image_segmentation/3d_spleen_segmentation` |
+| `standard` | `image_classification/xray_classification` |
+| `diffusion_model` | `image_synthesis/latent_diffusion_model` |
+| `fed_opt` | `image_segmentation/3d_spleen_segmentation` |
+| `evaluation` | `image_evaluation/3d_spleen_segmentation` |
+
+---
+
+## FL Services API
+
+The [`fl_services/`](./fl_services/README.md) directory contains Docker-based NVFLARE services. See the [FL services README](./fl_services/README.md) and the [FL API README](./fl_services/fl-api-base/README.md) for full details on provisioning and the API endpoints.
+
+### Prerequisites
+
+- Docker and Docker Compose
+- [uv](https://github.com/astral-sh/uv) (Python package manager)
+- AWS CLI configured (for downloading test data)
+
+### Provisioning a Network
+
+Generate the certificates, keys, and configuration for a new FL network:
+
+```bash
+make nvflare-provision NET_NUMBER=1
+```
+
+This creates a network-specific compose file (`deploy/compose-net-1.yml`) and service secrets in `workspace/net-1/services/` (gitignored). Multiple networks can be provisioned with different ports:
+
+```bash
+make nvflare-provision NET_NUMBER=2 FL_PORT=8004 ADMIN_PORT=8005
+```
+
+> **Warning**: Provisioned files contain cryptographic signatures. Any modification will cause errors. Always re-run provisioning if changes are needed.
+
+### Running the Network
+
+```bash
+make build NET_NUMBER=1   # Build Docker images
+make up NET_NUMBER=1      # Start the network (server, 2 clients, API)
+make down NET_NUMBER=1    # Stop the network
+make clean NET_NUMBER=1   # Remove containers and images
+```
+
+### Integration Testing
+
+Download test data (requires AWS S3 access) then run the relevant target:
+
+```bash
+make download-xrays-data && make test-xrays-standard
+make download-spleen-data && make test-spleen-standard
+make download-checkpoints && make test-spleen-evaluation
+make test-spleen-diffusion
+make test   # Run all integration tests
+```
+
+### CI/CD
+
+GitHub Actions workflows use OIDC to authenticate to AWS (no long-lived keys).
+
+| Trigger | Target |
+| --------- | -------- |
+| PR to any branch | `s3://flipdev/base-application-dev/pull-requests/<PR_NUMBER>/src/` |
+| Merge to `develop` | `s3://flipdev/base-application-dev/src/` and `s3://flipstag/base-application/src/` |
+| Merge to `main` | `s3://flipprod/base-application/src/` |
 
 > **Warning**: Never manually sync to the production bucket.
 
-## Makefile Reference
+To test a PR on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo environment variables](https://github.com/londonaicentre/FLIP/blob/main/.env.development) to point to your PR's S3 path.
 
-### Network Management
+### Makefile Reference
+
+#### Network Management
 
 | Command | Description |
 | --------- | ------------- |
@@ -310,26 +231,28 @@ These workflows use GitHub OIDC to securely authenticate to AWS (no long-lived A
 | `make down NET_NUMBER=X` | Stop FL network X |
 | `make clean NET_NUMBER=X` | Remove containers and images |
 
-### Development
+#### Development
 
 | Command | Description |
 | --------- | ------------- |
 | `make run-container` | Run NVFLARE simulator in Docker |
 
-### Testing Commands
+#### Testing
 
 | Command | Description |
 | --------- | ------------- |
 | `make unit-test` | Run pytest unit tests |
+| `make test-xrays-standard` | Test standard job with x-ray data |
 | `make test-spleen-standard` | Test standard job with spleen data |
 | `make test-spleen-evaluation` | Test evaluation job with spleen data |
 | `make test-spleen-diffusion` | Test diffusion model with spleen data |
 | `make test` | Run all integration tests |
 
-### Data Management
+#### Data Management
 
 | Command | Description |
 | --------- | ------------- |
+| `make download-xrays-data` | Download x-ray test images from S3 |
 | `make download-spleen-data` | Download spleen test images from S3 |
 | `make download-checkpoints` | Download model checkpoints from S3 |
 | `make copy-spleen-app` | Copy test app to dev folder |
