@@ -16,7 +16,7 @@
 # Provisioned secrets (e.g. certificates in local, startup dirs) are mounted from workspace/ (gitignored).
 services:
   fl-base:
-    image: fl-base:dev
+    image: flare-fl-base:dev
     env_file:
       - ../.env.development
     build:
@@ -30,7 +30,7 @@ services:
     # NOTE container_name is mandatory here in order for FL clients to resolve the server hostname (e.g. address
     # fl-server-net-1:8002 from within the client containers)
     container_name: fl-server-net-${NET_NUMBER}
-    image: fl-server:dev
+    image: flare-fl-server:dev
     build:
       context: ../fl_services/fl-server
       dockerfile: Dockerfile
@@ -55,7 +55,7 @@ services:
 
   flip-fl-api:
     container_name: flip-fl-api-net-${NET_NUMBER}
-    image: flip-fl-api:dev
+    image: flare-fl-api:dev
     build:
       context: ../fl_services/fl-api-base
       dockerfile: Dockerfile
@@ -87,7 +87,7 @@ services:
 
   fl-client-1:
     container_name: fl-client-1-net-${NET_NUMBER}
-    image: fl-client:dev
+    image: flare-fl-client:dev
     build:
       context: ../fl_services/fl-client
       dockerfile: Dockerfile
@@ -95,7 +95,7 @@ services:
         UID: ${UID:-1000}
         GID: ${GID:-1000}
         UNAME: ${UNAME:-flip}
-        BASE_REF: ${BASE_REF:-fl-base:dev}
+        BASE_REF: ${BASE_REF:-flare-fl-base:dev}
     environment:
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
@@ -116,7 +116,7 @@ services:
 
   fl-client-2:
     container_name: fl-client-2-net-${NET_NUMBER}
-    image: fl-client:dev
+    image: flare-fl-client:dev
     build:
       context: ../fl_services/fl-client
       dockerfile: Dockerfile
@@ -124,7 +124,7 @@ services:
         UID: ${UID:-1000}
         GID: ${GID:-1000}
         UNAME: ${UNAME:-flip}
-        BASE_REF: ${BASE_REF:-fl-base:dev}
+        BASE_REF: ${BASE_REF:-flare-fl-base:dev}
     environment:
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false
