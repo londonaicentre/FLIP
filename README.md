@@ -18,8 +18,29 @@
 Federated Learning Interoperability Platform
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![Documentation Status](https://readthedocs.org/projects/londonaicentreflip/badge/?version=latest)](https://londonaicentreflip.readthedocs.io/en/latest/)
-... <!-- TODO add more badges here (citations, etc) -->
+[![Coverage](https://codecov.io/gh/londonaicentre/FLIP/branch/main/graph/badge.svg)](https://codecov.io/gh/londonaicentre/FLIP)
+[![Code checks and Secret Scanning](https://github.com/londonaicentre/FLIP/actions/workflows/secret-scanning.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/secret-scanning.yml)
+[![FLIP Central Hub API CI](https://github.com/londonaicentre/FLIP/actions/workflows/central_hub_api.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/central_hub_api.yml)
+[![FLIP Trust API CI](https://github.com/londonaicentre/FLIP/actions/workflows/trust_api.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/trust_api.yml)
+[![FLIP Imaging API CI](https://github.com/londonaicentre/FLIP/actions/workflows/imaging_api.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/imaging_api.yml)
+[![FLIP Data Access API CI](https://github.com/londonaicentre/FLIP/actions/workflows/data_access_api.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/data_access_api.yml)
+[![UI CI](https://github.com/londonaicentre/FLIP/actions/workflows/ui.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/ui.yml)
+[![FLIP Documentation CI](https://github.com/londonaicentre/FLIP/actions/workflows/docs.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/docs.yml)
+[![Import Acceptance Criteria from Issues](https://github.com/londonaicentre/FLIP/actions/workflows/pr_acceptance_criteria.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/pr_acceptance_criteria.yml)
+
+Docker images:
+
+[![flip-api](https://ghcr-badge.egpl.dev/londonaicentre/flip-api/latest_tag?trim=major&label=flip-api)](https://github.com/londonaicentre/FLIP/pkgs/container/flip-api)
+[![trust-api](https://ghcr-badge.egpl.dev/londonaicentre/trust-api/latest_tag?trim=major&label=trust-api)](https://github.com/londonaicentre/FLIP/pkgs/container/trust-api)
+[![imaging-api](https://ghcr-badge.egpl.dev/londonaicentre/imaging-api/latest_tag?trim=major&label=imaging-api)](https://github.com/londonaicentre/FLIP/pkgs/container/imaging-api)
+[![data-access-api](https://ghcr-badge.egpl.dev/londonaicentre/data-access-api/latest_tag?trim=major&label=data-access-api)](https://github.com/londonaicentre/FLIP/pkgs/container/data-access-api)
+[![flip-ui](https://ghcr-badge.egpl.dev/londonaicentre/flip-ui/latest_tag?trim=major&label=flip-ui)](https://github.com/londonaicentre/FLIP/pkgs/container/flip-ui)
+[![orthanc](https://ghcr-badge.egpl.dev/londonaicentre/orthanc/latest_tag?trim=major&label=orthanc)](https://github.com/londonaicentre/FLIP/pkgs/container/orthanc)
+[![xnat-db](https://ghcr-badge.egpl.dev/londonaicentre/xnat-db/latest_tag?trim=major&label=xnat-db)](https://github.com/londonaicentre/FLIP/pkgs/container/xnat-db)
+[![xnat-nginx](https://ghcr-badge.egpl.dev/londonaicentre/xnat-nginx/latest_tag?trim=major&label=xnat-nginx)](https://github.com/londonaicentre/FLIP/pkgs/container/xnat-nginx)
+[![xnat-web](https://ghcr-badge.egpl.dev/londonaicentre/xnat-web/latest_tag?trim=major&label=xnat-web)](https://github.com/londonaicentre/FLIP/pkgs/container/xnat-web)
 
 FLIP is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
