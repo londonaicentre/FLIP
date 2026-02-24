@@ -30,7 +30,7 @@
 [![orthanc](https://img.shields.io/badge/docker-orthanc-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/orthanc)
 [![xnat-db](https://img.shields.io/badge/docker-xnat--db-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/xnat-db)
 [![xnat-nginx](https://img.shields.io/badge/docker-xnat--nginx-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/xnat-nginx)
-[![xnat-web](https://img.shields.io/badge/docker-xnat--web-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/xnat-web?tag=prod)
+[![xnat-web](https://img.shields.io/badge/docker-xnat--web-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/xnat-web)
 
 FLIP is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
