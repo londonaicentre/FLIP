@@ -30,6 +30,7 @@ from nvflare.app_common.app_constant import AppConstants
 
 from flip import FLIP
 from flip.constants import ResourceType
+from flip.nvflare.metrics import send_metrics_value
 
 
 class FLIP_VALIDATOR(Executor):
@@ -204,14 +205,15 @@ class FLIP_VALIDATOR(Executor):
         self.log_info(fl_ctx, message)
 
         # Send metrics over to FLIP
-        self.flip.send_metrics_value(label="TEST_LOSS", value=metrics["loss"][-1], fl_ctx=fl_ctx, round=0)
+        send_metrics_value(label="TEST_LOSS", value=metrics["loss"][-1], fl_ctx=fl_ctx, round=0, flip=self.flip)
         for metric in ["f1-score", "precision", "recall"]:
             for lesion_name in self._lesions.get_lesion_list():
-                self.flip.send_metrics_value(
+                send_metrics_value(
                     label=f"{'test'.upper()}-{metric.upper()}",
                     value=metrics[metric][lesion_name][-1],
                     fl_ctx=fl_ctx,
                     round=0,
+                    flip=self.flip,
                 )
 
         return metrics

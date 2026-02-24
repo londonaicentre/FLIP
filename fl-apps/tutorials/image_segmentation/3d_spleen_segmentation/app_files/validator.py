@@ -22,6 +22,8 @@ from nvflare.apis.signal import Signal
 from nvflare.app_common.app_constant import AppConstants
 from trainer import FLIP_BASE
 
+from flip.nvflare.metrics import send_metrics_value
+
 
 class FLIP_VALIDATOR(FLIP_BASE):
     def __init__(
@@ -121,6 +123,6 @@ class FLIP_VALIDATOR(FLIP_BASE):
             # Compute final mean Dice score
             metric = np.mean(val_dice)
             self.logger.info(f"Validator Iteration finished: {i}, Metric: {metric}")
-            self.flip.send_metrics_value(label="TEST_DICE", value=metric, round=0, fl_ctx=fl_ctx)
+            send_metrics_value(label="TEST_DICE", value=metric, fl_ctx=fl_ctx, flip=self.flip)
 
         return metric

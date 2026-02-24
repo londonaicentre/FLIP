@@ -28,8 +28,8 @@ from fl_api.utils.exception_handlers import (
 from fl_api.utils.logger import logger
 
 app = FastAPI(
-    title="FL API",
-    description="API for FLIP FL system",
+    title="FLIP FL API (FLARE)",
+    description="FL API for FLARE deployment runtime.",
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -58,5 +58,4 @@ def on_startup():
     """FL API startup event: initializes the FL session."""
     logger.info("Running FL startup initialization...")
     app.state.session = create_fl_session()
-    logger.info("FL session initialized successfully.")
     logger.info("FL session initialized successfully.")
