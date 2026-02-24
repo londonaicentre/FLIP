@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from fl_api.utils.schemas import UploadAppRequest
-from fl_api.utils.upload import upload_application
+from fl_api.utils.upload import upload_application, validate_config
 
 TEST_MODEL_ID = "c7f72374-0752-473f-a28f-592e4d8b7a47"
 TMP_PATH_UPLOAD_DIR = "/tmp/tests/_upload_dir"
@@ -36,8 +36,6 @@ def mock_upload_correct_request():
         ],
         project_id="123456789",
         cohort_query="SELECT * FROM patients WHERE age > 60",
-        local_rounds=10,
-        global_rounds=3,
         trusts=["Trust_1", "Trust_2"],
     )
 
@@ -68,8 +66,6 @@ def mock_upload_multiple_apps_request():
         ],
         project_id="123456789",
         cohort_query="SELECT * FROM patients WHERE age > 60",
-        local_rounds=10,
-        global_rounds=3,
         trusts=["Trust_1", "Trust_2"],
     )
 
@@ -100,8 +96,6 @@ def mock_upload_multiple_apps_request_missing_meta_json():
         ],
         project_id="123456789",
         cohort_query="SELECT * FROM patients WHERE age > 60",
-        local_rounds=10,
-        global_rounds=3,
         trusts=["Trust_1", "Trust_2"],
     )
 
@@ -138,6 +132,8 @@ def test_error_requests_get(
 @patch("fl_api.utils.upload.configure_server", MagicMock())
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock())
 def test_upload_app_success(
     mock_requests_get_success,
     mock_upload_correct_request,
@@ -152,6 +148,8 @@ def test_upload_app_success(
 @patch("fl_api.utils.upload.configure_server", MagicMock())
 @patch("fl_api.utils.upload.configure_client", MagicMock())
 @patch("fl_api.utils.upload.configure_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock())
 def test_upload_multiple_apps_success(
     mock_requests_get_success,
     mock_upload_multiple_apps_request,
@@ -169,3 +167,55 @@ def test_upload_multiple_apps_missing_meta_json(
         _ = upload_application(TEST_MODEL_ID, mock_upload_multiple_apps_request_missing_meta_json, TMP_PATH_UPLOAD_DIR)
 
     assert "Application must contain a meta.json file" in str(exc_info.value)
+
+
+def test_validate_config_valid():
+    valid_config = {
+        "LOCAL_ROUNDS": 5,
+        "GLOBAL_ROUNDS": 10,
+        "IGNORE_RESULT_ERROR": True,
+        "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
+        "AGGREGATION_WEIGHTS": {"client1": 1.0},
+    }
+    config = validate_config(valid_config)
+    assert config.LOCAL_ROUNDS == 5
+    assert config.GLOBAL_ROUNDS == 10
+    assert config.IGNORE_RESULT_ERROR is True
+    assert config.AGGREGATOR == "InTimeAccumulateWeightedAggregator"
+    assert config.AGGREGATION_WEIGHTS == {"client1": 1.0}
+
+
+def test_validate_config_invalid_type():
+    with pytest.raises(ValueError, match="Provided config is not a valid dictionary"):
+        validate_config("not-a-dict")
+
+
+def test_validate_config_skips_invalid_rounds():
+    config = {
+        "LOCAL_ROUNDS": -1,
+        "GLOBAL_ROUNDS": 0,
+        "IGNORE_RESULT_ERROR": True,
+        "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
+    }
+    result = validate_config(config)
+    assert result.LOCAL_ROUNDS is None
+    assert result.GLOBAL_ROUNDS is None
+
+
+def test_validate_config_invalid_aggregator():
+    invalid_config = {
+        "LOCAL_ROUNDS": 5,
+        "GLOBAL_ROUNDS": 10,
+        "AGGREGATOR": "invalid_agg",
+    }
+    with pytest.raises(ValueError, match="Unknown aggregator: invalid_agg"):
+        validate_config(invalid_config)
+
+
+def test_validate_config_invalid_weights():
+    bad_weights = {
+        "AGGREGATION_WEIGHTS": {"client1": "not-a-number"},
+        "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
+    }
+    with pytest.raises(ValueError, match="Invalid weight"):
+        validate_config(bad_weights)

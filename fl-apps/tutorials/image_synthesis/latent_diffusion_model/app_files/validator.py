@@ -33,6 +33,7 @@ from transforms import get_val_transforms
 
 from flip import FLIP
 from flip.constants import FlipConstants, ResourceType
+from flip.nvflare.metrics import send_metrics_value
 
 
 class FLIP_VALIDATOR(Executor):
@@ -268,7 +269,7 @@ class FLIP_VALIDATOR(Executor):
             to_print,
         )
 
-        self.flip.send_metrics_value(label="Total loss DM (val)", value=np.mean(val_loss), fl_ctx=fl_ctx)
+        send_metrics_value(label="Total loss DM (val)", value=np.mean(val_loss), fl_ctx=fl_ctx, flip=self.flip)
 
         return np.mean(val_loss)
 
@@ -336,8 +337,8 @@ class FLIP_VALIDATOR(Executor):
         )
 
         # Send metrics to flip
-        self.flip.send_metrics_value(label="val_l1_loss", value=l1_test_loss, fl_ctx=fl_ctx)
-        self.flip.send_metrics_value(label="val_ssim", value=ssim_test, fl_ctx=fl_ctx)
+        send_metrics_value(label="val_l1_loss", value=l1_test_loss, fl_ctx=fl_ctx, flip=self.flip)
+        send_metrics_value(label="val_ssim", value=ssim_test, fl_ctx=fl_ctx, flip=self.flip)
 
         return l1_test_loss, ssim_test
 
