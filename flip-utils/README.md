@@ -16,6 +16,7 @@
 <p align="left">
 <img src="docs/images/flip-flare-logo.png" height="200" alt='flip-flare-logo' />
 </p>
+
 [![codecov](https://codecov.io/gh/londonaicentre/flip-fl-base/graph/badge.svg)](https://codecov.io/gh/londonaicentre/flip-fl-base)
 [![PyPI version](https://img.shields.io/pypi/v/flip-utils)](https://pypi.org/project/flip-utils/)
 [![Docker - flare-fl-base](https://img.shields.io/badge/docker-flare--fl--base-blue?logo=docker)](https://github.com/londonaicentre/flip-fl-base/pkgs/container/flare-fl-base)
