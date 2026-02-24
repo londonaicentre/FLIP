@@ -86,3 +86,12 @@ jobs:
 
       - name: Run unit tests
         run: make unit_test
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: flip-api/coverage.xml
+          flags: flip-api
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
