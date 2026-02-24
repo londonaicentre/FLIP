@@ -139,30 +139,6 @@ class IBuildImagesForModel(BaseModel):
         return v
 
 
-class IBuildStateEnvironmentVariable(BaseModel):
-    name: str
-    value: str
-
-
-class IBuildStateChangeNotification(BaseModel):
-    detail: dict
-
-    @validator("detail")
-    def validate_environment_variables(cls, v):
-        if not isinstance(v, dict):
-            raise ValueError("'detail' must be a dictionary")
-        environment = v.get("environment")
-        if not environment:
-            raise ValueError("'environment' is required in 'detail'")
-        env_vars = environment.get("environment-variables")
-        if not isinstance(env_vars, list):
-            raise ValueError("'environment-variables' must be a list")
-        for item in env_vars:
-            if not isinstance(item, dict) or "name" not in item or "value" not in item:
-                raise ValueError("Each environment variable must have 'name' and 'value'")
-        return v
-
-
 class IDetailedModelStatus(BaseModel):
     status: ModelStatus
     deleted: bool
@@ -179,15 +155,6 @@ class ILog(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-
-
-class ILogPostgres(BaseModel):
-    id: UUID
-    model_id: UUID
-    logdate: datetime
-    success: bool
-    trust_name: str
-    log: str
 
 
 class IModelAuditAction(BaseModel):

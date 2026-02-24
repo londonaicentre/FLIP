@@ -16,9 +16,8 @@ from pathlib import Path
 from typing import Annotated, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
-from flip_api.domain.interfaces.shared import TrainingRound
 from flip_api.domain.schemas.status import ClientStatus
 
 # Path to the JSON file containing job types and required files (relative to this file)
@@ -53,14 +52,8 @@ _JOB_TYPES_CONFIG = _load_job_types_config()
 class IStartTrainingBody(BaseModel):
     project_id: str
     cohort_query: str
-    local_rounds: int
-    global_rounds: int
     trusts: List[str]
     bundle_urls: List[str]
-    ignore_result_error: Optional[bool] = False
-    aggregator: Optional[str] = None
-    aggregation_weights: Optional[Dict[str, float]] = None
-    job_type: Optional[str] = "standard"
 
 
 class ISchedulerResponse(BaseModel):
@@ -98,12 +91,6 @@ class IInitiateTrainingInputPayload(BaseModel):
         if len(set(v)) != len(v):
             raise ValueError("'trusts' must all be unique entries")
         return v
-
-    @model_validator(mode="after")
-    def validate_trusts_min_length(self):
-        if len(self.trusts) < TrainingRound.MIN:
-            raise ValueError(f"'trusts' must contain at least {TrainingRound.MIN} string(s)")
-        return self
 
 
 class INetDetails(BaseModel):
@@ -178,7 +165,7 @@ class JobRequiredFiles(BaseModel):
             setattr(self, job_type, files)
 
     @classmethod
-    def get_required_files(cls, job_type: Enum) -> List[str]:
+    def get_required_files(cls, job_type: JobTypes) -> List[str]:
         """Returns the list of required files for a specific job type (always reloads from disk)."""
         config = _load_job_types_config()
         return config.get(job_type.value, [])

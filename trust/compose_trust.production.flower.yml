@@ -1,0 +1,49 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
+# inheriting service configs below
+
+services:
+
+  fl-client-net-1:
+    image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    volumes:
+      # Mount the base images download directory to share images downloaded from XNAT with FL clients
+      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+    environment:
+      - NET_ID=net-1
+      - SUPERNODE_NAME=Trust_${TRUST_NUMBER}
+      - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
+      - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=${MIN_CLIENTS}
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+      - IMAGING_API_URL=${IMAGING_API_URL}
+      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+    command:
+      - --insecure
+      - --superlink
+      - fl-server-net-1:9092
+      - --health-server-address
+      - 0.0.0.0:9098
+    shm_size: '8gb'
+    # gpus: all
+
+networks:
+  default:
+    external: true
+    name: ${TRUST_NETWORK_NAME}

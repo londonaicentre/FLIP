@@ -53,90 +53,16 @@ def mocked_settings():
         yield mock
 
 
-def test_validate_config_valid():
-    valid_config = {
-        "LOCAL_ROUNDS": 5,
-        "GLOBAL_ROUNDS": 10,
-        "IGNORE_RESULT_ERROR": True,
-        "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
-        "AGGREGATION_WEIGHTS": {"client1": 1.0},
-    }
-    config = fl_service.validate_config(valid_config)
-    assert config.LOCAL_ROUNDS == 5
-    assert config.GLOBAL_ROUNDS == 10
-    assert config.IGNORE_RESULT_ERROR is True
-    assert config.AGGREGATOR == "InTimeAccumulateWeightedAggregator"
-    assert config.AGGREGATION_WEIGHTS == {"client1": 1.0}
-
-
-def test_validate_config_invalid_type():
-    with pytest.raises(ValueError, match="Provided config is not a valid dictionary"):
-        fl_service.validate_config("not-a-dict")
-
-
-def test_validate_config_skips_invalid_rounds():
-    config = {
-        "LOCAL_ROUNDS": -1,
-        "GLOBAL_ROUNDS": 0,
-        "IGNORE_RESULT_ERROR": True,
-        "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
-    }
-    result = fl_service.validate_config(config)
-    assert result.LOCAL_ROUNDS is None
-    assert result.GLOBAL_ROUNDS is None
-
-
-def test_validate_config_invalid_aggregator():
-    invalid_config = {
-        "LOCAL_ROUNDS": 5,
-        "GLOBAL_ROUNDS": 10,
-        "AGGREGATOR": "invalid_agg",
-    }
-    with pytest.raises(ValueError, match="Unknown aggregator: invalid_agg"):
-        fl_service.validate_config(invalid_config)
-
-
-def test_validate_config_invalid_weights():
-    bad_weights = {
-        "AGGREGATION_WEIGHTS": {"client1": "not-a-number"},
-        "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
-    }
-    with pytest.raises(ValueError, match="Invalid weight"):
-        fl_service.validate_config(bad_weights)
-
-
-@patch("flip_api.fl_services.services.fl_service.http_get")
-def test_download_config_returns_config(mock_get, model_id):
-    mock_get.return_value = {"LOCAL_ROUNDS": 1, "GLOBAL_ROUNDS": 1}
-    with patch("flip_api.fl_services.services.fl_service.validate_config") as mock_validate:
-        mock_validate.return_value = "validated_config"
-        urls = [f"http://host/{model_id}/custom/config.json"]
-        config = fl_service.download_config(urls, model_id)
-        assert config == "validated_config"
-
-
-@patch("flip_api.fl_services.services.fl_service.http_get")
-def test_download_config_no_config_found(mock_get, model_id):
-    urls = [f"http://host/{model_id}/other/file.txt"]
-    result = fl_service.download_config(urls, model_id)
-    assert result is None
-
-
 @patch("flip_api.fl_services.services.fl_service.http_post")
 def test_upload_app_calls_http_post(mock_post, model_id):
     body = IStartTrainingBody(
         project_id="proj",
         cohort_query="query",
-        local_rounds=1,
-        global_rounds=2,
         trusts=["client1"],
         bundle_urls=["http://s3-presigned-url/file1", "http://s3-presigned-url/file2"],
-        ignore_result_error=True,
-        aggregator="default",
-        aggregation_weights={"client1": 1.0},
     )
     mock_post.return_value = {"status": "ok"}
-    result = fl_service.upload_app(model_id, body, "req-id", "endpoint")
+    result = fl_service.upload_app(model_id, body, "endpoint")
     assert result == {"status": "ok"}
 
 
@@ -163,14 +89,14 @@ def test_add_fl_backend_job_id_updates_db(fl_job_id, fake_session):
 def test_submit_job_raises_when_no_job_id(mock_post, fl_job_id, model_id, fake_session):
     mock_post.return_value = ""
     with pytest.raises(ValueError, match="No backend job id returned"):
-        fl_service.submit_job("req-id", fl_job_id, "endpoint", model_id, fake_session)
+        fl_service.submit_job(fl_job_id, "endpoint", model_id, fake_session)
 
 
 # TODO add tests for fetch_server_status, fetch_client_status
 @patch("flip_api.fl_services.services.fl_service.check_server_status")
 def test_fetch_server_status_success(mock_check_server):
     mock_check_server.return_value = IServerStatus(status="running")
-    status = fl_service.fetch_server_status("req-id", "endpoint")
+    status = fl_service.fetch_server_status("endpoint")
     assert status.status == "running"
 
 
@@ -180,7 +106,7 @@ def test_fetch_client_status_success(mock_check_client):
         IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS.value),
         IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY.value),
     ]
-    status = fl_service.fetch_client_status("req-id", "endpoint")
+    status = fl_service.fetch_client_status("endpoint")
     assert status[0].name == "Trust_1"
     assert status[0].status == ClientStatus.NO_JOBS.value
     assert status[1].name == "Trust_2"
@@ -209,7 +135,7 @@ def test_validate_client_availability_all_offline(mock_get_status):
     ]
 
     with pytest.raises(ValueError, match="Clients unavailable: trust-1"):
-        fl_service.validate_client_availability(["trust-1"], "endpoint", "req-id")
+        fl_service.validate_client_availability(["trust-1"], "endpoint")
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
@@ -221,7 +147,7 @@ def test_validate_client_availability_some_online(mock_get_status):
 
     # This has to raise an error for Trust_2 only.
     with pytest.raises(ValueError, match="Clients unavailable: Trust_2"):
-        fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint", "req-id")
+        fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint")
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
@@ -229,27 +155,23 @@ def test_validate_client_availability_empty_statuses(mock_get_status):
     mock_get_status.return_value = []
 
     with pytest.raises(ValueError, match="Unable to fetch client statuses"):
-        fl_service.validate_client_availability(["trust-1"], "endpoint", "req-id")
+        fl_service.validate_client_availability(["trust-1"], "endpoint")
 
 
 @patch("flip_api.fl_services.services.fl_service.http_delete")
 def test_abort_job_success(mock_delete):
     mock_delete.return_value = {"status": "aborted"}
-    result = fl_service.abort_job("req-id", "endpoint", "job-id")
+    result = fl_service.abort_job("endpoint", "job-id")
     assert result == {"status": "aborted"}
 
 
 @patch("flip_api.fl_services.services.fl_service.submit_job")
 @patch("flip_api.fl_services.services.fl_service.upload_app")
-@patch("flip_api.fl_services.services.fl_service.download_config")
-@patch("flip_api.fl_services.services.fl_service.add_log")
 @patch("flip_api.fl_services.services.fl_service.encrypt")
 @patch("flip_api.fl_services.services.fl_scheduler_service.get_required_training_details")
 def test_start_training_with_config(
     mock_get_required,
     mock_encrypt,
-    mock_add_log,
-    mock_download,
     mock_upload,
     mock_submit,
     model_id,
@@ -258,18 +180,17 @@ def test_start_training_with_config(
 ):
     mock_get_required.return_value = MagicMock(project_id="proj", cohort_query="query")
     mock_encrypt.return_value = "encrypted"
-    mock_download.return_value = MagicMock(
-        LOCAL_ROUNDS=2,
-        GLOBAL_ROUNDS=2,
-        IGNORE_RESULT_ERROR=True,
-        AGGREGATOR=None,
-        AGGREGATION_WEIGHTS=None,
-    )
 
-    fl_service.start_training(model_id, fl_job_id, ["client1"], "endpoint", ["url"], "req-id", fake_session)
+    fl_service.start_training(
+        model_id=model_id,
+        fl_job_id=fl_job_id,
+        clients=["client1"],
+        endpoint="endpoint",
+        bundle_urls=["url"],
+        session=fake_session,
+    )
     mock_upload.assert_called_once()
     mock_submit.assert_called_once()
-    mock_add_log.assert_called()
 
 
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
@@ -300,9 +221,10 @@ def test_bundle_application_success(mock_s3, mock_required, mock_verify, model_i
     mock_client.object_exists.return_value = False  # No files exist yet
     mock_verify.return_value = None
 
-    job_type = fl_service.bundle_application(model_id)
+    dest_bucket_s3_path = fl_service.bundle_application(model_id)
 
-    assert job_type.value == "standard"
+    assert dest_bucket_s3_path == f"{dest_bucket}/{model_id}"
+
     # assert that the copy_object was called for each file including the bucket names
     mock_client.copy_object.assert_any_call(
         f"{base_bucket}/src/standard/app/file1.py",
@@ -441,8 +363,8 @@ def test_bundle_application_file_wrong_job_type_in_config(
         ):
             _ = fl_service.bundle_application(model_id)
     else:
-        returned_job_type = fl_service.bundle_application(model_id)
-        assert returned_job_type.value == job_type
+        dest_bucket_s3_path = fl_service.bundle_application(model_id)
+        assert dest_bucket_s3_path == f"{mocked_settings.FL_APP_DESTINATION_BUCKET}/{model_id}"
 
 
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
@@ -606,7 +528,7 @@ def test_get_bundle_urls_success(mock_s3, mocked_settings, model_id):
         "https://dest/file2.csv",
     ]
 
-    urls = fl_service.get_bundle_urls(model_id)
+    urls = fl_service.get_bundle_urls(expected_s3_path)
 
     assert urls == ["https://dest/file1.csv", "https://dest/file2.csv"]
     mock_client.list_objects.assert_called_once_with(expected_s3_path)
@@ -619,8 +541,11 @@ def test_get_bundle_urls_list_objects_failure(mock_s3, mocked_settings, model_id
     mock_client = mock_s3.return_value
     mock_client.list_objects.side_effect = Exception("boom")
 
+    # build the expected path exactly like prod code
+    expected_s3_path = f"{mocked_settings.FL_APP_DESTINATION_BUCKET}/{model_id}"
+
     with pytest.raises(RuntimeError) as exc:
-        fl_service.get_bundle_urls(model_id)
+        fl_service.get_bundle_urls(expected_s3_path)
 
     # message contains context
     assert "Failed to list objects in S3 bucket" in str(exc.value)
@@ -640,8 +565,11 @@ def test_get_bundle_urls_presign_failure(mock_s3, mocked_settings, model_id):
     mock_client.list_objects.return_value = files
     mock_client.get_presigned_url.side_effect = Exception("presign exploded")
 
+    # build the expected path exactly like prod code
+    expected_s3_path = f"{mocked_settings.FL_APP_DESTINATION_BUCKET}/{model_id}"
+
     with pytest.raises(RuntimeError) as exc:
-        fl_service.get_bundle_urls(model_id)
+        fl_service.get_bundle_urls(expected_s3_path)
 
     assert "Failed to generate presigned URLs" in str(exc.value)
 
@@ -727,7 +655,7 @@ def test_abort_model_training_success(
     request.path_params = {"target": "server", "clients": None}
 
     fl_service.abort_model_training(request, model_id, fake_session)
-    mock_abort.assert_called_once_with("req-id", "http://endpoint", "job123")
+    mock_abort.assert_called_once_with("http://endpoint", "job123")
 
 
 def test_add_fl_job_creates_job(model_id, fake_session):

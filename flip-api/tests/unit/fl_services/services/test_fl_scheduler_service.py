@@ -51,6 +51,10 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
 
     with (
         patch(
+            "flip_api.fl_services.services.fl_scheduler_service.get_settings",
+            return_value=MagicMock(FL_BACKEND="nvflare"),
+        ),
+        patch(
             "flip_api.fl_services.services.fl_scheduler_service.bundle_application",
             return_value=(2, JobTypes.standard),
         ) as mock_bundle,
@@ -68,7 +72,6 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
             model_id=model_id,
             fl_job_id=fl_job_id,
             clients=["client1"],
-            request_id="req-id",
             session=fake_session,
         )
 
@@ -80,6 +83,10 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
 
 def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
     with (
+        patch(
+            "flip_api.fl_services.services.fl_scheduler_service.get_settings",
+            return_value=MagicMock(FL_BACKEND="nvflare"),
+        ),
         patch(
             "flip_api.fl_services.services.fl_scheduler_service.bundle_application",
             side_effect=Exception("bundle failed"),
@@ -93,7 +100,6 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
                 model_id=model_id,
                 fl_job_id=fl_job_id,
                 clients=["client1"],
-                request_id="req-id",
                 session=fake_session,
             )
 
@@ -302,7 +308,7 @@ def test_get_required_training_details(fake_session, model_id):
 def test_get_required_training_details_no_model(fake_session, model_id):
     fake_session.exec.return_value.first.return_value = None
 
-    with pytest.raises(Exception, match="Model not found"):
+    with pytest.raises(NotFoundError, match=f"Model with ID {model_id} not found"):
         fl_scheduler_service.get_required_training_details(model_id, fake_session)
 
 

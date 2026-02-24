@@ -525,7 +525,7 @@ def main(
             fl_port = 8000  # FL API always runs on port 8000 inside the container
             fl_service_name = f"flip-fl-api-net-{net_num}"
             container_name = "flip-api"
-            fl_api_url = f"http://{fl_service_name}:{fl_port}/check_status/server"
+            fl_api_url = f"http://{fl_service_name}:{fl_port}/check_server_status"
             print_status("INFO", f"Checking FL API Net-{net_num} from '{container_name}' container...")
             try:
                 success, output = run_command(

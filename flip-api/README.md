@@ -23,17 +23,17 @@
 > If the pgAdmin docker is running on a remote machine, you'll need first to tunnel the port from your local machine, e.g.
 `ssh -D 1234 -L 5050:localhost:5050 desk`
 
-Go to pgAdmin (<http://localhost:5050>) and log in (note the port and credentials are defined in [compose.yml](../deploy/compose.yml), under the service `pgadmin`).
+Go to pgAdmin (<http://localhost:5050>) and log in (note the port and credentials are defined in [compose.development.yml](../deploy/compose.development.yml), under the service `pgadmin`).
 
 Click on Register Server in the pgAdmin interface and configure the connection:
 
 * Under 'General' tab
   * Name: centralhub (or any name you prefer)
 * Under 'Connection' tab
-  * Host name/address: `DB_HOST` defined in [compose.yml](../deploy/compose.yml) (e.g. `flip-db`)
+  * Host name/address: `DB_HOST` defined in [compose.development.yml](../deploy/compose.development.yml) (e.g. `flip-db`)
   * Port: `5432`
-  * Username: `POSTGRES_USER` defined in [compose.yml](../deploy/compose.yml)
-  * Password: `POSTGRES_PASSWORD` defined in [compose.yml](../deploy/compose.yml)
+  * Username: `POSTGRES_USER` defined in [compose.development.yml](../deploy/compose.development.yml)
+  * Password: `POSTGRES_PASSWORD` defined in [compose.development.yml](../deploy/compose.development.yml)
   * Toggle 'Save password'
 
 To view the data you've uploaded, on pgAdmin: Right click on the table (e.g. `fl_logs`) > `Scripts` > `SELECT Script` and then execute the script.
