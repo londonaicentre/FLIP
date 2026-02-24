@@ -10,7 +10,8 @@
 # limitations under the License.
 #
 
-from unittest.mock import MagicMock, Mock, patch
+import os
+from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
 from nvflare.apis.shareable import Shareable
@@ -70,17 +71,16 @@ class TestPersistToS3AndCleanup:
     def test_execute_invalid_persistor_component(self, mock_constants):
         """Test execute when persistor component is not PTFileModelPersistor"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
+
         flip = MagicMock()
         component = PersistToS3AndCleanup(model_id=model_id, flip=flip)
         component.system_panic = MagicMock()
 
         fl_ctx = MagicMock()
         fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
 
-        # Return wrong type for persistor
-        engine.get_component.return_value = MagicMock()
+        # Return a MagicMock instead of PTFileModelPersistor
+        fl_ctx.get_engine.return_value.get_component.return_value = MagicMock()
 
         component.execute(fl_ctx)
 
@@ -98,12 +98,7 @@ class TestPersistToS3AndCleanup:
         fl_ctx = MagicMock()
         fl_ctx.get_peer_context.return_value = None
         engine = MagicMock()
-        workspace = MagicMock()
-        workspace.get_root_dir.return_value = "/workspace"
-        workspace.get_run_dir.return_value = "/workspace/run"
-        engine.get_workspace.return_value = workspace
         fl_ctx.get_engine.return_value = engine
-        fl_ctx.get_job_id.return_value = "job-123"
 
         # Mock PTFileModelPersistor
         persistor = Mock(spec=PTFileModelPersistor)
@@ -124,6 +119,7 @@ class TestPersistToS3AndCleanup:
         """Test execute when model inventory doesn't have model"""
         mock_constants.LOCAL_DEV = True
         model_id = "123e4567-e89b-12d3-a456-426614174000"
+
         flip = MagicMock()
         component = PersistToS3AndCleanup(model_id=model_id, flip=flip)
         component.log_warning = MagicMock()
@@ -131,12 +127,7 @@ class TestPersistToS3AndCleanup:
         fl_ctx = MagicMock()
         fl_ctx.get_peer_context.return_value = None
         engine = MagicMock()
-        workspace = MagicMock()
-        workspace.get_root_dir.return_value = "/workspace"
-        workspace.get_run_dir.return_value = "/workspace/run"
-        engine.get_workspace.return_value = workspace
         fl_ctx.get_engine.return_value = engine
-        fl_ctx.get_job_id.return_value = "job-123"
 
         persistor = Mock(spec=PTFileModelPersistor)
         persistor.get_model_inventory.return_value = {}
@@ -151,159 +142,56 @@ class TestPersistToS3AndCleanup:
         assert "Unable to retrieve" in str(component.log_warning.call_args)
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
-    @patch("shutil.make_archive")
     @patch("shutil.move")
     @patch("shutil.rmtree")
     @patch("os.path.isfile")
     @patch("os.path.isdir")
-    def test_upload_results_to_s3_bucket_dev_mode(
-        self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_make_archive, mock_constants
-    ):
-        """Test upload_results_to_s3_bucket in dev mode"""
-        mock_constants.LOCAL_DEV = True
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        component = PersistToS3AndCleanup(model_id=model_id, flip=flip)
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        workspace = MagicMock()
-        workspace.get_root_dir.return_value = "/workspace"
-        workspace.get_run_dir.return_value = "/workspace/run"
-        engine.get_workspace.return_value = workspace
-        fl_ctx.get_engine.return_value = engine
-        fl_ctx.get_job_id.return_value = "job-123"
-
-        mock_isfile.return_value = True
-        mock_isdir.return_value = True
-
-        component.upload_results_to_s3_bucket(fl_ctx)
-
-        # In dev mode, should not upload to S3
-        mock_make_archive.assert_called_once()
-        # Should move global model, trainer.py, and validator.py if they exist
-        assert mock_move.call_count == 3
-        mock_rmtree.assert_called_once()
-
-    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
-    @patch("boto3.client")
-    @patch("shutil.make_archive")
-    @patch("shutil.move")
-    @patch("shutil.rmtree")
-    @patch("os.path.isfile")
-    @patch("os.path.isdir")
-    def test_upload_results_to_s3_bucket_production_mode(
-        self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_make_archive, mock_boto3, mock_constants
-    ):
+    def test_upload_results_to_s3_bucket(self, mock_isdir, mock_isfile, mock_rmtree, mock_move, mock_constants):
         """Test upload_results_to_s3_bucket in production mode"""
         mock_constants.LOCAL_DEV = False
-        mock_constants.UPLOADED_FEDERATED_DATA_BUCKET = "s3://my-bucket/path"
         model_id = "123e4567-e89b-12d3-a456-426614174000"
+
         flip = MagicMock()
         component = PersistToS3AndCleanup(model_id=model_id, flip=flip)
 
         fl_ctx = MagicMock()
         fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        workspace = MagicMock()
-        workspace.get_root_dir.return_value = "/workspace"
-        workspace.get_run_dir.return_value = "/workspace/run"
-        engine.get_workspace.return_value = workspace
-        fl_ctx.get_engine.return_value = engine
         fl_ctx.get_job_id.return_value = "job-123"
+        fl_ctx.get_engine.return_value.get_workspace.return_value.get_run_dir.return_value = "/mock/workspace"
 
         mock_isfile.return_value = True
         mock_isdir.return_value = True
 
-        s3_client = MagicMock()
-        mock_boto3.return_value = s3_client
-
         component.upload_results_to_s3_bucket(fl_ctx)
 
-        # In production mode, should upload to S3
-        s3_client.upload_file.assert_called_once()
+        flip.upload_results_to_s3.assert_called_once()
+
         # Should move global model, trainer.py, and validator.py if they exist
         assert mock_move.call_count == 3
         mock_rmtree.assert_called_once()
 
-    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
-    @patch("shutil.rmtree")
     @patch("os.path.isdir")
-    def test_cleanup_dev_mode(self, mock_isdir, mock_rmtree, mock_constants):
-        """Test cleanup in dev mode"""
-        mock_constants.LOCAL_DEV = True
+    def test_cleanup(self, mock_isdir):
+        """Test cleanup"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
+
         flip = MagicMock()
         component = PersistToS3AndCleanup(model_id=model_id, flip=flip)
 
         fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        workspace = MagicMock()
-        workspace.get_root_dir.return_value = "/workspace"
-        engine.get_workspace.return_value = workspace
-        fl_ctx.get_engine.return_value = engine
+        fl_ctx.get_engine.return_value.get_workspace.return_value.get_root_dir.return_value = "/mock/workspace"
 
         mock_isdir.return_value = True
 
         component.cleanup(fl_ctx)
 
-        # In dev mode, should not delete directories
-        mock_rmtree.assert_not_called()
+        expected_calls = [
+            call(os.path.join("/mock/workspace", "save", model_id)),
+            call(os.path.join("/mock/workspace", "transfer", model_id)),
+        ]
 
-    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
-    @patch("shutil.rmtree")
-    @patch("os.path.isdir")
-    def test_cleanup_production_mode(self, mock_isdir, mock_rmtree, mock_constants):
-        """Test cleanup in production mode"""
-        mock_constants.LOCAL_DEV = False
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        component = PersistToS3AndCleanup(model_id=model_id, flip=flip)
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        workspace = MagicMock()
-        workspace.get_root_dir.return_value = "/workspace"
-        engine.get_workspace.return_value = workspace
-        fl_ctx.get_engine.return_value = engine
-
-        mock_isdir.return_value = True
-
-        component.cleanup(fl_ctx)
-
-        # In production mode, should delete directories
-        assert mock_rmtree.call_count == 2  # transfer and save dirs
-
-    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
-    @patch("shutil.rmtree")
-    @patch("os.path.isdir")
-    def test_cleanup_exception_handling(self, mock_isdir, mock_rmtree, mock_constants):
-        """Test cleanup exception handling"""
-        mock_constants.LOCAL_DEV = False
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        flip = MagicMock()
-        component = PersistToS3AndCleanup(model_id=model_id, flip=flip)
-        component.log_error = MagicMock()
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        workspace = MagicMock()
-        workspace.get_root_dir.return_value = "/workspace"
-        engine.get_workspace.return_value = workspace
-        fl_ctx.get_engine.return_value = engine
-
-        mock_isdir.return_value = True
-        mock_rmtree.side_effect = Exception("Test exception")
-
-        # Implementation catches and re-raises Exception() with no message
-        with pytest.raises(Exception):  # noqa: PT011
-            component.cleanup(fl_ctx)
-
-        component.log_error.assert_called()
+        flip.cleanup.assert_has_calls(expected_calls, any_order=False)
+        assert flip.cleanup.call_count == 2
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     def test_execute_base_exception_handling(self, mock_constants):
@@ -331,12 +219,11 @@ class TestPersistToS3AndCleanup:
             component.execute("task", shareable, fl_ctx, MagicMock())
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
-    @patch("flip.nvflare.components.persist_and_cleanup.os.path.exists")
-    @patch("builtins.open")
-    def test_upload_results_with_general_exception(self, mock_open, mock_exists, mock_constants):
+    def test_upload_results_with_general_exception(self, mock_constants):
         """Test upload_results_to_s3_bucket with general exception"""
         mock_constants.LOCAL_DEV = True
         model_id = "123e4567-e89b-12d3-a456-426614174000"
+
         flip = MagicMock()
         component = PersistToS3AndCleanup(model_id=model_id, flip=flip)
         component.log_info = MagicMock()
@@ -345,19 +232,13 @@ class TestPersistToS3AndCleanup:
 
         fl_ctx = MagicMock()
         fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        workspace = MagicMock()
-        workspace.get_root_dir.return_value = "/workspace"
-        workspace.get_run_dir.return_value = "/workspace/run"
-        engine.get_workspace.return_value = workspace
-        fl_ctx.get_engine.return_value = engine
+        fl_ctx.get_engine.return_value.get_workspace.return_value.get_run_dir.return_value = "/mock/workspace/run"
         fl_ctx.get_job_id.return_value = "job-123"
 
-        mock_exists.return_value = True
+        flip.upload_results_to_s3.side_effect = Exception("Upload failed")
 
-        with patch("shutil.make_archive", side_effect=Exception("Upload failed")):
-            # Implementation catches and re-raises Exception() with no message
-            with pytest.raises(Exception):  # noqa: PT011
-                component.upload_results_to_s3_bucket(fl_ctx)
+        # Implementation catches and re-raises Exception() with no message
+        with pytest.raises(Exception, match="Upload failed"):
+            component.upload_results_to_s3_bucket(fl_ctx)
 
         component.cleanup.assert_called_once()

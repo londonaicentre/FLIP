@@ -136,6 +136,25 @@ class FLIPBase(ABC):
             model_id (str): The model UUID
         """
 
+    @abstractmethod
+    def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:
+        """
+        Uploads results to S3 bucket.
+
+        Args:
+            results_folder (Path): The folder containing results to upload
+            model_id (str): The model UUID for which results are being uploaded
+        """
+
+    @abstractmethod
+    def cleanup(self, path: Path) -> None:
+        """
+        Cleans up local files.
+
+        Args:
+            path (Path): The path to the file or directory to clean up
+        """
+
     # ======================================================
     # Concrete Validation Methods - Shared across all implementations
     # ======================================================
