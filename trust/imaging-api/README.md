@@ -13,6 +13,11 @@
 
 # Imaging API
 
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![FLIP Imaging API CI](https://github.com/londonaicentre/FLIP/actions/workflows/imaging_api.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/imaging_api.yml)
+[![imaging-api](https://ghcr-badge.egpl.dev/londonaicentre/imaging-api/latest_tag?trim=major&label=imaging-api)](https://github.com/londonaicentre/FLIP/pkgs/container/imaging-api)
+[![Coverage](https://codecov.io/gh/londonaicentre/FLIP/branch/main/graph/badge.svg?flag=imaging-api)](https://codecov.io/gh/londonaicentre/FLIP)
+
 Reimplementation of flip-trust-imaging-api in Python. Allows creation of XNAT projects, users, downloading data, and querying from Orthanc (mock PACS).
 
 Tested with `XNAT version 1.9.1.1, build: 158` (see xnat folder in the repo).

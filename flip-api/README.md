@@ -13,6 +13,11 @@
 
 # flip-api
 
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![FLIP Central Hub API CI](https://github.com/londonaicentre/FLIP/actions/workflows/central_hub_api.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/central_hub_api.yml)
+[![flip-api](https://ghcr-badge.egpl.dev/londonaicentre/flip-api/latest_tag?trim=major&label=flip-api)](https://github.com/londonaicentre/FLIP/pkgs/container/flip-api)
+[![Coverage](https://codecov.io/gh/londonaicentre/FLIP/branch/main/graph/badge.svg?flag=flip-api)](https://codecov.io/gh/londonaicentre/FLIP)
+
 ## [Optional] Configure the connection on pgAdmin
 
 > If the pgAdmin docker is running on a remote machine, you'll need first to tunnel the port from your local machine, e.g.
