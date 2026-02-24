@@ -11,8 +11,7 @@
 #
 
 import json
-from typing import Any, List, Optional
-from urllib.parse import urlparse
+from typing import Any, List
 from uuid import UUID
 
 from fastapi import Request
@@ -22,19 +21,14 @@ from flip_api.config import get_settings
 from flip_api.db.database import engine
 from flip_api.db.models.main_models import FLJob
 from flip_api.domain.interfaces.fl import (
-    AggregationWeights,
-    FLAggregators,
     IClientStatus,
     IJobMetaData,
-    IOverridableConfig,
     IServerStatus,
     IStartTrainingBody,
     JobRequiredFiles,
     JobTypes,
 )
-from flip_api.domain.interfaces.shared import TrainingRound
 from flip_api.domain.schemas.status import FLTargets
-from flip_api.model_services.services.model_service import add_log
 from flip_api.utils.encryption import encrypt
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
@@ -47,83 +41,7 @@ class UnknownJobTypeError(Exception):
     pass
 
 
-def validate_config(config: IOverridableConfig) -> IOverridableConfig:
-    """
-    Validate the provided configuration dictionary.
-
-    Args:
-        config (IOverridableConfig): The configuration dictionary to validate.
-
-    Returns:
-        IOverridableConfig: The validated configuration dictionary.
-
-    Raises:
-        ValueError: If any of the checks fail, a ValueError is raised with an appropriate message.
-    """
-    validated = IOverridableConfig()
-
-    def is_valid(value):
-        return isinstance(value, (int, float)) and 0 < value <= 100
-
-    if not isinstance(config, dict):
-        raise ValueError("Provided config is not a valid dictionary")
-
-    if is_valid(config.get("LOCAL_ROUNDS")):
-        validated.LOCAL_ROUNDS = config["LOCAL_ROUNDS"]
-
-    if is_valid(config.get("GLOBAL_ROUNDS")):
-        validated.GLOBAL_ROUNDS = config["GLOBAL_ROUNDS"]
-
-    if isinstance(config.get("IGNORE_RESULT_ERROR"), bool):
-        validated.IGNORE_RESULT_ERROR = config["IGNORE_RESULT_ERROR"]
-
-    agg = config.get("AGGREGATOR")
-    if agg:
-        if agg in FLAggregators:
-            validated.AGGREGATOR = agg
-        else:
-            raise ValueError(f"Unknown aggregator: {agg}")
-
-    weights = config.get("AGGREGATION_WEIGHTS")
-    if weights:
-        if not isinstance(weights, dict):
-            raise ValueError("AGGREGATION_WEIGHTS must be a dictionary")
-
-        for key, val in weights.items():
-            logger.info(f"Validating aggregation weight: {key} -> {val}")
-            if not (
-                isinstance(val, (int, float))
-                and AggregationWeights.MinimumAggregationWeight <= val <= AggregationWeights.MaximumAggregationWeight
-            ):
-                raise ValueError(f"Invalid weight: {val}")
-
-        validated.AGGREGATION_WEIGHTS = weights
-
-    return validated
-
-
-def download_config(bundle_urls: List[str], model_id: UUID) -> Optional[IOverridableConfig]:
-    """
-    Download the config.json file from the bundle URLs and validate its contents.
-    If the file is found and valid, return the validated config.
-    If the file is not found or invalid, return None.
-
-    Args:
-        bundle_urls (List[str]): A list of URLs to download the config.json file from.
-        model_id (UUID): The ID of the model.
-
-    Returns:
-        Optional[IOverridableConfig]: The validated config if found, otherwise None.
-    """
-    for url in bundle_urls:
-        if "/custom/config.json" in urlparse(url).path:
-            config = http_get(url)
-            return validate_config(config)
-    logger.info("No config.json file found.")
-    return None
-
-
-def upload_app(model_id: UUID, body: IStartTrainingBody, request_id: str, endpoint: str) -> Any:
+def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: str) -> Any:
     """
     Upload the application to the FL server.
 
@@ -132,15 +50,14 @@ def upload_app(model_id: UUID, body: IStartTrainingBody, request_id: str, endpoi
 
     Args:
         model_id (UUID): The ID of the model to upload.
-        body (IStartTrainingBody): The payload containing the training details.
-        request_id (str): The request ID of the request that triggered the function.
+        training_details (IStartTrainingBody): The payload containing the training details.
         endpoint (str): The endpoint of the net (FL API service).
 
     Returns:
         Any: The response from the server after uploading the application.
     """
     url = f"{endpoint}/upload_app/{model_id}"
-    response = http_post(url, request_id, body.model_dump())
+    response = http_post(url=url, data=training_details.model_dump())
     logger.info(f"upload_app response: {response}")
     # TODO There should be some response validation here, and the return type should not be Any
     return response
@@ -191,12 +108,11 @@ def add_fl_backend_job_id(fl_job_id: UUID, fl_backend_job_id: str, session: Sess
     session.commit()
 
 
-def submit_job(request_id: str, fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session):
+def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session):
     """
     Submits a job to the FL API that is going to kick off training
 
     Args:
-        request_id (str): The request ID of the request that triggered the function.
         fl_job_id (UUID): The ID of the FL job to add the backend job id given successful job submission
         endpoint (str): The endpoint of the Flare Loader service.
         model_id (UUID): The ID of the model to start submit the job for.
@@ -206,27 +122,27 @@ def submit_job(request_id: str, fl_job_id: UUID, endpoint: str, model_id: UUID, 
         ValueError: If the backend job ID is not returned in the response.
     """
     url = f"{endpoint}/submit_job/{model_id}"
-    fl_backend_job_id = http_post(url, request_id)
+    # NOTE we increased the timeout here as Flower submit takes slightly longer to return a response compared to FLARE.
+    fl_backend_job_id = http_post(url, timeout=30)
     # Validate that the fl_backend_job_id is returned and is a string
     if not fl_backend_job_id or not isinstance(fl_backend_job_id, str):
         raise ValueError("No backend job id returned or invalid format")
     add_fl_backend_job_id(fl_job_id, fl_backend_job_id, session)
 
 
-def check_server_status(request_id: str, endpoint: str) -> IServerStatus | None:
+def check_server_status(endpoint: str) -> IServerStatus | None:
     """
     Fetch the status of the server from the FL API.
 
     Args:
-        request_id (str): The request ID for logging purposes.
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
         IServerStatus: The server status.
     """
-    url = f"{endpoint}/check_status/server"
-    logger.debug(f"Checking server status at '{url}' with request_id '{request_id}'")
-    response = http_get(url, request_id)
+    url = f"{endpoint}/check_server_status"
+    logger.debug(f"Checking server status at '{url}'")
+    response = http_get(url)
     logger.debug(f"Server status response: {response}")
     if not response:
         logger.error(f"No response from FL API for server at endpoint {endpoint}")
@@ -235,20 +151,19 @@ def check_server_status(request_id: str, endpoint: str) -> IServerStatus | None:
     return server_status
 
 
-def check_client_status(request_id: str, endpoint: str) -> List[IClientStatus] | None:
+def check_client_status(endpoint: str) -> List[IClientStatus] | None:
     """
     Fetch the status of all clients from the FL API.
 
     Args:
-        request_id (str): The request ID for logging purposes.
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
         List[IClientStatus] | None: A list of client statuses if available, otherwise None.
     """
-    url = f"{endpoint}/check_status/client"
-    logger.debug(f"Checking client status at '{url}' with request_id '{request_id}'")
-    response = http_get(url, request_id)
+    url = f"{endpoint}/check_client_status"
+    logger.debug(f"Checking client status at '{url}'")
+    response = http_get(url)
     logger.debug(f"Client status response: {response}")
     if not response:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
@@ -257,36 +172,34 @@ def check_client_status(request_id: str, endpoint: str) -> List[IClientStatus] |
     return client_statuses
 
 
-def fetch_server_status(request_id: str, endpoint: str) -> IServerStatus | None:
+def fetch_server_status(endpoint: str) -> IServerStatus | None:
     """
     Fetch the status of the server from the FL API.
 
     Args:
-        request_id (str): The request ID for logging purposes.
         endpoint (str): The endpoint of the server to fetch the status from.
 
     Returns:
         IServerStatus | None: The server status if available, otherwise None.
     """
-    server_status = check_server_status(request_id, endpoint)
+    server_status = check_server_status(endpoint)
     if not server_status:
         logger.error(f"No response from FL API for server at endpoint {endpoint}")
         return None
     return server_status
 
 
-def fetch_client_status(request_id: str, endpoint: str) -> List[IClientStatus] | None:
+def fetch_client_status(endpoint: str) -> List[IClientStatus] | None:
     """
     Fetch the status of the clients from the FL API.
 
     Args:
-        request_id (str): The request ID for logging purposes.
         endpoint (str): The endpoint of the server to fetch the status from.
 
     Returns:
         List[IClientStatus] | None: A list of client statuses if available, otherwise None.
     """
-    client_statuses = check_client_status(request_id, endpoint)
+    client_statuses = check_client_status(endpoint)
     if not client_statuses:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
         return None
@@ -313,7 +226,7 @@ def is_client_available(client_name: str, client_statuses: List[IClientStatus]) 
     return False
 
 
-def validate_client_availability(clients: List[str], endpoint: str, request_id: str) -> None:
+def validate_client_availability(clients: List[str], endpoint: str) -> None:
     """
     Validate the availability of clients by checking their status.
     It sends a GET request to the Flare Loader service to check the status of the clients.
@@ -322,7 +235,6 @@ def validate_client_availability(clients: List[str], endpoint: str, request_id: 
     Args:
         clients (List[str]): A list of client names to check the availability of.
         endpoint (str): The endpoint of the Flare Loader service.
-        request_id (str): The request ID of the request that triggered the function.
 
     Returns:
         None
@@ -330,7 +242,7 @@ def validate_client_availability(clients: List[str], endpoint: str, request_id: 
     Raises:
         ValueError: If any client is unavailable.
     """
-    client_statuses = check_client_status(request_id, endpoint)
+    client_statuses = check_client_status(endpoint)
     if not client_statuses:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
         raise ValueError("Unable to fetch client statuses to validate client availability")
@@ -343,12 +255,11 @@ def validate_client_availability(clients: List[str], endpoint: str, request_id: 
         raise ValueError(f"Clients unavailable: {', '.join(unavailable)}")
 
 
-def abort_job(request_id: str, endpoint: str, job_id: str) -> dict:
+def abort_job(endpoint: str, job_id: str) -> dict:
     """
     Aborts a job on the FL server.
 
     Args:
-        request_id (str): The request ID of the request that triggered the function.
         endpoint (str): The endpoint of the Flare Loader service.
         job_id (str): The ID of the job to abort.
 
@@ -356,7 +267,7 @@ def abort_job(request_id: str, endpoint: str, job_id: str) -> dict:
         dict: The response from the server after aborting the job.
     """
     url = f"{endpoint}/abort_job/{job_id}"
-    response = http_delete(url, request_id)
+    response = http_delete(url)
     return response
 
 
@@ -366,9 +277,7 @@ def start_training(
     clients: List[str],
     endpoint: str,
     bundle_urls: List[str],
-    request_id: str,
     session: Session,
-    job_type: JobTypes = JobTypes.standard,  # type: ignore[attr-defined]
 ):
     """
     Start the training process for a given model by uploading the application and submitting the job.
@@ -381,9 +290,7 @@ def start_training(
         clients (List[str]): A list of client names to start training on.
         endpoint (str): The endpoint of the Flare Loader service.
         bundle_urls (List[str]): A list of URLs for the application bundle.
-        request_id (str): The request ID of the request that triggered the function.
         session (Session): An instance of the database connection.
-        job_type (JobTypes): The type of job (e.g., 'standard', 'evaluation'). Defaults to 'standard'.
 
     Raises:
         ValueError: If the backend job ID is not returned in the response.
@@ -393,46 +300,19 @@ def start_training(
     required_info = fl_scheduler_service.get_required_training_details(model_id, session)
     encrypted_project_id = encrypt(required_info.project_id)
 
-    config = download_config(bundle_urls, model_id)
-    if config:
-        local_rounds = config.LOCAL_ROUNDS if config.LOCAL_ROUNDS else TrainingRound.MIN
-        global_rounds = config.GLOBAL_ROUNDS if config.GLOBAL_ROUNDS else TrainingRound.MIN
-        aggregator = config.AGGREGATOR if config.AGGREGATOR else FLAggregators.InTimeAccumulateWeightedAggregator.value
-        aggregation_weights = config.AGGREGATION_WEIGHTS if config.AGGREGATION_WEIGHTS else {}
-        ignore_result_error = config.IGNORE_RESULT_ERROR if config.IGNORE_RESULT_ERROR else False
-    else:
-        local_rounds = TrainingRound.MIN
-        global_rounds = TrainingRound.MIN
-        aggregator = FLAggregators.InTimeAccumulateWeightedAggregator.value
-        aggregation_weights = {}
-        ignore_result_error = False
-
-    body = IStartTrainingBody(
+    training_details = IStartTrainingBody(
         project_id=encrypted_project_id,
         cohort_query=required_info.cohort_query,
-        local_rounds=local_rounds,
-        global_rounds=global_rounds,
         trusts=clients,
-        aggregator=aggregator,
-        aggregation_weights=aggregation_weights,
         bundle_urls=bundle_urls,
-        ignore_result_error=ignore_result_error,
     )
 
-    upload_app(model_id, body, request_id, endpoint)
+    upload_app(model_id, training_details, endpoint)
     logger.info(f"Submitting job for training for model {model_id} with FL job ID {fl_job_id}")
-    submit_job(request_id, fl_job_id, endpoint, model_id, session)
-
-    if config:
-        add_log(model_id, "Config file found ✅", session)
-        if not config.AGGREGATION_WEIGHTS:
-            add_log(model_id, "No aggregation weights provided. Using default = 1", session)
-        else:
-            weight_summary = ", ".join([f"{k}: {v}" for k, v in config.AGGREGATION_WEIGHTS.items()])
-            add_log(model_id, f"Aggregation weights for training: {weight_summary}", session)
+    submit_job(fl_job_id, endpoint, model_id, session)
 
 
-def bundle_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> JobTypes:  # type: ignore[attr-defined]
+def bundle_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> str:  # type: ignore[attr-defined]
     """
     Creates the app folder from the base application files and the uploaded files.
 
@@ -503,7 +383,7 @@ def bundle_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -
         FileNotFoundError: If required files for the job type are missing.
 
     Returns:
-        JobTypes: the job type used for the application (e.g. 'standard', 'evaluation', etc.)
+        str: The destination bucket S3 path where the bundled application is located.
     """
     s3 = S3Client()
 
@@ -528,9 +408,13 @@ def bundle_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -
         logger.info("No config.json file was found in the scanned files. Using job_type=standard.")
     else:
         # We download the file
-        s3_config_object = s3.get_object(config_file)
-        config_object = s3_config_object["Body"].read()
-        input_config = json.loads(config_object) if config_object else {}
+        try:
+            s3_config_object = s3.get_object(config_file)
+            config_object = s3_config_object["Body"].read()
+            input_config = json.loads(config_object) if config_object else {}
+        except Exception as e:
+            logger.error(f"Error reading config.json from S3: {str(e)}. Using job_type=standard.")
+            raise ValueError("Error reading config.json from S3") from e
 
         jt = input_config.get("job_type")
         if not jt:
@@ -632,7 +516,7 @@ def bundle_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -
         dest_bucket_s3_path=dest_bucket_s3_path,
     )
 
-    return job_type
+    return dest_bucket_s3_path
 
 
 def verify_bundle_paths(
@@ -684,22 +568,20 @@ def verify_bundle_paths(
     logger.info(f"Bundle verification succeeded: {len(expected)} files present.")
 
 
-def get_bundle_urls(model_id: UUID) -> List[str]:
+def get_bundle_urls(s3_path: str) -> List[str]:
     """
     Creates pre-signed URLs for the bundle files in S3 (containing the application files and model files) that the FL
     API will use for training.
 
     Args:
-        model_id (UUID): The ID of the model to get the bundle URLs for.
+        s3_path (str): The S3 path of the bundle to get the URLs for.
 
     Returns:
-        List[str]: A list of pre-signed URLs for the model bundle files.
+        List[str]: A list of pre-signed URLs for the bundle files.
 
     Raises:
         ClientError: If there is an error listing objects or generating pre-signed URLs.
     """
-    s3_path = f"{get_settings().FL_APP_DESTINATION_BUCKET}/{model_id}"
-
     logger.info(f"Getting bundle URLs from {s3_path}")
 
     s3 = S3Client()
@@ -773,9 +655,9 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     Check if the model is currently running training, and if it is, send an abort request to the FL server.
 
     Args:
-        request: The FastAPI request object
-        model_id: The ID of the model to abort
-        session: SQLModel session object
+        request (Request): The FastAPI request object
+        model_id (UUID): The ID of the model to abort
+        session (Session): SQLModel session object
     """
     logger.debug(f"Checking if model {model_id} is currently running...")
 
@@ -796,8 +678,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         logger.info(f"Model {model_id} not currently running training; removed from queue. Reason: {e}")
         return
 
-    request_id = str(request.scope.get("request_id", ""))
-    server_status = fetch_server_status(request_id, net_endpoint)
+    server_status = fetch_server_status(net_endpoint)
     logger.debug(f"Server status: {server_status}")
 
     if not server_status:  # or server_status.status != FLStatus.SUCCESS.value:
@@ -831,7 +712,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
 
     logger.debug(f"Attempting abort request for model ID: {model_id} on {net_name} (job ID: {fl_backend_job_id})")
 
-    response = abort_job(request_id, net_endpoint, fl_backend_job_id)
+    response = abort_job(net_endpoint, fl_backend_job_id)
 
     logger.info(f"Abort job response ({target=}, {clients=}): {response}")
 
@@ -880,12 +761,13 @@ def keep_fl_api_session_alive() -> None:
     with Session(engine) as db:
         nets = fl_scheduler_service.get_nets(db)
 
-    # For each FL Net in the database, call its check_status endpoint, which in turn calls the FL session.
+    # For each FL Net in the database, call its check_server_status endpoint to keep the session alive.
+    # NOTE this was created for FLARE and might need to be revisited for Flower, depending on session management.
     # NOTE In the old implementation, we had 3 'nets' in the database, each with its own FLAdminAPI. So each net had a
     # separate FLAdminAPI endpoint. Here, there should just be 1 net for now. If we add more nets in the future, they
     # might all have the same FLARE_API endpoint, if the FLARE_API controls all controllers/clients.
     for net in nets:
         try:
-            fetch_server_status("", net.endpoint)
+            fetch_server_status(net.endpoint)
         except Exception as e:
             logger.error(f"Failed to send check request: {e}")

@@ -35,7 +35,7 @@ include xnat-docker-compose/.env
 export $(shell sed 's/=.*//' xnat-docker-compose/.env)
 endif
 
-DOCKER_COMPOSE_CMD=docker compose -f docker-compose.yml
+DOCKER_COMPOSE_CMD=docker compose -f docker-compose.development.yml
 DOCKER_COMPOSE_PROD_CMD=docker compose -f docker-compose.production.yml
 
 project1 = xnat1

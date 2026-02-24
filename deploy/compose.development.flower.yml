@@ -1,0 +1,65 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
+# inheriting service configs below
+
+services:
+  #################### CENTRAL HUB FL ####################
+
+  fl-api-net-1:
+    container_name: flip-fl-api-net-1
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    environment:
+      - DEBUG=${DEBUG}
+      - SUPERLINK_ADDRESS=fl-server-net-1:9093
+      - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
+      - SUPERNODE_HEALTH_ADDRESSES=Trust_1=trust1-fl-client-net-1-1:9098,Trust_2=trust2-fl-client-net-1-1:9098
+    ports:
+      - "${FL_API_PORT}:8000"
+      - "5679:5679"
+    depends_on:
+      - fl-server-net-1
+    networks:
+      - default
+      - shared-net-1
+    restart: unless-stopped
+
+  fl-server-net-1:
+    container_name: fl-server-net-1
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    volumes:
+      # Mount the AWS credentials (needed to upload model results to S3)
+      - ~/.aws/config:/root/.aws/config:ro
+      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+    environment:
+      - NET_ID=net-1
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=${MIN_CLIENTS}
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+      - IMAGING_API_URL=${IMAGING_API_URL}
+      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      - AWS_PROFILE=${AWS_PROFILE}
+    command:
+      - --insecure
+      - --health-server-address
+      - 0.0.0.0:9097
+    ports:
+      - 9093:9093
+    networks:
+      - shared-net-1
+    restart: unless-stopped
+    init: true

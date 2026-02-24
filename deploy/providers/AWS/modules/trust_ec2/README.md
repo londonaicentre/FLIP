@@ -52,4 +52,4 @@ Security and IAM
 
 Troubleshooting
 
-- If the stack doesn't start, SSH into the instance and inspect `/home/ubuntu/compose_trust.yml`, `/home/ubuntu/.env.development` and the command `docker compose -f compose_trust.yml up -d`.
+- If the stack doesn't start, SSH into the instance and inspect `/home/ubuntu/compose_trust.development.yml`, `/home/ubuntu/.env.development` and the command `docker compose -f compose_trust.development.yml up -d`.

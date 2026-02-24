@@ -92,7 +92,7 @@ To be able to pull the FLIP docker images, configure your ghcr.io credentials as
 
 ### Using the Makefile
 
-To start the services, you can use the Makefile provided in the root directory. The Makefile provides several convenient commands to manage the services defined in the `deploy/compose.yml` file.
+To start the services, you can use the Makefile provided in the root directory. The Makefile provides several convenient commands to manage the services defined in the [deploy/compose.development.yml](deploy/compose.development.yml) file.
 
 For example:
 
@@ -173,20 +173,20 @@ To start the development environment:
 make up
 ```
 
-This will start all the services defined in the `deploy/compose.yml` file. The services will be started in detached
+This will start all the services defined in the `deploy/compose.development.yml` file. The services will be started in detached
 mode, so you can continue using your terminal. Use `docker compose ps` to see the status of the services and see which
 ports they are running on.
 
 To get a shell some of the services, you can run:
 
 ```bash
-docker compose -f deploy/compose.yml exec < service-name > < command >
+docker compose -f deploy/compose.development.yml exec < service-name > < command >
 ```
 
 For example:
 
 ```bash
-docker compose -f deploy/compose.yml exec flip-ui /bin/sh
+docker compose -f deploy/compose.development.yml exec flip-ui /bin/sh
 ```
 
 This will give you a shell in the `flip-ui` container. You can run any command inside the container, including
@@ -205,7 +205,7 @@ make down
 If you want to run a single service you can run:
 
 ```bash
-docker compose -f deploy/compose.yml run --rm < service name >
+docker compose -f deploy/compose.development.yml run --rm < service name >
 ```
 
 ### Federated Learning Setup
@@ -256,8 +256,8 @@ If you see errors like "fed_client.json does not exist" or "missing startup fold
 ```console
 make -C trust build
 make[1]: Entering directory '/data/github/flip/trust'
-BASE_IMAGES_DOWNLOAD_DIR_TRUST1=./data/trust-1 OMOP_DB_PORT=5434 XNAT_PORT=8104 DATA_ACCESS_API_PORT=8010 TRUST_DEBUG_PORT=5682 IMAGING_DEBUG_PORT=5681 DATA_ACCESS_DEBUG_PORT=5680 TRUST_NETWORK_NAME=deploy_trust-network-1 docker compose -f compose_trust.yml build
-validating /data/github/flip/trust/compose_trust.yml: services.fl-client-net-1 Additional property gpus is not allowed
+BASE_IMAGES_DOWNLOAD_DIR_TRUST1=./data/trust-1 OMOP_DB_PORT=5434 XNAT_PORT=8104 DATA_ACCESS_API_PORT=8010 TRUST_DEBUG_PORT=5682 IMAGING_DEBUG_PORT=5681 DATA_ACCESS_DEBUG_PORT=5680 TRUST_NETWORK_NAME=deploy_trust-network-1 docker compose -f compose_trust.development.yml build
+validating /data/github/flip/trust/compose_trust.development.yml: services.fl-client-net-1 Additional property gpus is not allowed
 make[1]: *** [Makefile:53: build] Error 15
 make[1]: Leaving directory '/data/github/flip/trust'
 make: *** [Makefile:56: build] Error 2
@@ -270,7 +270,7 @@ The error `Additional property gpus is not allowed` may arise from the version o
 Add a new service definition to the services section in the docker compose files. For example:
 
 ```yml
-# deploy/compose.yml
+# deploy/compose.development.yml
 services:
   # Existing flip-ui service...
 
@@ -296,7 +296,7 @@ Optionally update the Makefile to include commands for the new service:
 # Makefile
 # Start only the new service
 new:
-    docker compose -f deploy/compose.yml up -d new
+    docker compose -f deploy/compose.development.yml up -d new
 ```
 
 ## Python best practices

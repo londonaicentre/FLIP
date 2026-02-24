@@ -1,0 +1,110 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
+# inheriting service configs below
+
+services:
+  #################### CENTRAL HUB FL ####################
+
+  fl-api-net-1:
+    container_name: flip-fl-api-net-1
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    environment:
+      - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+      - DEBUG=${DEBUG}
+    ports:
+      - "${FL_API_PORT}:8000"
+      - "5679:5679"
+    volumes:
+      # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
+      - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/local:/app/admin/local
+      - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/startup:/app/admin/startup
+    depends_on:
+      - fl-server-net-1
+    networks:
+      - default
+      - shared-net-1
+    restart: unless-stopped
+
+  fl-api-net-2:
+    container_name: flip-fl-api-net-2
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    environment:
+      - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+      - DEBUG=${DEBUG}
+    volumes:
+      # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
+      - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/local:/app/admin/local
+      - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/startup:/app/admin/startup
+    depends_on:
+      - fl-server-net-2
+    networks:
+      - default
+      - shared-net-2
+    restart: unless-stopped
+
+  fl-server-net-1:
+    container_name: fl-server-net-1
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    volumes:
+      # Provisioned NVFLARE secrets (certificates, fed_server.json)
+      - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/local:/app/local
+      - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/startup:/app/startup
+      - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/transfer:/app/transfer
+      # Mount the AWS credentials (needed to upload model results to S3)
+      - ~/.aws/config:/root/.aws/config:ro
+      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+    environment:
+      - NET_ID=net-1
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=${MIN_CLIENTS}
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+      - IMAGING_API_URL=${IMAGING_API_URL}
+      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      - AWS_PROFILE=${AWS_PROFILE}
+    networks:
+      - shared-net-1
+    restart: unless-stopped
+    init: true
+
+  fl-server-net-2:
+    container_name: fl-server-net-2
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    volumes:
+      # Provisioned NVFLARE secrets (certificates, fed_server.json)
+      - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/local:/app/local
+      - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/startup:/app/startup
+      - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/transfer:/app/transfer
+      # Mount the AWS credentials (needed to upload model results to S3)
+      - ~/.aws/config:/root/.aws/config:ro
+      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+    environment:
+      - NET_ID=net-2
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=${MIN_CLIENTS}
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+      - IMAGING_API_URL=${IMAGING_API_URL}
+      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      - AWS_PROFILE=${AWS_PROFILE}
+    networks:
+      - shared-net-2
+    restart: unless-stopped
+    init: true
