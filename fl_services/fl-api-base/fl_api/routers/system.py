@@ -18,42 +18,9 @@ from nvflare.fuel.hci.client.fl_admin_api import TargetType
 
 from fl_api.core.dependencies import get_session
 from fl_api.utils.flip_session import FLIP_Session
-from fl_api.utils.logger import logger
 from fl_api.utils.schemas import ClientInfoModel, ServerInfoModel, SystemInfoModel
 
 router = APIRouter()
-
-
-@router.get("/check_status/{target_type}", response_model=List[ClientInfoModel] | ServerInfoModel | SystemInfoModel)
-def check_status(
-    target_type: TargetType,
-    targets: Optional[List[str]] = Query(None),
-    session: FLIP_Session = Depends(get_session),
-) -> List[ClientInfoModel] | ServerInfoModel | SystemInfoModel:
-    """
-    Checks the status of the server, clients or full FL system. Kept for backward compatibility but ideally users
-    should use the more specific endpoints (e.g. /check_server_status).
-
-    Args:
-        target_type (TargetType): type of target (can be server, client or all)
-        targets (Optional[List[str]]): if target_type is client, this is a list of specific clients you want to check
-        the status of. If not specified, the status of all clients will be checked.
-        session (FLIP_Session): the FLIP session instance.
-
-    Returns:
-        List[ClientInfoModel] | ServerInfoModel | SystemInfoModel: status information about the specified target(s).
-    """
-    logger.info(f"Checking status of {target_type} with targets: {targets}")
-
-    if target_type == TargetType.CLIENT:
-        if targets:
-            return session.check_client_status(targets)
-        return session.check_client_status()
-
-    elif target_type == TargetType.SERVER:
-        return session.check_server_status()
-
-    return session.get_system_info()
 
 
 @router.get("/check_server_status", response_model=ServerInfoModel)

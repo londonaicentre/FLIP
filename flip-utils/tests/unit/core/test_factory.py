@@ -12,103 +12,69 @@
 
 """Tests for flip.core.factory module."""
 
-import importlib
 from unittest.mock import patch
 
 import pytest
 
-import flip.constants.flip_constants
+from flip.constants import JobType
 from flip.core.factory import FLIP
+from flip.core.standard import FLIPStandardDev, FLIPStandardProd
 
 
 class TestFLIPFactory:
     """Test the FLIP factory function."""
 
-    @patch.dict("os.environ", {"LOCAL_DEV": "true"})
-    def test_factory_creates_standard_dev(self):
+    @patch("flip.core.factory.FlipConstants")
+    def test_factory_creates_standard_dev(self, mock_constants):
         """Factory should create FLIPStandardDev for standard job type in dev mode."""
-        importlib.reload(flip.constants.flip_constants)
-
-        from flip.constants import JobType
-        from flip.core.standard import FLIPStandardDev
+        mock_constants.LOCAL_DEV = True
 
         result = FLIP(JobType.STANDARD)
         assert isinstance(result, FLIPStandardDev)
 
-    @patch.dict("os.environ", {"LOCAL_DEV": "true"})
-    def test_factory_creates_evaluation_dev(self):
+    @patch("flip.core.factory.FlipConstants")
+    def test_factory_creates_evaluation_dev(self, mock_constants):
         """Factory should create FLIPStandardDev for evaluation job type."""
-        importlib.reload(flip.constants.flip_constants)
-
-        from flip.constants import JobType
-        from flip.core.standard import FLIPStandardDev
+        mock_constants.LOCAL_DEV = True
 
         result = FLIP(JobType.EVALUATION)
         assert isinstance(result, FLIPStandardDev)
 
-    @patch.dict("os.environ", {"LOCAL_DEV": "true"})
-    def test_factory_creates_fed_opt_dev(self):
+    @patch("flip.core.factory.FlipConstants")
+    def test_factory_creates_fed_opt_dev(self, mock_constants):
         """Factory should create FLIPStandardDev for fed_opt job type."""
-        importlib.reload(flip.constants.flip_constants)
-
-        from flip.constants import JobType
-        from flip.core.standard import FLIPStandardDev
+        mock_constants.LOCAL_DEV = True
 
         result = FLIP(JobType.FED_OPT)
         assert isinstance(result, FLIPStandardDev)
 
-    @patch.dict("os.environ", {"LOCAL_DEV": "true"})
-    def test_factory_creates_diffusion_dev(self):
+    @patch("flip.core.factory.FlipConstants")
+    def test_factory_creates_diffusion_dev(self, mock_constants):
         """Factory should create FLIPStandardDev for diffusion_model job type."""
-        importlib.reload(flip.constants.flip_constants)
-
-        from flip.constants import JobType
-        from flip.core.standard import FLIPStandardDev
+        mock_constants.LOCAL_DEV = True
 
         result = FLIP(JobType.DIFFUSION)
         assert isinstance(result, FLIPStandardDev)
 
-    @pytest.mark.skip(reason="Production mode tests require complex singleton reloading")
-    @patch.dict(
-        "os.environ",
-        {
-            "LOCAL_DEV": "false",
-            "CENTRAL_HUB_API_URL": "https://hub.example.com",
-            "DATA_ACCESS_API_URL": "https://data.example.com",
-            "IMAGING_API_URL": "https://imaging.example.com",
-            "IMAGES_DIR": "/images",
-            "PRIVATE_API_KEY_HEADER": "x-api-key",
-            "PRIVATE_API_KEY": "test-key",
-            "NET_ID": "net-1",
-            "UPLOADED_FEDERATED_DATA_BUCKET": "s3://bucket",
-            "MIN_CLIENTS": "1",
-        },
-    )
-    def test_factory_creates_prod_when_not_local_dev(self):
+    @patch("flip.core.factory.FlipConstants")
+    def test_factory_creates_prod_when_not_local_dev(self, mock_constants):
         """Factory should create FLIPStandardProd when LOCAL_DEV=false."""
-        importlib.reload(flip.constants.flip_constants)
 
-        from flip.constants import JobType
-        from flip.core.standard import FLIPStandardProd
+        mock_constants.LOCAL_DEV = False
 
         result = FLIP(JobType.STANDARD)
         assert isinstance(result, FLIPStandardProd)
-
-        # Reset to dev mode
-        with patch.dict("os.environ", {"LOCAL_DEV": "true"}):
-            importlib.reload(flip.constants.flip_constants)
 
     def test_factory_rejects_invalid_job_type(self):
         """Factory should raise ValueError for invalid job type string."""
         with pytest.raises(ValueError, match="Unknown job_type"):
             FLIP("invalid_job_type")
 
-    @patch.dict("os.environ", {"LOCAL_DEV": "true"})
-    def test_factory_accepts_string_job_types(self):
+    @patch("flip.core.factory.FlipConstants")
+    def test_factory_accepts_string_job_types(self, mock_constants):
         """Factory should accept job type as string."""
-        importlib.reload(flip.constants.flip_constants)
 
-        from flip.core.standard import FLIPStandardDev
+        mock_constants.LOCAL_DEV = True
 
         result = FLIP("standard")
         assert isinstance(result, FLIPStandardDev)

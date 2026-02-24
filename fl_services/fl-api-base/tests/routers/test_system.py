@@ -47,44 +47,6 @@ def override_session(client):
 
 
 # ---------------------------------------------------------------------
-# check_status
-# ---------------------------------------------------------------------
-
-
-def test_check_status_server(client, mock_session):
-    """✅ GET /check_status/server should call check_server_status"""
-    app.dependency_overrides[system.get_session] = lambda: mock_session
-    mock_session.check_server_status.return_value = {"status": "running", "start_time": 123.0}
-
-    resp = client.get("/check_status/server")
-    assert resp.status_code == status.HTTP_200_OK
-    mock_session.check_server_status.assert_called_once()
-    assert resp.json() == {"status": "running", "start_time": 123.0}
-
-
-def test_check_status_client_with_targets(client, mock_session):
-    """✅ Should call check_client_status(targets) when target_type=client and targets given"""
-    app.dependency_overrides[system.get_session] = lambda: mock_session
-    mock_session.check_client_status.return_value = [
-        {"name": "site-1", "last_connect_time": 123.0, "status": "connected"}
-    ]
-
-    resp = client.get("/check_status/client", params={"targets": ["site-1", "site-2"]})
-    assert resp.status_code == status.HTTP_200_OK
-    mock_session.check_client_status.assert_called_once_with(["site-1", "site-2"])
-    assert resp.json() == [{"name": "site-1", "last_connect_time": 123.0, "status": "connected"}]
-
-
-def test_check_status_invalid_target_type(client, mock_session):
-    """🚫 Invalid TargetType should return 422 (FastAPI validation error)"""
-    app.dependency_overrides[system.get_session] = lambda: mock_session
-
-    resp = client.get("/check_status/invalid")
-    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-    assert "target_type" in resp.text
-
-
-# ---------------------------------------------------------------------
 # check_server_status
 # ---------------------------------------------------------------------
 
