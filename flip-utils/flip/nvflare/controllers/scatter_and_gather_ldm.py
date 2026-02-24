@@ -33,6 +33,7 @@ from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
 
 from flip import FLIP
 from flip.constants import FlipEvents, ModelStatus, PTConstants
+from flip.nvflare.metrics import handle_metrics_event
 from flip.utils import Utils
 
 
@@ -379,7 +380,12 @@ class ScatterAndGatherLDM(Controller):
                 self.log_error(fl_ctx, "Metrics Error: metrics result event was fired but no data found")
                 return
 
-            self.flip.handle_metrics_event(event_data, self._current_round, self.model_id)
+            handle_metrics_event(
+                event_data,
+                self._current_round if self._current_round else 0,
+                self.model_id,
+                flip=self.flip,
+            )
 
     def _prepare_train_task_data(self, client_task: ClientTask, fl_ctx: FLContext) -> None:
         fl_ctx.set_prop(AppConstants.TRAIN_SHAREABLE, client_task.task.data, private=True, sticky=False)

@@ -11,7 +11,7 @@
 #
 
 """
-FLIP - Federated Learning for Imaging Platform
+FLIP - Federated Learning and Interoperability Platform
 
 This package provides the core functionality for federated learning in the FLIP platform,
 built on NVIDIA FLARE (NVFLARE).
@@ -33,4 +33,4 @@ from flip.core.factory import FLIP
 
 __all__ = ["FLIP", "FLIPBase"]
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

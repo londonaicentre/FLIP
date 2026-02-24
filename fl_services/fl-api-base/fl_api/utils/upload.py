@@ -17,6 +17,7 @@ from urllib.parse import urlparse
 import requests
 
 from fl_api.utils.constants import META
+from fl_api.utils.io_utils import read_config
 from fl_api.utils.logger import logger
 from fl_api.utils.prepare_config import (
     configure_client,
@@ -24,8 +25,9 @@ from fl_api.utils.prepare_config import (
     configure_environment,
     configure_meta,
     configure_server,
+    validate_config,
 )
-from fl_api.utils.schemas import UploadAppRequest
+from fl_api.utils.schemas import FLAggregators, TrainingRound, UploadAppRequest
 
 
 def _infer_app_folder_name(model_id: str, s3_file_dir: str) -> str:
@@ -91,8 +93,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
 
     Args:
         model_id (str): id of the model.
-        body (UploadAppRequest): UploadAppRequest object with info such as project_id, cohort_query, local_rounds,
-        global_rounds, trusts, ignore_result_error, aggregator, and aggregation_weights.
+        body (UploadAppRequest): UploadAppRequest object with info such as project_id, cohort_query, trusts
         upload_dir (str): directory where the application will be uploaded (session's upload dir.)
     Raises:
         HTTPException: if the application fails to upload, an error is raised.
@@ -205,12 +206,24 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         logger.info(f"Configuring application folder: {app_folder_name}")
         app_folder_path = job_dir / app_folder_name
 
+        # Grab config values from the uploaded config.json
+        config_path = app_folder_path / "custom" / "config.json"
+        raw_config = read_config(config_path)
+        config = validate_config(raw_config)
+
+        # Set defaults for config values if not provided in the uploaded config.json
+        local_rounds = config.LOCAL_ROUNDS if config.LOCAL_ROUNDS else TrainingRound.MIN
+        global_rounds = config.GLOBAL_ROUNDS if config.GLOBAL_ROUNDS else TrainingRound.MIN
+        aggregator = config.AGGREGATOR if config.AGGREGATOR else FLAggregators.InTimeAccumulateWeightedAggregator.value
+        aggregation_weights = config.AGGREGATION_WEIGHTS if config.AGGREGATION_WEIGHTS else {}
+        ignore_result_error = config.IGNORE_RESULT_ERROR if config.IGNORE_RESULT_ERROR else False
+
         try:
             # Update config.json with the new global and local rounds
             configure_config(
                 app_folder_path,
-                global_rounds_override=body.global_rounds,
-                local_rounds_override=body.local_rounds,
+                global_rounds_override=global_rounds,
+                local_rounds_override=local_rounds,
             )
 
             # Check if config_fed_client.json exists and verify its config.
@@ -225,11 +238,11 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
             configure_server(
                 app_folder_path,
                 model_id,
-                body.global_rounds,  # I'd remove this one
+                global_rounds,  # TODO review this one
                 body.trusts,
-                body.ignore_result_error,
-                body.aggregator,
-                body.aggregation_weights,
+                ignore_result_error,
+                aggregator,
+                aggregation_weights,
             )
 
             # Configure the environment.json file if it exists.

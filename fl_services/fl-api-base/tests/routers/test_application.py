@@ -43,13 +43,8 @@ def make_upload_payload():
     return {
         "project_id": "proj_001",
         "cohort_query": "SELECT * FROM patients WHERE site='A'",
-        "local_rounds": 2,
-        "global_rounds": 10,
         "trusts": ["trustA", "trustB"],
         "bundle_urls": ["http://example.com/bundle1", "http://example.com/bundle2"],
-        "ignore_result_error": False,
-        "aggregator": "InTimeAccumulateWeightedAggregator",
-        "aggregation_weights": {"trustA": 0.6, "trustB": 0.4},
     }
 
 

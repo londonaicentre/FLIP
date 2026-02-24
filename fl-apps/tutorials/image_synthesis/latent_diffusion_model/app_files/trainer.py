@@ -36,6 +36,7 @@ from transforms import get_train_transforms, get_val_transforms
 
 from flip import FLIP
 from flip.constants import FlipConstants, PTConstants, ResourceType
+from flip.nvflare.metrics import send_metrics_value
 from flip.utils import get_model_weights_diff
 
 
@@ -462,13 +463,13 @@ class FLIP_TRAINER(Executor):
             )
 
             # Send metrics to flip
-            self.flip.send_metrics_value(label="Train loss (G)", value=train_g_loss, fl_ctx=fl_ctx)
-            self.flip.send_metrics_value(label="Train loss (D)", value=train_d_loss, fl_ctx=fl_ctx)
-            self.flip.send_metrics_value(label="Perceptual loss (G)", value=train_g_percloss, fl_ctx=fl_ctx)
-            self.flip.send_metrics_value(label="KLD loss (G)", value=train_g_klloss, fl_ctx=fl_ctx)
-            self.flip.send_metrics_value(label="Reconstruction loss (G)", value=train_g_l1loss, fl_ctx=fl_ctx)
-            self.flip.send_metrics_value(label="GAN loss (G)", value=train_g_ganloss, fl_ctx=fl_ctx)
-            self.flip.send_metrics_value(label="Validation loss (L1)", value=val_loss, fl_ctx=fl_ctx)
+            send_metrics_value(label="Train loss (G)", value=train_g_loss, fl_ctx=fl_ctx, flip=self.flip)
+            send_metrics_value(label="Train loss (D)", value=train_d_loss, fl_ctx=fl_ctx, flip=self.flip)
+            send_metrics_value(label="Perceptual loss (G)", value=train_g_percloss, fl_ctx=fl_ctx, flip=self.flip)
+            send_metrics_value(label="KLD loss (G)", value=train_g_klloss, fl_ctx=fl_ctx, flip=self.flip)
+            send_metrics_value(label="Reconstruction loss (G)", value=train_g_l1loss, fl_ctx=fl_ctx, flip=self.flip)
+            send_metrics_value(label="GAN loss (G)", value=train_g_ganloss, fl_ctx=fl_ctx, flip=self.flip)
+            send_metrics_value(label="Validation loss (L1)", value=val_loss, fl_ctx=fl_ctx, flip=self.flip)
 
         return np.mean(val_loss_total)
 
@@ -644,8 +645,8 @@ class FLIP_TRAINER(Executor):
                 to_print,
             )
 
-            self.flip.send_metrics_value(label="Total loss DM", value=np.mean(train_loss), fl_ctx=fl_ctx)
-            self.flip.send_metrics_value(label="Validation loss DM", value=np.mean(val_loss), fl_ctx=fl_ctx)
+            send_metrics_value(label="Total loss DM", value=np.mean(train_loss), fl_ctx=fl_ctx, flip=self.flip)
+            send_metrics_value(label="Validation loss DM", value=np.mean(val_loss), fl_ctx=fl_ctx, flip=self.flip)
 
         return np.mean(val_loss)
 
