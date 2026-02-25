@@ -21,13 +21,17 @@ try:
     from typing import override
 except ImportError:
     from typing_extensions import override
-
 import json
 import logging
 import os
+import shutil
+import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import List, Union
+from urllib.parse import urlparse
 
+import boto3
 import pandas as pd
 import requests
 from requests import HTTPError
@@ -334,6 +338,66 @@ class FLIPStandardProd(FLIPBase):
             self.logger.error("Something went wrong when sending the exception to the Central Hub, see exception below")
             self.logger.exception(e)
 
+    @override
+    def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:
+        """
+        Uploads results to S3 bucket in standard mode.
+
+        Args:
+            results_folder (Path): The folder containing results to upload
+            model_id (str): The model UUID for which results are being uploaded
+        """
+        s3_bucket = FlipConstants.UPLOADED_FEDERATED_DATA_BUCKET
+        self.logger.info(f"Attempting to upload results folder for model {model_id} to S3 bucket {s3_bucket} ...")
+
+        zip_name = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        self.logger.info(f"Results folder to be zipped: {results_folder}")
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                zip_base = Path(tmpdir) / zip_name
+
+                # Create archive
+                shutil.make_archive(str(zip_base), "zip", results_folder)
+
+                zip_file = f"{zip_base}.zip"
+                self.logger.info(f"Zip file created at: {zip_file}")
+
+                # Parse bucket
+                parsed = urlparse(s3_bucket)
+                bucket = parsed.netloc
+                prefix = parsed.path.lstrip("/")
+
+                bucket_zip_path = f"{model_id}/{zip_name}.zip"
+
+                self.logger.info(f"Uploading zip file {zip_file} to {bucket}/{prefix}/{bucket_zip_path}...")
+
+                s3_client = boto3.client("s3")
+                s3_client.upload_file(
+                    zip_file,
+                    bucket,
+                    f"{prefix}/{bucket_zip_path}",
+                )
+
+                self.logger.info("Upload .zip to the S3 bucket successful")
+
+        except Exception as e:
+            # catch-all: ensures you still get a consistent exception type at the boundary
+            self.logger.exception("Unexpected failure in upload_results_to_s3 for model_id=%s", model_id)
+            raise Exception("Unexpected failure uploading results to S3") from e
+
+    @override
+    def cleanup(self, path: Path) -> None:
+        """Cleans up local files by deleting the specified path."""
+        self.logger.info(f"Cleaning up path: {path}")
+        try:
+            shutil.rmtree(path)
+        except Exception as e:
+            self.logger.error(f"Failed to clean up path: {path}, see exception below")
+            self.logger.exception(e)
+            raise Exception(f"Failed to clean up path: {path}") from e
+
 
 class FLIPStandardDev(FLIPBase):
     """Development implementation of FLIP for standard job types."""
@@ -431,3 +495,19 @@ class FLIPStandardDev(FLIPBase):
             "[DEV] send_handled_exception is not supported in LOCAL_DEV mode."
             f"Details of the function call: sending {formatted_exception} for {client_name}."
         )
+
+    @override
+    def upload_results_to_s3(self, results_folder: Path, model_id: str) -> None:
+        """Log only in dev mode - no actual upload."""
+        # NOTE FlipConstants.UPLOADED_FEDERATED_DATA_BUCKET is not available in dev mode, so we can't log it here.
+        self.logger.info(
+            "[DEV] upload_results_to_s3 is not supported in LOCAL_DEV mode."
+            f"Details of the function call: uploading results from {results_folder} for model {model_id}."
+        )
+
+    @override
+    def cleanup(self, path: Path) -> None:
+        """
+        Cleans up local files in LOCAL_DEV mode. Logs the cleanup action but does not actually delete any files.
+        """
+        self.logger.info(f"[DEV] cleanup is not supported in LOCAL_DEV mode. Would have cleaned up path: {path}")
