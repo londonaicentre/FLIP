@@ -12,7 +12,7 @@ The overall FLIP solution comprises three main features:
 2. A **Secure Enclave** hosted on premise at each individual Trust providing a highly secure environment designed to solely permit requests for training from the Central Hub. A set of FLIP microservices are hosted within the Secure Enclave to handle these requests, scheduling and managing workload for the bespoke compute resources.
 3. A **high performance compute stack** designed specifically for the rapid testing and training of machine learning models. This consists of a number of powerful GPUs and a cluster of head nodes to receive requests from the FLIP microservices and orchestrate the compute resource.
 
-.. figure:: ../assets/support/flip_architecture-flip_architecture.drawio.png
+.. figure:: ../assets/support/flip_architecture-flip_architecture.png
    :width: 600
    :align: center
 
@@ -25,38 +25,23 @@ The Central Hub is a cloud-hosted environment which provides researchers with th
 
 Researchers can define the cohort of data they wish to use for training and testing based on data from the available Trusts, view statistics about the available data, tweak and refine their query, and ultimately decide on a dataset on which to train and test their model. Following this, the model is distributed, trained and tested within the Secure Enclave at each selected Trust before the resultant model is centrally aggregated.
 
-.. figure:: ../assets/support/flip_architecture-central_hub.drawio.png
-   :width: 600
-   :align: center
-
-   FLIP Central Hub.
-
-The Central Hub implements a serverless architecture to take advantage of the natural horizontal scaling that cloud hosting provides. All business logic is implemented as serverless Lambdas, controlled by Step Functions.
-
 Secure Enclave
 ===============
 
 The Trust component of FLIP runs in a Secure Enclave at each Trust to facilitate the secure training and testing of the models on the high-performance GPU hardware.
 
-As per the security principles, no personally identifying data will leave the Secure Enclave.
+As per security principles, no personally identifying data leaves the Secure Enclave.
 
-.. figure:: ../assets/support/flip_architecture-secure_enclave.drawio.png
-   :width: 600
-   :align: center
-
-   FLIP Secure Enclave.
-
-
-FLIP implements a microservice-based architecture. The Image Service, Import Service and Data Service are deployed as Dockerised microservices, running in Kubernetes, orchestrated by a FLIP API.
+FLIP implements a microservice-based architecture. The Image Service and Data Service are deployed as Dockerised microservices, orchestrated by a Trust API.
 
 **********
 Components
 **********
 
-Kubernetes
-==========
+Docker
+======
 
-All client-side services deployed into the Secure Enclave are running as Dockerised components in Kubernetes. These are deployed and configured using Terraform scripts for infrastructure and Ansible playbooks for installation and configuration.
+All client-side services deployed into the Secure Enclave are running as Dockerised components.
 
 OMOP
 ====
@@ -70,7 +55,7 @@ The OMOP CDM is implemented as a PostgreSQL database in the Data Centre at each 
 XNAT
 ====
 
-`XNAT <https://wiki.xnat.org/documentation>`_ is an open-source platform for imaging research and processing. The primary functionality of XNAT is to provide a place to store and control access to imaging data such as DICOM series images. This includes user control, search and retrieval and archiving capabilities.
+The primary functionality of :term:`XNAT` is to provide a place to store and control access to imaging data such as DICOM series images. This includes user control, search and retrieval and archiving capabilities.
 
 XNAT enables quality control procedures and provides secure access to storage of data.
 
@@ -97,7 +82,7 @@ All traffic between the Central Hub and the Secure Enclaves are secured via the 
 
 This VPN tunnel means that all traffic is encrypted with at least AES-256 encryption, while traversing between the locations.
 
-.. figure:: ../assets/support/flip_architecture-flip_and_aide_network_architecture.drawio.png
+.. figure:: ../assets/support/flip_architecture-flip_network_architecture.png
    :width: 600
    :align: center
 
@@ -173,20 +158,6 @@ Once all training cycles are completed, the final weighted model and any recorde
    :align: center
 
    Training finish.
-
-*******
-Logging
-*******
-
-Elasticsearch
-=============
-
-All logs created through the FLIP components running in Kubernetes within the Secure Enclave will be aggregated together into the Elasticsearch index hosted within each Trust Secure Enclave. These logs will be shipped to the Central Hub where Answer Support staff will be able to construct queries in Kibana to interrogate the logs.
-
-Cloudwatch
-==========
-
-All AWS components in the Central Hub will output their logs to Cloudwatch. This will aggregate the logs and allow central querying. Logs will also be shipped to the central Elasticsearch index to allow for cross-source querying and reporting.
 
 *****************
 Backup / Restore
