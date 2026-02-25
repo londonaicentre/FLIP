@@ -61,18 +61,22 @@ XNAT enables quality control procedures and provides secure access to storage of
 
 XNAT includes a pipeline engine to allow complex workflows with multiple levels of automation. This can include things such as converting DICOM to NIfTI file formats.
 
-NVIDIA FLARE
-============
+FL nets
+=======
 
-The Federated Learning functionality is provided by NVIDIA's `NVIDIA FLARE <https://github.com/NVIDIA/NVIDIA FLARE>`_ solution. NVIDIA FLARE is deployed in a collection of 'nets', with a net consisting of a central controller with a worker at each of the Trusts. Each net will have access to a GPU at each of the Trusts to accelerate the model training.
+The Federated Learning functionality is provided by either :term:`NVIDIA FLARE` or :term:`Flower Framework`.
 
-.. figure:: ../assets/support/nvflare_options-nvflare_phase2.drawio.png
+The FL services are deployed in a collection of 'nets' or 'federations', with a net consisting of a central API and server with a client at each of the Trusts. 
+
+Each net will have access to GPU resource at each of the Trusts to perform the model training.
+
+FLIP jobs are distributed by the central hub FL scheduler to an available net.
+
+.. figure:: ../assets/support/flip_components_nets_and_scheduler.png
    :width: 600
    :align: center
 
-   NVIDIA NVIDIA FLARE.
-
-Training jobs will be distributed to the NVIDIA FLARE controller in a net from a FLIP-administered queue, whereupon the worker nodes in the net will communicate with the controller and co-ordinate the training.
+   FL nets and scheduler.
 
 *********
 Security
@@ -86,7 +90,7 @@ This VPN tunnel means that all traffic is encrypted with at least AES-256 encryp
    :width: 600
    :align: center
 
-   FLIP and AIDE network architecture.
+   FLIP network architecture.
 
 The following is the list of ports required to be opened for the Secure Enclave communication:
 
@@ -143,13 +147,7 @@ Once all images have been prepared, the Model Developer will be able to initiate
 
    Training start.
 
-Between training cycles, the weighted model will be sent back to the Central Hub to be aggregated and redistributed out to the workers.
-
-.. figure:: ../assets/support/flip_walkthrough-aggregate_model.drawio.png
-   :width: 600
-   :align: center
-
-   Aggregated model.
+Between training cycles, the weighted model will be sent back to the Central Hub to be aggregated and redistributed out to the workers. 
 
 Once all training cycles are completed, the final weighted model and any recorded metrics will be made available to the Model Developer through the FLIP UI.
 
