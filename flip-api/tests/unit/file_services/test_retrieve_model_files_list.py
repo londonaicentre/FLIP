@@ -17,11 +17,8 @@ import pytest
 from fastapi import HTTPException, status
 
 from flip_api.config import Settings
-from flip_api.file_services.retrieve_model_files_list import (
-    ModelFiles,
-    ModelFilesList,
-    retrieve_model_files_list,
-)
+from flip_api.domain.schemas.file import ModelFiles, ModelFilesList
+from flip_api.file_services.retrieve_model_files_list import retrieve_model_files_list
 from tests.fixtures.db_fixtures import ModelFactory, ProjectFactory
 
 

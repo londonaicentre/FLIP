@@ -23,11 +23,11 @@ endif
 
 service_name = flip-api
 lint_command = uv run ruff check . --fix
-test_args = --tb=short --disable-warnings --cov=src/ --cov-report=html --cov-report=term-missing
+test_args = --tb=short --disable-warnings --cov=src/ --cov-report=html --cov-report=term-missing --cov-report=xml:coverage.xml
 test_coverage_html_command = uv run pytest $(test_args)
 test_coverage_html_command_unit = uv run pytest ./tests/unit ./tests/step_functions_services $(test_args)
 test_coverage_html_command_integration = uv run pytest ./tests/integration $(test_args)
-docker_command = DEBUG=$(DEBUG) docker compose -f ../deploy/compose.yml
+docker_command = DEBUG=$(DEBUG) docker compose -f ../deploy/compose.development.yml
 run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
 

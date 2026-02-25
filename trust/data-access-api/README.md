@@ -13,6 +13,11 @@
 
 # Data Access API
 
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
+[![FLIP Data Access API CI](https://github.com/londonaicentre/FLIP/actions/workflows/data_access_api.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/data_access_api.yml)
+[![data-access-api](https://ghcr-badge.egpl.dev/londonaicentre/data-access-api/latest_tag?trim=major&label=data-access-api)](https://github.com/londonaicentre/FLIP/pkgs/container/data-access-api)
+[![Coverage](https://codecov.io/gh/londonaicentre/FLIP/branch/main/graph/badge.svg?flag=data-access-api)](https://codecov.io/gh/londonaicentre/FLIP)
+
 Service to query the OMOP database and return dataframes, statistics. The query is SQL and given by the researcher.
 
 ## Run

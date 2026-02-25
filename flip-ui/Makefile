@@ -29,7 +29,7 @@ include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
-docker_command = docker compose -f ../deploy/compose.yml
+docker_command = docker compose -f ../deploy/compose.development.yml
 
 unit_test:
 	$(docker_command) run --rm --remove-orphans --name flip-ui-test flip-ui npm run test:unit:update

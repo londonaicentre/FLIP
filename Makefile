@@ -15,10 +15,13 @@
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
+__DCKR_SUFFIX=production
 else ifeq ($(PROD),stag)
 MAIN_ENV_FILE=.env.stag
+__DCKR_SUFFIX=production
 else
 MAIN_ENV_FILE=.env.development
+__DCKR_SUFFIX=development
 endif
 
 # Print which environment files are being used
@@ -48,6 +51,17 @@ export DOCKER_TAG
 # override DOCKER_TAG := $(shell gh pr view --json number -q '"pr-" + (.number | tostring)' 2>/dev/null || echo "stag")
 # export DOCKER_TAG
 
+# ---- FL backend selection (flower | nvflare) ----
+FL_BACKEND ?= flower
+VALID_FL_BACKENDS := flower nvflare
+
+ifeq (,$(filter $(FL_BACKEND),$(VALID_FL_BACKENDS)))
+$(error Invalid FL_BACKEND '$(FL_BACKEND)'. Must be one of: $(VALID_FL_BACKENDS))
+endif
+
+COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
+FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
+
 # Override FL_PROVISIONED_DIR to use absolute path resolved relative to this Makefile
 # This allows the repo to work on any machine without hardcoding paths
 override FL_PROVISIONED_DIR := $(shell realpath $(dir $(lastword $(MAKEFILE_LIST)))/../flip-fl-base/workspace)
@@ -69,8 +83,8 @@ get_service_type = $(word 2,$(subst :, ,$(filter $1:%,$(SERVICE_CONFIG))))
 get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central FL ,$1)))
 
 export COMPOSE_BAKE=true
-DOCKER_COMMAND=docker compose -f deploy/compose.yml
-OVERRIDE_COMPOSE_COMMAND=docker compose -f deploy/compose.yml -f deploy/compose.debug.override.yml
+DOCKER_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
 SHOW_LOGS_CENTRAL_HUB=docker logs -f flip-api --tail 100 --timestamps --follow
 GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
@@ -88,7 +102,8 @@ build:
 up: create-networks
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
-	${DOCKER_COMMAND} up --remove-orphans -d --pull always
+	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
+	${DOCKER_COMMAND} up --remove-orphans -d
 	@echo "🚢 Starting trust services..."
 	$(MAKE) -C trust up
 	@echo "🚢 Starting XNAT services..."
@@ -97,6 +112,8 @@ up: create-networks
 
 # Minimal $(MAKE) up
 up-no-trust: create-networks
+	@echo "🚢 Starting central hub API services..."
+	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d --pull always
 
 up-trusts: create-networks
@@ -114,7 +131,7 @@ up-centralhub-stag: create-networks
 	PROVIDER=AWS \
 	DOCKER_TAG=$(DOCKER_TAG) \
 	DOCKER_FL_TAG=$(DOCKER_FL_TAG) \
-	docker compose -f deploy/compose.production.yml up --remove-orphans -d --pull always
+	${DOCKER_COMMAND} up --remove-orphans -d --pull always
 	@echo "✅ Central hub API services started successfully!"
 
 up-trust-stag: create-networks
@@ -165,12 +182,12 @@ tests:
 
 debug-all:
 	@echo "🚨 Starting debug mode by overriding the DEBUG environment variable..."
-	DEBUG=true $(OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
+	DEBUG=true $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
 	$(MAKE) -C trust debug
 debug-off-all:
 	@echo "🚨 Stopping debug mode by removing the DEBUG environment variable override..."
 	$(MAKE) -C flip-api delete_testing_projects
-	DEBUG=false $(OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
+	DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
 	$(MAKE) -C trust debug-off
 
 create-networks:
@@ -199,7 +216,7 @@ debug:
 		data-access-api|imaging-api|trust-api) \
 			DEBUG=true $(MAKE) -C trust debug-$(SERVICE) ;; \
 		flip-api|fl-api-net-1) \
-			DEBUG=true $(OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d $(SERVICE) ;; \
+			DEBUG=true $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d $(SERVICE) ;; \
 		*) \
 			echo "❌ Unknown service: $(SERVICE)"; exit 1 ;; \
 	esac
@@ -214,9 +231,9 @@ debug-off:
 		data-access-api|imaging-api|trust-api) \
 			DEBUG=false $(MAKE) -C trust debug-$(SERVICE)-off ;; \
 		flip-api) \
-			DEBUG=false $(OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d $(SERVICE) ;; \
+			DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d $(SERVICE) ;; \
 		fl-api) \
-			DEBUG=false $(OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d $(SERVICE) ;; \
+			DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d $(SERVICE) ;; \
 		*) \
 			echo "❌ Unknown service: $(SERVICE)"; exit 1 ;; \
 	esac
