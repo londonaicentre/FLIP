@@ -13,10 +13,7 @@
 import os
 import shutil
 import traceback
-from datetime import datetime
-from urllib.parse import urlparse
 
-import boto3
 from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
 from nvflare.app_common.app_constant import AppConstants
@@ -112,8 +109,8 @@ class PersistToS3AndCleanup(FLComponent):
         """
         Uploads the final aggregated model and reports to an S3 bucket as a zip file.
         """
-        workspace_dir = fl_ctx.get_engine().get_workspace().get_root_dir()
         run_dir = fl_ctx.get_engine().get_workspace().get_run_dir(fl_ctx.get_job_id())
+
         try:
             self.log_info(fl_ctx, "Attempting to upload the final aggregated model to the s3 bucket...")
 
@@ -146,66 +143,24 @@ class PersistToS3AndCleanup(FLComponent):
                 self.log_info(fl_ctx, f"Removing app_server directory: {app_server_path}")
                 shutil.rmtree(app_server_path)
 
-            self.log_info(fl_ctx, "Zipping the final model and the reports...")
-            zip_name = datetime.now().strftime("%Y%m%d_%H%M%S")
-            zip_path = os.path.join(workspace_dir, "save", self.model_id, zip_name)
-            self.log_info(fl_ctx, f"Source folder to be zipped: {run_dir}")
-            shutil.make_archive(zip_path, "zip", run_dir)
-            self.log_info(fl_ctx, f"Zip file created at: {zip_path}.zip")
+            self.flip.upload_results_to_s3(run_dir, self.model_id)
 
-            if not FlipConstants.LOCAL_DEV:
-                self.bucket_name = FlipConstants.UPLOADED_FEDERATED_DATA_BUCKET
-
-                self.log_info(fl_ctx, "Uploading zip file...")
-                bucket_zip_path = f"{self.model_id}/{zip_name}"
-
-                # Use boto3 to upload the zip file to the S3 bucket
-                s3_client = boto3.client("s3")
-
-                self.log_info(fl_ctx, f"Uploading zip file {zip_path} to {self.bucket_name}/{bucket_zip_path}...")
-
-                parsed = urlparse(self.bucket_name)  # e.g. "s3://my-bucket/some/path"
-                bucket = parsed.netloc  # "my-bucket"
-                prefix = parsed.path.lstrip("/")  # "some/path"
-
-                s3_client.upload_file(f"{zip_path}.zip", bucket, f"{prefix}/{bucket_zip_path}.zip")
-
-                self.log_info(fl_ctx, "Upload .zip to the s3 bucket successful")
-
-            else:
-                self.log_info(fl_ctx, "[DEV] Skipping upload of .zip file to S3 bucket in LOCAL_DEV mode.")
-
-        except FileNotFoundError as e:
-            self.log_error(fl_ctx, f"File or directory: {e.filename} does not exist")
-            self.log_error(fl_ctx, str(e))
-            raise Exception
         except Exception as e:
             self.log_error(fl_ctx, "Upload to the s3 bucket failed. Attempting to cleanup")
             self.cleanup(fl_ctx)
             self.log_error(fl_ctx, str(e))
-            raise Exception
+            raise Exception(str(e))
 
     def cleanup(self, fl_ctx: FLContext):
         """
         Cleans up the workspace by deleting the transfer and save directories for the model ID.
         """
-        try:
-            workspace_dir = fl_ctx.get_engine().get_workspace().get_root_dir()
+        workspace_dir = fl_ctx.get_engine().get_workspace().get_root_dir()
 
-            transfer_job_dir = os.path.join(workspace_dir, "transfer", self.model_id)
-            save_dir = os.path.join(workspace_dir, "save", self.model_id)
+        transfer_job_dir = os.path.join(workspace_dir, "transfer", self.model_id)
+        save_dir = os.path.join(workspace_dir, "save", self.model_id)
 
-            for path in [save_dir, transfer_job_dir]:
-                if not os.path.isdir(path):
-                    continue
-
-                if FlipConstants.LOCAL_DEV:
-                    self.log_info(fl_ctx, f"[DEV] Skipping cleanup of path: {path} in LOCAL_DEV mode.")
-                    continue
-                else:
-                    self.log_info(fl_ctx, f"Cleaning up path: {path}")
-                    shutil.rmtree(path)
-        except Exception as e:
-            self.log_error(fl_ctx, "Cleanup step to delete the images used for training failed")
-            self.log_error(fl_ctx, str(e))
-            raise Exception
+        for path in [save_dir, transfer_job_dir]:
+            if not os.path.isdir(path):
+                continue
+            self.flip.cleanup(path)
