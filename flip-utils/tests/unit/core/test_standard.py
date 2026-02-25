@@ -337,3 +337,106 @@ class TestFLIPStandardProdSendHandledException:
         """send_handled_exception should reject invalid model IDs."""
         with pytest.raises(ValueError, match="Invalid model ID"):
             flip_prod.send_handled_exception("Error message", "client-1", "model-123")
+
+
+class TestFLIPStandardProdUploadResultsToS3:
+    """Test FLIPStandardProd upload_results_to_s3 method."""
+
+    @pytest.fixture
+    def flip_prod(self):
+        """Create a FLIPStandardProd instance."""
+        return FLIPStandardProd()
+
+    def test_upload_results_to_s3_uploads_zip_to_expected_bucket_path(self, flip_prod, tmp_path):
+        """upload_results_to_s3 should zip results and upload to expected S3 location."""
+        results_folder = tmp_path / "results"
+        results_folder.mkdir()
+        (results_folder / "metrics.json").write_text("{}")
+
+        mock_s3_client = Mock()
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.boto3.client", return_value=mock_s3_client) as mock_boto_client,
+        ):
+            mock_constants.UPLOADED_FEDERATED_DATA_BUCKET = "s3://test-bucket/uploads"
+
+            flip_prod.upload_results_to_s3(results_folder, "model-123")
+
+            mock_boto_client.assert_called_once_with("s3")
+            mock_s3_client.upload_file.assert_called_once()
+            upload_args = mock_s3_client.upload_file.call_args[0]
+
+            assert upload_args[0].endswith(".zip")
+            assert upload_args[1] == "test-bucket"
+            assert upload_args[2].startswith("uploads/model-123/")
+            assert upload_args[2].endswith(".zip")
+
+    def test_upload_results_to_s3_raises_when_archive_creation_fails(self, flip_prod, tmp_path):
+        """upload_results_to_s3 should raise a consistent exception when archiving fails."""
+        results_folder = tmp_path / "results"
+        results_folder.mkdir()
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.shutil.make_archive", side_effect=RuntimeError("archive failed")),
+        ):
+            mock_constants.UPLOADED_FEDERATED_DATA_BUCKET = "s3://test-bucket/uploads"
+
+            with pytest.raises(Exception, match="Unexpected failure uploading results to S3"):
+                flip_prod.upload_results_to_s3(results_folder, "model-123")
+
+
+class TestFLIPStandardProdCleanup:
+    """Test FLIPStandardProd cleanup method."""
+
+    @pytest.fixture
+    def flip_prod(self):
+        """Create a FLIPStandardProd instance."""
+        return FLIPStandardProd()
+
+    def test_cleanup_removes_existing_path(self, flip_prod, tmp_path):
+        """cleanup should remove the provided path recursively."""
+        cleanup_dir = tmp_path / "to_cleanup"
+        cleanup_dir.mkdir()
+        (cleanup_dir / "file.txt").write_text("data")
+
+        flip_prod.cleanup(cleanup_dir)
+
+        assert not cleanup_dir.exists()
+
+    def test_cleanup_raises_when_rmtree_fails(self, flip_prod, tmp_path):
+        """cleanup should raise when underlying removal fails."""
+        cleanup_dir = tmp_path / "to_cleanup"
+
+        with patch("flip.core.standard.shutil.rmtree", side_effect=OSError("permission denied")) as mock_rmtree:
+            with pytest.raises(Exception, match="Failed to clean up path"):
+                flip_prod.cleanup(cleanup_dir)
+
+            mock_rmtree.assert_called_once_with(cleanup_dir)
+
+
+class TestFLIPStandardDevUploadAndCleanup:
+    """Test FLIPStandardDev upload_results_to_s3 and cleanup methods."""
+
+    @pytest.fixture
+    def flip_dev(self):
+        """Create a FLIPStandardDev instance."""
+        return FLIPStandardDev()
+
+    def test_upload_results_to_s3_runs_without_error_in_dev_mode(self, flip_dev, tmp_path):
+        """upload_results_to_s3 should run without error in dev mode (no-op)."""
+        results_folder = tmp_path / "results"
+        results_folder.mkdir()
+
+        flip_dev.upload_results_to_s3(results_folder, "model-123")
+
+    def test_cleanup_does_not_delete_path_in_dev_mode(self, flip_dev, tmp_path):
+        """cleanup should not delete files in dev mode."""
+        cleanup_dir = tmp_path / "to_cleanup"
+        cleanup_dir.mkdir()
+        (cleanup_dir / "file.txt").write_text("data")
+
+        flip_dev.cleanup(cleanup_dir)
+
+        assert cleanup_dir.exists()
