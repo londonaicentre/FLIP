@@ -35,11 +35,11 @@ sys.path.insert(0, os.path.abspath("../../trust/trust-api"))
 
 # -- Project information -----------------------------------------------------
 project = "FLIP"
-copyright = "2025, The London Medical Imaging & AI Centre for Value Based Healthcare (AIC)"
-author = "The London Medical Imaging & AI Centre for Value Based Healthcare (AIC)"
+copyright = "2025, The London AI Centre for Value-Based Healthcare"
+author = "The London AI Centre for Value-Based Healthcare"
 
 # The full version of the documentation, including alpha/beta/rc tags
-release = "1.0"
+release = ""
 
 # The full version of the FLIP platform, including alpha/beta/rc tags
 # The rst_epilog list makes items within it globally-available to compiled .rst files.
@@ -107,7 +107,6 @@ html_theme_options = {
     "analytics_id": "",  # Provided by Google in your dashboard
     "analytics_anonymize_ip": False,
     "logo_only": False,
-    # 'display_version': False,  # To avoid confusion with documentation vs platform versions
     "prev_next_buttons_location": "bottom",
     "style_external_links": False,
     "vcs_pageview_mode": "",
