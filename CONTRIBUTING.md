@@ -45,7 +45,8 @@ The project spans two repositories:
 | Repository | Description |
 |---|---|
 | [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo: Central Hub API, Trust APIs, UI, and Docker deployment |
-| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | Federated learning base application library, workflows, and tutorials |
+| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | NVIDIA FLARE federated learning base application library, workflows, and tutorials |
+| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower federated learning base application library, workflows, and tutorials |
 
 The main FLIP repository follows a mono-repo structure with these key services:
 
