@@ -114,7 +114,7 @@ def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session)
 
     Args:
         fl_job_id (UUID): The ID of the FL job to add the backend job id given successful job submission
-        endpoint (str): The endpoint of the Flare Loader service.
+        endpoint (str): The endpoint of the FL API service.
         model_id (UUID): The ID of the model to start submit the job for.
         session (Session): An instance of the database connection.
 
@@ -229,12 +229,12 @@ def is_client_available(client_name: str, client_statuses: List[IClientStatus]) 
 def validate_client_availability(clients: List[str], endpoint: str) -> None:
     """
     Validate the availability of clients by checking their status.
-    It sends a GET request to the Flare Loader service to check the status of the clients.
+    It sends a GET request to the FL API service to check the status of the clients.
     If any client is unavailable, it raises a ValueError.
 
     Args:
         clients (List[str]): A list of client names to check the availability of.
-        endpoint (str): The endpoint of the Flare Loader service.
+        endpoint (str): The endpoint of the FL API service.
 
     Returns:
         None
@@ -260,7 +260,7 @@ def abort_job(endpoint: str, job_id: str) -> dict:
     Aborts a job on the FL server.
 
     Args:
-        endpoint (str): The endpoint of the Flare Loader service.
+        endpoint (str): The endpoint of the FL API service.
         job_id (str): The ID of the job to abort.
 
     Returns:
@@ -288,7 +288,7 @@ def start_training(
         model_id (UUID): The ID of the model to start training for.
         fl_job_id (UUID): The ID of the FL job to add the backend job id given successful job submission.
         clients (List[str]): A list of client names to start training on.
-        endpoint (str): The endpoint of the Flare Loader service.
+        endpoint (str): The endpoint of the FL API service.
         bundle_urls (List[str]): A list of URLs for the application bundle.
         session (Session): An instance of the database connection.
 
@@ -609,7 +609,7 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     Extract the current job data from the FL server status response.
 
     Args:
-        net_endpoint (str): The endpoint of the Flare Loader service.
+        net_endpoint (str): The endpoint of the FL API service.
         fl_backend_job_id (str): The FL job ID to look for.
 
     Returns:
