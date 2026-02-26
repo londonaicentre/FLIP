@@ -36,8 +36,7 @@ FLIP is an open-source platform for federated training and evaluation of medical
 
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London.
 
-<!-- add image -->
-<p align="center"><img src="docs/source/assets/support/flip_architecture-flip_architecture.png" alt='flip-architecture' /></p>
+<p align="center"><img src="docs/source/assets/support/flip_architecture-flip_architecture.png" width="600" alt='flip-architecture' /></p>
 
 ## Docker Deployment Setup
 
