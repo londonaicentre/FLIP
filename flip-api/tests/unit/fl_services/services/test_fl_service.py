@@ -582,7 +582,7 @@ def test_get_bundle_urls_presign_failure(mock_s3, mocked_settings, model_id):
 def test_extract_current_job_data_success(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
-    net_endpoint = "http://flare-endpoint"
+    net_endpoint = "http://fl-api-endpoint"
     fl_backend_job_id = "job123"
 
     # Mock backend job list response
@@ -606,7 +606,7 @@ def test_extract_current_job_data_not_found(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
     mock_http_get.return_value = [{"job_id": "other", "status": "RUNNING", "job_name": "otherjob"}]
-    net_endpoint = "http://flare-endpoint"
+    net_endpoint = "http://fl-api-endpoint"
     fl_backend_job_id = "missing-job"
 
     with pytest.raises(ValueError, match=f"Could not find job ID {fl_backend_job_id}"):
@@ -617,7 +617,7 @@ def test_extract_current_job_data_not_found(mock_http_get):
 def test_extract_current_job_data_multiple_found(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
-    net_endpoint = "http://flare-endpoint"
+    net_endpoint = "http://fl-api-endpoint"
     fl_backend_job_id = "duplicate-job"
 
     mock_http_get.return_value = [
@@ -646,7 +646,7 @@ def test_abort_model_training_success(
     fake_session,
 ):
     mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
-    mock_get_net.return_value = MagicMock(endpoint="http://endpoint", name="net1")
+    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
     mock_fetch_server_status.return_value = {"status": "stopped"}
     mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", job_name=str(model_id), status="RUNNING")
 
@@ -655,7 +655,7 @@ def test_abort_model_training_success(
     request.path_params = {"target": "server", "clients": None}
 
     fl_service.abort_model_training(request, model_id, fake_session)
-    mock_abort.assert_called_once_with("http://endpoint", "job123")
+    mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
 
 
 def test_add_fl_job_creates_job(model_id, fake_session):

@@ -66,7 +66,7 @@ describe("Manage Users as Administrator", () => {
 
     it("Should allow you to register a user", () => {
         cy.getBySel("register-user-btn").click();
-        cy.getBySel("email-field").type("test.person@answerdigital.com");
+        cy.getBySel("email-field").type("test.person@kcl.ac.uk");
         cy.getBySel("chip-select").click();
         cy.getBySel("chip-select-option").contains("Researcher").click();
         cy.intercept("POST", "step/users", { fixture: "user/postRegisterUser" }).as("registerUser");
@@ -75,7 +75,7 @@ describe("Manage Users as Administrator", () => {
         cy.wait("@registerUser")
             .its("request.body")
             .should("deep.equal", {
-                "email": "test.person@answerdigital.com",
+                "email": "test.person@kcl.ac.uk",
                 "roles": [
                     "da2d1b85-6bdd-4089-b2fa-3594cc233327"
                 ]
@@ -85,7 +85,7 @@ describe("Manage Users as Administrator", () => {
 
     it("handles error on attempt to register a user", () => {
         cy.getBySel("register-user-btn").click();
-        cy.getBySel("email-field").type("test.person@answerdigital.com");
+        cy.getBySel("email-field").type("test.person@kcl.ac.uk");
         cy.getBySel("chip-select").click();
         cy.getBySel("chip-select-option").contains("Researcher").click();
         // step function returns 200 with empty response body if user registration fails
