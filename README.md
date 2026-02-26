@@ -41,14 +41,17 @@ FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in coll
 ## Docker Deployment Setup
 
 This repository consolidates all the flip services in a mono repository so they can all be deployed in a single
-docker compose file for local testing and development.
+docker compose file for local testing and development. The federated learning code code is divided into two separate
+repositories [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) and
+[flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower), but they are deployed here via pulling
+the images generated there.
 
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) with [Swarm mode](https://docs.docker.com/engine/swarm/) initialized
 - [Nvidia Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 - [Make](https://formulae.brew.sh/formula/make)
-- [Python 3.10+](https://www.python.org/downloads/)
+- [Python 3.12+](https://www.python.org/downloads/)
 - [UV](https://docs.astral.sh/uv) - Python environment management tool
 - postgresql-client and postgresql-client-common (install with `apt install postgresql-client postgresql-client-common` on Debian/Ubuntu)
 
@@ -80,29 +83,6 @@ Normally we develop on a remote server, so we use the `Remote - SSH` extension t
 `Remote - Containers` extension to connect to the Docker container running the flip services. This minimizes the
 overhead of testing things in your local machine and then deploying them to the server.
 
-#### Auxiliary Tools
-
-- [beekeeper](https://www.beekeeperstudio.io/) - A cross-platform SQL editor and database manager that can be used to
-  manage the database used by the flip services. It is useful for verifying the data in the database and running
-  SQL queries.
-- [postman](https://www.postman.com/) - A API testing tool that can be used to test the APIs exposed by the
-  flip services. It is useful for verifying the functionality of the APIs and testing different scenarios. You can
-  create collections of requests and run them in different environments. It is also useful for testing the APIs.
-
-### First run
-
-To be able to pull the FLIP docker images, configure your ghcr.io credentials as follows:
-
-1. Make sure you can see the images in [https://github.com/londonaicentre/FLIP/packages](https://github.com/londonaicentre/FLIP/packages) and [https://github.com/londonaicentre/flip-fl-base/packages](https://github.com/londonaicentre/flip-fl-base/packages)
-   - Contact a team member to be given permission if you cannot.
-2. Create a [Github public access token (classic)](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic) with these permissions:
-   - `repo`
-   - `admin:org`
-   - `read:packages`
-3. Log in using either
-   1. `docker login ghcr.io -u <github_username>`, entering your token when prompted, or
-   2. `echo <token> | docker login ghcr.io -u <github_username> --password-stdin`
-
 ### Using the Makefile
 
 To start the services, you can use the Makefile provided in the root directory. The Makefile provides several convenient commands to manage the services defined in the [deploy/compose.development.yml](deploy/compose.development.yml) file.
@@ -122,7 +102,7 @@ For example:
 | `make restart-no-trust` | Stop and start all services except the trust services related services |
 | `make clean` | Remove all stopped containers, networks, and images |
 | `make ci` | Run the CI pipeline locally using `act` |
-| `make tests` | Run the tests for all services |
+| `make unit_test` | Run the tests for all services |
 
 You can add new commands to the Makefile to create smaller deployments for testing and development.
 
@@ -225,28 +205,7 @@ docker compose -f deploy/compose.development.yml run --rm < service name >
 
 The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for federated learning. FLARE requires provisioned certificates and configuration files that are generated in the separate repository [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) (see that repository for instructions on how to provision the workspace).
 
-#### FL_PROVISIONED_DIR Configuration
-
-The `FL_PROVISIONED_DIR` environment variable points to the NVFLARE provisioned workspace containing:
-
-- Certificates and keys for secure communication
-- `fed_client.json` and `fed_admin.json` configuration files
-- Network-specific startup kits for FL APIs, FL servers, and FL clients
-
-**Important Notes:**
-
-1. **Repository Structure Assumption**: The system assumes `flip` and `flip-fl-base` are sibling directories:
-
-   ```bash
-   parent-directory/
-   ├── flip/             # This repository
-   └── flip-fl-base/     # Contains the provisioned workspace
-       └── workspace/
-           ├── net-1/
-           └── net-2/
-   ```
-
-2. **Path Resolution**: While `.env.development` defines `FL_PROVISIONED_DIR` as a relative path (`../flip-fl-base/workspace`), the Makefile automatically converts this to an absolute path using:
+1. **Path Resolution**: While `.env.development` defines `FL_PROVISIONED_DIR` as a relative path (`../flip-fl-base/workspace`), the Makefile automatically converts this to an absolute path using:
 
    ```makefile
    override FL_PROVISIONED_DIR := $(shell realpath $(dir $(lastword $(MAKEFILE_LIST)))/../flip-fl-base/workspace)
@@ -254,7 +213,7 @@ The `FL_PROVISIONED_DIR` environment variable points to the NVFLARE provisioned 
 
    This ensures Docker volume mounts work correctly (Docker requires absolute paths) while maintaining portability across different machines.
 
-3. **Why This Matters**: Docker Compose cannot resolve relative paths for volume mounts, so the absolute path conversion is essential for FL services to access their provisioned certificates and configuration files.
+2. **Why This Matters**: Docker Compose cannot resolve relative paths for volume mounts, so the absolute path conversion is essential for FL services to access their provisioned certificates and configuration files.
 
 If you see errors like "fed_client.json does not exist" or "missing startup folder", verify that:
 
