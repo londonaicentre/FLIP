@@ -97,6 +97,20 @@ services:
       - ./data-access-api/data_access_api:/app/data_access_api
       - ./data-access-api/tests:/app/tests
 
+  nginx-tls:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    ports:
+      - "${TRUST_API_PORT}:8000"
+    volumes:
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - trust-api
+    networks:
+      - default
+      - central-hub-trust-apis-network
+
   trust-api:
     build:
       args:
@@ -108,7 +122,7 @@ services:
       dockerfile: Dockerfile
       target: development
     # ports:
-    #   - "${TRUST_API_PORT}:8000"
+    #   - "${TRUST_API_PORT}:8000"   # nginx-tls exposes the external port; keep this commented
     environment:
       CENTRAL_HUB_API_URL: ${CENTRAL_HUB_API_URL}
       DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
