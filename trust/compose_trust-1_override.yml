@@ -20,6 +20,5 @@ services:
     ports:
       - "${DATA_ACCESS_API_PORT}:8000"
 
-  trust-api:
-    ports:
-      - "${TRUST_API_PORT}:8000"
+  # trust-api port removed: nginx-tls (in compose_trust.development.yml) now owns
+  # TRUST_API_PORT and proxies to trust-api over the internal Docker network.
