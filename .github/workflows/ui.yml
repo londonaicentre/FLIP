@@ -47,3 +47,12 @@ jobs:
 
     - name: Run tests with npm
       run: npm run test:unit
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        files: flip-ui/coverage/cobertura-coverage.xml
+        flags: flip-ui
+        fail_ci_if_error: false
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
