@@ -336,6 +336,11 @@ flip-fl-api/transfer/*/*
 .env.stag
 .env.production
 
+# Trust TLS certificates (generated locally, never committed)
+trust/certs/*.key
+trust/certs/*.crt
+trust/certs/*.srl
+
 trust/terraform.tfstate
 
 .claude/settings.local.json
