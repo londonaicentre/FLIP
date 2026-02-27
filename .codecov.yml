@@ -1,0 +1,50 @@
+codecov:
+  require_ci_to_pass: yes
+
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+      flip-api:
+        flags: [flip-api]
+        target: auto
+        threshold: 1%
+      trust-api:
+        flags: [trust-api]
+        target: auto
+        threshold: 1%
+      imaging-api:
+        flags: [imaging-api]
+        target: auto
+        threshold: 1%
+      data-access-api:
+        flags: [data-access-api]
+        target: auto
+        threshold: 1%
+      flip-ui:
+        flags: [flip-ui]
+        target: auto
+        threshold: 1%
+
+flags:
+  flip-api:
+    paths:
+      - flip-api/
+  trust-api:
+    paths:
+      - trust/trust-api/
+  imaging-api:
+    paths:
+      - trust/imaging-api/
+  data-access-api:
+    paths:
+      - trust/data-access-api/
+  flip-ui:
+    paths:
+      - flip-ui/
+
+comment:
+  layout: "reach, diff, flags, files"
+  require_changes: true
