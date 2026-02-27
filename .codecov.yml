@@ -6,27 +6,27 @@ coverage:
     project:
       default:
         target: auto
-        threshold: 1%
+        threshold: 70%
       flip-api:
         flags: [flip-api]
         target: auto
-        threshold: 1%
+        threshold: 70%
       trust-api:
         flags: [trust-api]
         target: auto
-        threshold: 1%
+        threshold: 70%
       imaging-api:
         flags: [imaging-api]
         target: auto
-        threshold: 1%
+        threshold: 70%
       data-access-api:
         flags: [data-access-api]
         target: auto
-        threshold: 1%
+        threshold: 70%
       flip-ui:
         flags: [flip-ui]
         target: auto
-        threshold: 1%
+        threshold: 70%
 
 flags:
   flip-api:
