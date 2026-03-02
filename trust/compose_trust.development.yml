@@ -101,8 +101,9 @@ services:
     build:
       context: ./nginx
       dockerfile: Dockerfile
-    ports:
-      - "${TRUST_API_PORT}:8000"
+    # No ports here: each trust instance declares its own host port in its override
+    # file (compose_trust-1_override.yml, compose_trust-2_override.yml) so that
+    # multiple instances on the same host do not conflict.
     volumes:
       - ./certs:/etc/nginx/certs:ro
     depends_on:

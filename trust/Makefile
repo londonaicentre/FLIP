@@ -123,11 +123,11 @@ up-trust-2: update-omop-data
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST2}
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d
+	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -f compose_trust-2_override.yml -p ${trust2} up -d
 
 down-trust-2:
 	@echo "🛑 Stopping Trust 2 services..."
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} down --remove-orphans
+	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -f compose_trust-2_override.yml -p ${trust2} down --remove-orphans
 
 restart-trust-2: down-trust-2 up-trust-2
 
