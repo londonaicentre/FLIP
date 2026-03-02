@@ -183,7 +183,7 @@ make nvflare-provision NET_NUMBER=1
 This creates a network-specific compose file (`deploy/compose-net-1.yml`) and service secrets in `workspace/net-1/services/` (gitignored). Multiple networks can be provisioned with different ports:
 
 ```bash
-make nvflare-provision NET_NUMBER=2 FL_PORT=8004 ADMIN_PORT=8005
+make nvflare-provision NET_NUMBER=2 FL_PORT=8004
 ```
 
 > **Warning**: Provisioned files contain cryptographic signatures. Any modification will cause errors. Always re-run provisioning if changes are needed.
