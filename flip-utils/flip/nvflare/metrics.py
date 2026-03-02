@@ -96,10 +96,10 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
     trust_name = client_name.replace("site-", "Trust_")
 
     if "round" in metrics_data.keys():
-        # Override the global rounds with the x-value sent by the client if it is provided. This allows the client to
-        # specify the x-value for the metric, which can be different from the global round number.
+        # Override the global rounds with the 'round' value sent by the client if it is provided. This allows the client
+        # to specify the x-value for the metric, which can be different from the global round number.
         # TODO let the client specify an x-value for the metric that is not necessarily the round number, and use that
-        # x-value when sending the metric to the Central Hub.
+        # x-value when sending the metric to the Central Hub (see https://github.com/londonaicentre/FLIP/issues/148).
         flip.send_metrics(
             client_name=trust_name,
             model_id=model_id,
