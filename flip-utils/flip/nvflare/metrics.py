@@ -19,15 +19,21 @@ from flip.constants.flip_constants import FlipEvents
 from flip.utils.utils import Utils
 
 
-def send_metrics_value(label: str, value: float, fl_ctx: FLContext, round: int = 0, flip: FLIP = FLIP()) -> None:
+def send_metrics_value(
+    label: str, value: float, fl_ctx: FLContext, round: int | None = None, flip: FLIP = FLIP()
+) -> None:
     """
     Sends a metric value to the Central Hub.
+
+    If 'round' is provided, it will be included in the event data sent to the Central Hub. This allows the client to
+    specify the x-value for the metric, which can be different from the global round number. If 'round' is not provided,
+    the Central Hub will use the global round number as the x-value for the metric.
 
     Args:
         label: The label of the metric.
         value: The value of the metric.
         fl_ctx: The federated learning context.
-        round: The local round number (default: 0).
+        round: The local round number (default: None).
     """
     if not isinstance(label, str):
         raise TypeError(f"expect label to be string, but got {type(label)}")
@@ -42,7 +48,12 @@ def send_metrics_value(label: str, value: float, fl_ctx: FLContext, round: int =
 
     flip.logger.info("Attempting to fire metrics event...")
 
-    dxo = DXO(data_kind=DataKind.METRICS, data={"label": label, "value": value, "round": round})
+    # Create a DXO - if 'round' is provided include it in the data, otherwise just send the label and value
+    if round is not None:
+        dxo = DXO(data_kind=DataKind.METRICS, data={"label": label, "value": value, "round": round})
+    else:
+        dxo = DXO(data_kind=DataKind.METRICS, data={"label": label, "value": value})
+
     event_data = dxo.to_shareable()
 
     fl_ctx.set_prop(FLContextKey.EVENT_DATA, event_data, private=True, sticky=False)
@@ -65,7 +76,7 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
 
     Args:
         event_data: The event data containing the metrics.
-        global_round: The global round number.
+        global_round: The global round number (aka _current_round in scatter_and_gather scripts).
         model_id: The ID of the model.
     """
     if Utils.is_valid_uuid(model_id) is False:
@@ -84,10 +95,24 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
     # associated with the client's contributions.
     trust_name = client_name.replace("site-", "Trust_")
 
-    flip.send_metrics(
-        client_name=trust_name,
-        model_id=model_id,
-        label=metrics_data["label"],
-        value=metrics_data["value"],
-        round=global_round,
-    )
+    if "round" in metrics_data.keys():
+        # Override the global rounds with the x-value sent by the client if it is provided. This allows the client to
+        # specify the x-value for the metric, which can be different from the global round number.
+        # TODO let the client specify an x-value for the metric that is not necessarily the round number, and use that
+        # x-value when sending the metric to the Central Hub.
+        flip.send_metrics(
+            client_name=trust_name,
+            model_id=model_id,
+            label=metrics_data["label"],
+            value=metrics_data["value"],
+            round=metrics_data["round"],
+        )
+    else:
+        # Legacy behaviour: if the client does not provide 'round', use the global round as the x-value for the metric.
+        flip.send_metrics(
+            client_name=trust_name,
+            model_id=model_id,
+            label=metrics_data["label"],
+            value=metrics_data["value"],
+            round=global_round,
+        )
