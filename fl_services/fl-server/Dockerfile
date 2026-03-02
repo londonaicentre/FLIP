@@ -23,7 +23,7 @@ COPY fl-server/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # Expose necessary ports
-EXPOSE 8002 8003
+EXPOSE 8002
 
 # Use ENTRYPOINT instead of CMD for better signal handling
 ENTRYPOINT ["/app/entrypoint.sh"]

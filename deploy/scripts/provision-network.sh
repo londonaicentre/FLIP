@@ -13,14 +13,13 @@
 #
 
 # Provision an NVFLARE federated learning network
-# Usage: ./scripts/provision-network.sh <net_number> [fl_port] [admin_port]
+# Usage: ./scripts/provision-network.sh <net_number> [fl_port] [debug]
 
 set -euo pipefail
 
 NET_NUMBER="${1:?Error: NET_NUMBER is required}"
 FL_PORT="${2:-8002}"
-ADMIN_PORT="${3:-8003}"
-DEBUG="${4:-false}"
+DEBUG="${3:-false}"
 
 # Other configurations
 VERBOSE="true"
@@ -37,7 +36,7 @@ log "Provisioning network ${NET_NUMBER}..."
 PROJECT_YAML="net-${NET_NUMBER}_project.yml"
 
 # Generate network-specific project file from template
-export NET_NUMBER FL_PORT ADMIN_PORT DEBUG
+export NET_NUMBER FL_PORT DEBUG
 envsubst < net_project.yml > "${PROJECT_YAML}"
 
 # Run NVFLARE provisioning
