@@ -13,8 +13,6 @@
 
 # XNAT
 
-## Overview
-
 This is a very simple development environment to enable new users of XNAT to interact with the tool in a local environment, using Orthanc as as the mock PACS.
 
 ## Setup

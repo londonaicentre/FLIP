@@ -17,7 +17,7 @@ on:
   push:
     branches: [main, develop]
     paths:
-      - 'trust/trust-api/xnat/**'
+      - "trust/xnat/**"
 
 jobs:
   build-and-push:
