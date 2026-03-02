@@ -33,13 +33,34 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OUT_DIR="${SCRIPT_DIR}"
 
 # ---------------------------------------------------------------------------
-# Validate inputs
+# Determine TRUST_HOST: use provided env or try to auto-detect public IP
 # ---------------------------------------------------------------------------
 if [[ -z "${TRUST_HOST:-}" ]]; then
-    echo "ERROR: TRUST_HOST environment variable is required." >&2
-    echo "  Example: TRUST_HOST=192.168.1.100 bash $0" >&2
-    echo "  Example: TRUST_HOST=trust.example.com bash $0" >&2
-    exit 1
+    echo "TRUST_HOST not provided — attempting auto-detection..."
+
+    # Preferred: use dig against Cloudflare whoami service if available
+    if command -v dig >/dev/null 2>&1; then
+        # Output is a TXT record, remove surrounding quotes
+        TRUST_HOST="$(dig +short txt ch whoami.cloudflare @1.0.0.1 2>/dev/null | tr -d '"' | head -n1)"
+    fi
+
+    # Fallback: use Cloudflare trace endpoint if curl is available
+    if [[ -z "${TRUST_HOST}" ]] && command -v curl >/dev/null 2>&1; then
+        TRUST_HOST="$(curl -s https://1.1.1.1/cdn-cgi/trace 2>/dev/null | awk -F= '/^ip=/{print $2}')"
+    fi
+
+    # Another fallback: ipify service
+    if [[ -z "${TRUST_HOST}" ]] && command -v curl >/dev/null 2>&1; then
+        TRUST_HOST="$(curl -s https://api.ipify.org 2>/dev/null)"
+    fi
+
+    if [[ -z "${TRUST_HOST}" ]]; then
+        echo "ERROR: TRUST_HOST could not be determined automatically. Please set TRUST_HOST." >&2
+        echo "  Example: TRUST_HOST=192.168.1.100 bash $0" >&2
+        echo "  Example: TRUST_HOST=trust.example.com bash $0" >&2
+        exit 1
+    fi
+    echo "Auto-detected TRUST_HOST=${TRUST_HOST}"
 fi
 
 # Detect whether TRUST_HOST looks like an IP address or a DNS name
@@ -48,6 +69,10 @@ if [[ "${TRUST_HOST}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 else
     SAN="DNS:${TRUST_HOST}"
 fi
+
+# Always add localhost / 127.0.0.1 so local dev tooling (curl, check scripts) can
+# verify the cert without disabling certificate validation.
+SAN="${SAN},DNS:localhost,IP:127.0.0.1"
 
 CERT_DAYS="${CERT_DAYS:-825}"  # Apple/Chrome cap; override if needed
 
@@ -104,6 +129,7 @@ keyUsage       = digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
 
 [v3_ca]
+# SANs always include the target host AND localhost/127.0.0.1 for local dev tooling
 subjectAltName = ${SAN}
 keyUsage       = digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
