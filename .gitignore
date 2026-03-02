@@ -340,6 +340,8 @@ flip-fl-api/transfer/*/*
 trust/certs/*.key
 trust/certs/*.crt
 trust/certs/*.srl
+# Trust CA cert copied to Terraform deploy dir for use with `file()` in main.tf
+deploy/providers/AWS/trust-ca.crt
 
 trust/terraform.tfstate
 
