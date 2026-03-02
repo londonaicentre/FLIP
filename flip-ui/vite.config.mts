@@ -108,7 +108,7 @@ export default defineConfig(({ mode }) => {
             globals: true,
             environment: "jsdom",
             setupFiles: ["./test/setup.ts"],
-            coverage: { reporter: ["text", "json"] },
+            coverage: { reporter: ["text", "json", "cobertura"] },
             deps: {
                 optimizer: {
                     web: {
