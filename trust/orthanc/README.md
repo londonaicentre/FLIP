@@ -11,11 +11,15 @@
     limitations under the License.
 -->
 
-# Orthanc
+# Orthanc (mock PACS)
 
-Orthanc username and password are set by `ORTHANC_USERNAME` and `ORTHANC_PASSWORD` environment variables in [../../.env.development](../../.env.development).
+> We use Orthanc as a mock PACS server to store and serve DICOM files for testing purposes. Orthanc is an open-source, lightweight DICOM server that provides a RESTful API for managing medical images. Read more about Orthanc in the [Orthanc documentation](https://www.orthanc-server.com/).
 
-Upload DICOM files to Orthanc, you can use the mock data in <https://emckclac-my.sharepoint.com/:u:/g/personal/k2481169_kcl_ac_uk/ETiafC8VeqdIiQrChm208swBUABVQ_PYDomPRxLQcXvfkw?e=z1UaHp>.
+Orthanc username and password are set by `ORTHANC_USERNAME` and `ORTHANC_PASSWORD` environment variables in the .env.development file at the root of this repository (see example in [.env.development.example](../../.env.development.example)).
+
+You'll need to populate Orthanc with DICOM files in order to test FLIP locally. You can use the mock data in <https://emckclac-my.sharepoint.com/:u:/g/personal/k2481169_kcl_ac_uk/ETiafC8VeqdIiQrChm208swBUABVQ_PYDomPRxLQcXvfkw?e=z1UaHp>.
+
+<!-- TODO add instructions to generate mock data using the MSD dataset. -->
 
 The Makefile has targets to download and extract the Orthanc data volumes from S3 (needs AWS credentials configured):
 
