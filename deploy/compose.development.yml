@@ -63,6 +63,7 @@ services:
       - ../flip-api/entrypoint.sh:/app/entrypoint.sh
       - ../flip-api/tests/:/app/tests/
       - ../flip-api/.vscode:/app/.vscode
+      - ../trust/certs/trust-ca.crt:/etc/ssl/trust/trust-ca.crt:ro
       - ~/.aws/config:/home/${UNAME}/.aws/config:ro
       - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
     networks:
@@ -84,6 +85,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
       - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      - TRUST_CA_BUNDLE=/etc/ssl/trust/trust-ca.crt
       - AWS_SECRET_NAME=${AWS_SECRET_NAME}
       - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
       - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS}
