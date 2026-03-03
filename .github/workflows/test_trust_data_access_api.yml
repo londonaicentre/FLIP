@@ -17,7 +17,7 @@ on:
     branches: [main, develop]
     paths:
       - "trust/data-access-api/**"
-      - ".github/workflows/data_access_api.yml"
+      - ".github/workflows/test_trust_data_access_api.yml"
   pull_request:
     branches: [main, develop]
 

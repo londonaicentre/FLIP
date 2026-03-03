@@ -18,6 +18,7 @@ on:
     branches: [main, develop]
     paths:
       - "trust/orthanc/**"
+      - ".github/workflows/docker_build_orthanc.yml"
 
 jobs:
   build-and-push:

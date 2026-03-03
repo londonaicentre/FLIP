@@ -17,7 +17,7 @@ on:
     branches: [main, develop]
     paths:
       - "trust/imaging-api/**"
-      - ".github/workflows/imaging_api.yml"
+      - ".github/workflows/test_trust_imaging_api.yml"
   pull_request:
     branches: [main, develop]
 

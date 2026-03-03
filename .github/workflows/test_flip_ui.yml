@@ -17,7 +17,7 @@ on:
     branches: [main, develop]
     paths:
       - "flip-ui/**"
-      - ".github/workflows/ui.yml"
+      - ".github/workflows/flip_ui.yml"
   pull_request:
     branches: [main, develop]
 
@@ -37,7 +37,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set Node.js version
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v4 #
         with:
           node-version: "20.9.0" # Specify the Node.js version you need
       - name: Install dependencies

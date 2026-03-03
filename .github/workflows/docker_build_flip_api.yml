@@ -18,6 +18,7 @@ on:
     branches: [main, develop]
     paths:
       - "flip-api/**"
+      - ".github/workflows/flip_api.yml"
 
 jobs:
   build-and-push:

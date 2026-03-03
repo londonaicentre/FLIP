@@ -18,6 +18,7 @@ on:
     branches: [main, develop]
     paths:
       - "trust/trust-api/**"
+      - ".github/workflows/docker_build_trust_trust_api.yml"
 
 jobs:
   build-and-push:

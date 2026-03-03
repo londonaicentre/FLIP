@@ -18,6 +18,7 @@ on:
     branches: [main, develop]
     paths:
       - "trust/data-access-api/**"
+      - ".github/workflows/docker_build_trust_data_access_api.yml"
 
 jobs:
   build-and-push:
