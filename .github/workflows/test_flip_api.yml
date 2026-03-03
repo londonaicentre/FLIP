@@ -17,7 +17,7 @@ on:
     branches: [main, develop]
     paths:
       - "flip-api/**"
-      - ".github/workflows/flip_api.yml"
+      - ".github/workflows/test_flip_api.yml"
   pull_request:
     branches: [main, develop]
 
