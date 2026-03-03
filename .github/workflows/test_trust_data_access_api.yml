@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-name: FLIP Data Access API CI
+name: Trust - Data Access API CI
 
 on:
   push:

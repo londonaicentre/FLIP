@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-name: UI CI
+name: FLIP UI CI
 
 on:
   push:

@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-name: FLIP Imaging API CI
+name: Trust - Imaging API CI
 
 on:
   push:

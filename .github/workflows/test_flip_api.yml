@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-name: FLIP Central Hub API CI
+name: FLIP API CI
 
 on:
   push:

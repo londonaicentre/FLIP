@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-name: FLIP Trust API CI
+name: Trust - Trust API CI
 
 on:
   push:
