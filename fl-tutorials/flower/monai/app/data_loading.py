@@ -35,8 +35,8 @@ class FLIP_BASE:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging.INFO)
 
-    def get_image_and_label_list(self, _val_split):
-        """Returns a list of dicts, each dict containing the path to an image and its corresponding label."""
+    def get_image_and_label_list(self, _val_split, _test_split, is_test: bool=False):
+        """Returns train, val, and test lists of dicts, each dict containing the path to an image and its corresponding label."""
 
         datalist = []
         # loop over each accession id in the train set
@@ -108,7 +108,20 @@ class FLIP_BASE:
 
         print(f"Found {len(datalist)} files in total.")
 
-        # split into the training and testing data
-        train_datalist, val_datalist = np.split(datalist, [int((1 - _val_split) * len(datalist))])
+        # Calculate split indices
+        n_total = len(datalist)
+        n_test = int(_test_split * n_total)
+        n_val = int(_val_split * n_total)
+        n_train = n_total - n_val - n_test
 
-        return train_datalist, val_datalist
+        # Shuffle datalist for random split
+        np.random.shuffle(datalist)
+
+        train_datalist = datalist[:n_train]
+        val_datalist = datalist[n_train:n_train + n_val]
+        test_datalist = datalist[n_train + n_val:]
+
+        if is_test:
+            return test_datalist
+        else:
+            return train_datalist, val_datalist

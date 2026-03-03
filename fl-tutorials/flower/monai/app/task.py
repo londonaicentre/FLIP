@@ -142,3 +142,58 @@ def validate_func(
     logger.info(f"Validation completed. Mean Dice score: {dice_score:.4f}, Average Loss: {running_loss:.4f}")
 
     return dice_score, running_loss
+
+
+def test_func(
+    model: torch.nn.Module,
+    val_loader: DataLoader,
+    device: torch.device,
+    loss_fn: DiceLoss,
+) -> tuple[float, float]:
+    """Test the model on test data (same as validate_func but for test set).
+
+    Args:
+        model: The segmentation model to evaluate
+        val_loader: DataLoader with test data
+        device: Device to evaluate on
+        loss_fn: DiceLoss for computing loss
+
+    Returns:
+        Mean Dice score across all test samples
+        Running loss across all test samples
+    """
+    model.eval()
+    dice_metric = DiceMetric(reduction="mean")
+
+    logger.info(f"Starting test evaluation on {len(val_loader)} batches")
+
+    if len(val_loader) == 0:
+        logger.warning("Test loader is empty, skipping evaluation")
+        return -1, -1
+
+    running_loss = 0.0
+    with torch.no_grad():
+        for i, batch in enumerate(val_loader):
+            images = batch["image"].to(device)
+            labels = batch["label"].to(device)
+            predictions = model(images)
+            loss = loss_fn(predictions, labels).item()
+            running_loss += loss
+
+            # Convert labels to one-hot encoding for Dice computation
+            num_classes = predictions.shape[1]
+            labels_one_hot = one_hot(labels, num_classes=num_classes)
+
+            # Accumulate Dice scores
+            dice_metric(predictions, labels_one_hot)
+
+            logger.info(f"Test batch {i + 1}/{len(val_loader)} processed")
+
+    # Compute final aggregated Dice score
+    dice_score = dice_metric.aggregate().cpu().numpy().item()
+    running_loss /= max(1, len(val_loader.dataset))
+    dice_metric.reset()
+
+    logger.info(f"Test evaluation completed. Mean Dice score: {dice_score:.4f}, Average Loss: {running_loss:.4f}")
+
+    return dice_score, running_loss
