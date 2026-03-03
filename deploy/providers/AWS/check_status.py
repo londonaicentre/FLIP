@@ -778,7 +778,7 @@ def main(
                 ]
                 # Add only configured FL server containers
                 for net_num in configured_net_numbers:
-                    expected_containers.append(f"flipserver-net-{net_num}")
+                    expected_containers.append(f"fl-server-net-{net_num}")
 
                 for container in expected_containers:
                     container_found = False

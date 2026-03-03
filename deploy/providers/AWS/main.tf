@@ -23,7 +23,7 @@ terraform {
 }
 
 provider "aws" {
-  region  = var.AWS_REGION
+  region = var.AWS_REGION
 }
 
 ############################
@@ -49,13 +49,13 @@ module "flip_vpc" {
 # Security Groups
 ############################
 
-# EC2
+# Central Hub Security Group for EC2 instance
 
 module "ec2_security_group" {
   source      = "./modules/secgroup"
   name        = "ec2-security-group"
   vpc_id      = module.flip_vpc.vpc_id
-  description = "Security group for FLIP EC2 instance"
+  description = "Security group for FLIP Central Hub EC2 instance"
   ingress_rules = [
     {
       port        = var.UI_PORT
@@ -69,6 +69,22 @@ module "ec2_security_group" {
       port        = var.FL_API_PORT
       description = "FLIP FL API"
     },
+    {
+      port        = 22
+      description = "SSH access"
+    }
+  ]
+}
+
+# Trust Security Group for Trust EC2 instance
+
+module "trust_security_group" {
+  source      = "./modules/secgroup"
+  name        = "trust-security-group"
+  vpc_id      = module.flip_vpc.vpc_id
+  description = "Security group for FLIP Trust EC2 instance"
+
+  ingress_rules = [
     {
       port        = var.TRUST_API_PORT
       description = "Trust API"
@@ -96,16 +112,6 @@ resource "aws_security_group_rule" "fl_server_ingress" {
   cidr_blocks       = ["${module.trust_ec2.public_ip}/32"]
   security_group_id = module.ec2_security_group.security_group.id
   description       = "FL Server from Trust EC2"
-}
-
-resource "aws_security_group_rule" "fl_admin_ingress" {
-  type              = "ingress"
-  from_port         = 8003
-  to_port           = 8003
-  protocol          = "tcp"
-  cidr_blocks       = ["${module.trust_ec2.public_ip}/32"]
-  security_group_id = module.ec2_security_group.security_group.id
-  description       = "FL Admin Port from Trust EC2"
 }
 
 # RDS
@@ -167,9 +173,9 @@ module "flip_api_secret" {
   recovery_window_in_days = 30
 
   secret_string = jsonencode({
-    aes_key               = var.AES_KEY_BASE64
-    Trust_1-endpoint      = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
-    Trust_2-endpoint      = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
+    aes_key          = var.AES_KEY_BASE64
+    Trust_1-endpoint = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
+    Trust_2-endpoint = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
   })
 }
 
@@ -241,7 +247,7 @@ resource "aws_instance" "ec2_instance" {
   }
   subnet_id                   = module.flip_vpc.public_subnets[0]
   associate_public_ip_address = true
-  instance_type               = "t3.small"
+  instance_type               = "t3.medium"
   ami                         = data.aws_ssm_parameter.ubuntu.value
   vpc_security_group_ids      = [module.ec2_security_group.security_group.id]
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
@@ -472,15 +478,18 @@ resource "aws_ses_template" "flip_xnat_credentials" {
 module "trust_ec2" {
   source = "./modules/trust_ec2"
 
-  name_prefix        = "trust"
-  instance_type      = "t3.medium"
-  key_name           = aws_key_pair.host_key.key_name
-  subnet_id          = element(module.flip_vpc.public_subnets, 0)
-  security_group_ids = [module.ec2_security_group.security_group.id]
-  FL_API_PORT        = var.FL_API_PORT
-  TRUST_API_PORT     = var.TRUST_API_PORT
-  XNAT_PORT          = var.XNAT_PORT
-  PACS_UI_PORT       = var.PACS_UI_PORT
+  name_prefix   = "trust"
+  instance_type = "t3.xlarge"
+  key_name      = aws_key_pair.host_key.key_name
+  subnet_id     = element(module.flip_vpc.public_subnets, 0)
+
+  # use the trust SG, not the central EC2 SG
+  security_group_ids = [module.trust_security_group.security_group.id]
+
+  TRUST_API_PORT = var.TRUST_API_PORT
+  XNAT_PORT      = var.XNAT_PORT
+  PACS_UI_PORT   = var.PACS_UI_PORT
+
   # pass the compose file content and env file content from the repo
   create_elastic_ip = true
   # attaches the same ec2-role-profile instance profile to the Trust instance
