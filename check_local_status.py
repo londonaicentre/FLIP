@@ -276,6 +276,7 @@ def main(
     UI_PORT = env_vars.get("UI_PORT", "5173")
     API_PORT = env_vars.get("API_PORT", "8001")
     FL_API_PORT = env_vars.get("FL_API_PORT", "8000")
+    FL_SERVER_PORT = env_vars.get("FL_SERVER_PORT", "8002")
     TRUST_API_PORT = env_vars.get("TRUST_API_PORT", "8100")
     IMAGING_API_PORT = env_vars.get("IMAGING_API_PORT", "8200")
     DATA_ACCESS_API_PORT = env_vars.get("DATA_ACCESS_API_PORT", "8300")
