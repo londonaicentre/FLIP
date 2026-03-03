@@ -17,15 +17,12 @@ on:
     branches: [main, develop]
     paths:
       - "flip-api/**"
-      - ".github/workflows/central_hub_api.yml"
+      - ".github/workflows/flip_api.yml"
   pull_request:
     branches: [main, develop]
-    paths:
-      - "flip-api/**"
-      - ".github/workflows/central_hub_api.yml"
 
 jobs:
-  flip-api:
+    flip-api:
     runs-on: ubuntu-latest
     environment: flip
     services:
@@ -39,7 +36,7 @@ jobs:
           # optional (defaults to `postgres`)
           POSTGRES_DB: centralhub
           # required
-          POSTGRES_PASSWORD: some_password
+          POSTGRES_PASSWORD: some_password  # pragma: allowlist secret
           # optional (defaults to `5432`)
           POSTGRES_PORT: 5432
           # optional (defaults to `postgres`)

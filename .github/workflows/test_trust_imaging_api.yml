@@ -10,26 +10,24 @@
 # limitations under the License.
 #
 
-name: FLIP Data Access API CI
+name: FLIP Imaging API CI
 
 on:
   push:
     branches: [main, develop]
     paths:
-      - "trust/data-access-api/**"
-      - ".github/workflows/data_access_api.yml"
+      - "trust/imaging-api/**"
+      - ".github/workflows/imaging_api.yml"
   pull_request:
     branches: [main, develop]
-    paths:
-      - "trust/data-access-api/**"
-      - ".github/workflows/data_access_api.yml"
+
 jobs:
-  data-access-api:
+  imaging-api:
     runs-on: ubuntu-latest
     environment: flip
     defaults:
       run:
-        working-directory: ./trust/data-access-api
+        working-directory: ./trust/imaging-api
 
     steps:
       - name: Checkout code
@@ -38,7 +36,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          # get python version from ./trust/data-access-api/.python-version file
+          # get python version from ./trust/imaging-api/.python-version file
           # if not found, use 3.11
           python-version: ${{ github.event.inputs.python-version || '3.11' }}
 
@@ -46,23 +44,22 @@ jobs:
         run: pip install uv
 
       - name: Setup environment file
-        run: |
+        run: | # pragma: allowlist secret
           cp ../../.env.development.example ../../.env.development
           # Override sensitive values with GitHub secrets
-          echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 }}" >> ../../.env.development
-          echo "PRIVATE_API_KEY=${{ secrets.PRIVATE_API_KEY }}" >> ../../.env.development
+          echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=' }}" >> ../../.env.development  # pragma: allowlist secret
+          echo "PRIVATE_API_KEY=${{ secrets.PRIVATE_API_KEY || 'test-private-api-key-for-ci' }}" >> ../../.env.development
           echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
           echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
           echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-
       - name: Run tests with pytest (example)
         run: make local_test
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: trust/data-access-api/coverage.xml
-          flags: data-access-api
+          files: trust/imaging-api/coverage.xml
+          flags: imaging-api
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

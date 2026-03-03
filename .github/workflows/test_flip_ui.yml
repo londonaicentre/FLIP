@@ -14,15 +14,12 @@ name: UI CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
     paths:
-      - 'flip-ui/**'
-      - '.github/workflows/ui.yml'
+      - "flip-ui/**"
+      - ".github/workflows/ui.yml"
   pull_request:
-    branches: [ main, develop ]
-    paths:
-      - 'flip-ui/**'
-      - '.github/workflows/ui.yml'
+    branches: [main, develop]
 
 jobs:
   flip-ui:
@@ -33,27 +30,27 @@ jobs:
         working-directory: ./flip-ui
 
     env:
-        VITE_LOCAL: false
+      VITE_LOCAL: false
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set Node.js version
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20.9.0'  # Specify the Node.js version you need
-    - name: Install dependencies
-      run: npm install
+      - name: Set Node.js version
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.9.0" # Specify the Node.js version you need
+      - name: Install dependencies
+        run: npm install
 
-    - name: Run tests with npm
-      run: npm run test:unit
+      - name: Run tests with npm
+        run: npm run test:unit
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        files: flip-ui/coverage/cobertura-coverage.xml
-        flags: flip-ui
-        fail_ci_if_error: false
-      env:
-        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: flip-ui/coverage/cobertura-coverage.xml
+          flags: flip-ui
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
