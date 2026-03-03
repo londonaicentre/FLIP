@@ -273,7 +273,7 @@ module "alb_security_group" {
       description = "FL API traffic"
     },
     {
-      port        = 8002
+      port        = var.FL_SERVER_PORT
       description = "FL Server traffic"
     },
     {
@@ -324,7 +324,7 @@ module "alb" {
       }
     },
     "fl-server-listener" = {
-      port     = 8002
+      port     = var.FL_SERVER_PORT
       protocol = "HTTP"
       forward = {
         target_group_key = "ec2-instance-fl-server"
@@ -348,11 +348,8 @@ module "alb" {
       protocol  = "HTTP"
       target_id = aws_instance.ec2_instance.id
     },
-    # TODO FL Server communication should use gRPC protocol
-    # TODO When upgrading nvflare to 2.7 or later, note FL Server port consolidation:
-    # https://nvflare.readthedocs.io/en/2.7.0/user_guide/admin_guide/configurations/server_port_consolidation.html
     ec2-instance-fl-server = {
-      port      = 8002
+      port      = var.FL_SERVER_PORT
       protocol  = "HTTP"
       target_id = aws_instance.ec2_instance.id
     }

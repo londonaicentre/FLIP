@@ -125,6 +125,12 @@ variable "FL_API_PORT" {
   default     = 8000
 }
 
+variable "FL_SERVER_PORT" {
+  description = "Port for FLIP FL Server"
+  type        = number
+  default     = 8002
+}
+
 variable "flip_alb_subdomain" {
   description = "Subdomain for the FLIP ALB"
   type        = string
