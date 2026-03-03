@@ -88,6 +88,9 @@ build:
 	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} build
 	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} build
 
+# Only pull from registry when DOCKER_REGISTRY is set (non-empty).
+PULL_ALWAYS = $(if $(DOCKER_REGISTRY),--pull always,)
+
 # Uses --pull always to ensure the latest FL images and omop-db image are used
 # ensure omop data is up to date before bringing up trust 1
 up-trust-1: update-omop-data
@@ -95,7 +98,7 @@ up-trust-1: update-omop-data
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST1}
-	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f compose_trust-1_override.yml -p ${trust1} up -d
+	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f compose_trust-1_override.yml -p ${trust1} up -d $(PULL_ALWAYS)
 
 down-trust-1:
 	@echo "🛑 Stopping Trust 1 services..."
@@ -123,7 +126,7 @@ up-trust-2: update-omop-data
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST2}
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d
+	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d $(PULL_ALWAYS)
 
 down-trust-2:
 	@echo "🛑 Stopping Trust 2 services..."

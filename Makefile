@@ -97,13 +97,16 @@ build:
 	$(MAKE) -C trust/xnat build
 	@echo "✅ Docker images built successfully!"
 
+# Only pull from registry when DOCKER_REGISTRY is set (non-empty).
+PULL_ALWAYS = $(if $(DOCKER_REGISTRY),--pull always,)
+
 # Run all services
 # Uses --pull always to ensure the latest FL images are used
 up: create-networks
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d
+	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS)
 	@echo "🚢 Starting trust services..."
 	$(MAKE) -C trust up
 	@echo "🚢 Starting XNAT services..."
@@ -114,7 +117,7 @@ up: create-networks
 up-no-trust: create-networks
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d --pull always
+	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS)
 
 up-trusts: create-networks
 	@echo "🚢 Starting Trust services..."
