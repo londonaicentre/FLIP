@@ -5,6 +5,8 @@ description = "Local uv environment for the 3D spleen segmentation tutorial util
 requires-python = ">=3.12"
 dependencies = [
     "monai>=1.5.1",
+    "natsort>=8.4.0",
+    "pandas>=2.3.2",
     "requests>=2.32.5",
     "torch>=2.6.0",
     "tqdm>=4.67.3",
