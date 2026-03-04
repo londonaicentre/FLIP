@@ -1,0 +1,14 @@
+[project]
+name = "spleen-segmentation-tutorial"
+version = "0.1.0"
+description = "Local uv environment for the 3D spleen segmentation tutorial utilities."
+requires-python = ">=3.12"
+dependencies = [
+    "monai>=1.5.1",
+    "requests>=2.32.5",
+    "torch>=2.6.0",
+    "tqdm>=4.67.3",
+]
+
+[tool.uv]
+package = false
