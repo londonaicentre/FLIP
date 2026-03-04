@@ -23,7 +23,7 @@ service_name = nvflare-simulator
 docker_command = docker compose -f compose.yml
 
 prep: clean checks
-	bash ./app_organiser.sh ${REPO_BRANCH} ${REPO_URL} ${JOB_TYPE} ${PATH_TO_APP}
+	bash ./app_organiser.sh ${JOB_TYPE} ${PATH_TO_APP} ${DEV_IMAGES_DIR} ${DEV_DATAFRAME}
 
 up:
 	$(docker_command) run --rm --remove-orphans $(service_name)
@@ -32,7 +32,8 @@ down:
 	$(docker_command) down --remove-orphans $(service_name)
 
 clean:
-	bash ./cleanup.sh
+	@echo "Cleaning up temp directory..."
+	rm -rf ./tmp/*
 
 run: prep up down clean
 
@@ -65,15 +66,6 @@ checks:
 	fi
 	@echo "✅ Using DEV_IMAGES_DIR: ${DEV_IMAGES_DIR}"
 	@echo "✅ Using DEV_DATAFRAME: ${DEV_DATAFRAME}"
-
-# 	Check REPO_URL and REPO_BRANCH are set
-	@if [ -z "${REPO_URL}" ] || [ -z "${REPO_BRANCH}" ]; then \
-		echo "❌ ERROR: REPO_URL and/or REPO_BRANCH not set."; \
-		echo "   Make sure you have set these in .env.testing"; \
-		exit 1; \
-	fi
-	@echo "✅ Using REPO_URL: ${REPO_URL}"
-	@echo "✅ Using REPO_BRANCH: ${REPO_BRANCH}"
 
 # 	Check NUM_CLIENTS is set
 	@if [ -z "${NUM_CLIENTS}" ]; then \

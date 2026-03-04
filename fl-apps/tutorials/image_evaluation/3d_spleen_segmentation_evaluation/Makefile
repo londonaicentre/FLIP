@@ -23,14 +23,14 @@ endif
 
 download-checkpoints:
 	@set -e; \
-	ckpt="$(notdir $(MODEL_CHECKPOINT_S3))"; \
+	ckpt="$(notdir $(MODEL_CHECKPOINT_URL))"; \
 	dst="$(APP_DIR)/app_files/$$ckpt"; \
 	echo "Checking for: $$dst"; \
 	if [ ! -f "$$dst" ]; then \
-		echo "Downloading from $(MODEL_CHECKPOINT_S3) ..."; \
-		aws s3 cp "$(MODEL_CHECKPOINT_S3)" "$$dst"; \
+		echo "Downloading from $(MODEL_CHECKPOINT_URL) ..."; \
+		curl -fL "$(MODEL_CHECKPOINT_URL)" -o "$$dst"; \
 	else \
-		echo "Checkpoint file $$ckpt already exists, skipping download from S3."; \
+		echo "Checkpoint file $$ckpt already exists, skipping download."; \
 	fi
 
 run: download-checkpoints
