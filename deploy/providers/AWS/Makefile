@@ -217,6 +217,30 @@ destroy-cert: ## Destroy only the ACM certificate (use with caution - will break
 	@terraform destroy -target=aws_acm_certificate.flip -target=aws_acm_certificate_validation.flip -target=aws_route53_record.cert_validation
 	@echo "✅ Certificate destroyed! Now run 'make plan' and 'make apply' to remove DNS validation."
 
+.PHONY: update-trust-secret
+update-trust-secret: ## Update Secrets Manager with the current trust-ca.crt (run after cert regeneration)
+	@echo "🔐 Updating Secrets Manager with the current trust-ca.crt..."
+	@terraform apply -target='module.flip_api_secret.aws_secretsmanager_secret_version.this[0]' -auto-approve
+	@echo "✅ Secrets Manager updated with new trust CA certificate!"
+
+.PHONY: regen-trust-certs
+regen-trust-certs: ## Re-generate TLS certs for Trust EC2, deploy to EC2, and update Secrets Manager
+	@echo "🔑 Regenerating TLS certificates for Trust EC2..."
+	@TRUST_HOST="$$(terraform output -raw TrustEc2PublicIp)" bash ../../../trust/certs/generate-trust-certs.sh
+	@echo "📋 Copying new CA cert to provider directory..."
+	@cp ../../../trust/certs/trust-ca.crt trust-ca.crt
+	@echo "📦 Copying certificates to Trust EC2..."
+	@scp -i ~/.ssh/host-aws \
+		../../../trust/certs/trust-server.crt \
+		../../../trust/certs/trust-server.key \
+		../../../trust/certs/trust-ca.crt \
+		ubuntu@$$(terraform output -raw TrustEc2PublicIp):/opt/flip/certs/
+	@echo "🔄 Restarting nginx-tls on Trust EC2 to load new certificate..."
+	@ssh flip-trust "docker restart trust1-nginx-tls-1"
+	@echo "🔐 Updating Secrets Manager..."
+	@$(MAKE) update-trust-secret
+	@echo "✅ Certificate rotation complete!"
+
 .PHONY: apply
 apply: ## Apply Terraform configuration to update AWS infrastructure
 	@echo "🛠️ Applying Terraform configuration..."
@@ -268,7 +292,10 @@ deploy-trust: update-env ## Deploy trust relationships after central hub is depl
 	@docker context use flip-trust
 	@echo "🐳 Deploying containers to Trust EC2 ..."
 	docker swarm init || echo "   Swarm already initialized"
-	@echo "🚀 Deploying Trust services..."
+	@echo "� Copying TLS certificates to Trust EC2..."
+	scp -i ~/.ssh/host-aws -r ../../../trust/certs ubuntu@$$(terraform output -raw TrustEc2PublicIp):/opt/flip/certs
+	@echo "✅ Certificates copied!"
+	@echo "�🚀 Deploying Trust services..."
 	$(MAKE) -C ../../../ up-trust-stag PROD=stag
 	@echo "✅ Trust deployment complete!"
 
