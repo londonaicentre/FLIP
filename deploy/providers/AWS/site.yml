@@ -120,8 +120,8 @@
   vars:
     central_services_dir: "/opt/flip/services"
     central_s3_sources:
-      - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/20260204/net-1/services/fl-server-net-1/"
-      - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/20260204/net-1/services/flip-fl-api-net-1/"
+      - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/20260303/net-1/services/fl-server-net-1/"
+      - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/20260303/net-1/services/flip-fl-api-net-1/"
   tasks:
     - name: ensure central services directory exists
       file:
@@ -167,7 +167,7 @@
   become: true
   vars:
     trust_services_dir: "/opt/flip/services"
-    trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/20260204/net-1/services/Trust_1/"
+    trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/20260303/net-1/services/Trust_1/"
   tasks:
     - name: ensure trust services directory exists
       file:
