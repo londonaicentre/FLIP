@@ -353,3 +353,7 @@ plans/
 scripts/remove-env-from-history.sh
 
 SECURITY_INCIDENT.md
+
+trust/certs/
+
+*.crt

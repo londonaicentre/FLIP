@@ -10,14 +10,15 @@
 # limitations under the License.
 #
 
-name: Build and Push Docker Image for Trust API
+name: Build and Push Docker Image for Data Access API
 
 on:
   workflow_dispatch:
   push:
     branches: [main, develop]
     paths:
-      - "trust/trust-api/**"
+      - "trust/data-access-api/**"
+      - ".github/workflows/docker_build_trust_data_access_api.yml"
 
 jobs:
   build-and-push:
@@ -27,10 +28,10 @@ jobs:
       packages: write
     defaults:
       run:
-        working-directory: ./trust/trust-api
+        working-directory: ./trust/data-access-api
     env:
       REGISTRY: ghcr.io
-      IMAGE_NAME: londonaicentre/trust-api
+      IMAGE_NAME: londonaicentre/data-access-api
       BUILD_ARGS: |
         --build-arg UID=1000
         --build-arg GID=1000
@@ -64,7 +65,7 @@ jobs:
              TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:pr-${PR_NUMBER}"
           fi
 
-          # Determine if this is a merge/push to main or develop
+            # Determine if this is a merge/push to main or develop
           BRANCH_NAME=""
           if [[ "${{ github.event_name }}" == "workflow_run" && "${{ github.event.workflow_run.event }}" == "push" ]]; then
             BRANCH_NAME="${{ github.event.workflow_run.head_branch }}"
