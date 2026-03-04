@@ -10,49 +10,47 @@
 # limitations under the License.
 
 import argparse
-import csv
-import re
+import os
 from pathlib import Path
 
-
-def _subject_sort_key(subject_id: str) -> tuple[int, str]:
-    match = re.search(r"(\d+)$", subject_id)
-    if match:
-        return (int(match.group(1)), subject_id)
-    return (10**9, subject_id)
+import pandas as pd
+from natsort import natsorted
 
 
-def _is_valid_subject_folder(subject_dir: Path) -> bool:
-    scans_dir = subject_dir / "scans"
-    if not scans_dir.is_dir():
+def _is_valid_subject_folder(images_dir: str, subject_id: str) -> bool:
+    """Check if the given subject folder contains both input and label files."""
+    subject_dir = os.path.join(images_dir, subject_id)
+    scans_dir = os.path.join(subject_dir, "scans")
+    if not os.path.isdir(scans_dir):
         return False
 
-    input_files = list(scans_dir.glob("input_*.nii.gz"))
-    label_files = list(scans_dir.glob("label_*.nii.gz"))
-    return len(input_files) > 0 and len(label_files) > 0
+    scan_files = os.listdir(scans_dir)
+    has_input = any(name.startswith("input_") and name.endswith(".nii.gz") for name in scan_files)
+    has_label = any(name.startswith("label_") and name.endswith(".nii.gz") for name in scan_files)
+    return has_input and has_label
 
 
 def create_accession_csv(images_dir: Path, output_csv: Path) -> int:
+    """Create a CSV file containing accession IDs from the reorganized spleen dataset folders."""
     if not images_dir.exists():
         raise FileNotFoundError(f"Images directory does not exist: {images_dir}")
     if not images_dir.is_dir():
         raise NotADirectoryError(f"Images path is not a directory: {images_dir}")
 
+    images_dir_str = str(images_dir)
     subject_ids = []
-    for child in images_dir.iterdir():
-        if not child.is_dir() or child.name.startswith("."):
+    for name in os.listdir(images_dir_str):
+        if name.startswith("."):
             continue
-        if _is_valid_subject_folder(child):
-            subject_ids.append(child.name)
+        if not os.path.isdir(os.path.join(images_dir_str, name)):
+            continue
+        if _is_valid_subject_folder(images_dir_str, name):
+            subject_ids.append(name)
 
-    subject_ids = sorted(subject_ids, key=_subject_sort_key)
+    subject_ids = natsorted(subject_ids)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
-
-    with output_csv.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["accession_id"])
-        for subject_id in subject_ids:
-            writer.writerow([subject_id])
+    df = pd.DataFrame(subject_ids, columns=["accession_id"])
+    df.to_csv(output_csv, index=False)
 
     return len(subject_ids)
 
