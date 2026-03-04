@@ -13,13 +13,13 @@
 #
 
 # Provision an NVFLARE federated learning network
-# Usage: ./scripts/provision-network.sh <net_number> [fl_port] [debug]
+# Usage: ./scripts/provision-network.sh <project_yaml_file> <net_number> [fl_port] [debug]
 
-set -euo pipefail
 
-NET_NUMBER="${1:?Error: NET_NUMBER is required}"
-FL_PORT="${2:-8002}"
-DEBUG="${3:-false}"
+PROJECT_YAML="${1:?Error: PROJECT_YAML is required}"
+NET_NUMBER="${2:?Error: NET_NUMBER is required}"
+FL_PORT="${3:-8002}"
+DEBUG="${4:-false}"
 
 # Other configurations
 VERBOSE="true"
@@ -30,16 +30,8 @@ vlog() { if [[ "${VERBOSE}" == "true" ]]; then echo "   [verbose] $*"; fi }
 WORKSPACE_DIR="workspace/net-${NET_NUMBER}"
 SERVICES_DIR="${WORKSPACE_DIR}/services"
 
-log "Provisioning network ${NET_NUMBER}..."
-
-# FLARE project YAML file for this network
-PROJECT_YAML="net-${NET_NUMBER}_project.yml"
-
-# Generate network-specific project file from template
-export NET_NUMBER FL_PORT DEBUG
-envsubst < net_project.yml > "${PROJECT_YAML}"
-
 # Run NVFLARE provisioning
+log "Provisioning network ${NET_NUMBER}..."
 uv run nvflare provision -p "${PROJECT_YAML}"
 
 echo "Restructuring provisioned files in workspace..."
