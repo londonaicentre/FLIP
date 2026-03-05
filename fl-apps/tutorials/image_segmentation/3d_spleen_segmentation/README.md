@@ -24,7 +24,6 @@ This tutorial is designed for `JOB_TYPE=standard`.
 From this tutorial folder, create the local `uv` environment:
 
 ```bash
-cd tutorials/image_segmentation/3d_spleen_segmentation
 uv sync
 ```
 
@@ -88,7 +87,6 @@ Training hyperparameters are in `app_files/config.json`:
 From this folder:
 
 ```bash
-cd tutorials/image_segmentation/3d_spleen_segmentation
 make run
 ```
 
