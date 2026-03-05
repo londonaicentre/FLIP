@@ -17,33 +17,7 @@ This tutorial is designed for `JOB_TYPE=evaluation`.
 
 ## Dataset setup
 
-This app expects the same spleen dataset layout used by the segmentation tutorial.
-
-If you have not prepared it yet, from the segmentation tutorial folder run:
-
-```bash
-cd tutorials/image_segmentation/3d_spleen_segmentation
-uv sync
-uv run python utils/download_spleen_dataset.py \
-  --output_dir ../../data/spleen/images \
-  --num_cases 10
-uv run python utils/create_spleen_accession_csv.py \
-  --images_dir ../../data/spleen/images \
-  --output_csv ../../data/spleen/dataframe.csv
-```
-
-Expected structure:
-
-```text
-tutorials/data/spleen/
-├── images/
-│   ├── subject_1/
-│   │   └── scans/
-│   │       ├── input_spleen_1.nii.gz
-│   │       └── label_spleen_1.nii.gz
-│   └── ...
-└── dataframe.csv
-```
+This app expects the same spleen dataset layout used by the segmentation tutorial (see [../../image_segmentation/3d_spleen_segmentation/README.md#dataset-setup](../../image_segmentation/3d_spleen_segmentation/README.md#dataset-setup)). If you have not prepared it yet, follow the instructions in that tutorial to download and organise the data.
 
 ## Checkpoint setup
 
@@ -52,7 +26,6 @@ The evaluation app needs a model checkpoint in `app_files/`.
 From this folder:
 
 ```bash
-cd tutorials/image_evaluation/3d_spleen_segmentation_evaluation
 make download-checkpoints
 ```
 
@@ -76,7 +49,6 @@ Evaluation settings are defined in `app_files/config.json`.
 From this folder:
 
 ```bash
-cd tutorials/image_evaluation/3d_spleen_segmentation_evaluation
 make run
 ```
 
