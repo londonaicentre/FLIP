@@ -10,19 +10,17 @@
 # limitations under the License.
 #
 
-name: FLIP Data Access API CI
+name: Trust - Data Access API CI
 
 on:
   push:
     branches: [main, develop]
     paths:
       - "trust/data-access-api/**"
-      - ".github/workflows/data_access_api.yml"
+      - ".github/workflows/test_trust_data_access_api.yml"
   pull_request:
     branches: [main, develop]
-    paths:
-      - "trust/data-access-api/**"
-      - ".github/workflows/data_access_api.yml"
+
 jobs:
   data-access-api:
     runs-on: ubuntu-latest
