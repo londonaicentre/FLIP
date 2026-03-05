@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +30,7 @@ if [ ! -f "$DEV_DATAFRAME" ]; then
 fi
 
 # Copy base application files (e.g. config folder, other custom files, etc.)
+mkdir -p ./tmp
 cp -r ../../src/$JOB_TYPE/app ./tmp/
 
 # Copy app files (e.g. trainer.py, validator.py, etc.)

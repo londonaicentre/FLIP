@@ -33,7 +33,8 @@ down:
 
 clean:
 	@echo "Cleaning up temp directory..."
-	rm -rf ./tmp/*
+	rm -rf ./tmp
+	mkdir -p ./tmp
 
 run: prep up down clean
 
