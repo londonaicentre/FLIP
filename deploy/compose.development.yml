@@ -63,7 +63,7 @@ services:
       - ../flip-api/entrypoint.sh:/app/entrypoint.sh
       - ../flip-api/tests/:/app/tests/
       - ../flip-api/.vscode:/app/.vscode
-      - ../trust/certs/trust-ca.crt:/etc/ssl/trust/trust-ca.crt:ro
+      - ../trust/certs/:/etc/ssl/trust/:ro
       - ~/.aws/config:/home/${UNAME}/.aws/config:ro
       - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
     networks:

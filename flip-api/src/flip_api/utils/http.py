@@ -24,16 +24,26 @@ def trust_ssl_context() -> Union[ssl.SSLContext, bool]:
 
     Reads `TRUST_CA_BUNDLE` environment variable which should point to a PEM file.
     If not set, returns True to use system CA bundle.
+
+    If `TRUST_CA_BUNDLE` is set but invalid or unreadable, this function raises a
+    RuntimeError so that misconfiguration is detected early instead of silently
+    falling back to system CAs.
     """
     ca_bundle = os.getenv("TRUST_CA_BUNDLE")
     if ca_bundle:
         try:
             ctx = ssl.create_default_context(cafile=ca_bundle)
             return ctx
-        except Exception:
-            # Fall back to True if creating the context fails
-            logger.warning(f"Failed to create SSL context with {ca_bundle}; falling back to system CAs")
-            return True
+        except (OSError, ssl.SSLError) as exc:
+            # Fail fast if the configured CA bundle is invalid or cannot be loaded.
+            logger.error(
+                "Failed to create SSL context with TRUST_CA_BUNDLE '%s': %s",
+                ca_bundle,
+                repr(exc),
+            )
+            raise RuntimeError(
+                f"Invalid TRUST_CA_BUNDLE configuration: failed to load '{ca_bundle}'"
+            ) from exc
     return True
 
 
