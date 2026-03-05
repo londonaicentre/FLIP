@@ -42,8 +42,9 @@ if [ $? -eq 0 ]; then
     if [ -n "${TRUST_CA_CERT:-}" ]; then
         echo "Writing Trust CA certificate to /etc/ssl/trust/trust-ca.crt"
         mkdir -p /etc/ssl/trust
-        echo "$TRUST_CA_CERT" > /etc/ssl/trust/trust-ca.crt
+        printf '%s\n' "$TRUST_CA_CERT" > /etc/ssl/trust/trust-ca.crt
         chmod 0644 /etc/ssl/trust/trust-ca.crt
+        export TRUST_CA_BUNDLE=/etc/ssl/trust/trust-ca.crt
     fi
 
     # If TRUST_CA_BUNDLE is set to a path (mount from compose), ensure directory exists
@@ -66,6 +67,7 @@ try:
 except Exception as e:
     print('No trust_ca_cert found in secrets or failed to write CA:', e)
 PY
+    export TRUST_CA_BUNDLE=${TRUST_CA_BUNDLE:-/etc/ssl/trust/trust-ca.crt}
     if [ "$DEBUG" = "true" ]; then
         echo "🚨 Starting API in debug mode... 🐛"
         exec uv run python ${debug_cmd} ${fast_api_cmd}
