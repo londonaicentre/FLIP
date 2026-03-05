@@ -31,7 +31,7 @@ from flip_api.domain.interfaces.project import (
 from flip_api.domain.schemas.projects import ImagingProject, XnatProjectStatusInfo
 from flip_api.domain.schemas.status import XNATImageStatus
 from flip_api.trusts_services.services.trust import get_trusts
-from flip_api.utils.http import _trust_ssl_context
+from flip_api.utils.http import trust_ssl_context
 from flip_api.utils.logger import logger
 
 
@@ -116,7 +116,7 @@ def delete_imaging_project(imaging_project: ImagingProject, db: Session) -> bool
     try:
         trust_endpoint = f"{imaging_project.endpoint}/imaging/{imaging_project.xnat_project_id}"
 
-        with httpx.Client(timeout=10.0, verify=_trust_ssl_context()) as client:
+        with httpx.Client(timeout=10.0, verify=trust_ssl_context()) as client:
             response = client.delete(trust_endpoint)
             logger.debug(f"Delete request to {trust_endpoint} returned status {response.status_code}")
 
@@ -214,7 +214,7 @@ def get_imaging_project_statuses(
         try:
             logger.debug(f"Encoded query: {encoded_query}")
             api_url = f"{row_project.endpoint}/imaging/{row_project.xnat_project_id}"
-            with httpx.Client(timeout=10.0, verify=_trust_ssl_context()) as client:
+            with httpx.Client(timeout=10.0, verify=trust_ssl_context()) as client:
                 response = client.get(api_url, params={"encoded_query": encoded_query})
             logger.debug(f"API response for {row_project.name}: {response.status_code} - {response.text}")
 
@@ -262,7 +262,7 @@ def update_xnat_user_profile(
 
     for trust in trusts:
         try:
-            with httpx.Client(timeout=10.0, verify=_trust_ssl_context()) as client:
+            with httpx.Client(timeout=10.0, verify=trust_ssl_context()) as client:
                 response = client.put(
                     f"{trust.endpoint}/imaging/users",
                     json=request_data.model_dump(mode="json"),
@@ -329,7 +329,7 @@ def reimport_failed_studies(
         total_eligible_queries += 1
 
         try:
-            with httpx.Client(timeout=10.0, verify=_trust_ssl_context()) as client:
+            with httpx.Client(timeout=10.0, verify=trust_ssl_context()) as client:
                 response = client.put(url, params={"encoded_query": encoded_query})
                 response.raise_for_status()
 

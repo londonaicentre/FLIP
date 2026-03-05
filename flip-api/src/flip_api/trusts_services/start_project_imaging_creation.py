@@ -37,7 +37,7 @@ from flip_api.project_services.services.project_services import get_project, get
 from flip_api.utils.cognito_helpers import get_cognito_users, get_user_pool_id
 from flip_api.utils.constants import IMAGING_CREDENTIALS_TEMPLATE_NAME
 from flip_api.utils.encryption import decrypt
-from flip_api.utils.http import _trust_ssl_context
+from flip_api.utils.http import trust_ssl_context
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
@@ -173,7 +173,7 @@ async def start_project_imaging_creation(
         # Make request to trust to create imaging project
         endpoint = f"{trust.endpoint}/imaging"
         try:
-            async with httpx.AsyncClient(timeout=30.0, verify=_trust_ssl_context()) as client:
+            async with httpx.AsyncClient(timeout=30.0, verify=trust_ssl_context()) as client:
                 response = await client.post(
                     url=endpoint,
                     json=request_data.model_dump(mode="json"),

@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from flip_api.utils.http import _trust_ssl_context
+from flip_api.utils.http import trust_ssl_context
 
 
 @pytest.fixture
@@ -52,14 +52,14 @@ def test_trust_ssl_context_returns_true_when_env_not_set():
     """When TRUST_CA_BUNDLE is not set, _trust_ssl_context should return True (system CA store)."""
     env_without_bundle = {k: v for k, v in os.environ.items() if k != "TRUST_CA_BUNDLE"}
     with patch.dict("os.environ", env_without_bundle, clear=True):
-        result = _trust_ssl_context()
+        result = trust_ssl_context()
         assert result is True
 
 
 def test_trust_ssl_context_returns_ssl_context_when_env_set(valid_ca_cert):
     """When TRUST_CA_BUNDLE points to a valid PEM file, _trust_ssl_context returns an SSLContext."""
     with patch.dict("os.environ", {"TRUST_CA_BUNDLE": str(valid_ca_cert)}):
-        result = _trust_ssl_context()
+        result = trust_ssl_context()
         assert isinstance(result, ssl.SSLContext)
 
 
@@ -69,12 +69,12 @@ def test_trust_ssl_context_falls_back_to_true_on_bad_pem(tmp_path):
     bad_file.write_text("this is not a valid pem certificate")
 
     with patch.dict("os.environ", {"TRUST_CA_BUNDLE": str(bad_file)}):
-        result = _trust_ssl_context()
+        result = trust_ssl_context()
         assert result is True
 
 
 def test_trust_ssl_context_falls_back_to_true_when_file_missing():
     """When TRUST_CA_BUNDLE is set to a non-existent path, _trust_ssl_context falls back to True."""
     with patch.dict("os.environ", {"TRUST_CA_BUNDLE": "/nonexistent/path/cert.crt"}):
-        result = _trust_ssl_context()
+        result = trust_ssl_context()
         assert result is True

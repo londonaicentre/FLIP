@@ -19,7 +19,7 @@ import httpx
 from flip_api.utils.logger import logger
 
 
-def _trust_ssl_context() -> Union[ssl.SSLContext, bool]:
+def trust_ssl_context() -> Union[ssl.SSLContext, bool]:
     """Return an SSLContext that trusts the Trust CA, or True for default verification.
 
     Reads `TRUST_CA_BUNDLE` environment variable which should point to a PEM file.
@@ -40,7 +40,7 @@ def _trust_ssl_context() -> Union[ssl.SSLContext, bool]:
 def http_get(url: str, request_id: Optional[str] = None) -> Any:
     """Perform an HTTP GET request to the specified URL with optional request ID for tracing."""
     headers = {"x-request-id": request_id} if request_id else {}
-    with httpx.Client(verify=_trust_ssl_context()) as client:
+    with httpx.Client(verify=trust_ssl_context()) as client:
         try:
             response = client.get(url, headers=headers)
             response.raise_for_status()
@@ -62,7 +62,7 @@ def http_post(
         if request_id
         else {"Content-Type": "application/json"}
     )
-    with httpx.Client(verify=_trust_ssl_context()) as client:
+    with httpx.Client(verify=trust_ssl_context()) as client:
         try:
             if timeout is None:
                 response = client.post(url, headers=headers, json=data)
@@ -82,7 +82,7 @@ def http_post(
 def http_delete(url: str, request_id: Optional[str] = None) -> Any:
     """Perform an HTTP DELETE request to the specified URL with optional request ID for tracing."""
     headers = {"x-request-id": request_id} if request_id else {}
-    with httpx.Client(verify=_trust_ssl_context()) as client:
+    with httpx.Client(verify=trust_ssl_context()) as client:
         try:
             response = client.delete(url, headers=headers)
             response.raise_for_status()
