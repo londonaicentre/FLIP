@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
 
+    # SSL / TLS settings
+    TRUST_CA_BUNDLE: Optional[str] = None  # Path to the Trust CA certificate PEM file
+
     # FL settings
     FL_BACKEND: Literal["nvflare", "flower"] = "nvflare"
 
