@@ -19,8 +19,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # env file is 3 directories up from this file
     # Get current directory: imaging-api/imaging_api/config.py
-    PROD: bool = bool(int(os.getenv("PROD", "0")))
-    environment: str = "development" if not PROD else "production"
+    ENV: str = os.getenv("ENV", "development")
+    environment: str = ENV
 
     model_config = SettingsConfigDict(
         env_file=str(Path(__file__).parent.parent.parent.parent / f".env.{environment}"),
