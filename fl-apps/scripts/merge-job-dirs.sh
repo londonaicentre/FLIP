@@ -33,8 +33,7 @@ rm -rf "${OUTPUT_DIR}"
 mkdir -p "${OUTPUT_DIR}/custom"
 mkdir -p "${OUTPUT_DIR}/config"
 
-# Copy ONLY config templates from base app (not custom folder with base files)
-# Base application files are now in the flip package
+# Copy config templates from base app
 if [[ -d "${BASE_APP_DIR}/config" ]]; then
     cp -r "${BASE_APP_DIR}/config"/* "${OUTPUT_DIR}/config/" 2>/dev/null || true
 fi
