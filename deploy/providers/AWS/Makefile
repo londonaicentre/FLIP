@@ -21,6 +21,9 @@ include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
+# Export PROD so child processes (e.g. check_status.py) can determine the environment
+export PROD
+
 # If PROD=true, check that the AWS_PROFILE=FlipDeveloperAccess-046651569599
 ifeq ($(PROD),true)
 ifneq ($(AWS_PROFILE),FlipDeveloperAccess-046651569599)

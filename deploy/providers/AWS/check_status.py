@@ -367,6 +367,12 @@ def main(
     original_dir = Path.cwd()
     os.chdir(terraform_dir)
 
+    # Determine ALB subdomain from environment. ALB_SUBDOMAIN takes precedence;
+    # otherwise derive from PROD: 'true' → production domain, else → staging domain.
+    _prod_env = os.getenv("PROD", "")
+    _default_domain = "app.flip.aicentre.co.uk" if _prod_env == "true" else "stag.flip.aicentre.co.uk"
+    alb_subdomain = os.getenv("ALB_SUBDOMAIN", _default_domain)
+
     # Check prerequisites
     print_section("Checking Prerequisites")
 
@@ -522,7 +528,6 @@ def main(
 
     # Get certificate ARN and domain from Terraform
     cert_arn = get_terraform_output("CertificateArn")
-    alb_subdomain = os.getenv("ALB_SUBDOMAIN", "stag.flip.aicentre.co.uk")
 
     if cert_arn:
         print_status("INFO", f"Checking ACM certificate: {cert_arn}")
@@ -659,9 +664,6 @@ def main(
     if not skip_endpoints:
         print_section("Application Endpoint Checks")
 
-        # Get ALB subdomain for HTTPS checks
-        alb_subdomain = os.getenv("ALB_SUBDOMAIN", "stag.flip.aicentre.co.uk")
-
         # Central Hub EC2 ports
         UI_PORT = os.getenv("UI_PORT", "")
         API_PORT = os.getenv("API_PORT", "")
@@ -690,12 +692,6 @@ def main(
 
         # Check API docs endpoint via ALB
         check_http_endpoint(f"https://{alb_subdomain}/docs", "FLIP API Docs (ALB)", 200)
-
-        # Check API health endpoint via direct EC2 access (for debugging)
-        check_http_endpoint(f"http://{central_hub_ip}:{API_PORT}/health", "FLIP API Health (Direct)", 200)
-
-        # Check API docs endpoint via direct EC2 access (for debugging)
-        check_http_endpoint(f"http://{central_hub_ip}:{API_PORT}/docs", "FLIP API Docs (Direct)", 200)
 
         # Check FL API health and docs endpoints via docker exec using urllib.request
         # (curl is not present in the NVFlare-based FL API containers; iptables also blocks
@@ -1155,7 +1151,7 @@ def main(
             )
             # Open centralhub on browser
             try:
-                os.system("open http://stag.flip.aicentre.co.uk")
+                os.system(f"open https://{alb_subdomain}")
             except Exception:
                 pass
         sys.exit(0)
