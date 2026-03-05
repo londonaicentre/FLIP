@@ -88,11 +88,10 @@ def main():
     updates = {
         "DB_HOST": db_endpoint,
         "SP_ADDRESS": ec2_ip,
-        "CENTRAL_HUB_API_URL": f"http://{ec2_ip}:8080",
-        # Also update UI_HOST if it was pointing to a container name,
-        # but usually UI_HOST might be used for internal binding or external access.
-        # If it's for external access URL construction:
-        # "UI_HOST": ec2_ip
+        # NOTE: CENTRAL_HUB_API_URL is intentionally NOT updated here.
+        # In staging/production it should be the ALB Route53 domain (e.g. https://stag.flip.aicentre.co.uk),
+        # not the raw EC2 IP. SSL is terminated at the ALB using the ACM certificate.
+        # Set this value manually in the env file.
         "POSTGRES_SECRET_ARN": db_secret_arn,
         "AWS_COGNITO_USER_POOL_ID": cognito_user_pool_id,
         "AWS_COGNITO_APP_CLIENT_ID": cognito_app_client_id,

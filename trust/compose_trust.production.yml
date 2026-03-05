@@ -43,6 +43,11 @@ services:
 
   imaging-api:
     image: ghcr.io/londonaicentre/imaging-api:${DOCKER_TAG}
+    # Override the default CMD so that the production image uses uvicorn directly
+    # instead of `fastapi dev --reload-exclude` (which fails on older fastapi CLI versions).
+    # The entrypoint.sh fix (uvicorn for non-debug mode) will remove the need for this
+    # override once the next image build is pushed.
+    command: ["uv", "run", "python", "-m", "uvicorn", "imaging_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "${IMAGING_API_PORT}:8000"
     environment:
@@ -74,10 +79,22 @@ services:
       DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT_TRUST_1}
       DEBUG: ${DEBUG}
 
-  trust-api:
-    image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}
+  nginx-tls:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
     ports:
       - "${TRUST_API_PORT}:8000"
+    volumes:
+      - /opt/flip/certs:/etc/nginx/certs:ro
+    depends_on:
+      - trust-api
+
+  trust-api:
+    image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}
+    # ports removed — nginx-tls owns TRUST_API_PORT and proxies to trust-api
+    # over the internal Docker network, preventing direct unauthenticated HTTP
+    # access from outside the container network.
     environment:
       CENTRAL_HUB_API_URL: ${CENTRAL_HUB_API_URL}
       DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}

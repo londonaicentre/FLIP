@@ -1,0 +1,16 @@
+# Override for Trust 2 to avoid host port conflicts when running multiple Trust instances
+# This file mirrors compose_trust-1_override.yml but remaps the external TRUST_API_PORT
+# for the nginx TLS proxy to 8021 (host) -> 8000 (container).
+
+services:
+
+  # imaging-api and data-access-api are internal services reached by trust-api via
+  # Docker service names. No per-trust host ports are defined in the env file for
+  # trust2, so we do not expose them to the host here.
+
+  nginx-tls:
+    ports:
+      - "8021:8000"
+
+# Note: The `trust-api` service intentionally does not expose the TRUST_API_PORT
+# to the host; `nginx-tls` performs TLS termination and proxies to `trust-api`.

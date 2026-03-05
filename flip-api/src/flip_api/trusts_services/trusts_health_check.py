@@ -13,6 +13,7 @@
 import asyncio
 
 import httpx
+from flip_api.utils.http import _trust_ssl_context
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session, select
 
@@ -59,7 +60,7 @@ async def check_trusts_health(
         logger.debug("Sending a request to each of the trusts...")
 
         # Make concurrent requests to all trusts
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=10.0, verify=_trust_ssl_context()) as client:
             tasks = []
 
             for row in result:

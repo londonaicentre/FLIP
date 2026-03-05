@@ -199,6 +199,74 @@ def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 
         return False
 
 
+def check_https_insecure(url: str, name: str, expected_status: int = 200) -> bool:
+    """Check HTTPS endpoint with certificate verification disabled (--insecure).
+
+    Use when the cert SAN does not cover 'localhost' (e.g. it was issued for the
+    machine's public IP) but you still want to confirm the TLS handshake succeeds.
+    """
+    print_status("INFO", f"Checking {name} (HTTPS insecure) at {url}...")
+
+    success, output = run_command(
+        ["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", url],
+        timeout=15,
+    )
+
+    if not success:
+        print_status("FAIL", f"{name} HTTPS check failed: {output}")
+        return False
+
+    status = output.strip()
+    if status == str(expected_status):
+        print_status("PASS", f"{name} is responding over HTTPS (HTTP {status})")
+        return True
+    else:
+        print_status("FAIL", f"{name} returned HTTP {status} over HTTPS (expected {expected_status})")
+        return False
+
+
+def check_https_with_cacert(url: str, name: str, cacert_path: str, expected_status: int = 200) -> bool:
+    """Check HTTPS endpoint using curl with a custom CA certificate.
+
+    Uses `curl --cacert` to verify endpoints that present a self-signed certificate.
+    """
+    from pathlib import Path
+
+    print_status("INFO", f"Checking {name} (HTTPS w/ CA) at {url} using {cacert_path}...")
+
+    if not Path(cacert_path).exists():
+        print_status("WARN", f"CA file {cacert_path} not found — skipping HTTPS CA verification")
+        return False
+
+    # Use curl to perform verification and return only the HTTP status code
+    success, output = run_command(
+        [
+            "curl",
+            "-sS",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "--cacert",
+            cacert_path,
+            url,
+        ],
+        timeout=15,
+    )
+
+    if not success:
+        print_status("FAIL", f"{name} HTTPS check failed: {output}")
+        return False
+
+    status = output.strip()
+    if status == str(expected_status):
+        print_status("PASS", f"{name} is responding over HTTPS (HTTP {status})")
+        return True
+    else:
+        print_status("FAIL", f"{name} returned HTTP {status} over HTTPS (expected {expected_status})")
+        return False
+
+
 def load_env_file(env_file: Path) -> dict:
     """Load environment variables from a file.
 
@@ -554,14 +622,27 @@ def main(
         # Check Trust endpoints if they exist
         print_section("Trust Service Endpoint Checks")
 
-        check_http_endpoint(f"http://localhost:{TRUST_API_PORT}/health", "Trust API Health", 200)
-        check_http_endpoint(f"http://localhost:{TRUST_API_PORT}/docs", "Trust API Docs", 200)
+        # Trust API is exposed via nginx-tls (HTTPS only) — use insecure HTTPS check
+        check_https_insecure(f"https://localhost:{TRUST_API_PORT}/health", "Trust API Health")
+        check_https_insecure(f"https://localhost:{TRUST_API_PORT}/docs", "Trust API Docs")
 
+        # Imaging and Data Access APIs are plain HTTP internal services
         check_http_endpoint(f"http://localhost:{IMAGING_API_PORT}/health", "Imaging API Health", 200)
         check_http_endpoint(f"http://localhost:{IMAGING_API_PORT}/docs", "Imaging API Docs", 200)
 
         check_http_endpoint(f"http://localhost:{DATA_ACCESS_API_PORT}/health", "Data Access API Health", 200)
         check_http_endpoint(f"http://localhost:{DATA_ACCESS_API_PORT}/docs", "Data Access API Docs", 200)
+
+        # If a Trust CA is present, also verify Trust API HTTPS using the CA bundle
+        # (Imaging and Data Access are plain HTTP — not verified over HTTPS)
+        cacert = Path("trust/certs/trust-ca.crt")
+        if cacert.exists():
+            check_https_with_cacert(
+                f"https://localhost:{TRUST_API_PORT}/health", "Trust API Health (HTTPS+CA)", str(cacert), 200
+            )
+            check_https_with_cacert(
+                f"https://localhost:{TRUST_API_PORT}/docs", "Trust API Docs (HTTPS+CA)", str(cacert), 200
+            )
 
         # Check XNAT endpoints
         print_section("XNAT Service Endpoint Checks")

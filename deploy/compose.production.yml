@@ -58,5 +58,8 @@ services:
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
+      # Path where entrypoint.sh writes the Trust CA cert from Secrets Manager;
+      # _trust_ssl_context() reads this to verify Trust API HTTPS connections.
+      - TRUST_CA_BUNDLE=/etc/ssl/trust/trust-ca.crt
     restart: unless-stopped
     container_name: flip-api

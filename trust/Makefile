@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 create-networks remove-networks recreate-networks tests
+.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 create-networks remove-networks recreate-networks tests generate-trust-certs verify-trust-certs test-trust-https
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=../.env.production
@@ -123,11 +123,11 @@ up-trust-2: update-omop-data
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST2}
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d
+	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -f compose_trust-2_override.yml -p ${trust2} up -d
 
 down-trust-2:
 	@echo "🛑 Stopping Trust 2 services..."
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} down --remove-orphans
+	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -f compose_trust-2_override.yml -p ${trust2} down --remove-orphans
 
 restart-trust-2: down-trust-2 up-trust-2
 
@@ -185,3 +185,19 @@ debug-imaging-api-off:
 	DEBUG=false $(TRUST_1_VARS) ${DEBUG_OVERRIDE_COMPOSE_COMMAND} -p ${trust1} up --remove-orphans -d imaging-api
 debug-trust-api-off:
 	DEBUG=false $(TRUST_1_VARS) ${DEBUG_OVERRIDE_COMPOSE_COMMAND} -p ${trust1} up --remove-orphans -d trust-api
+
+generate-trust-certs:
+	TRUST_HOST="$(TRUST_HOST)" bash certs/generate-trust-certs.sh
+
+verify-trust-certs:
+	@echo "--- Verifying cert chain ---"
+	openssl verify -CAfile certs/trust-ca.crt certs/trust-server.crt
+	@echo "--- Server cert SANs ---"
+	openssl x509 -in certs/trust-server.crt -noout -ext subjectAltName
+	@echo "--- Expiry ---"
+	openssl x509 -in certs/trust-server.crt -noout -dates
+
+test-trust-https:
+	@[ -n "$(TRUST_HOST)" ] || (echo "ERROR: TRUST_HOST is required. Usage: make test-trust-https TRUST_HOST=<ip-or-hostname>"; exit 1)
+	@echo "--- HTTPS health check: https://$(TRUST_HOST):$(TRUST_API_PORT)/health ---"
+	curl -sf --cacert certs/trust-ca.crt https://$(TRUST_HOST):$(TRUST_API_PORT)/health
