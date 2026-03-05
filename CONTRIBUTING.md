@@ -119,7 +119,7 @@ the version used in the service's Dockerfile.
 
 ### Environment variables
 
-Environment variables for local development are defined in [`.env.development`](.env.development). This file uses
+Environment variables for local development are defined in [`.env.development.example`](.env.development.example). This file uses
 dummy/safe credentials for local use and **must not be used in production**. It centrally configures all services.
 
 To get started, copy the example file:

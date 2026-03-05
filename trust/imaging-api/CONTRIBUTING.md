@@ -40,9 +40,6 @@ make up
 
 ### Running tests
 
-> **Note**: Tests require a running XNAT instance with pre-loaded test data. Test data (accession numbers, paths,
-> etc.) is currently hardcoded in the test fixtures.
-
 ```bash
 make test
 ```

@@ -51,7 +51,7 @@ It requires the [OMOP database](../omop-db/) to be running and populated with da
 
 ## Configuration
 
-Key environment variables (set in [`.env.development`](../../.env.development)):
+Key environment variables (set in [`.env.development.example`](../../.env.development.example)):
 
 | Variable | Description |
 | --- | --- |

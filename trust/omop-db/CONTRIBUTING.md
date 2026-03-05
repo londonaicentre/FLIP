@@ -50,7 +50,7 @@ ssh -L 5050:localhost:5050 <your-server>
 ```
 
 1. Open pgAdmin at <http://localhost:5050> and log in. Credentials are `PGADMIN_EMAIL` and `PGADMIN_PASSWORD` from
-   [`.env.development`](../../.env.development).
+   [`.env.development.example`](../../.env.development.example).
 2. Click **Register Server** and configure:
    - **General > Name**: `trust` (or any label)
    - **Connection > Host**: `omop-db`

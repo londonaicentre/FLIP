@@ -28,8 +28,7 @@ The trust-api acts as the local orchestrator at each Trust:
 
 1. **Cohort queries** — receives OMOP SQL queries from the Central Hub, delegates to [data-access-api](../data-access-api/), and returns aggregated statistics
 2. **Imaging projects** — creates projects in XNAT via [imaging-api](../imaging-api/) in response to approved FL studies
-3. **Model training coordination** — triggers the local FL client and reports training status back to the Central Hub
-4. **Audit** — logs all operations locally for governance purposes
+3. **Audit** — logs all operations locally for governance purposes
 
 The trust-api is only called by the [flip-api](../../flip-api/) (Central Hub). It does not expose an external user interface.
 
@@ -48,7 +47,7 @@ make up
 ```
 
 API documentation (Swagger UI) is available at the port defined by `TRUST_API_PORT` in
-[`.env.development`](../../.env.development):
+[`.env.development.example`](../../.env.development.example):
 
 ```
 http://localhost:<TRUST_API_PORT>/docs
@@ -56,7 +55,7 @@ http://localhost:<TRUST_API_PORT>/docs
 
 ## Configuration
 
-Key environment variables (set in [`.env.development`](../../.env.development)):
+Key environment variables (set in [`.env.development.example`](../../.env.development.example)):
 
 | Variable | Description |
 | --- | --- |

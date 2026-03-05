@@ -58,7 +58,7 @@ ssh -L 5050:localhost:5050 <your-server>
 ```
 
 1. Open pgAdmin at <http://localhost:5050> and log in. Credentials are set by `PGADMIN_EMAIL` and `PGADMIN_PASSWORD`
-   in [`.env.development`](../.env.development).
+   in [`.env.development.example`](../.env.development.example).
 2. Click **Register Server** and configure:
    - **General > Name**: `centralhub` (or any label)
    - **Connection > Host**: value of `DB_HOST` from

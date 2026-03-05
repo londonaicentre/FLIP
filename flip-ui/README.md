@@ -34,7 +34,7 @@ or as part of the full platform:
 make up
 ```
 
-The UI is accessible at the port defined by `FLIP_UI_PORT` in [`.env.development`](../.env.development)
+The UI is accessible at the port defined by `FLIP_UI_PORT` in [`.env.development.example`](../.env.development.example)
 (default: `3000`):
 
 ```
@@ -43,7 +43,7 @@ http://localhost:3000
 
 ## Configuration
 
-The flip-ui requires the following environment variables, set via [`.env.development`](../.env.development) in
+The flip-ui requires the following environment variables, set via [`.env.development.example`](../.env.development.example) in
 development or via the hosting environment in production:
 
 | Variable | Description |

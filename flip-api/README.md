@@ -48,7 +48,7 @@ or as part of the full platform:
 make up
 ```
 
-The API is served on the port defined by `FLIP_API_PORT` in [`.env.development`](../.env.development)
+The API is served on the port defined by `FLIP_API_PORT` in [`.env.development.example`](../.env.development.example)
 (default: `8000`). Interactive API documentation (Swagger UI) is available at:
 
 ```
@@ -58,7 +58,7 @@ http://localhost:<FLIP_API_PORT>/docs
 ## Configuration
 
 The flip-api is configured via environment variables. In development these are set in
-[`.env.development`](../.env.development). Key variables include:
+[`.env.development.example`](../.env.development.example). Key variables include:
 
 | Variable | Description |
 | --- | --- |

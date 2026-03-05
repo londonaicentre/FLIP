@@ -44,7 +44,7 @@ make test
 Use these via the Swagger UI at `http://localhost:<DATA_ACCESS_API_PORT>/docs` or with curl/Postman.
 
 ```sql
-SELECT * FROM omop.radiology_occurrence
+SELECT * FROM OMOP.IMAGE_OCCURRENCE WHERE modality_concept_id = 4300757
 ```
 
 ```sql
