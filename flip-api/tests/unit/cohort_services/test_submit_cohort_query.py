@@ -146,8 +146,8 @@ def test_submit_cohort_query_trust_error(monkeypatch, mock_request, sample_query
         def post(self, *args, **kwargs):
             raise Exception("Connection failed")
 
-    # Monkeypatch `httpx.Client` to use the fake client
-    monkeypatch.setattr("httpx.Client", lambda: FakeClient())
+    # Monkeypatch `httpx.Client` to use the fake client (accept any kwargs such as verify=)
+    monkeypatch.setattr("httpx.Client", lambda **kwargs: FakeClient())
 
     # Call the function and capture the result
     response = submit_cohort_query(mock_request, sample_query, mock_db)
