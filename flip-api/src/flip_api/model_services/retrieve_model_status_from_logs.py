@@ -22,6 +22,7 @@ from flip_api.auth.access_manager import can_access_model
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.model_services.services.model_service import get_model_status
+from flip_api.utils.http import _trust_ssl_context
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/model", tags=["model_services"])
@@ -81,7 +82,7 @@ def retrieve_model_status_from_logs(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Elasticsearch URL not found.")
 
     try:
-        response = httpx.post(f"{elastic_url}/centralhub-eks/_search", json=query_body)
+        response = httpx.post(f"{elastic_url}/centralhub-eks/_search", json=query_body, verify=_trust_ssl_context())
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:
