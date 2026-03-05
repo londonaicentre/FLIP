@@ -295,10 +295,10 @@ deploy-trust: update-env ## Deploy trust relationships after central hub is depl
 	@docker context use flip-trust
 	@echo "🐳 Deploying containers to Trust EC2 ..."
 	docker swarm init || echo "   Swarm already initialized"
-	@echo "� Copying TLS certificates to Trust EC2..."
+	@echo "🗒️ Copying TLS certificates to Trust EC2..."
 	scp -i ~/.ssh/host-aws -r ../../../trust/certs ubuntu@$$(terraform output -raw TrustEc2PublicIp):/opt/flip/certs
 	@echo "✅ Certificates copied!"
-	@echo "�🚀 Deploying Trust services..."
+	@echo "🚀 Deploying Trust services..."
 	$(MAKE) -C ../../../ up-trust-stag PROD=stag
 	@echo "✅ Trust deployment complete!"
 
