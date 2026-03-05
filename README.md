@@ -11,7 +11,7 @@
     limitations under the License.
 -->
 
-<p align="center"><img src="docs/images/flip-logo.png" height="200" alt='flip-logo' /></p>
+<p align="center"><img src="docs/source/assets/flip-logo.png" height="200" alt='flip-logo' /></p>
 
 # Federated Learning and Interoperability Platform
 
@@ -36,7 +36,7 @@ FLIP is an open-source platform for federated training and evaluation of medical
 
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London.
 
-<p align="center"><img src="docs/source/assets/support/flip_architecture-flip_architecture.png" width="600" alt='flip-architecture' /></p>
+<p align="center"><img src="docs/source/assets/flip-diagram-2-nodes.png" alt='flip-architecture' /></p>
 
 ## Repositories
 
