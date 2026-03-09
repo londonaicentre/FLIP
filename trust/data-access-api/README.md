@@ -18,32 +18,48 @@
 [![data-access-api](https://ghcr-badge.egpl.dev/londonaicentre/data-access-api/latest_tag?trim=major&label=data-access-api)](https://github.com/londonaicentre/FLIP/pkgs/container/data-access-api)
 [![Coverage](https://codecov.io/gh/londonaicentre/FLIP/branch/main/graph/badge.svg?flag=data-access-api)](https://codecov.io/gh/londonaicentre/FLIP)
 
-Service to query the OMOP database and return dataframes, statistics. The query is SQL and given by the researcher.
+The **data-access-api** executes researcher-supplied SQL queries against the Trust's local OMOP database and returns
+aggregated statistics and dataframes. It is an internal Trust-side service called only by the
+[trust-api](../trust-api/).
 
-## Run
+## Role in the FLIP Platform
 
-You'll need to have started the OMOP database and added data (see [../omop-db/README.md](../omop-db/README.md)).
+When a researcher submits a cohort query for a federated learning study, the [trust-api](../trust-api/) delegates
+the query execution to the data-access-api. The service:
 
-Then, run
+1. Receives a SQL query (restricted to `SELECT` operations on the OMOP schema)
+2. Executes it against the local [OMOP database](../omop-db/)
+3. Returns aggregated results (counts, statistics) — **no individual patient records are returned**
 
-```sh
-make dev # needs local `uv` installation
+This service is not directly accessible from outside the Trust network.
+
+## Deployment
+
+The data-access-api starts as part of the Trust-side stack:
+
+```bash
+make up-trusts
 ```
 
-To run in Docker
+or the full platform:
 
-```sh
+```bash
 make up
 ```
 
-## Testing
+It requires the [OMOP database](../omop-db/) to be running and populated with data.
 
-### Example cohort queries to test with
+## Configuration
 
-```sql
-SELECT * FROM omop.radiology_occurrence
-```
+Key environment variables (set in [`.env.development.example`](../../.env.development.example)):
 
-```sql
-select p.gender_source_value, p.year_of_birth, r.protocol_source_value, r.manufacturer, r.accession_id from omop.person p inner join omop.radiology_occurrence r on r.person_id = p.person_id where r.radiology_occurrence_id > 200000 and p.gender_source_value = 'M'
-```
+| Variable | Description |
+| --- | --- |
+| `OMOP_DB_URL` | PostgreSQL connection string for the OMOP database |
+| `DATA_ACCESS_API_PORT` | Port the service listens on |
+
+## Further Reading
+
+- [OMOP Database setup](../omop-db/README.md)
+- [Trust deployment overview](../README.md)
+- [Contributing & Development Guide](CONTRIBUTING.md)
