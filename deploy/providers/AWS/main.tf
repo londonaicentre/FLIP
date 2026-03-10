@@ -446,6 +446,34 @@ resource "aws_lb_listener_rule" "api_user_project_routing" {
   }
 }
 
+############################
+# On-Premises Trust (optional)
+# Activated by setting local_trust_public_ip in the env file or via
+# TF_VAR_local_trust_public_ip when running `make add-local-trust`.
+############################
+
+resource "aws_security_group_rule" "local_trust_fl_server" {
+  count             = var.local_trust_public_ip != "" ? 1 : 0
+  type              = "ingress"
+  from_port         = 8002
+  to_port           = 8002
+  protocol          = "tcp"
+  cidr_blocks       = ["${var.local_trust_public_ip}/32"]
+  security_group_id = module.ec2_security_group.security_group.id
+  description       = "FL Server from on-prem Trust"
+}
+
+resource "aws_security_group_rule" "local_trust_fl_admin" {
+  count             = var.local_trust_public_ip != "" ? 1 : 0
+  type              = "ingress"
+  from_port         = 8003
+  to_port           = 8003
+  protocol          = "tcp"
+  cidr_blocks       = ["${var.local_trust_public_ip}/32"]
+  security_group_id = module.ec2_security_group.security_group.id
+  description       = "FL Admin from on-prem Trust"
+}
+
 # Outputs
 output "Keypair" {
   value = var.flip_keypair

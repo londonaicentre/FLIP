@@ -150,3 +150,9 @@ variable "PACS_UI_PORT" {
   description = "Port for Orthanc PACS UI"
   type        = number
 }
+
+variable "local_trust_public_ip" {
+  description = "Public IP of an on-premises Trust host. When non-empty, AWS security group rules are created to allow FL communication on ports 8002 and 8003 from this IP to the Central Hub."
+  type        = string
+  default     = ""
+}
