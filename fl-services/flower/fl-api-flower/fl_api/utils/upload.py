@@ -29,15 +29,16 @@ def _key_after_model_id(url: str, model_id: str) -> Path:
     return Path(*parts[index + 1 :])
 
 
-def upsert_flwr_run_config(pyproject_path: Path, model_id: str, project_id: str, cohort_query: str) -> None:
-    """This function updates the pyproject.toml file with the provided model_id, project_id and cohort_query."""
-    doc = parse(pyproject_path.read_text())
+def upsert_flwr_run_config(config_path: Path, model_id: str, project_id: str, cohort_query: str) -> None:
+    """Update config.toml with the provided model_id, project_id and cohort_query."""
+    doc = parse(config_path.read_text())
 
-    doc["tool"]["flwr"]["app"]["config"]["flip-model-id"] = model_id  # type: ignore[index]
-    doc["tool"]["flwr"]["app"]["config"]["flip-project-id"] = project_id  # type: ignore[index]
-    doc["tool"]["flwr"]["app"]["config"]["flip-cohort-query"] = cohort_query  # type: ignore[index]
+    # run config values must be top-level key/value pairs in config.toml
+    doc["flip-model-id"] = model_id
+    doc["flip-project-id"] = project_id
+    doc["flip-cohort-query"] = cohort_query
 
-    pyproject_path.write_text(dumps(doc))
+    config_path.write_text(dumps(doc))
 
 
 def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) -> dict[str, str]:
@@ -96,19 +97,17 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
 
         logger.info(f"Downloaded file {dest_path}")
 
-    # Part 2: pyproject.toml file
-    # among the uploaded files, there should be a pyproject.toml file which needs to go 1 folder above app_dir
-    # i.e. to job_dir, so we move it there.
-    pyproject_src = app_dir / "pyproject.toml"
-    pyproject_dest = job_dir / "pyproject.toml"
-    if pyproject_src.exists():
-        shutil.move(str(pyproject_src), str(pyproject_dest))
-        logger.info(f"Moved pyproject.toml from {pyproject_src} to {pyproject_dest}")
-    else:
-        logger.error(f"pyproject.toml not found at expected location: {pyproject_src}")
+    # Part 2: optional config.toml file
+    # among the uploaded files, there may be an override config.toml file
+    # populate the config.toml file with the FLIP configuration parameters (model_id, project_id, cohort_query)
+    config_toml = app_dir / "config.toml"
+    if not config_toml.exists():
+        # If config.toml is not found, we create a default empty one to add FLIP configuration
+        logger.warning(f"config.toml not found at expected location: {config_toml}. Will create an empty one.")
+        config_toml.write_text("")
 
-    # Now we add project_id and query to flwr run config section in pyproject.toml
-    upsert_flwr_run_config(pyproject_dest, model_id, body.project_id, body.cohort_query)
+    # Now we add FLIP configuration as top-level run-config key/value pairs in config.toml
+    upsert_flwr_run_config(config_toml, model_id, body.project_id, body.cohort_query)
 
     response = {"message": f"Application uploaded successfully to: {job_dir}"}
 

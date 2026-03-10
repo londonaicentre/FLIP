@@ -59,6 +59,11 @@ test-split = 0.3
 batch-size = 2
 # Model configuration
 spatial-dims = 3 # This is currently unused but can be passed to get_model()
+# FLIP configuration - needs to be set here so it can be overridden by flwr run command
+# See https://flower.ai/docs/framework/ref-api-cli.html#flwr-run for more details
+flip-model-id = "uuid"
+flip-project-id = "uuid"
+flip-cohort-query = "*"
 
 # Linter
 [tool.ruff]
