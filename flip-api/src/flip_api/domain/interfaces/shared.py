@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from enum import IntEnum
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
@@ -76,15 +75,6 @@ class SQLArray:
 
 class ICount:
     count: int
-
-
-# TODO Decide if we want to keep this or not
-# The original value of MAX was 100, but this was increased to 1000 due to
-# https://github.com/londonaicentre/flipe-application/pull/47, where 'global round' can be something else, e.g.
-# a combined value of global round and local round.
-class TrainingRound(IntEnum):
-    MIN = 1
-    MAX = 1000
 
 
 class IContext:

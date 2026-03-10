@@ -1,8 +1,6 @@
-#########
-Components
-#########
-
-[Diagram of the components of the AI Centre]
+################
+FLIP Components
+################
 
 .. toctree::
    :glob:

@@ -57,3 +57,12 @@ jobs:
 
       - name: Run tests with pytest (example)
         run: make local_test
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: trust/data-access-api/coverage.xml
+          flags: data-access-api
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

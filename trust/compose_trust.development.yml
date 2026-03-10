@@ -1,0 +1,136 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
+# inheriting service configs below
+
+services:
+
+  omop-db:
+    image: ghcr.io/londonaicentre/omop-db:latest
+    restart: always
+    ports:
+      - "${OMOP_DB_PORT}:5432"
+    environment:
+      POSTGRES_USER: ${OMOP_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${OMOP_POSTGRES_DB}
+    volumes:
+      - ./omop-db/volumes/${TRUST_NAME}/db_data:/var/lib/postgresql/data
+
+  orthanc:
+    build:
+      context: ./orthanc
+      dockerfile: Dockerfile
+    restart: always
+    ports:
+      # - "${PACS_DICOM_PORT}:4242"
+      - "${PACS_UI_PORT}:8042"
+    volumes:
+      - ./orthanc/${ORTHANC_STORAGE}:/var/lib/orthanc/db
+    environment:
+      ORTHANC__REGISTERED_USERS: |
+          {"${ORTHANC_USERNAME}": "${ORTHANC_PASSWORD}"}
+      ORTHANC__DICOM_MODALITIES: |
+          {"XNAT": {"AET": "XNAT", "Host": "xnat-web", "Port": "${XNAT_PORT}"}}
+
+  imaging-api:
+    build:
+      args:
+        UID: ${UID}
+        GID: ${GID}
+        UNAME: ${UNAME}
+        DEBUG_PORT: ${IMAGING_DEBUG_PORT_TRUST_1}
+      context: ./imaging-api
+      dockerfile: Dockerfile
+      target: development
+    # ports:
+    #   - "${IMAGING_API_PORT}:8000"
+    environment:
+      XNAT_URL: ${XNAT_URL}
+      XNAT_PORT: ${XNAT_PORT}
+      XNAT_SERVICE_USER: ${XNAT_SERVICE_USER}
+      XNAT_SERVICE_PASSWORD: ${XNAT_SERVICE_PASSWORD}
+      PACS_ID: ${PACS_ID}
+      XNAT_DATABASE_URL: ${XNAT_DATABASE_URL}
+      DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
+      AES_KEY_BASE64: ${AES_KEY_BASE64}
+      DEBUG_PORT: ${IMAGING_DEBUG_PORT_TRUST_1}
+      DEBUG: ${DEBUG}
+      BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
+    # NOTE the volume BASE_IMAGES_DOWNLOAD_DIR is mounted to share images downloaded from XNAT with FL clients
+    volumes:
+      - ./imaging-api/imaging_api:/app/imaging_api
+      - ./imaging-api/tests:/app/tests
+      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+
+  data-access-api:
+    build:
+      args:
+        UID: ${UID}
+        GID: ${GID}
+        UNAME: ${UNAME}
+        DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT_TRUST_1}
+      context: ./data-access-api
+      dockerfile: Dockerfile
+      target: development
+    # ports:
+    #   - "${DATA_ACCESS_API_PORT}:8000"
+    environment:
+      OMOP_DB_SERVICE_NAME: ${OMOP_DB_SERVICE_NAME}
+      DATA_ACCESS_POSTGRES_USER: ${DATA_ACCESS_POSTGRES_USER}
+      DATA_ACCESS_POSTGRES_PASSWORD: ${DATA_ACCESS_POSTGRES_PASSWORD}
+      OMOP_POSTGRES_DB: ${OMOP_POSTGRES_DB}
+      AES_KEY_BASE64: ${AES_KEY_BASE64}
+      DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT_TRUST_1}
+      DEBUG: ${DEBUG}
+    volumes:
+      - ./data-access-api/data_access_api:/app/data_access_api
+      - ./data-access-api/tests:/app/tests
+
+  trust-api:
+    build:
+      args:
+        UID: ${UID}
+        GID: ${GID}
+        UNAME: ${UNAME}
+        DEBUG_PORT: ${TRUST_DEBUG_PORT_TRUST_1}
+      context: ./trust-api
+      dockerfile: Dockerfile
+      target: development
+    # ports:
+    #   - "${TRUST_API_PORT}:8000"
+    environment:
+      CENTRAL_HUB_API_URL: ${CENTRAL_HUB_API_URL}
+      DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
+      IMAGING_API_URL: ${IMAGING_API_URL}
+      DEBUG_PORT: ${TRUST_DEBUG_PORT_TRUST_1}
+      DEBUG: ${DEBUG}
+      PRIVATE_API_KEY_HEADER: ${PRIVATE_API_KEY_HEADER}
+      PRIVATE_API_KEY: ${PRIVATE_API_KEY}
+    volumes:
+      - ./trust-api/trust_api:/app/trust_api
+      - ./trust-api/tests:/app/tests
+    networks:
+      - default
+      - central-hub-trust-apis-network
+
+networks:
+  default:
+    external: true
+    name: ${TRUST_NETWORK_NAME}
+  central-hub-trust-apis-network:
+    external: true
+  deploy_shared-net-1:
+    external: true
+  deploy_shared-net-2:
+    external: true

@@ -11,31 +11,47 @@
     limitations under the License.
 -->
 
-<p align="left">
-<img src="docs/images/flip-logo.png" height="200" alt='flip-logo' />
-</p>
+<p align="center"><img src="docs/images/flip-logo.png" height="200" alt='flip-logo' /></p>
 
-Federated Learning Interoperability Platform
+# Federated Learning and Interoperability Platform
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![Documentation Status](https://readthedocs.org/projects/londonaicentreflip/badge/?version=latest)](https://londonaicentreflip.readthedocs.io/en/latest/)
-... <!-- TODO add more badges here (citations, etc) -->
+[![Coverage](https://codecov.io/gh/londonaicentre/FLIP/branch/main/graph/badge.svg)](https://codecov.io/gh/londonaicentre/FLIP)
+
+[![flip-api](https://img.shields.io/badge/docker-flip--api-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/flip-api)
+[![flip-ui](https://img.shields.io/badge/docker-flip--ui-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/flip-ui)
+
+[![data-access-api](https://img.shields.io/badge/docker-data--access--api-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/data-access-api)
+[![imaging-api](https://img.shields.io/badge/docker-imaging--api-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/imaging-api)
+[![trust-api](https://img.shields.io/badge/docker-trust--api-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/trust-api)
+
+[![orthanc](https://img.shields.io/badge/docker-orthanc-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/orthanc)
+[![xnat-db](https://img.shields.io/badge/docker-xnat--db-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/xnat-db)
+[![xnat-nginx](https://img.shields.io/badge/docker-xnat--nginx-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/xnat-nginx)
+[![xnat-web](https://img.shields.io/badge/docker-xnat--web-blue?logo=docker)](https://github.com/londonaicentre/FLIP/pkgs/container/xnat-web)
 
 FLIP is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London.
 
+<p align="center"><img src="docs/source/assets/support/flip_architecture-flip_architecture.png" width="600" alt='flip-architecture' /></p>
+
 ## Docker Deployment Setup
 
 This repository consolidates all the flip services in a mono repository so they can all be deployed in a single
-docker compose file for local testing and development.
+docker compose file for local testing and development. The federated learning code code is divided into two separate
+repositories [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) and
+[flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower), but they are deployed here via pulling
+the images generated there.
 
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) with [Swarm mode](https://docs.docker.com/engine/swarm/) initialized
 - [Nvidia Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 - [Make](https://formulae.brew.sh/formula/make)
-- [Python 3.10+](https://www.python.org/downloads/)
+- [Python 3.12+](https://www.python.org/downloads/)
 - [UV](https://docs.astral.sh/uv) - Python environment management tool
 - postgresql-client and postgresql-client-common (install with `apt install postgresql-client postgresql-client-common` on Debian/Ubuntu)
 
@@ -67,32 +83,9 @@ Normally we develop on a remote server, so we use the `Remote - SSH` extension t
 `Remote - Containers` extension to connect to the Docker container running the flip services. This minimizes the
 overhead of testing things in your local machine and then deploying them to the server.
 
-#### Auxiliary Tools
-
-- [beekeeper](https://www.beekeeperstudio.io/) - A cross-platform SQL editor and database manager that can be used to
-  manage the database used by the flip services. It is useful for verifying the data in the database and running
-  SQL queries.
-- [postman](https://www.postman.com/) - A API testing tool that can be used to test the APIs exposed by the
-  flip services. It is useful for verifying the functionality of the APIs and testing different scenarios. You can
-  create collections of requests and run them in different environments. It is also useful for testing the APIs.
-
-### First run
-
-To be able to pull the FLIP docker images, configure your ghcr.io credentials as follows:
-
-1. Make sure you can see the images in [https://github.com/londonaicentre/FLIP/packages](https://github.com/londonaicentre/FLIP/packages) and [https://github.com/londonaicentre/flip-fl-base/packages](https://github.com/londonaicentre/flip-fl-base/packages)
-   - Contact a team member to be given permission if you cannot.
-2. Create a [Github public access token (classic)](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic) with these permissions:
-   - `repo`
-   - `admin:org`
-   - `read:packages`
-3. Log in using either
-   1. `docker login ghcr.io -u <github_username>`, entering your token when prompted, or
-   2. `echo <token> | docker login ghcr.io -u <github_username> --password-stdin`
-
 ### Using the Makefile
 
-To start the services, you can use the Makefile provided in the root directory. The Makefile provides several convenient commands to manage the services defined in the `deploy/compose.yml` file.
+To start the services, you can use the Makefile provided in the root directory. The Makefile provides several convenient commands to manage the services defined in the [deploy/compose.development.yml](deploy/compose.development.yml) file.
 
 For example:
 
@@ -109,7 +102,7 @@ For example:
 | `make restart-no-trust` | Stop and start all services except the trust services related services |
 | `make clean` | Remove all stopped containers, networks, and images |
 | `make ci` | Run the CI pipeline locally using `act` |
-| `make tests` | Run the tests for all services |
+| `make unit_test` | Run the tests for all services |
 
 You can add new commands to the Makefile to create smaller deployments for testing and development.
 
@@ -173,20 +166,20 @@ To start the development environment:
 make up
 ```
 
-This will start all the services defined in the `deploy/compose.yml` file. The services will be started in detached
+This will start all the services defined in the `deploy/compose.development.yml` file. The services will be started in detached
 mode, so you can continue using your terminal. Use `docker compose ps` to see the status of the services and see which
 ports they are running on.
 
 To get a shell some of the services, you can run:
 
 ```bash
-docker compose -f deploy/compose.yml exec < service-name > < command >
+docker compose -f deploy/compose.development.yml exec < service-name > < command >
 ```
 
 For example:
 
 ```bash
-docker compose -f deploy/compose.yml exec flip-ui /bin/sh
+docker compose -f deploy/compose.development.yml exec flip-ui /bin/sh
 ```
 
 This will give you a shell in the `flip-ui` container. You can run any command inside the container, including
@@ -205,35 +198,14 @@ make down
 If you want to run a single service you can run:
 
 ```bash
-docker compose -f deploy/compose.yml run --rm < service name >
+docker compose -f deploy/compose.development.yml run --rm < service name >
 ```
 
 ### Federated Learning Setup
 
 The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for federated learning. FLARE requires provisioned certificates and configuration files that are generated in the separate repository [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) (see that repository for instructions on how to provision the workspace).
 
-#### FL_PROVISIONED_DIR Configuration
-
-The `FL_PROVISIONED_DIR` environment variable points to the NVFLARE provisioned workspace containing:
-
-- Certificates and keys for secure communication
-- `fed_client.json` and `fed_admin.json` configuration files
-- Network-specific startup kits for FL APIs, FL servers, and FL clients
-
-**Important Notes:**
-
-1. **Repository Structure Assumption**: The system assumes `flip` and `flip-fl-base` are sibling directories:
-
-   ```bash
-   parent-directory/
-   ├── flip/             # This repository
-   └── flip-fl-base/     # Contains the provisioned workspace
-       └── workspace/
-           ├── net-1/
-           └── net-2/
-   ```
-
-2. **Path Resolution**: While `.env.development` defines `FL_PROVISIONED_DIR` as a relative path (`../flip-fl-base/workspace`), the Makefile automatically converts this to an absolute path using:
+1. **Path Resolution**: While `.env.development` defines `FL_PROVISIONED_DIR` as a relative path (`../flip-fl-base/workspace`), the Makefile automatically converts this to an absolute path using:
 
    ```makefile
    override FL_PROVISIONED_DIR := $(shell realpath $(dir $(lastword $(MAKEFILE_LIST)))/../flip-fl-base/workspace)
@@ -241,7 +213,7 @@ The `FL_PROVISIONED_DIR` environment variable points to the NVFLARE provisioned 
 
    This ensures Docker volume mounts work correctly (Docker requires absolute paths) while maintaining portability across different machines.
 
-3. **Why This Matters**: Docker Compose cannot resolve relative paths for volume mounts, so the absolute path conversion is essential for FL services to access their provisioned certificates and configuration files.
+2. **Why This Matters**: Docker Compose cannot resolve relative paths for volume mounts, so the absolute path conversion is essential for FL services to access their provisioned certificates and configuration files.
 
 If you see errors like "fed_client.json does not exist" or "missing startup folder", verify that:
 
@@ -256,8 +228,8 @@ If you see errors like "fed_client.json does not exist" or "missing startup fold
 ```console
 make -C trust build
 make[1]: Entering directory '/data/github/flip/trust'
-BASE_IMAGES_DOWNLOAD_DIR_TRUST1=./data/trust-1 OMOP_DB_PORT=5434 XNAT_PORT=8104 DATA_ACCESS_API_PORT=8010 TRUST_DEBUG_PORT=5682 IMAGING_DEBUG_PORT=5681 DATA_ACCESS_DEBUG_PORT=5680 TRUST_NETWORK_NAME=deploy_trust-network-1 docker compose -f compose_trust.yml build
-validating /data/github/flip/trust/compose_trust.yml: services.fl-client-net-1 Additional property gpus is not allowed
+BASE_IMAGES_DOWNLOAD_DIR_TRUST1=./data/trust-1 OMOP_DB_PORT=5434 XNAT_PORT=8104 DATA_ACCESS_API_PORT=8010 TRUST_DEBUG_PORT=5682 IMAGING_DEBUG_PORT=5681 DATA_ACCESS_DEBUG_PORT=5680 TRUST_NETWORK_NAME=deploy_trust-network-1 docker compose -f compose_trust.development.yml build
+validating /data/github/flip/trust/compose_trust.development.yml: services.fl-client-net-1 Additional property gpus is not allowed
 make[1]: *** [Makefile:53: build] Error 15
 make[1]: Leaving directory '/data/github/flip/trust'
 make: *** [Makefile:56: build] Error 2
@@ -270,7 +242,7 @@ The error `Additional property gpus is not allowed` may arise from the version o
 Add a new service definition to the services section in the docker compose files. For example:
 
 ```yml
-# deploy/compose.yml
+# deploy/compose.development.yml
 services:
   # Existing flip-ui service...
 
@@ -296,7 +268,7 @@ Optionally update the Makefile to include commands for the new service:
 # Makefile
 # Start only the new service
 new:
-    docker compose -f deploy/compose.yml up -d new
+    docker compose -f deploy/compose.development.yml up -d new
 ```
 
 ## Python best practices

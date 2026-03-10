@@ -15,7 +15,7 @@
 
 
 const cognitoUrl = "https://cognito-idp.eu-west-2.amazonaws.com/";
-const dummyEmail = "throwaway.user@answerdigital.com";
+const dummyEmail = "throwaway.user@kcl.ac.uk";
 
 describe("Reset Password Page", () => {
     beforeEach(() => {
