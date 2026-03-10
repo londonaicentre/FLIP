@@ -92,7 +92,7 @@ GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 build:
 	@echo "🛠️ Building Docker images..."
 	@echo "UI_PORT = $(UI_PORT)"
-	${DOCKER_COMMAND} build
+	${DOCKER_COMMAND} build --no-cache
 	$(MAKE) -C trust build
 	$(MAKE) -C trust/xnat build
 	@echo "✅ Docker images built successfully!"
