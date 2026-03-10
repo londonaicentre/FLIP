@@ -13,11 +13,17 @@
 #
 
 
-# Receive the DEBUG from the environment variable
+# Receive the DEBUG and ENV from the environment variable
+ENV=${ENV:-development}
 echo "🚀 Starting trust-api entrypoint script..."
+echo "🌍 Environment: $ENV"
 echo "🐛 Debug mode: $DEBUG on port ${DEBUG_PORT}"
 
-FAST_API_CMD="-m fastapi dev trust_api/main.py --host 0.0.0.0 --port 8000 --reload"
+if [ "$ENV" = "production" ] || [ "$ENV" = "staging" ]; then
+    FAST_API_CMD="-m fastapi run trust_api/main.py --host 0.0.0.0 --port 8000"
+else
+    FAST_API_CMD="-m fastapi dev trust_api/main.py --host 0.0.0.0 --port 8000 --reload"
+fi
 DEBUG_CMD="-Xfrozen_modules=off -m debugpy --listen 0.0.0.0:${DEBUG_PORT} --wait-for-client"
 
 if [ "$DEBUG" = "true" ]; then

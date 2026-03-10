@@ -16,8 +16,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    PROD: bool = bool(int(os.getenv("PROD", "0")))
-    environment: str = "development" if not PROD else "production"
+    ENV: str = os.getenv("ENV", "development")
+    environment: str = ENV
     LOG_LEVEL: str = "DEBUG"
 
     #
