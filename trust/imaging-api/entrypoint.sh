@@ -22,7 +22,7 @@ echo "🐛 Debug mode: $DEBUG on port ${DEBUG_PORT}"
 if [ "$ENV" = "production" ] || [ "$ENV" = "staging" ]; then
     FAST_API_CMD="-m fastapi run imaging_api/main.py --host 0.0.0.0 --port 8000"
 else
-    FAST_API_CMD="-m fastapi dev imaging_api/main.py --host 0.0.0.0 --port 8000 --reload --reload-exclude '*.venv/*' --reload-exclude '**/site-packages/*'"
+    FAST_API_CMD="-m fastapi dev imaging_api/main.py --host 0.0.0.0 --port 8000 --reload
 fi
 DEBUG_CMD="-Xfrozen_modules=off -m debugpy --listen 0.0.0.0:${DEBUG_PORT} --wait-for-client"
 
