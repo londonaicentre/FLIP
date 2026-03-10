@@ -10,27 +10,30 @@
 # limitations under the License.
 #
 
-from typing import Dict, List
 
 from sqlmodel import Session, col, select
 
+from flip_api.config import get_settings
 from flip_api.db.database import engine
 from flip_api.db.models.main_models import Trust
 from flip_api.utils.get_secrets import get_secret
 
 
-def seed_trusts(session: Session) -> List[Dict[str, str]]:
+def seed_trusts(session: Session) -> list[dict[str, str]]:
     """Seed trusts into the database."""
-    # TODO Replace with dynamic trust names and endpoints as needed
-    trust_names = [
-        "Trust_1",
-        "Trust_2",
-    ]
 
-    # Get endpoints from secrets manager
-    trust_endpoints = [get_secret(f"{name}-endpoint") for name in trust_names]
+    # Get settings
+    stt = get_settings()
 
-    for trust_name, endpoint in zip(trust_names, trust_endpoints):
+    # In production, get trust endpoints from AWS Secrets Manager; in dev, use env variables or defaults
+    if stt.ENV == "production":
+        trust_endpoints: dict[str, str] = get_secret("trust_endpoints")  # type: ignore
+
+    else:
+        # In dev, use environment variables or defaults
+        trust_endpoints = stt.TRUST_ENDPOINTS
+
+    for trust_name, endpoint in trust_endpoints.items():
         try:
             # Check if trust exists
             statement = select(Trust).where(col(Trust.name) == trust_name)

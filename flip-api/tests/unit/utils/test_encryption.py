@@ -23,6 +23,15 @@ RAW_KEY_BYTES = b"ThisIsExactly32BytesLongKey!!!!1"
 ENCODED_KEY = base64.b64encode(RAW_KEY_BYTES).decode()
 
 
+@pytest.fixture
+def mock_settings():
+    """Mock settings for AWS region."""
+    with patch("flip_api.utils.encryption.get_settings") as mock_get_settings:
+        mock_get_settings.return_value.ENV = "production"
+        mock_get_settings.return_value.AES_KEY_BASE64 = ENCODED_KEY
+        yield mock_get_settings
+
+
 def test_encryption_decryption_roundtrip():
     plaintext = "This is a test message"
     encrypted = encrypt(plaintext, RAW_KEY_BYTES)
@@ -30,13 +39,13 @@ def test_encryption_decryption_roundtrip():
     assert decrypted == plaintext
 
 
-def test_get_aes_key_returns_decoded_bytes():
+def test_get_aes_key_returns_decoded_bytes(mock_settings):
     with patch("flip_api.utils.encryption.get_secret", return_value=ENCODED_KEY):
         key = get_aes_key()
         assert key == RAW_KEY_BYTES
 
 
-def test_get_aes_key_raises_if_secret_invalid_base64():
+def test_get_aes_key_raises_if_secret_invalid_base64(mock_settings):
     with patch("flip_api.utils.encryption.get_secret", return_value="not-base64"):
         with pytest.raises(binascii.Error, match="Invalid base64-encoded string"):
             get_aes_key()
