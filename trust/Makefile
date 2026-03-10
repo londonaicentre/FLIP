@@ -85,7 +85,7 @@ TRUST_2_VARS = \
 	TRUST_NAME=trust2
 
 build:
-	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} build
+	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} build --no-cache
 	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} build
 
 # Uses --pull always to ensure the latest FL images and omop-db image are used
