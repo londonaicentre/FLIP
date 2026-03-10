@@ -27,7 +27,7 @@ from flwr.common import ConfigRecord, log
 from flwr.serverapp import Grid, ServerApp
 from flwr.serverapp.strategy import FedAvg
 
-from app.task import get_model
+from app.models import get_model
 
 try:
     sys.path.insert(0, str(Path(__file__).parent.parent))

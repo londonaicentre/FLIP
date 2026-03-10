@@ -170,7 +170,7 @@ def evaluate(msg: Message, context: Context) -> Message:
 
     # Get test data
     test_datalist = flip_utils.get_image_and_label_list(_val_split=val_split, _test_split=test_split, is_test=True)
-    test_dataset = Dataset(test_datalist, transform=get_val_transforms(), batch_size=batch_size)
+    test_dataset = Dataset(test_datalist, transform=get_val_transforms())
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     # Initialize model and load received weights

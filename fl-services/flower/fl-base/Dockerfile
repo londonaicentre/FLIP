@@ -32,7 +32,8 @@ COPY --from=fliputils_dist *.whl /wheels/
 
 # NOTE use --force-reinstall to always replace installed flip-utils from 'base' even if the version is unchanged
 # This allows us to overwrite the flip-utils package in 'base' (PyPI version) with the local dev version
-RUN python -m pip install --no-cache-dir --force-reinstall /wheels/*.whl
+# Don't use --force-reinstall as it may break dependencies. Just install the wheel with [all] extras.
+RUN python -m pip install --no-cache-dir /wheels/*.whl[all]
 
 FROM base AS production
 # base already ran `pip install .` so flip-utils comes from PyPI
