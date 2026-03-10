@@ -25,10 +25,9 @@ from nvflare.app_common.abstract.learnable_persistor import LearnablePersistor
 from nvflare.app_common.abstract.shareable_generator import ShareableGenerator
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
+from nvflare.app_opt.pt.PTFedOptModelShareableGenerator import PTFedOptModelShareableGenerator
 from nvflare.security.logging import secure_format_exception
 from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
-from nvflare.app_opt.pt.PTFedOptModelShareableGenerator import PTFedOptModelShareableGenerator
-from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
 
 from flip import FLIP
 from flip.constants import FlipEvents, ModelStatus
@@ -359,6 +358,7 @@ class ScatterAndGather(Controller):
                     return False
 
         try:
+            # FedOpt needs WEIGHT_DIFF, otherwise we transform WEIGHT_DIFF to WEIGHTS.
             dxo = from_shareable(result)
             if isinstance(self.aggregator, PTFedOptModelShareableGenerator):
                 new_dxo = dxo
