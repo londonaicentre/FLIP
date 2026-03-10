@@ -110,11 +110,11 @@ def save_model(
             db.add(intersect)
         db.commit()
 
-        # Pull the latest required_job_types.json from S3 after model creation
+        # Pull the latest job_types_and_required_files JSON from S3 after model creation
         try:
             pull_required_files_json_to_assets()
         except Exception as e:
-            logger.error(f"Failed to pull required_job_types.json from S3: {e}")
+            logger.error(f"Failed to pull job_types_and_required_files JSON from S3: {e}")
 
         logger.info(f"Model created with ID: {model.id}")
         return IId(id=model.id)
