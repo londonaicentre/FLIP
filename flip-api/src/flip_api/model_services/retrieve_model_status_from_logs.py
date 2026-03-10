@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import Optional
 from uuid import UUID
 
 import httpx
@@ -22,16 +21,10 @@ from flip_api.auth.access_manager import can_access_model
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.model_services.services.model_service import get_model_status
+from flip_api.utils.get_secrets import get_secret
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/model", tags=["model_services"])
-
-
-def get_secret(secret_name: str) -> Optional[str]:
-    # TODO - Implement secret retrieval logic
-    # Placeholder for secret retrieval logic
-    # In a real application, this would interface with a secrets manager or similar service
-    return "http://example.com"  # Replace with actual secret retrieval
 
 
 # [#114] ✅
