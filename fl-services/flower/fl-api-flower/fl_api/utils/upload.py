@@ -79,8 +79,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         logger.info(f"Downloading file from {url}")
 
         # Reconstruct structure under app_dir using the URL path after model_id
-        relative_path = _key_after_model_id(url, model_id)  # e.g. config.json
-        dest_path = app_dir / relative_path  # job_dir/app/config.json
+        relative_path = _key_after_model_id(url, model_id)  # e.g. config.toml
+        dest_path = app_dir / relative_path  # job_dir/app/config.toml
 
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
