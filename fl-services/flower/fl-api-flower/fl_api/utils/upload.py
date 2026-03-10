@@ -69,9 +69,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         logger.warning(f"Job directory {job_dir} already exists, removing it...")
         shutil.rmtree(job_dir, ignore_errors=True)
 
-    # Then we create the app directory for the job.
-    app_dir = job_dir / "app"
-    app_dir.mkdir(parents=True, exist_ok=True)
+    # Then we create the job directory.
+    job_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Downloading {len(bundle_urls)} files into job directory: {job_dir}")
 
@@ -79,8 +78,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         logger.info(f"Downloading file from {url}")
 
         # Reconstruct structure under app_dir using the URL path after model_id
-        relative_path = _key_after_model_id(url, model_id)  # e.g. config.json
-        dest_path = app_dir / relative_path  # job_dir/app/config.json
+        relative_path = _key_after_model_id(url, model_id)  # e.g. app/config.toml
+        dest_path = job_dir / relative_path  # job_dir/app/config.toml
 
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -100,7 +99,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     # Part 2: optional config.toml file
     # among the uploaded files, there may be an override config.toml file
     # populate the config.toml file with the FLIP configuration parameters (model_id, project_id, cohort_query)
-    config_toml = app_dir / "config.toml"
+    config_toml = job_dir / "config.toml"
     if not config_toml.exists():
         # If config.toml is not found, we create a default empty one to add FLIP configuration
         logger.warning(f"config.toml not found at expected location: {config_toml}. Will create an empty one.")
