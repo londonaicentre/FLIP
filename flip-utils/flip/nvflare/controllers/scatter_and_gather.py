@@ -27,6 +27,8 @@ from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
 from nvflare.security.logging import secure_format_exception
 from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
+from nvflare.app_opt.pt.PTFedOptModelShareableGenerator import PTFedOptModelShareableGenerator
+from nvflare.app_common.shareablegenerators.full_model_shareable_generator import FullModelShareableGenerator
 
 from flip import FLIP
 from flip.constants import FlipEvents, ModelStatus
@@ -358,15 +360,22 @@ class ScatterAndGather(Controller):
 
         try:
             dxo = from_shareable(result)
-            if dxo.data_kind == DataKind.WEIGHT_DIFF:
-                # FedAVG receives WEIGHTS, so we need to update the WEIGHTS with the contents of WEIGHT_DIFF passed.
-                global_weights = self._global_weights["weights"]
-                diff = dxo.data
-                new_weights = {}
-                for k in global_weights:
-                    new_weights[k] = global_weights[k] + diff[k]
-                new_dxo = DXO(data_kind=DataKind.WEIGHTS, data=new_weights, meta=dxo.meta)
-                result = new_dxo.update_shareable(result)
+            if isinstance(self.aggregator, PTFedOptModelShareableGenerator):
+                new_dxo = dxo
+            else:
+                if dxo.data_kind == DataKind.WEIGHT_DIFF:
+                    # FedAVG receives WEIGHTS, so we need to update the WEIGHTS with the contents of WEIGHT_DIFF passed.
+                    global_weights = self._global_weights["weights"]
+                    diff = dxo.data
+                    new_weights = {}
+                    for k in global_weights:
+                        new_weights[k] = global_weights[k] + diff[k]
+                    new_dxo = DXO(data_kind=DataKind.WEIGHTS, data=new_weights, meta=dxo.meta)
+                    result = new_dxo.update_shareable(result)
+                else:
+                    self.log_error(
+                        fl_ctx, f"The returned weights are not of type WEIGHT_DIFF. Received data kind: {dxo.data_kind}"
+                    )
         except Exception as e:
             self.log_error(fl_ctx, f"Error while adding client WEIGHT_DIFF to global weights at server: {e}")
 
