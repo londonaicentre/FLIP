@@ -202,6 +202,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         json.dump(cross_val_results, f, indent=2)
     log(INFO, "✓ Cross-validation results saved to %s", json_path)
 
+    flip.upload_results_to_s3(output_dir, model_id)
     flip.update_status(model_id, ModelStatus.RESULTS_UPLOADED)
 
     log(INFO, "\n✓ Training complete. All outputs saved to %s", output_dir)
