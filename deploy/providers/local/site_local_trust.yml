@@ -1,0 +1,201 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# site_local_trust.yml
+#
+# Provisions an on-premises Ubuntu host to run the FLIP Trust-API stack
+# with HTTPS via the nginx-tls sidecar.
+#
+# Usage:
+#   ansible-playbook -i <trust-host-ip>, \
+#     -u ubuntu --private-key ~/.ssh/trust_key \
+#     deploy/providers/local/site_local_trust.yml \
+#     -e trust_public_ip=<public-ip-or-hostname> \
+#     -e trust_api_port=8443 \
+#     -e ch_public_ip=<aws-ec2-public-ip>
+#
+# After the playbook completes, trust/certs/trust-ca.crt will be fetched to
+# the operator workstation. Upload it to AWS Secrets Manager as described in
+# docs/hybrid-local-trust-https-plan.md.
+
+---
+- name: Configure on-premises Trust host for HTTPS
+  hosts: all
+  become: true
+  vars:
+    trust_api_port: 8443
+    cert_dir: /opt/flip/certs
+    flip_dir: /opt/flip
+
+  pre_tasks:
+    - name: Assert required variables are set
+      assert:
+        that:
+          - trust_public_ip is defined and trust_public_ip | length > 0
+          - ch_public_ip is defined and ch_public_ip | length > 0
+        fail_msg: "trust_public_ip and ch_public_ip must be provided via -e"
+
+  tasks:
+    # ── System packages ──────────────────────────────────────────────────────
+    - name: Install required packages
+      apt:
+        name:
+          - openssl
+          - ufw
+          - curl
+          - python3-cryptography  # required by community.crypto
+        state: present
+        update_cache: yes
+
+    # ── Docker ───────────────────────────────────────────────────────────────
+    - name: Install Docker
+      include_role:
+        name: geerlingguy.docker
+      vars:
+        docker_users: [ubuntu]
+
+    # ── Application directories ───────────────────────────────────────────────
+    - name: Create application directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      loop:
+        - "{{ flip_dir }}"
+        - "{{ flip_dir }}/data/trust-1"
+        - "{{ cert_dir }}"
+
+    # ── TLS certificates ─────────────────────────────────────────────────────
+    - name: Generate Trust CA private key
+      community.crypto.openssl_privatekey:
+        path: "{{ cert_dir }}/trust-ca.key"
+        size: 4096
+        mode: "0600"
+        owner: root
+        group: root
+
+    - name: Generate Trust CA CSR
+      community.crypto.openssl_csr:
+        path: "{{ cert_dir }}/trust-ca.csr"
+        privatekey_path: "{{ cert_dir }}/trust-ca.key"
+        subject:
+          CN: "Trust Local CA"
+          O: "FLIP Trust"
+          OU: "Local CA"
+        basic_constraints:
+          - "CA:TRUE"
+        basic_constraints_critical: true
+        key_usage:
+          - keyCertSign
+          - cRLSign
+
+    - name: Generate Trust CA certificate
+      community.crypto.x509_certificate:
+        path: "{{ cert_dir }}/trust-ca.crt"
+        privatekey_path: "{{ cert_dir }}/trust-ca.key"
+        csr_path: "{{ cert_dir }}/trust-ca.csr"
+        provider: selfsigned
+        selfsigned_not_after: "+825d"
+        mode: "0644"
+
+    - name: Generate server private key
+      community.crypto.openssl_privatekey:
+        path: "{{ cert_dir }}/trust-server.key"
+        size: 2048
+        mode: "0600"
+
+    - name: Generate server CSR with SANs
+      community.crypto.openssl_csr:
+        path: "{{ cert_dir }}/trust-server.csr"
+        privatekey_path: "{{ cert_dir }}/trust-server.key"
+        subject:
+          CN: "{{ trust_public_ip }}"
+          O: "FLIP Trust"
+          OU: "Trust Server"
+        subject_alt_name:
+          - "IP:{{ trust_public_ip }}"
+          - "DNS:localhost"
+          - "IP:127.0.0.1"
+        key_usage:
+          - digitalSignature
+          - keyEncipherment
+        extended_key_usage:
+          - serverAuth
+
+    - name: Sign server certificate with local CA
+      community.crypto.x509_certificate:
+        path: "{{ cert_dir }}/trust-server.crt"
+        csr_path: "{{ cert_dir }}/trust-server.csr"
+        ownca_path: "{{ cert_dir }}/trust-ca.crt"
+        ownca_privatekey_path: "{{ cert_dir }}/trust-ca.key"
+        provider: ownca
+        ownca_not_after: "+825d"
+        mode: "0644"
+
+    # ── Firewall ─────────────────────────────────────────────────────────────
+    - name: Set UFW default policy — deny incoming
+      community.general.ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+
+    - name: Set UFW default policy — allow outgoing
+      community.general.ufw:
+        state: enabled
+        policy: allow
+        direction: outgoing
+
+    - name: Allow SSH (prevent operator lockout)
+      community.general.ufw:
+        rule: allow
+        port: "22"
+        proto: tcp
+        comment: SSH access
+
+    - name: Allow Trust API HTTPS from Central Hub IP only
+      community.general.ufw:
+        rule: allow
+        src: "{{ ch_public_ip }}"
+        port: "{{ trust_api_port | string }}"
+        proto: tcp
+        comment: "FLIP Trust-API HTTPS from AWS CH"
+
+    - name: Allow FL Server port 8002 from Central Hub
+      community.general.ufw:
+        rule: allow
+        src: "{{ ch_public_ip }}"
+        port: "8002"
+        proto: tcp
+        comment: "FL Server port from AWS CH"
+
+    - name: Allow FL Admin port 8003 from Central Hub
+      community.general.ufw:
+        rule: allow
+        src: "{{ ch_public_ip }}"
+        port: "8003"
+        proto: tcp
+        comment: "FL Admin port from AWS CH"
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled
+
+    # ── Fetch CA cert back to operator workstation ────────────────────────────
+    - name: Fetch Trust CA certificate to operator workstation
+      fetch:
+        src: "{{ cert_dir }}/trust-ca.crt"
+        dest: "trust/certs/trust-ca.crt"
+        flat: true
