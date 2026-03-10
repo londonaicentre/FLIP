@@ -223,7 +223,7 @@ Two-Instance Setup
    - OMOP database
 
 | Application Component |
-|----------------------|
+| ---------------------- |
 | **Central Hub Services** |
 | FLIP API ✅ |
 | FLIP UI ✅ |
@@ -295,7 +295,7 @@ The Trust services are deployed on separate EC2 instance(s) using the `trust_ec2
 ### Port configuration
 
 | Port | Service | Status | Purpose |
-|------|---------|---------|---------|
+| ------ | --------- | --------- | --------- |
 | **22** | SSH | 🟢 **OPEN** | Remote administration |
 | **80** | HTTP | 🟢 **OPEN** | ALB traffic |
 | **3000** | FLIP UI | 🟢 **OPEN** | Frontend application |
