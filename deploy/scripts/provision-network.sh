@@ -20,6 +20,7 @@ PROJECT_YAML="${1:?Error: PROJECT_YAML is required}"
 NET_NUMBER="${2:?Error: NET_NUMBER is required}"
 FL_PORT="${3:-8002}"
 DEBUG="${4:-false}"
+WORKSPACE_PARENT_DIR="${5:-workspace}"
 
 # Other configurations
 VERBOSE="true"
@@ -27,12 +28,12 @@ VERBOSE="true"
 log() { echo "$*"; }
 vlog() { if [[ "${VERBOSE}" == "true" ]]; then echo "   [verbose] $*"; fi }
 
-WORKSPACE_DIR="workspace/net-${NET_NUMBER}"
+WORKSPACE_DIR="${WORKSPACE_PARENT_DIR}/net-${NET_NUMBER}"
 SERVICES_DIR="${WORKSPACE_DIR}/services"
 
 # Run NVFLARE provisioning
 log "Provisioning network ${NET_NUMBER}..."
-uv run nvflare provision -p "${PROJECT_YAML}"
+uv run nvflare provision -p "${PROJECT_YAML}" -w "${WORKSPACE_PARENT_DIR}"
 
 echo "Restructuring provisioned files in workspace..."
 
