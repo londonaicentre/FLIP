@@ -196,7 +196,7 @@ def test_start_training_with_config(
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_application_success(mock_s3, mock_required, mock_verify, model_id, mocked_settings):
+def test_bundle_nvflare_application_success(mock_s3, mock_required, mock_verify, model_id, mocked_settings):
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
@@ -221,7 +221,7 @@ def test_bundle_application_success(mock_s3, mock_required, mock_verify, model_i
     mock_client.object_exists.return_value = False  # No files exist yet
     mock_verify.return_value = None
 
-    dest_bucket_s3_path = fl_service.bundle_application(model_id)
+    dest_bucket_s3_path = fl_service.bundle_nvflare_application(model_id)
 
     assert dest_bucket_s3_path == f"{dest_bucket}/{model_id}"
 
@@ -240,7 +240,7 @@ def test_bundle_application_success(mock_s3, mock_required, mock_verify, model_i
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 @patch("flip_api.fl_services.services.fl_service.logger")
-def test_bundle_application_model_files_overwrite(
+def test_bundle_nvflare_application_model_files_overwrite(
     mock_logger, mock_s3, mock_required, mock_verify, model_id, mocked_settings
 ):
     """
@@ -286,7 +286,7 @@ def test_bundle_application_model_files_overwrite(
 
     mock_client.object_exists.side_effect = object_exists_side_effect
 
-    fl_service.bundle_application(model_id)
+    fl_service.bundle_nvflare_application(model_id)
 
     # Check that logger.warning was called with the message for the file
     mock_logger.warning.assert_any_call(
@@ -319,7 +319,7 @@ def test_bundle_application_model_files_overwrite(
         "invalid",
     ],
 )
-def test_bundle_application_file_wrong_job_type_in_config(
+def test_bundle_nvflare_application_file_wrong_job_type_in_config(
     mock_s3,
     mock_required,
     mock_verify,
@@ -361,15 +361,15 @@ def test_bundle_application_file_wrong_job_type_in_config(
         with pytest.raises(
             fl_service.UnknownJobTypeError, match=f"Unknown job_type argument found in config.json: {job_type}"
         ):
-            _ = fl_service.bundle_application(model_id)
+            _ = fl_service.bundle_nvflare_application(model_id)
     else:
-        dest_bucket_s3_path = fl_service.bundle_application(model_id)
+        dest_bucket_s3_path = fl_service.bundle_nvflare_application(model_id)
         assert dest_bucket_s3_path == f"{mocked_settings.FL_APP_DESTINATION_BUCKET}/{model_id}"
 
 
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_application_wrong_files(mock_s3, mock_verify, mocked_settings, model_id):
+def test_bundle_nvflare_application_wrong_files(mock_s3, mock_verify, mocked_settings, model_id):
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
@@ -391,7 +391,7 @@ def test_bundle_application_wrong_files(mock_s3, mock_verify, mocked_settings, m
     mock_verify.return_value = None
 
     with pytest.raises(FileNotFoundError, match="Missing required files for job type standard: trainer.py."):
-        _ = fl_service.bundle_application(model_id)
+        _ = fl_service.bundle_nvflare_application(model_id)
 
 
 def test_verify_bundle_paths_success(model_id, mocked_settings):

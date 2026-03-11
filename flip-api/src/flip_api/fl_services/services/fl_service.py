@@ -312,7 +312,7 @@ def start_training(
     submit_job(fl_job_id, endpoint, model_id, session)
 
 
-def bundle_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> str:  # type: ignore[attr-defined]
+def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> str:  # type: ignore[attr-defined]
     """
     Creates the app folder from the base application files and the uploaded files.
 
