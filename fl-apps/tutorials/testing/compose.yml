@@ -19,8 +19,8 @@ services:
       - DEV_DATAFRAME=/dataframe/sample_get_dataframe_response.csv
     volumes:
       - ${RUNS_DIR}:/app/runs
-      - ${DEV_IMAGES_DIR:-/dev/null}:/images
-      - ${DEV_DATAFRAME:-/dev/null}:/dataframe/sample_get_dataframe_response.csv
+      - ${DEV_IMAGES_DIR}:/images
+      - ${DEV_DATAFRAME}:/dataframe/sample_get_dataframe_response.csv
       - ./tmp/app:/app/job
     shm_size: 32gb
     gpus: all

@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,20 +13,30 @@
 # limitations under the License.
 
 # Arguments:
-# $1 branch of the base app repo
-# $2 URL of the base app repo
-# $3 job type
-# $4 path to app to test
+JOB_TYPE=$1
+APP_PATH=$2
+DEV_IMAGES_DIR=$3
+DEV_DATAFRAME=$4
 
-echo "Cloning base application repository..."
-mkdir -p ./tmp/base_application_files
-git clone --branch $1 $2 ./tmp/base_application_files
-cp -r ./tmp/base_application_files/src/$3/app ./tmp/
-rm -rf ./tmp/base_application_files
+# Check images folder and dataframe file exist
+if [ ! -d "$DEV_IMAGES_DIR" ]; then
+  echo "Error: DEV_IMAGES_DIR directory '$DEV_IMAGES_DIR' does not exist."
+  exit 1
+fi
 
-# Copying base application files (e.g. trainer.py, validator.py, etc.)
-echo "Copying your application into the testing app..."
-for f in $4/app_files/*; do
+if [ ! -f "$DEV_DATAFRAME" ]; then
+  echo "Error: DEV_DATAFRAME file '$DEV_DATAFRAME' does not exist."
+  exit 1
+fi
+
+# Copy base application files (e.g. config folder, other custom files, etc.)
+mkdir -p ./tmp
+cp -r ../../src/$JOB_TYPE/app ./tmp/
+
+# Copy app files (e.g. trainer.py, validator.py, etc.)
+echo "Copying your app files into the testing app..."
+mkdir -p ./tmp/app/custom
+for f in $APP_PATH/app_files/*; do
   if [ -f "$f" ]; then
     cp "$f" ./tmp/app/custom/
   fi

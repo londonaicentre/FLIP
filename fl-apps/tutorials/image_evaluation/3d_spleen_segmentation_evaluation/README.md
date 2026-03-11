@@ -1,29 +1,74 @@
-# Evaluation of a 3D segmentation model
+# Evaluation of a 3D segmentation model - FLIP tutorial
 
-This application contains an example of evaluating a model in a federated fashion using FLIP.
-It is paired to the `image_segmentation/3d_spleen_segmentation_evaluation` app: once the model is trained, it can be tested
-with this app.
+FLIP tutorial for federated evaluation of a 3D spleen segmentation model.
 
-## Key elements
+This app is intended to evaluate a model trained with:
+`tutorials/image_segmentation/3d_spleen_segmentation`.
 
-This app uses the `job_type=evaluation`. With this job type, you have to pass:
+## Compatible job type
 
-- an `evaluator` script which performs inference
-- auxiliary `models.py` which instances the model or models to do inference on. A dictionary `model_paths` must point to the instance of the different models that will be tested.
-- optionally, a `transforms.py` script to handle data transformations
+This tutorial is designed for `JOB_TYPE=evaluation`.
 
-In the `config.json` file, you have to have the following fields:
+## Prerequisites
 
-- `models`: a dictionary of dictionaries where they key is the model name, and the value is a dictionary with keys `checkpoint`, pointing to the weights file for this specific model, and a `path` key, pointing to the name of the model in the `model_paths` dictionary (see `models.py`).
-- `evaluation_output`: this contains the structure of the evaluation output. In the example provided, the output is: `{"spleen": {"mean_dice": 0.0, "raw_dice": []}}`. When you populate this output in the `evaluator.py` file, its parent class will check that the function is outputting a dictionary like that one, where the contents can only be float values (e.g. no strings).
+- Python 3.12+
+- Docker + Docker Compose
+- `tutorials/testing/.env.testing` configured (at minimum `FL_BASE_IMAGE_TAG`, `NUM_CLIENTS`)
 
-## Test it with the spleen MSD dataset
+## Dataset setup
 
-You need to download the spleen data (see `testing/data_download_utils/preprocess_spleen_data.py`) from the Medical Imaging Segmentation decathlon.
+This app expects the same spleen dataset layout used by the segmentation tutorial (see [../../image_segmentation/3d_spleen_segmentation/README.md#dataset-setup](../../image_segmentation/3d_spleen_segmentation/README.md#dataset-setup)). If you have not prepared it yet, follow the instructions in that tutorial to download and organise the data.
 
-You will also need to download a pre-trained model by running: `make download-checkpoints`. This will download the checkpoint of the pre-trained UNet into `app_files`.
-After that, just do:
+## Checkpoint setup
 
-`make run`
+The evaluation app needs a model checkpoint in `app_files/`.
 
-Should run this code with a pre-trained U-Net network on the MSD dataset.
+From this folder:
+
+```bash
+make download-checkpoints
+```
+
+By default, the checkpoint URL is configured in `.env.app` as `MODEL_CHECKPOINT_URL`.
+
+## App configuration
+
+Default local development settings are in `.env.app`:
+
+- `JOB_TYPE=evaluation`
+- `DEV_IMAGES_DIR=../data/spleen/images`
+- `DEV_DATAFRAME=../data/spleen/dataframe.csv`
+- `MODEL_CHECKPOINT_URL=https://huggingface.co/aicentreflip/tutorials-evaluation-3d-seg-model/resolve/main/model.pt`
+
+Update these paths if your local data/checkpoint locations differ.
+
+Evaluation settings are defined in `app_files/config.json`.
+
+## Run the tutorial
+
+From this folder:
+
+```bash
+make run
+```
+
+Useful targets:
+
+- `make shell`: open an interactive shell in the simulator container
+- `make down`: stop the simulator service
+- `make clean`: remove generated local simulator artifacts
+
+## Key evaluation files
+
+- `app_files/evaluator.py`: evaluation loop and metric computation
+- `app_files/models.py`: model definitions and checkpoint loading
+- `app_files/transforms.py`: inference/evaluation transforms
+- `app_files/config.json`: model/checkpoint mapping and evaluation output schema
+
+## Notes and troubleshooting
+
+- If checkpoint download fails, confirm `MODEL_CHECKPOINT_URL` is reachable.
+- If evaluation finds no samples, verify:
+  - CSV contains `accession_id`
+  - each accession has `scans/input_*.nii.gz` and matching `label_*.nii.gz`
+- If you see `FL_BASE_IMAGE_TAG not set`, update `tutorials/testing/.env.testing`.
