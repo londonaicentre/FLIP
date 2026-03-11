@@ -361,7 +361,6 @@ def upload_app(model_id: str, body: UploadAppRequest) -> dict[str, str]:
     Args:
         model_id (str): The ID of the model to associate the application with.
         body (UploadAppRequest): The request body containing the application details.
-        session (FLIP_Session): The NVFlare session instance.
 
     Returns:
         dict[str, str]: A dictionary containing the status of the upload.
