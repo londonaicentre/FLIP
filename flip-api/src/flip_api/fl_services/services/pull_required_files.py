@@ -28,7 +28,7 @@ def pull_required_files_json_to_assets():
     Pulls required_files.json from S3 and saves it to the local assets folder.
     """
     s3 = S3Client()
-    bucket_path = f"{get_settings().FL_APP_BASE_BUCKET}/src/required_files.json"
+    bucket_path = f"{get_settings().FL_APP_BASE_BUCKET}/required_files.json"
 
     try:
         s3_obj = s3.get_object(bucket_path)

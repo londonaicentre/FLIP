@@ -214,7 +214,7 @@ def test_bundle_nvflare_application_success(mock_s3, mock_required, mock_verify,
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],
-        [f"{base_bucket}/src/standard/app/file1.py"],
+        [f"{base_bucket}/standard/app/file1.py"],
         [],  # Destination bucket
     ]
     mock_client.copy_object.return_value = None
@@ -227,7 +227,7 @@ def test_bundle_nvflare_application_success(mock_s3, mock_required, mock_verify,
 
     # assert that the copy_object was called for each file including the bucket names
     mock_client.copy_object.assert_any_call(
-        f"{base_bucket}/src/standard/app/file1.py",
+        f"{base_bucket}/standard/app/file1.py",
         f"{dest_bucket}/{model_id}/app/file1.py",
     )
     mock_client.copy_object.assert_any_call(
@@ -266,8 +266,8 @@ def test_bundle_nvflare_application_model_files_overwrite(
         f"{model_bucket}/{model_id}/flip.py",  # user trying to overwrite the flip.py in base with one in model files
     ]
     base_files = [
-        f"{base_bucket}/src/standard/app/custom/flip.py",
-        f"{base_bucket}/src/standard/app/config/config_fed_client.json",
+        f"{base_bucket}/standard/app/custom/flip.py",
+        f"{base_bucket}/standard/app/config/config_fed_client.json",
     ]
     # Destination bucket is empty at first
     mock_client.list_objects.side_effect = [
@@ -350,7 +350,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],
-        [f"{base_bucket}/src/{job_type}/app/file1.py"],
+        [f"{base_bucket}/{job_type}/app/file1.py"],
         [],  # Destination bucket
     ]
     mock_client.copy_object.return_value = None
@@ -386,7 +386,7 @@ def test_bundle_nvflare_application_wrong_files(mock_s3, mock_required, mock_ver
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],  # Missing trainer.py
-        [f"{base_bucket}/src/standard/app/file1.py"],
+        [f"{base_bucket}/standard/app/file1.py"],
         [],  # Destination bucket
     ]
     mock_client.copy_object.return_value = None
@@ -415,8 +415,8 @@ def test_bundle_flower_application_success(mock_s3, mock_required, model_id, moc
             f"{model_bucket}/{model_id}/config.json",
         ],
         [
-            f"{base_bucket}/src/standard/app/server_app.py",
-            f"{base_bucket}/src/standard/pyproject.toml",
+            f"{base_bucket}/standard/app/server_app.py",
+            f"{base_bucket}/standard/pyproject.toml",
         ],
         [],
     ]
@@ -427,7 +427,7 @@ def test_bundle_flower_application_success(mock_s3, mock_required, model_id, moc
 
     assert dest_bucket_s3_path == f"{dest_bucket}/{model_id}"
     mock_client.copy_object.assert_any_call(
-        f"{base_bucket}/src/standard/app/server_app.py",
+        f"{base_bucket}/standard/app/server_app.py",
         f"{dest_bucket}/{model_id}/app/server_app.py",
     )
     mock_client.copy_object.assert_any_call(
@@ -458,8 +458,8 @@ def test_bundle_flower_application_model_files_overwrite(
         f"{model_bucket}/{model_id}/server_app.py",
     ]
     base_files = [
-        f"{base_bucket}/src/standard/app/server_app.py",
-        f"{base_bucket}/src/standard/pyproject.toml",
+        f"{base_bucket}/standard/app/server_app.py",
+        f"{base_bucket}/standard/pyproject.toml",
     ]
     mock_client.list_objects.side_effect = [
         model_files,
@@ -526,7 +526,7 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],
-        [f"{base_bucket}/src/{job_type}/app/server_app.py"],
+        [f"{base_bucket}/{job_type}/app/server_app.py"],
         [],
     ]
     mock_client.copy_object.return_value = None
@@ -558,7 +558,7 @@ def test_bundle_flower_application_wrong_files(mock_s3, mock_required, mocked_se
             f"{model_bucket}/{model_id}/client_app.py",
             f"{model_bucket}/{model_id}/config.json",
         ],  # Missing models.py
-        [f"{base_bucket}/src/standard/app/server_app.py"],
+        [f"{base_bucket}/standard/app/server_app.py"],
         [],
     ]
     mock_client.copy_object.return_value = None
@@ -572,7 +572,7 @@ def test_verify_bundle_paths_success(model_id, mocked_settings):
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    base_bucket_s3_path = f"{base_bucket}/src/standard"
+    base_bucket_s3_path = f"{base_bucket}/standard"
     model_bucket_s3_path = f"{model_bucket}/{model_id}"
     dest_bucket_s3_path = f"{dest_bucket}/{model_id}"
 
@@ -598,16 +598,16 @@ def test_verify_bundle_paths_success(model_id, mocked_settings):
     expected_dest_keys = set()
 
     # base mirrored
-    for src in base_files:
-        rel = src.replace(f"{base_bucket_s3_path}/", "", 1)
+    for file in base_files:
+        rel = file.replace(f"{base_bucket_s3_path}/", "", 1)
         expected_dest_keys.add(f"{dest_bucket_s3_path}/{rel}")
 
     # meta.json once
     expected_dest_keys.add(f"{dest_bucket_s3_path}/meta.json")
 
     # model files into each app/custom (skip meta.json)
-    for src in model_files:
-        rel = src.replace(f"{model_bucket_s3_path}/", "", 1)
+    for file in model_files:
+        rel = file.replace(f"{model_bucket_s3_path}/", "", 1)
         if rel == "meta.json":
             continue
         for app in app_folders:
@@ -635,7 +635,7 @@ def test_verify_bundle_paths_raises_on_missing_file(model_id, mocked_settings):
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    base_bucket_s3_path = f"{base_bucket}/src/standard"
+    base_bucket_s3_path = f"{base_bucket}/standard"
     model_bucket_s3_path = f"{model_bucket}/{model_id}"
     dest_bucket_s3_path = f"{dest_bucket}/{model_id}"
 
@@ -651,14 +651,14 @@ def test_verify_bundle_paths_raises_on_missing_file(model_id, mocked_settings):
     # Build the full expected set (same logic as the helper)
     expected_dest_keys = set()
 
-    for src in base_files:
-        rel = src.replace(f"{base_bucket_s3_path}/", "", 1)
+    for file in base_files:
+        rel = file.replace(f"{base_bucket_s3_path}/", "", 1)
         expected_dest_keys.add(f"{dest_bucket_s3_path}/{rel}")
 
     expected_dest_keys.add(f"{dest_bucket_s3_path}/meta.json")
 
-    for src in model_files:
-        rel = src.replace(f"{model_bucket_s3_path}/", "", 1)
+    for file in model_files:
+        rel = file.replace(f"{model_bucket_s3_path}/", "", 1)
         if rel == "meta.json":
             continue
         for app in app_folders:

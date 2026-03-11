@@ -325,7 +325,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.sta
 
     Base application files in the base bucket:
 
-        s3://base-bucket/src/standard/
+        s3://base-bucket/standard/
         ├── app_site1/
         │   ├── config/
         │   │   └── config_fed_client.json
@@ -427,7 +427,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.sta
             logger.info(f"job_type in config.json: {job_type.value}. Using it to select base application.")
 
     # List base files for that job_type
-    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/src/{job_type.value}"
+    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/{job_type.value}"
     logger.debug(f"Base bucket: {base_bucket_s3_path}")
     base_files = s3.list_objects(base_bucket_s3_path)
     if not base_files:
@@ -530,7 +530,7 @@ def bundle_flower_application(model_id: UUID, job_type: JobTypes = JobTypes.stan
 
     Base application files in the base bucket:
 
-        s3://base-bucket/src/standard/
+        s3://base-bucket/standard/
         ├── app/
         │   └── server_app.py
         └── pyproject.toml
@@ -609,7 +609,7 @@ def bundle_flower_application(model_id: UUID, job_type: JobTypes = JobTypes.stan
             logger.info(f"job_type in config.json: {job_type.value}. Using it to select base application.")
 
     # List base files for that job_type
-    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/src/{job_type.value}"
+    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/{job_type.value}"
     logger.debug(f"Base bucket: {base_bucket_s3_path}")
     base_files = s3.list_objects(base_bucket_s3_path)
     if not base_files:
