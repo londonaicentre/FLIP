@@ -21,6 +21,9 @@ include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
+# Export PROD so child processes (e.g. check_status.py) can determine the environment
+export PROD
+
 # If PROD=true, check that the AWS_PROFILE=FlipDeveloperAccess-046651569599
 ifeq ($(PROD),true)
 ifneq ($(AWS_PROFILE),FlipDeveloperAccess-046651569599)
@@ -238,7 +241,6 @@ gen-trust-ec2-certs: ## Generate TLS certs for the cloud Trust EC2 using its Ter
 		../../../trust/certs/trust-server.key \
 		ubuntu@$$TRUST_IP:/opt/flip/certs/
 	@echo "✅ TLS certificates generated and deployed to Trust EC2!"
-
 .PHONY: regen-trust-certs
 regen-trust-certs: ## Re-generate TLS certs for Trust EC2, deploy to EC2, and update Secrets Manager
 	@echo "🔑 Regenerating TLS certificates for Trust EC2..."
@@ -311,6 +313,10 @@ deploy-trust: update-env ## Deploy trust relationships after central hub is depl
 	@docker context use flip-trust
 	@echo "🐳 Deploying containers to Trust EC2 ..."
 	docker swarm init || echo "   Swarm already initialized"
+	@echo "🗒️ Copying TLS certificates to Trust EC2..."
+	ssh -i ~/.ssh/host-aws ubuntu@$$(terraform output -raw TrustEc2PublicIp) "mkdir -p /opt/flip/certs"
+	scp -i ~/.ssh/host-aws -r ../../../trust/certs/* ubuntu@$$(terraform output -raw TrustEc2PublicIp):/opt/flip/certs/
+	@echo "✅ Certificates copied!"
 	@echo "🚀 Deploying Trust services..."
 	$(MAKE) -C ../../../ up-trust-stag PROD=stag
 	@echo "✅ Trust deployment complete!"

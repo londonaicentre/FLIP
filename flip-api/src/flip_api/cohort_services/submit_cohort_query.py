@@ -32,6 +32,7 @@ from flip_api.domain.schemas.cohort import (
     TrustDetails,
 )
 from flip_api.utils.encryption import encrypt
+from flip_api.utils.http import trust_ssl_context
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/cohort", tags=["cohort_services"])
@@ -159,7 +160,7 @@ def submit_cohort_query(
                 # Make request to trust
                 # headers = dict(request.headers)
 
-                with httpx.Client() as client:
+                with httpx.Client(verify=trust_ssl_context()) as client:
                     response = client.post(
                         f"{trust.endpoint}/cohort",
                         json=request_body.model_dump(mode="json"),

@@ -13,19 +13,29 @@
 #
 
 
-# Receive the DEBUG from the environment variable
+# Receive the DEBUG and ENV from the environment variable
+ENV=${ENV:-development}
 echo "🚀 Starting imaging-api entrypoint script..."
+echo "🌍 Environment: $ENV"
 echo "🐛 Debug mode: $DEBUG on port ${DEBUG_PORT}"
 
-FAST_API_CMD="-m fastapi dev imaging_api/main.py --host 0.0.0.0 --port 8000 --reload --reload-exclude '*.venv/*' --reload-exclude '**/site-packages/*'"
+# Debug mode uses debugpy + fastapi dev (autoreload) for iteration speed.
+# Normal mode uses uvicorn directly (stable, production-grade).
+if [ "$ENV" = "production" ] || [ "$ENV" = "staging" ]; then
+    FAST_API_CMD="-m fastapi run imaging_api/main.py --host 0.0.0.0 --port 8000"
+else
+    FAST_API_CMD="-m fastapi dev imaging_api/main.py --host 0.0.0.0 --port 8000 --reload
+fi
 DEBUG_CMD="-Xfrozen_modules=off -m debugpy --listen 0.0.0.0:${DEBUG_PORT} --wait-for-client"
+DEV_API_CMD="-m fastapi dev imaging_api/main.py --host 0.0.0.0 --port 8000 --reload"
+PROD_API_CMD="-m uvicorn imaging_api.main:app --host 0.0.0.0 --port 8000"
 
 if [ "$DEBUG" = "true" ]; then
     echo "🚨 Starting API in debug mode... 🐛"
-    echo "🚨 Running command: uv run python ${DEBUG_CMD} ${FAST_API_CMD}"
-    exec uv run python ${DEBUG_CMD} ${FAST_API_CMD}
+    echo "🚨 Running command: uv run python ${DEBUG_CMD} ${DEV_API_CMD}"
+    exec uv run python ${DEBUG_CMD} ${DEV_API_CMD}
 else
-    echo "🚢 Starting API in normal mode... "
-    echo "🚢 Running command: uv run python ${FAST_API_CMD}"
-    exec uv run python ${FAST_API_CMD}
+    echo "🚢 Starting API in normal mode..."
+    echo "🚢 Running command: uv run python ${PROD_API_CMD}"
+    exec uv run python ${PROD_API_CMD}
 fi

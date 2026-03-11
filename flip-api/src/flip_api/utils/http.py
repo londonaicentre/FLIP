@@ -10,17 +10,43 @@
 # limitations under the License.
 #
 
-from typing import Any, Dict, Optional
+import os
+import ssl
+from typing import Any, Dict, Optional, Union
 
 import httpx
 
 from flip_api.utils.logger import logger
 
 
+def trust_ssl_context() -> Union[ssl.SSLContext, bool]:
+    """Return an SSLContext that trusts the Trust CA, or True for default verification.
+
+    Reads `TRUST_CA_BUNDLE` environment variable which should point to a PEM file.
+    If not set, returns True to use the system CA bundle.
+
+    If `TRUST_CA_BUNDLE` is set but the file is missing or unreadable, logs a
+    warning and falls back to True (system CAs) so that local development and
+    test environments where the cert file has not been deployed are not broken.
+    """
+    ca_bundle = os.getenv("TRUST_CA_BUNDLE")
+    if ca_bundle:
+        try:
+            ctx = ssl.create_default_context(cafile=ca_bundle)
+            return ctx
+        except (OSError, ssl.SSLError) as exc:
+            logger.warning(
+                "Failed to load TRUST_CA_BUNDLE '%s': %s — falling back to system CAs",
+                ca_bundle,
+                repr(exc),
+            )
+    return True
+
+
 def http_get(url: str, request_id: Optional[str] = None) -> Any:
     """Perform an HTTP GET request to the specified URL with optional request ID for tracing."""
     headers = {"x-request-id": request_id} if request_id else {}
-    with httpx.Client() as client:
+    with httpx.Client(verify=trust_ssl_context()) as client:
         try:
             response = client.get(url, headers=headers)
             response.raise_for_status()
@@ -42,7 +68,7 @@ def http_post(
         if request_id
         else {"Content-Type": "application/json"}
     )
-    with httpx.Client() as client:
+    with httpx.Client(verify=trust_ssl_context()) as client:
         try:
             if timeout is None:
                 response = client.post(url, headers=headers, json=data)
@@ -62,7 +88,7 @@ def http_post(
 def http_delete(url: str, request_id: Optional[str] = None) -> Any:
     """Perform an HTTP DELETE request to the specified URL with optional request ID for tracing."""
     headers = {"x-request-id": request_id} if request_id else {}
-    with httpx.Client() as client:
+    with httpx.Client(verify=trust_ssl_context()) as client:
         try:
             response = client.delete(url, headers=headers)
             response.raise_for_status()

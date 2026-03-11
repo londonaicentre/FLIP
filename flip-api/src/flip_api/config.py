@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
 
+    # SSL / TLS settings
+    TRUST_CA_BUNDLE: Optional[str] = None  # Path to the Trust CA certificate PEM file
+
     # FL settings
     FL_BACKEND: Literal["nvflare", "flower"] = "nvflare"
 
@@ -82,6 +85,10 @@ class DevSettings(Settings):
 
     ENV: Literal["development"] = "development"
     POSTGRES_PASSWORD: str  # in dev, get DB password from env variable
+
+    AES_KEY_BASE64: str  # in dev, get AES key from env variable
+
+    TRUST_ENDPOINTS: dict[str, str]  # in dev, get trust endpoints from env variables
 
 
 class ProdSettings(Settings):

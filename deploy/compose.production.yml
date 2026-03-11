@@ -48,6 +48,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
       - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      # - AES_KEY_BASE64=${AES_KEY_BASE64} # in production, AES key is retrieved from AWS Secrets Manager
       - AWS_SECRET_NAME=${AWS_SECRET_NAME}
       - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
       - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS}
@@ -58,5 +59,9 @@ services:
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
+      # Path where entrypoint.sh writes the Trust CA cert from Secrets Manager;
+      # _trust_ssl_context() reads this to verify Trust API HTTPS connections.
+      - TRUST_CA_BUNDLE=/etc/ssl/trust/trust-ca.crt
+      # - TRUST_ENDPOINTS=${TRUST_ENDPOINTS} # in production, trust endpoints are retrieved from AWS Secrets Manager
     restart: unless-stopped
     container_name: flip-api

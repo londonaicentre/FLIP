@@ -18,6 +18,7 @@ on:
     branches: [main, develop]
     paths:
       - "trust/xnat/**"
+      - ".github/workflows/docker_build_xnat_nginx.yml"
 
 jobs:
   build-and-push:

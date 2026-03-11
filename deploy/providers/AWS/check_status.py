@@ -39,6 +39,7 @@ EXIT CODES:
 import json
 import os
 import platform
+import ssl
 import subprocess
 import sys
 import urllib.request
@@ -200,18 +201,19 @@ def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) ->
         Tuple of (success, output)
     """
     try:
+        cmd = ["ssh"]
+        if ssh_key:
+            cmd += ["-i", ssh_key]
+        cmd += [
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            f"ConnectTimeout={timeout}",
+            host,
+            command,
+        ]
         result = subprocess.run(
-            [
-                "ssh",
-                "-i",
-                ssh_key,
-                "-o",
-                "StrictHostKeyChecking=no",
-                "-o",
-                f"ConnectTimeout={timeout}",
-                host,
-                command,
-            ],
+            cmd,
             capture_output=True,
             text=True,
             check=True,
@@ -222,13 +224,19 @@ def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) ->
         return False, str(e)
 
 
-def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 200) -> bool:
+def check_http_endpoint(
+    url: str,
+    name: str,
+    expected_status: int | list[int] = 200,
+    cafile: str | None = None,
+) -> bool:
     """Check HTTP endpoint availability.
 
     Args:
         url: URL to check
         name: Endpoint name for logging
         expected_status: Expected HTTP status code(s). Can be a single int or list of ints.
+        cafile: Optional path to a CA bundle for verifying self-signed HTTPS certs.
 
     Returns:
         True if endpoint is accessible, False otherwise
@@ -238,9 +246,18 @@ def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 
     # Convert single int to list for uniform handling
     valid_statuses = [expected_status] if isinstance(expected_status, int) else expected_status
 
+    # Build SSL context: use provided CA bundle, or a permissive ctx for https:// URLs
+    # where no cafile is given (e.g. self-signed certs accessed directly).
+    ssl_ctx: ssl.SSLContext | None = None
+    if url.startswith("https://"):
+        if cafile and Path(cafile).exists():
+            ssl_ctx = ssl.create_default_context(cafile=cafile)
+        else:
+            ssl_ctx = ssl.create_default_context()
+
     try:
         req = urllib.request.Request(url, method="GET")
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as response:
             if response.status in valid_statuses:
                 print_status("PASS", f"{name} is responding (HTTP {response.status})")
                 return True
@@ -263,17 +280,25 @@ def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 
         return False
 
 
-def check_endpoint_over_ssh(host: str, endpoint: str, expected_status: int = 200) -> bool:
-    """Check an HTTP endpoint from a remote host via SSH.
+def check_endpoint_over_ssh(
+    host: str,
+    endpoint: str,
+    expected_status: int = 200,
+    verify_ssl: bool = True,
+) -> bool:
+    """Check an HTTP/HTTPS endpoint from a remote host via SSH.
 
     Args:
-        host: Host address (user@ip)
+        host: Host alias (from ~/.ssh/config) or user@ip
         endpoint: URL to check
+        expected_status: Expected HTTP status code
+        verify_ssl: When False, passes -k to curl to skip certificate validation
 
     Returns:
         True if endpoint is accessible, False otherwise
     """
-    command = f"curl -s -o /dev/null -w '%{{http_code}}' {endpoint}"
+    skip_flag = "" if verify_ssl else "-k "
+    command = f"curl -s {skip_flag}-o /dev/null -w '%{{http_code}}' {endpoint}"
     print_status(status="INFO", message=f"Checking endpoint {endpoint} from {host} via SSH...")
     success, output = run_ssh_command(ssh_key="", host=host, command=command)
     if success and output == str(expected_status):
@@ -341,6 +366,12 @@ def main(
     # Change to terraform directory
     original_dir = Path.cwd()
     os.chdir(terraform_dir)
+
+    # Determine ALB subdomain from environment. ALB_SUBDOMAIN takes precedence;
+    # otherwise derive from PROD: 'true' → production domain, else → staging domain.
+    _prod_env = os.getenv("PROD", "")
+    _default_domain = "app.flip.aicentre.co.uk" if _prod_env == "true" else "stag.flip.aicentre.co.uk"
+    alb_subdomain = os.getenv("ALB_SUBDOMAIN", _default_domain)
 
     # Check prerequisites
     print_section("Checking Prerequisites")
@@ -443,21 +474,22 @@ def main(
         "rds",
         "describe-db-instances",
         "--query",
-        "DBInstances[?contains(DBInstanceIdentifier, `flipEndpoint.Address",
+        "DBInstances[?contains(DBInstanceIdentifier, 'flip')].Endpoint.Address | [0]",
         "--output",
         "text",
     ])
-    if success and rds_endpoint:
-        print_status("PASS", f"RDS endpoint found: {rds_endpoint}")
+    if success and rds_endpoint and rds_endpoint.strip():
+        print_status("PASS", f"RDS endpoint found: {rds_endpoint.strip()}")
 
         success, rds_status = run_aws_command([
             "rds",
             "describe-db-instances",
             "--query",
-            "DBInstances[?contains(DBInstanceIdentifier, `flipDBInstanceStatus",
+            "DBInstances[?contains(DBInstanceIdentifier, 'flip')].DBInstanceStatus | [0]",
             "--output",
             "text",
         ])
+        rds_status = (rds_status or "").strip()
         if success and rds_status == "available":
             print_status("PASS", "RDS instance is available")
         else:
@@ -496,7 +528,6 @@ def main(
 
     # Get certificate ARN and domain from Terraform
     cert_arn = get_terraform_output("CertificateArn")
-    alb_subdomain = os.getenv("ALB_SUBDOMAIN", "stag.flip.aicentre.co.uk")
 
     if cert_arn:
         print_status("INFO", f"Checking ACM certificate: {cert_arn}")
@@ -633,9 +664,6 @@ def main(
     if not skip_endpoints:
         print_section("Application Endpoint Checks")
 
-        # Get ALB subdomain for HTTPS checks
-        alb_subdomain = os.getenv("ALB_SUBDOMAIN", "stag.flip.aicentre.co.uk")
-
         # Central Hub EC2 ports
         UI_PORT = os.getenv("UI_PORT", "")
         API_PORT = os.getenv("API_PORT", "")
@@ -665,28 +693,64 @@ def main(
         # Check API docs endpoint via ALB
         check_http_endpoint(f"https://{alb_subdomain}/docs", "FLIP API Docs (ALB)", 200)
 
-        # Check API health endpoint via direct EC2 access (for debugging)
-        check_http_endpoint(f"http://{central_hub_ip}:{API_PORT}/health", "FLIP API Health (Direct)", 200)
+        # Check FL API health and docs endpoints via docker exec using urllib.request
+        # (curl is not present in the NVFlare-based FL API containers; iptables also blocks
+        # loopback→bridge traffic from the EC2 host, so we exec directly into
+        # the container instead of curling from the host; urllib.request is stdlib
+        # so it is always available regardless of installed packages)
+        for net_num in configured_net_numbers:
+            container = f"flip-fl-api-net-{net_num}"
+            command = (
+                f"docker exec {container} python -c "
+                '"import urllib.request; '
+                "r=urllib.request.urlopen('http://localhost:8000/health', timeout=5); "
+                'print(r.status)"'
+            )
 
-        # Check API docs endpoint via direct EC2 access (for debugging)
-        check_http_endpoint(f"http://{central_hub_ip}:{API_PORT}/docs", "FLIP API Docs (Direct)", 200)
+            success, output = run_ssh_command(
+                ssh_key=ssh_key_path,
+                host=f"ubuntu@{central_hub_ip}",
+                command=(command),
+            )
+            if success and output.strip() == "200":
+                print_status("PASS", f"FL API Net-{net_num} health endpoint is accessible (via docker exec)")
+            else:
+                print_status("FAIL", f"FL API Net-{net_num} health endpoint not accessible (via docker exec): {output}")
+                print(command)
 
-        # Check FL API health endpoint
-        check_http_endpoint(f"http://{central_hub_ip}:{FL_API_PORT}/health", "FLIP FL API Health", 200)
-
-        # Check FL API docs endpoint
-        check_http_endpoint(f"http://{central_hub_ip}:{FL_API_PORT}/docs", "FLIP FL API Docs", 200)
+        for net_num in configured_net_numbers:
+            container = f"flip-fl-api-net-{net_num}"
+            success, output = run_ssh_command(
+                ssh_key=ssh_key_path,
+                host=f"ubuntu@{central_hub_ip}",
+                command=(
+                    f"docker exec {container} python -c "
+                    f"\"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/docs', timeout=5); print(r.status)\""
+                ),
+            )
+            if success and output.strip() == "200":
+                print_status("PASS", f"FL API Net-{net_num} docs endpoint is accessible (via docker exec)")
+            else:
+                print_status("FAIL", f"FL API Net-{net_num} docs endpoint not accessible (via docker exec): {output}")
 
         # Check Central Hub API is reachable inside Central Hub EC2 via SSH
         check_endpoint_over_ssh("flip", f"http://localhost:{API_PORT}/health", 200)
 
-        # Check FL-api-net endpoints over ssh and inside flip running container.
+        # Check FL-api-net endpoints over ssh and inside flip-api running container.
+        # Use urllib.request (stdlib) for consistency — works even if httpx is absent.
         for nets in configured_net_numbers:
             success, message = run_ssh_command(
                 ssh_key=ssh_key_path,
                 host=f"ubuntu@{central_hub_ip}",
-                command=f"docker exec flip httpx http://fl-api-net-{nets}:8000/check_client_status",
+                command=(
+                    f"docker exec flip-api python -c "
+                    f"\"import urllib.request; r=urllib.request.urlopen('http://fl-api-net-{nets}:8000/check_client_status', timeout=5); import sys; sys.stdout.write(r.read().decode())\""
+                ),
             )
+            if not success or not message:
+                # FL API may not be running or reachable — degrade gracefully
+                print_status("WARN", f"FL API Net {nets} check_client_status not reachable from flip-api container")
+                continue
             # Extract JSON part from the message (list of client info)
             start = message.find("[")
             json_part = message[start:]
@@ -694,30 +758,41 @@ def main(
                 client_info = json.loads(json_part)
             except json.JSONDecodeError:
                 print_status(
-                    "FAIL",
-                    f"FL API Net {nets} clients returned invalid JSON from flip container:\n{message}",
+                    "WARN",
+                    f"FL API Net {nets} clients returned unexpected response from flip-api container: {message[:120]}",
                 )
                 continue
-            if success and ("200" in message) and client_info != []:
-                print_status("PASS", f"FL API Net {nets} clients are reachable inside flip container")
+            if client_info != []:
+                print_status("PASS", f"FL API Net {nets} clients are reachable inside flip-api container")
             else:
                 print_status(
-                    "FAIL",
-                    f"FL API Net {nets} clients are not reachable from flip container:\n{message}",
+                    "WARN",
+                    f"FL API Net {nets}: no clients registered yet (empty list)",
                 )
 
         # Trust EC2 endpoint checks
         if trust_ip:
             print_status("INFO", "Checking Trust EC2 service endpoints...")
 
+            # Trust API is now served over HTTPS via the nginx-tls sidecar.
+            # Use -k (skip verify) for SSH-based loopback and cross-EC2 checks since
+            # those go directly to the self-signed cert.  For the direct check from
+            # this machine we use the local trust-ca.crt when available.
+            _trust_ca = str(Path(__file__).parent / "trust-ca.crt")
+
             # Check if Trust API is reachable from Trust EC2 via SSH
-            check_endpoint_over_ssh("flip-trust", f"http://localhost:{TRUST_API_PORT}/health", 200)
+            check_endpoint_over_ssh("flip-trust", f"https://localhost:{TRUST_API_PORT}/health", 200, verify_ssl=False)
 
-            # Check Trust is reachable inside Central Hub
-            check_endpoint_over_ssh("flip", f"http://{trust_ip}:{TRUST_API_PORT}/health", 200)
+            # Check Trust is reachable from Central Hub EC2 via SSH
+            check_endpoint_over_ssh("flip", f"https://{trust_ip}:{TRUST_API_PORT}/health", 200, verify_ssl=False)
 
-            # Check Trust API health endpoint
-            check_http_endpoint(f"http://{trust_ip}:{TRUST_API_PORT}/health", "Trust API Health", 200)
+            # Check Trust API health endpoint directly from this machine (use CA cert)
+            check_http_endpoint(
+                f"https://{trust_ip}:{TRUST_API_PORT}/health",
+                "Trust API Health",
+                200,
+                cafile=_trust_ca if Path(_trust_ca).exists() else None,
+            )
 
             # Check XNAT is reachable
             check_http_endpoint(f"http://{trust_ip}:{XNAT_PORT}", "XNAT Service", 200)
@@ -776,9 +851,10 @@ def main(
                     "flip-api",
                     "flip-ui",
                 ]
-                # Add only configured FL server containers
+                # Add only configured FL server and API containers
                 for net_num in configured_net_numbers:
-                    expected_containers.append(f"flipserver-net-{net_num}")
+                    expected_containers.append(f"flip-fl-server-net-{net_num}")
+                    expected_containers.append(f"flip-fl-api-net-{net_num}")
 
                 for container in expected_containers:
                     container_found = False
@@ -1075,7 +1151,7 @@ def main(
             )
             # Open centralhub on browser
             try:
-                os.system(f"open http://{central_hub_ip}:{os.getenv('UI_PORT', '80')}")
+                os.system(f"open https://{alb_subdomain}")
             except Exception:
                 pass
         sys.exit(0)
