@@ -18,13 +18,16 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+from flip_api.config import get_settings
 from flip_api.utils.get_secrets import get_secret
 
 
-# --- Step 1: Get AES key from AWS Secrets Manager ---
+# --- Step 1: Get AES key ---
 def get_aes_key() -> bytes:
-    """Retrieve the AES key from AWS Secrets Manager and return it as bytes."""
-    aes_key_b64 = get_secret("aes_key")
+    """Retrieve the AES key and return it as bytes."""
+    # In production, get the AES key from secrets manager. In dev, use the environment variable directly.
+    stt = get_settings()
+    aes_key_b64 = get_secret("aes_key") if stt.ENV == "production" else stt.AES_KEY_BASE64
     return base64.b64decode(aes_key_b64)  # Return as bytes
 
 

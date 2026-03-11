@@ -78,3 +78,30 @@ def test_get_secrets_client_error(mock_boto3_session):
 
     # Verify the exception is the same one we raised
     assert excinfo.value == error
+
+
+def test_get_secrets_missing_secret_string(mock_settings, mock_boto3_session):
+    """Test error when SecretString key is missing from AWS response."""
+    _, mock_client = mock_boto3_session
+    mock_client.get_secret_value.return_value = {}
+
+    with pytest.raises(ValueError, match="does not contain 'SecretString'"):
+        get_secrets()
+
+
+def test_get_secrets_invalid_json_secret_string(mock_settings, mock_boto3_session):
+    """Test error when SecretString is not valid JSON."""
+    _, mock_client = mock_boto3_session
+    mock_client.get_secret_value.return_value = {"SecretString": "{'aes_key':'abc'}"}
+
+    with pytest.raises(ValueError, match="has invalid JSON in SecretString"):
+        get_secrets()
+
+
+def test_get_secrets_non_object_json_secret_string(mock_settings, mock_boto3_session):
+    """Test error when SecretString JSON is valid but not an object."""
+    _, mock_client = mock_boto3_session
+    mock_client.get_secret_value.return_value = {"SecretString": '["a", "b"]'}
+
+    with pytest.raises(ValueError, match="must be a JSON object"):
+        get_secrets()
