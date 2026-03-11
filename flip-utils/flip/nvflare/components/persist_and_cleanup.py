@@ -11,9 +11,9 @@
 #
 
 import os
-from pathlib import Path
 import shutil
 import traceback
+from pathlib import Path
 
 from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
