@@ -168,8 +168,10 @@ module "flip_api_secret" {
 
   secret_string = jsonencode({
     aes_key               = var.AES_KEY_BASE64
-    Trust_1-endpoint      = "https://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
-    Trust_2-endpoint      = "https://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
+    trust_endpoints       = {
+      "Trust_1" = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}",
+      "Trust_2" = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
+    }
     trust_ca_cert         = try(file("${path.module}/trust-ca.crt"), "")
   })
 }

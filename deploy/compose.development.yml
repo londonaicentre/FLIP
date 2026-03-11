@@ -85,6 +85,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
       - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      - AES_KEY_BASE64=${AES_KEY_BASE64}
       - TRUST_CA_BUNDLE=/etc/ssl/trust/trust-ca.crt
       - AWS_SECRET_NAME=${AWS_SECRET_NAME}
       - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
@@ -97,6 +98,7 @@ services:
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
       - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
+      - TRUST_ENDPOINTS=${TRUST_ENDPOINTS}
     restart: unless-stopped
     container_name: flip-api
 

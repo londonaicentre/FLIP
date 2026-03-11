@@ -38,50 +38,31 @@ FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in coll
 
 <p align="center"><img src="docs/source/assets/flip-diagram-2-nodes.png" alt='flip-architecture' /></p>
 
-## Docker Deployment Setup
+## Repositories
 
-This repository consolidates all the flip services in a mono repository so they can all be deployed in a single
-docker compose file for local testing and development. The federated learning code code is divided into two separate
-repositories [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) and
-[flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower), but they are deployed here via pulling
-the images generated there.
+FLIP spans several repositories:
+
+| Repository | Description |
+| --- | --- |
+| [FLIP](https://github.com/londonaicentre/FLIP) | This repo: Central Hub API, Trust APIs, UI, and Docker deployment |
+| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | NVIDIA FLARE federated learning base application library, workflows, and tutorials |
+| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower federated learning base application library, workflows, and tutorials |
+
+This repository consolidates all FLIP services in a mono-repo that can be deployed together via Docker Compose. The
+federated learning images are pulled from [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) and
+[flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower).
+
+## Deployment
 
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) with [Swarm mode](https://docs.docker.com/engine/swarm/) initialized
 - [Nvidia Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 - [Make](https://formulae.brew.sh/formula/make)
-- [Python 3.12+](https://www.python.org/downloads/)
 - [UV](https://docs.astral.sh/uv) - Python environment management tool
-- postgresql-client and postgresql-client-common (install with `apt install postgresql-client postgresql-client-common` on Debian/Ubuntu)
+- postgresql-client (install with `apt install postgresql-client postgresql-client-common` on Debian/Ubuntu)
 
-Optional Tools:
-
-- [act](https://github.com/nektos/act) - A tool to run GitHub Actions locally
-- [Homebrew](https://brew.sh/) - A package manager for macOS and Linux (optional, but recommended for installing `act`)
-- [VSCode](https://code.visualstudio.com/) - A code editor with support for remote development
-- [Postman](https://www.postman.com/) - A tool for testing APIs
-
-### Optional Tools
-
-#### Recommended VSCode Extensions
-
-The file [`recommended_extensions.vsix`](recommended_extensions.vsix) contains a list of recommended VSCode extensions
-for the flip project. You can install them by running the following command in your terminal:[]
-
-```bash
-code --install-extension recommended_extensions.vsix
-```
-
-These are particularly useful for keeping the code style consistent across the project, helping with debugging, and
-providing a better development experience.
-
-The most critical extensions is `ms-vscode-remote.vscode-remote-extensionpack`, which allows you to connect to the
-Docker container running the flip services and edit the code inside the container. This is useful for debugging
-and testing the services without having to rebuild the Docker image every time you make a change.
-Normally we develop on a remote server, so we use the `Remote - SSH` extension to connect to the server and then use the
-`Remote - Containers` extension to connect to the Docker container running the flip services. This minimizes the
-overhead of testing things in your local machine and then deploying them to the server.
+> For developer tooling and IDE setup, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### Using the Makefile
 
@@ -160,7 +141,7 @@ make xnat-shell-swarm
 
 ### Basic Usage
 
-To start the development environment:
+To start the full platform locally:
 
 ```bash
 make up
@@ -221,175 +202,16 @@ If you see errors like "fed_client.json does not exist" or "missing startup fold
 - The workspace has been properly provisioned with NVFLARE certificates
 - The `FL_PROVISIONED_DIR` path is correctly resolved (check Makefile output)
 
-### Troubleshooting
+## AWS Deployment
 
-#### Error building images
+For production deployments on AWS, see the [AWS Deployment Guide](deploy/README.md). This covers provisioning
+infrastructure with OpenTofu (Terraform), configuring AWS services, and deploying the platform at scale.
 
-```console
-make -C trust build
-make[1]: Entering directory '/data/github/flip/trust'
-BASE_IMAGES_DOWNLOAD_DIR_TRUST1=./data/trust-1 OMOP_DB_PORT=5434 XNAT_PORT=8104 DATA_ACCESS_API_PORT=8010 TRUST_DEBUG_PORT=5682 IMAGING_DEBUG_PORT=5681 DATA_ACCESS_DEBUG_PORT=5680 TRUST_NETWORK_NAME=deploy_trust-network-1 docker compose -f compose_trust.development.yml build
-validating /data/github/flip/trust/compose_trust.development.yml: services.fl-client-net-1 Additional property gpus is not allowed
-make[1]: *** [Makefile:53: build] Error 15
-make[1]: Leaving directory '/data/github/flip/trust'
-make: *** [Makefile:56: build] Error 2
-```
+## Project Structure
 
-The error `Additional property gpus is not allowed` may arise from the version of docker-compose being too low. The argument should be supported for versions >=19.03, but updating docker compose from 2.29.7 to 2.40.3 seemed to fix the error. If your `apt` does not provide the latest version you may need to remove out-of-date Docker repos from `/etc/apt/source.list.d` and reinstall.
+The repository is organised as follows:
 
-## How to add a new service
-
-Add a new service definition to the services section in the docker compose files. For example:
-
-```yml
-# deploy/compose.development.yml
-services:
-  # Existing flip-ui service...
-
-  # New service example
-  new:
-    build:
-      context: ../path/to/backend
-      dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
-    volumes:
-      - ../path/to/backend:/app
-    depends_on:
-      - database
-
-...
-
-```
-
-Optionally update the Makefile to include commands for the new service:
-
-```Makefile
-# Makefile
-# Start only the new service
-new:
-    docker compose -f deploy/compose.development.yml up -d new
-```
-
-## Python best practices
-
-### Environment
-
-- Use [UV](https://docs.astral.sh/uv) for python environment management. The UV configuration file is located at the
-  `pyproject.toml` files in the root directory of each service. It contains the configuration for building the virtual
-  environment, packaging the code, running the tests, and linting the code.
-- The `.python-version` file is used to define the python version for the virtual environment. It is used by UV to
-  create the virtual environment with the specified python version. The `.python-version` file MUST be present in the
-  root directory of each service. The python version should be set to the same version as the one used in the Dockerfile.
-- The `pyproject.toml` file is used to define the dependencies for the service. It is the source of truth for the
-  dependencies and should be used to install the dependencies in the virtual environment. The `pyproject.toml` file
-  MUST be present in the root directory of each service. The dependencies should be defined in the
-  `[tool.poetry.dependencies]` section of the `pyproject.toml` file. The dependencies should be installed using the
-  `uv sync` command. To add a new dependency, use the `uv add < package name >` command. This will add the dependency
-  to the `pyproject.toml` file and install it in the virtual environment. You can also use the
-  `uv add < package name > --dev` command to add a development dependency or the
-  `uv add < package name > --group < group name >` command to add a dependency to a specific group.
-- Environment variables are defined in the [`.env.development`](.env.development) file. This file is used to define the
-  environment variables for the development environment. It contains dummy credentials and other environment variables
-  to be used in the development environment. On production, these variables should be set in the production environment
-  by following the best practices on safety and security. The `.env.development` file MUST NOT be used in production.
-  **The `.env.development` file centrally defines the environment variables for all services.**
-- Docker file should get their environment variables from the `.env.development` file through the docker compose file.
-  This is done by using the `env_file` directive in the docker compose file. This way, the environment variables are
-  available in the Docker container and can be used by the services. **Avoid using hardcoded values in the Dockerfile,
-  the code, or the docker compose file.**
-- **FL-Specific Environment Variables**: Federated learning services use specific environment variables:
-  - `FL_PROVISIONED_DIR`: Path to NVFLARE provisioned workspace (automatically resolved to absolute path by Makefile)
-  - `FL_API_PORT`: Port for FL API services (default: 8000)
-
-### Code Style
-
-- Use [ruff](https://docs.astral.sh/ruff) for linting and formatting. The ruff configuration file is located at the
-  `pyproject.toml` files in the root directory of each service.
-- Documentation follows the [Google style guide](https://google.github.io/styleguide/pyguide.html) for Python. The
-  documentation generator is [Sphinx](https://www.sphinx-doc.org/en/master/).
-
-We use these custom ruff rules to enforce the code style:
-
-```toml
-[tool.ruff]
-line-length = 120
-
-[tool.ruff.lint]
-preview = true
-select = ['I', 'F', 'E', 'W', 'PT']
-```
-
-Add this to the your `pyproject.toml` file to enable the custom ruff rules.
-
-### Testing
-
-- Use [pytest](https://docs.astral.sh/pytest) for testing. The pytest configurations are located at the `pyproject.toml`.
-  The configuration  contains the configuration for running the tests, including the test discovery rules, test paths,
-  and test dependencies.
-- Coverage is measured using [coverage.py](https://coverage.readthedocs.io/en/7.8.0/). The coverage configuration is
-  located at the `pyproject.toml` file. The configuration contains the configuration for measuring the coverage,
-  including the coverage report format, coverage report paths, and coverage report dependencies. We do not use coverage
-  for the PR checks, but please make sure to run it locally before pushing your changes and try to keep the coverage
-  as high as possible.
-- For testing APIs and other integration tests, database assets, and other resources, we use
-  [pytest-fixture](https://docs.pytest.org/en/7.1.x/how-to/fixtures.html). For fixtures that are reused across multiple
-  test files, we use the `conftest.py` file to import fixtures defined in files in the `tests/fixtures` directory.
-  In some cases we use [`factory_boy`](https://factoryboy.readthedocs.io/en/latest/) to create test data. This is
-  useful for creating random test data following the same structure as the data used in the production environment.
-
-Add these to the `pyproject.toml` file to enable the custom pytest rules:
-
-```toml
-[tool.coverage.report]
-exclude_lines = ["if __name__ == .__main__.:"]
-omit = ["*.venv/*", "*/tests/*", "*/__init__.py"]
-
-[tool.pytest.ini_options]
-python_files = ["test_*.py", "*_test.py"]
-addopts = []
-filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
-
-[tool.pytest.ini_options_debug]
-python_files = ["test_*.py", "*_test.py"]
-filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
-```
-
-We use Makefiles to run all the services, docker building, and testing. There is no command to run all from the top
-project, but you can run the tests for each service going to the service directory and running `make test`.
-A `Makefile` shall exist in each service and define the commands to run the tests.
-For running python tests, the recommended command is:
-
-```bash
-uv run pytest --tb=short --disable-warnings --cov=src/ --cov-report=html --cov-report=term-missing
-```
-
-This will run the tests and generate a coverage report in HTML format. The coverage report will be generated in the
-`htmlcov` directory.
-We typically run linting and formatting before running the tests. This is done by running the following command:
-
-```bash
-uv run ruff check . --fix
-uv run mypy .
-uv run pytest --tb=short --disable-warnings --cov=src/ --cov-report=html --cov-report=term-missing
-```
-
-The `make test` command will run all these commands in order.
-
-#### Automatically creating projects for manually testing the system
-
-To automatically create projects for manually testing the system, you can use the `make -C flip-api create_testing_projects`
-command. This command will create projects in different stages (e.g. `unstaged`, `staged`, `approved`).
-To clean the environment, you can use the `make -C flip-api delete_testing_projects` command.
-These are also available as vscode tasks. To run them, you click on the `Terminal > Run Task...` in VSCode top menu and
-select `Create testing projects` or `Delete testing projects`, or you can use the command palette (Ctrl+Shift+P) and type
-`Tasks: Run Task` to find and run the tasks.
-
-### Project Structure
-
-The project structure is as follows:
-
-- `deploy`: Contains the Docker deployment files
+- `deploy`: Contains the Docker deployment and infrastructure files
 - `docs`: Contains the documentation files
 - `flip-api`: Contains the central hub API service
 - `flip-ui`: Contains the UI service
@@ -401,70 +223,15 @@ The project structure is as follows:
   - `trust-api`: Contains the trust API service
   - `xnat`: Contains a mocked [XNAT](https://www.xnat.org/) service
 
-### PR creation
+## Contributing
 
-When creating a PR, please make sure to run the tests and linting before pushing your changes.
-All PRs should be associated with an issue. The issue should be created before creating the PR. The PR should be linked
-to the issue.
+We welcome contributions from the community. See [CONTRIBUTING.md](CONTRIBUTING.md) for guidance on setting up a
+development environment, adding new services, coding standards, testing practices, and the pull request process.
 
-#### Run CI pipeline locally
+## Further Resources
 
-If your CI jobs are failing and you want to debug them locally, you can run the CI pipeline locally using the
-`make ci` command. This will run all the jobs defined in the `.github/workflows/` directory by running
-[`act`](https://github.com/nektos/act). This will only work if you have the `act` tool installed.
-To install `act`, I recommend using [Homebrew](https://brew.sh/):
-
-```bash
-brew install act
-```
-
-#### GitHub Secrets for CI
-
-The CI/CD pipeline requires certain GitHub repository secrets to be configured for running tests. These secrets provide
-sensitive values like encryption keys and API keys. See [.github/SECRETS.md](.github/SECRETS.md) for:
-
-- Complete list of required secrets
-- How to generate and configure them
-- Security best practices
-
-For local development, copy `.env.development.example` to `.env.development` and update the placeholder values.
-
-## Setting up the AWS configuration
-
-Some services (e.g. `flip-api`) interact with AWS services (e.g. via `boto3`). You'll need an AWS account in the AI
-Centre, talk to Lawrence to create one for you. Once you have AWS access, you need to configure your profile, see the
-following instructions page:
-<https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html#cli-configure-sso-configure>.
-
-For devices without access to a browser (e.g. when using via SSH), you can configure it using the device authorization
-flow (`--use-device-code` option):
-
-```bash
-aws configure sso --use-device-code
-```
-
-The new configuration should show in the `~/.aws/config` file.
-
-To log in to AWS in a new Terminal, you can run the following command:
-
-```bash
-aws sso login
-```
-
-If you want to avoid providing the profile name every time you run an AWS command, you can set the `AWS_PROFILE`
-environment variable to the profile name you want to use.
-
-```bash
-export AWS_PROFILE=<your-profile-name>
-```
-
-Granted (<https://granted.dev/>) is a tool that can facilitate the process of logging in to AWS accounts and switching
-between profiles:
-
-```bash
-assume <your-profile-name>
-```
-
-## Debugging across services
-
-Follow the [debugging guide](./DEBUG.md).
+- [Full Documentation](https://londonaicentreflip.readthedocs.io/en/latest/)
+- [AWS Deployment Guide](deploy/README.md)
+- [Debugging Guide](DEBUG.md)
+- [Security & Secrets](scripts/README.md)
+- [London AI Centre](https://www.aicentre.co.uk/)

@@ -61,6 +61,7 @@ services:
       AES_KEY_BASE64: ${AES_KEY_BASE64}
       DEBUG_PORT: ${IMAGING_DEBUG_PORT_TRUST_1}
       DEBUG: ${DEBUG}
+      ENV: production
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
     # NOTE the volume BASE_IMAGES_DOWNLOAD_DIR is mounted to share images downloaded from XNAT with FL clients
     volumes:
@@ -78,6 +79,7 @@ services:
       AES_KEY_BASE64: ${AES_KEY_BASE64}
       DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT_TRUST_1}
       DEBUG: ${DEBUG}
+      ENV: production
 
   nginx-tls:
     build:
@@ -103,6 +105,7 @@ services:
       DEBUG: ${DEBUG}
       PRIVATE_API_KEY_HEADER: ${PRIVATE_API_KEY_HEADER}
       PRIVATE_API_KEY: ${PRIVATE_API_KEY}
+      ENV: production
 
 networks:
   default:
