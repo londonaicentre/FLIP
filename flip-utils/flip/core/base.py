@@ -118,11 +118,11 @@ class FLIPBase(ABC):
         Sends a metric value to the Central Hub.
 
         Args:
-            client_name (str): The client name sending the metric
-            model_id (str): The model UUID
-            label (str): The label of the metric
-            value (float): The value of the metric
-            round (int): The local round number
+            client_name (str): The name of the client sending the metric.
+            model_id (str): The ID of the model.
+            label (str): The label of the metric.
+            value (float): The value of the metric.
+            round (int): The round number.
         """
 
     @abstractmethod

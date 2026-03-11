@@ -603,7 +603,6 @@ wheels = [
 
 [[package]]
 name = "flip-utils"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "nvflare" },

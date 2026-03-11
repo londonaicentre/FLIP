@@ -476,7 +476,7 @@ class FLIPStandardDev(FLIPBase):
     def update_status(self, model_id: str, new_model_status: ModelStatus) -> None:
         """Log only in dev mode - no actual status update."""
         self.logger.info(
-            "[DEV] update_status is not supported in LOCAL_DEV mode."
+            "[DEV] update_status is not supported in LOCAL_DEV mode. "
             f"Details of the function call: updating model status to {new_model_status}."
         )
 
@@ -484,15 +484,15 @@ class FLIPStandardDev(FLIPBase):
     def send_metrics(self, client_name: str, model_id: str, label: str, value: float, round: int) -> None:
         """Log only in dev mode - no actual metrics sending."""
         self.logger.info(
-            "[DEV] send_metrics is not supported in LOCAL_DEV mode."
-            f"Details of the function call: sending metrics with label {label} and value {value} for {client_name}."
+            "[DEV] send_metrics is not supported in LOCAL_DEV mode. "
+            f"Details of the function call: sending metrics with {label=}, {value=}, {round=} for {client_name}."
         )
 
     @override
     def send_handled_exception(self, formatted_exception: str, client_name: str, model_id: str) -> None:
         """Log only in dev mode - no actual exception sending."""
         self.logger.info(
-            "[DEV] send_handled_exception is not supported in LOCAL_DEV mode."
+            "[DEV] send_handled_exception is not supported in LOCAL_DEV mode. "
             f"Details of the function call: sending {formatted_exception} for {client_name}."
         )
 
@@ -501,7 +501,7 @@ class FLIPStandardDev(FLIPBase):
         """Log only in dev mode - no actual upload."""
         # NOTE FlipConstants.UPLOADED_FEDERATED_DATA_BUCKET is not available in dev mode, so we can't log it here.
         self.logger.info(
-            "[DEV] upload_results_to_s3 is not supported in LOCAL_DEV mode."
+            "[DEV] upload_results_to_s3 is not supported in LOCAL_DEV mode. "
             f"Details of the function call: uploading results from {results_folder} for model {model_id}."
         )
 
