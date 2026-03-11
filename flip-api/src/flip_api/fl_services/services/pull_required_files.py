@@ -25,7 +25,7 @@ JOB_TYPES_REQUIRED_FILES_PATH = Path(__file__).parent.parent.parent / "assets" /
 # TODO Review: This is disruptive for development if the file on the s3 bucket is not in sync with the current codebase.
 def pull_required_files_json_to_assets():
     """
-    Pulls job_types_and_required_files from S3 and saves it to the local assets folder.
+    Pulls required_files.json from S3 and saves it to the local assets folder.
     """
     s3 = S3Client()
     bucket_path = f"{get_settings().FL_APP_BASE_BUCKET}/src/required_files.json"
@@ -37,7 +37,7 @@ def pull_required_files_json_to_assets():
         json.loads(content)
         with open(JOB_TYPES_REQUIRED_FILES_PATH, "wb") as f:
             f.write(content)
-        logger.info(f"Downloaded job_types_and_required_files to {JOB_TYPES_REQUIRED_FILES_PATH}")
+        logger.info(f"Downloaded required_files.json to {JOB_TYPES_REQUIRED_FILES_PATH}")
     except Exception as e:
         logger.error(f"Failed to download {JOB_TYPES_REQUIRED_FILES_FILE}: {e}")
         # Fallback to default JSON
@@ -49,4 +49,4 @@ def pull_required_files_json_to_assets():
             fallback = {}
         with open(JOB_TYPES_REQUIRED_FILES_PATH, "w") as f:
             json.dump(fallback, f, indent=4)
-        logger.info(f"Wrote fallback job_types_and_required_files to {JOB_TYPES_REQUIRED_FILES_PATH}")
+        logger.info(f"Wrote fallback required_files.json to {JOB_TYPES_REQUIRED_FILES_PATH}")
