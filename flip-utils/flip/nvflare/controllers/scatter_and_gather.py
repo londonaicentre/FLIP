@@ -25,7 +25,7 @@ from nvflare.app_common.abstract.learnable_persistor import LearnablePersistor
 from nvflare.app_common.abstract.shareable_generator import ShareableGenerator
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
-from nvflare.app_opt.pt.PTFedOptModelShareableGenerator import PTFedOptModelShareableGenerator
+from nvflare.app_opt.pt.fedopt import PTFedOptModelShareableGenerator
 from nvflare.security.logging import secure_format_exception
 from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
 
