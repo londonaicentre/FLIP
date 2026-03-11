@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-import os
+from pathlib import Path
 from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
@@ -186,8 +186,8 @@ class TestPersistToS3AndCleanup:
         component.cleanup(fl_ctx)
 
         expected_calls = [
-            call(os.path.join("/mock/workspace", "save", model_id)),
-            call(os.path.join("/mock/workspace", "transfer", model_id)),
+            call(Path("/mock/workspace") / "save" / model_id),
+            call(Path("/mock/workspace") / "transfer" / model_id),
         ]
 
         flip.cleanup.assert_has_calls(expected_calls, any_order=False)
