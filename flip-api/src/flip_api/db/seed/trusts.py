@@ -17,6 +17,7 @@ from flip_api.config import get_settings
 from flip_api.db.database import engine
 from flip_api.db.models.main_models import Trust
 from flip_api.utils.get_secrets import get_secret
+from flip_api.utils.logger import logger
 
 
 def seed_trusts(session: Session) -> list[dict[str, str]]:
@@ -48,7 +49,7 @@ def seed_trusts(session: Session) -> list[dict[str, str]]:
                 session.add(new_trust)
         except Exception as e:
             # If the endpoint is not found in secrets, skip this trust
-            print(f"Endpoint for {trust_name} not found in secrets. Skipping. Error: {e}")
+            logger.info(f"Endpoint for {trust_name} not found in secrets. Skipping. Error: {e}")
             continue
     session.commit()
 
@@ -60,6 +61,6 @@ def seed_trusts(session: Session) -> list[dict[str, str]]:
 if __name__ == "__main__":
     with Session(engine) as session:
         seed_trusts(session)
-        print("Trusts seeded successfully.")
+        logger.info("Trusts seeded successfully.")
         session.commit()
         session.close()
