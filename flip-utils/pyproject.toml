@@ -48,6 +48,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
 ]
 dependencies = [
+    "boto3>=1.38.31",
     "nvflare==2.7.1",
     "pandas>=2.3.0",
     "pydantic>=2.11.7",
@@ -64,7 +65,6 @@ Issues = "https://github.com/londonaicentre/flip-fl-base/issues"
 [project.optional-dependencies]
 # Full dependencies for running FL jobs (includes ML frameworks)
 full = [
-    "boto3>=1.38.31",
     "einops==0.8.1",
     "gdown==5.2.0",
     "lpips==0.1.4",

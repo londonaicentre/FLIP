@@ -11,6 +11,7 @@
 #
 
 import os
+from pathlib import Path
 import shutil
 import traceback
 
@@ -163,4 +164,4 @@ class PersistToS3AndCleanup(FLComponent):
         for path in [save_dir, transfer_job_dir]:
             if not os.path.isdir(path):
                 continue
-            self.flip.cleanup(path)
+            self.flip.cleanup(Path(path))
