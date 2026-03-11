@@ -1,0 +1,6 @@
+{
+  "standard": [
+    "client_app.py",
+    "models.py"
+  ]
+}

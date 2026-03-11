@@ -292,7 +292,16 @@ def submit_run(app_folder: str) -> str:
 
     global _submission_in_progress
 
-    command = ["uvx", "flwr", "run", ".", "local", "--format", "json"]
+    # Override app config with FLIP parameters and user-provided overrides before submission
+    # --run-config </path/to/config.toml> allows us to specify a config file that can override the defaults
+    config_toml_path = job_dir / "config.toml"
+
+    if config_toml_path.is_file():
+        logger.info("Using config.toml overrides from %s for job submission.", job_dir)
+        command = ["uvx", "flwr", "run", ".", "local", "--format", "json", "--run-config", str(config_toml_path)]
+    else:
+        logger.warning("No config.toml found in %s. Using default configuration.", job_dir)
+        command = ["uvx", "flwr", "run", ".", "local", "--format", "json"]
 
     with _state_lock:
         if _submission_in_progress:
@@ -312,6 +321,7 @@ def submit_run(app_folder: str) -> str:
             ) from err
 
         response_payload = _parse_flwr_payload(result, "submit")
+        logger.info("Raw Flower submit response payload: %s", response_payload)
         resp = FlowerSubmitRunCommandResponse.model_validate(response_payload)
 
         logger.info(
@@ -351,7 +361,6 @@ def upload_app(model_id: str, body: UploadAppRequest) -> dict[str, str]:
     Args:
         model_id (str): The ID of the model to associate the application with.
         body (UploadAppRequest): The request body containing the application details.
-        session (FLIP_Session): The NVFlare session instance.
 
     Returns:
         dict[str, str]: A dictionary containing the status of the upload.
