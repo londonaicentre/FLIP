@@ -23,7 +23,8 @@ def fake_settings(tmp_path):
     """Fake settings with a temporary admin directory."""
 
     class Settings:
-        USERNAME = "admin"
+        USERNAME = "admin@nvidia.com"
+        SECURE_MODE = True
         LOG_LEVEL = "DEBUG"
         FL_ADMIN_DIRECTORY = str(tmp_path / "admin")
         JOB_RESOURCE_SPEC_NUM_GPUS = 2
