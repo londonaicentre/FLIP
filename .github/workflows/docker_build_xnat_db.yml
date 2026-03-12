@@ -17,7 +17,8 @@ on:
   push:
     branches: [main, develop]
     paths:
-      - 'trust/trust-api/xnat/**'
+      - "trust/xnat/**"
+      - ".github/workflows/docker_build_xnat_db.yml"
 
 jobs:
   build-and-push:

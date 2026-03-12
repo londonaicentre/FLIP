@@ -10,19 +10,16 @@
 # limitations under the License.
 #
 
-name: FLIP Trust API CI
+name: Trust - Trust API CI
 
 on:
   push:
     branches: [main, develop]
     paths:
       - "trust/trust-api/**"
-      - ".github/workflows/trust_api.yml"
+      - ".github/workflows/test_trust_trust_api.yml"
   pull_request:
     branches: [main, develop]
-    paths:
-      - "trust/trust-api/**"
-      - ".github/workflows/trust_api.yml"
 
 jobs:
   trust-api:
@@ -47,7 +44,7 @@ jobs:
         run: pip install uv
 
       - name: Setup environment file
-        run: |
+        run: | # pragma: allowlist secret
           cp ../../.env.development.example ../../.env.development
           # Override sensitive values with GitHub secrets
           echo "PRIVATE_API_KEY=${{ secrets.PRIVATE_API_KEY || 'test-private-api-key-for-ci' }}" >> ../../.env.development

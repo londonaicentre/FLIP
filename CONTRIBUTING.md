@@ -43,7 +43,7 @@ FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in coll
 The project spans two repositories:
 
 | Repository | Description |
-|---|---|
+| --- | --- |
 | [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo: Central Hub API, Trust APIs, UI, and Docker deployment |
 | [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | NVIDIA FLARE federated learning base application library, workflows, and tutorials |
 | [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower federated learning base application library, workflows, and tutorials |
@@ -64,6 +64,121 @@ FLIP/
     ├── trust-api/          # Trust API
     └── xnat/               # Mocked XNAT service
 ```
+
+## Setting up the development environment
+
+### Prerequisites
+
+In addition to the [deployment prerequisites](README.md#prerequisites), you'll need the following for development:
+
+- [Python 3.12+](https://www.python.org/downloads/)
+- [UV](https://docs.astral.sh/uv) - Python environment management tool (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- [act](https://github.com/nektos/act) - Run GitHub Actions locally (install via [Homebrew](https://brew.sh/): `brew install act`)
+
+### Recommended IDE Setup
+
+The file [`recommended_extensions.vsix`](recommended_extensions.vsix) contains a bundle of recommended VS Code
+extensions for FLIP development. Install with:
+
+```bash
+code --install-extension recommended_extensions.vsix
+```
+
+Key extensions include:
+
+- `ms-vscode-remote.vscode-remote-extensionpack` — connect to Docker containers and remote servers via SSH for in-container development, avoiding the need to rebuild images on every change
+- Python linting/formatting (ruff, mypy)
+- Docker tooling
+
+Other useful tools:
+
+- [Postman](https://www.postman.com/) — API testing
+- [Homebrew](https://brew.sh/) — package manager for macOS/Linux
+
+### Python environment management
+
+FLIP uses [UV](https://docs.astral.sh/uv) for all Python services. Each service has a `pyproject.toml` and a
+`.python-version` file in its root directory.
+
+To install dependencies for a service:
+
+```bash
+uv sync
+```
+
+To add a new dependency:
+
+```bash
+uv add <package-name>            # runtime dependency
+uv add <package-name> --dev      # development-only dependency
+uv add <package-name> --group <group>  # dependency in a named group
+```
+
+The `pyproject.toml` file is the source of truth for dependencies. The Python version in `.python-version` must match
+the version used in the service's Dockerfile.
+
+### Environment variables
+
+Environment variables for local development are defined in [`.env.development.example`](.env.development.example). This file uses
+dummy/safe credentials for local use and **must not be used in production**. It centrally configures all services.
+
+To get started, copy the example file:
+
+```bash
+cp .env.development.example .env.development
+```
+
+Then update any placeholder values. Docker services receive these variables via the `env_file` directive in the
+compose file — avoid hardcoding values in Dockerfiles or compose files directly.
+
+**FL-specific environment variables:**
+
+- `FL_PROVISIONED_DIR` — path to the NVFLARE provisioned workspace. The Makefile automatically converts this to an
+  absolute path (Docker requires absolute paths for volume mounts).
+- `FL_API_PORT` — port for FL API services (default: `8000`).
+
+### Setting up AWS access
+
+Some services (e.g. `flip-api`) interact with AWS via `boto3`. You will need AWS credentials configured locally.
+
+Configure AWS SSO:
+
+```bash
+aws configure sso
+```
+
+For headless/SSH environments, use the device authorization flow:
+
+```bash
+aws configure sso --use-device-code
+```
+
+Log in to AWS in a new terminal session:
+
+```bash
+aws sso login --profile <your-profile-name>
+```
+
+To avoid specifying the profile name on every command:
+
+```bash
+export AWS_PROFILE=<your-profile-name>
+```
+
+### GitHub Secrets for CI
+
+The CI/CD pipeline requires GitHub repository secrets to run tests and deployments. See
+[.github/SECRETS.md](.github/SECRETS.md) for the complete list, how to generate them, and security best practices.
+
+### Running the CI pipeline locally
+
+To debug failing CI jobs without pushing, use `act` (requires Docker):
+
+```bash
+make ci
+```
+
+This runs all jobs defined in `.github/workflows/` locally.
 
 ## The contribution process
 
@@ -161,6 +276,19 @@ Integration tests for the FL base application are also available (see the [flip-
 
 All new functionality should be accompanied by an appropriate set of tests. Existing tests throughout the services can serve as examples.
 
+Add these sections to the service's `pyproject.toml` to configure pytest and coverage:
+
+```toml
+[tool.coverage.report]
+exclude_lines = ["if __name__ == .__main__.:"]
+omit = ["*.venv/*", "*/tests/*", "*/__init__.py"]
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py", "*_test.py"]
+addopts = []
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
+```
+
 #### Signing your work
 
 FLIP enforces the [Developer Certificate of Origin](https://developercertificate.org/) (DCO) on all pull requests. All commit messages should contain the `Signed-off-by` line with an email address.
@@ -199,18 +327,60 @@ The new branch should be based on the latest `develop` branch.
 1. Reviewer and contributor may have discussions back and forth until all comments are addressed.
 1. Wait for the pull request to be merged.
 
-### Environment and dependency management
+## Adding a new service
 
-FLIP uses [UV](https://docs.astral.sh/uv) for Python environment management. Each service has its own `pyproject.toml` and `.python-version` file.
+To extend the platform with a new service, add a definition to the appropriate Docker Compose file:
 
-Key points:
+```yml
+# deploy/compose.development.yml
+services:
+  new-service:
+    build:
+      context: ../path/to/service
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ../path/to/service:/app
+    depends_on:
+      - flip-db
+    env_file:
+      - ../.env.development
+```
 
-- The `pyproject.toml` is the source of truth for dependencies.
-- Use `uv sync` to install dependencies in a virtual environment.
-- Use `uv add <package>` to add a new dependency.
-- Use `uv add <package> --dev` for development dependencies or `uv add <package> --group <group>` for group-specific dependencies.
-- The `.python-version` file defines the Python version and should match the version used in the service's Dockerfile.
+Create a directory following the standard service layout:
 
-Environment variables are defined centrally in the [`.env.development`](.env.development) file for the development environment. Docker services receive these variables via `env_file` in the Docker Compose file. Avoid hardcoding values in Dockerfiles, source code, or compose files.
+```
+new-service/
+├── src/
+│   └── new_service/
+├── tests/
+├── Dockerfile
+├── Makefile
+├── pyproject.toml
+└── .python-version
+```
 
-[back to top](#the-contribution-process)
+Optionally add Makefile shortcuts at the repository root:
+
+```makefile
+new-service:
+    docker compose -f deploy/compose.development.yml up -d new-service
+```
+
+## Creating test data for manual testing
+
+To create projects in various pipeline stages (`unstaged`, `staged`, `approved`) for manual testing:
+
+```bash
+make -C flip-api create_testing_projects
+```
+
+To clean up the test data:
+
+```bash
+make -C flip-api delete_testing_projects
+```
+
+These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
+`Delete testing projects`.

@@ -13,13 +13,19 @@
 #
 
 
-# Receive the DEBUG from the environment variable
+# Receive the DEBUG and ENV from the environment variable
 DEBUG=${DEBUG:-false}
+ENV=${ENV:-development}
 
 echo "🚀 Starting flip-api entrypoint script..."
+echo "🌍 Environment: $ENV"
 echo "🐛 Debug mode: $DEBUG"
 
-fast_api_cmd="-m fastapi dev ./src/flip_api/main.py --host 0.0.0.0 --port 8000 --reload"
+if [ "$ENV" = "production" ] || [ "$ENV" = "staging" ]; then
+    fast_api_cmd="-m fastapi run ./src/flip_api/main.py --host 0.0.0.0 --port 8000"
+else
+    fast_api_cmd="-m fastapi dev ./src/flip_api/main.py --host 0.0.0.0 --port 8000 --reload"
+fi
 debug_cmd="-Xfrozen_modules=off -m debugpy --listen 0.0.0.0:5678 --wait-for-client"
 seed_cmd="uv run python src/flip_api/db/seed/seed_essential_data.py"
 

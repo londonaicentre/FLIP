@@ -46,9 +46,23 @@ def get_secrets(secret_name: str = "", region_name: str = "") -> dict:
         # https://docs.aws.amazon.com/secretsmanager/latest/apireference/API_GetSecretValue.html
         raise e
 
-    secrets = get_secret_value_response["SecretString"]
-    # Cast json string to dict
-    secrets = json.loads(secrets)
+    secret_string = get_secret_value_response.get("SecretString")
+
+    if secret_string is None:
+        raise ValueError(
+            f"Secret '{secret_name}' does not contain 'SecretString'. "
+            'Expected a JSON object string, e.g. \'{"aes_key":"..."}\'.'
+        )
+
+    # Cast json string to dict and validate structure.
+    try:
+        secrets = json.loads(secret_string)
+    except json.JSONDecodeError as e:
+        preview = secret_string[:200]
+        raise ValueError(f"Secret '{secret_name}' has invalid JSON in SecretString: {e}. Preview: {preview!r}") from e
+
+    if not isinstance(secrets, dict):
+        raise ValueError(f"Secret '{secret_name}' must be a JSON object, got {type(secrets).__name__}.")
 
     return secrets
 

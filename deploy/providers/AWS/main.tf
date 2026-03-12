@@ -173,9 +173,11 @@ module "flip_api_secret" {
   recovery_window_in_days = 30
 
   secret_string = jsonencode({
-    aes_key          = var.AES_KEY_BASE64
-    Trust_1-endpoint = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
-    Trust_2-endpoint = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
+    aes_key               = var.AES_KEY_BASE64
+    trust_endpoints       = {
+      "Trust_1" = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}",
+      "Trust_2" = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
+    }
   })
 }
 

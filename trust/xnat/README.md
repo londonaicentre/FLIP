@@ -13,8 +13,6 @@
 
 # XNAT
 
-## Overview
-
 This is a very simple development environment to enable new users of XNAT to interact with the tool in a local environment, using Orthanc as as the mock PACS.
 
 ## Setup
@@ -36,7 +34,7 @@ make xnat-plugins-download
 The following table lists the compatible versions of the plugins for the XNAT version `1.9.3` used in this environment.
 
 | Plugin                          | Version for XNAT 1.9.3  |
-|---------------------------------|-------------------------|
+| --------------------------------- | ------------------------- |
 | Container Service Plugin        | 3.7.3                   |
 | Batch Launch Plugin             | 0.9.0                   |
 | DICOM Query-Retrieve Plugin     | 2.2.0                   |
@@ -84,7 +82,7 @@ This can also be done manually from XNAT:
 
 Container service plugin 3.4.3 is incompatible with Docker version 25 and above. This is a known issue (<https://groups.google.com/g/xnat_discussion/c/2kh3J-p_8bE>). See plugin release notes for 3.5.0 <https://bitbucket.org/xnatdev/container-service/src/master/CHANGELOG.md>. I was running Docker version 28.0.1, build 068a01e.
 
-At the time this was fixed by installing newer version of the plugin (3.6.2). This meant installing a newer XNAT (1.9.1.1), after checking the compatibility matrix <https://wiki.xnat.org/container-service/container-service-compatibility-matrix#ContainerServiceCompatibilityMatrix-ContainerServiceCompatibilitywithXNAT>
+At the time this was fixed by installing newer version of the plugin (3.6.2). This meant installing a newer XNAT (1.9.3), after checking the compatibility matrix <https://wiki.xnat.org/container-service/container-service-compatibility-matrix#ContainerServiceCompatibilityMatrix-ContainerServiceCompatibilitywithXNAT>
 
 Also installed newer Batch Launch Plugin and DQR Plugin due to compatibility matrices.
 

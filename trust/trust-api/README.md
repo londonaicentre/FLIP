@@ -18,43 +18,55 @@
 [![trust-api](https://ghcr-badge.egpl.dev/londonaicentre/trust-api/latest_tag?trim=major&label=trust-api)](https://github.com/londonaicentre/FLIP/pkgs/container/trust-api)
 [![Coverage](https://codecov.io/gh/londonaicentre/FLIP/branch/main/graph/badge.svg?flag=trust-api)](https://codecov.io/gh/londonaicentre/FLIP)
 
-## Testing
+The **trust-api** is the gateway service deployed at each participating healthcare Trust site. It receives requests
+from the FLIP Central Hub and coordinates local operations — cohort queries, model training, and imaging project
+management — without exposing patient data externally.
 
-Example blocks for testing:
+## Role in the FLIP Platform
 
-Post cohort query
+The trust-api acts as the local orchestrator at each Trust:
 
-```json
-{
-  "project_id": "my_project",
-  "query_id": "1",
-  "query_name": "my_query",
-  "query": "SELECT * FROM omop.radiology_occurrence",
-  "trust_id": "mock"
-}
+1. **Cohort queries** — receives OMOP SQL queries from the Central Hub, delegates to [data-access-api](../data-access-api/), and returns aggregated statistics
+2. **Imaging projects** — creates projects in XNAT via [imaging-api](../imaging-api/) in response to approved FL studies
+3. **Audit** — logs all operations locally for governance purposes
+
+The trust-api is only called by the [flip-api](../../flip-api/) (Central Hub). It does not expose an external user interface.
+
+## Deployment
+
+The trust-api is deployed as part of the Trust-side stack. In the local test environment it starts as part of:
+
+```bash
+make up-trusts   # trust services for both mock Trusts
 ```
 
-Create imaging project from central hub project
+or the full stack:
 
-```json
-{
-  "project_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "trust_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "project_name": "my_project",
-  "query": "SELECT * FROM omop.radiology_occurrence",
-  "users": [
-    {
-      "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-      "email": "user@company.com",
-      "is_disabled": false
-    }
-  ]
-}
+```bash
+make up
 ```
 
-Get imaging project status
+API documentation (Swagger UI) is available at the port defined by `TRUST_API_PORT` in
+[`.env.development.example`](../../.env.development.example):
 
 ```
-project: test
-query: SELECT * FROM omop.radiology_occurrence
+http://localhost:<TRUST_API_PORT>/docs
 ```
+
+## Configuration
+
+Key environment variables (set in [`.env.development.example`](../../.env.development.example)):
+
+| Variable | Description |
+| --- | --- |
+| `TRUST_ID` | Identifier for this Trust instance |
+| `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
+| `IMAGING_API_URL` | Internal URL of the imaging-api |
+| `FLIP_API_URL` | URL of the Central Hub API (for callbacks) |
+| `ENCRYPTION_KEY` | Shared key for decrypting project identifiers |
+
+## Further Reading
+
+- [Full FLIP Documentation](https://londonaicentreflip.readthedocs.io/en/latest/)
+- [Trust deployment overview](../README.md)
+- [Contributing & Development Guide](CONTRIBUTING.md)
