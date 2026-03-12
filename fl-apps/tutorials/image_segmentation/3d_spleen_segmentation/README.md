@@ -63,7 +63,7 @@ tutorials/data/spleen/
 └── dataframe.csv
 ```
 
-Use a CSV with an `accession_id` column (example: `.test_data/spleen/sample_get_dataframe_response.csv`).
+Use a CSV with an `accession_id` column (see example in [test dataset spleen/sample_get_dataframe_response.csv](https://huggingface.co/datasets/aicentreflip/flip-fl-base-test-data/blob/main/flip-fl-base-test-data/spleen/sample_get_dataframe_response.csv)).
 
 ## App configuration
 

@@ -96,6 +96,7 @@ exclude = [
 
 [dependency-groups]
 dev = [
+    "huggingface-hub>=1.6.0",
     "matplotlib>=3.10.7",
     "mypy>=1.18.2",
     "pyqt5>=5.15.11",
