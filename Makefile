@@ -89,6 +89,15 @@ DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_
 SHOW_LOGS_CENTRAL_HUB=docker logs -f flip-api --tail 100 --timestamps --follow
 GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
+# NOTE DOCKER_REGISTRY is set to empty when we use local FL images during development (e.g. flare-fl-server:dev). 
+# In that case, '--pull always' will error because docker won't be able to find the manifest for the dev image online,
+# so we need to remove the --pull always flag.
+ifneq ($(strip $(DOCKER_REGISTRY)),)
+PULL_ALWAYS_FLAG=--pull always
+else
+PULL_ALWAYS_FLAG=
+endif
+
 # Build the Docker images
 build:
 	@echo "🛠️ Building Docker images..."
@@ -104,7 +113,7 @@ up: check-aws-access create-networks
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d
+	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
 	@echo "🚢 Starting trust services..."
 	$(MAKE) -C trust up
 	@echo "🚢 Starting XNAT services..."
@@ -115,7 +124,7 @@ up: check-aws-access create-networks
 up-no-trust: create-networks
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d --pull always
+	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
 
 up-trusts: create-networks
 	@echo "🚢 Starting Trust services..."
