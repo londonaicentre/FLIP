@@ -18,6 +18,7 @@ from nvflare.apis.dxo import DXO, DataKind, from_shareable
 from nvflare.app_common.abstract.aggregator import Aggregator
 from nvflare.app_common.abstract.shareable_generator import ShareableGenerator
 from nvflare.app_common.app_constant import AppConstants
+from nvflare.app_opt.pt.fedopt import PTFedOptModelShareableGenerator
 
 from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
 
@@ -307,6 +308,42 @@ class TestScatterAndGather:
         assert accepted is True
         controller.log_error.assert_called_once()
         assert "not of type WEIGHT_DIFF" in controller.log_error.call_args[0][1]
+
+    def test_accept_train_result_keeps_weight_diff_for_fedopt_aggregator(self):
+        """FedOpt aggregators should receive WEIGHT_DIFF payloads without conversion."""
+
+        class _FedOptAggregatorStub(PTFedOptModelShareableGenerator):
+            def __init__(self):
+                self.accept = MagicMock(return_value=True)
+
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        controller = ScatterAndGather(model_id=model_id)
+        controller.aggregator = _FedOptAggregatorStub()
+        controller.fire_event = MagicMock()
+        controller.log_info = MagicMock()
+        controller.log_error = MagicMock()
+        controller._current_round = 4
+        controller._global_weights = {"weights": {"w1": 10.0}}
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+
+        result = DXO(
+            data_kind=DataKind.WEIGHT_DIFF,
+            data={"w1": -0.75},
+            meta={"origin": "client"},
+        ).to_shareable()
+        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 4)
+
+        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=fl_ctx)
+
+        assert accepted is True
+        sent_shareable = controller.aggregator.accept.call_args[0][0]
+        sent_dxo = from_shareable(sent_shareable)
+        assert sent_dxo.data_kind == DataKind.WEIGHT_DIFF
+        assert sent_dxo.data == {"w1": -0.75}
+        assert sent_dxo.meta == {"origin": "client"}
+        controller.log_error.assert_not_called()
 
     def test_accept_train_result_logs_error_when_weight_diff_merge_fails(self):
         """Merge errors while applying WEIGHT_DIFF should be logged and not crash acceptance flow."""
