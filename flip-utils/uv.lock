@@ -603,9 +603,9 @@ wheels = [
 
 [[package]]
 name = "flip-utils"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "nvflare" },
     { name = "pandas" },
     { name = "pydantic" },
@@ -615,7 +615,6 @@ dependencies = [
 
 [package.optional-dependencies]
 full = [
-    { name = "boto3" },
     { name = "einops" },
     { name = "gdown" },
     { name = "lpips" },
@@ -637,7 +636,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "boto3", marker = "extra == 'full'", specifier = ">=1.38.31" },
+    { name = "boto3", specifier = ">=1.38.31" },
     { name = "einops", marker = "extra == 'full'", specifier = "==0.8.1" },
     { name = "gdown", marker = "extra == 'full'", specifier = "==5.2.0" },
     { name = "lpips", marker = "extra == 'full'", specifier = "==0.1.4" },

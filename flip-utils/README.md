@@ -202,10 +202,7 @@ make clean NET_NUMBER=1   # Remove containers and images
 Download test data (requires AWS S3 access) then run the relevant target:
 
 ```bash
-make download-xrays-data && make test-xrays-standard
-make download-spleen-data && make test-spleen-standard
-make download-checkpoints && make test-spleen-evaluation
-make test-spleen-diffusion
+make download-test-data
 make test   # Run all integration tests
 ```
 
@@ -241,24 +238,19 @@ To test a PR on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo
 | --------- | ------------- |
 | `make run-container` | Run NVFLARE simulator in Docker |
 
+#### Data Management
+
+| Command | Description |
+| --------- | ------------- |
+| `make download-test-data` | Download all test data (x-ray and spleen images, model checkpoints) from S3 |
+
 #### Testing
 
 | Command | Description |
 | --------- | ------------- |
-| `make unit-test` | Run pytest unit tests |
+| `make unit-test` | Run pytest unit tests for flip python package |
 | `make test-xrays-standard` | Test standard job with x-ray data |
 | `make test-spleen-standard` | Test standard job with spleen data |
 | `make test-spleen-evaluation` | Test evaluation job with spleen data |
 | `make test-spleen-diffusion` | Test diffusion model with spleen data |
 | `make test` | Run all integration tests |
-
-#### Data Management
-
-| Command | Description |
-| --------- | ------------- |
-| `make download-xrays-data` | Download x-ray test images from S3 |
-| `make download-spleen-data` | Download spleen test images from S3 |
-| `make download-checkpoints` | Download model checkpoints from S3 |
-| `make copy-spleen-app` | Copy test app to dev folder |
-| `make save-spleen-app` | Save dev changes to test folder |
-| `make pull-spleen-app` | Pull latest app from tutorials repo |
