@@ -14,6 +14,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from nvflare.apis.dxo import DXO, DataKind, from_shareable
 from nvflare.app_common.abstract.aggregator import Aggregator
 from nvflare.app_common.abstract.shareable_generator import ShareableGenerator
 from nvflare.app_common.app_constant import AppConstants
@@ -250,3 +251,86 @@ class TestScatterAndGather:
 
         assert controller._phase == AppConstants.PHASE_FINISHED
         controller.cancel_all_tasks.assert_called_once()
+
+    def test_accept_train_result_converts_weight_diff_to_weights_for_non_fedopt(self):
+        """WEIGHT_DIFF should be converted to WEIGHTS before aggregator.accept for non-FedOpt aggregators."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        controller = ScatterAndGather(model_id=model_id)
+        controller.aggregator = MagicMock(spec=Aggregator)
+        controller.aggregator.accept.return_value = True
+        controller.fire_event = MagicMock()
+        controller.log_info = MagicMock()
+        controller.log_error = MagicMock()
+        controller._current_round = 2
+        controller._global_weights = {"weights": {"w1": 1.0, "w2": 2.0}}
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+
+        result = DXO(
+            data_kind=DataKind.WEIGHT_DIFF,
+            data={"w1": 0.25, "w2": -0.5},
+            meta={"origin": "client"},
+        ).to_shareable()
+        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 2)
+
+        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=fl_ctx)
+
+        assert accepted is True
+        sent_shareable = controller.aggregator.accept.call_args[0][0]
+        sent_dxo = from_shareable(sent_shareable)
+        assert sent_dxo.data_kind == DataKind.WEIGHTS
+        assert sent_dxo.data == {"w1": 1.25, "w2": 1.5}
+        assert sent_dxo.meta == {"origin": "client"}
+        controller.log_error.assert_not_called()
+
+    def test_accept_train_result_logs_error_when_data_kind_is_not_weight_diff(self):
+        """Non-WEIGHT_DIFF inputs should log an error in non-FedOpt mode."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        controller = ScatterAndGather(model_id=model_id)
+        controller.aggregator = MagicMock(spec=Aggregator)
+        controller.aggregator.accept.return_value = True
+        controller.fire_event = MagicMock()
+        controller.log_info = MagicMock()
+        controller.log_error = MagicMock()
+        controller._current_round = 1
+        controller._global_weights = {"weights": {"w1": 1.0}}
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+
+        result = DXO(data_kind=DataKind.WEIGHTS, data={"w1": 1.0}).to_shareable()
+        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 1)
+
+        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=fl_ctx)
+
+        assert accepted is True
+        controller.log_error.assert_called_once()
+        assert "not of type WEIGHT_DIFF" in controller.log_error.call_args[0][1]
+
+    def test_accept_train_result_logs_error_when_weight_diff_merge_fails(self):
+        """Merge errors while applying WEIGHT_DIFF should be logged and not crash acceptance flow."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        controller = ScatterAndGather(model_id=model_id)
+        controller.aggregator = MagicMock(spec=Aggregator)
+        controller.aggregator.accept.return_value = True
+        controller.fire_event = MagicMock()
+        controller.log_info = MagicMock()
+        controller.log_error = MagicMock()
+        controller._current_round = 3
+        controller._global_weights = {"weights": {"w1": 1.0, "w2": 2.0}}
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+
+        # Missing "w2" causes KeyError during merge.
+        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": 0.1}).to_shareable()
+        result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 3)
+
+        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=fl_ctx)
+
+        assert accepted is True
+        assert any(
+            "Error while adding client WEIGHT_DIFF to global weights at server" in call.args[1]
+            for call in controller.log_error.call_args_list
+        )
