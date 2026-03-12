@@ -106,15 +106,7 @@ xnat-war-download:
 # Plugin versions (see the compatibility matrices for each plugin, e.g. for the container service plugin,
 # see https://wiki.xnat.org/container-service/container-service-compatibility-matrix)
 xnat-plugins-download:
-	@echo "📦 Downloading required XNAT plugins if missing..."
-	@aws s3 sync s3://$(FLIP_ARTIFACTS_BUCKET_NAME)/xnat/plugins/ xnat-docker-compose/xnat/plugins/ --delete --exclude "*" --include "*.jar"
-# 	Error if no *.jar files are found after sync (i.e. if the S3 bucket is empty or not accessible)
-	@if [ -z "$$(ls xnat-docker-compose/xnat/plugins/*.jar 2>/dev/null)" ]; then \
-		echo "❌ ERROR: No XNAT plugin files found after sync. Please check the S3 bucket and your AWS credentials."; \
-		exit 1; \
-	else \
-		echo "✅ Required plugins downloaded."; \
-	fi
+	@./scripts/ensure_plugins.sh "xnat-docker-compose/xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)"
 
 # Note this needs root privileges to run
 # Creates directory structure for XNAT (Docker Swarm requires them to exist beforehand)
