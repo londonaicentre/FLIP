@@ -451,6 +451,61 @@ resource "aws_lb_listener_rule" "api_user_project_routing" {
   }
 }
 
+# Outputs
+output "Keypair" {
+  value = var.flip_keypair
+}
+
+output "Ec2InstanceId" {
+  description = "EC2 Instance ID"
+  value       = aws_instance.ec2_instance.id
+}
+
+output "Ec2PublicIp" {
+  description = "EC2 Instance Public IP"
+  value       = aws_instance.ec2_instance.public_ip
+}
+
+output "SshCommand" {
+  description = "SSH command to connect to the instance"
+  value       = "ssh -i ${var.flip_keypair} ubuntu@${aws_instance.ec2_instance.public_ip}"
+}
+
+output "TrustEc2InstanceId" {
+  description = "Trust EC2 Instance ID"
+  value       = module.trust_ec2.instance_id
+}
+
+output "TrustEc2PublicIp" {
+  description = "Trust EC2 Instance Public IP"
+  value       = module.trust_ec2.public_ip
+}
+
+output "TrustSshCommand" {
+  description = "SSH command to connect to the Trust EC2 instance"
+  value       = "ssh -i ${var.flip_keypair} ubuntu@${module.trust_ec2.public_ip}"
+}
+
+output "DbEndpoint" {
+  description = "RDS Database Endpoint"
+  value       = module.flip_db.db_instance_address
+}
+
+output "DbSecretArn" {
+  description = "RDS Database Secret ARN"
+  value       = module.flip_db.db_instance_master_user_secret_arn
+}
+
+output "CognitoUserPoolId" {
+  description = "Cognito User Pool ID"
+  value       = aws_cognito_user_pool.flip_user_pool.id
+}
+
+output "CognitoAppClientId" {
+  description = "Cognito App Client ID"
+  value       = aws_cognito_user_pool_client.client.id
+}
+
 ############################
 # SES Email Templates
 ############################
