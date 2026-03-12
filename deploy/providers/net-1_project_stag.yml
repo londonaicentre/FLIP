@@ -22,7 +22,7 @@ participants:
     type: server
     org: AICentre
     fed_learn_port: 8002
-    host_names: [fl.stag.flip.aicentre.co.uk, fl-server-net-1]
+    host_names: [fl.stag.flip.aicentre.co.uk]
     default_host: fl.stag.flip.aicentre.co.uk
 #    docker_comm_port: 8005
   - name: Trust_1
