@@ -11,7 +11,8 @@
 #
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
-		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps
+		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
+		check-aws-access
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -99,7 +100,7 @@ build:
 
 # Run all services
 # Uses --pull always to ensure the latest FL images are used
-up: create-networks
+up: check-aws-access create-networks
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -252,3 +253,15 @@ unit_test:
 	$(MAKE) -C trust/data-access-api unit_test
 	$(MAKE) -C trust/imaging-api unit_test
 	$(MAKE) -C trust/trust-api unit_test 
+
+check-aws-access:
+	@echo "🔎 Checking AWS CLI access..."
+	@if ! command -v aws >/dev/null 2>&1; then \
+		echo "❌ ERROR: AWS CLI is not installed or not in PATH."; \
+		exit 1; \
+	fi
+	@if ! aws sts get-caller-identity >/dev/null 2>&1; then \
+		echo "❌ ERROR: AWS is not accessible. Check credentials, profile, and network access."; \
+		exit 1; \
+	fi
+	@echo "✅ AWS access confirmed."
