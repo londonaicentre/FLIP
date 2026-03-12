@@ -16,18 +16,18 @@ from fl_api.utils.flip_session import FLIP_Session
 from fl_api.utils.logger import logger
 
 
-def create_fl_session(username: str = "admin", secure_mode: bool = False, debug: bool = False) -> FLIP_Session:
+def create_fl_session(secure_mode: bool = False, debug: bool = False) -> FLIP_Session:
     """
     Initialize NVFlare admin workspace and return a secure session.
 
     Args:
-        username: The username for the FLIP session (default: "admin").
         secure_mode: Whether to enable secure mode for the session (default: False).
         debug: Whether to enable debug mode for the session (default: False).
 
     Returns:
         FLIP_Session: An initialized FLIP_Session object.
     """
+    username = get_settings().USERNAME
     admin_dir = get_settings().FL_ADMIN_DIRECTORY
 
     logger.info(f"Admin directory set to: {admin_dir}")
