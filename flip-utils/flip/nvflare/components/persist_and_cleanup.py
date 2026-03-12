@@ -13,6 +13,7 @@
 import os
 import shutil
 import traceback
+from pathlib import Path
 
 from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
@@ -163,4 +164,4 @@ class PersistToS3AndCleanup(FLComponent):
         for path in [save_dir, transfer_job_dir]:
             if not os.path.isdir(path):
                 continue
-            self.flip.cleanup(path)
+            self.flip.cleanup(Path(path))
