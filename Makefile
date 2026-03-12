@@ -114,7 +114,7 @@ up: create-networks
 up-no-trust: create-networks
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d
+	${DOCKER_COMMAND} up --remove-orphans -d --pull always
 
 up-trusts: create-networks
 	@echo "🚢 Starting Trust services..."
