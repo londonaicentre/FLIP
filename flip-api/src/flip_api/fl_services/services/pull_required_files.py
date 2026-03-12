@@ -37,7 +37,7 @@ def pull_required_files_json_to_assets():
         json.loads(content)
         with open(REQUIRED_JOB_TYPES_FILE, "wb") as f:
             f.write(content)
-        logger.info(f"Downloaded required_files.json to {REQUIRED_JOB_TYPES_FILE}")
+        logger.info(f"Downloaded required_files.json from S3 to {REQUIRED_JOB_TYPES_FILE}")
     except Exception as e:
         logger.error(f"Failed to download {JOB_TYPES_REQUIRED_FILES_FILE}: {e}")
         # Fallback to default JSON
@@ -49,4 +49,4 @@ def pull_required_files_json_to_assets():
             fallback = {}
         with open(REQUIRED_JOB_TYPES_FILE, "w") as f:
             json.dump(fallback, f, indent=4)
-        logger.info(f"Wrote fallback required_files.json to {REQUIRED_JOB_TYPES_FILE}")
+        logger.info(f"Wrote fallback to {REQUIRED_JOB_TYPES_FILE}")

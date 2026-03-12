@@ -32,7 +32,7 @@ def _load_job_types_config() -> Dict[str, List[str]]:
         Dict[str, List[str]]: A dictionary mapping job type names to their required files.
 
     Raises:
-        FileNotFoundError: If the file is not found.
+        FileNotFoundError: If the JOB_TYPES_REQUIRED_FILES_FILE file is not found.
         json.JSONDecodeError: If the JSON file is malformed.
     """
     try:
