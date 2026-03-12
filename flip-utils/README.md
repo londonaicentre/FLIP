@@ -212,9 +212,9 @@ GitHub Actions workflows use OIDC to authenticate to AWS (no long-lived keys).
 
 | Trigger | Target |
 | --------- | -------- |
-| PR to any branch | `s3://flipdev/base-application-dev/pull-requests/<PR_NUMBER>/src/` |
-| Merge to `develop` | `s3://flipdev/base-application-dev/src/` and `s3://flipstag/base-application/src/` |
-| Merge to `main` | `s3://flipprod/base-application/src/` |
+| PR to any branch | `s3://flipdev/base-application-dev/nvflare/pull-requests/<PR_NUMBER>` |
+| Merge to `develop` | `s3://flipdev/base-application/nvflare` and `s3://flipstag/base-application/nvflare` |
+| Merge to `main` | `s3://flipprod/base-application/nvflare` |
 
 > **Warning**: Never manually sync to the production bucket.
 
