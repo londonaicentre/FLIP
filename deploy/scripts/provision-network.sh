@@ -13,14 +13,11 @@
 #
 
 # Provision an NVFLARE federated learning network
-# Usage: ./scripts/provision-network.sh <project_yaml_file> <net_number> [fl_port] [debug]
-
+# Usage: ./scripts/provision-network.sh <project_yaml_file> <net_number>
 
 PROJECT_YAML="${1:?Error: PROJECT_YAML is required}"
 NET_NUMBER="${2:?Error: NET_NUMBER is required}"
-FL_PORT="${3:-8002}"
-DEBUG="${4:-false}"
-WORKSPACE_PARENT_DIR="${5:-workspace}"
+WORKSPACE_PARENT_DIR="${3:-workspace}"
 
 # Other configurations
 VERBOSE="true"
@@ -31,13 +28,21 @@ vlog() { if [[ "${VERBOSE}" == "true" ]]; then echo "   [verbose] $*"; fi }
 WORKSPACE_DIR="${WORKSPACE_PARENT_DIR}/net-${NET_NUMBER}"
 SERVICES_DIR="${WORKSPACE_DIR}/services"
 
+# Clean up any existing workspace directory for this network
+if [[ -d "${WORKSPACE_DIR}" ]]; then
+    echo "🧹 Cleaning up existing workspace directory: ${WORKSPACE_DIR}"
+    vlog "Removing directory: ${WORKSPACE_DIR}"
+    rm -rf "${WORKSPACE_DIR}"
+fi
+
 # Run NVFLARE provisioning
 log "Provisioning network ${NET_NUMBER}..."
 uv run nvflare provision -p "${PROJECT_YAML}" -w "${WORKSPACE_PARENT_DIR}"
 
 echo "Restructuring provisioned files in workspace..."
 
-# Find the prod directory created by nvflare provision (the last one if multiple exist)
+# Find the prod directory created by nvflare provision
+# Takes the last one if multiple exist, though this should not be the case since we clean up the workspace above
 PROD_DIR=$(find "${WORKSPACE_DIR}" -name "prod_*" -type d | tail -n 1)
 
 if [[ -z "${PROD_DIR}" ]]; then

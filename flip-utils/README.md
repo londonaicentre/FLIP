@@ -172,23 +172,27 @@ The [`fl_services/`](./fl_services/README.md) directory contains Docker-based NV
 - [uv](https://github.com/astral-sh/uv) (Python package manager)
 - AWS CLI configured (for downloading test data)
 
-### Provisioning a Network
+### Provisioning the 2 Networks
 
-Generate the certificates, keys, and configuration for a new FL network:
-
-```bash
-make nvflare-provision NET_NUMBER=1
-```
-
-This creates a network-specific compose file (`deploy/compose-net-1.yml`) and service secrets in `workspace/net-1/services/` (gitignored). Multiple networks can be provisioned with different ports:
+Generate the certificates, keys, and configuration for the 2 FL networks:
 
 ```bash
-make nvflare-provision NET_NUMBER=2 FL_PORT=8004
+make nvflare-provision-2-nets
 ```
 
-> **Warning**: Provisioned files contain cryptographic signatures. Any modification will cause errors. Always re-run provisioning if changes are needed.
+This uses the network-specific provisioning project files (`net-1_project.yml` and `net-2_project.yml`) and provisions the network files in `workspace/net-1` and `workspace/net-2` (gitignored) using the [scripts/provision-network.sh](scripts/provision-network.sh) script.
 
-### Running the Network
+> ⚠️ **Warning**: Provisioned files contain cryptographic signatures. Any modification will cause errors. Always re-run provisioning if changes are needed.
+
+## Creating a New Network
+
+Create a provisioning project file (e.g. `net-3_project.yml`) based on the template (`net-1_project.yml`) (you'll likely need to change `fed_learn_port`) and run:
+
+```bash
+NET_NUMBER=3 make nvflare-provision
+```
+
+### Running a Network
 
 ```bash
 make build NET_NUMBER=1   # Build Docker images
