@@ -184,7 +184,18 @@ This uses the network-specific provisioning project files (`net-1_project.yml` a
 
 > ⚠️ **Warning**: Provisioned files contain cryptographic signatures. Any modification will cause errors. Always re-run provisioning if changes are needed.
 
-## Creating a New Network
+### Provisioning Networks for Staging/Production
+
+Note the provisioning project file `net-1_project_stag.yml` changes the name of the FL server to the full domain name i.e. `stag.flip.aicentre.co.uk` instead of `fl-server-net-1`, since the FL
+clients won't be on the same Docker network as the FL server (as they are in development) and won't be able to resolve internal Docker hostnames. 
+
+Run:
+
+```bash
+make nvflare-provision-stag
+```
+
+### Creating a New Network
 
 Create a provisioning project file (e.g. `net-3_project.yml`) based on the template (`net-1_project.yml`) (you'll likely need to change `fed_learn_port`) and run:
 
