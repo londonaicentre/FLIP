@@ -105,13 +105,13 @@ module "trust_security_group" {
 }
 
 resource "aws_security_group_rule" "fl_server_ingress" {
-  type              = "ingress"
-  from_port         = var.FL_SERVER_PORT
-  to_port           = var.FL_SERVER_PORT
-  protocol          = "tcp"
-  cidr_blocks       = ["${module.trust_ec2.public_ip}/32"]
-  security_group_id = module.ec2_security_group.security_group.id
-  description       = "FL Server from Trust EC2"
+  type                     = "ingress"
+  from_port                = var.FL_SERVER_PORT
+  to_port                  = var.FL_SERVER_PORT
+  protocol                 = "tcp"
+  source_security_group_id = module.trust_security_group.security_group.id
+  security_group_id        = module.ec2_security_group.security_group.id
+  description              = "FL Server from Trust Security Group"
 }
 
 # RDS
