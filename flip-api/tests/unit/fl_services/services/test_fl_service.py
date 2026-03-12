@@ -11,12 +11,14 @@
 #
 
 import json
+from enum import Enum
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
 
 from flip_api.config import Settings
+from flip_api.domain.interfaces import fl as fl_interfaces
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
     IJobMetaData,
@@ -51,6 +53,30 @@ def mocked_settings():
     )
     with patch("flip_api.fl_services.services.fl_service.get_settings", return_value=mock):
         yield mock
+
+
+@pytest.fixture
+def mock_job_types_file(tmp_path, monkeypatch):
+    """Mock the JSON job-types file and rebuild JobTypes from it."""
+    job_types_config = {
+        "standard": ["trainer.py", "validator.py", "models.py", "config.json"],
+        "diffusion_model": ["trainer.py", "validator.py", "models.py", "config.json"],
+        "fed_opt": ["trainer.py", "validator.py", "models.py", "config.json"],
+        "evaluation": ["trainer.py", "validator.py", "models.py", "config.json"],
+    }
+    mock_file = tmp_path / "job_types_required_files.json"
+    mock_file.write_text(json.dumps(job_types_config), encoding="utf-8")
+
+    monkeypatch.setattr(fl_interfaces, "REQUIRED_JOB_TYPES_FILE", mock_file)
+    monkeypatch.setattr(fl_interfaces, "_JOB_TYPES_CONFIG", fl_interfaces._load_job_types_config())
+    monkeypatch.setattr(
+        fl_interfaces,
+        "JobTypes",
+        Enum("JobTypes", {job_type: job_type for job_type in fl_interfaces._JOB_TYPES_CONFIG.keys()}),  # type: ignore[misc]
+    )
+    monkeypatch.setattr(fl_service, "JobTypes", fl_interfaces.JobTypes)
+
+    return job_types_config
 
 
 @patch("flip_api.fl_services.services.fl_service.http_post")
@@ -326,6 +352,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
     model_id,
     mocked_settings,
     job_type,
+    mock_job_types_file,
 ):
     """
     Test that providing an invalid job type into the config.json raises an error while providing valid
@@ -511,6 +538,7 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
     model_id,
     mocked_settings,
     job_type,
+    mock_job_types_file,
 ):
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
