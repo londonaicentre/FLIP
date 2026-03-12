@@ -114,6 +114,28 @@ resource "aws_security_group_rule" "fl_server_ingress" {
   description              = "FL Server from Trust Security Group"
 }
 
+resource "aws_security_group_rule" "fl_server_ingress_from_vpc" {
+  type              = "ingress"
+  from_port         = var.FL_SERVER_PORT
+  to_port           = var.FL_SERVER_PORT
+  protocol          = "tcp"
+  cidr_blocks       = [var.vpc_cidr]
+  security_group_id = module.ec2_security_group.security_group.id
+  description       = "FL Server from VPC (NLB path)"
+}
+
+# The trust client reaches the internet-facing NLB via its public IP.
+# Keep a narrow allow-list by permitting only the trust host public IP on FL server port.
+resource "aws_security_group_rule" "fl_server_ingress_from_trust_public_ip" {
+  type              = "ingress"
+  from_port         = var.FL_SERVER_PORT
+  to_port           = var.FL_SERVER_PORT
+  protocol          = "tcp"
+  cidr_blocks       = ["${module.trust_ec2.public_ip}/32"]
+  security_group_id = module.ec2_security_group.security_group.id
+  description       = "FL Server from Trust host public IP"
+}
+
 # RDS
 # TODO: In Production we need to activate delete protection to the RDS instances
 module "rds_security_group" {
@@ -356,6 +378,27 @@ module "fl_server_nlb" {
   vpc_id                     = module.flip_vpc.vpc_id
   subnets                    = module.flip_vpc.public_subnets
   enable_deletion_protection = false
+  create_security_group      = true
+
+  security_group_ingress_rules = {
+    fl_server_ingress = {
+      description = "Allow inbound FL server traffic to NLB"
+      ip_protocol = "tcp"
+      from_port   = tostring(var.FL_SERVER_PORT)
+      to_port     = tostring(var.FL_SERVER_PORT)
+      cidr_ipv4   = "0.0.0.0/0"
+    }
+  }
+
+  security_group_egress_rules = {
+    fl_server_egress = {
+      description = "Allow NLB traffic and health checks to FL server targets"
+      ip_protocol = "tcp"
+      from_port   = tostring(var.FL_SERVER_PORT)
+      to_port     = tostring(var.FL_SERVER_PORT)
+      cidr_ipv4   = var.vpc_cidr
+    }
+  }
 
   listeners = {
     "fl-server-tcp-listener" = {
@@ -369,9 +412,19 @@ module "fl_server_nlb" {
 
   target_groups = {
     ec2-instance-fl-server-tcp = {
-      port      = var.FL_SERVER_PORT
-      protocol  = "TCP"
-      target_id = aws_instance.ec2_instance.id
+      port        = var.FL_SERVER_PORT
+      protocol    = "TCP"
+      target_type = "instance"
+      target_id   = aws_instance.ec2_instance.id
+
+      health_check = {
+        enabled             = true
+        protocol            = "TCP"
+        port                = "traffic-port"
+        healthy_threshold   = 3
+        unhealthy_threshold = 3
+        interval            = 30
+      }
     }
   }
 }
