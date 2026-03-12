@@ -35,7 +35,7 @@ def test_pull_required_files_json_to_assets_success(tmp_path, monkeypatch):
     assets_dir = tmp_path / "assets"
     assets_dir.mkdir()
     monkeypatch.setattr(
-        pull_required_files, "JOB_TYPES_REQUIRED_FILES_PATH", assets_dir / JOB_TYPES_REQUIRED_FILES_FILE
+        pull_required_files, "REQUIRED_JOB_TYPES_FILE", assets_dir / JOB_TYPES_REQUIRED_FILES_FILE
     )
     pull_required_files.pull_required_files_json_to_assets()
     with open(assets_dir / JOB_TYPES_REQUIRED_FILES_FILE) as f:
@@ -58,7 +58,7 @@ def test_pull_required_files_json_to_assets_fallback(tmp_path, monkeypatch):
     assets_dir = tmp_path / "assets"
     assets_dir.mkdir()
     monkeypatch.setattr(
-        pull_required_files, "JOB_TYPES_REQUIRED_FILES_PATH", assets_dir / JOB_TYPES_REQUIRED_FILES_FILE
+        pull_required_files, "REQUIRED_JOB_TYPES_FILE", assets_dir / JOB_TYPES_REQUIRED_FILES_FILE
     )
     pull_required_files.pull_required_files_json_to_assets()
     with open(assets_dir / JOB_TYPES_REQUIRED_FILES_FILE) as f:

@@ -19,7 +19,7 @@ from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import S3Client
 
 # Path to the JSON file containing job types and required files (relative to this file)
-JOB_TYPES_REQUIRED_FILES_PATH = Path(__file__).parent.parent.parent / "assets" / JOB_TYPES_REQUIRED_FILES_FILE
+REQUIRED_JOB_TYPES_FILE = Path(__file__).parent.parent.parent / "assets" / JOB_TYPES_REQUIRED_FILES_FILE
 
 
 # TODO Review: This is disruptive for development if the file on the s3 bucket is not in sync with the current codebase.
@@ -35,9 +35,9 @@ def pull_required_files_json_to_assets():
         content = s3_obj["Body"].read()
         # Validate JSON
         json.loads(content)
-        with open(JOB_TYPES_REQUIRED_FILES_PATH, "wb") as f:
+        with open(REQUIRED_JOB_TYPES_FILE, "wb") as f:
             f.write(content)
-        logger.info(f"Downloaded required_files.json to {JOB_TYPES_REQUIRED_FILES_PATH}")
+        logger.info(f"Downloaded required_files.json to {REQUIRED_JOB_TYPES_FILE}")
     except Exception as e:
         logger.error(f"Failed to download {JOB_TYPES_REQUIRED_FILES_FILE}: {e}")
         # Fallback to default JSON
@@ -47,6 +47,6 @@ def pull_required_files_json_to_assets():
             fallback = {"standard": ["client_app.py", "models.py"]}
         else:
             fallback = {}
-        with open(JOB_TYPES_REQUIRED_FILES_PATH, "w") as f:
+        with open(REQUIRED_JOB_TYPES_FILE, "w") as f:
             json.dump(fallback, f, indent=4)
-        logger.info(f"Wrote fallback required_files.json to {JOB_TYPES_REQUIRED_FILES_PATH}")
+        logger.info(f"Wrote fallback required_files.json to {REQUIRED_JOB_TYPES_FILE}")

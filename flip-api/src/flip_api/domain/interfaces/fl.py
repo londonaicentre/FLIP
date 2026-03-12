@@ -22,7 +22,7 @@ from flip_api.domain.schemas.status import ClientStatus
 from flip_api.utils.constants import JOB_TYPES_REQUIRED_FILES_FILE
 
 # Path to the JSON file containing job types and required files (relative to this file)
-JOB_TYPES_REQUIRED_FILES_PATH = Path(__file__).parent.parent.parent / "assets" / JOB_TYPES_REQUIRED_FILES_FILE
+REQUIRED_JOB_TYPES_FILE = Path(__file__).parent.parent.parent / "assets" / JOB_TYPES_REQUIRED_FILES_FILE
 
 
 def _load_job_types_config() -> Dict[str, List[str]]:
@@ -36,7 +36,7 @@ def _load_job_types_config() -> Dict[str, List[str]]:
         json.JSONDecodeError: If the JSON file is malformed.
     """
     try:
-        with open(JOB_TYPES_REQUIRED_FILES_PATH, encoding="utf-8") as f:
+        with open(REQUIRED_JOB_TYPES_FILE, encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
         # Log error and return empty dict so the API doesn't crash
