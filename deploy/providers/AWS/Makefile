@@ -57,6 +57,7 @@ export TF_VAR_VPC_NAME=${VPC_NAME}
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
+export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 
 prettier:
 	terraform fmt -recursive

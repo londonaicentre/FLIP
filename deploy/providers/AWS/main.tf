@@ -23,7 +23,7 @@ terraform {
 }
 
 provider "aws" {
-  region  = var.AWS_REGION
+  region = var.AWS_REGION
 }
 
 ############################
@@ -106,8 +106,8 @@ module "trust_security_group" {
 
 resource "aws_security_group_rule" "fl_server_ingress" {
   type              = "ingress"
-  from_port         = 8002
-  to_port           = 8002
+  from_port         = var.FL_SERVER_PORT
+  to_port           = var.FL_SERVER_PORT
   protocol          = "tcp"
   cidr_blocks       = ["${module.trust_ec2.public_ip}/32"]
   security_group_id = module.ec2_security_group.security_group.id
@@ -173,8 +173,8 @@ module "flip_api_secret" {
   recovery_window_in_days = 30
 
   secret_string = jsonencode({
-    aes_key               = var.AES_KEY_BASE64
-    trust_endpoints       = {
+    aes_key = var.AES_KEY_BASE64
+    trust_endpoints = {
       "Trust_1" = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}",
       "Trust_2" = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
     }
@@ -281,10 +281,6 @@ module "alb_security_group" {
       description = "FL API traffic"
     },
     {
-      port        = var.FL_SERVER_PORT
-      description = "FL Server traffic"
-    },
-    {
       port        = var.ALB_HTTP_PORT
       description = "HTTP traffic (redirect to HTTPS)"
     }
@@ -330,13 +326,6 @@ module "alb" {
       forward = {
         target_group_key = "ec2-instance-fl-api"
       }
-    },
-    "fl-server-listener" = {
-      port     = var.FL_SERVER_PORT
-      protocol = "HTTP"
-      forward = {
-        target_group_key = "ec2-instance-fl-server"
-      }
     }
   }
 
@@ -355,10 +344,33 @@ module "alb" {
       port      = var.FL_API_PORT
       protocol  = "HTTP"
       target_id = aws_instance.ec2_instance.id
-    },
-    ec2-instance-fl-server = {
+    }
+  }
+}
+
+# Network Load Balancer for FL server TCP/TLS pass-through
+module "fl_server_nlb" {
+  source                     = "terraform-aws-modules/alb/aws"
+  name                       = "flip-fl-server-nlb"
+  load_balancer_type         = "network"
+  vpc_id                     = module.flip_vpc.vpc_id
+  subnets                    = module.flip_vpc.public_subnets
+  enable_deletion_protection = false
+
+  listeners = {
+    "fl-server-tcp-listener" = {
+      port     = var.FL_SERVER_PORT
+      protocol = "TCP"
+      forward = {
+        target_group_key = "ec2-instance-fl-server-tcp"
+      }
+    }
+  }
+
+  target_groups = {
+    ec2-instance-fl-server-tcp = {
       port      = var.FL_SERVER_PORT
-      protocol  = "HTTP"
+      protocol  = "TCP"
       target_id = aws_instance.ec2_instance.id
     }
   }
@@ -376,6 +388,18 @@ resource "aws_route53_record" "alb" {
   alias {
     name                   = module.alb.dns_name
     zone_id                = module.alb.zone_id
+    evaluate_target_health = true
+  }
+}
+
+resource "aws_route53_record" "fl_server_nlb" {
+  zone_id = data.aws_route53_zone.subdomain.zone_id
+  name    = var.flip_nlb_subdomain
+  type    = "A"
+
+  alias {
+    name                   = module.fl_server_nlb.dns_name
+    zone_id                = module.fl_server_nlb.zone_id
     evaluate_target_health = true
   }
 }
@@ -506,6 +530,11 @@ output "CognitoAppClientId" {
   value       = aws_cognito_user_pool_client.client.id
 }
 
+output "FlServerEndpoint" {
+  description = "FL server DNS endpoint (NLB pass-through)"
+  value       = var.flip_nlb_subdomain
+}
+
 ############################
 # SES Email Templates
 ############################
@@ -535,17 +564,17 @@ resource "aws_ses_template" "flip_xnat_credentials" {
 module "trust_ec2" {
   source = "./modules/trust_ec2"
 
-  name_prefix        = "trust"
-  instance_type      = "t3.xlarge"
-  key_name           = aws_key_pair.host_key.key_name
-  subnet_id          = element(module.flip_vpc.public_subnets, 0)
+  name_prefix   = "trust"
+  instance_type = "t3.xlarge"
+  key_name      = aws_key_pair.host_key.key_name
+  subnet_id     = element(module.flip_vpc.public_subnets, 0)
 
   # use the trust SG, not the central EC2 SG
   security_group_ids = [module.trust_security_group.security_group.id]
 
-  TRUST_API_PORT     = var.TRUST_API_PORT
-  XNAT_PORT          = var.XNAT_PORT
-  PACS_UI_PORT       = var.PACS_UI_PORT
+  TRUST_API_PORT = var.TRUST_API_PORT
+  XNAT_PORT      = var.XNAT_PORT
+  PACS_UI_PORT   = var.PACS_UI_PORT
 
   # pass the compose file content and env file content from the repo
   create_elastic_ip = true

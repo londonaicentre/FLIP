@@ -137,6 +137,12 @@ variable "flip_alb_subdomain" {
   default     = "dev.flip.aicentre.co.uk"
 }
 
+variable "flip_nlb_subdomain" {
+  description = "Subdomain for the FLIP FL server NLB endpoint"
+  type        = string
+  default     = "fl.dev.flip.aicentre.co.uk"
+}
+
 variable "SES_VERIFIED_EMAIL" {
   description = "SES verified email address for FLIP"
   type        = string
