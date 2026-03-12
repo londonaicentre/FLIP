@@ -535,17 +535,17 @@ resource "aws_ses_template" "flip_xnat_credentials" {
 module "trust_ec2" {
   source = "./modules/trust_ec2"
 
-  name_prefix   = "trust"
-  instance_type = "t3.xlarge"
-  key_name      = aws_key_pair.host_key.key_name
-  subnet_id     = element(module.flip_vpc.public_subnets, 0)
+  name_prefix        = "trust"
+  instance_type      = "t3.xlarge"
+  key_name           = aws_key_pair.host_key.key_name
+  subnet_id          = element(module.flip_vpc.public_subnets, 0)
 
   # use the trust SG, not the central EC2 SG
   security_group_ids = [module.trust_security_group.security_group.id]
 
-  TRUST_API_PORT = var.TRUST_API_PORT
-  XNAT_PORT      = var.XNAT_PORT
-  PACS_UI_PORT   = var.PACS_UI_PORT
+  TRUST_API_PORT     = var.TRUST_API_PORT
+  XNAT_PORT          = var.XNAT_PORT
+  PACS_UI_PORT       = var.PACS_UI_PORT
 
   # pass the compose file content and env file content from the repo
   create_elastic_ip = true
