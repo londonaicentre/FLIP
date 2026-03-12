@@ -315,7 +315,11 @@ deploy-trust: update-env ## Deploy trust relationships after central hub is depl
 	docker swarm init || echo "   Swarm already initialized"
 	@echo "🗒️ Copying TLS certificates to Trust EC2..."
 	ssh -i ~/.ssh/host-aws ubuntu@$$(terraform output -raw TrustEc2PublicIp) "mkdir -p /opt/flip/certs"
-	scp -i ~/.ssh/host-aws -r ../../../trust/certs/* ubuntu@$$(terraform output -raw TrustEc2PublicIp):/opt/flip/certs/
+	scp -i ~/.ssh/host-aws \
+		../../../trust/certs/trust-server.crt \
+		../../../trust/certs/trust-server.key \
+		../../../trust/certs/trust-ca.crt \
+		ubuntu@$$(terraform output -raw TrustEc2PublicIp):/opt/flip/certs/
 	@echo "✅ Certificates copied!"
 	@echo "🚀 Deploying Trust services..."
 	$(MAKE) -C ../../../ up-trust-stag PROD=stag
@@ -397,7 +401,7 @@ test-local-trust: ## Verify HTTPS connectivity to an on-premises Trust host
 	@curl -sf --cacert ../../../trust/certs/trust-ca.crt \
 		https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)/health \
 	&& echo "✅ HTTPS connection to local Trust host successful!" \
-	|| (echo "❌ Connection failed. Check:"; \/
+	|| (echo "❌ Connection failed. Check:"; \
 	    echo "   - Trust stack is running on the host: PROD=$(PROD) make up-trust-1"; \
 	    echo "   - UFW allows $(TRUST_API_PORT) from this machine (run: make add-local-trust)"; \
 	    echo "   - Border router forwards $(TRUST_API_PORT)/tcp to the trust host LAN IP"; \

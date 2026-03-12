@@ -117,6 +117,10 @@
         size: 2048
         mode: "0600"
 
+    - name: Determine SAN type (IP vs DNS) for trust_public_ip
+      set_fact:
+        _trust_san: "{{ 'IP:' ~ trust_public_ip if trust_public_ip is match('^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$') else 'DNS:' ~ trust_public_ip }}"
+
     - name: Generate server CSR with SANs
       community.crypto.openssl_csr:
         path: "{{ cert_dir }}/trust-server.csr"
@@ -126,7 +130,7 @@
           O: "FLIP Trust"
           OU: "Trust Server"
         subject_alt_name:
-          - "IP:{{ trust_public_ip }}"
+          - "{{ _trust_san }}"
           - "DNS:localhost"
           - "IP:127.0.0.1"
         key_usage:
@@ -146,17 +150,8 @@
         mode: "0644"
 
     # ── Firewall ─────────────────────────────────────────────────────────────
-    - name: Set UFW default policy — deny incoming
-      community.general.ufw:
-        state: enabled
-        policy: deny
-        direction: incoming
-
-    - name: Set UFW default policy — allow outgoing
-      community.general.ufw:
-        state: enabled
-        policy: allow
-        direction: outgoing
+    # Add all allow rules BEFORE enabling UFW with default-deny to avoid
+    # locking out the operator on a remote host mid-playbook.
 
     - name: Allow SSH (prevent operator lockout)
       community.general.ufw:
@@ -188,6 +183,16 @@
         port: "8003"
         proto: tcp
         comment: "FL Admin port from AWS CH"
+
+    - name: Set UFW default policy — deny incoming
+      community.general.ufw:
+        policy: deny
+        direction: incoming
+
+    - name: Set UFW default policy — allow outgoing
+      community.general.ufw:
+        policy: allow
+        direction: outgoing
 
     - name: Enable UFW
       community.general.ufw:
