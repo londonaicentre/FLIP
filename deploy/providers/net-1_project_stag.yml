@@ -22,12 +22,14 @@ participants:
     type: server
     org: AICentre
     fed_learn_port: 8002
-    host_names: [fl.stag.flip.aicentre.co.uk]
+    host_names: [fl.stag.flip.aicentre.co.uk, fl-server-net-1]
     default_host: fl.stag.flip.aicentre.co.uk
 #    docker_comm_port: 8005
   - name: Trust_1
     type: client
     org: AICentre
+    connect_to:
+      host: fl.stag.flip.aicentre.co.uk
     # Specifying listening_host will enable the creation of one pair of
     # certificate/private key for this client, allowing the client to function
     # as a server for 3rd-party integration.
@@ -41,6 +43,8 @@ participants:
   - name: Trust_2
     type: client
     org: AICentre
+    connect_to:
+      host: fl.stag.flip.aicentre.co.uk
     enable_byoc: true
     resource:
       num_of_gpus: 1
@@ -49,6 +53,8 @@ participants:
     type: admin
     org: AICentre
     role: project_admin
+    connect_to:
+      host: fl-server-net-1
 
 # The same methods in all builders are called in their order defined in builders section
 builders:
