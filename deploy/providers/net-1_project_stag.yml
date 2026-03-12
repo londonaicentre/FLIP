@@ -18,11 +18,12 @@ participants:
   # Change the name of the server (server1) to the Fully Qualified Domain Name
   # (FQDN) of the server, for example: server1.example.com.
   # Ensure that the FQDN is correctly mapped in the /etc/hosts file.
-  - name: stag.flip.aicentre.co.uk
+  - name: fl.stag.flip.aicentre.co.uk
     type: server
     org: AICentre
     fed_learn_port: 8002
-    host_names: [stag.flip.aicentre.co.uk, fl-server-net-1]
+    host_names: [fl.stag.flip.aicentre.co.uk, fl-server-net-1]
+    default_host: fl.stag.flip.aicentre.co.uk
 #    docker_comm_port: 8005
   - name: Trust_1
     type: client
