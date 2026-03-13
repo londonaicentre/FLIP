@@ -13,6 +13,7 @@
 import json
 
 from flip_api.fl_services.services import pull_required_files
+from flip_api.utils.constants import JOB_TYPES_REQUIRED_FILES_FILE
 
 
 def test_pull_required_files_json_to_assets_success(tmp_path, monkeypatch):
@@ -26,14 +27,18 @@ def test_pull_required_files_json_to_assets_success(tmp_path, monkeypatch):
             return {"Body": DummyBody()}
 
     monkeypatch.setattr(pull_required_files, "S3Client", lambda: DummyS3())
-    monkeypatch.setattr(pull_required_files, "get_settings", lambda: type("X", (), {"FL_APP_BASE_BUCKET": "bucket"})())
-    monkeypatch.setattr(pull_required_files.os.path, "dirname", lambda _: str(tmp_path))
-    monkeypatch.setattr(pull_required_files.os, "makedirs", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        pull_required_files,
+        "get_settings",
+        lambda: type("X", (), {"FL_APP_BASE_BUCKET": "bucket", "FL_BACKEND": "nvflare"})(),
+    )
     assets_dir = tmp_path / "assets"
     assets_dir.mkdir()
-    monkeypatch.setattr(pull_required_files.os.path, "join", lambda *args: str(assets_dir) + "/required_files.json")
+    monkeypatch.setattr(
+        pull_required_files, "REQUIRED_JOB_TYPES_FILE", assets_dir / JOB_TYPES_REQUIRED_FILES_FILE
+    )
     pull_required_files.pull_required_files_json_to_assets()
-    with open(assets_dir / "required_files.json") as f:
+    with open(assets_dir / JOB_TYPES_REQUIRED_FILES_FILE) as f:
         data = json.load(f)
     assert data["standard"] == ["trainer.py", "validator.py", "models.py", "config.json"]
 
@@ -45,13 +50,17 @@ def test_pull_required_files_json_to_assets_fallback(tmp_path, monkeypatch):
             raise Exception("S3 unavailable")
 
     monkeypatch.setattr(pull_required_files, "S3Client", lambda: DummyS3())
-    monkeypatch.setattr(pull_required_files, "get_settings", lambda: type("X", (), {"FL_APP_BASE_BUCKET": "bucket"})())
-    monkeypatch.setattr(pull_required_files.os.path, "dirname", lambda _: str(tmp_path))
-    monkeypatch.setattr(pull_required_files.os, "makedirs", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        pull_required_files,
+        "get_settings",
+        lambda: type("X", (), {"FL_APP_BASE_BUCKET": "bucket", "FL_BACKEND": "nvflare"})(),
+    )
     assets_dir = tmp_path / "assets"
     assets_dir.mkdir()
-    monkeypatch.setattr(pull_required_files.os.path, "join", lambda *args: str(assets_dir) + "/required_files.json")
+    monkeypatch.setattr(
+        pull_required_files, "REQUIRED_JOB_TYPES_FILE", assets_dir / JOB_TYPES_REQUIRED_FILES_FILE
+    )
     pull_required_files.pull_required_files_json_to_assets()
-    with open(assets_dir / "required_files.json") as f:
+    with open(assets_dir / JOB_TYPES_REQUIRED_FILES_FILE) as f:
         data = json.load(f)
     assert data["standard"] == ["trainer.py", "validator.py", "models.py", "config.json"]

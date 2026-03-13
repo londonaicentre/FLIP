@@ -312,7 +312,7 @@ def start_training(
     submit_job(fl_job_id, endpoint, model_id, session)
 
 
-def bundle_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> str:  # type: ignore[attr-defined]
+def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> str:  # type: ignore[attr-defined]
     """
     Creates the app folder from the base application files and the uploaded files.
 
@@ -325,7 +325,7 @@ def bundle_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -
 
     Base application files in the base bucket:
 
-        s3://base-bucket/src/standard/
+        s3://base-bucket/standard/
         ├── app_site1/
         │   ├── config/
         │   │   └── config_fed_client.json
@@ -427,7 +427,7 @@ def bundle_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -
             logger.info(f"job_type in config.json: {job_type.value}. Using it to select base application.")
 
     # List base files for that job_type
-    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/src/{job_type.value}"
+    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/{job_type.value}"
     logger.debug(f"Base bucket: {base_bucket_s3_path}")
     base_files = s3.list_objects(base_bucket_s3_path)
     if not base_files:
@@ -515,6 +515,150 @@ def bundle_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -
         model_bucket_s3_path=model_bucket_s3_path,
         dest_bucket_s3_path=dest_bucket_s3_path,
     )
+
+    return dest_bucket_s3_path
+
+
+def bundle_flower_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> str:  # type: ignore[attr-defined]
+    """
+    Creates the app folder from the base application files and the uploaded files.
+
+    It copies the base application files and the model files to the destination bucket.
+    It checks if the destination bucket has any files, and if it does, it deletes them.
+
+    Example:
+
+    Base application files in the base bucket:
+
+        s3://base-bucket/standard/
+        ├── app/
+        │   └── server_app.py
+        └── pyproject.toml
+
+    Model files in the model files bucket:
+
+        s3://model-bucket/<model_id>/
+        ├── client_app.py
+        ├── models.py
+        ├── config.json
+        └── [other user uploaded files]
+
+    Final structure in the destination bucket:
+
+        s3://dest-bucket/<model_id>/
+        ├── app/
+        │   ├── server_app.py
+        │   ├── client_app.py                 ← copied from model files
+        │   ├── models.py                     ← copied from model files
+        │   ├── config.json                   ← copied from model files
+        │   └── [other user uploaded files]
+        └── pyproject.toml                    ← copied from base application (not overwritten by model files)
+
+    Args:
+        model_id (UUID): model ID, which will give the name to the app folder.
+        job_type (JobTypes, optional): type of job (e.g. 'standard', 'evaluation', etc.). This will cause
+        a specific base application to be selected. Defaults to 'standard'.
+
+    Raises:
+        EnvironmentError: If the S3 bucket environment variables are not set.
+        FileNotFoundError: If the base or model files are missing.
+        FileNotFoundError: If required files for the job type are missing.
+
+    Returns:
+        str: The destination bucket S3 path where the bundled application is located.
+    """
+    s3 = S3Client()
+
+    # Construct S3 paths for base, model, and destination buckets
+    model_bucket_s3_path = f"{get_settings().SCANNED_MODEL_FILES_BUCKET}/{model_id}"
+    dest_bucket_s3_path = f"{get_settings().FL_APP_DESTINATION_BUCKET}/{model_id}"
+
+    logger.debug(f"Model bucket: {model_bucket_s3_path}")
+    logger.debug(f"Destination bucket: {dest_bucket_s3_path}")
+
+    # TODO Validate that the buckets are valid S3 paths
+    #
+
+    # List objects in the model bucket
+    model_files = s3.list_objects(model_bucket_s3_path)
+    if not model_files:
+        raise FileNotFoundError("Model files missing on the S3 bucket")
+
+    # Determine job_type from config.json if present
+    config_file = next((k for k in model_files if k.endswith("/config.json")), None)
+    if not config_file:
+        logger.info("No config.json file was found in the scanned files. Using job_type=standard.")
+    else:
+        # We download the file
+        try:
+            s3_config_object = s3.get_object(config_file)
+            config_object = s3_config_object["Body"].read()
+            input_config = json.loads(config_object) if config_object else {}
+        except Exception as e:
+            logger.error(f"Error reading config.json from S3: {str(e)}. Using job_type=standard.")
+            raise ValueError("Error reading config.json from S3") from e
+
+        jt = input_config.get("job_type")
+        if not jt:
+            logger.info("No 'job_type' found in config.json. Using job_type=standard.")
+        else:
+            try:
+                job_type = JobTypes(jt)
+            except ValueError:
+                raise UnknownJobTypeError(f"Unknown job_type argument found in config.json: {jt}")
+            logger.info(f"job_type in config.json: {job_type.value}. Using it to select base application.")
+
+    # List base files for that job_type
+    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/{job_type.value}"
+    logger.debug(f"Base bucket: {base_bucket_s3_path}")
+    base_files = s3.list_objects(base_bucket_s3_path)
+    if not base_files:
+        raise FileNotFoundError("Base application files missing on the S3 bucket")
+
+    # Clear destination if files already exist there (e.g. from a previous training run)
+    dest_files = s3.list_objects(dest_bucket_s3_path)
+    if dest_files:
+        s3.delete_objects(dest_files)
+
+    # Copy entire base tree into destination (1:1 paths under base_bucket_s3_path)
+    for src_key in base_files:
+        rel = src_key.replace(f"{base_bucket_s3_path}/", "", 1)
+        dst_key = f"{dest_bucket_s3_path}/{rel}"
+        logger.debug(f"Copying base {src_key} -> {dst_key}")
+        s3.copy_object(src_key, dst_key)
+
+    # Validate required model files exist for the job type
+    required_files = JobRequiredFiles.get_required_files(job_type)
+    model_rel = {
+        k.replace(f"{model_bucket_s3_path}/", "", 1) for k in model_files
+    }  # relative paths of model files (i.e. without the bucket prefix)
+    missing_files = [f for f in required_files if f not in model_rel]
+    if len(missing_files) > 0:
+        raise FileNotFoundError(f"Missing required files for job type {job_type.value}: {', '.join(missing_files)}. ")  # type: ignore[attr-defined]
+
+    # Copy base application files to the destination bucket
+    for file in base_files:
+        # extract the rest of the file after the parent s3 path to copy the file tree structure
+        key = file.replace(f"{base_bucket_s3_path}/", "")
+        dest_file_path = f"{dest_bucket_s3_path}/{key}"
+
+        logger.debug(f"Copying {file} to {dest_file_path}")
+        s3.copy_object(file, dest_file_path)
+
+    # Copy model files into app/
+    for src_key in model_files:
+        rel = src_key.replace(f"{model_bucket_s3_path}/", "", 1)
+
+        dst_key = f"{dest_bucket_s3_path}/app/{rel}"
+        # Check if destination key exists
+        if s3.object_exists(dst_key):
+            logger.warning(
+                f"The file name {rel} is reserved for this base application, which contains a file with the same "
+                f"name. The researcher can't overwrite it. Skipping upload from model files."
+            )
+            continue
+        logger.debug(f"Copying model file {src_key} -> {dst_key}")
+        s3.copy_object(src_key, dst_key)
 
     return dest_bucket_s3_path
 

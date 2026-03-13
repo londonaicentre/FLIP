@@ -27,7 +27,6 @@ from flip_api.domain.interfaces.model import (
 from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.fl_services.services import fl_scheduler_service
-from flip_api.fl_services.services.pull_required_files import pull_required_files_json_to_assets
 from flip_api.model_services.utils.audit_helper import audit_model_action, audit_model_actions
 from flip_api.utils.logger import logger
 
@@ -58,16 +57,6 @@ def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, sess
 
     audit_response = audit_model_action(model_id, ModelAuditAction.EDIT, user_id, session)
     logger.info(f"Output: {audit_response}")
-
-
-def create_model(*args, **kwargs):
-    """
-    Create a model and pull required_files.json from S3 into the assets folder.
-    """
-    # ...existing model creation logic...
-
-    pull_required_files_json_to_assets()
-    # ...rest of model creation logic...
 
 
 def update_model_status(model_id: UUID, status: ModelStatus | None, session: Session) -> Optional[ModelStatus]:

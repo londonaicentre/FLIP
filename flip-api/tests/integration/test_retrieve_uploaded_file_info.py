@@ -18,8 +18,6 @@ import pytest
 
 from flip_api.db.models.main_models import UploadedFiles
 
-# filepath: /app/src/flip/file_services/test_retrieve_uploaded_file_info.py
-
 
 @pytest.fixture
 def mock_logger():
