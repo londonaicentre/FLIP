@@ -47,9 +47,9 @@ def seed_trusts(session: Session) -> list[dict[str, str]]:
                 # Create new trust
                 new_trust = Trust(name=trust_name, endpoint=endpoint)
                 session.add(new_trust)
-        except Exception as e:
+        except Exception:
             # If the endpoint is not found in secrets, skip this trust
-            logger.info(f"Endpoint for {trust_name} not found in secrets. Skipping. Error: {e}")
+            logger.info("Endpoint not found in secrets for one of the trusts. Skipping.")
             continue
     session.commit()
 
