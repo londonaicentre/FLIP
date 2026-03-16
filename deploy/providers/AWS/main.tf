@@ -502,7 +502,7 @@ resource "aws_lb_listener_rule" "api_trust_site_routing" {
 
   condition {
     path_pattern {
-      values = ["/trust/*", "/site/*"]
+      values = ["/trust", "/trust/*", "/site", "/site/*"]
     }
   }
 }
