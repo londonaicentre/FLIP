@@ -588,6 +588,11 @@ output "FlServerEndpoint" {
   value       = var.flip_nlb_subdomain
 }
 
+output "FlServerRawNlbDns" {
+  description = "Raw AWS NLB DNS name for FL server debugging"
+  value       = module.fl_server_nlb.dns_name
+}
+
 ############################
 # SES Email Templates
 ############################
