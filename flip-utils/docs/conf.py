@@ -89,3 +89,6 @@ autoapi_options = [
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
 }
+
+# Suppress ambiguous cross-reference warnings caused by re-exported constants
+suppress_warnings = ["ref.python"]
