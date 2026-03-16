@@ -16,15 +16,25 @@ diffusion model training, and custom federated optimization.
 Installation
 ~~~~~~~~~~~~
 
-Install from the repository:
+Install the published package from PyPI:
 
 .. code-block:: bash
 
+   pip install flip-utils
+   # or with uv
+   uv add flip-utils
+
+To use the latest development version, clone the repository and install from source:
+
+.. code-block:: bash
+
+   git clone https://github.com/londonaicentre/flip-fl-base.git
+   cd flip-fl-base
    uv sync
    # or
    pip install .
 
-Build a distributable wheel:
+To build a distributable wheel for development:
 
 .. code-block:: bash
 
