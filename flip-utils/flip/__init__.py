@@ -17,14 +17,17 @@ This package provides the core functionality for federated learning in the FLIP 
 built on NVIDIA FLARE (NVFLARE).
 
 Main exports:
-    - FLIP: Factory function that returns the appropriate FLIP implementation based on job type
-    - FLIPBase: Abstract base class for FLIP implementations
+    - `FLIP`: Factory function that returns the appropriate FLIP implementation based on job type
+    - `FLIPBase`: Abstract base class for FLIP implementations
 
 Example usage:
+
+.. code-block:: python
+
     from flip import FLIP
-    from flip.constants import FlipConstants, ResourceType, ModelStatus
 
     flip = FLIP()  # Uses default "standard" job type
+
     df = flip.get_dataframe(project_id, query)
 """
 

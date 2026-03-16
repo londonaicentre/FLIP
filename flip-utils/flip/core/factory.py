@@ -30,8 +30,9 @@ def FLIP(job_type: Union[JobType, JobTypeStr] = JobType.STANDARD, **kwargs) -> F
 
     This is the main entry point for users to create FLIP instances.
     The factory automatically selects the correct implementation based on:
-    1. The job type (standard, evaluation, fed_opt, diffusion_model)
-    2. The environment (LOCAL_DEV or production)
+
+        1. The job type (standard, evaluation, fed_opt, diffusion_model)
+        2. The environment (LOCAL_DEV or production)
 
     Args:
         job_type: One of "standard", "evaluation", "fed_opt", "diffusion_model"
@@ -41,17 +42,26 @@ def FLIP(job_type: Union[JobType, JobTypeStr] = JobType.STANDARD, **kwargs) -> F
     Returns:
         FLIPBase: Appropriate FLIP instance for the job type and environment
 
-    Example:
-        # Create standard FLIP instance
-        flip = FLIP()
-        df = flip.get_dataframe(project_id, query)
+    Examples:
+        Create a standard FLIP instance:
 
-        # Create evaluation-specific FLIP instance
-        flip = FLIP(job_type="evaluation")
+        .. code-block:: python
 
-        # Using enum
-        from flip.constants import JobType
-        flip = FLIP(job_type=JobType.DIFFUSION)
+            flip = FLIP()
+            df = flip.get_dataframe(project_id, query)
+
+        Create an evaluation-specific FLIP instance:
+
+        .. code-block:: python
+
+            flip = FLIP(job_type="evaluation")
+
+        Use the enum-based job type:
+
+        .. code-block:: python
+
+            from flip.constants import JobType
+            flip = FLIP(job_type=JobType.DIFFUSION)
     """
     is_dev = FlipConstants.LOCAL_DEV
 
