@@ -101,17 +101,14 @@ Job Types
 
 Set the job type via the ``JOB_TYPE`` environment variable:
 
-+------------------+------------------------------------------------------------------------------------+
-| Type             | Description                                                                        |
-+==================+====================================================================================+
-| ``standard``     | Federated training with FedAvg aggregation (default)                              |
-+------------------+------------------------------------------------------------------------------------+
-| ``evaluation``   | Distributed model evaluation without training                                     |
-+------------------+------------------------------------------------------------------------------------+
-| ``diffusion_model`` | Two-stage training: VAE encoder followed by diffusion model training              |
-+------------------+------------------------------------------------------------------------------------+
-| ``fed_opt``      | Custom federated optimization with flexible aggregation strategies                |
-+------------------+------------------------------------------------------------------------------------+
+====================  ====================================================================================
+Type                  Description
+====================  ====================================================================================
+``standard``          Federated training with FedAvg aggregation (default)
+``evaluation``        Distributed model evaluation without training
+``diffusion_model``   Two-stage training: VAE encoder followed by diffusion model training
+``fed_opt``           Custom federated optimization with flexible aggregation strategies
+====================  ====================================================================================
 
 
 User Application Requirements
@@ -120,19 +117,15 @@ User Application Requirements
 User-provided application code goes in the job's ``custom/`` directory. The
 executor wrappers dynamically import these files:
 
-+--------------------+----------------------------------------------------------------+
-| File               | Description                                                    |
-+====================+================================================================+
-| ``trainer.py``     | Training logic — must export ``FLIP_TRAINER`` class            |
-+--------------------+----------------------------------------------------------------+
-| ``validator.py``   | Validation logic — must export ``FLIP_VALIDATOR`` class        |
-+--------------------+----------------------------------------------------------------+
-| ``models.py``      | Model definitions — must export ``get_model()`` function       |
-+--------------------+----------------------------------------------------------------+
-| ``config.json``    | Hyperparameters — must include ``LOCAL_ROUNDS`` and ``LEARNING_RATE`` |
-+--------------------+----------------------------------------------------------------+
-| ``transforms.py``  | Data transforms *(optional)*                                   |
-+--------------------+----------------------------------------------------------------+
+====================  ================================================================
+File                  Description
+====================  ================================================================
+``trainer.py``        Training logic — must export ``FLIP_TRAINER`` class
+``validator.py``      Validation logic — must export ``FLIP_VALIDATOR`` class
+``models.py``         Model definitions — must export ``get_model()`` function
+``config.json``       Hyperparameters — must include ``LOCAL_ROUNDS`` and ``LEARNING_RATE``
+``transforms.py``     Data transforms *(optional)*
+====================  ================================================================
 
 
 Development Mode
