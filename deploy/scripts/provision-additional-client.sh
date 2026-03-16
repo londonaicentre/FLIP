@@ -13,7 +13,7 @@
 #
 
 # Provision a new client for an existing NVFLARE federated learning network
-# Usage: ./scripts/provision-additional-client.sh <net_number> [fl_port] [admin_port]
+# Usage: ./scripts/provision-additional-client.sh <net_number> [fl_port]
 # 
 # You'll need to have added a new Trust_<N> client entry in the net-<net_number>_project.yml file
 # before running this script.
@@ -23,7 +23,6 @@ set -e
 
 NET_NUMBER="${1:?Error: NET_NUMBER is required}"
 FL_PORT="${2:-8002}"
-ADMIN_PORT="${3:-8003}"
 
 WORKSPACE="workspace/net-${NET_NUMBER}"
 FL_SERVICES="workspace/net-${NET_NUMBER}/services"
