@@ -33,7 +33,7 @@ def send_metrics_value(
         label: The label of the metric.
         value: The value of the metric.
         fl_ctx: The federated learning context.
-        round: The local round number (default: None).
+        round: The round number (default: None).
     """
     if not isinstance(label, str):
         raise TypeError(f"expect label to be string, but got {type(label)}")

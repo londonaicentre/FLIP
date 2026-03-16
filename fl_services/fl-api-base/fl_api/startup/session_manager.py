@@ -16,19 +16,17 @@ from fl_api.utils.flip_session import FLIP_Session
 from fl_api.utils.logger import logger
 
 
-def create_fl_session(username: str = "admin", secure_mode: bool = False, debug: bool = False) -> FLIP_Session:
+def create_fl_session() -> FLIP_Session:
     """
-    Initialize NVFlare admin workspace and return a secure session.
-
-    Args:
-        username: The username for the FLIP session (default: "admin").
-        secure_mode: Whether to enable secure mode for the session (default: False).
-        debug: Whether to enable debug mode for the session (default: False).
+    Initialize NVIDIA FLARE admin workspace and return a session object for interacting with it.
 
     Returns:
         FLIP_Session: An initialized FLIP_Session object.
     """
+    username = get_settings().USERNAME
     admin_dir = get_settings().FL_ADMIN_DIRECTORY
+    secure_mode = get_settings().SECURE_MODE
+    debug = get_settings().LOG_LEVEL == "DEBUG"
 
     logger.info(f"Admin directory set to: {admin_dir}")
     logger.info(
