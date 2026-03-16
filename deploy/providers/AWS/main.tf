@@ -490,8 +490,8 @@ resource "aws_lb_listener_rule" "api_roles_routing" {
   }
 }
 
-# Additional listener rule for trust and site API paths
-resource "aws_lb_listener_rule" "api_trust_site_routing" {
+# Additional listener rule for miscellaneous API paths
+resource "aws_lb_listener_rule" "api_misc_routing" {
   listener_arn = module.alb.listeners["https-listener"].arn
   priority     = 102
 
@@ -502,7 +502,7 @@ resource "aws_lb_listener_rule" "api_trust_site_routing" {
 
   condition {
     path_pattern {
-      values = ["/trust", "/trust/*", "/site", "/site/*"]
+      values = ["/trust", "/trust/*", "/site", "/site/*", "/step/*"]
     }
   }
 }
