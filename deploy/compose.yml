@@ -45,7 +45,7 @@ services:
       - MIN_CLIENTS=1
       - IMAGES_DIR=/app/data/images
       - UPLOADED_FEDERATED_DATA_BUCKET=fake-s3-bucket
-      # - LOG_LEVEL=DEBUG
+      - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       # Provisioned secrets from workspace/ (gitignored)
       - ../workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/local:/app/local
@@ -63,11 +63,10 @@ services:
         UID: ${UID:-1000}
         GID: ${GID:-1000}
         UNAME: ${UNAME:-flip}
-      target: development
     environment:
       - FL_ADMIN_DIRECTORY=/app/admin
       - DEBUG=${DEBUG}
-      # - LOG_LEVEL=DEBUG
+      - LOG_LEVEL=${LOG_LEVEL}
     ports:
       - "${FL_API_PORT}:8000"
       - "5679:5679"
@@ -104,7 +103,7 @@ services:
       - UPLOADED_FEDERATED_DATA_BUCKET=fake-s3-bucket
       # - NUM_AVAILABLE_GPUS=1
       # - MEMORY_PER_GPU_IN_GIB=16
-      # - LOG_LEVEL=DEBUG
+      - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       # Provisioned secrets from workspace/ (gitignored)
       - ../workspace/net-${NET_NUMBER}/services/Trust_1/local:/app/local
@@ -133,7 +132,7 @@ services:
       - UPLOADED_FEDERATED_DATA_BUCKET=fake-s3-bucket
       # - NUM_AVAILABLE_GPUS=1
       # - MEMORY_PER_GPU_IN_GIB=16
-      # - LOG_LEVEL=DEBUG
+      - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       # Provisioned secrets from workspace/ (gitignored)
       - ../workspace/net-${NET_NUMBER}/services/Trust_2/local:/app/local
