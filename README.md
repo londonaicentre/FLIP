@@ -90,7 +90,7 @@ To start the services, you can use the Makefile provided in the root directory. 
 For example:
 
 | Command | Description |
-|---------|-------------|
+| --------- | ------------- |
 | `make up` | Run all services using Docker Swarm for XNAT (⚠️ This will not build the images, use `make build` first if needed)|
 | `make up-no-trust` | Run all services except the trust services related services |
 | `make up-trusts` | Run the trust services related services (uses Docker Swarm for XNAT) |

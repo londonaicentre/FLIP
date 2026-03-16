@@ -34,7 +34,7 @@ make xnat-plugins-download
 The following table lists the compatible versions of the plugins for the XNAT version `1.9.3` used in this environment.
 
 | Plugin                          | Version for XNAT 1.9.3  |
-|---------------------------------|-------------------------|
+| --------------------------------- | ------------------------- |
 | Container Service Plugin        | 3.7.3                   |
 | Batch Launch Plugin             | 0.9.0                   |
 | DICOM Query-Retrieve Plugin     | 2.2.0                   |

@@ -3,7 +3,7 @@
 ## Supported versions
 
 | Version | Supported |
-|---------|-----------|
+| --------- | ----------- |
 | latest  | ✅        |
 
 ## Reporting a vulnerability
