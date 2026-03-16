@@ -50,6 +50,8 @@ Platform) federated learning base application utilities. It is a monorepo that i
   - [Integration Testing](#integration-testing)
   - [CI/CD](#cicd)
   - [Makefile Reference](#makefile-reference)
+- [Security](#security)
+- [Contributing](#contributing)
 
 ---
 
@@ -187,7 +189,7 @@ This uses the network-specific provisioning project files (`net-1_project.yml` a
 ### Provisioning Networks for Staging/Production
 
 Note the provisioning project file `net-1_project_stag.yml` changes the name of the FL server to the full domain name i.e. `stag.flip.aicentre.co.uk` instead of `fl-server-net-1`, since the FL
-clients won't be on the same Docker network as the FL server (as they are in development) and won't be able to resolve internal Docker hostnames. 
+clients won't be on the same Docker network as the FL server (as they are in development) and won't be able to resolve internal Docker hostnames.
 
 Run:
 
@@ -269,3 +271,17 @@ To test a PR on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo
 | `make test-spleen-evaluation` | Test evaluation job with spleen data |
 | `make test-spleen-diffusion` | Test diffusion model with spleen data |
 | `make test` | Run all integration tests |
+
+---
+
+## Security
+
+Please report security vulnerabilities responsibly. For details on how to report a vulnerability, see [SECURITY.md](./SECURITY.md).
+
+**⚠️ Do not open a public GitHub issue for security bugs; instead, use the private GitHub Security Advisory feature.**
+
+---
+
+## Contributing
+
+For information on how to contribute to this project, see [CONTRIBUTING.md](./CONTRIBUTING.md).
