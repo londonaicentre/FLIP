@@ -16,6 +16,9 @@ SERVICE_UNAVAILABLE_MESSAGE = "The server is unable to process any requests at t
 ACCESS_REQUEST_TEMPLATE_NAME = "flip-access-request"
 IMAGING_CREDENTIALS_TEMPLATE_NAME = "flip-xnat-credentials"
 
+# File containing job types and their required files
+JOB_TYPES_REQUIRED_FILES_FILE = "job_types_and_required_files.json"
+
 # Testing constants
 BASE_URL = "http://localhost:8080/"
 ADMIN_EMAIL = "aicentreflip@gmail.com"

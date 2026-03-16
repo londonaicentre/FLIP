@@ -145,22 +145,28 @@ const stopTrainingAction = async () => {
 };
 
 const downloadTrainingResults = async () => {
-    const urls = await getDownloadUrlForResults(
-        modelId
-    );
-    if (!urls.length) {
+    try {
+        const urls = await getDownloadUrlForResults(modelId);
+        if (!urls.length) {
+            Snackbar.error({
+                title: "No results available",
+                text: "No downloadable result files were found for this model."
+            });
+
+            return;
+        }
+        urls.forEach((url) => {
+            const element = document.createElement("a");
+            element.setAttribute("href", url);
+            element.click();
+            element.remove();
+        });
+    }
+    catch {
         Snackbar.error({
             title: "Unable to download results",
             text: "There was a problem when downloading the results for this model."
         });
-
-        return;
     }
-    urls.forEach((url) => {
-        const element = document.createElement("a");
-        element.setAttribute("href", url);
-        element.click();
-        element.remove();
-    });
 };
 </script>

@@ -11,7 +11,6 @@
 #
 
 import json
-from enum import IntEnum
 from typing import List
 from uuid import UUID
 
@@ -27,12 +26,6 @@ from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import S3Client
 
 router = APIRouter(prefix="/files", tags=["file_services"])
-
-
-# TODO move this definition
-class ObjectCount(IntEnum):
-    NOT_FOUND = 0
-    HAS_FILES = 1
 
 
 # [#114] ✅
@@ -54,8 +47,8 @@ def retrieve_federated_results(
         List[str]: A list of presigned URLs for the files associated with the model.
 
     Raises:
-        HTTPException: If the user does not have access to the model, if the S3 bucket is not defined, or if there are
-                       no objects found for the specified model ID.
+        HTTPException: If the user does not have access to the model, if the model ID does not exist, if S3 command
+                       gives an error while listing objects, or if there are any errors retrieving objects from S3.
     """
     try:
         # Check user access
@@ -102,13 +95,9 @@ def retrieve_federated_results(
         logger.debug(f"List of files returned: {json.dumps(list_objects, default=str)}")
 
         # Check if any files were found
-        key_count = len(list_objects)
-        if key_count < ObjectCount.HAS_FILES:
-            logger.error(f"No result data was found: {s3_path}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No result data was found",
-            )
+        if len(list_objects) == 0:
+            logger.info(f"No result data was found: {s3_path}")
+            return []
 
         # Get presigned URLs for each file
         try:
