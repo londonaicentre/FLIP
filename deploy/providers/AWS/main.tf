@@ -359,13 +359,15 @@ module "fl_server_nlb" {
   enable_deletion_protection = false
   create_security_group      = true
 
+  # NLB only accepts trusted client sources - allow-list only the trusted client egress IPs
+  # TODO explore 'internal' NLB plus private connectivity instead of an internet-facing NLB
   security_group_ingress_rules = {
     fl_server_ingress = {
-      description = "Allow inbound FL server traffic to NLB"
+      description = "Allow inbound FL server traffic only from trusted FL client IP"
       ip_protocol = "tcp"
       from_port   = tostring(var.FL_SERVER_PORT)
       to_port     = tostring(var.FL_SERVER_PORT)
-      cidr_ipv4   = "0.0.0.0/0"
+      cidr_ipv4   = "${module.trust_ec2.public_ip}/32"
     }
   }
 
