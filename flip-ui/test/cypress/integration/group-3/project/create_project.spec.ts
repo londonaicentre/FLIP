@@ -23,7 +23,7 @@ describe("create project", () => {
 
     beforeEach(() => {
         cy.restoreLocalStorage();
-        cy.intercept("GET", "/projects?pageNumber=1&pageSize=20", { fixture: "project/getProjectsEmpty" })
+        cy.intercept("GET", "/projects/?pageNumber=1&pageSize=20", { fixture: "project/getProjectsEmpty" })
             .as("getProjectsEmpty");
         cy.intercept("GET", `/projects/${validProject.id}`, { fixture: "project/getProjectWithQuery" });
         cy.visit("/projects");
@@ -31,7 +31,7 @@ describe("create project", () => {
     });
 
     it("successfully creates a new project when name and description is provided", () => {
-        cy.intercept("POST", "/projects", {
+        cy.intercept("POST", "/projects/", {
             statusCode: 200,
             body: { "id": validProject.id }
         }).as("createProject");
@@ -51,7 +51,7 @@ describe("create project", () => {
     });
 
     it("displays an error message if the API call fails", () => {
-        cy.intercept("POST", "/projects", { statusCode: 500 });
+        cy.intercept("POST", "/projects/", { statusCode: 500 });
 
         cy.getBySel("project-name").type("Test Project Name");
         cy.getBySel("project-description").type("Test Project Description");
@@ -115,7 +115,7 @@ describe("create project", () => {
             }
         }).as("validateUser");
 
-        cy.intercept("POST", "/projects", {
+        cy.intercept("POST", "/projects/", {
             statusCode: 200,
             body: { "id": validProject.id }
         }).as("createProject");
@@ -143,7 +143,7 @@ describe("create project", () => {
     });
 
     it("attempts to add a user that does not exist, and when creating the project there are no users added", () => {
-        cy.intercept("POST", "/projects", {
+        cy.intercept("POST", "/projects/", {
             statusCode: 200,
             body: { "id": validProject.id }
         }).as("createProject");
@@ -173,7 +173,7 @@ describe("create project", () => {
     });
 
     it("attempts to add the same user twice, and when creating the project there is only one ID passed in", () => {
-        cy.intercept("POST", "/projects", {
+        cy.intercept("POST", "/projects/", {
             statusCode: 200,
             body: { "id": validProject.id }
         }).as("createProject");
@@ -215,7 +215,7 @@ describe("create project", () => {
     });
 
     it("successfully creates a new project when name, description, and users are added", () => {
-        cy.intercept("POST", "/projects", {
+        cy.intercept("POST", "/projects/", {
             statusCode: 200,
             body: { "id": validProject.id }
         }).as("createProject");
@@ -287,7 +287,7 @@ describe("create project", () => {
     });
 
     it("successfully creates a new project when name, description, and users are added and removed", () => {
-        cy.intercept("POST", "/projects", {
+        cy.intercept("POST", "/projects/", {
             statusCode: 200,
             body: { "id": validProject.id }
         }).as("createProject");

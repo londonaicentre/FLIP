@@ -168,7 +168,7 @@ const submitForm = async(v: unknown) => {
             return u.id;
         });
 
-        const { id: projectId } = await createProject("/projects", values as IProjectCreate);
+        const { id: projectId } = await createProject("/projects/", values as IProjectCreate);
 
         modalStore.toggleCreateProject();
 

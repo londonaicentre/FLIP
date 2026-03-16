@@ -33,9 +33,9 @@ describe("Manage Users as Administrator", () => {
         cy.login();
         cy.intercept("GET", "/users/**/permissions", { fixture: "user/getPermissions" })
             .as("getPermissions");
-        cy.intercept("GET", "/users?pageNumber=1&pageSize=20", { fixture: "user/getUsers" })
+        cy.intercept("GET", "/users/?pageNumber=1&pageSize=20", { fixture: "user/getUsers" })
             .as("getUsers");
-        cy.intercept("GET", "/roles", { fixture: "user/getRoles" })
+        cy.intercept("GET", "/roles/", { fixture: "user/getRoles" })
             .as("getRoles");
         cy.visit("/admin/users");
     });
@@ -146,7 +146,7 @@ describe("Manage Users as Administrator", () => {
     });
 
     it("Should support pagination", () => {
-        cy.intercept("GET", "/users?pageNumber=2&pageSize=20", { fixture: "user/getUsersPageTwo" })
+        cy.intercept("GET", "/users/?pageNumber=2&pageSize=20", { fixture: "user/getUsersPageTwo" })
             .as("pageTwo");
         cy.getBySel("page-btn-2").click();
         cy.wait("@pageTwo");

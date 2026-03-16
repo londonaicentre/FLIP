@@ -468,7 +468,24 @@ resource "aws_lb_listener_rule" "api_docs_routing" {
 
   condition {
     path_pattern {
-      values = ["/docs", "/openapi.json", "/redoc", "/prompts/*", "/roles/*"]
+      values = ["/docs", "/openapi.json", "/redoc", "/prompts/*"]
+    }
+  }
+}
+
+# Listener rule for role API endpoints
+resource "aws_lb_listener_rule" "api_roles_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 103
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/roles", "/roles/", "/roles/*"]
     }
   }
 }
@@ -491,8 +508,8 @@ resource "aws_lb_listener_rule" "api_trust_site_routing" {
 }
 
 # Listener rule for user and project API endpoints (priority 99 - higher priority)
-# Note: /users and /projects in UI are frontend routes, not API endpoints
-# API endpoints for users/projects should use more specific paths or HTTP methods
+# The SPA owns /projects, so collection endpoints must use a trailing slash (/projects/)
+# while detail endpoints stay under /projects/* and /users/*.
 resource "aws_lb_listener_rule" "api_user_project_routing" {
   listener_arn = module.alb.listeners["https-listener"].arn
   priority     = 99
@@ -504,7 +521,7 @@ resource "aws_lb_listener_rule" "api_user_project_routing" {
 
   condition {
     path_pattern {
-      values = ["/user/*", "/project/*"]
+      values = ["/users", "/users/", "/users/*", "/projects/", "/projects/*"]
     }
   }
 }

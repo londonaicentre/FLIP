@@ -251,7 +251,7 @@ const userFilter = {
 
 const { data, error } = useSWRV(
     () =>
-        `/projects?pageNumber=${pageNumber.value}&pageSize=${pageSize}${searchQueryParam.value}${ownerQueryParam.value}`,
+        `/projects/?pageNumber=${pageNumber.value}&pageSize=${pageSize}${searchQueryParam.value}${ownerQueryParam.value}`,
     getProjects,
     {
         dedupingInterval: 5_000,
