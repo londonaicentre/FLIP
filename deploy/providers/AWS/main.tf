@@ -104,36 +104,15 @@ module "trust_security_group" {
   ]
 }
 
-resource "aws_security_group_rule" "fl_server_ingress" {
+# Only allow FL server traffic that arrives through the NLB, not direct client or VPC access.
+resource "aws_security_group_rule" "fl_server_ingress_from_nlb" {
   type                     = "ingress"
   from_port                = var.FL_SERVER_PORT
   to_port                  = var.FL_SERVER_PORT
   protocol                 = "tcp"
-  source_security_group_id = module.trust_security_group.security_group.id
+  source_security_group_id = module.fl_server_nlb.security_group_id
   security_group_id        = module.ec2_security_group.security_group.id
-  description              = "FL Server from Trust Security Group"
-}
-
-resource "aws_security_group_rule" "fl_server_ingress_from_vpc" {
-  type              = "ingress"
-  from_port         = var.FL_SERVER_PORT
-  to_port           = var.FL_SERVER_PORT
-  protocol          = "tcp"
-  cidr_blocks       = [var.vpc_cidr]
-  security_group_id = module.ec2_security_group.security_group.id
-  description       = "FL Server from VPC (NLB path)"
-}
-
-# The trust client reaches the internet-facing NLB via its public IP.
-# Keep a narrow allow-list by permitting only the trust host public IP on FL server port.
-resource "aws_security_group_rule" "fl_server_ingress_from_trust_public_ip" {
-  type              = "ingress"
-  from_port         = var.FL_SERVER_PORT
-  to_port           = var.FL_SERVER_PORT
-  protocol          = "tcp"
-  cidr_blocks       = ["${module.trust_ec2.public_ip}/32"]
-  security_group_id = module.ec2_security_group.security_group.id
-  description       = "FL Server from Trust host public IP"
+  description              = "FL Server from NLB security group"
 }
 
 # RDS
