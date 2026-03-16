@@ -1,5 +1,5 @@
-Overview
-========
+Getting Started with flip-utils
+===============================
 
 About flip-utils
 ----------------
@@ -29,6 +29,7 @@ To use the latest development version, clone the repository and install from sou
 .. code-block:: bash
 
    git clone https://github.com/londonaicentre/flip-fl-base.git
+   git checkout develop   # or the desired branch/commit
    cd flip-fl-base
    uv sync
    # or
@@ -100,17 +101,17 @@ Job Types
 
 Set the job type via the ``JOB_TYPE`` environment variable:
 
-+-----------------+--------------------------------------------------------------------------+
-| Type            | Description                                                              |
-+=================+==========================================================================+
-| ``standard``    | Federated training with FedAvg aggregation (default)                    |
-+-----------------+--------------------------------------------------------------------------+
-| ``evaluation``  | Distributed model evaluation without training                           |
-+-----------------+--------------------------------------------------------------------------+
-| ``diffusion_model``  | Two-stage training: VAE encoder followed by diffusion model training |
-+-----------------+--------------------------------------------------------------------------+
-| ``fed_opt``     | Custom federated optimization with flexible aggregation strategies      |
-+-----------------+--------------------------------------------------------------------------+
++------------------+------------------------------------------------------------------------------------+
+| Type             | Description                                                                        |
++==================+====================================================================================+
+| ``standard``     | Federated training with FedAvg aggregation (default)                              |
++------------------+------------------------------------------------------------------------------------+
+| ``evaluation``   | Distributed model evaluation without training                                     |
++------------------+------------------------------------------------------------------------------------+
+| ``diffusion_model`` | Two-stage training: VAE encoder followed by diffusion model training              |
++------------------+------------------------------------------------------------------------------------+
+| ``fed_opt``      | Custom federated optimization with flexible aggregation strategies                |
++------------------+------------------------------------------------------------------------------------+
 
 
 User Application Requirements
@@ -119,19 +120,19 @@ User Application Requirements
 User-provided application code goes in the job's ``custom/`` directory. The
 executor wrappers dynamically import these files:
 
-+-------------------+-----------------------------------------------------------+
-| File              | Description                                               |
-+===================+===========================================================+
-| ``trainer.py``    | Training logic — must export ``FLIP_TRAINER`` class       |
-+-------------------+-----------------------------------------------------------+
-| ``validator.py``  | Validation logic — must export ``FLIP_VALIDATOR`` class   |
-+-------------------+-----------------------------------------------------------+
-| ``models.py``     | Model definitions — must export ``get_model()`` function  |
-+-------------------+-----------------------------------------------------------+
-| ``config.json``   | Hyperparameters — must include ``LOCAL_ROUNDS`` and ``LEARNING_RATE`` |
-+-------------------+-----------------------------------------------------------+
-| ``transforms.py`` | Data transforms *(optional)*                              |
-+-------------------+-----------------------------------------------------------+
++--------------------+----------------------------------------------------------------+
+| File               | Description                                                    |
++====================+================================================================+
+| ``trainer.py``     | Training logic — must export ``FLIP_TRAINER`` class            |
++--------------------+----------------------------------------------------------------+
+| ``validator.py``   | Validation logic — must export ``FLIP_VALIDATOR`` class        |
++--------------------+----------------------------------------------------------------+
+| ``models.py``      | Model definitions — must export ``get_model()`` function       |
++--------------------+----------------------------------------------------------------+
+| ``config.json``    | Hyperparameters — must include ``LOCAL_ROUNDS`` and ``LEARNING_RATE`` |
++--------------------+----------------------------------------------------------------+
+| ``transforms.py``  | Data transforms *(optional)*                                   |
++--------------------+----------------------------------------------------------------+
 
 
 Development Mode
@@ -193,4 +194,4 @@ How the API Reference is Generated
 
 The API reference is built with ``sphinx-autoapi`` and points directly at the
 ``flip/`` source tree. That keeps the reference pages aligned with the code
-without maintaining hand-written module stubs. See the :ref:`API Reference <reference/index:API Reference>` section for complete documentation of all public classes and functions.
+without maintaining hand-written module stubs. See the :doc:`reference/index` section for complete documentation of all public classes and functions.
