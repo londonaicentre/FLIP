@@ -113,4 +113,4 @@ def test_seed_trusts_skips_trust_on_exception(mock_get_settings, mock_logger, mo
     assert mock_session.commit.call_count == 1
     assert result == []
     mock_logger.info.assert_called_once()
-    assert "Endpoint for Broken Trust not found in secrets. Skipping." in mock_logger.info.call_args[0][0]
+    assert "Endpoint not found in secrets for one of the trusts. Skipping." in mock_logger.info.call_args[0][0]
