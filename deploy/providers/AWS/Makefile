@@ -240,9 +240,10 @@ update-env: ## Update environment file with Terraform outputs
 .PHONY: ansible-init
 ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed try again for 3 times)
 	@echo "☁️🔗 Initiate ansible and install docker on both EC2 instances"
+	@test -n "$(FL_KIT_DATE)" || (echo "FL_KIT_DATE must be set in $(MAIN_ENV_FILE)"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
-	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=${AICENTRE_BUCKET_NAME}
+	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) -e fl_kit_date=$(FL_KIT_DATE)
 
 .PHONY: deploy-centralhub
 deploy-centralhub: ## Deploy FLIP containers to flip context with environment from Terraform
