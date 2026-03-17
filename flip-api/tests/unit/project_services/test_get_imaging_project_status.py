@@ -257,10 +257,10 @@ def test_get_imaging_project_status_statuses_not_found(client: TestClient, app_f
 
 
 def test_get_imaging_project_status_invalid_project_id_format(client: TestClient, app_fixture: FastAPI):
-    # No dependency overrides needed as FastAPI validation happens before endpoint logic
+    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
     project_id = "not-a-valid-uuid"
     response = client.get(f"/api/projects/{project_id}/image/status")
 
-    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     app_fixture.dependency_overrides.clear()
