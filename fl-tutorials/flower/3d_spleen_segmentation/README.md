@@ -12,6 +12,7 @@
 -->
 
 ---
+
 tags: [quickstart]
 dataset: [spleen]
 framework: [monai]
@@ -26,7 +27,7 @@ This example of Flower uses a small MONAI UNet based on FLIP's implementation an
 ### Folder structure
 
 ```shell
-monai
+3d_spleen_segmentation
 ├── app
 │   ├── __init__.py
 │   ├── client_app.py   # Defines your ClientApp
@@ -61,7 +62,7 @@ pip install -e .
 
 ## Run with the Simulation Engine
 
-Assuming the `./data` is at the top level directory of this repository, from the `monai` directory, use `flwr run` to run a local simulation:
+Assuming the `./data` is at the top level directory of this repository, from the `3d_spleen_segmentation` directory, use `flwr run` to run a local simulation:
 
 ```bash
 DEV_DATAFRAME="../../data/spleen/sample_get_dataframe_response.csv"  DEV_IMAGES_DIR="../../data/spleen/accession-resources" flwr run .
