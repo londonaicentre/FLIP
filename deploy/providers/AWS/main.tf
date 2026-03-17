@@ -451,7 +451,24 @@ resource "aws_lb_listener_rule" "api_path_routing" {
 
   condition {
     path_pattern {
-      values = ["/cohort/*", "/files/*", "/fl/*", "/model/*", "/health"]
+      values = ["/cohort/*", "/files/*", "/fl/*", "/health"]
+    }
+  }
+}
+
+# Listener rule for model API endpoints
+resource "aws_lb_listener_rule" "api_model_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 104
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/model", "/model/*"]
     }
   }
 }
@@ -502,7 +519,7 @@ resource "aws_lb_listener_rule" "api_misc_routing" {
 
   condition {
     path_pattern {
-      values = ["/trust", "/trust/*", "/site", "/site/*", "/step/*"]
+      values = ["/trust", "/trust/*", "/site/*", "/step/*"]
     }
   }
 }
