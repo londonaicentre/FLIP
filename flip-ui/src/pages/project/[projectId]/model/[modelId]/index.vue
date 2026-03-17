@@ -201,6 +201,14 @@ function getStatusEnumValue(status: string | undefined): number {
 
 const steps = computed((): IStep[] => {
     const statusValue = getStatusEnumValue(modelData.value?.status);
+    const isStopped = statusValue === ModelStatusEnum.STOPPED;
+    const isError = statusValue === ModelStatusEnum.ERROR;
+
+    // When training is stopped or errors, prior completed steps should
+    // remain marked as completed (✅) rather than showing 🚫.
+    // A stopped/errored model must have been at least PREPARED, so
+    // "Model Prepared" stays completed and only later steps show the
+    // stopped/error indicator.  See issue #29.
     return [
         {
             id: "01",
@@ -212,9 +220,7 @@ const steps = computed((): IStep[] => {
             name: "Model Prepared",
             description: statusValue === ModelStatusEnum.INITIATED ? "Model Queued" : undefined,
             inProgress: statusValue === ModelStatusEnum.INITIATED,
-            completed: statusValue >= ModelStatusEnum.PREPARED,
-            error: statusValue === ModelStatusEnum.ERROR,
-            stopped: statusValue === ModelStatusEnum.STOPPED
+            completed: statusValue >= ModelStatusEnum.PREPARED || isStopped || isError,
         },
         {
             id: "03",
@@ -222,17 +228,17 @@ const steps = computed((): IStep[] => {
             description:
                 (statusValue >= ModelStatusEnum.PREPARED && statusValue < ModelStatusEnum.RESULTS_UPLOADED)
                     ? "In Progress" : undefined,
-            inProgress: statusValue >= ModelStatusEnum.PREPARED,
+            inProgress: statusValue >= ModelStatusEnum.PREPARED && !isStopped && !isError,
             completed: statusValue > ModelStatusEnum.TRAINING_STARTED,
-            error: statusValue === ModelStatusEnum.ERROR,
-            stopped: statusValue === ModelStatusEnum.STOPPED
+            error: isError,
+            stopped: isStopped
         },
         {
             id: "04",
             name: "Results Uploaded",
             completed: statusValue === ModelStatusEnum.RESULTS_UPLOADED,
-            error: statusValue === ModelStatusEnum.ERROR,
-            stopped: statusValue === ModelStatusEnum.STOPPED
+            error: isError,
+            stopped: isStopped
         }
     ];
 });
