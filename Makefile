@@ -43,7 +43,8 @@ endif
 ifeq ($(PROD),true)
 override DOCKER_TAG := prod
 else ifeq ($(PROD),stag)
-override DOCKER_TAG := stag
+# Use branch number tag if on a feature branch (e.g. 157 for 157-feature-...), otherwise fall back to "stag"
+override DOCKER_TAG := $(shell git rev-parse --abbrev-ref HEAD | grep -oE '^[0-9]+' || echo "stag")
 else
 override DOCKER_TAG := $(shell gh pr view --json number -q '"pr-" + (.number | tostring)' 2>/dev/null || echo "stag")
 endif
