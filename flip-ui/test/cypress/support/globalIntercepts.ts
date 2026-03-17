@@ -49,7 +49,7 @@ beforeEach(() => {
 
     cy.intercept(
         "GET",
-        "/projects/?pageNumber=1&pageSize=20", {
+        "/projects?pageNumber=1&pageSize=20", {
             statusCode: 200,
             fixture: "project/getProjects"
         }

@@ -130,7 +130,7 @@ class TestIntegration:
                 mock_result.all.return_value = sample_files[0]
                 mock_exec.return_value = mock_result
 
-                response = client.post("/files/info", json={"ids": [str(id) for id in sample_file_ids[:2]]})
+                response = client.post("/api/files/info", json={"ids": [str(id) for id in sample_file_ids[:2]]})
 
                 assert response.status_code == 200
                 data = response.json()

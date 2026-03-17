@@ -92,7 +92,7 @@ def test_delete_model_success(
     mock_delete_model,
     mock_abort_training,
 ):
-    response = client.delete(f"/model/{test_model_id}")
+    response = client.delete(f"/api/model/{test_model_id}")
     assert response.status_code == status.HTTP_204_NO_CONTENT
     mock_delete_model.assert_called_once()
     mock_abort_training.assert_called_once()
@@ -101,7 +101,7 @@ def test_delete_model_success(
 def test_delete_model_forbidden(
     mock_can_access_false,
 ):
-    response = client.delete(f"/model/{test_model_id}")
+    response = client.delete(f"/api/model/{test_model_id}")
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert "denied access" in response.json()["detail"]
 
@@ -110,7 +110,7 @@ def test_delete_model_not_found(
     mock_can_access_true,
     mock_model_status_none,
 ):
-    response = client.delete(f"/model/{test_model_id}")
+    response = client.delete(f"/api/model/{test_model_id}")
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert "does not exist" in response.json()["detail"]
 
@@ -119,7 +119,7 @@ def test_delete_model_already_deleted(
     mock_can_access_true,
     mock_model_status_deleted,
 ):
-    response = client.delete(f"/model/{test_model_id}")
+    response = client.delete(f"/api/model/{test_model_id}")
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert "already deleted" in response.json()["detail"]
 
@@ -130,7 +130,7 @@ def test_delete_model_database_error(
     mock_abort_training,
 ):
     with patch("flip_api.model_services.delete_model.delete_model", side_effect=SQLAlchemyError):
-        response = client.delete(f"/model/{test_model_id}")
+        response = client.delete(f"/api/model/{test_model_id}")
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert "Database error" in response.json()["detail"]
 
@@ -141,6 +141,6 @@ def test_delete_model_unexpected_error(
     mock_abort_training,
 ):
     with patch("flip_api.model_services.delete_model.delete_model", side_effect=Exception("Unexpected error")):
-        response = client.delete(f"/model/{test_model_id}")
+        response = client.delete(f"/api/model/{test_model_id}")
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert "Unexpected error" in response.json()["detail"]

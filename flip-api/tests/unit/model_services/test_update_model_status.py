@@ -95,7 +95,7 @@ def test_update_model_status_success(
     mock_update_model_status_success,
     mock_add_log,
 ):
-    response = client.patch(f"/model/{test_model_id}/status/{ModelStatus.TRAINING_STARTED.value}")
+    response = client.patch(f"/api/model/{test_model_id}/status/{ModelStatus.TRAINING_STARTED.value}")
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"success": "status set"}
     mock_update_model_status_success.assert_called_once()
@@ -108,7 +108,7 @@ def test_update_model_status_success_no_log(
 ):
     with patch("flip_api.model_services.update_model_status.update_model_status", return_value=True):
         with patch("flip_api.model_services.update_model_status.add_log") as mock_add_log:
-            response = client.patch(f"/model/{test_model_id}/status/{ModelStatus.PENDING.value}")
+            response = client.patch(f"/api/model/{test_model_id}/status/{ModelStatus.PENDING.value}")
             assert response.status_code == status.HTTP_200_OK
             assert response.json() == {"success": "status set"}
             mock_add_log.assert_not_called()
@@ -118,7 +118,7 @@ def test_update_model_status_forbidden(
     mock_can_access_false,
     mock_deployment_mode_disabled,
 ):
-    response = client.patch(f"/model/{test_model_id}/status/{ModelStatus.ERROR.value}")
+    response = client.patch(f"/api/model/{test_model_id}/status/{ModelStatus.ERROR.value}")
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert "denied access" in response.json()["detail"]
 
@@ -135,7 +135,7 @@ def test_update_model_status_deployment_mode_enabled(
     mock_can_access_true,
     mock_deployment_mode_enabled,
 ):
-    response = client.patch(f"/model/{test_model_id}/status/{ModelStatus.ERROR.value}")
+    response = client.patch(f"/api/model/{test_model_id}/status/{ModelStatus.ERROR.value}")
     assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
     assert SERVICE_UNAVAILABLE_MESSAGE in response.json()["detail"]
 
@@ -147,7 +147,7 @@ def test_update_model_status_model_not_found(
     mock_update_model_status_not_found,
 ):
     override_dependencies.get.return_value = None
-    response = client.patch(f"/model/{test_model_id}/status/{ModelStatus.ERROR.value}")
+    response = client.patch(f"/api/model/{test_model_id}/status/{ModelStatus.ERROR.value}")
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert "does not exist" in response.json()["detail"]
 
@@ -158,6 +158,6 @@ def test_update_model_status_database_error(
     mock_deployment_mode_disabled,
 ):
     override_dependencies.get.side_effect = SQLAlchemyError
-    response = client.patch(f"/model/{test_model_id}/status/{ModelStatus.ERROR.value}")
+    response = client.patch(f"/api/model/{test_model_id}/status/{ModelStatus.ERROR.value}")
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Database error" in response.json()["detail"]

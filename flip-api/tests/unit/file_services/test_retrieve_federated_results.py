@@ -168,7 +168,7 @@ def test_retrieve_federated_results_endpoint_calls_function(override_dependencie
         mock_s3.get_presigned_url.return_value = expected_output[0]
 
         client = TestClient(app)
-        response = client.get(f"/files/model/{model_id}/fl/results")
+        response = client.get(f"/api/files/model/{model_id}/fl/results")
 
         assert response.status_code == 200
         assert response.json() == expected_output

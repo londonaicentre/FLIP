@@ -315,7 +315,7 @@ onBeforeMount(async () => {
 
 const { data: userData, mutate: userMutate } = useSWRV(
     () =>
-        `/users/?pageNumber=${pageNumber.value}&pageSize=${pageSize}${searchQueryParam.value}`,
+        `/users?pageNumber=${pageNumber.value}&pageSize=${pageSize}${searchQueryParam.value}`,
     getUsers,
     {
         dedupingInterval: 5_000,
@@ -325,7 +325,7 @@ const { data: userData, mutate: userMutate } = useSWRV(
 
 const { data: allRoles } = useSWRV(
     () =>
-        "/roles/",
+        "/roles",
     getRoles,
     {
         dedupingInterval: 5_000,

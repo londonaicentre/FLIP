@@ -31,7 +31,7 @@ from flip_api.utils.paging_utils import IPagedResponse
 @pytest.fixture
 def app_fixture() -> FastAPI:
     app = FastAPI()
-    app.include_router(get_models_router)
+    app.include_router(get_models_router, prefix="/api")
     return app
 
 
@@ -101,7 +101,7 @@ def test_get_models_success(client: TestClient, app_fixture: FastAPI):
             return_value=mock_get_models_service_response,
         ) as mock_get_project_models,
     ):
-        response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/models")
+        response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/models")
 
     assert response.status_code == status.HTTP_200_OK
     # Ensure response JSON matches the corrected expected list
@@ -124,7 +124,7 @@ def test_get_models_access_denied(client: TestClient, app_fixture: FastAPI):
         patch("flip_api.project_services.get_models.get_project") as mock_get_project,
         patch("flip_api.project_services.get_models.get_project_models_service") as mock_get_project_models,
     ):
-        response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/models")
+        response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/models")
 
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert response.json()["detail"] == f"User with ID: {MOCK_USER_ID} is denied access to this project"
@@ -145,7 +145,7 @@ def test_get_models_project_not_found(client: TestClient, app_fixture: FastAPI):
         patch("flip_api.project_services.get_models.get_project", return_value=None) as mock_get_project,
         patch("flip_api.project_services.get_models.get_project_models_service") as mock_get_project_models,
     ):
-        response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/models")
+        response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/models")
 
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert response.json()["detail"] == f"Project with ID: {MOCK_PROJECT_ID} not found."
@@ -172,7 +172,7 @@ def test_get_models_no_models_found_for_project(client: TestClient, app_fixture:
             return_value=mock_get_models_service_empty_response,
         ) as mock_get_project_models,
     ):
-        response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/models")
+        response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/models")
 
     assert response.status_code == status.HTTP_200_OK
     mock_can_access.assert_called_once_with(MOCK_USER_ID, MOCK_PROJECT_ID, mock_db_session)

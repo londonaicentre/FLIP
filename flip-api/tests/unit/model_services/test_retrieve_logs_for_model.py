@@ -108,26 +108,26 @@ def test_retrieve_logs_for_model_success(override_dependencies, mock_can_access_
         mock_exec_result,  # db.exec(...).all() → returns mock logs
     ]
 
-    response = client.get(f"/model/{test_model_id}/logs")
+    response = client.get(f"/api/model/{test_model_id}/logs")
     assert response.status_code == status.HTTP_200_OK
     assert isinstance(response.json(), list)
     assert len(response.json()) == 2
 
 
 def test_retrieve_logs_for_model_forbidden(mock_can_access_false):
-    response = client.get(f"/model/{test_model_id}/logs")
+    response = client.get(f"/api/model/{test_model_id}/logs")
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert "denied access" in response.json()["detail"]
 
 
 def test_retrieve_logs_for_model_model_not_found(mock_can_access_true, mock_model_status_none):
-    response = client.get(f"/model/{test_model_id}/logs")
+    response = client.get(f"/api/model/{test_model_id}/logs")
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert "does not exist" in response.json()["detail"]
 
 
 def test_retrieve_logs_for_model_model_deleted(mock_can_access_true, mock_model_status_deleted):
-    response = client.get(f"/model/{test_model_id}/logs")
+    response = client.get(f"/api/model/{test_model_id}/logs")
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert "does not exist" in response.json()["detail"]
 
@@ -142,20 +142,20 @@ def test_retrieve_logs_for_model_orphaned_model(mock_can_access_true, mock_model
         [],  # won't be reached
     ]
 
-    response = client.get(f"/model/{test_model_id}/logs")
+    response = client.get(f"/api/model/{test_model_id}/logs")
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert "does not exist or is orphaned" in response.json()["detail"]
 
 
 def test_retrieve_logs_for_model_database_error(mock_can_access_true, mock_model_status_ok, override_dependencies):
     override_dependencies.exec.side_effect = SQLAlchemyError
-    response = client.get(f"/model/{test_model_id}/logs")
+    response = client.get(f"/api/model/{test_model_id}/logs")
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Database error" in response.json()["detail"]
 
 
 def test_retrieve_logs_for_model_unexpected_error(mock_can_access_true, mock_model_status_ok, override_dependencies):
     override_dependencies.exec.side_effect = Exception("Unexpected error")
-    response = client.get(f"/model/{test_model_id}/logs")
+    response = client.get(f"/api/model/{test_model_id}/logs")
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Unexpected error" in response.json()["detail"]
