@@ -1,3 +1,0 @@
-#########
-Imaging Database
-#########

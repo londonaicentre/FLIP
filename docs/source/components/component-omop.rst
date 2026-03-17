@@ -1,3 +1,5 @@
+.. _flip-omop:
+
 #########
 OMOP Database
 #########
