@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 create-networks remove-networks recreate-networks tests generate-trust-certs verify-trust-certs test-trust-https
+.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 up-local-trust-stag create-networks remove-networks recreate-networks tests generate-trust-certs verify-trust-certs test-trust-https
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=../.env.production
@@ -124,6 +124,20 @@ up-trust-1-stag:
 down-trust-1-stag:
 	@echo "🛑 Stopping Trust 1 services..."
 	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust1} down --remove-orphans
+
+# LOCAL_TRUST_NUMBER controls which NVFlare participant kit the FL client mounts.
+# Local (on-prem) trusts use Trust_2 kit; EC2 trusts use Trust_1 kit (default).
+LOCAL_TRUST_NUMBER ?= 2
+
+up-local-trust-stag:
+	## Starts Trust 1 compose stack with TRUST_NUMBER overridden for the local trust FL kit.
+	## Uses project name 'trust1' so nginx-tls, trust-api, etc. keep their normal names,
+	## but overrides TRUST_NUMBER so the FL client mounts Trust_$(LOCAL_TRUST_NUMBER)/ kit dir.
+	@echo "🚢 Starting local Trust services (TRUST_NUMBER=$(LOCAL_TRUST_NUMBER))..."
+	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
+	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
+	$(TRUST_1_VARS) TRUST_NUMBER=$(LOCAL_TRUST_NUMBER) DEBUG=$(DEBUG) \
+		$(DOCKER_COMPOSE_CMD) -p $(trust1) up -d --pull always
 
 # Uses --pull always to ensure the latest FL images and omop-db image are used
 # ensure omop data is up to date before bringing up trust 2

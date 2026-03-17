@@ -78,6 +78,20 @@
         - "{{ flip_dir }}/data/trust-1"
         - "{{ cert_dir }}"
 
+    - name: Create FL client kit directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      loop:
+        - "/opt/flip/services"
+        - "/opt/flip/services/Trust_2"
+        - "/opt/flip/services/Trust_2/startup"
+        - "/opt/flip/services/Trust_2/local"
+        - "/opt/flip/services/Trust_2/transfer"
+
     # ── TLS certificates ─────────────────────────────────────────────────────
     - name: Generate Trust CA private key
       community.crypto.openssl_privatekey:
