@@ -202,5 +202,5 @@
     - name: Fetch Trust CA certificate to operator workstation
       fetch:
         src: "{{ cert_dir }}/trust-ca.crt"
-        dest: "trust/certs/trust-ca.crt"
+        dest: "../../../trust/certs/trust-ca.crt"
         flat: true
