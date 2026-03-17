@@ -662,6 +662,9 @@ def main(
         # Check API health endpoint via ALB
         check_http_endpoint(f"https://{alb_subdomain}/api/health", "FLIP API Health (ALB)", 200)
 
+        # Check API docs endpoint via ALB
+        check_http_endpoint(f"https://{alb_subdomain}/api/docs", "FLIP API Docs (ALB)", 200)
+
         # Check API health endpoint via direct EC2 access (for debugging)
         check_http_endpoint(f"http://{central_hub_ip}:{API_PORT}/api/health", "FLIP API Health (Direct)", 200)
 
