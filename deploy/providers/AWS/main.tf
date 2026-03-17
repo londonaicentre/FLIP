@@ -340,6 +340,14 @@ module "alb" {
       port      = var.API_PORT
       protocol  = "HTTP"
       target_id = aws_instance.ec2_instance.id
+
+      health_check = {
+        enabled  = true
+        protocol = "HTTP"
+        path     = "/api/health"
+        port     = "traffic-port"
+        matcher  = "200"
+      }
     },
     ec2-instance-fl-api = {
       port      = var.FL_API_PORT
