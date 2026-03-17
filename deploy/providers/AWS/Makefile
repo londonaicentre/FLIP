@@ -313,6 +313,8 @@ deploy-centralhub: write-trust-ca ## Deploy FLIP containers to flip context with
 
 # Default SSH user for on-premises trust hosts (override with LOCAL_TRUST_SSH_USER=<user>)
 LOCAL_TRUST_SSH_USER ?= ubuntu
+# Trust kit number for the local (on-prem) trust FL client (default 2; EC2 trust uses 1)
+LOCAL_TRUST_NUMBER ?= 2
 
 .PHONY: deploy-trust
 deploy-trust: update-env ## Deploy trust relationships after central hub is deployed
@@ -388,6 +390,26 @@ add-local-trust: ## Provision an on-prem Trust host via Ansible and register it 
 		sudo -n rm -f /etc/sudoers.d/flip-ansible-local; \
 		exit $$PLAY_RC; \
 	fi
+	@echo "📦 Downloading Trust_$(LOCAL_TRUST_NUMBER) FL participant kit from S3..."
+	@LOCAL_TRUST_KIT_DIR=/tmp/Trust_$(LOCAL_TRUST_NUMBER)_kit && \
+	  rm -rf $$LOCAL_TRUST_KIT_DIR && mkdir -p $$LOCAL_TRUST_KIT_DIR && \
+	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/Trust_$(LOCAL_TRUST_NUMBER)/ \
+	    $$LOCAL_TRUST_KIT_DIR && \
+	  if [ -n "$(LOCAL_TRUST_SSH_KEY)" ]; then \
+	    ssh -i $(LOCAL_TRUST_SSH_KEY) $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP) \
+	      "mkdir -p /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/startup /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/transfer" && \
+	    rsync -av --delete -e "ssh -i $(LOCAL_TRUST_SSH_KEY)" \
+	      $$LOCAL_TRUST_KIT_DIR/startup/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/startup/ && \
+	    rsync -av --delete -e "ssh -i $(LOCAL_TRUST_SSH_KEY)" \
+	      $$LOCAL_TRUST_KIT_DIR/local/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local/; \
+	  else \
+	    sudo mkdir -p /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/startup /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/transfer && \
+	    sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/startup/ /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/startup/ && \
+	    sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/local/ /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local/; \
+	  fi && \
+	  rm -rf $$LOCAL_TRUST_KIT_DIR && \
+	  echo "✅ Trust_$(LOCAL_TRUST_NUMBER) FL kit deployed"
 	@echo "📋 Building CA bundle (EC2 trust CA + local trust CA) for Secrets Manager..."
 	@# trust-ca.crt is the cloud Trust EC2 CA (written by gen-trust-ec2-certs).
 	@# local-trust-ca.crt is the on-prem trust CA (just fetched by Ansible above).
@@ -416,7 +438,7 @@ add-local-trust: ## Provision an on-prem Trust host via Ansible and register it 
 	@echo "   1. Configure border router NAT: forward $(TRUST_API_PORT)/tcp → <trust-host-lan-ip>:$(TRUST_API_PORT)"
 	@echo "   2. Update 'Trust_1-endpoint' in the FLIP_API Secrets Manager secret:"
 	@echo "      https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)"
-	@echo "   3. On the trust host — start the trust stack: PROD=$(PROD) make up-trust-1"
+	@echo "   3. On the trust host — start the trust stack: cd trust && PROD=$(PROD) make up-local-trust-stag"
 	@echo "   4. Verify: make test-local-trust LOCAL_TRUST_IP=$(LOCAL_TRUST_IP)"
 
 .PHONY: test-local-trust
