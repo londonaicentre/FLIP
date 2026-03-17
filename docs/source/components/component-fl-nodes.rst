@@ -53,6 +53,7 @@ Examples of how the same job type (standard -> federated averaging) can run diff
 
 - <https://github.com/londonaicentre/flip-fl-base/tree/main/tutorials/image_classification/xray_classification>`_
 - <https://github.com/londonaicentre/flip-fl-base/tree/main/tutorials/image_segmentation/3d_spleen_segmentation>`_
+
 Both cases perform a supervised federated averaging training, but the data, architecture and training configuration are different.
 
 
@@ -84,7 +85,7 @@ The server will also use the package to update the status, as well as to upload 
 
 
 Disclaimer: some things are still under construction!
-----------------------------------------------------
+-----------------------------------------------------
 
 There are currently some elements that are still under construction, and might not adjust exactly to 
 the description above:

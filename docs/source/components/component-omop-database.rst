@@ -1,8 +1,8 @@
 .. _flip-omop:
 
-#########
+#############
 OMOP Database
-#########
+#############
 
 FLIP requires data from all participating Trusts to be stored in a standardised format so that a single query can be federated between the sites to generate a cohort of data. Aggregate statistics are returned as results on the platform and, if and when the project is approved, the underlying data at each site will be retrieved and provided for local model training.
 
