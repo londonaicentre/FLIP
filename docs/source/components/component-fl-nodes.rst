@@ -12,7 +12,7 @@ In both settings, the minimum components are:
 The FL API and Server are hosted at the Central Hub (in the Cloud), while client nodes are launched in the sites participating in a specific project (Cloud or on-premise).
 
 .. figure:: ../../images/nodes_fl.jpg
-   :alt: Example figure
+   :alt: Diagram of federated learning nodes showing FL server, FL clients, and FL API interactions.
    :width: 300px
    :align: center
    
