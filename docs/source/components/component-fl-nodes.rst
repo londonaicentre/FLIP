@@ -5,7 +5,7 @@ Federated Learning Nodes
 FLIP supports two federated learning frameworks: NVFLARE and Flower AI. 
 In both settings, the minimum components are:
 
-- FL server: orchestrates the training process across sites and perform the aggregation of weights. It also uploads results at the end of the training.
+- FL server: orchestrates the training process across sites and performs the aggregation of weights. It also uploads results at the end of the training.
 - FL client: performs local training on the data at each site and sends the weights to the server.
 - FL API: launches the training and acts as interface between the other FL components and the Central Hub API.
 
@@ -26,7 +26,7 @@ Job types
 Due to security restrictions, FLIP users are not allowed to control what happens on the server side.
 Although most adjustable aspects of machine learning training happen on the client side 
 (e.g. dataloading, training loop, model architecture), FLIP provides different job types
-that the user can choose base on their needs.
+that the user can choose based on their needs.
 Currently, these job types include federated averaging (job type `standard`),
 evaluation task (job type `evaluation`), federated optimisation (job type `fed_opt`)
 and diffusion model training (job type `diffusion_model`), which covers multi-stage federated training.
