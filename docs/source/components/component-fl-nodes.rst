@@ -1,6 +1,6 @@
-#########
+#########################
 Federated Learning Nodes
-#########
+#########################
 
 FLIP supports two federated learning frameworks: NVFLARE and Flower AI. 
 In both settings, the minimum components are:
