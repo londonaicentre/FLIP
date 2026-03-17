@@ -48,6 +48,7 @@ export TF_VAR_DB_PORT=${DB_PORT}
 export TF_VAR_UI_PORT=${UI_PORT}
 export TF_VAR_API_PORT=${API_PORT}
 export TF_VAR_FL_API_PORT=${FL_API_PORT}
+export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
 export TF_VAR_TRUST_API_PORT=${TRUST_API_PORT}
 export TF_VAR_XNAT_PORT=${XNAT_PORT_TRUST_1}
 export TF_VAR_PACS_UI_PORT=${PACS_UI_PORT_TRUST_1}
@@ -56,6 +57,7 @@ export TF_VAR_VPC_NAME=${VPC_NAME}
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
+export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 
 prettier:
 	terraform fmt -recursive
@@ -238,9 +240,10 @@ update-env: ## Update environment file with Terraform outputs
 .PHONY: ansible-init
 ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed try again for 3 times)
 	@echo "☁️🔗 Initiate ansible and install docker on both EC2 instances"
+	@test -n "$(FL_KIT_DATE)" || (echo "FL_KIT_DATE must be set in $(MAIN_ENV_FILE)"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
-	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=${AICENTRE_BUCKET_NAME}
+	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) -e fl_kit_date=$(FL_KIT_DATE)
 
 .PHONY: deploy-centralhub
 deploy-centralhub: ## Deploy FLIP containers to flip context with environment from Terraform
