@@ -100,10 +100,10 @@ make add-local-trust LOCAL_TRUST_IP=<public-ip>
    - Installs Docker and required system packages
    - Generates a self-signed CA and server TLS certificate with the host's public IP as SAN
    - Configures UFW firewall to allow `TRUST_API_PORT`, 8002, 8003 **only from the Central Hub IP**
-   - Fetches the CA certificate back to `trust/certs/trust-ca.crt`
-2. Copies the CA cert into the Terraform directory (`trust-ca.crt`)
+   - Fetches the local trust CA certificate back to `trust/certs/local-trust-ca.crt`
+2. Creates a **CA bundle** (`deploy/providers/AWS/trust-ca.crt`) by concatenating the cloud Trust EC2 CA (generated earlier by `gen-trust-ec2-certs`) with the new local trust CA. This lets `flip-api` verify HTTPS connections to **both** trusts using a single bundle.
 3. Runs a targeted `terraform apply` to:
-   - Update Secrets Manager with the new CA cert (so the Central Hub can verify the Trust's HTTPS)
+   - Upload the CA bundle to Secrets Manager (`trust_ca_cert` key in `FLIP_API` secret)
    - Add security group rules allowing FL traffic from the local trust's public IP
 
 ### Post-provisioning manual steps

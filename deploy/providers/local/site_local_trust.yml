@@ -202,5 +202,7 @@
     - name: Fetch Trust CA certificate to operator workstation
       fetch:
         src: "{{ cert_dir }}/trust-ca.crt"
-        dest: "../../../trust/certs/trust-ca.crt"
+        # Save as local-trust-ca.crt so it does not overwrite the cloud Trust EC2 CA
+        # (trust-ca.crt). The Makefile bundles both CAs into a single PEM for Secrets Manager.
+        dest: "../../../trust/certs/local-trust-ca.crt"
         flat: true
