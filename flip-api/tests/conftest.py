@@ -53,8 +53,8 @@ def real_client() -> requests.Session:
 @pytest.fixture(autouse=True)
 def mock_pull_required_files(request):
     """
-    Automatically mock pull_required_files_json_to_assets across all tests
-    to prevent modifications to the required_job_types.json file during test runs.
+    Automatically mock pull_required_files_json_to_assets across all tests to prevent modifications to the file during
+    test runs.
 
     This fixture is skipped for tests in test_pull_required_files.py which test
     the function directly.
@@ -65,8 +65,7 @@ def mock_pull_required_files(request):
     else:
         with patch("flip_api.fl_services.services.pull_required_files.pull_required_files_json_to_assets"):
             with patch("flip_api.model_services.save_model.pull_required_files_json_to_assets"):
-                with patch("flip_api.model_services.services.model_service.pull_required_files_json_to_assets"):
-                    yield
+                yield
 
 
 def pytest_addoption(parser):

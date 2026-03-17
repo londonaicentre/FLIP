@@ -215,11 +215,8 @@ class TestRetrieveFederatedResults:
     def test_no_files_found(self, mock_db_session, s3_mock_empty, mocked_settings, sample_model_id, user_id):
         """Test handling of no files found in S3."""
         with patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True):
-            with pytest.raises(HTTPException) as exc_info:
-                retrieve_federated_results(model_id=sample_model_id, db=mock_db_session, user_id=user_id)
-
-            assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-            assert "No result data was found" in exc_info.value.detail
+            result = retrieve_federated_results(model_id=sample_model_id, db=mock_db_session, user_id=user_id)
+            assert result == []
 
     def test_presigned_url_error(
         self, mock_db_session, s3_mock_presigned_error, mocked_settings, sample_model_id, user_id

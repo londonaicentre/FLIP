@@ -11,12 +11,14 @@
 #
 
 import json
+from enum import Enum
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
 
 from flip_api.config import Settings
+from flip_api.domain.interfaces import fl as fl_interfaces
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
     IJobMetaData,
@@ -51,6 +53,30 @@ def mocked_settings():
     )
     with patch("flip_api.fl_services.services.fl_service.get_settings", return_value=mock):
         yield mock
+
+
+@pytest.fixture
+def mock_job_types_file(tmp_path, monkeypatch):
+    """Mock the JSON job-types file and rebuild JobTypes from it."""
+    job_types_config = {
+        "standard": ["trainer.py", "validator.py", "models.py", "config.json"],
+        "diffusion_model": ["trainer.py", "validator.py", "models.py", "config.json"],
+        "fed_opt": ["trainer.py", "validator.py", "models.py", "config.json"],
+        "evaluation": ["trainer.py", "validator.py", "models.py", "config.json"],
+    }
+    mock_file = tmp_path / "job_types_required_files.json"
+    mock_file.write_text(json.dumps(job_types_config), encoding="utf-8")
+
+    monkeypatch.setattr(fl_interfaces, "REQUIRED_JOB_TYPES_FILE", mock_file)
+    monkeypatch.setattr(fl_interfaces, "_JOB_TYPES_CONFIG", fl_interfaces._load_job_types_config())
+    monkeypatch.setattr(
+        fl_interfaces,
+        "JobTypes",
+        Enum("JobTypes", {job_type: job_type for job_type in fl_interfaces._JOB_TYPES_CONFIG.keys()}),  # type: ignore[misc]
+    )
+    monkeypatch.setattr(fl_service, "JobTypes", fl_interfaces.JobTypes)
+
+    return job_types_config
 
 
 @patch("flip_api.fl_services.services.fl_service.http_post")
@@ -196,7 +222,7 @@ def test_start_training_with_config(
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_application_success(mock_s3, mock_required, mock_verify, model_id, mocked_settings):
+def test_bundle_nvflare_application_success(mock_s3, mock_required, mock_verify, model_id, mocked_settings):
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
@@ -214,20 +240,20 @@ def test_bundle_application_success(mock_s3, mock_required, mock_verify, model_i
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],
-        [f"{base_bucket}/src/standard/app/file1.py"],
+        [f"{base_bucket}/standard/app/file1.py"],
         [],  # Destination bucket
     ]
     mock_client.copy_object.return_value = None
     mock_client.object_exists.return_value = False  # No files exist yet
     mock_verify.return_value = None
 
-    dest_bucket_s3_path = fl_service.bundle_application(model_id)
+    dest_bucket_s3_path = fl_service.bundle_nvflare_application(model_id)
 
     assert dest_bucket_s3_path == f"{dest_bucket}/{model_id}"
 
     # assert that the copy_object was called for each file including the bucket names
     mock_client.copy_object.assert_any_call(
-        f"{base_bucket}/src/standard/app/file1.py",
+        f"{base_bucket}/standard/app/file1.py",
         f"{dest_bucket}/{model_id}/app/file1.py",
     )
     mock_client.copy_object.assert_any_call(
@@ -240,7 +266,7 @@ def test_bundle_application_success(mock_s3, mock_required, mock_verify, model_i
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 @patch("flip_api.fl_services.services.fl_service.logger")
-def test_bundle_application_model_files_overwrite(
+def test_bundle_nvflare_application_model_files_overwrite(
     mock_logger, mock_s3, mock_required, mock_verify, model_id, mocked_settings
 ):
     """
@@ -266,8 +292,8 @@ def test_bundle_application_model_files_overwrite(
         f"{model_bucket}/{model_id}/flip.py",  # user trying to overwrite the flip.py in base with one in model files
     ]
     base_files = [
-        f"{base_bucket}/src/standard/app/custom/flip.py",
-        f"{base_bucket}/src/standard/app/config/config_fed_client.json",
+        f"{base_bucket}/standard/app/custom/flip.py",
+        f"{base_bucket}/standard/app/config/config_fed_client.json",
     ]
     # Destination bucket is empty at first
     mock_client.list_objects.side_effect = [
@@ -286,7 +312,7 @@ def test_bundle_application_model_files_overwrite(
 
     mock_client.object_exists.side_effect = object_exists_side_effect
 
-    fl_service.bundle_application(model_id)
+    fl_service.bundle_nvflare_application(model_id)
 
     # Check that logger.warning was called with the message for the file
     mock_logger.warning.assert_any_call(
@@ -319,13 +345,14 @@ def test_bundle_application_model_files_overwrite(
         "invalid",
     ],
 )
-def test_bundle_application_file_wrong_job_type_in_config(
+def test_bundle_nvflare_application_file_wrong_job_type_in_config(
     mock_s3,
     mock_required,
     mock_verify,
     model_id,
     mocked_settings,
     job_type,
+    mock_job_types_file,
 ):
     """
     Test that providing an invalid job type into the config.json raises an error while providing valid
@@ -350,7 +377,7 @@ def test_bundle_application_file_wrong_job_type_in_config(
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],
-        [f"{base_bucket}/src/{job_type}/app/file1.py"],
+        [f"{base_bucket}/{job_type}/app/file1.py"],
         [],  # Destination bucket
     ]
     mock_client.copy_object.return_value = None
@@ -361,15 +388,16 @@ def test_bundle_application_file_wrong_job_type_in_config(
         with pytest.raises(
             fl_service.UnknownJobTypeError, match=f"Unknown job_type argument found in config.json: {job_type}"
         ):
-            _ = fl_service.bundle_application(model_id)
+            _ = fl_service.bundle_nvflare_application(model_id)
     else:
-        dest_bucket_s3_path = fl_service.bundle_application(model_id)
+        dest_bucket_s3_path = fl_service.bundle_nvflare_application(model_id)
         assert dest_bucket_s3_path == f"{mocked_settings.FL_APP_DESTINATION_BUCKET}/{model_id}"
 
 
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_application_wrong_files(mock_s3, mock_verify, mocked_settings, model_id):
+def test_bundle_nvflare_application_wrong_files(mock_s3, mock_required, mock_verify, mocked_settings, model_id):
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
@@ -378,20 +406,193 @@ def test_bundle_application_wrong_files(mock_s3, mock_verify, mocked_settings, m
     mock_client.get_object.return_value = {
         "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
     }
+    mock_required.return_value = ["trainer.py", "validator.py", "models.py", "config.json"]
     mock_client.list_objects.side_effect = [
         [
             f"{model_bucket}/{model_id}/validator.py",
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],  # Missing trainer.py
-        [f"{base_bucket}/src/standard/app/file1.py"],
+        [f"{base_bucket}/standard/app/file1.py"],
         [],  # Destination bucket
     ]
     mock_client.copy_object.return_value = None
     mock_verify.return_value = None
 
     with pytest.raises(FileNotFoundError, match="Missing required files for job type standard: trainer.py."):
-        _ = fl_service.bundle_application(model_id)
+        _ = fl_service.bundle_nvflare_application(model_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_success(mock_s3, mock_required, model_id, mocked_settings):
+    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+    dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_required.return_value = ["client_app.py", "models.py"]
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/models.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
+        [
+            f"{base_bucket}/standard/app/server_app.py",
+            f"{base_bucket}/standard/pyproject.toml",
+        ],
+        [],
+    ]
+    mock_client.copy_object.return_value = None
+    mock_client.object_exists.return_value = False
+
+    dest_bucket_s3_path = fl_service.bundle_flower_application(model_id)
+
+    assert dest_bucket_s3_path == f"{dest_bucket}/{model_id}"
+    mock_client.copy_object.assert_any_call(
+        f"{base_bucket}/standard/app/server_app.py",
+        f"{dest_bucket}/{model_id}/app/server_app.py",
+    )
+    mock_client.copy_object.assert_any_call(
+        f"{model_bucket}/{model_id}/client_app.py",
+        f"{dest_bucket}/{model_id}/app/client_app.py",
+    )
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+@patch("flip_api.fl_services.services.fl_service.logger")
+def test_bundle_flower_application_model_files_overwrite(
+    mock_logger, mock_s3, mock_required, model_id, mocked_settings
+):
+    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+    dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_required.return_value = ["client_app.py", "models.py"]
+    model_files = [
+        f"{model_bucket}/{model_id}/client_app.py",
+        f"{model_bucket}/{model_id}/models.py",
+        f"{model_bucket}/{model_id}/config.json",
+        f"{model_bucket}/{model_id}/server_app.py",
+    ]
+    base_files = [
+        f"{base_bucket}/standard/app/server_app.py",
+        f"{base_bucket}/standard/pyproject.toml",
+    ]
+    mock_client.list_objects.side_effect = [
+        model_files,
+        base_files,
+        [],
+    ]
+    mock_client.copy_object.return_value = None
+
+    def object_exists_side_effect(key):
+        if key.endswith("server_app.py"):
+            return True
+        return False
+
+    mock_client.object_exists.side_effect = object_exists_side_effect
+
+    fl_service.bundle_flower_application(model_id)
+
+    mock_logger.warning.assert_any_call(
+        "The file name server_app.py is reserved for this base application, which contains a file with the same "
+        "name. The researcher can't overwrite it. Skipping upload from model files."
+    )
+
+    model_src_path = f"{model_bucket}/{model_id}/server_app.py"
+    model_dst_path = f"{dest_bucket}/{model_id}/app/server_app.py"
+
+    for call in mock_client.copy_object.call_args_list:
+        args, _ = call
+        if len(args) >= 2:
+            assert not (args[0] == model_src_path and args[1] == model_dst_path), (
+                "Model server_app.py should not have been copied when destination already exists"
+            )
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+@pytest.mark.parametrize(
+    "job_type",
+    [
+        "standard",
+        "diffusion_model",
+        "fed_opt",
+        "evaluation",
+        "invalid",
+    ],
+)
+def test_bundle_flower_application_file_wrong_job_type_in_config(
+    mock_s3,
+    mock_required,
+    model_id,
+    mocked_settings,
+    job_type,
+    mock_job_types_file,
+):
+    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": job_type}).encode("utf-8")))
+    }
+    mock_required.return_value = ["client_app.py", "models.py"]
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/models.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
+        [f"{base_bucket}/{job_type}/app/server_app.py"],
+        [],
+    ]
+    mock_client.copy_object.return_value = None
+    mock_client.object_exists.return_value = False
+
+    if job_type == "invalid":
+        with pytest.raises(
+            fl_service.UnknownJobTypeError, match=f"Unknown job_type argument found in config.json: {job_type}"
+        ):
+            _ = fl_service.bundle_flower_application(model_id)
+    else:
+        dest_bucket_s3_path = fl_service.bundle_flower_application(model_id)
+        assert dest_bucket_s3_path == f"{mocked_settings.FL_APP_DESTINATION_BUCKET}/{model_id}"
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_wrong_files(mock_s3, mock_required, mocked_settings, model_id):
+    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({}).encode("utf-8")))
+    }
+    mock_required.return_value = ["client_app.py", "models.py"]
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],  # Missing models.py
+        [f"{base_bucket}/standard/app/server_app.py"],
+        [],
+    ]
+    mock_client.copy_object.return_value = None
+
+    with pytest.raises(FileNotFoundError, match="Missing required files for job type standard: models.py."):
+        _ = fl_service.bundle_flower_application(model_id)
 
 
 def test_verify_bundle_paths_success(model_id, mocked_settings):
@@ -399,7 +600,7 @@ def test_verify_bundle_paths_success(model_id, mocked_settings):
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    base_bucket_s3_path = f"{base_bucket}/src/standard"
+    base_bucket_s3_path = f"{base_bucket}/standard"
     model_bucket_s3_path = f"{model_bucket}/{model_id}"
     dest_bucket_s3_path = f"{dest_bucket}/{model_id}"
 
@@ -425,16 +626,16 @@ def test_verify_bundle_paths_success(model_id, mocked_settings):
     expected_dest_keys = set()
 
     # base mirrored
-    for src in base_files:
-        rel = src.replace(f"{base_bucket_s3_path}/", "", 1)
+    for file in base_files:
+        rel = file.replace(f"{base_bucket_s3_path}/", "", 1)
         expected_dest_keys.add(f"{dest_bucket_s3_path}/{rel}")
 
     # meta.json once
     expected_dest_keys.add(f"{dest_bucket_s3_path}/meta.json")
 
     # model files into each app/custom (skip meta.json)
-    for src in model_files:
-        rel = src.replace(f"{model_bucket_s3_path}/", "", 1)
+    for file in model_files:
+        rel = file.replace(f"{model_bucket_s3_path}/", "", 1)
         if rel == "meta.json":
             continue
         for app in app_folders:
@@ -462,7 +663,7 @@ def test_verify_bundle_paths_raises_on_missing_file(model_id, mocked_settings):
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
-    base_bucket_s3_path = f"{base_bucket}/src/standard"
+    base_bucket_s3_path = f"{base_bucket}/standard"
     model_bucket_s3_path = f"{model_bucket}/{model_id}"
     dest_bucket_s3_path = f"{dest_bucket}/{model_id}"
 
@@ -478,14 +679,14 @@ def test_verify_bundle_paths_raises_on_missing_file(model_id, mocked_settings):
     # Build the full expected set (same logic as the helper)
     expected_dest_keys = set()
 
-    for src in base_files:
-        rel = src.replace(f"{base_bucket_s3_path}/", "", 1)
+    for file in base_files:
+        rel = file.replace(f"{base_bucket_s3_path}/", "", 1)
         expected_dest_keys.add(f"{dest_bucket_s3_path}/{rel}")
 
     expected_dest_keys.add(f"{dest_bucket_s3_path}/meta.json")
 
-    for src in model_files:
-        rel = src.replace(f"{model_bucket_s3_path}/", "", 1)
+    for file in model_files:
+        rel = file.replace(f"{model_bucket_s3_path}/", "", 1)
         if rel == "meta.json":
             continue
         for app in app_folders:

@@ -55,7 +55,7 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
             return_value=MagicMock(FL_BACKEND="nvflare"),
         ),
         patch(
-            "flip_api.fl_services.services.fl_scheduler_service.bundle_application",
+            "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",
             return_value=(2, JobTypes.standard),
         ) as mock_bundle,
         patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
@@ -88,7 +88,7 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
             return_value=MagicMock(FL_BACKEND="nvflare"),
         ),
         patch(
-            "flip_api.fl_services.services.fl_scheduler_service.bundle_application",
+            "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",
             side_effect=Exception("bundle failed"),
         ),
         patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,

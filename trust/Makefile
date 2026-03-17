@@ -54,6 +54,15 @@ OMOP_DB_CMD=make -C ./omop-db
 DOCKER_COMPOSE_CMD=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f compose_trust.debug.override.yml
 
+# NOTE DOCKER_REGISTRY is set to empty when we use local FL images during development (e.g. flare-fl-server:dev). 
+# In that case, '--pull always' will error because docker won't be able to find the manifest for the dev image online,
+# so we need to remove the --pull always flag.
+ifneq ($(strip $(DOCKER_REGISTRY)),)
+PULL_ALWAYS_FLAG=--pull always
+else
+PULL_ALWAYS_FLAG=
+endif
+
 TRUST_1_VARS = \
 	TRUST_NUMBER=1 \
 	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST1} \
@@ -95,7 +104,7 @@ up-trust-1: update-omop-data
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST1}
-	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f compose_trust-1_override.yml -p ${trust1} up -d
+	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f compose_trust-1_override.yml -p ${trust1} up -d $(PULL_ALWAYS_FLAG)
 
 down-trust-1:
 	@echo "🛑 Stopping Trust 1 services..."
@@ -123,7 +132,7 @@ up-trust-2: update-omop-data
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST2}
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d
+	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d $(PULL_ALWAYS_FLAG)
 
 down-trust-2:
 	@echo "🛑 Stopping Trust 2 services..."

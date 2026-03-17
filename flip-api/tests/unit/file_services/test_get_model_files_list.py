@@ -20,8 +20,6 @@ from fastapi import HTTPException, status
 from flip_api.db.models.main_models import UploadedFiles
 from flip_api.file_services.get_model_files_list import get_model_files_list
 
-# filepath: /app/src/flip/file_services/test_get_model_files_list.py
-
 
 @pytest.fixture
 def mock_db_files():
