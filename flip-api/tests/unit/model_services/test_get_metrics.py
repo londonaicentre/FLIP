@@ -112,7 +112,7 @@ def test_get_metrics_success(
     mock_model_status_exists,
     mock_get_metrics,
 ):
-    response = client.get(f"/model/{test_model_id}/metrics")
+    response = client.get(f"/api/model/{test_model_id}/metrics")
     assert response.status_code == HTTPStatus.OK
     assert response.json()[0] == test_metrics[0].model_dump()
     assert response.json()[1] == test_metrics[1].model_dump()
@@ -122,7 +122,7 @@ def test_get_metrics_success(
 def test_get_metrics_forbidden(
     mock_can_access_false,
 ):
-    response = client.get(f"/model/{test_model_id}/metrics")
+    response = client.get(f"/api/model/{test_model_id}/metrics")
     assert response.status_code == HTTPStatus.FORBIDDEN
     assert "denied access" in response.json()["detail"]
 
@@ -131,7 +131,7 @@ def test_get_metrics_model_not_found(
     mock_can_access_true,
     mock_model_status_none,
 ):
-    response = client.get(f"/model/{test_model_id}/metrics")
+    response = client.get(f"/api/model/{test_model_id}/metrics")
     assert response.status_code == HTTPStatus.NOT_FOUND
     assert "does not exist" in response.json()["detail"]
 
@@ -141,7 +141,7 @@ def test_get_metrics_database_error(
     mock_model_status_exists,
 ):
     with patch("flip_api.model_services.get_metrics.get_metrics", side_effect=SQLAlchemyError):
-        response = client.get(f"/model/{test_model_id}/metrics")
+        response = client.get(f"/api/model/{test_model_id}/metrics")
         assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
         assert "Database error" in response.json()["detail"] or "Unexpected error" in response.json()["detail"]
 
@@ -151,6 +151,6 @@ def test_get_metrics_unexpected_error(
     mock_model_status_exists,
 ):
     with patch("flip_api.model_services.get_metrics.get_metrics", side_effect=RuntimeError("Boom")):
-        response = client.get(f"/model/{test_model_id}/metrics")
+        response = client.get(f"/api/model/{test_model_id}/metrics")
         assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
         assert "Boom" in response.json()["detail"]

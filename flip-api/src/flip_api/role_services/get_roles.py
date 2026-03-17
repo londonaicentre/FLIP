@@ -26,7 +26,7 @@ router = APIRouter(prefix="/roles", tags=["role_services"])
 
 
 # [#114] ✅
-@router.get("/", response_model=IRolesResponse)
+@router.get("", response_model=IRolesResponse)
 def get_roles(
     session: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
