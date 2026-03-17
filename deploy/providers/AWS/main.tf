@@ -538,6 +538,19 @@ resource "aws_security_group_rule" "local_trust_fl_admin" {
   description       = "FL Admin from on-prem Trust"
 }
 
+# Allow the local (on-prem) trust FL client to reach the FL server via the NLB.
+# Without this rule the NLB security group drops the connection before it reaches the EC2.
+resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
+  count             = var.local_trust_public_ip != "" ? 1 : 0
+  type              = "ingress"
+  from_port         = var.FL_SERVER_PORT
+  to_port           = var.FL_SERVER_PORT
+  protocol          = "tcp"
+  cidr_blocks       = ["${var.local_trust_public_ip}/32"]
+  security_group_id = module.fl_server_nlb.security_group_id
+  description       = "FL Server NLB from on-prem Trust"
+}
+
 # Outputs
 output "Keypair" {
   value = var.flip_keypair
