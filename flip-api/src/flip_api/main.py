@@ -22,6 +22,7 @@ from flip_api.cohort_services import (
     save_cohort_query,
     submit_cohort_query,
 )
+from flip_api.config import get_settings
 from flip_api.file_services import (
     delete_file,
     download_file,
@@ -105,7 +106,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 API_PREFIX = "/api"
-
+docs_enabled = get_settings().ENV != "production"
 
 # Initialize the FastAPI app
 app = FastAPI(
@@ -113,9 +114,9 @@ app = FastAPI(
     description="Main API for FLIP CentralHub, providing communication between the frontend and backend services.",
     version="0.1.0",
     lifespan=lifespan,
-    docs_url=f"{API_PREFIX}/docs",
-    openapi_url=f"{API_PREFIX}/openapi.json",
-    redoc_url=f"{API_PREFIX}/redoc",
+    docs_url=f"{API_PREFIX}/docs" if docs_enabled else None,
+    openapi_url=f"{API_PREFIX}/openapi.json" if docs_enabled else None,
+    redoc_url=f"{API_PREFIX}/redoc" if docs_enabled else None,
 )
 
 # CORS middleware
