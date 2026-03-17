@@ -59,9 +59,13 @@ services:
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
-      # Path where entrypoint.sh writes the Trust CA cert from Secrets Manager;
-      # _trust_ssl_context() reads this to verify Trust API HTTPS connections.
+      # Path where the Trust CA cert is mounted from the host (written by deploy-centralhub);
+      # trust_ssl_context() reads this to verify Trust API HTTPS connections.
       - TRUST_CA_BUNDLE=/etc/ssl/trust/trust-ca.crt
       # - TRUST_ENDPOINTS=${TRUST_ENDPOINTS} # in production, trust endpoints are retrieved from AWS Secrets Manager
+    volumes:
+      # Trust CA cert is written to the host by the write-trust-ca Makefile target and
+      # mounted read-only into the container so trust_ssl_context() can verify HTTPS connections.
+      - /opt/flip/certs/trust-ca.crt:/etc/ssl/trust/trust-ca.crt:ro
     restart: unless-stopped
     container_name: flip-api
