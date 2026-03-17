@@ -61,15 +61,6 @@ resource "aws_vpc_security_group_ingress_rule" "pacs_ui" {
   to_port           = var.PACS_UI_PORT
 }
 
-resource "aws_vpc_security_group_ingress_rule" "fl_api" {
-  count             = length(var.security_group_ids) == 0 ? 1 : 0
-  security_group_id = aws_security_group.trust_host_sg[0].id
-  cidr_ipv4         = "0.0.0.0/0"
-  from_port         = var.FL_API_PORT
-  ip_protocol       = "tcp"
-  to_port           = var.FL_API_PORT
-}
-
 resource "aws_vpc_security_group_egress_rule" "allow_all" {
   count             = length(var.security_group_ids) == 0 ? 1 : 0
   security_group_id = aws_security_group.trust_host_sg[0].id

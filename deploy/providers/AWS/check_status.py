@@ -853,7 +853,7 @@ def main(
                 ]
                 # Add only configured FL server and API containers
                 for net_num in configured_net_numbers:
-                    expected_containers.append(f"flip-fl-server-net-{net_num}")
+                    expected_containers.append(f"fl-server-net-{net_num}")
                     expected_containers.append(f"flip-fl-api-net-{net_num}")
 
                 for container in expected_containers:

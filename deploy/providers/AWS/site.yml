@@ -21,6 +21,12 @@
           - flip_aicentre_bucket is defined
           - flip_aicentre_bucket | length > 0
         fail_msg: "The flip_aicentre_bucket variable must be defined to proceed."
+    - name: ensure fl_kit_date variable is defined
+      assert:
+        that:
+          - fl_kit_date is defined
+          - fl_kit_date | length > 0
+        fail_msg: "The fl_kit_date variable must be defined to proceed."
     - name: use plugin to extract Terraform outputs
       community.general.terraform:
         state: present
@@ -120,8 +126,8 @@
   vars:
     central_services_dir: "/opt/flip/services"
     central_s3_sources:
-      - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/20260204/net-1/services/fl-server-net-1/"
-      - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/20260204/net-1/services/flip-fl-api-net-1/"
+      - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/fl-server-net-1/"
+      - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/flip-fl-api-net-1/"
   tasks:
     - name: ensure central services directory exists
       file:
@@ -167,7 +173,7 @@
   become: true
   vars:
     trust_services_dir: "/opt/flip/services"
-    trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/20260204/net-1/services/Trust_1/"
+    trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/Trust_1/"
   tasks:
     - name: ensure trust services directory exists
       file:
