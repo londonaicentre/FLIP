@@ -1,4 +1,4 @@
-.. _documentation:
+.. _autoapi_documentation:
 
 .. toctree::
    :maxdepth: 2
