@@ -47,15 +47,15 @@ variable "create_elastic_ip" {
 }
 
 variable "TRUST_API_PORT" {
-  type    = number
+  type = number
 }
 
 variable "XNAT_PORT" {
-  type    = number
+  type = number
 }
 
 variable "PACS_UI_PORT" {
-  type    = number
+  type = number
 }
 
 variable "iam_instance_profile_name" {
