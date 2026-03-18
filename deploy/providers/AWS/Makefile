@@ -237,8 +237,8 @@ gen-trust-ec2-certs: ## Generate TLS certs for the cloud Trust EC2 using its Ter
 	@cp ../../../trust/certs/trust-ca.crt ./trust-ca.crt
 	@echo "📦 Deploying server certificate and key to Trust EC2..."
 	@TRUST_IP="$$(terraform output -raw TrustEc2PublicIp)"; \
-	ssh -i ~/.ssh/host-aws -o StrictHostKeyChecking=no ubuntu@$$TRUST_IP "sudo mkdir -p /opt/flip/certs && sudo chown ubuntu:ubuntu /opt/flip/certs" && \
-	scp -i ~/.ssh/host-aws -o StrictHostKeyChecking=no \
+	ssh -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new ubuntu@$$TRUST_IP "sudo mkdir -p /opt/flip/certs && sudo chown ubuntu:ubuntu /opt/flip/certs" && \
+	scp -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new \
 		../../../trust/certs/trust-server.crt \
 		../../../trust/certs/trust-server.key \
 		ubuntu@$$TRUST_IP:/opt/flip/certs/
@@ -378,6 +378,7 @@ add-local-trust: ## Provision an on-prem Trust host via Ansible and register it 
 			"echo '$$CURR_USER ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/flip-ansible-local && chmod 440 /etc/sudoers.d/flip-ansible-local" \
 			2>/dev/null || { echo "❌  sudo authentication failed — check your password."; exit 1; }; \
 		echo "✅ Authenticated. Running Ansible playbook..."; \
+		trap 'sudo -n rm -f /etc/sudoers.d/flip-ansible-local' EXIT INT TERM; \
 		ANSIBLE_BECOME_PASS= uv run ansible-playbook \
 			-i "localhost," \
 			-e ansible_connection=local \
@@ -387,7 +388,6 @@ add-local-trust: ## Provision an on-prem Trust host via Ansible and register it 
 			-e ch_public_ip="$$CH_IP" \
 			-e trust_api_port=$(TRUST_API_PORT); \
 		PLAY_RC=$$?; \
-		sudo -n rm -f /etc/sudoers.d/flip-ansible-local; \
 		exit $$PLAY_RC; \
 	fi
 	@echo "📦 Downloading Trust_$(LOCAL_TRUST_NUMBER) FL participant kit from S3..."
@@ -445,16 +445,16 @@ add-local-trust: ## Provision an on-prem Trust host via Ansible and register it 
 .PHONY: set-local-trust-endpoint
 set-local-trust-endpoint: ## Update FLIP_API Trust_1-endpoint to the local trust HTTPS URL
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make set-local-trust-endpoint LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
-	@echo "🔐 Updating FLIP_API secret Trust_1-endpoint to https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)..."
+	@echo "🔐 Updating $(AWS_SECRET_NAME) secret Trust_1-endpoint to https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)..."
 	@AWS_PROFILE=$(AWS_PROFILE) aws secretsmanager get-secret-value \
-		--secret-id FLIP_API \
+		--secret-id $(AWS_SECRET_NAME) \
 		--query SecretString \
 		--output text | \
 	python3 -c "import json, sys; s=json.load(sys.stdin); s['Trust_1-endpoint']='https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)'; print(json.dumps(s))" | \
 	AWS_PROFILE=$(AWS_PROFILE) aws secretsmanager update-secret \
-		--secret-id FLIP_API \
+		--secret-id $(AWS_SECRET_NAME) \
 		--secret-string file:///dev/stdin >/dev/null
-	@echo "✅ FLIP_API Trust_1-endpoint updated."
+	@echo "✅ $(AWS_SECRET_NAME) Trust_1-endpoint updated."
 
 .PHONY: test-local-trust
 test-local-trust: ## Verify HTTPS connectivity to an on-premises Trust host
