@@ -59,7 +59,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/londonaicentre/flip-fl-base"
 Repository = "https://github.com/londonaicentre/flip-fl-base"
-Documentation = "https://github.com/londonaicentre/flip-fl-base#readme"
+Documentation = "https://flip-fl-base.readthedocs.io/en/stable"
 Issues = "https://github.com/londonaicentre/flip-fl-base/issues"
 
 [project.optional-dependencies]
