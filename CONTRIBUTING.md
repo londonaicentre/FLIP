@@ -180,6 +180,22 @@ make ci
 
 This runs all jobs defined in `.github/workflows/` locally.
 
+### Testing local Trust HTTPS deployment (secure mode only)
+
+For hybrid/on-premises Trust deployment testing, validate connectivity with certificate verification enabled:
+
+```bash
+make -C deploy/providers/AWS test-local-trust LOCAL_TRUST_IP=<public-ip>
+```
+
+Security requirements:
+
+- Do not bypass TLS certificate validation in commands, scripts, or documentation examples.
+- Do not use insecure transport checks (for example `curl -k`) in normal testing or validation flows.
+- If certificate verification fails, fix certificates/CA bundle and endpoint configuration instead of disabling verification.
+
+Risk note: bypassing certificate validation can hide man-in-the-middle attacks and endpoint misconfiguration, and can lead to approving unsafe deployments.
+
 ## The contribution process
 
 *Fork the repository before making changes* [Learn how to fork](https://help.github.com/en/github/getting-started-with-github/fork-a-repo). All contributions to the `develop` branch must be made via pull requests. This allows us to review your changes and ensure they meet our quality standards before merging them into the main codebase.
