@@ -18,7 +18,7 @@ build-backend = "hatchling.build"
 name = "flip-utils"
 dynamic = ["version"]
 description = "FLIP - Federated Learning and Interoperability Platform library built on NVIDIA FLARE"
-readme = "README.md"
+readme = {file = "docs/overview.rst", content-type = "text/x-rst"}
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [
@@ -59,7 +59,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/londonaicentre/flip-fl-base"
 Repository = "https://github.com/londonaicentre/flip-fl-base"
-Documentation = "https://github.com/londonaicentre/flip-fl-base#readme"
+Documentation = "https://flip-fl-base.readthedocs.io/en/stable"
 Issues = "https://github.com/londonaicentre/flip-fl-base/issues"
 
 [project.optional-dependencies]
