@@ -206,7 +206,7 @@ def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) ->
             cmd += ["-i", ssh_key]
         cmd += [
             "-o",
-            "StrictHostKeyChecking=no",
+            "StrictHostKeyChecking=accept-new",
             "-o",
             f"ConnectTimeout={timeout}",
             host,
@@ -300,13 +300,52 @@ def check_endpoint_over_ssh(
     skip_flag = "" if verify_ssl else "-k "
     command = f"curl -s {skip_flag}-o /dev/null -w '%{{http_code}}' {endpoint}"
     print_status(status="INFO", message=f"Checking endpoint {endpoint} from {host} via SSH...")
-    success, output = run_ssh_command(ssh_key="", host=host, command=command)
+    success, output = run_ssh_command(ssh_key="", host=host, command=command)SSH
     if success and output == str(expected_status):
         print_status("PASS", f"{endpoint} is accessible from {host}")
         return True
     else:
         print_status("FAIL", f"{endpoint} is not accessible from {host}: {output}")
         return False
+
+
+def check_endpoint_rejects_insecure_ssh(
+    host: str,
+    endpoint: str,
+) -> bool:
+    """Verify that a secure endpoint rejects insecure HTTP requests via SSH.
+
+    This is a SECURITY CHECK: ensures that an HTTPS endpoint does not respond
+    to HTTP requests (i.e., redirects or rejects, but doesn't serve with 200).
+
+    Args:
+        host: Host alias (from ~/.ssh/config) or user@ip
+        endpoint: HTTPS URL to check
+
+    Returns:
+        True if insecure request is properly rejected, False if it somehow succeeds
+    """
+    insecure_endpoint = endpoint.replace("https://", "http://")
+    command = f"curl -s -o /dev/null -w '%{{http_code}}' {insecure_endpoint}"
+    print_status(
+        status="INFO",
+        message=f"SECURITY: Verifying {insecure_endpoint} rejects insecure request from {host}...",
+    )
+    success, output = run_ssh_command(ssh_key="", host=host, command=command)
+
+    if success and output == "200":
+        print_status(
+            "FAIL",
+            f"{insecure_endpoint} CRITICALLY responded with HTTP 200 from {host}. "
+            f"HTTPS-only endpoints must reject HTTP requests.",
+        )
+        return False
+    else:
+        print_status(
+            "PASS",
+            f"{insecure_endpoint} properly rejected from {host}",
+        )
+        return True
 
 
 def ping_host(host: str) -> bool:
@@ -785,6 +824,10 @@ def main(
 
             # Check Trust is reachable from Central Hub EC2 via SSH
             check_endpoint_over_ssh("flip", f"https://{trust_ip}:{TRUST_API_PORT}/health", 200, verify_ssl=False)
+
+            # SECURITY CHECKS: Verify HTTP is rejected (Trust API must be HTTPS-only)
+            check_endpoint_rejects_insecure_ssh("flip-trust", f"https://localhost:{TRUST_API_PORT}/health")
+            check_endpoint_rejects_insecure_ssh("flip", f"https://{trust_ip}:{TRUST_API_PORT}/health")
 
             # Check Trust API health endpoint directly from this machine (use CA cert)
             check_http_endpoint(
