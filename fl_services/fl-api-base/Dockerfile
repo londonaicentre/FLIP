@@ -29,7 +29,6 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Sync the project into a new environment, using the frozen lockfile
 COPY pyproject.toml uv.lock ./
-COPY docs/ ./docs/
 
 COPY ./entrypoint.sh /app/entrypoint.sh
 # COPY ./admin /app/admin
