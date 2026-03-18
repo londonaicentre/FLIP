@@ -77,6 +77,20 @@ All commands are run from the `deploy/providers/AWS/` directory since the Makefi
 cd deploy/providers/AWS
 ```
 
+### Recommended end-to-end target (staging hybrid)
+
+```bash
+make full-deploy-stag-hybrid LOCAL_TRUST_IP=<public-ip> [LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key]
+```
+
+This wrapper target runs the full AWS + local trust provisioning pipeline, updates `Trust_1-endpoint` in `FLIP_API`, and redeploys Central Hub so the new secret values are loaded.
+You still need to start the local trust stack on the trust host:
+
+```bash
+cd trust
+env PROD=stag make up-local-trust-stag
+```
+
 ### Provision a remote trust host (via SSH)
 
 ```bash
@@ -102,7 +116,8 @@ make add-local-trust LOCAL_TRUST_IP=<public-ip>
    - Configures UFW firewall to allow `TRUST_API_PORT`, 8002, 8003 **only from the Central Hub IP**
    - Fetches the local trust CA certificate back to `trust/certs/local-trust-ca.crt`
 2. Creates a **CA bundle** (`deploy/providers/AWS/trust-ca.crt`) by concatenating the cloud Trust EC2 CA (generated earlier by `gen-trust-ec2-certs`) with the new local trust CA. This lets `flip-api` verify HTTPS connections to **both** trusts using a single bundle.
-3. Runs a targeted `terraform apply` to:
+3. Downloads the `Trust_2` FL participant kit from S3 and deploys it to `/opt/flip/services/Trust_2/{startup,local,transfer}` on the trust host.
+4. Runs a targeted `terraform apply` to:
    - Upload the CA bundle to Secrets Manager (`trust_ca_cert` key in `FLIP_API` secret)
    - Add security group rules allowing FL traffic from the local trust's public IP
 
@@ -110,25 +125,42 @@ make add-local-trust LOCAL_TRUST_IP=<public-ip>
 
 1. **Configure router port forwarding** — Forward `TRUST_API_PORT/tcp` (default 8020) from the router's WAN interface to the trust host's LAN IP. Optionally forward 8002/tcp and 8003/tcp for federated learning.
 
-2. **Update the trust endpoint in Secrets Manager** — The `Trust_N-endpoint` in the `FLIP_API` secret must point to the local trust:
+2. **Update the trust endpoint in Secrets Manager** — Recommended helper target:
 
-   ```sh
-   https://<public-ip>:8020
+   ```bash
+   make set-local-trust-endpoint LOCAL_TRUST_IP=<public-ip>
    ```
 
 3. **Start the trust stack** on the trust host:
 
    ```bash
-   PROD=true make up-trust-1
+   cd trust
+   env PROD=stag make up-local-trust-stag
    ```
 
-4. **Verify** from the operator workstation:
+4. **Verify (CA-validated)** from the operator workstation:
 
    ```bash
    make test-local-trust LOCAL_TRUST_IP=<public-ip>
    ```
 
 5. **Restart flip-api** on the Central Hub to pick up the new CA cert from Secrets Manager.
+
+## Certificate Model (Critical)
+
+There are two different certificate verification contexts in this hybrid setup:
+
+1. **Central Hub -> Trust API runtime path (must verify CA)**
+   - `flip-api` verifies trust HTTPS endpoints using a CA bundle from `FLIP_API.trust_ca_cert`.
+   - That bundle is written on CH EC2 to `/opt/flip/certs/trust-ca.crt` and mounted into `flip-api`.
+   - The bundle must contain both:
+     - cloud Trust EC2 CA (`trust/certs/trust-ca.crt`), and
+     - local trust CA (`trust/certs/local-trust-ca.crt`).
+
+2. **Operator/external diagnostics path (must be CA-validated)**
+   - `make test-local-trust` uses `--cacert ../../../trust/certs/local-trust-ca.crt`.
+
+If `make test-local-trust` fails with certificate errors, re-run `make add-local-trust` to regenerate/fetch CA certs and rebuild the bundle.
 
 ## Ansible Playbook Details
 
@@ -221,8 +253,9 @@ If the public IP changes (common with residential broadband):
 
 1. Regenerate TLS certificates: `TRUST_HOST=<new-ip> make -C trust generate-trust-certs`
 2. Copy certs to `/opt/flip/certs/` and restart `nginx-tls`
-3. Update the `FLIP_API` secret in Secrets Manager with the new CA cert and endpoint URL
-4. Update the Terraform security group: `TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply`
+3. Re-run `make add-local-trust LOCAL_TRUST_IP=<new-ip>` to refresh certs and CA bundle
+4. Update endpoint URL in Secrets Manager: `make set-local-trust-endpoint LOCAL_TRUST_IP=<new-ip>`
+5. Update the Terraform security group: `TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply`
 
 ## Troubleshooting
 
