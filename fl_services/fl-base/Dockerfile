@@ -31,6 +31,7 @@ WORKDIR /app
 # Sync the project into a new environment, using the frozen lockfile
 # Copy necessary files for building the flip package
 COPY pyproject.toml uv.lock README.md ./
+COPY docs/ ./docs/
 COPY flip/ ./flip/
 
 # Sync dependencies using uv
