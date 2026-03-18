@@ -94,23 +94,17 @@ def test_seed_trusts_production_uses_secret_and_updates_existing(
     assert result == [{"name": "Trust Existing", "endpoint": "https://new-endpoint.example.com"}]
 
 
-@patch("flip_api.db.seed.trusts.logger")
 @patch("flip_api.db.seed.trusts.get_settings")
-def test_seed_trusts_skips_trust_on_exception(mock_get_settings, mock_logger, mock_session):
-    """Test that trust processing errors are skipped and do not stop seeding."""
+def test_seed_trusts_raises_on_lookup_exception(mock_get_settings, mock_session):
+    """Test that trust lookup errors are raised and stop seeding."""
     mock_get_settings.return_value = SimpleNamespace(
         ENV="development", TRUST_ENDPOINTS={"Broken Trust": "https://broken.example.com"}
     )
 
-    mock_session.exec.side_effect = [
-        Exception("lookup failed"),
-        MagicMock(all=MagicMock(return_value=[])),
-    ]
+    mock_session.exec.side_effect = Exception("lookup failed")
 
-    result = seed_trusts(mock_session)
+    with pytest.raises(Exception, match="lookup failed"):
+        seed_trusts(mock_session)
 
     mock_session.add.assert_not_called()
-    assert mock_session.commit.call_count == 1
-    assert result == []
-    mock_logger.info.assert_called_once()
-    assert "Endpoint not found in secrets for one of the trusts. Skipping." in mock_logger.info.call_args[0][0]
+    mock_session.commit.assert_not_called()
