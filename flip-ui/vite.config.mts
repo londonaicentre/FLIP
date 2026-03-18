@@ -55,8 +55,9 @@ export default defineConfig(({ mode }) => {
             open: true,
             host: true,
             allowedHosts: [
+                "app.flip.aicentre.co.uk",
                 "stag.flip.aicentre.co.uk",
-        ],
+            ],
         },
         resolve: {
             alias: [
