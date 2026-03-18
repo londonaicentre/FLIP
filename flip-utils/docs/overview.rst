@@ -13,6 +13,8 @@ The FLIP platform uses this package to power federated learning applications
 across multiple job types: standard federated training, distributed evaluation,
 diffusion model training, and custom federated optimization.
 
+Hosted documentation is available on `Read the Docs <https://flip-fl-base.readthedocs.io/en/stable>`_.
+
 Installation
 ~~~~~~~~~~~~
 
