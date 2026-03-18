@@ -254,7 +254,7 @@ deploy-centralhub: ## Deploy FLIP containers to flip context with environment fr
 	@echo "🔄 Switching to flip Docker context..."
 	@docker context use flip
 	@echo "🐳 Deploying containers..."
-	@$(MAKE) -C ../../../ up-centralhub-stag PROD=stag
+	@$(MAKE) -C ../../../ up-centralhub-ec2 PROD=${PROD}
 	@echo "✅ Deployment complete!"
 	@docker context use default
 
@@ -272,7 +272,7 @@ deploy-trust: update-env ## Deploy trust relationships after central hub is depl
 	@echo "🐳 Deploying containers to Trust EC2 ..."
 	docker swarm init || echo "   Swarm already initialized"
 	@echo "🚀 Deploying Trust services..."
-	$(MAKE) -C ../../../ up-trust-stag PROD=stag
+	$(MAKE) -C ../../../ up-trust-ec2 PROD=${PROD}
 	@echo "✅ Trust deployment complete!"
 
 .PHONY: down
