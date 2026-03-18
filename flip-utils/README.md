@@ -14,7 +14,7 @@
 # FLIP-FL-base-FLARE
 
 <p align="left">
-<img src="docs/images/flip-flare-logo.png" height="200" alt='flip-flare-logo' />
+<img src="assets/flip-flare-logo.png" height="200" alt='flip-flare-logo' />
 </p>
 
 [![codecov](https://codecov.io/gh/londonaicentre/flip-fl-base/graph/badge.svg)](https://codecov.io/gh/londonaicentre/flip-fl-base)

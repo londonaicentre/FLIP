@@ -508,6 +508,6 @@ class FLIPStandardDev(FLIPBase):
     @override
     def cleanup(self, path: Path) -> None:
         """
-        Cleans up local files in LOCAL_DEV mode. Logs the cleanup action but does not actually delete any files.
+        Log only in dev mode - no actual deletion of any files.
         """
         self.logger.info(f"[DEV] cleanup is not supported in LOCAL_DEV mode. Would have cleaned up path: {path}")
