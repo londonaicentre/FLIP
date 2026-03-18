@@ -16,6 +16,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict()
 
+    USERNAME: str = "admin@nvidia.com"
+    SECURE_MODE: bool = True
+
     LOG_LEVEL: str = "INFO"
 
     FL_ADMIN_DIRECTORY: str

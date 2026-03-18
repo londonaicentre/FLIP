@@ -34,8 +34,7 @@ you want to:
 
 You can run `make nvflare-provision NET_NUMBER=${NET_NUMBER}` to create a network: this will create an instance of the
 services defined in `net_project.yml`, substituting the naming by `net-${NET_NUMBER}`.
-You can also pass `FL_PORT` and `ADMIN_PORT` if you do not want to use the defaults (which will be the same for each
-created net).
+You can also pass `FL_PORT` if you do not want to use the default (which will be the same for each created net).
 
 ### Provisioning command
 
