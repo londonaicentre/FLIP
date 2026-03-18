@@ -436,10 +436,25 @@ add-local-trust: ## Provision an on-prem Trust host via Ansible and register it 
 	@echo ""
 	@echo "⚠️  REMAINING MANUAL STEPS:"
 	@echo "   1. Configure border router NAT: forward $(TRUST_API_PORT)/tcp → <trust-host-lan-ip>:$(TRUST_API_PORT)"
-	@echo "   2. Update 'Trust_1-endpoint' in the FLIP_API Secrets Manager secret:"
-	@echo "      https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)"
+	@echo "   2. Update Trust endpoint in Secrets Manager (recommended helper target):"
+	@echo "      make set-local-trust-endpoint LOCAL_TRUST_IP=$(LOCAL_TRUST_IP)"
 	@echo "   3. On the trust host — start the trust stack: cd trust && PROD=$(PROD) make up-local-trust-stag"
-	@echo "   4. Verify: make test-local-trust LOCAL_TRUST_IP=$(LOCAL_TRUST_IP)"
+	@echo "   4. Verify with CA validation: make test-local-trust LOCAL_TRUST_IP=$(LOCAL_TRUST_IP)"
+	@echo "      (or handshake-only test: make test-local-trust-insecure LOCAL_TRUST_IP=$(LOCAL_TRUST_IP))"
+
+.PHONY: set-local-trust-endpoint
+set-local-trust-endpoint: ## Update FLIP_API Trust_1-endpoint to the local trust HTTPS URL
+	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make set-local-trust-endpoint LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
+	@echo "🔐 Updating FLIP_API secret Trust_1-endpoint to https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)..."
+	@AWS_PROFILE=$(AWS_PROFILE) aws secretsmanager get-secret-value \
+		--secret-id FLIP_API \
+		--query SecretString \
+		--output text | \
+	python3 -c "import json, sys; s=json.load(sys.stdin); s['Trust_1-endpoint']='https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)'; print(json.dumps(s))" | \
+	AWS_PROFILE=$(AWS_PROFILE) aws secretsmanager update-secret \
+		--secret-id FLIP_API \
+		--secret-string file:///dev/stdin >/dev/null
+	@echo "✅ FLIP_API Trust_1-endpoint updated."
 
 .PHONY: test-local-trust
 test-local-trust: ## Verify HTTPS connectivity to an on-premises Trust host
@@ -449,10 +464,18 @@ test-local-trust: ## Verify HTTPS connectivity to an on-premises Trust host
 		https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)/health \
 	&& echo "✅ HTTPS connection to local Trust host successful!" \
 	|| (echo "❌ Connection failed. Check:"; \
-	    echo "   - Trust stack is running on the host: PROD=$(PROD) make up-trust-1"; \
+	    echo "   - Trust stack is running on the host: PROD=$(PROD) make up-local-trust-stag"; \
 	    echo "   - UFW allows $(TRUST_API_PORT) from this machine (run: make add-local-trust)"; \
 	    echo "   - Border router forwards $(TRUST_API_PORT)/tcp to the trust host LAN IP"; \
 	    exit 1)
+
+.PHONY: test-local-trust-insecure
+test-local-trust-insecure: ## Verify HTTPS handshake to local trust without CA validation (-k)
+	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make test-local-trust-insecure LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
+	@echo "🔍 Testing HTTPS handshake without CA validation: https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)/health"
+	@curl -skf https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)/health \
+	&& echo "✅ HTTPS handshake successful (insecure mode)." \
+	|| (echo "❌ Connection failed. Check network/NAT/UFW and service health."; exit 1)
 
 .PHONY: down
 down:
@@ -530,11 +553,26 @@ full-deploy-stag: ## Full staging deployment with on-prem local trust (requires 
 	## 6. ssh-config + ansible-init: configure SSH aliases, provision EC2s with Docker + FL kit
 	## 7. deploy-centralhub + deploy-trust: deploy Central Hub and cloud Trust containers
 	## 8. add-local-trust LOCAL_TRUST_IP=<ip>: generate local trust TLS certs, configure UFW,
-	##    update Secrets Manager CA cert to local trust CA, update AWS security groups
+	##    deploy local Trust_$(LOCAL_TRUST_NUMBER) FL kit, update CA bundle in Secrets Manager,
+	##    and update AWS security groups
 	## 9. status: verify all services healthy
 	## NOTE: After this completes you must manually:
-	##   - Update 'Trust_1-endpoint' in FLIP_API Secrets Manager to https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)
-	##   - Start local trust stack: cd ../../../trust && env PROD=stag make up-trust-1
+	##   - Update Trust endpoint in FLIP_API secret: make set-local-trust-endpoint LOCAL_TRUST_IP=<public-ip>
+	##   - Start local trust stack: cd ../../../trust && env PROD=stag make up-local-trust-stag
 	##   - Restart Central Hub API: make deploy-centralhub PROD=stag
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-stag LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
 full-deploy-stag: github-login aws-login init import-persistent plan apply update-env gen-trust-ec2-certs plan apply ssh-config ansible-init deploy-centralhub deploy-trust add-local-trust status
+
+.PHONY: full-deploy-stag-hybrid
+full-deploy-stag-hybrid: ## Full staging hybrid deployment including endpoint update and CH redeploy
+	## This wraps full-deploy-stag, then updates Trust_1-endpoint and redeploys Central Hub.
+	## You still need to start the local trust stack on the trust host.
+	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-stag-hybrid LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
+	@$(MAKE) full-deploy-stag LOCAL_TRUST_IP=$(LOCAL_TRUST_IP) LOCAL_TRUST_SSH_KEY="$(LOCAL_TRUST_SSH_KEY)" LOCAL_TRUST_SSH_USER="$(LOCAL_TRUST_SSH_USER)" LOCAL_TRUST_NUMBER="$(LOCAL_TRUST_NUMBER)"
+	@$(MAKE) set-local-trust-endpoint LOCAL_TRUST_IP=$(LOCAL_TRUST_IP)
+	@$(MAKE) deploy-centralhub PROD=stag
+	@echo ""
+	@echo "✅ Hybrid staging deployment complete."
+	@echo "➡️  Final manual step: start the local trust stack on the trust host:"
+	@echo "   cd ../../../trust && env PROD=stag make up-local-trust-stag"
+	@echo "➡️  Then verify: make test-local-trust LOCAL_TRUST_IP=$(LOCAL_TRUST_IP)"

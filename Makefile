@@ -12,7 +12,7 @@
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access
+		check-aws-access up-local-trust-stag
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -153,6 +153,11 @@ up-trust-stag: create-networks
 	@echo "🚢 Starting XNAT services..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-1-stag PROD=stag
 	@echo "✅ Trust services started successfully!"
+
+up-local-trust-stag: create-networks
+	@echo "🚢 Starting local on-prem Trust services for staging..."
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-local-trust-stag PROD=stag
+	@echo "✅ Local Trust services started successfully!"
 
 central-hub: create-networks
 	$(MAKE) -C flip-api up
