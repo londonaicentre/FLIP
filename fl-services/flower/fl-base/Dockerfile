@@ -13,7 +13,7 @@
 # limitations under the License.
 #
 
-FROM flwr/base:${FLWR_VERSION:-1.26.1-py3.12-ubuntu24.04} AS base
+FROM flwr/base:${FLWR_VERSION:-1.27.0-py3.12-ubuntu24.04} AS base
 
 WORKDIR /app
 
