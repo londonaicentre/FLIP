@@ -72,7 +72,7 @@ def test_cohort_query_success(
         query_id=query_id,
     )
 
-    response = client.post("/step/cohort", json=cohort_query_input)
+    response = client.post("/api/step/cohort", json=cohort_query_input)
 
     assert response.status_code == 201
     data = response.json()
@@ -89,7 +89,7 @@ def test_cohort_query_success(
 def test_cohort_query_project_not_found(mock_get_project, cohort_query_input):
     mock_get_project.return_value = None
 
-    response = client.post("/step/cohort", json=cohort_query_input)
+    response = client.post("/api/step/cohort", json=cohort_query_input)
 
     assert response.status_code == 404
     assert "not found" in response.json()["detail"]
@@ -102,7 +102,7 @@ def test_cohort_query_unexpected_exception(mock_save, mock_get_project, cohort_q
     mock_get_project.return_value = True
     mock_save.side_effect = Exception("Database error")
 
-    response = client.post("/step/cohort", json=cohort_query_input)
+    response = client.post("/api/step/cohort", json=cohort_query_input)
 
     assert response.status_code == 500
     assert "Failed to process cohort query" in response.json()["detail"]

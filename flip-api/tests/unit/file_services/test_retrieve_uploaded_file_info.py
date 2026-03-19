@@ -21,8 +21,6 @@ from flip_api.db.models.main_models import UploadedFiles
 from flip_api.domain.schemas.file import IdList
 from flip_api.file_services.retrieve_uploaded_file_info import get_uploaded_files_info, get_uploaded_files_info_post
 
-# filepath: /app/src/flip/file_services/test_retrieve_uploaded_file_info.py
-
 
 @pytest.fixture
 def mock_logger():

@@ -34,6 +34,21 @@ services:
       - shared-net-1
     restart: unless-stopped
 
+  fl-api-net-2:
+    container_name: flip-fl-api-net-2
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    environment:
+      - DEBUG=${DEBUG}
+      - SUPERLINK_ADDRESS=fl-server-net-2:9093
+      - SUPERLINK_HEALTH_ADDRESS=fl-server-net-2:9097
+      - SUPERNODE_HEALTH_ADDRESSES=Trust_1=trust1-fl-client-net-2-1:9098,Trust_2=trust2-fl-client-net-2-1:9098
+    depends_on:
+      - fl-server-net-2
+    networks:
+      - default
+      - shared-net-2
+    restart: unless-stopped
+
   fl-server-net-1:
     container_name: fl-server-net-1
     image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
@@ -61,5 +76,33 @@ services:
       - 9093:9093
     networks:
       - shared-net-1
+    restart: unless-stopped
+    init: true
+
+  fl-server-net-2:
+    container_name: fl-server-net-2
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    volumes:
+      # Mount the AWS credentials (needed to upload model results to S3)
+      - ~/.aws/config:/root/.aws/config:ro
+      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+    environment:
+      - NET_ID=net-2
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=${MIN_CLIENTS}
+      - IMAGES_DIR=/app/data/images
+      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
+      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+      - IMAGING_API_URL=${IMAGING_API_URL}
+      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
+      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      - AWS_PROFILE=${AWS_PROFILE}
+    command:
+      - --insecure
+      - --health-server-address
+      - 0.0.0.0:9097
+    networks:
+      - shared-net-2
     restart: unless-stopped
     init: true

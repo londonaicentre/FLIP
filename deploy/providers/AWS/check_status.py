@@ -688,10 +688,10 @@ def main(
         check_http_endpoint(f"https://{alb_subdomain}", "FLIP UI", 200)
 
         # Check API health endpoint via ALB
-        check_http_endpoint(f"https://{alb_subdomain}/health", "FLIP API Health (ALB)", 200)
+        check_http_endpoint(f"https://{alb_subdomain}/api/health", "FLIP API Health (ALB)", 200)
 
         # Check API docs endpoint via ALB
-        check_http_endpoint(f"https://{alb_subdomain}/docs", "FLIP API Docs (ALB)", 200)
+        check_http_endpoint(f"https://{alb_subdomain}/api/docs", "FLIP API Docs (ALB)", 200)
 
         # Check FL API health and docs endpoints via docker exec using urllib.request
         # (curl is not present in the NVFlare-based FL API containers; iptables also blocks
@@ -734,7 +734,7 @@ def main(
                 print_status("FAIL", f"FL API Net-{net_num} docs endpoint not accessible (via docker exec): {output}")
 
         # Check Central Hub API is reachable inside Central Hub EC2 via SSH
-        check_endpoint_over_ssh("flip", f"http://localhost:{API_PORT}/health", 200)
+        check_endpoint_over_ssh("flip", f"http://localhost:{API_PORT}/api/health", 200)
 
         # Check FL-api-net endpoints over ssh and inside flip-api running container.
         # Use urllib.request (stdlib) for consistency — works even if httpx is absent.
@@ -853,7 +853,7 @@ def main(
                 ]
                 # Add only configured FL server and API containers
                 for net_num in configured_net_numbers:
-                    expected_containers.append(f"flip-fl-server-net-{net_num}")
+                    expected_containers.append(f"fl-server-net-{net_num}")
                     expected_containers.append(f"flip-fl-api-net-{net_num}")
 
                 for container in expected_containers:

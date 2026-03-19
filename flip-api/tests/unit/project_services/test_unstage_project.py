@@ -27,7 +27,7 @@ from flip_api.project_services.unstage_project import router as unstage_project_
 @pytest.fixture
 def app_fixture() -> FastAPI:
     app = FastAPI()
-    app.include_router(unstage_project_router)
+    app.include_router(unstage_project_router, prefix="/api")
     return app
 
 
@@ -65,7 +65,7 @@ def test_unstage_project_success(app_fixture, client, test_user_id, test_project
         patch("flip_api.project_services.unstage_project.unstage_project_service") as mock_unstage_service,
     ):
         # Act
-        response = client.post(f"/projects/{test_project_id}/unstage")
+        response = client.post(f"/api/projects/{test_project_id}/unstage")
 
     # Assert
     assert response.status_code == status.HTTP_204_NO_CONTENT
@@ -85,7 +85,7 @@ def test_unstage_project_permission_denied(app_fixture, client, test_user_id, te
         patch("flip_api.project_services.unstage_project.get_project") as mock_get_project,
     ):
         # Act
-        response = client.post(f"/projects/{test_project_id}/unstage")
+        response = client.post(f"/api/projects/{test_project_id}/unstage")
 
     # Assert
     assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -104,7 +104,7 @@ def test_unstage_project_not_found(app_fixture, client, test_user_id, test_proje
         patch("flip_api.project_services.unstage_project.get_project", return_value=None),
     ):
         # Act
-        response = client.post(f"/projects/{test_project_id}/unstage")
+        response = client.post(f"/api/projects/{test_project_id}/unstage")
 
     # Assert
     assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -125,7 +125,7 @@ def test_unstage_project_not_staged_status(app_fixture, client, test_user_id, te
         patch("flip_api.project_services.unstage_project.get_project", return_value=mock_project_data),
     ):
         # Act
-        response = client.post(f"/projects/{test_project_id}/unstage")
+        response = client.post(f"/api/projects/{test_project_id}/unstage")
 
     # Assert
     assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -146,7 +146,7 @@ def test_unstage_project_approved_status(app_fixture, client, test_user_id, test
         patch("flip_api.project_services.unstage_project.get_project", return_value=mock_project_data),
     ):
         # Act
-        response = client.post(f"/projects/{test_project_id}/unstage")
+        response = client.post(f"/api/projects/{test_project_id}/unstage")
 
     # Assert
     assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -170,7 +170,7 @@ def test_unstage_project_value_error_from_service(
         ),
     ):
         # Act
-        response = client.post(f"/projects/{test_project_id}/unstage")
+        response = client.post(f"/api/projects/{test_project_id}/unstage")
 
     # Assert
     assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -194,7 +194,7 @@ def test_unstage_project_generic_exception_from_service(
         ),
     ):
         # Act
-        response = client.post(f"/projects/{test_project_id}/unstage")
+        response = client.post(f"/api/projects/{test_project_id}/unstage")
 
     # Assert
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -210,7 +210,7 @@ def test_unstage_project_invalid_project_id_format(app_fixture, client, test_use
     invalid_project_id = "not-a-valid-uuid"
 
     # Act
-    response = client.post(f"/projects/{invalid_project_id}/unstage")
+    response = client.post(f"/api/projects/{invalid_project_id}/unstage")
 
     # Assert
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -230,7 +230,7 @@ def test_unstage_project_permission_check_called_correctly(app_fixture, client, 
         patch("flip_api.project_services.unstage_project.get_project", return_value=None),
     ):
         # Act
-        client.post(f"/projects/{test_project_id}/unstage")
+        client.post(f"/api/projects/{test_project_id}/unstage")
 
     # Assert
     mock_has_permissions.assert_called_once_with(test_user_id, [PermissionRef.CAN_UNSTAGE_PROJECTS], mock_session)
@@ -250,7 +250,7 @@ def test_unstage_project_session_transaction_management(
         patch("flip_api.project_services.unstage_project.unstage_project_service") as mock_unstage_service,
     ):
         # Act
-        response = client.post(f"/projects/{test_project_id}/unstage")
+        response = client.post(f"/api/projects/{test_project_id}/unstage")
 
     # Assert
     assert response.status_code == status.HTTP_204_NO_CONTENT
@@ -273,7 +273,7 @@ def test_unstage_project_edge_case_empty_uuid(app_fixture, client, test_user_id)
         patch("flip_api.project_services.unstage_project.get_project", return_value=None),
     ):
         # Act
-        response = client.post(f"/projects/{zero_uuid}/unstage")
+        response = client.post(f"/api/projects/{zero_uuid}/unstage")
 
     # Assert
     assert response.status_code == status.HTTP_404_NOT_FOUND

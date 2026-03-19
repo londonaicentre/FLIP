@@ -125,10 +125,22 @@ variable "FL_API_PORT" {
   default     = 8000
 }
 
+variable "FL_SERVER_PORT" {
+  description = "Port for FLIP FL Server"
+  type        = number
+  default     = 8002
+}
+
 variable "flip_alb_subdomain" {
   description = "Subdomain for the FLIP ALB"
   type        = string
   default     = "dev.flip.aicentre.co.uk"
+}
+
+variable "flip_nlb_subdomain" {
+  description = "Subdomain for the FLIP FL server NLB endpoint"
+  type        = string
+  default     = "fl.dev.flip.aicentre.co.uk"
 }
 
 variable "SES_VERIFIED_EMAIL" {

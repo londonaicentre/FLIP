@@ -65,7 +65,7 @@ def test_get_details_success(client, mock_db):
     mock_db.get.return_value = mock_banner
     mock_db.exec.return_value = MagicMock(first=MagicMock(return_value=mock_config))
 
-    response = client.get("/site/details")
+    response = client.get("/api/site/details")
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {
@@ -79,7 +79,7 @@ def test_get_details_not_found(client, mock_db):
     mock_result.fetchone.return_value = None
     mock_db.execute.return_value = mock_result
 
-    response = client.get("/site/details")
+    response = client.get("/api/site/details")
 
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Error fetching site details" in response.json()["detail"]
@@ -115,7 +115,7 @@ def test_put_details_success(client, mock_db):
         MagicMock(first=MagicMock(return_value=updated_config)),  # get: config
     ]
 
-    response = client.put("/site/details", json=payload)
+    response = client.put("/api/site/details", json=payload)
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == payload  # expecting updated result
@@ -130,7 +130,7 @@ def test_put_details_failure(client, mock_db):
         "deploymentMode": False,
     }
 
-    response = client.put("/site/details", json=payload)
+    response = client.put("/api/site/details", json=payload)
 
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Error updating site details" in response.json()["detail"]

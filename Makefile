@@ -11,7 +11,8 @@
 #
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
-		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps
+		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
+		check-aws-access
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -88,6 +89,15 @@ DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_
 SHOW_LOGS_CENTRAL_HUB=docker logs -f flip-api --tail 100 --timestamps --follow
 GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
+# NOTE DOCKER_REGISTRY is set to empty when we use local FL images during development (e.g. flare-fl-server:dev). 
+# In that case, '--pull always' will error because docker won't be able to find the manifest for the dev image online,
+# so we need to remove the --pull always flag.
+ifneq ($(strip $(DOCKER_REGISTRY)),)
+PULL_ALWAYS_FLAG=--pull always
+else
+PULL_ALWAYS_FLAG=
+endif
+
 # Build the Docker images
 build:
 	@echo "🛠️ Building Docker images..."
@@ -99,11 +109,11 @@ build:
 
 # Run all services
 # Uses --pull always to ensure the latest FL images are used
-up: create-networks
+up: check-aws-access create-networks
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d
+	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
 	@echo "🚢 Starting trust services..."
 	$(MAKE) -C trust up
 	@echo "🚢 Starting XNAT services..."
@@ -114,7 +124,7 @@ up: create-networks
 up-no-trust: create-networks
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d --pull always
+	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
 
 up-trusts: create-networks
 	@echo "🚢 Starting Trust services..."
@@ -123,8 +133,8 @@ up-trusts: create-networks
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-swarm
 	@echo "✅ Trust services started successfully!"
 
-# Uses --pull always to ensure the latest FL images and 'stag' version are used
-up-centralhub-stag: create-networks
+# Uses --pull always to ensure the latest FL images and 'stag'/'prod' version are used
+up-centralhub-ec2: create-networks
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting central hub API services..."
@@ -134,13 +144,13 @@ up-centralhub-stag: create-networks
 	${DOCKER_COMMAND} up --remove-orphans -d --pull always
 	@echo "✅ Central hub API services started successfully!"
 
-up-trust-stag: create-networks
+up-trust-ec2: create-networks
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting Trust services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-1-stag PROD=stag
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-1-ec2 PROD=${PROD}
 	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-1-stag PROD=stag
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-1-ec2 PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
 central-hub: create-networks
@@ -252,3 +262,15 @@ unit_test:
 	$(MAKE) -C trust/data-access-api unit_test
 	$(MAKE) -C trust/imaging-api unit_test
 	$(MAKE) -C trust/trust-api unit_test 
+
+check-aws-access:
+	@echo "🔎 Checking AWS CLI access..."
+	@if ! command -v aws >/dev/null 2>&1; then \
+		echo "❌ ERROR: AWS CLI is not installed or not in PATH."; \
+		exit 1; \
+	fi
+	@if ! aws sts get-caller-identity >/dev/null 2>&1; then \
+		echo "❌ ERROR: AWS is not accessible. Check credentials, profile, and network access."; \
+		exit 1; \
+	fi
+	@echo "✅ AWS access confirmed."

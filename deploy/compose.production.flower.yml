@@ -18,7 +18,7 @@ services:
 
   fl-api-net-1:
     container_name: flip-fl-api-net-1
-    image: ghcr.io/londonaicentre/${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
@@ -30,11 +30,10 @@ services:
     restart: unless-stopped
 
   fl-server-net-1:
-    container_name: flip-fl-server-net-1
-    image: ghcr.io/londonaicentre/${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    container_name: fl-server-net-1
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     ports:
-      - "8002:8002"
-      - "8003:8003"
+      - "${FL_SERVER_PORT}:8002"
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false

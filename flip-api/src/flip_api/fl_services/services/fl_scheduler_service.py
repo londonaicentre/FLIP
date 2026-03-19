@@ -38,7 +38,8 @@ from flip_api.domain.schemas.status import (
     NetStatus,
 )
 from flip_api.fl_services.services.fl_service import (
-    bundle_application,
+    bundle_flower_application,
+    bundle_nvflare_application,
     get_bundle_urls,
     start_training,
     validate_client_availability,
@@ -350,15 +351,13 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
 
         if fl_backend == "nvflare":
             # Copies base application + user-uploaded model files into a destination bucket on S3
-            dest_bucket_s3_path = bundle_application(model_id)
+            dest_bucket_s3_path = bundle_nvflare_application(model_id)
             logger.info(f"Bundled the app for [nvflare] to '{dest_bucket_s3_path}'.")
 
         elif fl_backend == "flower":
-            # Flower model files are already in the correct structure, so we just point to the model files bucket
-            # without needing to copy them to a different location on S3
-            # NOTE Flower currently does not have a list of supported job types
-            dest_bucket_s3_path = f"{get_settings().SCANNED_MODEL_FILES_BUCKET}/{model_id}"
-            logger.info(f"Set the bundle path for [flower] to '{dest_bucket_s3_path}'.")
+            # Copies base application + user-uploaded model files into a destination bucket on S3
+            dest_bucket_s3_path = bundle_flower_application(model_id)
+            logger.info(f"Bundled the app for [flower] to '{dest_bucket_s3_path}'.")
 
         else:
             # If the FL_BACKEND setting is typed/ constrained correctly, this should never be hit

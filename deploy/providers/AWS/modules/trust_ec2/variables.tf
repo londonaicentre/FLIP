@@ -58,10 +58,6 @@ variable "PACS_UI_PORT" {
   type    = number
 }
 
-variable "FL_API_PORT" {
-  type    = number
-}
-
 variable "iam_instance_profile_name" {
   description = "Name of an existing IAM instance profile to attach to the Trust EC2 instance"
   type        = string

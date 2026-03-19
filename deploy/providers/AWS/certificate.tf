@@ -21,6 +21,7 @@
 #    terraform apply -target=aws_acm_certificate.flip
 # 2. Then deploy everything else:
 #    terraform apply
+# Use the Makefile targets `plan-cert` and `apply-cert`.
 #
 # This is because the domain_validation_options are only known after
 # the certificate is created, so Terraform cannot plan the DNS records

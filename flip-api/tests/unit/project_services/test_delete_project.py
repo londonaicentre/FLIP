@@ -70,7 +70,7 @@ def mock_services(monkeypatch):
 def test_delete_project_success(override_dependencies, mock_services):
     project_id = uuid4()
 
-    response = client.delete(f"/projects/{project_id}")
+    response = client.delete(f"/api/projects/{project_id}")
 
     assert response.status_code == status.HTTP_204_NO_CONTENT
     mock_services["delete_project"].assert_called_once()
@@ -80,7 +80,7 @@ def test_delete_project_forbidden(override_dependencies, mock_services):
     mock_services["can_access_project"].return_value = False
     project_id = uuid4()
 
-    response = client.delete(f"/projects/{project_id}")
+    response = client.delete(f"/api/projects/{project_id}")
 
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert "denied access" in response.json()["detail"]
@@ -92,7 +92,7 @@ def test_delete_project_abort_training_called(override_dependencies, mock_servic
     mock_services["get_project_models_service"].return_value = (MagicMock(data=[model_mock]), None)
 
     project_id = uuid4()
-    response = client.delete(f"/projects/{project_id}")
+    response = client.delete(f"/api/projects/{project_id}")
 
     assert response.status_code == status.HTTP_204_NO_CONTENT
     mock_services["abort_model_training"].assert_called_once_with(

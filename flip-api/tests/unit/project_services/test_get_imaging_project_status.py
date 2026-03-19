@@ -31,7 +31,7 @@ from flip_api.project_services.get_imaging_project_status import router as get_i
 @pytest.fixture
 def app_fixture() -> FastAPI:
     app = FastAPI()
-    app.include_router(get_imaging_project_status_router)
+    app.include_router(get_imaging_project_status_router, prefix="/api")
     return app
 
 
@@ -96,7 +96,7 @@ def test_get_imaging_project_status_success(client: TestClient, app_fixture: Fas
             return_value=mock_imaging_statuses_list_data,
         ) as mock_get_statuses,
     ):
-        response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/image/status")
+        response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/image/status")
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == mock_imaging_statuses_list_data
@@ -121,7 +121,7 @@ def test_get_imaging_project_status_forbidden(client: TestClient, app_fixture: F
         ) as mock_can_access,
         patch("flip_api.project_services.get_imaging_project_status.get_project") as mock_get_project,
     ):
-        response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/image/status")
+        response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/image/status")
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert response.json()["detail"] == "You do not have permission to access this project."
@@ -164,7 +164,7 @@ def test_get_imaging_project_status_project_not_found(
             status=ProjectStatus.UNSTAGED,
             query_id=uuid4(),
         )
-        response = client.get(f"/projects/{str(project_id)}/image/status")
+        response = client.get(f"/api/projects/{str(project_id)}/image/status")
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["detail"] == "The imaging project was not found."
         mock_can_access.assert_called_once_with(MOCK_USER_ID, project_id, mock_db_session)
@@ -190,7 +190,7 @@ def test_get_imaging_project_status_project_query_not_found(client: TestClient, 
             return_value=project_response_no_query,
         ) as mock_get_project,
     ):
-        response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/image/status")
+        response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/image/status")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["detail"] == "The project query was not found."
@@ -215,7 +215,7 @@ def test_get_imaging_project_status_imaging_projects_not_found(client: TestClien
             "flip_api.project_services.get_imaging_project_status.get_imaging_projects", return_value=None
         ) as mock_get_imaging_projects,
     ):
-        response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/image/status")
+        response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/image/status")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["detail"] == "The imaging project was not found."
@@ -247,7 +247,7 @@ def test_get_imaging_project_status_statuses_not_found(client: TestClient, app_f
             "flip_api.project_services.get_imaging_project_status.get_imaging_project_statuses", return_value=None
         ) as mock_get_statuses,
     ):
-        response = client.get(f"/projects/{str(MOCK_PROJECT_ID)}/image/status")
+        response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/image/status")
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert response.json()["detail"] == "The imaging project status was not found."
@@ -257,10 +257,10 @@ def test_get_imaging_project_status_statuses_not_found(client: TestClient, app_f
 
 
 def test_get_imaging_project_status_invalid_project_id_format(client: TestClient, app_fixture: FastAPI):
-    # No dependency overrides needed as FastAPI validation happens before endpoint logic
+    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
     project_id = "not-a-valid-uuid"
-    response = client.get(f"/projects/{project_id}/image/status")
+    response = client.get(f"/api/projects/{project_id}/image/status")
 
-    assert response.status_code == status.HTTP_403_FORBIDDEN
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     app_fixture.dependency_overrides.clear()
