@@ -13,6 +13,8 @@
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=../../../.env.production
 else
+# Sometimes PROD may not be set, default to staging environment in that case
+PROD=stag
 MAIN_ENV_FILE=../../../.env.stag
 endif
 
