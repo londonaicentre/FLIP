@@ -37,7 +37,7 @@ TEST_USER_ID = uuid.uuid4()
 @pytest.fixture
 def app_fixture() -> FastAPI:
     app = FastAPI()
-    app.include_router(get_project_approved_trusts_router)
+    app.include_router(get_project_approved_trusts_router, prefix="/api")
     return app
 
 
@@ -68,7 +68,7 @@ def test_get_project_approved_trusts_success(
         patch("flip_api.project_services.get_project_approved_trusts.can_access_project", return_value=True),
         patch("flip_api.project_services.get_project_approved_trusts.get_project", return_value=mock_project),
     ):
-        response = client.get(f"projects/{TEST_PROJECT_ID}/trusts/approved")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}/trusts/approved")
 
     # Assert
     assert response.status_code == status.HTTP_200_OK
@@ -86,7 +86,7 @@ def test_get_project_approved_trusts_forbidden(
     app_fixture.dependency_overrides[verify_token] = lambda: TEST_USER_ID
 
     with patch("flip_api.project_services.get_project_approved_trusts.can_access_project", return_value=False):
-        response = client.get(f"projects/{TEST_PROJECT_ID}/trusts/approved")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}/trusts/approved")
 
     # Assert
     assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -107,7 +107,7 @@ def test_get_project_approved_trusts_not_found(
         patch("flip_api.project_services.get_project_approved_trusts.can_access_project", return_value=True),
         patch("flip_api.project_services.get_project_approved_trusts.get_project", return_value=None),
     ):
-        response = client.get(f"projects/{TEST_PROJECT_ID}/trusts/approved")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}/trusts/approved")
 
     # Assert
     assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -136,7 +136,7 @@ def test_get_project_approved_trusts_project_not_approved(
             "flip_api.project_services.get_project_approved_trusts.get_approved_trusts_for_project"
         ) as mock_get_trusts,
     ):
-        response = client.get(f"/projects/{TEST_PROJECT_ID}/trusts/approved")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}/trusts/approved")
 
     # Assert
     assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -164,7 +164,7 @@ def test_get_project_approved_trusts_value_error_fetching_trusts(
             side_effect=ValueError("Test Value Error"),
         ) as mock_get_trusts,
     ):
-        response = client.get(f"/projects/{TEST_PROJECT_ID}/trusts/approved")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}/trusts/approved")
 
     # Assert
     assert response.status_code == status.HTTP_200_OK  # As per current implementation, returns 200 with empty list
@@ -192,7 +192,7 @@ def test_get_project_approved_trusts_generic_exception_fetching_trusts(
             side_effect=Exception("Test Generic Error"),
         ) as mock_get_trusts,
     ):
-        response = client.get(f"/projects/{TEST_PROJECT_ID}/trusts/approved")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}/trusts/approved")
 
     # Assert
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -226,7 +226,7 @@ def test_get_project_approved_trusts_success_with_data(
             return_value=expected_trusts_data,
         ) as mock_get_trusts,
     ):
-        response = client.get(f"/projects/{TEST_PROJECT_ID}/trusts/approved")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}/trusts/approved")
 
     # Assert
     assert response.status_code == status.HTTP_200_OK
@@ -246,7 +246,7 @@ def test_get_project_approved_trusts_invalid_project_id_format(
     app_fixture.dependency_overrides[verify_token] = lambda: TEST_USER_ID
 
     invalid_project_id = "not-a-uuid"
-    response = client.get(f"/projects/{invalid_project_id}/trusts/approved")
+    response = client.get(f"/api/projects/{invalid_project_id}/trusts/approved")
 
     # Assert
     # FastAPI's default for invalid UUID path parameters is 422 Unprocessable Entity

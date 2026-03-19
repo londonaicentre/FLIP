@@ -88,7 +88,7 @@ def main():
     updates = {
         "DB_HOST": db_endpoint,
         "SP_ADDRESS": ec2_ip,
-        "CENTRAL_HUB_API_URL": f"http://{ec2_ip}:8080",
+        "CENTRAL_HUB_API_URL": f"http://{ec2_ip}:8080/api",
         # Also update UI_HOST if it was pointing to a container name,
         # but usually UI_HOST might be used for internal binding or external access.
         # If it's for external access URL construction:

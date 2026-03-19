@@ -133,8 +133,8 @@ up-trusts: create-networks
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-swarm
 	@echo "✅ Trust services started successfully!"
 
-# Uses --pull always to ensure the latest FL images and 'stag' version are used
-up-centralhub-stag: create-networks
+# Uses --pull always to ensure the latest FL images and 'stag'/'prod' version are used
+up-centralhub-ec2: create-networks
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting central hub API services..."
@@ -144,13 +144,13 @@ up-centralhub-stag: create-networks
 	${DOCKER_COMMAND} up --remove-orphans -d --pull always
 	@echo "✅ Central hub API services started successfully!"
 
-up-trust-stag: create-networks
+up-trust-ec2: create-networks
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting Trust services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-1-stag PROD=stag
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-1-ec2 PROD=${PROD}
 	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-1-stag PROD=stag
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-1-ec2 PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
 central-hub: create-networks

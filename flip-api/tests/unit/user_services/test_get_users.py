@@ -71,7 +71,7 @@ class TestGetUsers:
         ]
         mock_get_total.return_value = 1
 
-        response = client.get("/users")
+        response = client.get("/api/users")
 
         assert response.status_code == status.HTTP_200_OK
         body = response.json()
@@ -91,20 +91,20 @@ class TestGetUsers:
         mock_get_user_pool_id.return_value = "mock-pool"
         mock_has_permissions.return_value = False
 
-        response = client.get("/users")
+        response = client.get("/api/users")
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert "unable to manage users" in response.json()["detail"]
 
     @patch("flip_api.user_services.get_users.get_pool_id", side_effect=Exception("pool error"))
     @patch("flip_api.user_services.get_users.has_permissions", return_value=True)
     def test_get_users_invalid_pool(self, mock_has_permissions, mock_get_user_pool_id):
-        response = client.get("/users")
+        response = client.get("/api/users")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "pool error" in response.json()["detail"]
 
     @patch("flip_api.user_services.get_users.get_pool_id", side_effect=Exception("server crash"))
     @patch("flip_api.user_services.get_users.has_permissions", side_effect=Exception("deep error"))
     def test_get_users_unexpected_error(self, mock_has_permissions, mock_get_user_pool_id):
-        response = client.get("/users")
+        response = client.get("/api/users")
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert "server crash" in response.json()["detail"] or "deep error" in response.json()["detail"]

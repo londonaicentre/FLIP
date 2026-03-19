@@ -50,7 +50,7 @@ flip-api backend. Configure the backend URL via `.env.development`:
 ```dotenv
 VITE_AWS_USER_POOL_ID="<A_VALID_COGNITO_USER_POOL>"
 VITE_AWS_CLIENT_ID="<A_VALID_COGNITO_CLIENT_ID>"
-VITE_AWS_BASE_URL="http://localhost:8000"
+VITE_AWS_BASE_URL="http://localhost:8000/api"
 VITE_LOCAL=false
 ```
 

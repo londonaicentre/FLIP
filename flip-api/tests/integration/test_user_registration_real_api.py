@@ -73,7 +73,7 @@ class TestUserRegistrationRealAPI:
         print(f"📋 With roles: {user_registration_data['roles']}")
 
         # Make the API call to register the user
-        response = client.post("/step/users/", json=user_registration_data, headers=admin_auth_token)
+        response = client.post("/api/step/users/", json=user_registration_data, headers=admin_auth_token)
 
         # Print response for debugging
         print(f"📡 Response status code: {response.status_code}")

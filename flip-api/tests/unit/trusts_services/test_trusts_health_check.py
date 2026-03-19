@@ -61,7 +61,7 @@ async def test_check_trusts_health_success(mock_http_get, mock_trusts_data):
 
     app.dependency_overrides[get_session] = lambda: mock_db
 
-    response = client.get("/trust/health")
+    response = client.get("/api/trust/health")
 
     assert response.status_code == 200
     assert len(response.json()) == 2
@@ -82,7 +82,7 @@ async def test_check_trusts_health_no_trusts_found():
     app.dependency_overrides[get_session] = lambda: mock_db
 
     # Make the test request to the endpoint
-    response = client.get("/trust/health")
+    response = client.get("/api/trust/health")
 
     # Assert that the response status code is 404
     assert response.status_code == 404
@@ -109,7 +109,7 @@ async def test_check_trusts_health_http_error(mock_trusts_data):
     app.dependency_overrides[httpx.AsyncClient] = lambda: mock_httpx
 
     # Make the test request to the endpoint
-    response = client.get("/trust/health")
+    response = client.get("/api/trust/health")
 
     # Assert that the response status code is 200
     assert response.status_code == 200
@@ -134,7 +134,7 @@ async def test_check_trusts_health_internal_server_error():
     app.dependency_overrides[get_session] = lambda: mock_db
 
     # Make the test request to the endpoint
-    response = client.get("/trust/health")
+    response = client.get("/api/trust/health")
 
     # Assert that the response status code is 500
     assert response.status_code == 500

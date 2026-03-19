@@ -135,7 +135,9 @@ const trustsToStage = ref<ITrustToStage[]>();
 const trustStore = useTrustStore();
 
 watch(trustStore, () => {
-    trustsToStage.value = trustStore.getTrusts.map((trust) => ({
+    const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
+
+    trustsToStage.value = trusts.map((trust) => ({
         ...trust,
         staged: false
     }));

@@ -26,7 +26,7 @@ from flip_api.private_services.invoke_model_status_update import (
 from flip_api.private_services.invoke_model_status_update import router as invoke_model_status_update_router
 
 test_app = FastAPI()
-test_app.include_router(invoke_model_status_update_router)
+test_app.include_router(invoke_model_status_update_router, prefix="/api")
 
 MOCKED_SERVICE_FUNCTION_PATH = "flip_api.private_services.invoke_model_status_update.update_model_status_endpoint"
 
@@ -64,7 +64,7 @@ class TestInvokeModelStatusUpdateEndpoint:
         mock_update_model.return_value = service_response
 
         # Act
-        response = client.put(f"/model/{model_id}/status/{model_status}")
+        response = client.put(f"/api/model/{model_id}/status/{model_status}")
         print(response.json())
         # Assert
         assert response.status_code == status.HTTP_200_OK
@@ -90,7 +90,7 @@ class TestInvokeModelStatusUpdateEndpoint:
         mock_update_model.side_effect = HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_detail)
 
         # Act
-        response = client.put(f"/model/{model_id}/status/{model_status}")
+        response = client.put(f"/api/model/{model_id}/status/{model_status}")
 
         # Assert
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -112,7 +112,7 @@ class TestInvokeModelStatusUpdateEndpoint:
         mock_update_model.side_effect = general_error
 
         # Act
-        response = client.put(f"/model/{model_id}/status/{model_status}")
+        response = client.put(f"/api/model/{model_id}/status/{model_status}")
 
         # Assert
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -133,7 +133,7 @@ class TestInvokeModelStatusUpdateEndpoint:
         model_status = ModelStatus.INITIATED.value
 
         # Act
-        response = unauth_client.put(f"/model/{model_id}/status/{model_status}")
+        response = unauth_client.put(f"/api/model/{model_id}/status/{model_status}")
 
         # Assert
         assert response.status_code == status.HTTP_401_UNAUTHORIZED

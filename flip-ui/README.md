@@ -50,7 +50,7 @@ development or via the hosting environment in production:
 | --- | --- |
 | `VITE_AWS_USER_POOL_ID` | AWS Cognito User Pool ID for authentication |
 | `VITE_AWS_CLIENT_ID` | AWS Cognito App Client ID |
-| `VITE_AWS_BASE_URL` | Base URL of the flip-api backend |
+| `VITE_AWS_BASE_URL` | Full base URL of the flip-api backend, including `/api` |
 | `VITE_LOCAL` | Set to `true` for local mock mode (bypasses Cognito) |
 
 Authentication is handled through [AWS Cognito](https://docs.aws.amazon.com/cognito/). A valid Cognito User Pool and

@@ -201,9 +201,7 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
             });
 
             this.post(baseUrl + "/step/model/:id", () => {
-
                 return new Response(200, undefined, mockModelDashboard);
-
             });
 
             this.post(baseUrl + "/model/:id/initialise", () => {
@@ -237,7 +235,6 @@ export const makeServer = ({ environment = "development" } = {}): Server<AppRegi
             });
 
             this.get(`${baseUrl}/files/:id`, (_schema, request) => {
-
                 return new Response(200, undefined, [{
                     status: FileUploadStatus.COMPLETED,
                     id: request.params.id

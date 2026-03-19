@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from flip_api.cohort_services import (
@@ -104,12 +104,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     print("Shutting down the app...")
 
 
+API_PREFIX = "/api"
+
 # Initialize the FastAPI app
 app = FastAPI(
     title="FLIP CentralHub API",
     description="Main API for FLIP CentralHub, providing communication between the frontend and backend services.",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url=f"{API_PREFIX}/docs",
+    openapi_url=f"{API_PREFIX}/openapi.json",
+    redoc_url=f"{API_PREFIX}/redoc",
 )
 
 # CORS middleware
@@ -122,86 +127,96 @@ app.add_middleware(
 )
 
 
-# Include routers
-# Cohort services
-app.include_router(get_cohort_query_results.router)
-app.include_router(save_cohort_query.router)
-app.include_router(submit_cohort_query.router)
-# File services
-app.include_router(delete_file.router)
-app.include_router(download_file.router)
-app.include_router(get_model_files_list.router)
-app.include_router(presigned_url_for_upload.router)
-app.include_router(retrieve_federated_results.router)
-app.include_router(retrieve_model_files_list.router)
-app.include_router(retrieve_uploaded_file_info.router)
-app.include_router(uploaded_file.router)
-# FL services
-app.include_router(get_net_status.router)
-app.include_router(get_status.router)
-app.include_router(initiate_training.router)
-app.include_router(run_jobs.router)
-app.include_router(stop_training.router)
-# Model job types endpoint (moved from FL)
-app.include_router(get_job_types.router)
-# Model services
-app.include_router(delete_model.router)
-app.include_router(edit_model.router)
-app.include_router(get_metrics.router)
-app.include_router(retrieve_logs_for_model.router)
-app.include_router(retrieve_model_status_from_logs.router)
-app.include_router(retrieve_trusts_in_model.router)
-app.include_router(save_model.router)
-app.include_router(update_model_status.router)
-# Private services
-app.include_router(add_log.router)
-app.include_router(invoke_model_status_update.router)
-app.include_router(receive_cohort_results.router)
-app.include_router(save_training_metrics.router)
-# Project services
-app.include_router(approve_project.router)
-app.include_router(create_project.router)
-app.include_router(delete_project.router)
-app.include_router(edit_project.router)
-app.include_router(get_imaging_project_status.router)
-app.include_router(get_models.router)
-app.include_router(get_project_approved_trusts.router)
-app.include_router(get_project.router)
-app.include_router(get_projects.router)
-app.include_router(stage_project.router)
-app.include_router(unstage_project.router)
-# Roles services
-app.include_router(get_roles.router)
-# Site services
-app.include_router(details.router)
-# Step functions services
-app.include_router(approve_project_step_function.router)
-app.include_router(cohort_query_step_function.router)
-app.include_router(register_user_step_function.router)
-app.include_router(retrieve_model_step_function.router)
-# Trust services
-app.include_router(get_trusts.router)
-app.include_router(trusts_health_check.router)
-app.include_router(update_trust_status.router)
-# User services
-app.include_router(access_request.router)
-app.include_router(delete_user.router)
-app.include_router(get_user.router)
-app.include_router(get_users.router)
-app.include_router(register_user.router)
-app.include_router(retrieve_user_permissions.router)
-app.include_router(set_user_roles.router)
-app.include_router(update_user.router)
+ROUTERS: tuple[APIRouter, ...] = (
+    # Cohort services
+    get_cohort_query_results.router,
+    save_cohort_query.router,
+    submit_cohort_query.router,
+    # File services
+    delete_file.router,
+    download_file.router,
+    get_model_files_list.router,
+    presigned_url_for_upload.router,
+    retrieve_federated_results.router,
+    retrieve_model_files_list.router,
+    retrieve_uploaded_file_info.router,
+    uploaded_file.router,
+    # FL services
+    get_net_status.router,
+    get_status.router,
+    initiate_training.router,
+    run_jobs.router,
+    stop_training.router,
+    # Model job types endpoint (moved from FL)
+    get_job_types.router,
+    # Model services
+    delete_model.router,
+    edit_model.router,
+    get_metrics.router,
+    retrieve_logs_for_model.router,
+    retrieve_model_status_from_logs.router,
+    retrieve_trusts_in_model.router,
+    save_model.router,
+    update_model_status.router,
+    # Private services
+    add_log.router,
+    invoke_model_status_update.router,
+    receive_cohort_results.router,
+    save_training_metrics.router,
+    # Project services
+    approve_project.router,
+    create_project.router,
+    delete_project.router,
+    edit_project.router,
+    get_imaging_project_status.router,
+    get_models.router,
+    get_project_approved_trusts.router,
+    get_project.router,
+    get_projects.router,
+    stage_project.router,
+    unstage_project.router,
+    # Roles services
+    get_roles.router,
+    # Site services
+    details.router,
+    # Step functions services
+    approve_project_step_function.router,
+    cohort_query_step_function.router,
+    register_user_step_function.router,
+    retrieve_model_step_function.router,
+    # Trust services
+    get_trusts.router,
+    trusts_health_check.router,
+    update_trust_status.router,
+    # User services
+    access_request.router,
+    delete_user.router,
+    get_user.router,
+    get_users.router,
+    register_user.router,
+    retrieve_user_permissions.router,
+    set_user_roles.router,
+    update_user.router,
+)
+
+
+def include_api_routers(fastapi_app: FastAPI) -> None:
+    """Mount all API routes under the shared /api namespace."""
+    for router in ROUTERS:
+        fastapi_app.include_router(router, prefix=API_PREFIX)
+
+
+include_api_routers(app)
 
 
 # Root endpoint
-@app.get("/", response_model=dict[str, str])
+@app.get(API_PREFIX, response_model=dict[str, str])
 def root():
     """Root endpoint to verify the API is running."""
     return {"message": "Welcome to flip"}
 
 
-@app.get("/health", response_model=dict[str, str])
+@app.get(f"{API_PREFIX}/health", response_model=dict[str, str])
 def health_check():
     """Health check endpoint to verify the API is running"""
     return {"status": "ok", "message": "flip is running"}

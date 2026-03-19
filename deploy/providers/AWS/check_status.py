@@ -660,16 +660,16 @@ def main(
         check_http_endpoint(f"https://{alb_subdomain}", "FLIP UI", 200)
 
         # Check API health endpoint via ALB
-        check_http_endpoint(f"https://{alb_subdomain}/health", "FLIP API Health (ALB)", 200)
+        check_http_endpoint(f"https://{alb_subdomain}/api/health", "FLIP API Health (ALB)", 200)
 
         # Check API docs endpoint via ALB
-        check_http_endpoint(f"https://{alb_subdomain}/docs", "FLIP API Docs (ALB)", 200)
+        check_http_endpoint(f"https://{alb_subdomain}/api/docs", "FLIP API Docs (ALB)", 200)
 
         # Check API health endpoint via direct EC2 access (for debugging)
-        check_http_endpoint(f"http://{central_hub_ip}:{API_PORT}/health", "FLIP API Health (Direct)", 200)
+        check_http_endpoint(f"http://{central_hub_ip}:{API_PORT}/api/health", "FLIP API Health (Direct)", 200)
 
         # Check API docs endpoint via direct EC2 access (for debugging)
-        check_http_endpoint(f"http://{central_hub_ip}:{API_PORT}/docs", "FLIP API Docs (Direct)", 200)
+        check_http_endpoint(f"http://{central_hub_ip}:{API_PORT}/api/docs", "FLIP API Docs (Direct)", 200)
 
         # Check FL API health endpoint
         check_http_endpoint(f"http://{central_hub_ip}:{FL_API_PORT}/health", "FLIP FL API Health", 200)
@@ -678,14 +678,14 @@ def main(
         check_http_endpoint(f"http://{central_hub_ip}:{FL_API_PORT}/docs", "FLIP FL API Docs", 200)
 
         # Check Central Hub API is reachable inside Central Hub EC2 via SSH
-        check_endpoint_over_ssh("flip", f"http://localhost:{API_PORT}/health", 200)
+        check_endpoint_over_ssh("flip", f"http://localhost:{API_PORT}/api/health", 200)
 
-        # Check FL-api-net endpoints over ssh and inside flip running container.
+        # Check FL-api-net endpoints over ssh and inside the running flip-api container.
         for nets in configured_net_numbers:
             success, message = run_ssh_command(
                 ssh_key=ssh_key_path,
                 host=f"ubuntu@{central_hub_ip}",
-                command=f"docker exec flip httpx http://fl-api-net-{nets}:8000/check_client_status",
+                command=f"docker exec flip-api httpx http://fl-api-net-{nets}:8000/check_client_status",
             )
             # Extract JSON part from the message (list of client info)
             start = message.find("[")
@@ -695,15 +695,15 @@ def main(
             except json.JSONDecodeError:
                 print_status(
                     "FAIL",
-                    f"FL API Net {nets} clients returned invalid JSON from flip container:\n{message}",
+                    f"FL API Net {nets} clients returned invalid JSON from flip-api container:\n{message}",
                 )
                 continue
             if success and ("200" in message) and client_info != []:
-                print_status("PASS", f"FL API Net {nets} clients are reachable inside flip container")
+                print_status("PASS", f"FL API Net {nets} clients are reachable from flip-api container")
             else:
                 print_status(
                     "FAIL",
-                    f"FL API Net {nets} clients are not reachable from flip container:\n{message}",
+                    f"FL API Net {nets} clients are not reachable from flip-api container:\n{message}",
                 )
 
         # Trust EC2 endpoint checks

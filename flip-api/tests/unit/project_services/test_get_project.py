@@ -95,7 +95,7 @@ def test_get_project_details_no_access(client, mock_db):
     # Arrange
     with patch("flip_api.project_services.get_project.can_access_project", return_value=False):
         # Act
-        response = client.get(f"/projects/{TEST_PROJECT_ID}")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}")
 
         # Assert
         assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -110,7 +110,7 @@ def test_get_project_details_not_found(client, mock_db):
         patch("flip_api.project_services.get_project.get_project", return_value=None),
     ):
         # Act
-        response = client.get(f"/projects/{TEST_PROJECT_ID}")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}")
 
         # Assert
         assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -120,7 +120,7 @@ def test_get_project_details_not_found(client, mock_db):
 def test_get_project_details_invalid_id(client, mock_db):
     """Test invalid project ID"""
     # Act
-    response = client.get("/projects/not-a-uuid")
+    response = client.get("/api/projects/not-a-uuid")
 
     # Assert - FastAPI should return 422 for invalid UUID
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
