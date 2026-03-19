@@ -23,7 +23,7 @@ import VueTippy from "vue-tippy";
 import VueHighlightJS from "vue3-highlightjs";
 import SmartTable from "vuejs-smart-table";
 
-import { makeServer } from "../api/server";
+import { makeServer } from "../mocks/server";
 import App from "./App.vue";
 import router from "./router";
 import { authConfig } from "./utils/auth";

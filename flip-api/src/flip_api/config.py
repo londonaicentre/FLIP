@@ -76,7 +76,7 @@ class Settings(BaseSettings):
     FL_BACKEND: Literal["nvflare", "flower"] = "nvflare"
 
     # Variables only used in testing
-    FLIP_API_URL: str = "http://localhost:8080/"  # this is currently only used in tests (TODO review)
+    FLIP_API_URL: str = "http://localhost:8080/api"  # this is currently only used in tests (TODO review)
     ADMIN_USER_PASSWORD: SecretStr | None = None  # only used in integration tests to make actual logins
 
 

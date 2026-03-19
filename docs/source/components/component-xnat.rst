@@ -149,4 +149,3 @@ The following methods are available to be used in training, located in `flip.py`
     - a list of files corresponding to the names of the files that reside within the `uploads` directory that you wish to upload, e.g. [`scan-1.dcm`, `scan-2.dcm`, ...].
 
     The list of files could also point to locations in subfolders relative to the uploads directory, e.g. [`subfolder/scans/scan-1.dcm`, `scan-2.dcm`], where `scan-1` has the path `uploads/subfolder/scans/scan-1.dcm` and `scan-2` has the path `uploads/scan-2.dcm`.
-

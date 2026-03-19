@@ -58,7 +58,7 @@ def test_register_user_success(mock_register, mock_set_roles, user_payload, mock
     mock_register.return_value = mock_register_response
     mock_set_roles.return_value = user_payload["roles"]
 
-    response = client.post("/step/users", json=user_payload)
+    response = client.post("/api/step/users", json=user_payload)
 
     assert response.status_code == 201
     data = response.json()
@@ -81,7 +81,7 @@ def test_register_user_role_assignment_fails(
     # Simulate failure in setting roles
     mock_set_roles.side_effect = Exception("Role assignment error")
 
-    response = client.post("/step/users", json=user_payload)
+    response = client.post("/api/step/users", json=user_payload)
 
     assert response.status_code == 500
     assert (
@@ -98,7 +98,7 @@ def test_register_user_role_assignment_fails(
 def test_register_user_unexpected_exception(mock_register, user_payload):
     mock_register.side_effect = Exception("DB failure")
 
-    response = client.post("/step/users", json=user_payload)
+    response = client.post("/api/step/users", json=user_payload)
 
     assert response.status_code == 500
     assert "Failed to register user" in response.json()["detail"]

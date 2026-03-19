@@ -120,7 +120,7 @@ def get_projects_paginated_orm(
 
 # [#114] ✅
 @router.get(
-    "/",
+    "",
     summary="Get a paginated and filtered list of projects.",
     response_model=IPagedData[IProject],
     status_code=status.HTTP_200_OK,

@@ -66,7 +66,7 @@ up-xnat-1: create-network-trust-1
 	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -p ${project1} up -d --remove-orphans
 	$(MAKE) xnat-configure-trust-1
 
-up-xnat-1-stag: create-network-trust-1
+up-xnat-1-ec2: create-network-trust-1
 	cd xnat-docker-compose && \
 	$(TRUST_1_VARS) ${DOCKER_COMPOSE_PROD_CMD} -p ${project1} up -d --remove-orphans --pull always
 	$(MAKE) xnat-configure-trust-1

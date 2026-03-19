@@ -31,7 +31,7 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
 
 # [#114] ✅
 @router.post(
-    "/",
+    "",
     summary="Create a new project.",
     response_model=IId,
     status_code=status.HTTP_201_CREATED,

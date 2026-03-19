@@ -35,22 +35,17 @@ def seed_trusts(session: Session) -> list[dict[str, str]]:
         trust_endpoints = stt.TRUST_ENDPOINTS
 
     for trust_name, endpoint in trust_endpoints.items():
-        try:
-            # Check if trust exists
-            statement = select(Trust).where(col(Trust.name) == trust_name)
-            existing_trust = session.exec(statement).first()
+        # Check if trust exists
+        statement = select(Trust).where(col(Trust.name) == trust_name)
+        existing_trust = session.exec(statement).first()
 
-            if existing_trust:
-                # Update existing trust
-                existing_trust.endpoint = endpoint
-            else:
-                # Create new trust
-                new_trust = Trust(name=trust_name, endpoint=endpoint)
-                session.add(new_trust)
-        except Exception as e:
-            # If the endpoint is not found in secrets, skip this trust
-            logger.info(f"Endpoint for {trust_name} not found in secrets. Skipping. Error: {e}")
-            continue
+        if existing_trust:
+            # Update existing trust
+            existing_trust.endpoint = endpoint
+        else:
+            # Create new trust
+            new_trust = Trust(name=trust_name, endpoint=endpoint)
+            session.add(new_trust)
     session.commit()
 
     # Return trusts

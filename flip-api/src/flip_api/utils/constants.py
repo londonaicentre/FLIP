@@ -20,6 +20,6 @@ IMAGING_CREDENTIALS_TEMPLATE_NAME = "flip-xnat-credentials"
 JOB_TYPES_REQUIRED_FILES_FILE = "job_types_and_required_files.json"
 
 # Testing constants
-BASE_URL = "http://localhost:8080/"
+BASE_URL = "http://localhost:8080/api"
 ADMIN_EMAIL = "aicentreflip@gmail.com"
 RESEARCHER_EMAIL = "rafaelagd@gmail.com"

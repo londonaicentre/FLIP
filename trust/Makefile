@@ -112,8 +112,8 @@ down-trust-1:
 
 restart-trust-1: down-trust-1 up-trust-1
 
-# Uses --pull always to ensure the latest FL images, 'stag' version, and omop-db images are used
-up-trust-1-stag:
+# Uses --pull always to ensure the latest FL images, 'stag' or 'prod' version, and omop-db images are used
+up-trust-1-ec2:
 # omop data will be downloaded onto the ec2 instance as part of deploy/providers/AWS/site.yml, so no need to do it here
 # NOTE eventually if we get AWSCLI on the ec2 instance by default then we could run update-omop-data here too.
 	@echo "🚢 Starting Trust 1 services..."
@@ -121,7 +121,7 @@ up-trust-1-stag:
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p ${trust1} up -d --pull always
 
-down-trust-1-stag:
+down-trust-1-ec2:
 	@echo "🛑 Stopping Trust 1 services..."
 	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust1} down --remove-orphans
 

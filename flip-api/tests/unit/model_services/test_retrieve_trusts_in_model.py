@@ -105,7 +105,7 @@ def test_get_trusts_success(
 
     override_dependencies.exec.return_value = mock_result
 
-    response = client.get(f"/model/{test_model_id}/trusts")
+    response = client.get(f"/api/model/{test_model_id}/trusts")
     assert response.status_code == status.HTTP_200_OK
 
 
@@ -114,7 +114,7 @@ def test_get_trusts_forbidden(
     mock_model_status_exists,
     mock_deployment_mode_disabled,
 ):
-    response = client.get(f"/model/{test_model_id}/trusts")
+    response = client.get(f"/api/model/{test_model_id}/trusts")
     print(response.json())
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert "denied access" in response.json()["detail"]
@@ -125,14 +125,14 @@ def test_get_trusts_deployment_mode_enabled(
     mock_model_status_exists,
     mock_deployment_mode_enabled,
 ):
-    response = client.get(f"/model/{test_model_id}/trusts")
+    response = client.get(f"/api/model/{test_model_id}/trusts")
     assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
     assert SERVICE_UNAVAILABLE_MESSAGE in response.json()["detail"]
 
 
 def test_get_trusts_no_user_id():
     app.dependency_overrides[verify_token] = lambda: None
-    response = client.get(f"/model/{test_model_id}/trusts")
+    response = client.get(f"/api/model/{test_model_id}/trusts")
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert "Authorization token is invalid" in response.json()["detail"]
 
@@ -142,7 +142,7 @@ def test_get_trusts_model_not_found(
     mock_model_status_none,
     mock_deployment_mode_disabled,
 ):
-    response = client.get(f"/model/{test_model_id}/trusts")
+    response = client.get(f"/api/model/{test_model_id}/trusts")
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert "does not exist" in response.json()["detail"]
 
@@ -152,7 +152,7 @@ def test_get_trusts_model_deleted(
     mock_model_status_deleted,
     mock_deployment_mode_disabled,
 ):
-    response = client.get(f"/model/{test_model_id}/trusts")
+    response = client.get(f"/api/model/{test_model_id}/trusts")
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert "does not exist" in response.json()["detail"]
 
@@ -165,7 +165,7 @@ def test_get_trusts_database_error(
 ):
     override_dependencies.exec.side_effect = SQLAlchemyError
 
-    response = client.get(f"/model/{test_model_id}/trusts")
+    response = client.get(f"/api/model/{test_model_id}/trusts")
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Database error" in response.json()["detail"]
 
@@ -178,6 +178,6 @@ def test_get_trusts_unexpected_error(
 ):
     override_dependencies.exec.side_effect = Exception("Something went wrong")
 
-    response = client.get(f"/model/{test_model_id}/trusts")
+    response = client.get(f"/api/model/{test_model_id}/trusts")
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Something went wrong" in response.json()["detail"]

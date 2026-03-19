@@ -104,33 +104,33 @@ def test_save_model_success(
     override_dependencies.flush.side_effect = lambda: None
     override_dependencies.begin.return_value.__enter__.return_value = None
 
-    response = client.post("/model", json=test_payload)
+    response = client.post("/api/model", json=test_payload)
     print(response.json())
     assert response.status_code == status.HTTP_200_OK
     assert response.json() == {"id": str(test_model_id)}
 
 
 def test_save_model_forbidden(mock_can_access_project_false):
-    response = client.post("/model", json=test_payload)
+    response = client.post("/api/model", json=test_payload)
     assert response.status_code == status.HTTP_403_FORBIDDEN
     assert "denied access" in response.json()["detail"]
 
 
 def test_save_model_project_not_found(mock_can_access_project_true, mock_get_project_not_found):
-    response = client.post("/model", json=test_payload)
+    response = client.post("/api/model", json=test_payload)
     assert response.status_code == status.HTTP_404_NOT_FOUND
     assert "No project found" in response.json()["detail"]
 
 
 def test_save_model_project_not_approved(mock_can_access_project_true, mock_get_project_not_approved):
-    response = client.post("/model", json=test_payload)
+    response = client.post("/api/model", json=test_payload)
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert "is not approved" in response.json()["detail"]
 
 
 def test_save_model_no_approved_trusts(mock_can_access_project_true, mock_get_project_approved, override_dependencies):
     override_dependencies.exec.return_value.all.return_value = []
-    response = client.post("/model", json=test_payload)
+    response = client.post("/api/model", json=test_payload)
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert "No approved trusts found" in response.json()["detail"]
 
@@ -139,7 +139,7 @@ def test_save_model_database_error(mock_can_access_project_true, mock_get_projec
     override_dependencies.exec.return_value.all.return_value = [uuid4()]  # Approved trusts
     override_dependencies.add.side_effect = SQLAlchemyError
 
-    response = client.post("/model", json=test_payload)
+    response = client.post("/api/model", json=test_payload)
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Database error" in response.json()["detail"]
 
@@ -148,6 +148,6 @@ def test_save_model_unexpected_error(mock_can_access_project_true, mock_get_proj
     override_dependencies.exec.return_value.all.return_value = [uuid4()]  # Approved trusts
     override_dependencies.add.side_effect = Exception("Unexpected error")
 
-    response = client.post("/model", json=test_payload)
+    response = client.post("/api/model", json=test_payload)
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Unexpected error" in response.json()["detail"]

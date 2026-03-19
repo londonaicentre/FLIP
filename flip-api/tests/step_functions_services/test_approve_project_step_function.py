@@ -81,7 +81,7 @@ def test_approve_project_success(
     mock_approve_project.return_value = mock_trusts
     mock_start_imaging.return_value = None  # since it's async, just return None
 
-    response = client.post(f"/step/project/{project_id}/approve", json=request_body)
+    response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
 
     assert response.status_code == 200
     data = response.json()
@@ -118,7 +118,7 @@ def test_approve_project_with_failure_in_trust(
     mock_approve_project.return_value = mock_trusts
     mock_start_imaging.side_effect = failing_start
 
-    response = client.post(f"/step/project/{project_id}/approve", json=request_body)
+    response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
 
     assert response.status_code == 200
     data = response.json()
@@ -138,7 +138,7 @@ def test_approve_project_with_empty_trusts(
 ):
     mock_approve_project.return_value = []
 
-    response = client.post(f"/step/project/{project_id}/approve", json=request_body)
+    response = client.post(f"/api/step/project/{project_id}/approve", json=request_body)
 
     assert response.status_code == 200
     data = response.json()

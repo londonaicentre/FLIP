@@ -130,7 +130,7 @@ def test_api_endpoint(test_client):
         }
 
         # Call the endpoint
-        response = test_client.post("/users/access", json=request_data)
+        response = test_client.post("/api/users/access", json=request_data)
 
         # Assertions
         assert response.status_code == status.HTTP_204_NO_CONTENT
