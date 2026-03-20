@@ -336,9 +336,10 @@ deploy-trust: update-env ## Deploy trust relationships after central hub is depl
 	@echo "✅ Trust deployment complete!"
 
 .PHONY: add-local-trust
-add-local-trust: ## Provision an on-prem Trust host via Ansible and register it with the Central Hub
-	## LOCAL_TRUST_SSH_KEY is optional. When omitted, Ansible runs locally (no SSH) — use this
+add-local-trust: ## Provision an on-prem Trust host and register it with the Central Hub
+	## LOCAL_TRUST_SSH_KEY is optional. When omitted, runs locally (no SSH) — use this
 	## when the trust host IS the operator workstation or is not reachable via its public IP.
+	## Local mode generates TLS certs and prints the sudo commands to run (UFW, cert install, kit deploy).
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make add-local-trust LOCAL_TRUST_IP=<public-ip> [LOCAL_TRUST_SSH_KEY=<path>]"; echo "   Omit LOCAL_TRUST_SSH_KEY to provision the local machine (no SSH)."; echo ""; exit 1)
 	@echo "🔧 Provisioning on-premises Trust host at $(LOCAL_TRUST_IP)..."
 	@uv sync
@@ -356,33 +357,30 @@ add-local-trust: ## Provision an on-prem Trust host via Ansible and register it 
 			-e trust_api_port=$(TRUST_API_PORT); \
 	else \
 		echo "💻 Running locally (no SSH — operator machine is the trust host)..."; \
-		if [ -z "$$ANSIBLE_BECOME_PASS" ]; then \
-			echo ""; \
-			echo "❌  ANSIBLE_BECOME_PASS is not set. Run this in your fish terminal first:"; \
-			echo ""; \
-			echo "     set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')"; \
-			echo ""; \
-			echo "   Then re-run this make target."; \
-			echo ""; \
-			exit 1; \
-		fi; \
-		echo "🔐 Authenticating sudo and creating temporary NOPASSWD entry..."; \
-		CURR_USER=$$(id -un); \
-		echo "$$ANSIBLE_BECOME_PASS" | sudo -S sh -c \
-			"echo '$$CURR_USER ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/flip-ansible-local && chmod 440 /etc/sudoers.d/flip-ansible-local" \
-			2>/dev/null || { echo "❌  sudo authentication failed — check your password."; exit 1; }; \
-		echo "✅ Authenticated. Running Ansible playbook..."; \
-		trap 'sudo -n rm -f /etc/sudoers.d/flip-ansible-local' EXIT INT TERM; \
-		ANSIBLE_BECOME_PASS= uv run ansible-playbook \
-			-i "localhost," \
-			-e ansible_connection=local \
-			-e ansible_python_interpreter=/usr/bin/python3 \
-			../../../deploy/providers/local/site_local_trust.yml \
-			-e trust_public_ip=$(LOCAL_TRUST_IP) \
-			-e ch_public_ip="$$CH_IP" \
-			-e trust_api_port=$(TRUST_API_PORT); \
-		PLAY_RC=$$?; \
-		exit $$PLAY_RC; \
+		echo ""; \
+		echo "🔑 Generating local trust TLS certificates..."; \
+		LOCAL_CERT_DIR=/tmp/flip-local-trust-certs; \
+		mkdir -p $$LOCAL_CERT_DIR; \
+		TRUST_HOST=$(LOCAL_TRUST_IP) OUT_DIR=$$LOCAL_CERT_DIR bash ../../../trust/certs/generate-trust-certs.sh || exit 1; \
+		cp $$LOCAL_CERT_DIR/trust-ca.crt ../../../trust/certs/local-trust-ca.crt; \
+		echo ""; \
+		echo "✅ Local trust CA saved to trust/certs/local-trust-ca.crt"; \
+		echo ""; \
+		echo "⚠️  Run the following commands on this machine to complete Trust host setup:"; \
+		echo ""; \
+		echo "  # 1. Install TLS certificates (required by the Trust nginx-tls container):"; \
+		echo "  sudo mkdir -p /opt/flip/certs"; \
+		echo "  sudo cp $$LOCAL_CERT_DIR/trust-ca.crt /opt/flip/certs/trust-ca.crt"; \
+		echo "  sudo cp $$LOCAL_CERT_DIR/trust-server.crt /opt/flip/certs/trust-server.crt"; \
+		echo "  sudo cp $$LOCAL_CERT_DIR/trust-server.key /opt/flip/certs/trust-server.key"; \
+		echo ""; \
+		echo "  # 2. Configure firewall — allow Central Hub ($$CH_IP) access to Trust ports:"; \
+		echo "  sudo ufw allow from $$CH_IP to any port $(TRUST_API_PORT) proto tcp comment 'FLIP Trust-API HTTPS from AWS CH'"; \
+		echo "  sudo ufw allow from $$CH_IP to any port 8002 proto tcp comment 'FL Server port from AWS CH'"; \
+		echo "  sudo ufw allow from $$CH_IP to any port 8003 proto tcp comment 'FL Admin port from AWS CH'"; \
+		echo "  sudo ufw default deny incoming"; \
+		echo "  sudo ufw default allow outgoing"; \
+		echo "  sudo ufw enable"; \
 	fi
 	@echo "📦 Downloading Trust_$(LOCAL_TRUST_NUMBER) FL participant kit from S3..."
 	@LOCAL_TRUST_KIT_DIR=/tmp/Trust_$(LOCAL_TRUST_NUMBER)_kit && \
@@ -398,15 +396,16 @@ add-local-trust: ## Provision an on-prem Trust host via Ansible and register it 
 	    rsync -av --delete -e "ssh -i $(LOCAL_TRUST_SSH_KEY)" \
 	      $$LOCAL_TRUST_KIT_DIR/local/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local/; \
 	  else \
-	    sudo mkdir -p /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/startup /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/transfer && \
-	    sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/startup/ /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/startup/ && \
-	    sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/local/ /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local/; \
+	    echo ""; \
+	    echo "  # 3. Deploy the Trust_$(LOCAL_TRUST_NUMBER) FL participant kit (kit staged at $$LOCAL_TRUST_KIT_DIR):"; \
+	    echo "  sudo mkdir -p /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/startup /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/transfer"; \
+	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/startup/ /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/startup/"; \
+	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/local/ /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local/"; \
 	  fi && \
-	  rm -rf $$LOCAL_TRUST_KIT_DIR && \
-	  echo "✅ Trust_$(LOCAL_TRUST_NUMBER) FL kit deployed"
+	  echo "✅ Trust_$(LOCAL_TRUST_NUMBER) FL kit staged at $$LOCAL_TRUST_KIT_DIR"
 	@echo "📋 Building CA bundle (EC2 trust CA + local trust CA) for Secrets Manager..."
 	@# trust-ca.crt is the cloud Trust EC2 CA (written by gen-trust-ec2-certs).
-	@# local-trust-ca.crt is the on-prem trust CA (just fetched by Ansible above).
+	@# local-trust-ca.crt is the on-prem trust CA (generated by generate-trust-certs.sh above).
 	@# Bundle them so flip-api can verify HTTPS connections to both trusts.
 	@if [ -f ./trust-ca.crt ]; then \
 		cat ./trust-ca.crt ../../../trust/certs/local-trust-ca.crt > /tmp/trust-ca-bundle.crt && \
