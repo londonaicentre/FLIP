@@ -558,12 +558,19 @@ full-deploy-stag: github-login aws-login init import-persistent plan apply updat
 full-deploy-stag-hybrid: ## Full staging hybrid deployment including endpoint update and CH redeploy
 	## This wraps full-deploy-stag, then updates Trust_1-endpoint and redeploys Central Hub.
 	## You still need to start the local trust stack on the trust host.
-	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-stag-hybrid LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
-	@$(MAKE) full-deploy-stag LOCAL_TRUST_IP=$(LOCAL_TRUST_IP) LOCAL_TRUST_SSH_KEY="$(LOCAL_TRUST_SSH_KEY)" LOCAL_TRUST_SSH_USER="$(LOCAL_TRUST_SSH_USER)" LOCAL_TRUST_NUMBER="$(LOCAL_TRUST_NUMBER)"
-	@$(MAKE) set-local-trust-endpoint LOCAL_TRUST_IP=$(LOCAL_TRUST_IP)
-	@$(MAKE) deploy-centralhub PROD=stag
-	@echo ""
-	@echo "✅ Hybrid staging deployment complete."
-	@echo "➡️  Final manual step: start the local trust stack on the trust host:"
-	@echo "   cd ../../../trust && env PROD=stag make up-local-trust-stag"
-	@echo "➡️  Then verify: make test-local-trust LOCAL_TRUST_IP=$(LOCAL_TRUST_IP)"
+	## If LOCAL_TRUST_IP is not provided, it will be auto-detected using curl.
+	@if [ -z "$(LOCAL_TRUST_IP)" ]; then \
+		echo "🔍 Detecting public IP for LOCAL_TRUST_IP..."; \
+		LOCAL_TRUST_IP=$$(curl -s https://api.ipify.org) && \
+		echo "✅ Detected LOCAL_TRUST_IP: $$LOCAL_TRUST_IP" || (echo "❌  Failed to detect IP. Provide LOCAL_TRUST_IP manually."; echo "   Usage: make full-deploy-stag-hybrid LOCAL_TRUST_IP=<public-ip>"; exit 1); \
+	else \
+		LOCAL_TRUST_IP="$(LOCAL_TRUST_IP)"; \
+	fi && \
+	$(MAKE) full-deploy-stag LOCAL_TRUST_IP=$$LOCAL_TRUST_IP LOCAL_TRUST_SSH_KEY="$(LOCAL_TRUST_SSH_KEY)" LOCAL_TRUST_SSH_USER="$(LOCAL_TRUST_SSH_USER)" LOCAL_TRUST_NUMBER="$(LOCAL_TRUST_NUMBER)" && \
+	$(MAKE) set-local-trust-endpoint LOCAL_TRUST_IP=$$LOCAL_TRUST_IP && \
+	$(MAKE) deploy-centralhub PROD=stag && \
+	echo "" && \
+	echo "✅ Hybrid staging deployment complete." && \
+	echo "➡️  Final manual step: start the local trust stack on the trust host:" && \
+	echo "   cd ../../../trust && env PROD=stag make up-local-trust-stag" && \
+	echo "➡️  Then verify: make test-local-trust LOCAL_TRUST_IP=$$LOCAL_TRUST_IP"
