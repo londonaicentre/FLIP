@@ -6,7 +6,11 @@ source "$(dirname "$0")/utils.sh"
 
 check_aws_profile
 
-BACKUP_FILE="eips-backup-$(date +%s).json"
+# Create backups directory if it doesn't exist
+BACKUPS_DIR="$(dirname "$0")/../.backups"
+mkdir -p "$BACKUPS_DIR"
+
+BACKUP_FILE="$BACKUPS_DIR/eips-backup-$(date +%s).json"
 
 log_info "📦 Backing up Elastic IP allocation IDs..."
 
