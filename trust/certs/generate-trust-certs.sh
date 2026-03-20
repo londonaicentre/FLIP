@@ -30,7 +30,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUT_DIR="${SCRIPT_DIR}"
+OUT_DIR="${OUT_DIR:-${SCRIPT_DIR}}"
 
 # ---------------------------------------------------------------------------
 # Determine TRUST_HOST: use provided env or try to auto-detect public IP
