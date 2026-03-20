@@ -125,6 +125,28 @@ if [ -n "$CERT_ARN" ]; then
     fi
 fi
 
+# 8. Route53 NLB Record
+echo ""
+log_info "8️⃣  Route53 NLB Record..."
+if [ -n "$NLB_SUBDOMAIN" ]; then
+    HOSTED_ZONE_ID=$(aws_cmd route53 list-hosted-zones --query "HostedZones[?Name=='${ALB_SUBDOMAIN}.'].Id" --output text 2>/dev/null | cut -d'/' -f3 || echo "")
+    if [ -n "$HOSTED_ZONE_ID" ]; then
+        NLB_RECORD=$(aws_cmd route53 list-resource-record-sets \
+            --hosted-zone-id "$HOSTED_ZONE_ID" \
+            --query "ResourceRecordSets[?Name=='${NLB_SUBDOMAIN}.'][0].Name" \
+            --output text 2>/dev/null || echo "")
+        if [ -n "$NLB_RECORD" ] && [ "$NLB_RECORD" != "None" ]; then
+            terraform import aws_route53_record.fl_server_nlb "${HOSTED_ZONE_ID}_${NLB_SUBDOMAIN}_A" 2>/dev/null || log_success "Route53 NLB record (already imported)"
+        else
+            log_info "No existing Route53 NLB record found for ${NLB_SUBDOMAIN} - will be created"
+        fi
+    else
+        log_warn "Could not find hosted zone for ${ALB_SUBDOMAIN}"
+    fi
+else
+    log_warn "NLB_SUBDOMAIN not set in environment"
+fi
+
 echo ""
 log_info "Note: Terraform state bucket (${FLIP_TFSTATE_BUCKET_NAME}) is managed externally via create_backend.sh"
 log_success "Persistent resources imported!"
