@@ -71,6 +71,26 @@ export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_create_central_hub_elastic_ip=${CREATE_CENTRAL_HUB_ELASTIC_IP}
 
+CENTRALHUB_IMAGES = \
+	$(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG) \
+	$(DOCKER_REGISTRY)flip-api:$(DOCKER_TAG)
+
+TRUST_IMAGES = \
+	$(DOCKER_REGISTRY)trust-api:$(DOCKER_TAG) \
+	$(DOCKER_REGISTRY)imaging-api:$(DOCKER_TAG) \
+	$(DOCKER_REGISTRY)data-access-api:$(DOCKER_TAG)
+
+.PHONY: trigger-builds
+trigger-builds: ## Trigger all GitHub Actions "Build and Push" workflows for the current branch
+	@echo "🔨 Triggering GitHub Actions build workflows..."
+	@branch=$$(git rev-parse --abbrev-ref HEAD) && \
+	gh workflow list --json name,id \
+	  --jq '.[] | select(.name | startswith("Build and Push")) | .id' | \
+	while read -r id; do \
+	  gh workflow run "$$id" --ref "$$branch"; \
+	done
+	@echo "✅ Build workflows triggered!"
+
 prettier:
 	terraform fmt -recursive
 	npx prettier --write "**/*.{yml,yaml}"
@@ -244,6 +264,21 @@ write-trust-ca: ## Fetch trust_ca_cert from Secrets Manager and write to CH EC2 
 
 .PHONY: deploy-centralhub
 deploy-centralhub: write-trust-ca ## Deploy FLIP containers to flip context with environment from Terraform
+	@echo "🔍 Checking central hub images (tag: $(DOCKER_TAG))..."
+	@missing=false; \
+	for image in $(CENTRALHUB_IMAGES); do \
+	  if ! docker manifest inspect "$$image" >/dev/null 2>&1; then \
+	    echo "   ⚠️  Missing: $$image"; \
+	    missing=true; \
+	  fi; \
+	done; \
+	if [ "$$missing" = "true" ]; then \
+	  echo "🔨 Images missing — triggering builds and waiting 2 minutes..."; \
+	  $(MAKE) trigger-builds; \
+	  sleep 120; \
+	else \
+	  echo "   ✅ All central hub images found."; \
+	fi
 	@echo "📋 Loading environment variables from Terraform outputs..."
 	@echo "👷 Create docker context if not exists, pointing to flip to ssh://flip"
 	@docker context create flip --docker "host=ssh://flip" || echo "   Context 'flip' already exists"
@@ -262,6 +297,21 @@ LOCAL_TRUST_NUMBER ?= 2
 
 .PHONY: deploy-trust
 deploy-trust: update-env ## Deploy trust relationships after central hub is deployed
+	@echo "🔍 Checking trust images (tag: $(DOCKER_TAG))..."
+	@missing=false; \
+	for image in $(TRUST_IMAGES); do \
+	  if ! docker manifest inspect "$$image" >/dev/null 2>&1; then \
+	    echo "   ⚠️  Missing: $$image"; \
+	    missing=true; \
+	  fi; \
+	done; \
+	if [ "$$missing" = "true" ]; then \
+	  echo "🔨 Images missing — triggering builds and waiting 2 minutes..."; \
+	  $(MAKE) trigger-builds; \
+	  sleep 120; \
+	else \
+	  echo "   ✅ All trust images found."; \
+	fi
 	@echo "⚙️  Configure .ssh/config for flip context..."
 	@set -x AWS_PROFILE ${AWS_PROFILE}
 	@terraform output

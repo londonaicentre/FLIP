@@ -49,6 +49,9 @@ override.tf.json
 .terraformrc
 terraform.rc
 
+# Ignore EIP backup files (temporary files created during destroy operations)
+eips-backup-*.json
+
 # End of https://www.toptal.com/developers/gitignore/api/terraform
 
 .env
