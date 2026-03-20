@@ -167,13 +167,6 @@
     # Add all allow rules BEFORE enabling UFW with default-deny to avoid
     # locking out the operator on a remote host mid-playbook.
 
-    - name: Allow SSH (prevent operator lockout)
-      community.general.ufw:
-        rule: allow
-        port: "22"
-        proto: tcp
-        comment: SSH access
-
     - name: Allow Trust API HTTPS from Central Hub IP only
       community.general.ufw:
         rule: allow
