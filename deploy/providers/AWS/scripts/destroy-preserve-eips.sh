@@ -24,12 +24,49 @@ log_info "🗑️  Disabling prevent_destroy in EIP resources temporarily..."
 sed -i 's/prevent_destroy = true/prevent_destroy = false/g' main.tf modules/trust_ec2/main.tf
 
 log_info "💥 Proceeding with infrastructure destruction..."
+
+# Step 1: Delete RDS database instance directly using AWS CLI
+log_info "Step 1: Deleting RDS database instance via AWS CLI..."
+DB_INSTANCE_ID=$(aws rds describe-db-instances \
+  --region eu-west-2 \
+  --profile FlipDeveloperAccess-080369786334 \
+  --query 'DBInstances[?DBInstanceIdentifier==`flip-database`].[DBInstanceIdentifier]' \
+  --output text 2>/dev/null || echo "")
+
+if [ -n "$DB_INSTANCE_ID" ]; then
+  log_info "  Found database instance: $DB_INSTANCE_ID - Deleting..."
+  aws rds delete-db-instance \
+    --db-instance-identifier "$DB_INSTANCE_ID" \
+    --skip-final-snapshot \
+    --region eu-west-2 \
+    --profile FlipDeveloperAccess-080369786334 \
+    2>&1 | grep -E "DBInstance|Status|Error" || true
+  
+  log_info "  Waiting for database deletion (this may take a few minutes)..."
+  aws rds wait db-instance-deleted \
+    --db-instance-identifier "$DB_INSTANCE_ID" \
+    --region eu-west-2 \
+    --profile FlipDeveloperAccess-080369786334 \
+    2>&1 || log_warn "  Timeout waiting for DB deletion - proceeding anyway"
+  
+  sleep 5  # Give AWS a moment to fully cleanup
+else
+  log_info "  No RDS database instance found"
+fi
+
+# Step 2: Now terraform can successfully destroy parameter group and subnet group
+log_info "Step 2: Destroying Terraform-managed RDS resources..."
+terraform destroy -auto-approve \
+  -target='module.flip_db.module.db_parameter_group.aws_db_parameter_group.this[0]' \
+  -target=aws_db_subnet_group.flip_db_subnet_group \
+  2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
+
+# Step 3: Destroy remaining infrastructure (VPC, security groups, etc.)
+log_info "Step 3: Destroying remaining infrastructure..."
 terraform destroy -auto-approve \
   -target=module.flip_vpc \
   -target=module.ec2_security_group \
   -target=module.rds_security_group \
-  -target=aws_db_subnet_group.flip_db_subnet_group \
-  -target=module.flip_db \
   -target=module.alb \
   -target=module.alb_security_group \
   -target=module.ec2_role \
