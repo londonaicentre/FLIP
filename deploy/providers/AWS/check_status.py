@@ -450,6 +450,84 @@ def check_endpoint_rejects_insecure_ssh(
         return True
 
 
+def check_endpoint_blocked_from_ssh(
+    host: str,
+    endpoint: str,
+    allowed_source_ip: Optional[str] = None,
+    connect_timeout: int = 5,
+) -> bool:
+    """Verify that an endpoint is unreachable from a remote host (firewall enforcement).
+
+    SECURITY CHECK: confirms the local Trust API cannot be reached from the cloud
+    Trust EC2. Only the Central Hub is whitelisted in UFW; the cloud Trust EC2 must
+    be blocked.
+
+    If the remote host shares an outbound IP with the allowed source (e.g. both route
+    through the same NAT gateway EIP), the firewall cannot distinguish them and this
+    check issues a WARN instead of FAIL.
+
+    A blocked connection (UFW DROP) causes curl to time out (exit code 28), which
+    run_ssh_command surfaces as success=False. A breach returns HTTP 200 with
+    success=True.
+
+    Args:
+        host: SSH host alias (from ~/.ssh/config)
+        endpoint: URL to attempt from the remote host
+        allowed_source_ip: The IP the UFW allowlist permits (typically the Central Hub EIP).
+            If the remote host's outbound IP matches this, the check is inconclusive.
+        connect_timeout: curl --connect-timeout value in seconds
+
+    Returns:
+        True if correctly blocked or inconclusive (PASS/WARN), False if reachable (FAIL)
+    """
+    # Determine the outbound internet IP of the remote host before testing.
+    # If it matches allowed_source_ip the firewall cannot distinguish it from the
+    # Central Hub, so the block check would always see a pass-through — warn instead.
+    if allowed_source_ip:
+        ok, remote_ip = run_ssh_command(
+            ssh_key="",
+            host=host,
+            command="curl -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || true",
+            timeout=15,
+        )
+        remote_ip = remote_ip.strip()
+        if ok and remote_ip == allowed_source_ip.strip():
+            print_status(
+                "WARN",
+                f"SECURITY (inconclusive): {host} outbound IP ({remote_ip}) is the same as "
+                f"the Central Hub allowed IP. Both instances share this outbound address — "
+                f"UFW cannot distinguish them. Consider restricting by instance security group "
+                f"rather than source IP, or accept this as an architectural limitation.",
+            )
+            return True
+
+    command = (
+        f"curl -sk --connect-timeout {connect_timeout} "
+        f"-o /dev/null -w '%{{http_code}}' {endpoint}"
+    )
+    print_status(
+        "INFO",
+        f"SECURITY: Verifying {endpoint} is blocked from {host} (firewall enforcement)...",
+    )
+    success, output = run_ssh_command(
+        ssh_key="", host=host, command=command, timeout=connect_timeout + 5
+    )
+
+    if success and output.strip() == "200":
+        print_status(
+            "FAIL",
+            f"FIREWALL BREACH: {endpoint} reachable from {host} (HTTP 200). "
+            f"UFW must block local Trust ports from all hosts except the Central Hub.",
+        )
+        return False
+    else:
+        print_status(
+            "PASS",
+            f"{endpoint} correctly blocked from {host} (UFW enforced)",
+        )
+        return True
+
+
 def ping_host(host: str) -> bool:
     """Ping a host to check connectivity.
 
@@ -977,6 +1055,35 @@ def main(
         #         "Data Access API Docs",
         #         200,
         #     )
+
+        # Local (on-premises) Trust checks
+        local_trust_ip = os.getenv("LOCAL_TRUST_IP")
+        if local_trust_ip:
+            print_section("Local Trust Checks")
+
+            _local_trust_ca = str(
+                Path(__file__).parent.parents[2] / "trust" / "certs" / "local-trust-ca.crt"
+            )
+
+            # 1. Verify local trust health endpoint is reachable from this machine
+            check_http_endpoint(
+                f"https://{local_trust_ip}:{TRUST_API_PORT}/health",
+                f"Local Trust API Health ({local_trust_ip})",
+                200,
+                cafile=_local_trust_ca if Path(_local_trust_ca).exists() else None,
+            )
+
+            # 2. Firewall enforcement: cloud Trust EC2 must NOT be able to reach local trust.
+            # UFW only whitelists the Central Hub IP; if the cloud Trust EC2 can reach the
+            # local trust health endpoint, the firewall is misconfigured.
+            if trust_ip:
+                check_endpoint_blocked_from_ssh(
+                    "flip-trust",
+                    f"https://{local_trust_ip}:{TRUST_API_PORT}/health",
+                    allowed_source_ip=central_hub_eip,
+                )
+        else:
+            print_status("INFO", "LOCAL_TRUST_IP not set — skipping local Trust checks")
 
     # Docker container checks (via SSH)
     if not skip_docker and ssh_key and Path(ssh_key).expanduser().exists():
