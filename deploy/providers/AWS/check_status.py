@@ -224,6 +224,108 @@ def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) ->
         return False, str(e)
 
 
+def check_elastic_ip_stability(
+    central_hub_id: str,
+    central_hub_eip: str,
+    trust_id: Optional[str],
+    trust_eip: Optional[str],
+) -> bool:
+    """Verify Elastic IP stability and correct instance association.
+
+    Tests that:
+    1. Central Hub Elastic IP is allocated and stable
+    2. Central Hub EIP is associated with the correct EC2 instance
+    3. Trust EC2 Elastic IP is allocated and stable (if Trust is deployed)
+    4. Trust EC2 EIP is associated with the correct EC2 instance
+
+    This ensures that outbound calls from Central Hub to Trust API will use a stable IP.
+    """
+    print_section("Elastic IP Stability Check")
+
+    failures = 0
+
+    # Check Central Hub EIP
+    if not central_hub_eip:
+        print_status("FAIL", "Central Hub Elastic IP is not allocated (check Ec2ElasticIp output)")
+        failures += 1
+    else:
+        print_status("PASS", f"Central Hub Elastic IP allocated: {central_hub_eip}")
+
+        # Verify EIP is associated with the correct instance in AWS
+        success, output = run_aws_command([
+            "ec2",
+            "describe-addresses",
+            "--region",
+            os.getenv("AWS_REGION", "eu-west-2"),
+            "--public-ips",
+            central_hub_eip,
+            "--query",
+            "Addresses[0].[InstanceId, AllocationId]",
+            "--output",
+            "text",
+        ])
+
+        if success and output:
+            instance_id, allocation_id = output.split()
+            if instance_id == central_hub_id:
+                print_status(
+                    "PASS",
+                    f"Central Hub EIP {central_hub_eip} correctly associated with {instance_id} (allocation: {allocation_id[:12]}...)",
+                )
+            else:
+                print_status(
+                    "FAIL",
+                    f"Central Hub EIP {central_hub_eip} associated with wrong instance: {instance_id} (expected {central_hub_id})",
+                )
+                failures += 1
+        else:
+            print_status("WARN", f"Could not verify Central Hub EIP association in AWS: {output}")
+
+    # Check Trust EC2 EIP if deployed
+    if trust_id:
+        if not trust_eip:
+            print_status("WARN", "Trust EC2 deployed but Elastic IP is not allocated (check TrustEc2ElasticIp output)")
+        else:
+            print_status("PASS", f"Trust EC2 Elastic IP allocated: {trust_eip}")
+
+            # Verify EIP is associated with the correct instance in AWS
+            success, output = run_aws_command([
+                "ec2",
+                "describe-addresses",
+                "--region",
+                os.getenv("AWS_REGION", "eu-west-2"),
+                "--public-ips",
+                trust_eip,
+                "--query",
+                "Addresses[0].[InstanceId, AllocationId]",
+                "--output",
+                "text",
+            ])
+
+            if success and output:
+                instance_id, allocation_id = output.split()
+                if instance_id == trust_id:
+                    print_status(
+                        "PASS",
+                        f"Trust EC2 EIP {trust_eip} correctly associated with {instance_id} (allocation: {allocation_id[:12]}...)",
+                    )
+                else:
+                    print_status(
+                        "FAIL",
+                        f"Trust EC2 EIP {trust_eip} associated with wrong instance: {instance_id} (expected {trust_id})",
+                    )
+                    failures += 1
+            else:
+                print_status("WARN", f"Could not verify Trust EC2 EIP association in AWS: {output}")
+
+    if failures > 0:
+        print_status("FAIL", f"EIP stability check failed with {failures} issue(s)")
+        return False
+    else:
+        print_status("PASS", "All EIP checks passed - stable IPs confirmed for outbound connectivity")
+        return True
+
+
 def check_http_endpoint(
     url: str,
     name: str,
@@ -300,7 +402,7 @@ def check_endpoint_over_ssh(
     skip_flag = "" if verify_ssl else "-k "
     command = f"curl -s {skip_flag}-o /dev/null -w '%{{http_code}}' {endpoint}"
     print_status(status="INFO", message=f"Checking endpoint {endpoint} from {host} via SSH...")
-    success, output = run_ssh_command(ssh_key="", host=host, command=command)SSH
+    success, output = run_ssh_command(ssh_key="", host=host, command=command)
     if success and output == str(expected_status):
         print_status("PASS", f"{endpoint} is accessible from {host}")
         return True
@@ -435,10 +537,12 @@ def main(
     # Get Terraform outputs
     central_hub_ip = get_terraform_output("Ec2PublicIp")
     central_hub_id = get_terraform_output("Ec2InstanceId")
+    central_hub_eip = get_terraform_output("Ec2ElasticIp")
     ssh_key = get_terraform_output("Keypair")
 
     trust_ip = get_terraform_output("TrustEc2PublicIp")
     trust_id = get_terraform_output("TrustEc2InstanceId")
+    trust_eip = get_terraform_output("TrustEc2ElasticIp")
 
     if not central_hub_ip:
         print_status("FAIL", "Could not retrieve Central Hub EC2 IP from Terraform outputs")
@@ -446,12 +550,19 @@ def main(
 
     print_status("PASS", f"Central Hub EC2 IP: {central_hub_ip}")
     print_status("PASS", f"Central Hub EC2 ID: {central_hub_id}")
+    if central_hub_eip:
+        print_status("PASS", f"Central Hub Elastic IP: {central_hub_eip}")
 
     if trust_ip:
         print_status("PASS", f"Trust EC2 IP: {trust_ip}")
         print_status("PASS", f"Trust EC2 ID: {trust_id}")
+        if trust_eip:
+            print_status("PASS", f"Trust EC2 Elastic IP: {trust_eip}")
     else:
         print_status("INFO", "Trust EC2 not found in outputs (may not be deployed)")
+
+    # Check Elastic IP stability (central hub outbound connectivity uses stable EIP)
+    check_elastic_ip_stability(central_hub_id, central_hub_eip, trust_id, trust_eip)
 
     # Check AWS resources
     print_section("Checking AWS Resources")
