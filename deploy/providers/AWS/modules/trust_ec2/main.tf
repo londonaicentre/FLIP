@@ -98,14 +98,20 @@ resource "aws_instance" "trust_host" {
 }
 
 resource "aws_eip" "trust_eip" {
-  # Always create EIP (never destroy with count toggle)
-  # Instance association is conditional, but the allocation persists
-  instance = var.create_elastic_ip ? aws_instance.trust_host.id : null
+  # Always allocate EIP - never destroy it
+  domain = "vpc"
 
   # Prevent accidental destruction - preserve Trust EC2 EIP across redeployments
   lifecycle {
     prevent_destroy = true
   }
+}
+
+resource "aws_eip_association" "trust_eip_assoc" {
+  count         = var.create_elastic_ip ? 1 : 0
+  instance_id   = aws_instance.trust_host.id
+  allocation_id = aws_eip.trust_eip.id
+  depends_on    = [aws_instance.trust_host]
 }
 
 output "instance_id" {

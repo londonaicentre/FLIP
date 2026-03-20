@@ -266,22 +266,24 @@ resource "aws_instance" "ec2_instance" {
 # Elastic IP for Central Hub EC2 instance
 # Provides a static IP address that persists across instance restarts and redeployments
 resource "aws_eip" "central_hub_eip" {
-  # Always create EIP (never destroy with count toggle)
-  # Instance association is conditional, but the allocation persists
-  instance = var.create_central_hub_elastic_ip ? aws_instance.ec2_instance.id : null
-  domain   = "vpc"
+  # Always allocate EIP - never destroy it
+  domain = "vpc"
 
   tags = {
     Name = "central-hub-eip"
   }
 
-  # Ensure proper dependency order and allow time for instance to initialize
-  depends_on = [aws_instance.ec2_instance]
-
   # Prevent accidental destruction - this EIP is precious infrastructure
   lifecycle {
     prevent_destroy = true
   }
+}
+
+resource "aws_eip_association" "central_hub_eip_assoc" {
+  count            = var.create_central_hub_elastic_ip ? 1 : 0
+  instance_id      = aws_instance.ec2_instance.id
+  allocation_id    = aws_eip.central_hub_eip.id
+  depends_on       = [aws_instance.ec2_instance]
 }
 
 # Application Load Balancer
