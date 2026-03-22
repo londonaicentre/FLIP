@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import os
 import warnings
 from pathlib import Path
 from typing import List
@@ -27,6 +28,19 @@ from tests.integration.utils import admin_authentication
 @pytest.fixture(scope="session")
 def base_url() -> str:
     return BASE_URL
+
+
+# Port configuration - matches check_local_status.py and .env.development defaults
+@pytest.fixture(scope="session")
+def service_ports() -> dict:
+    """Port configuration for all platform services."""
+    return {
+        "api": os.environ.get("API_PORT", "8001"),
+        "trust_api": os.environ.get("TRUST_API_PORT", "8100"),
+        "imaging_api": os.environ.get("IMAGING_API_PORT", "8200"),
+        "data_access_api": os.environ.get("DATA_ACCESS_API_PORT", "8300"),
+        "xnat_trust_1": os.environ.get("XNAT_PORT_TRUST_1", "8104"),
+    }
 
 
 @pytest.fixture(scope="session")

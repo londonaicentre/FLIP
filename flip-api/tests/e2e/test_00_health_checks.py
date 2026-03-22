@@ -15,44 +15,35 @@ Health check tests to verify all platform services are running before other E2E 
 Must pass before any workflow tests can succeed.
 """
 
-import os
-
 import pytest
 
 from tests.e2e.helpers import wait_for_service
-
-# Port configuration - matches check_local_status.py and .env.development defaults
-API_PORT = os.environ.get("API_PORT", "8001")
-TRUST_API_PORT = os.environ.get("TRUST_API_PORT", "8100")
-IMAGING_API_PORT = os.environ.get("IMAGING_API_PORT", "8200")
-DATA_ACCESS_API_PORT = os.environ.get("DATA_ACCESS_API_PORT", "8300")
-XNAT_PORT_TRUST_1 = os.environ.get("XNAT_PORT_TRUST_1", "8104")
 
 
 @pytest.mark.e2e
 class TestServiceHealthChecks:
     """Verify all platform services are reachable and healthy."""
 
-    def test_central_hub_api_healthy(self):
+    def test_central_hub_api_healthy(self, service_ports):
         """Central Hub API should respond on /health."""
-        wait_for_service(f"http://localhost:{API_PORT}/health", timeout_s=60)
+        wait_for_service(f"http://localhost:{service_ports['api']}/health", timeout_s=60)
 
-    def test_trust_api_healthy(self):
+    def test_trust_api_healthy(self, service_ports):
         """Trust API should respond on /health."""
-        wait_for_service(f"https://localhost:{TRUST_API_PORT}/health", timeout_s=60)
+        wait_for_service(f"https://localhost:{service_ports['trust_api']}/health", timeout_s=60)
 
-    def test_data_access_api_healthy(self):
+    def test_data_access_api_healthy(self, service_ports):
         """Data Access API should respond on /health."""
-        wait_for_service(f"http://localhost:{DATA_ACCESS_API_PORT}/health", timeout_s=60)
+        wait_for_service(f"http://localhost:{service_ports['data_access_api']}/health", timeout_s=60)
 
-    def test_imaging_api_healthy(self):
+    def test_imaging_api_healthy(self, service_ports):
         """Imaging API should respond on /health."""
-        wait_for_service(f"http://localhost:{IMAGING_API_PORT}/health", timeout_s=60)
+        wait_for_service(f"http://localhost:{service_ports['imaging_api']}/health", timeout_s=60)
 
-    def test_xnat_healthy(self):
+    def test_xnat_healthy(self, service_ports):
         """XNAT should respond on its web interface."""
-        wait_for_service(f"http://localhost:{XNAT_PORT_TRUST_1}", timeout_s=120)
+        wait_for_service(f"http://localhost:{service_ports['xnat_trust_1']}", timeout_s=120)
 
-    def test_central_hub_api_docs_accessible(self):
+    def test_central_hub_api_docs_accessible(self, service_ports):
         """Central Hub API docs should be accessible."""
-        wait_for_service(f"http://localhost:{API_PORT}/docs", timeout_s=30)
+        wait_for_service(f"http://localhost:{service_ports['api']}/docs", timeout_s=30)

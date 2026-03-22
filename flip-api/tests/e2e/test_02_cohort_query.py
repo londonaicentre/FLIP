@@ -17,15 +17,8 @@ Tests the full chain: Central Hub -> Trust API -> Data Access API -> OMOP DB -> 
 
 import pytest
 
-from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.utils.constants import BASE_URL
-from tests.debug_prelaunch_task import (
-    add_project_query,
-    create_new_project,
-    submit_query_to_trusts,
-)
-from tests.e2e.helpers import poll_until
-from tests.integration.utils import admin_authentication
+from tests.e2e.helpers import create_and_submit_project, poll_until
 
 
 @pytest.mark.e2e
@@ -44,49 +37,17 @@ class TestCohortQueryRoundTrip:
         5. Results are posted back to Central Hub
         6. Central Hub stores and returns aggregated results
         """
-        # Create project
-        project_data = ProjectDetails(
-            name="E2E Test - Cohort Query Round-Trip",
-            description="Tests full cohort query execution across services",
-            users=[],
+        _, query_id = create_and_submit_project(
+            authed_client, cohort_query_sql, cleanup_projects,
+            project_name="E2E Test - Cohort Query Round-Trip",
         )
-        response = create_new_project(authed_client, project_data)
-        assert response is not None, "Failed to create project"
-        assert response.status_code < 300, f"Create project failed: {response.status_code}"
-        project_id = response.json()["id"]
-        cleanup_projects.append(project_id)
 
-        # Save cohort query
-        query_info = {
-            "query": cohort_query_sql,
-            "name": "E2E Cohort Round-Trip Query",
-            "project_id": str(project_id),
-        }
-        query_response = add_project_query(authed_client, query_info)
-        assert query_response is not None, "Failed to save cohort query"
-        assert query_response.status_code < 300, f"Save query failed: {query_response.status_code}"
-        query_id = query_response.json()["query_id"]
-
-        # Submit query to trusts
-        auth_token = admin_authentication()
-        submit_info = {
-            "authenticationToken": auth_token.get("authorization", ""),
-            "query": cohort_query_sql,
-            "name": "E2E Cohort Round-Trip Query",
-            "project_id": str(project_id),
-            "query_id": str(query_id),
-        }
-        submit_response = submit_query_to_trusts(authed_client, submit_info)
-        assert submit_response is not None, "Failed to submit query to trusts"
-
-        # Poll for results - trusts process asynchronously and post results back
         def check_results():
             resp = authed_client.get(f"{BASE_URL}/cohort/{query_id}", timeout=30)
             if resp.status_code == 404:
                 return None  # Results not yet available
             if resp.status_code < 300:
                 data = resp.json()
-                # Check that we got meaningful results back
                 if data and "data" in data and data["data"] is not None:
                     return data
             return None

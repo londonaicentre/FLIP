@@ -22,10 +22,8 @@ from flip_api.utils.constants import BASE_URL
 from tests.debug_prelaunch_task import (
     add_project_query,
     create_new_project,
-    submit_query_to_trusts,
 )
-from tests.e2e.helpers import create_and_approve_project
-from tests.integration.utils import admin_authentication
+from tests.e2e.helpers import create_and_approve_project, create_and_submit_project
 
 
 @pytest.mark.e2e
@@ -53,7 +51,6 @@ class TestProjectLifecycle:
 
     def test_create_project_with_cohort_query(self, authed_client, cohort_query_sql, cleanup_projects):
         """A cohort query can be saved and submitted for a project."""
-        # Create project
         project_data = ProjectDetails(
             name="E2E Test - Project with Query",
             description="Automated E2E test with cohort query",
@@ -65,7 +62,6 @@ class TestProjectLifecycle:
         project_id = response.json()["id"]
         cleanup_projects.append(project_id)
 
-        # Save cohort query
         query_info = {
             "query": cohort_query_sql,
             "name": "E2E Test Cohort Query",
@@ -78,40 +74,11 @@ class TestProjectLifecycle:
 
     def test_stage_project(self, authed_client, cohort_query_sql, trust_ids, cleanup_projects):
         """A project can be staged after adding a query."""
-        # Create project with query
-        project_data = ProjectDetails(
-            name="E2E Test - Stage Project",
-            description="Automated E2E test for staging",
-            users=[],
+        project_id, _ = create_and_submit_project(
+            authed_client, cohort_query_sql, cleanup_projects,
+            project_name="E2E Test - Stage Project",
         )
-        response = create_new_project(authed_client, project_data)
-        assert response is not None
-        assert response.status_code < 300
-        project_id = response.json()["id"]
-        cleanup_projects.append(project_id)
 
-        # Add and submit query
-        auth_token = admin_authentication()
-        query_info = {
-            "query": cohort_query_sql,
-            "name": "E2E Stage Test Query",
-            "project_id": str(project_id),
-        }
-        query_response = add_project_query(authed_client, query_info)
-        assert query_response is not None
-        assert query_response.status_code < 300
-        query_id = query_response.json()["query_id"]
-
-        submit_info = {
-            "authenticationToken": auth_token.get("authorization", ""),
-            "query": cohort_query_sql,
-            "name": "E2E Stage Test Query",
-            "project_id": str(project_id),
-            "query_id": str(query_id),
-        }
-        submit_query_to_trusts(authed_client, submit_info)
-
-        # Stage the project
         stage_response = authed_client.post(
             f"{BASE_URL}/projects/{project_id}/stage",
             json={"trusts": trust_ids},
@@ -131,7 +98,7 @@ class TestProjectLifecycle:
         assert approval_data.get("successful") is True, f"Project approval was not successful: {approval_data}"
         assert approval_data["trusts"]["processed"] > 0, "No trusts were processed"
 
-        # Verify project status is APPROVED
+        # Verify project status is persisted as APPROVED in the database
         project_response = authed_client.get(f"{BASE_URL}/projects/{project_id}", timeout=30)
         assert project_response.status_code < 300
         project_data = project_response.json()

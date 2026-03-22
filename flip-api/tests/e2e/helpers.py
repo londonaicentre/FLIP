@@ -22,7 +22,6 @@ from tests.debug_prelaunch_task import (
     create_new_project,
     submit_query_to_trusts,
 )
-from tests.integration.utils import admin_authentication
 
 
 def poll_until(fn, timeout_s=60, interval_s=5, description="condition"):
@@ -75,7 +74,7 @@ def wait_for_service(url, timeout_s=30, interval_s=2):
 
     def check():
         try:
-            resp = requests.get(url, timeout=5)
+            resp = requests.get(url, timeout=5, verify=False)
             return resp.status_code < 300
         except requests.ConnectionError:
             return False
@@ -83,6 +82,49 @@ def wait_for_service(url, timeout_s=30, interval_s=2):
             return False
 
     poll_until(check, timeout_s=timeout_s, interval_s=interval_s, description=f"service at {url}")
+
+
+def create_and_submit_project(
+    authed_client: requests.Session,
+    cohort_query_sql: str,
+    cleanup_projects: List[str],
+    project_name: str = "E2E Test Project",
+) -> Tuple[str, str]:
+    """
+    Create a project, add a cohort query, and submit it to trusts.
+
+    Returns:
+        Tuple of (project_id, query_id).
+    """
+    project_data = ProjectDetails(
+        name=project_name,
+        description="Automated E2E test project",
+        users=[],
+    )
+    response = create_new_project(authed_client, project_data)
+    assert response is not None, "Failed to create project"
+    assert response.status_code < 300, f"Create project failed: {response.status_code} {response.text}"
+    project_id = response.json()["id"]
+    cleanup_projects.append(project_id)
+
+    query_info = {
+        "query": cohort_query_sql,
+        "name": f"{project_name} Query",
+        "project_id": str(project_id),
+    }
+    query_response = add_project_query(authed_client, query_info)
+    assert query_response is not None, "Failed to save cohort query"
+    assert query_response.status_code < 300, f"Save query failed: {query_response.status_code}"
+    query_id = query_response.json()["query_id"]
+
+    submit_info = {
+        **query_info,
+        "authenticationToken": authed_client.headers.get("Authorization", ""),
+        "query_id": str(query_id),
+    }
+    submit_query_to_trusts(authed_client, submit_info)
+
+    return project_id, query_id
 
 
 def create_and_approve_project(
@@ -98,40 +140,10 @@ def create_and_approve_project(
     Returns:
         Tuple of (project_id, approval_response_data).
     """
-    project_data = ProjectDetails(
-        name=project_name,
-        description="Automated E2E test project",
-        users=[],
+    project_id, _ = create_and_submit_project(
+        authed_client, cohort_query_sql, cleanup_projects, project_name,
     )
-    response = create_new_project(authed_client, project_data)
-    assert response is not None, "Failed to create project"
-    assert response.status_code < 300, f"Create project failed: {response.status_code} {response.text}"
-    project_id = response.json()["id"]
-    cleanup_projects.append(project_id)
 
-    # Add cohort query
-    auth_token = admin_authentication()
-    query_info = {
-        "query": cohort_query_sql,
-        "name": f"{project_name} Query",
-        "project_id": str(project_id),
-    }
-    query_response = add_project_query(authed_client, query_info)
-    assert query_response is not None, "Failed to save cohort query"
-    assert query_response.status_code < 300, f"Save query failed: {query_response.status_code}"
-    query_id = query_response.json()["query_id"]
-
-    # Submit query to trusts
-    submit_info = {
-        "authenticationToken": auth_token.get("authorization", ""),
-        "query": cohort_query_sql,
-        "name": f"{project_name} Query",
-        "project_id": str(project_id),
-        "query_id": str(query_id),
-    }
-    submit_query_to_trusts(authed_client, submit_info)
-
-    # Stage
     stage_response = authed_client.post(
         f"{BASE_URL}/projects/{project_id}/stage",
         json={"trusts": trust_ids},
@@ -139,7 +151,7 @@ def create_and_approve_project(
     )
     assert stage_response.status_code < 300, f"Stage failed: {stage_response.status_code} {stage_response.text}"
 
-    # Approve (triggers XNAT project creation + image retrieval)
+    # Triggers asynchronous XNAT project creation + image retrieval
     approve_response = authed_client.post(
         f"{BASE_URL}/step/project/{project_id}/approve",
         json={"trusts": trust_ids},

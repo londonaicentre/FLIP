@@ -16,7 +16,6 @@ Tests the full XNAT flow triggered by project approval.
 """
 
 import base64
-import os
 
 import pytest
 import urllib3
@@ -25,8 +24,6 @@ from tests.e2e.helpers import create_and_approve_project, poll_until
 
 # Trust API uses HTTPS with self-signed certs in local dev
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-TRUST_API_PORT = os.environ.get("TRUST_API_PORT", "8100")
 
 
 @pytest.mark.e2e
@@ -42,7 +39,6 @@ class TestXNATProjectCreation:
 
         assert approval_data.get("successful") is True, f"Approval not successful: {approval_data}"
 
-        # Verify trust processing details
         details = approval_data.get("details", [])
         assert len(details) > 0, "No trust processing details returned"
         for detail in details:
@@ -51,7 +47,9 @@ class TestXNATProjectCreation:
             )
 
     @pytest.mark.slow
-    def test_xnat_image_retrieval(self, authed_client, cohort_query_sql, trust_ids, cleanup_projects):
+    def test_xnat_image_retrieval(
+        self, authed_client, cohort_query_sql, trust_ids, cleanup_projects, service_ports,
+    ):
         """
         After project approval, XNAT should retrieve images from PACS.
 
@@ -64,15 +62,14 @@ class TestXNATProjectCreation:
             project_name="E2E Test - XNAT Image Retrieval",
         )
 
-        # Encode the query for the trust API endpoint
         encoded_query = base64.urlsafe_b64encode(cohort_query_sql.encode()).decode()
+        trust_api_port = service_ports["trust_api"]
 
-        # Poll the import status via the trust API.
         # The trust API proxies to the imaging API's retrieval status endpoint.
         def check_import_status():
             try:
                 resp = authed_client.get(
-                    f"https://localhost:{TRUST_API_PORT}/imaging/{project_id}",
+                    f"https://localhost:{trust_api_port}/imaging/{project_id}",
                     params={"encoded_query": encoded_query},
                     timeout=30,
                     verify=False,
