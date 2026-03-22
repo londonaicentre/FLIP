@@ -305,6 +305,40 @@ addopts = []
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 ```
 
+#### E2E integration testing
+
+End-to-end tests verify the full platform workflow across all services. Unlike unit tests, E2E tests run against live services and test cross-service communication including the Central Hub, Trust APIs, OMOP database, and XNAT imaging.
+
+**Prerequisites:** All services must be running via `make up` before running E2E tests.
+
+**What the tests cover:**
+
+| Test file | What it verifies |
+| --- | --- |
+| `test_00_health_checks.py` | All services are reachable and healthy |
+| `test_01_project_lifecycle.py` | Project creation, staging, and approval |
+| `test_02_cohort_query.py` | Cohort query round-trip (Central Hub -> Trust -> OMOP DB -> back) |
+| `test_03_xnat_imaging.py` | XNAT project creation and image retrieval from PACS |
+| `test_04_model_training_setup.py` | Model creation and file upload via presigned S3 URLs |
+
+To run all E2E tests:
+
+```bash
+make e2e_test
+```
+
+To run E2E tests excluding slow XNAT image retrieval (which polls for up to 5 minutes):
+
+```bash
+make e2e_test_fast
+```
+
+Tests are located in `flip-api/tests/e2e/`. They reuse helpers from `tests/debug_prelaunch_task.py` for project creation and `tests/integration/utils.py` for authentication.
+
+**Cleanup:** Test data is automatically cleaned up via pytest fixtures. Each test that creates projects tracks them for deletion in teardown using the same logic as `make delete_testing_projects`.
+
+**Markers:** Tests use `@pytest.mark.e2e` for selection and `@pytest.mark.slow` for long-running XNAT polling tests. You can skip slow tests with `-m "not slow"`.
+
 #### Signing your work
 
 FLIP enforces the [Developer Certificate of Origin](https://developercertificate.org/) (DCO) on all pull requests. All commit messages should contain the `Signed-off-by` line with an email address.

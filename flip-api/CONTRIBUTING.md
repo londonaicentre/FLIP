@@ -48,6 +48,22 @@ To clean up test data:
 make delete_testing_projects
 ```
 
+### Running E2E integration tests
+
+E2E tests verify the full platform workflow across all services. **All services must be running** (`make up` from the repo root) before running these tests.
+
+```bash
+make e2e_test
+```
+
+To skip slow XNAT image retrieval tests:
+
+```bash
+make e2e_test_fast
+```
+
+E2E tests are located in `tests/e2e/` and cover health checks, project lifecycle, cohort queries, XNAT imaging, and model file uploads.
+
 ## Connecting pgAdmin to the Central Hub database
 
 pgAdmin is included in the local stack for database inspection. If pgAdmin is running on a remote machine, tunnel the

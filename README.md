@@ -84,6 +84,8 @@ For example:
 | `make clean` | Remove all stopped containers, networks, and images |
 | `make ci` | Run the CI pipeline locally using `act` |
 | `make unit_test` | Run the tests for all services |
+| `make e2e_test` | Run E2E integration tests against all running services |
+| `make e2e_test_fast` | Run E2E tests excluding slow XNAT image retrieval tests |
 
 You can add new commands to the Makefile to create smaller deployments for testing and development.
 
