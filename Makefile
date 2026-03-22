@@ -262,6 +262,10 @@ print-docker-tag:  ## Print the current DOCKER_TAG value
 up-pgadmin:
 	${DOCKER_COMMAND} up -d pgadmin
 
+e2e_test:
+	$(MAKE) -C flip-api e2e_test
+e2e_test_fast:
+	$(MAKE) -C flip-api e2e_test_fast
 unit_test:
 	$(MAKE) -C flip-api unit_test
 	$(MAKE) -C flip-ui unit_test

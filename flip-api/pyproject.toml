@@ -87,6 +87,10 @@ omit = ["*.venv/*", "*/tests/*", "*/__init__.py", "*/translation/*", "*/migratio
 python_files = ["test_*.py", "*_test.py"]
 addopts = []
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
+markers = [
+    "e2e: end-to-end integration tests (require all services running via make up)",
+    "slow: marks tests as slow (e.g. XNAT image retrieval polling)",
+]
 
 [tool.pytest.ini_options_debug]
 python_files = ["test_*.py", "*_test.py"]

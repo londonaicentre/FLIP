@@ -68,6 +68,12 @@ debug:
 	@echo "🚨 Starting debug mode..."
 	@echo "🚨 Setting DEBUG=true"
 	$(docker_command) restart --remove-orphans $(service_name)
+e2e_test:
+	@echo "🧪 Running E2E integration tests..."
+	env DB_HOST=localhost uv run pytest tests/e2e/ -v -s --timeout=600
+e2e_test_fast:
+	@echo "🧪 Running E2E integration tests (excluding slow XNAT tests)..."
+	env DB_HOST=localhost uv run pytest tests/e2e/ -v -s --timeout=120 -m "not slow"
 create_testing_projects:
 	@echo "🔢 Creating projects for debugging..."
 	env DB_HOST=localhost uv run python -m tests.debug_prelaunch_task
