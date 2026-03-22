@@ -16,7 +16,6 @@ Reuses helpers from tests/debug_prelaunch_task.py.
 """
 
 import pytest
-import requests
 
 from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.utils.constants import BASE_URL
@@ -25,6 +24,7 @@ from tests.debug_prelaunch_task import (
     create_new_project,
     submit_query_to_trusts,
 )
+from tests.e2e.helpers import create_and_approve_project
 from tests.integration.utils import admin_authentication
 
 
@@ -61,6 +61,7 @@ class TestProjectLifecycle:
         )
         response = create_new_project(authed_client, project_data)
         assert response is not None, "Failed to create project"
+        assert response.status_code < 300, f"Create project failed: {response.status_code}"
         project_id = response.json()["id"]
         cleanup_projects.append(project_id)
 
@@ -72,6 +73,7 @@ class TestProjectLifecycle:
         }
         query_response = add_project_query(authed_client, query_info)
         assert query_response is not None, "Failed to save cohort query"
+        assert query_response.status_code < 300, f"Save query failed: {query_response.status_code}"
         assert "query_id" in query_response.json(), "Response should contain query_id"
 
     def test_stage_project(self, authed_client, cohort_query_sql, trust_ids, cleanup_projects):
@@ -84,6 +86,7 @@ class TestProjectLifecycle:
         )
         response = create_new_project(authed_client, project_data)
         assert response is not None
+        assert response.status_code < 300
         project_id = response.json()["id"]
         cleanup_projects.append(project_id)
 
@@ -96,6 +99,7 @@ class TestProjectLifecycle:
         }
         query_response = add_project_query(authed_client, query_info)
         assert query_response is not None
+        assert query_response.status_code < 300
         query_id = query_response.json()["query_id"]
 
         submit_info = {
@@ -109,7 +113,7 @@ class TestProjectLifecycle:
 
         # Stage the project
         stage_response = authed_client.post(
-            f"{BASE_URL}/projects/{project_id}/stage/",
+            f"{BASE_URL}/projects/{project_id}/stage",
             json={"trusts": trust_ids},
             timeout=30,
         )
@@ -119,56 +123,11 @@ class TestProjectLifecycle:
 
     def test_approve_project(self, authed_client, cohort_query_sql, trust_ids, cleanup_projects):
         """A project can go through the full lifecycle to approval."""
-        # Create project
-        project_data = ProjectDetails(
-            name="E2E Test - Approve Project",
-            description="Automated E2E test for approval",
-            users=[],
-        )
-        response = create_new_project(authed_client, project_data)
-        assert response is not None
-        project_id = response.json()["id"]
-        cleanup_projects.append(project_id)
-
-        # Add and submit query
-        auth_token = admin_authentication()
-        query_info = {
-            "query": cohort_query_sql,
-            "name": "E2E Approval Test Query",
-            "project_id": str(project_id),
-        }
-        query_response = add_project_query(authed_client, query_info)
-        assert query_response is not None
-        query_id = query_response.json()["query_id"]
-
-        submit_info = {
-            "authenticationToken": auth_token.get("authorization", ""),
-            "query": cohort_query_sql,
-            "name": "E2E Approval Test Query",
-            "project_id": str(project_id),
-            "query_id": str(query_id),
-        }
-        submit_query_to_trusts(authed_client, submit_info)
-
-        # Stage project
-        stage_response = authed_client.post(
-            f"{BASE_URL}/projects/{project_id}/stage/",
-            json={"trusts": trust_ids},
-            timeout=30,
-        )
-        assert stage_response.status_code < 300
-
-        # Approve project (triggers XNAT project creation)
-        approve_response = authed_client.post(
-            f"{BASE_URL}/step/project/{project_id}/approve/",
-            json={"trusts": trust_ids},
-            timeout=60,
-        )
-        assert approve_response.status_code < 300, (
-            f"Failed to approve project: {approve_response.status_code} {approve_response.text}"
+        project_id, approval_data = create_and_approve_project(
+            authed_client, cohort_query_sql, trust_ids, cleanup_projects,
+            project_name="E2E Test - Approve Project",
         )
 
-        approval_data = approve_response.json()
         assert approval_data.get("successful") is True, f"Project approval was not successful: {approval_data}"
         assert approval_data["trusts"]["processed"] > 0, "No trusts were processed"
 

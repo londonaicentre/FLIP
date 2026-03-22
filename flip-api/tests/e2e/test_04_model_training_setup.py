@@ -18,68 +18,20 @@ Tests the model management workflow on an approved project.
 import pytest
 import requests
 
-from flip_api.domain.schemas.projects import ProjectDetails
 from flip_api.utils.constants import BASE_URL
-from tests.debug_prelaunch_task import (
-    add_project_query,
-    create_new_project,
-    submit_query_to_trusts,
-)
-from tests.integration.utils import admin_authentication
+from tests.e2e.helpers import create_and_approve_project
 
 
 @pytest.mark.e2e
 class TestModelTrainingSetup:
     """Test model creation and training file upload on an approved project."""
 
-    def _create_approved_project(self, authed_client, cohort_query_sql, trust_ids, cleanup_projects):
-        """Helper to create a fully approved project."""
-        project_data = ProjectDetails(
-            name="E2E Test - Model Setup",
-            description="Tests model creation and file upload",
-            users=[],
-        )
-        response = create_new_project(authed_client, project_data)
-        assert response is not None
-        project_id = response.json()["id"]
-        cleanup_projects.append(project_id)
-
-        auth_token = admin_authentication()
-        query_info = {
-            "query": cohort_query_sql,
-            "name": "E2E Model Test Query",
-            "project_id": str(project_id),
-        }
-        query_response = add_project_query(authed_client, query_info)
-        assert query_response is not None
-        query_id = query_response.json()["query_id"]
-
-        submit_info = {
-            "authenticationToken": auth_token.get("authorization", ""),
-            "query": cohort_query_sql,
-            "name": "E2E Model Test Query",
-            "project_id": str(project_id),
-            "query_id": str(query_id),
-        }
-        submit_query_to_trusts(authed_client, submit_info)
-
-        authed_client.post(
-            f"{BASE_URL}/projects/{project_id}/stage/",
-            json={"trusts": trust_ids},
-            timeout=30,
-        )
-
-        approve_response = authed_client.post(
-            f"{BASE_URL}/step/project/{project_id}/approve/",
-            json={"trusts": trust_ids},
-            timeout=60,
-        )
-        assert approve_response.status_code < 300
-        return project_id
-
     def test_create_model_for_approved_project(self, authed_client, cohort_query_sql, trust_ids, cleanup_projects):
         """A model can be created for an approved project."""
-        project_id = self._create_approved_project(authed_client, cohort_query_sql, trust_ids, cleanup_projects)
+        project_id, _ = create_and_approve_project(
+            authed_client, cohort_query_sql, trust_ids, cleanup_projects,
+            project_name="E2E Test - Model Setup",
+        )
 
         model_payload = {
             "name": "E2E Test Classification Model",
@@ -99,7 +51,10 @@ class TestModelTrainingSetup:
 
     def test_upload_training_files(self, authed_client, cohort_query_sql, trust_ids, cleanup_projects):
         """Training files can be uploaded to a model via presigned S3 URLs."""
-        project_id = self._create_approved_project(authed_client, cohort_query_sql, trust_ids, cleanup_projects)
+        project_id, _ = create_and_approve_project(
+            authed_client, cohort_query_sql, trust_ids, cleanup_projects,
+            project_name="E2E Test - File Upload",
+        )
 
         # Create model
         model_payload = {
@@ -132,7 +87,7 @@ class TestModelTrainingSetup:
             upload_url = presigned_response.json()
             assert upload_url, f"No presigned URL returned for {filename}"
 
-            # Upload file to S3
+            # Upload file to S3 (presigned URLs don't need auth headers)
             upload_response = requests.put(upload_url, data=content, timeout=60)
             assert upload_response.status_code < 300, (
                 f"Failed to upload {filename}: {upload_response.status_code}"
@@ -144,7 +99,7 @@ class TestModelTrainingSetup:
         )
 
         # Verify files are listed for the model
-        files_response = authed_client.get(f"{BASE_URL}/files/model/{model_id}", timeout=30)
+        files_response = authed_client.get(f"{BASE_URL}/files/model/{model_id}/get/files", timeout=30)
         assert files_response.status_code < 300, (
             f"Failed to list model files: {files_response.status_code} {files_response.text}"
         )

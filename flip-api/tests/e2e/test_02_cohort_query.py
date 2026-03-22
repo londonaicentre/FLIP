@@ -52,6 +52,7 @@ class TestCohortQueryRoundTrip:
         )
         response = create_new_project(authed_client, project_data)
         assert response is not None, "Failed to create project"
+        assert response.status_code < 300, f"Create project failed: {response.status_code}"
         project_id = response.json()["id"]
         cleanup_projects.append(project_id)
 
@@ -63,6 +64,7 @@ class TestCohortQueryRoundTrip:
         }
         query_response = add_project_query(authed_client, query_info)
         assert query_response is not None, "Failed to save cohort query"
+        assert query_response.status_code < 300, f"Save query failed: {query_response.status_code}"
         query_id = query_response.json()["query_id"]
 
         # Submit query to trusts
@@ -85,7 +87,7 @@ class TestCohortQueryRoundTrip:
             if resp.status_code < 300:
                 data = resp.json()
                 # Check that we got meaningful results back
-                if data and data.get("data"):
+                if data and "data" in data and data["data"] is not None:
                     return data
             return None
 

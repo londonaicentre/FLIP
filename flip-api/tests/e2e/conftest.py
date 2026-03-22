@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+import warnings
+from pathlib import Path
 from typing import List
 
 import pytest
@@ -57,7 +59,8 @@ def trust_ids(authed_client, base_url) -> List[str]:
 @pytest.fixture(scope="session")
 def cohort_query_sql() -> str:
     """Load the example cohort query SQL."""
-    with open("tests/example_query.sql", "r") as f:
+    sql_path = Path(__file__).parent.parent / "example_query.sql"
+    with open(sql_path, "r") as f:
         return f.read()
 
 
@@ -85,4 +88,4 @@ def cleanup_projects():
             else:
                 session.rollback()
     except Exception as e:
-        print(f"Warning: cleanup failed: {e}")
+        warnings.warn(f"E2E test cleanup failed for projects {project_ids}: {e}", stacklevel=1)
