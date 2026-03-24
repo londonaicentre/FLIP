@@ -231,7 +231,8 @@ class FLIP_TRAINER(Executor):
                     positive_ratio = 0.0
 
                 self.logger.info(
-                    f"  {lesion_name:20s}: {num_positive:4d} positive, {num_negative:4d} negative, {num_masked:4d} masked/unknown"
+                    f"  {lesion_name:20s}: {num_positive:4d} positive, {num_negative:4d} negative, "
+                    f"{num_masked:4d} masked/unknown"
                 )
                 self.logger.info(f"                        Positive ratio: {positive_ratio:.2f}% (excluding masked)")
 
@@ -271,7 +272,10 @@ class FLIP_TRAINER(Executor):
 
                 # Log class distribution for this batch
                 labels_np = labels.detach().cpu().numpy()
-                batch_info = f"Epoch {epoch + 1}, Train Batch {i + 1}/{len(self.training_dataloader)}, Batch size: {labels.shape[0]} - "
+                batch_info = (
+                    f"Epoch {epoch + 1}, Train Batch {i + 1}/{len(self.training_dataloader)}, "
+                    f"Batch size: {labels.shape[0]} - "
+                )
                 for lesion_idx, lesion in enumerate(self._lesions.items):
                     lesion_labels = labels_np[:, lesion_idx]
                     # Filter out -1 (unknown/masked) values
@@ -312,7 +316,10 @@ class FLIP_TRAINER(Executor):
 
                     # Log class distribution for this validation batch
                     labels_np = labels.detach().cpu().numpy()
-                    batch_info = f"Epoch {epoch + 1}, Val Batch {i + 1}/{len(self.validation_dataloader)}, Batch size: {labels.shape[0]} - "
+                    batch_info = (
+                        f"Epoch {epoch + 1}, Val Batch {i + 1}/{len(self.validation_dataloader)}, "
+                        f"Batch size: {labels.shape[0]} - "
+                    )
                     for lesion_idx, lesion in enumerate(self._lesions.items):
                         lesion_labels = labels_np[:, lesion_idx]
                         # Filter out -1 (unknown/masked) values
