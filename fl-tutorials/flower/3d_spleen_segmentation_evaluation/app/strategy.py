@@ -13,10 +13,12 @@
 
 """Custom Federated Learning strategies for evaluation."""
 
+from collections.abc import Iterable
 from logging import INFO
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Tuple, Type
 
-from flwr.common import EvaluateRes, Scalar, log
+from flwr.common import MetricRecord, log
+from flwr.common.message import Message
 from flwr.serverapp.strategy import FedAvg
 
 
@@ -71,10 +73,12 @@ class MetricsValidator:
     def _validate_type(self, metric_name: str, value: Any, expected_type: Type) -> Tuple[bool, str]:
         """Validate that a metric value matches the expected type.
 
+        Only numeric types (int, float) are supported.
+
         Args:
             metric_name: Name of the metric
             value: The actual value
-            expected_type: The expected type (float, int, list, etc.)
+            expected_type: The expected type (float or int)
 
         Returns:
             Tuple of (is_valid, message)
@@ -83,27 +87,7 @@ class MetricsValidator:
         if isinstance(value, str):
             return False, f"Metric '{metric_name}' cannot be a string. Numeric types only."
 
-        # Check for list type
-        if expected_type == list:
-            if not isinstance(value, list):
-                return False, f"Metric '{metric_name}' expected type 'list', got '{type(value).__name__}'"
-
-            if len(value) == 0:
-                return True, ""  # Empty lists are valid
-
-            # All elements must be numeric (int or float), no strings
-            for i, elem in enumerate(value):
-                if isinstance(elem, str):
-                    return False, f"Metric '{metric_name}' list element at index {i} cannot be a string"
-                if not isinstance(elem, (int, float)):
-                    return (
-                        False,
-                        f"Metric '{metric_name}' list element at index {i} must be numeric, got '{type(elem).__name__}'",
-                    )
-
-            return True, ""
-
-        # Check for exact type match
+        # Check for exact type match (int or float)
         if not isinstance(value, expected_type):
             return (
                 False,
@@ -133,28 +117,54 @@ class EvaluationStrategy(FedAvg):
     def aggregate_evaluate(
         self,
         server_round: int,
-        results: List[Tuple[str, EvaluateRes]],
-        failures: List[Tuple[str, Exception]],
-    ) -> Tuple[Optional[float], Dict[str, Scalar]]:
+        replies: Iterable[Message],
+    ) -> MetricRecord | None:
         """Aggregate evaluation results from all clients."""
 
-        if not results:
-            log(INFO, "No evaluation results to aggregate")
-            return None, {}
+        # Use parent class helper to filter valid replies
+        valid_replies, error_replies = self._check_and_log_replies(replies, is_train=False, validate=False)
 
-        if failures:
-            log(INFO, f"Received {len(failures)} failures during evaluation")
+        if not valid_replies:
+            log(INFO, "No valid evaluation results to aggregate")
+            return None
 
         # Process each client's evaluation results
-        for client_id, evaluate_res in results:
-            metrics = evaluate_res.metrics
+        for msg in valid_replies:
+            client_id = msg.metadata.src_node_id
 
-            if "evaluation" not in metrics:
-                log(INFO, f"Warning: No evaluation results from client {client_id}")
+            # Extract metrics from the message content
+            if not msg.content.metric_records:
+                log(INFO, f"Warning: No metrics from client {client_id}")
                 continue
 
-            # Parse evaluation results
-            client_eval = self._parse_evaluation_metrics(metrics["evaluation"])
+            # metric_records contains {'metrics': {actual_metrics_dict}}
+            metrics_outer = dict(msg.content.metric_records)
+            log(INFO, f"DEBUG: Client {client_id} metrics keys: {list(metrics_outer.keys())}")
+
+            # Extract the inner 'metrics' dict
+            if "metrics" not in metrics_outer:
+                log(INFO, f"Warning: No 'metrics' key from client {client_id}")
+                continue
+
+            metrics = metrics_outer["metrics"]
+            log(INFO, f"DEBUG: Client {client_id} inner metrics: {metrics}")
+
+            # Reconstruct evaluation results from flattened keys
+            # Keys are in format: "evaluation.model_name.metric_name"
+            client_eval = {}
+            for key, value in metrics.items():
+                if key.startswith("evaluation."):
+                    # Extract model_name and metric_name from "evaluation.model_name.metric_name"
+                    parts = key.split(".", 2)
+                    if len(parts) == 3:
+                        _, model_name, metric_name = parts
+                        if model_name not in client_eval:
+                            client_eval[model_name] = {}
+                        client_eval[model_name][metric_name] = value
+
+            if not client_eval:
+                log(INFO, f"Warning: No evaluation results from client {client_id}")
+                continue
 
             # Validate the evaluation results
             is_valid, message = self.validator.validate(client_eval)
@@ -169,59 +179,27 @@ class EvaluationStrategy(FedAvg):
                 if model_name not in self.all_results:
                     self.all_results[model_name] = {metric_name: [] for metric_name in self.metrics_spec.keys()}
 
-                # Collect metrics
+                # Collect metrics (only scalar numeric types: float or int)
                 for metric_name in self.metrics_spec.keys():
                     if metric_name in model_metrics:
                         metric_value = model_metrics[metric_name]
+                        # Convert to float for aggregation (works for both int and float types)
+                        self.all_results[model_name][metric_name].append(float(metric_value))
 
-                        # Handle list metrics: extend the list
-                        if self.metrics_spec[metric_name] == list:
-                            if isinstance(metric_value, list):
-                                self.all_results[model_name][metric_name].extend([float(x) for x in metric_value])
-                        # Handle scalar metrics: append to list for averaging
-                        else:
-                            self.all_results[model_name][metric_name].append(float(metric_value))
+        # Calculate final aggregated results and return as MetricRecord
+        aggregated_metrics = MetricRecord()
 
-        # Calculate final aggregated results
-        final_results = {}
         for model_name, metrics_data in self.all_results.items():
-            model_final = {}
-
             for metric_name, values in metrics_data.items():
                 if not values:
                     continue
 
                 # Calculate mean for all metrics (even if originally scalar)
                 mean_value = sum(values) / len(values)
-                model_final[f"{metric_name}_mean"] = float(mean_value)
-                model_final[f"{metric_name}_count"] = len(values)
+                # Ensure native Python types (not numpy)
+                aggregated_metrics[f"{model_name}.{metric_name}_mean"] = float(mean_value)
+                aggregated_metrics[f"{model_name}.{metric_name}_count"] = int(len(values))
 
-            final_results[model_name] = model_final
+        log(INFO, f"Round {server_round} - Aggregated evaluation results: {dict(aggregated_metrics)}")
 
-        log(INFO, f"Round {server_round} - Aggregated evaluation results: {final_results}")
-
-        # Return the average of all mean values as the top-level scalar
-        all_means = []
-        for model_data in final_results.values():
-            for key, value in model_data.items():
-                if key.endswith("_mean") and isinstance(value, (int, float)):
-                    all_means.append(value)
-
-        aggregated_metric = sum(all_means) / len(all_means) if all_means else 0.0
-        return float(aggregated_metric), final_results
-
-    def _parse_evaluation_metrics(self, evaluation_data: Any) -> Dict[str, Dict[str, Any]]:
-        """Parse evaluation metrics from Flower's Scalar types to Python types.
-
-        Args:
-            evaluation_data: Raw evaluation data from the client message
-
-        Returns:
-            Parsed evaluation dictionary
-        """
-        # If it's already a dict, return it
-        if isinstance(evaluation_data, dict):
-            return evaluation_data
-
-        # Handle other serialization formats if needed
-        return {}
+        return aggregated_metrics if aggregated_metrics else None

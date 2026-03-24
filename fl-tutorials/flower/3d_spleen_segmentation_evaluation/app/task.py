@@ -189,7 +189,10 @@ def evaluate_func(
 
             # Compute Dice score for this batch
             dice_metric(predictions, labels_one_hot)
-            batch_dice = dice_metric.aggregate().cpu().numpy().item()
+            batch_dice_per_class = dice_metric.aggregate().cpu().numpy()
+
+            # Take mean across all classes to get single score per batch
+            batch_dice = float(batch_dice_per_class.mean())
             dice_scores.append(batch_dice)
             dice_metric.reset()
 

@@ -56,7 +56,8 @@ def parse_models_config(run_config: Dict) -> Dict:
 def parse_metrics_config(metrics_config: Dict[str, str]) -> Dict[str, Type]:
     """Parse metrics configuration from pyproject.toml.
 
-    Converts string type names (\"float\", \"int\", \"list\") to actual Python types.
+    Converts string type names (\"float\", \"int\") to actual Python types.
+    Only native numeric types are allowed - no lists or complex types.
 
     Args:
         metrics_config: Dictionary mapping metric names to type strings.
@@ -68,17 +69,18 @@ def parse_metrics_config(metrics_config: Dict[str, str]) -> Dict[str, Type]:
         ValueError: If an unsupported type string is encountered.
 
     """
+    # Only allow native numeric types (float, int) - no lists or other types
     type_mapping = {
         "float": float,
         "int": int,
-        "list": list,
     }
 
     metrics_spec = {}
     for metric_name, type_str in metrics_config.items():
         if type_str not in type_mapping:
             msg = (
-                f"Unsupported type '{type_str}' for metric '{metric_name}'. Allowed types: {list(type_mapping.keys())}"
+                f"Unsupported type '{type_str}' for metric '{metric_name}'. "
+                f"Only native numeric types are allowed: {list(type_mapping.keys())}"
             )
             raise ValueError(msg)
         metrics_spec[metric_name] = type_mapping[type_str]
@@ -164,7 +166,10 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     arrays = pack_models(loaded_models)
 
     # Parse metrics specification from config
-    metrics_config = context.run_config.get("metrics", {})
+    # TOML nested tables are flattened in run_config, so extract keys starting with "metrics."
+    metrics_config = {
+        key.split(".", 1)[1]: value for key, value in context.run_config.items() if key.startswith("metrics.")
+    }
     if not metrics_config:
         msg = "No metrics configuration found in pyproject.toml. Please define [tool.flwr.app.config.metrics]."
         raise ValueError(msg)

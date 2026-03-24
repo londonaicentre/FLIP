@@ -144,15 +144,21 @@ def evaluate(msg: Message, context: Context) -> Message:
         overall_mean_dice = sum(all_dice_scores) / len(all_dice_scores) if all_dice_scores else 0.0
         evaluation_results[model_name] = {
             "mean_dice": float(overall_mean_dice),
-            "raw_dice": [float(d) for d in all_dice_scores],
         }
         log(INFO, f"  Model '{model_name}' mean dice: {overall_mean_dice:.4f}")
 
+    # Flatten evaluation results for MetricRecord (which only accepts flat key-value pairs)
+    # Convert nested dict to dotted keys: evaluation.model_name.metric_name
+    flattened_metrics = {"num-examples": int(len(test_loader.dataset))}
+    for model_name, model_results in evaluation_results.items():
+        for metric_name, metric_value in model_results.items():
+            flattened_key = f"evaluation.{model_name}.{metric_name}"
+            # Ensure native Python types (convert from numpy if needed)
+            flattened_metrics[flattened_key] = float(metric_value)
+
+    log(INFO, f"DEBUG: Sending flattened_metrics: {flattened_metrics}")
+
     # Construct and return the reply Message
-    metrics = {
-        "evaluation": evaluation_results,
-        "num-examples": len(test_loader.dataset),
-    }
-    metric_record = MetricRecord(metrics)
+    metric_record = MetricRecord(flattened_metrics)
     content = RecordDict({"metrics": metric_record})
     return Message(content=content, reply_to=msg)
