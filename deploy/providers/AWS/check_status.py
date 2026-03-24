@@ -565,7 +565,7 @@ def main(
     print_section("HTTPS & Certificate Status")
 
     # Get certificate ARN and domain from Terraform
-    cert_arn = get_terraform_output("CertificateArn")
+    cert_arn = get_terraform_output("certificate_arn")
 
     if cert_arn:
         print_status("INFO", f"Checking ACM certificate: {cert_arn}")

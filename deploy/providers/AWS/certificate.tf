@@ -65,7 +65,7 @@ resource "aws_acm_certificate_validation" "flip" {
   validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
 }
 
-output "CertificateArn" {
+output "certificate_arn" {
   description = "ACM Certificate ARN (validated)"
   value       = aws_acm_certificate_validation.flip.certificate_arn
 }
