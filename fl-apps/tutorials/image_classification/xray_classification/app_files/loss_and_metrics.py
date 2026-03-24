@@ -43,12 +43,17 @@ def compute_precision_recall_f1(
 
     prediction_new = np.array(prediction_new)
     ground_truth_new = np.array(ground_truth_new)
-    tp = np.sum((prediction == 1) & (ground_truth == 1))
-    fp = np.sum((prediction == 1) & (ground_truth == 0))
-    fn = np.sum((prediction == 0) & (ground_truth == 1))
 
-    precision = tp / (tp + fp)
-    recall = tp / (tp + fn)
-    f1 = 2 * (precision * recall) / (precision + recall)
+    # Calculate metrics using the pathology-specific predictions and ground truth
+    tp = np.sum((prediction_new == 1) & (ground_truth_new == 1))
+    fp = np.sum((prediction_new == 1) & (ground_truth_new == 0))
+    fn = np.sum((prediction_new == 0) & (ground_truth_new == 1))
+
+    # Gracefully handle division by zero cases by returning NaN
+    # The trainer will use np.nanmean() to ignore these when computing epoch averages
+    # This ensures only valid batches contribute to the metric, not artificially lowering it with 0.0
+    precision = tp / (tp + fp) if (tp + fp) > 0 else np.nan
+    recall = tp / (tp + fn) if (tp + fn) > 0 else np.nan
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else np.nan
 
     return precision, recall, f1
