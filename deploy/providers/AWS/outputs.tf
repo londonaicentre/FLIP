@@ -16,7 +16,7 @@
 # Central Hub
 ############################
 
-output "keypair" {
+output "key_pair" {
   value = var.flip_keypair
 }
 

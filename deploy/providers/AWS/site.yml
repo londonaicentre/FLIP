@@ -39,7 +39,7 @@
           - ec2
           - central_hub
         ansible_ssh_user: ubuntu
-        ansible_ssh_private_key_file: "{{ terraform_output.outputs.keypair.value }}"
+        ansible_ssh_private_key_file: "{{ terraform_output.outputs.key_pair.value }}"
         ansible_ssh_common_args: "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
         ansible_ec2_instance_id: "{{ terraform_output.outputs.ec2_instance_id.value }}"
     - name: add Trust EC2 instance to Ansible inventory
@@ -49,7 +49,7 @@
           - ec2
           - trust_ec2
         ansible_ssh_user: ubuntu
-        ansible_ssh_private_key_file: "{{ terraform_output.outputs.keypair.value }}"
+        ansible_ssh_private_key_file: "{{ terraform_output.outputs.key_pair.value }}"
         ansible_ssh_common_args: "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
         ansible_ec2_instance_id: "{{ terraform_output.outputs.trust_ec2_instance_id.value }}"
 
