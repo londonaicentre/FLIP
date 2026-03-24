@@ -62,10 +62,10 @@ pip install -e .
 
 ## Run with the Simulation Engine
 
-Assuming the `./data` is at the top level directory of this repository, from the `3d_spleen_segmentation` directory, use `flwr run` to run a local simulation:
+Assuming the `./data` is at the top level directory of this repository, and that  from the `3d_spleen_segmentation` directory, use `flwr run` to run a local simulation:
 
 ```bash
-DEV_DATAFRAME="../../data/spleen/sample_get_dataframe_response.csv"  DEV_IMAGES_DIR="../../data/spleen/accession-resources" flwr run .
+DEV_DATAFRAME="../../data/spleen/sample_get_dataframe_response.csv"  DEV_IMAGES_DIR="../../data/spleen/accession-resources" WORKING_DIR="../../data/" flwr run .
 ```
 
 ## Data Location

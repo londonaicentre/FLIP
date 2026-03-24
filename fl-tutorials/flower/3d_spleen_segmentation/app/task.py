@@ -13,18 +13,16 @@
 
 """Training utilities for the MONAI Flower app."""
 
-import logging
+from logging import INFO, WARNING
 
 import torch
+from flwr.common import log
 from monai.data import DataLoader
 from monai.losses import DiceLoss
 from monai.metrics import DiceMetric
 from monai.networks.utils import one_hot
 
 from app.transforms import get_sliding_window_inferer
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 
 def train_func(
@@ -50,7 +48,7 @@ def train_func(
     total_loss = 0.0
     total_samples = 0
 
-    logger.info(f"Starting training pass on device {device}")
+    log(INFO, f"Starting training pass on device {device}")
 
     for i, batch in enumerate(train_loader):
         images = batch["image"].to(device)
@@ -71,10 +69,10 @@ def train_func(
         total_samples += batch_size
 
         if i % 10 == 0:
-            logger.info(f"Batch {i + 1}, Loss: {batch_loss:.4f}")
+            log(INFO, f"Batch {i + 1}, Loss: {batch_loss:.4f}")
 
     avg_loss = total_loss / max(1, total_samples)
-    logger.info(f"Training pass completed. Average loss: {avg_loss:.4f}")
+    log(INFO, f"Training pass completed. Average loss: {avg_loss:.4f}")
 
     return avg_loss
 
@@ -105,10 +103,10 @@ def validate_func(
     model.eval()
     dice_metric = DiceMetric(reduction="mean")
 
-    logger.info(f"Starting validation on {len(val_loader)} batches")
+    log(INFO, f"Starting validation on {len(val_loader)} batches")
 
     if len(val_loader) == 0:
-        logger.warning("Validation loader is empty, skipping validation")
+        log(WARNING, "Validation loader is empty, skipping validation")
         return -1, -1
 
     running_loss = 0.0
@@ -132,14 +130,14 @@ def validate_func(
             # Accumulate Dice scores
             dice_metric(predictions, labels_one_hot)
 
-            logger.info(f"Validation batch {i + 1}/{len(val_loader)} processed")
+            log(INFO, f"Validation batch {i + 1}/{len(val_loader)} processed")
 
     # Compute final aggregated Dice score
     dice_score = dice_metric.aggregate().cpu().numpy().item()
     running_loss /= max(1, len(val_loader.dataset))
     dice_metric.reset()
 
-    logger.info(f"Validation completed. Mean Dice score: {dice_score:.4f}, Average Loss: {running_loss:.4f}")
+    log(INFO, f"Validation completed. Mean Dice score: {dice_score:.4f}, Average Loss: {running_loss:.4f}")
 
     return dice_score, running_loss
 
@@ -165,10 +163,10 @@ def test_func(
     model.eval()
     dice_metric = DiceMetric(reduction="mean")
 
-    logger.info(f"Starting test evaluation on {len(val_loader)} batches")
+    log(INFO, f"Starting test evaluation on {len(val_loader)} batches")
 
     if len(val_loader) == 0:
-        logger.warning("Test loader is empty, skipping evaluation")
+        log(WARNING, "Test loader is empty, skipping evaluation")
         return -1, -1
 
     running_loss = 0.0
@@ -187,13 +185,13 @@ def test_func(
             # Accumulate Dice scores
             dice_metric(predictions, labels_one_hot)
 
-            logger.info(f"Test batch {i + 1}/{len(val_loader)} processed")
+            log(INFO, f"Test batch {i + 1}/{len(val_loader)} processed")
 
     # Compute final aggregated Dice score
     dice_score = dice_metric.aggregate().cpu().numpy().item()
     running_loss /= max(1, len(val_loader.dataset))
     dice_metric.reset()
 
-    logger.info(f"Test evaluation completed. Mean Dice score: {dice_score:.4f}, Average Loss: {running_loss:.4f}")
+    log(INFO, f"Test evaluation completed. Mean Dice score: {dice_score:.4f}, Average Loss: {running_loss:.4f}")
 
     return dice_score, running_loss

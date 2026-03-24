@@ -13,13 +13,16 @@
 
 """Spleen Segmentation: Data loading and transform functions (training-only)."""
 
-import logging
+from logging import INFO
 from pathlib import Path
 
 import nibabel as nib
 import numpy as np
 from flip import FLIP
 from flip.constants import ResourceType
+from flwr.common import log
+
+SEED = 42
 
 
 class FLIP_BASE:
@@ -31,12 +34,11 @@ class FLIP_BASE:
         # --- Core FLIP object ---
         self.flip = FLIP()
 
-        # --- Logging setup ---
-        self.logger = logging.getLogger(self.__class__.__name__)
-        self.logger.setLevel(logging.INFO)
+    def get_image_and_label_list(self, _val_split, _test_split, is_test: bool = False):
+        """Returns train, val, and test lists of dicts.
 
-    def get_image_and_label_list(self, _val_split, _test_split, is_test: bool=False):
-        """Returns train, val, and test lists of dicts, each dict containing the path to an image and its corresponding label."""
+        Each dict contains the path to an image and its corresponding label.
+        """
 
         datalist = []
         # loop over each accession id in the train set
@@ -51,62 +53,63 @@ class FLIP_BASE:
                     ],
                 )
             except Exception as err:
-                print(f"Could not get image data folder path for {accession_id}: {err}")
+                log(INFO, f"Could not get image data folder path for {accession_id}: {err}")
                 continue
 
-            print(accession_folder_path)
+            log(INFO, str(accession_folder_path))
 
             all_images = list(accession_folder_path.rglob("input_*.nii.gz"))
-            print(all_images)
+            log(INFO, str(all_images))
 
             this_accession_matches = 0
-            print(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
+            log(INFO, f"Total base count found for accession_id {accession_id}: {len(all_images)}")
             for img in all_images:
                 # for each image, find the corresponding segmentation mask
                 seg = str(img).replace("/input_", "/label_")
 
                 if not Path(seg).exists():
-                    print(f"No matching segmentation mask for {img}.")
+                    log(INFO, f"No matching segmentation mask for {img}.")
                     continue
 
                 try:
                     img_header = nib.load(str(img))
                 except nib.filebasedimages.ImageFileError as err:
-                    print(f"Problem loading header of base image {str(img)}.")
-                    print(f"{err=}")
-                    print(f"{type(err)=}")
-                    print(f"{err.args=}")
+                    log(INFO, f"Problem loading header of base image {str(img)}.")
+                    log(INFO, f"{err=}")
+                    log(INFO, f"{type(err)=}")
+                    log(INFO, f"{err.args=}")
                     continue
 
                 try:
                     seg_header = nib.load(seg)
                 except nib.filebasedimages.ImageFileError as err:
-                    print(f"Problem loading header of segmentation {str(seg)}.")
-                    print(f"{err=}")
-                    print(f"{type(err)=}")
-                    print(f"{err.args=}")
+                    log(INFO, f"Problem loading header of segmentation {str(seg)}.")
+                    log(INFO, f"{err=}")
+                    log(INFO, f"{type(err)=}")
+                    log(INFO, f"{err.args=}")
                     continue
 
                 # Some QC checks to ensure the image and segmentation are valid and match
                 # check is 3D and at least 128x128x128 in size and seg is the same
                 if len(img_header.shape) != 3:
-                    print(f"Image has other than 3 dimensions (it has {len(img_header.shape)}.)")
+                    log(INFO, f"Image has other than 3 dimensions (it has {len(img_header.shape)}.)")
                     continue
                 elif any([img_dim != seg_dim for img_dim, seg_dim in zip(img_header.shape, seg_header.shape)]):
-                    print(
+                    log(
+                        INFO,
                         f"Image dimensions do not match segmentation dimensions"
-                        f"({img_header.shape}) vs ({seg_header.shape})."
+                        f"({img_header.shape}) vs ({seg_header.shape}).",
                     )
                     continue
                 else:
                     # defines keys for image and segmentation
                     datalist.append({"image": str(img), "label": seg})
-                    print("Matching base image and segmentation added.")
+                    log(INFO, "Matching base image and segmentation added.")
                     this_accession_matches += 1
 
-            print(f"Added {this_accession_matches} matched image + segmentation pairs for {accession_id}.")
+            log(INFO, f"Added {this_accession_matches} matched image + segmentation pairs for {accession_id}.")
 
-        print(f"Found {len(datalist)} files in total.")
+        log(INFO, f"Found {len(datalist)} files in total.")
 
         # Calculate split indices
         n_total = len(datalist)
@@ -115,13 +118,14 @@ class FLIP_BASE:
         n_train = n_total - n_val - n_test
 
         # Shuffle datalist for random split
-        np.random.shuffle(datalist)
+        rng = np.random.default_rng(seed=SEED)
+        rng.shuffle(datalist)
 
         train_datalist = datalist[:n_train]
-        val_datalist = datalist[n_train:n_train + n_val]
-        test_datalist = datalist[n_train + n_val:]
+        val_datalist = datalist[n_train : n_train + n_val]
+        test_datalist = datalist[n_train + n_val :]
 
         if is_test:
             return test_datalist
-        else:
-            return train_datalist, val_datalist
+
+        return train_datalist, val_datalist

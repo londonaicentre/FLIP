@@ -13,12 +13,14 @@
 
 """quickstart-monai: A Flower / MONAI training-only app."""
 
-import logging
 import os
+from logging import INFO
 
 import torch
+from flip.constants.flip_constants import ModelStatus
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
+from flwr.common import log
 from monai.data import DataLoader, Dataset
 from monai.losses import DiceLoss
 
@@ -26,9 +28,6 @@ from app.data_loading import FLIP_BASE
 from app.models import get_model
 from app.task import train_func, validate_func
 from app.transforms import get_train_transforms, get_val_transforms
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # Flower ClientApp
 app = ClientApp()
@@ -59,15 +58,20 @@ def train(msg: Message, context: Context) -> Message:
     flip_utils = FLIP_BASE()
     flip_utils.project_id = run_config.get("flip-project-id", "monai-flower-tutorial")
     flip_utils.query = run_config.get("flip-cohort-query", "*")
-    logger.info("Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
+    log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
     flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
-    logger.info(f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
+    log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
 
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info("Training on device: %s", device)
+    log(INFO, "Training on device: %s", device)
 
     # Get data
+    if val_split + test_split >= 1.0:
+        log(INFO, "Invalid split configuration: val_split + test_split must be < 1.0")
+        flip_utils.flip.update_status(model_id, ModelStatus.ERROR)
+        raise ValueError("Invalid split configuration: val_split + test_split must be < 1.0")
+
     train_datalist, val_datalist = flip_utils.get_image_and_label_list(
         _val_split=val_split, _test_split=test_split, is_test=False
     )
@@ -90,7 +94,7 @@ def train(msg: Message, context: Context) -> Message:
     losses: dict[str, list[float]] = {"train": [], "val": []}
     dice: dict[str, list[float]] = {"val": []}
     for epoch in range(local_epochs):
-        logger.info(f"Starting epoch {epoch + 1}/{local_epochs}")
+        log(INFO, f"Starting epoch {epoch + 1}/{local_epochs}")
         train_loss = train_func(
             model=model,
             train_loader=train_loader,
@@ -150,7 +154,6 @@ def evaluate(msg: Message, context: Context) -> Message:
     run_config = context.run_config
     val_split = float(run_config.get("val-split", 0.2))
     test_split = float(run_config.get("test-split", 0.2))
-    batch_size = int(run_config.get("batch-size", 2))
 
     # FLIP variables
     model_id = run_config.get("flip-model-id", "monai-flower-tutorial-model")
@@ -158,15 +161,15 @@ def evaluate(msg: Message, context: Context) -> Message:
 
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info("Evaluating on device: %s", device)
+    log(INFO, "Evaluating on device: %s", device)
 
     # Get FLIP config
     flip_utils = FLIP_BASE()
     flip_utils.project_id = run_config.get("flip-project-id", "monai-flower-tutorial")
     flip_utils.query = run_config.get("flip-cohort-query", "*")
-    logger.info("Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
+    log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
     flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
-    logger.info(f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
+    log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
 
     # Get test data
     test_datalist = flip_utils.get_image_and_label_list(_val_split=val_split, _test_split=test_split, is_test=True)
@@ -184,7 +187,7 @@ def evaluate(msg: Message, context: Context) -> Message:
 
     # Perform evaluation
     if len(test_loader.dataset) == 0:
-        logger.info("No test data found!")
+        log(INFO, "No test data found!")
         metrics = {"test_loss": 0.0, "test_dice": 0.0, "num-examples": 0}
         metric_record = MetricRecord(metrics)
         content = RecordDict({"metrics": metric_record})
@@ -197,7 +200,8 @@ def evaluate(msg: Message, context: Context) -> Message:
         loss_fn=loss_fn,
     )
 
-    logger.info(
+    log(
+        INFO,
         "Evaluation completed for client %s. Test Loss: %.4f, Test Dice: %.4f",
         client_name,
         test_loss,
