@@ -95,3 +95,12 @@ output "fl_server_raw_nlb_dns" {
   description = "Raw AWS NLB DNS name for FL server debugging"
   value       = module.fl_server_nlb.dns_name
 }
+
+############################
+# Certificate
+############################
+
+output "certificate_arn" {
+  description = "ACM Certificate ARN (validated)"
+  value       = aws_acm_certificate_validation.flip.certificate_arn
+}
