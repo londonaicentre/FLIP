@@ -429,17 +429,30 @@ class FLIP_TRAINER(Executor):
                 self.log_info(fl_ctx, nan_summary)
             # Send metrics over to FLIP
             round = global_round * (self._epochs) + epoch + 1
+
+            # Send loss metrics - convert NaN to 0.0
+            train_loss = training_metrics["loss"]["train"][-1]
+            val_loss = training_metrics["loss"]["val"][-1]
+
+            if np.isnan(train_loss):
+                self.logger.warning("TRAIN_LOSS is NaN (no valid batches) - sending 0.0")
+                train_loss = 0.0
+
+            if np.isnan(val_loss):
+                self.logger.warning("VAL_LOSS is NaN (no valid batches) - sending 0.0")
+                val_loss = 0.0
+
             send_metrics_value(
                 label="TRAIN_LOSS",
                 round=round,
-                value=training_metrics["loss"]["train"][-1],
+                value=train_loss,
                 fl_ctx=fl_ctx,
                 flip=self.flip,
             )
             send_metrics_value(
                 label="VAL_LOSS",
                 round=round,
-                value=training_metrics["loss"]["val"][-1],
+                value=val_loss,
                 fl_ctx=fl_ctx,
                 flip=self.flip,
             )
@@ -449,32 +462,33 @@ class FLIP_TRAINER(Executor):
                     train_value = training_metrics[metric][lesion_name]["train"][-1]
                     val_value = training_metrics[metric][lesion_name]["val"][-1]
 
-                    # Only send metrics if they are not NaN
-                    if not np.isnan(train_value):
-                        send_metrics_value(
-                            label=f"{'train'.upper()}-{metric.upper()}",
-                            round=round,
-                            value=train_value,
-                            fl_ctx=fl_ctx,
-                            flip=self.flip,
-                        )
-                    else:
+                    # Convert NaN to 0.0 before sending
+                    if np.isnan(train_value):
                         self.logger.warning(
-                            f"Skipping TRAIN-{metric.upper()} for {lesion_name} (value is NaN - no valid batches)"
+                            f"TRAIN-{metric.upper()} for {lesion_name} is NaN (no valid batches) - sending 0.0"
                         )
+                        train_value = 0.0
 
-                    if not np.isnan(val_value):
-                        send_metrics_value(
-                            label=f"{'val'.upper()}-{metric.upper()}",
-                            round=round,
-                            value=val_value,
-                            fl_ctx=fl_ctx,
-                            flip=self.flip,
-                        )
-                    else:
+                    if np.isnan(val_value):
                         self.logger.warning(
-                            f"Skipping VAL-{metric.upper()} for {lesion_name} (value is NaN - no valid batches)"
+                            f"VAL-{metric.upper()} for {lesion_name} is NaN (no valid batches) - sending 0.0"
                         )
+                        val_value = 0.0
+
+                    send_metrics_value(
+                        label=f"{'train'.upper()}-{metric.upper()}",
+                        round=round,
+                        value=train_value,
+                        fl_ctx=fl_ctx,
+                        flip=self.flip,
+                    )
+                    send_metrics_value(
+                        label=f"{'val'.upper()}-{metric.upper()}",
+                        round=round,
+                        value=val_value,
+                        fl_ctx=fl_ctx,
+                        flip=self.flip,
+                    )
 
     def execute(
         self,
