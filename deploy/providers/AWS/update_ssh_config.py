@@ -123,7 +123,7 @@ def get_terraform_output(output_name: str) -> str:
         print_status("FAIL", f"Could not retrieve required IP {output_name} from Terraform outputs")
         exit(1)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        print_status("FAIL", "Could not retrieve required IP Ec2PublicIp from Terraform outputs")
+        print_status("FAIL", f"Could not retrieve required IP {output_name} from Terraform outputs")
         exit(1)
 
 
@@ -339,8 +339,8 @@ def main(
         sys.exit(1)
 
     EC2_INSTANCES: dict[str, str] = {
-        "flip": "Ec2PublicIp",
-        "flip-trust": "TrustEc2PublicIp",
+        "flip": "ec2_public_ip",
+        "flip-trust": "trust_ec2_public_ip",
     }
     for service_name, instance_ip_name in EC2_INSTANCES.items():
         public_ip = get_terraform_output(instance_ip_name)

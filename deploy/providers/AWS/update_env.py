@@ -72,12 +72,12 @@ def main():
 
     # Extract values safely
     try:
-        ec2_ip = outputs["Ec2PublicIp"]["value"]
-        trust_ip = outputs["TrustEc2PublicIp"]["value"]
-        db_endpoint = outputs["DbEndpoint"]["value"]
-        db_secret_arn = outputs["DbSecretArn"]["value"]
-        cognito_user_pool_id = outputs["CognitoUserPoolId"]["value"]
-        cognito_app_client_id = outputs["CognitoAppClientId"]["value"]
+        ec2_ip = outputs["ec2_public_ip"]["value"]
+        trust_ip = outputs["trust_ec2_public_ip"]["value"]
+        db_endpoint = outputs["db_endpoint"]["value"]
+        db_secret_arn = outputs["db_secret_arn"]["value"]
+        cognito_user_pool_id = outputs["cognito_user_pool_id"]["value"]
+        cognito_app_client_id = outputs["cognito_app_client_id"]["value"]
     except KeyError as e:
         print(f"❌ Error: Missing output {e} in Terraform state. Did you run 'make apply'?")
         sys.exit(1)

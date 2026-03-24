@@ -432,12 +432,12 @@ def main(
     print_section("Fetching Terraform Outputs")
 
     # Get Terraform outputs
-    central_hub_ip = get_terraform_output("Ec2PublicIp")
-    central_hub_id = get_terraform_output("Ec2InstanceId")
-    ssh_key = get_terraform_output("Keypair")
+    central_hub_ip = get_terraform_output("ec2_public_ip")
+    central_hub_id = get_terraform_output("ec2_instance_id")
+    ssh_key = get_terraform_output("keypair")
 
-    trust_ip = get_terraform_output("TrustEc2PublicIp")
-    trust_id = get_terraform_output("TrustEc2InstanceId")
+    trust_ip = get_terraform_output("trust_ec2_public_ip")
+    trust_id = get_terraform_output("trust_ec2_instance_id")
 
     if not central_hub_ip:
         print_status("FAIL", "Could not retrieve Central Hub EC2 IP from Terraform outputs")

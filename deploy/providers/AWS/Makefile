@@ -233,12 +233,12 @@ update-trust-secret: ## Update Secrets Manager with the current trust-ca.crt (ru
 .PHONY: gen-trust-ec2-certs
 gen-trust-ec2-certs: ## Generate TLS certs for the cloud Trust EC2 using its Terraform-provisioned public IP
 	@echo "🔑 Generating TLS certificates for cloud Trust EC2..."
-	@TRUST_HOST="$$(terraform output -raw TrustEc2PublicIp)" \
+	@TRUST_HOST="$$(terraform output -raw trust_ec2_public_ip)" \
 		bash ../../../trust/certs/generate-trust-certs.sh
 	@echo "📋 Copying CA cert to Terraform directory (picked up by Secrets Manager on next apply)..."
 	@cp ../../../trust/certs/trust-ca.crt ./trust-ca.crt
 	@echo "📦 Deploying server certificate and key to Trust EC2..."
-	@TRUST_IP="$$(terraform output -raw TrustEc2PublicIp)"; \
+	@TRUST_IP="$$(terraform output -raw trust_ec2_public_ip)"; \
 	ssh -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new ubuntu@$$TRUST_IP "sudo mkdir -p /opt/flip/certs && sudo chown ubuntu:ubuntu /opt/flip/certs" && \
 	scp -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new \
 		../../../trust/certs/trust-server.crt \
@@ -248,7 +248,7 @@ gen-trust-ec2-certs: ## Generate TLS certs for the cloud Trust EC2 using its Ter
 .PHONY: regen-trust-certs
 regen-trust-certs: ## Re-generate TLS certs for Trust EC2, deploy to EC2, and update Secrets Manager
 	@echo "🔑 Regenerating TLS certificates for Trust EC2..."
-	@TRUST_HOST="$$(terraform output -raw TrustEc2PublicIp)" bash ../../../trust/certs/generate-trust-certs.sh
+	@TRUST_HOST="$$(terraform output -raw trust_ec2_public_ip)" bash ../../../trust/certs/generate-trust-certs.sh
 	@echo "📋 Copying new CA cert to provider directory..."
 	@cp ../../../trust/certs/trust-ca.crt trust-ca.crt
 	@echo "📦 Copying certificates to Trust EC2..."
@@ -256,7 +256,7 @@ regen-trust-certs: ## Re-generate TLS certs for Trust EC2, deploy to EC2, and up
 		../../../trust/certs/trust-server.crt \
 		../../../trust/certs/trust-server.key \
 		../../../trust/certs/trust-ca.crt \
-		ubuntu@$$(terraform output -raw TrustEc2PublicIp):/opt/flip/certs/
+		ubuntu@$$(terraform output -raw trust_ec2_public_ip):/opt/flip/certs/
 	@echo "🔄 Restarting nginx-tls on Trust EC2 to load new certificate..."
 	@ssh flip-trust "docker restart trust1-nginx-tls-1"
 	@echo "🔐 Updating Secrets Manager..."
@@ -292,7 +292,7 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 .PHONY: write-trust-ca
 write-trust-ca: ## Fetch trust_ca_cert from Secrets Manager and write to CH EC2 host for volume mount
 	@echo "🔐 Fetching Trust CA cert from Secrets Manager and writing to CH EC2..."
-	@CH_IP=$$(terraform output -raw Ec2PublicIp) && \
+	@CH_IP=$$(terraform output -raw ec2_public_ip) && \
 	  CA_CERT=$$(AWS_PROFILE=$(AWS_PROFILE) aws secretsmanager get-secret-value \
 	    --secret-id $(AWS_SECRET_NAME) \
 	    --query 'SecretString' --output text | python3 -c \
@@ -332,12 +332,12 @@ deploy-trust: update-env ## Deploy trust relationships after central hub is depl
 	@echo "🐳 Deploying containers to Trust EC2 ..."
 	docker swarm init || echo "   Swarm already initialized"
 	@echo "🗒️ Copying TLS certificates to Trust EC2..."
-	ssh -i ~/.ssh/host-aws ubuntu@$$(terraform output -raw TrustEc2PublicIp) "mkdir -p /opt/flip/certs"
+	ssh -i ~/.ssh/host-aws ubuntu@$$(terraform output -raw trust_ec2_public_ip) "mkdir -p /opt/flip/certs"
 	scp -i ~/.ssh/host-aws \
 		../../../trust/certs/trust-server.crt \
 		../../../trust/certs/trust-server.key \
 		../../../trust/certs/trust-ca.crt \
-		ubuntu@$$(terraform output -raw TrustEc2PublicIp):/opt/flip/certs/
+		ubuntu@$$(terraform output -raw trust_ec2_public_ip):/opt/flip/certs/
 	@echo "✅ Certificates copied!"
 	@echo "🚀 Deploying Trust services..."
 	$(MAKE) -C ../../../ up-trust-ec2 PROD=${PROD}
@@ -351,7 +351,7 @@ add-local-trust: ## Provision an on-prem Trust host via Ansible and register it 
 	@echo "🔧 Provisioning on-premises Trust host at $(LOCAL_TRUST_IP)..."
 	@uv sync
 	@uv run ansible-galaxy install -r ../../../deploy/providers/local/requirements.yml
-	@CH_IP="$$(terraform output -raw Ec2PublicIp)" && \
+	@CH_IP="$$(terraform output -raw ec2_public_ip)" && \
 	if [ -n "$(LOCAL_TRUST_SSH_KEY)" ]; then \
 		echo "📡 Connecting via SSH (key: $(LOCAL_TRUST_SSH_KEY))..."; \
 		uv run ansible-playbook \
