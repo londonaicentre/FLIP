@@ -73,6 +73,12 @@ model-checkpoints = "/app/model_checkpoints"
 checkpoint = "model.pt"
 path = "unet"
 
+# Metrics specification for evaluation
+# Define metric names and their expected types ("float", "int", or "list")
+[tool.flwr.app.config.metrics]
+mean_dice = "float"
+raw_dice = "list"
+
 # Linter
 [tool.ruff]
 line-length = 120

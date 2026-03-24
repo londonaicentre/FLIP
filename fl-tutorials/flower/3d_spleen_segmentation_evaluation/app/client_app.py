@@ -13,17 +13,20 @@
 
 """quickstart-monai: A Flower / MONAI evaluation-only app."""
 
-import logging
 import os
+from logging import INFO
 from typing import Dict, List
 
 import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
+from flwr.common import log
 from monai.data import DataLoader, Dataset
 
 from app.data_loading import FLIP_BASE
 from app.models import get_model_for_path
+from app.task import evaluate_func
+from app.transforms import get_val_transforms
 
 
 def parse_models_config(run_config: Dict) -> Dict:
@@ -36,17 +39,13 @@ def parse_models_config(run_config: Dict) -> Dict:
     prefix = "models."
     for key, value in run_config.items():
         if key.startswith(prefix):
-            rest = key[len(prefix):]
+            rest = key[len(prefix) :]
             parts = rest.split(".", 1)
             if len(parts) == 2:
                 model_name, field = parts
                 models.setdefault(model_name, {})[field] = value
     return models
-from app.task import evaluate_func
-from app.transforms import get_val_transforms
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # Must match the separator used in server_app.pack_models.
 _MODEL_KEY_SEP = "/"
@@ -98,13 +97,13 @@ def evaluate(msg: Message, context: Context) -> Message:
     flip_utils = FLIP_BASE()
     flip_utils.project_id = run_config.get("flip-project-id", "monai-flower-tutorial")
     flip_utils.query = run_config.get("flip-cohort-query", "*")
-    logger.info("Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
+    log(INFO, "Fetching FLIP dataframe using project_id=%s and query=%s", flip_utils.project_id, flip_utils.query)
     flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
-    logger.info(f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
+    log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
 
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info("Evaluating on device: %s", device)
+    log(INFO, "Evaluating on device: %s", device)
 
     # Get test data (shared across all models)
     test_datalist = flip_utils.get_test_data_list(_test_split=test_split)
@@ -117,7 +116,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     # Evaluate each model
     evaluation_results: Dict = {}
     for model_name, model_cfg in models_config.items():
-        logger.info(f"Evaluating model '{model_name}' (arch='{model_cfg['path']}')");
+        log(INFO, f"Evaluating model '{model_name}' (arch='{model_cfg['path']}')")
 
         model = get_model_for_path(model_cfg["path"])
         model = unpack_model(arrays, model_name, model)
@@ -125,7 +124,7 @@ def evaluate(msg: Message, context: Context) -> Message:
 
         all_dice_scores: List[float] = []
         for round_idx in range(local_rounds):
-            logger.info(f"  Round {round_idx + 1}/{local_rounds}")
+            log(INFO, f"  Round {round_idx + 1}/{local_rounds}")
             dice_scores = evaluate_func(
                 model=model,
                 test_loader=test_loader,
@@ -147,7 +146,7 @@ def evaluate(msg: Message, context: Context) -> Message:
             "mean_dice": float(overall_mean_dice),
             "raw_dice": [float(d) for d in all_dice_scores],
         }
-        logger.info(f"  Model '{model_name}' mean dice: {overall_mean_dice:.4f}")
+        log(INFO, f"  Model '{model_name}' mean dice: {overall_mean_dice:.4f}")
 
     # Construct and return the reply Message
     metrics = {

@@ -13,18 +13,21 @@
 
 """quickstart-monai: A Flower / MONAI server app (evaluation-only)."""
 
+import json
 import os
-from typing import Dict, List, Optional, Tuple
+from logging import INFO
+from pathlib import Path
+from typing import Dict, Type
 
 import torch
 from flip import FLIP
 from flip.constants.flip_constants import ModelStatus
 from flwr.app import ArrayRecord, Context
-from flwr.common import EvaluateRes, Scalar
+from flwr.common import log
 from flwr.serverapp import Grid, ServerApp
-from flwr.serverapp.strategy import FedAvg
 
 from app.models import get_model_for_path
+from app.strategy import EvaluationStrategy
 
 
 def parse_models_config(run_config: Dict) -> Dict:
@@ -50,6 +53,39 @@ def parse_models_config(run_config: Dict) -> Dict:
     return models
 
 
+def parse_metrics_config(metrics_config: Dict[str, str]) -> Dict[str, Type]:
+    """Parse metrics configuration from pyproject.toml.
+
+    Converts string type names (\"float\", \"int\", \"list\") to actual Python types.
+
+    Args:
+        metrics_config: Dictionary mapping metric names to type strings.
+
+    Returns:
+        Dictionary mapping metric names to Python type objects.
+
+    Raises:
+        ValueError: If an unsupported type string is encountered.
+
+    """
+    type_mapping = {
+        "float": float,
+        "int": int,
+        "list": list,
+    }
+
+    metrics_spec = {}
+    for metric_name, type_str in metrics_config.items():
+        if type_str not in type_mapping:
+            msg = (
+                f"Unsupported type '{type_str}' for metric '{metric_name}'. Allowed types: {list(type_mapping.keys())}"
+            )
+            raise ValueError(msg)
+        metrics_spec[metric_name] = type_mapping[type_str]
+
+    return metrics_spec
+
+
 # Separator used to namespace per-model parameter keys inside a single ArrayRecord.
 # Must not appear in any PyTorch state-dict key.
 _MODEL_KEY_SEP = "/"
@@ -68,121 +104,6 @@ def pack_models(models: Dict[str, torch.nn.Module]) -> ArrayRecord:
     return ArrayRecord(combined)
 
 
-class MetricsValidator:
-    """Validator for evaluation metrics returned from clients."""
-
-    def __init__(self, input_evaluation: Dict, input_models: List):
-        self.input_evaluation = input_evaluation
-        self.input_models = input_models
-
-    def validate(self, input_evaluation: Dict) -> Tuple[bool, str]:
-        """Validate that the evaluation results match the expected structure."""
-        for model, evaluation in input_evaluation.items():
-            if model not in self.input_models:
-                return False, f"Model '{model}' is not in the list of input models."
-            else:
-                if not isinstance(evaluation, dict):
-                    return False, "Each model must be mapped to a dictionary of metrics."
-                success, message = self.validate_element(evaluation, self.input_evaluation)
-                if not success:
-                    return success, message
-        return True, "Successfully validated all models."
-
-    def validate_element(self, element: Dict, original_element: Dict) -> Tuple[bool, str]:
-        """Recursively validate that metric values are of the correct type (float or list of floats)."""
-        for key, value in element.items():
-            if key not in original_element.keys():
-                return False, f"Wrong metric '{key}' in evaluation."
-            else:
-                if isinstance(value, dict):
-                    success, message = self.validate_element(value, original_element[key])
-                    if not success:
-                        return success, message
-                else:
-                    if not isinstance(value, (float, list)):
-                        return False, f"Metric '{key}' must be a float or a list of floats."
-                    if isinstance(value, list):
-                        if not all(isinstance(x, (float, int)) for x in value):
-                            return False, f"All elements in the list for metric '{key}' must be floats."
-        return True, "Successfully validated elements."
-
-
-class EvaluationStrategy(FedAvg):
-    """Custom strategy for evaluation-only federated learning."""
-
-    def __init__(self, evaluation_output: Dict, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.evaluation_output = evaluation_output
-        self.validator = MetricsValidator(
-            input_evaluation=evaluation_output, input_models=list(evaluation_output.keys())
-        )
-        self.all_results = {}
-
-    def aggregate_evaluate(
-        self,
-        server_round: int,
-        results: List[Tuple[str, EvaluateRes]],
-        failures: List[Tuple[str, Exception]],
-    ) -> Tuple[Optional[float], Dict[str, Scalar]]:
-        """Aggregate evaluation results from all clients."""
-
-        if not results:
-            return None, {}
-
-        # Process each client's evaluation results
-        for client_id, evaluate_res in results:
-            metrics = evaluate_res.metrics
-
-            if "evaluation" in metrics:
-                # Parse evaluation results (may need conversion from Scalar types)
-                client_eval = self._parse_evaluation_metrics(metrics["evaluation"])
-
-                # Validate the evaluation results
-                is_valid, message = self.validator.validate(client_eval)
-                if not is_valid:
-                    print(f"Warning: Invalid evaluation results from client {client_id}: {message}")
-                    continue
-
-                # Aggregate results
-                for model_name, model_metrics in client_eval.items():
-                    if model_name not in self.all_results:
-                        self.all_results[model_name] = {"mean_dice": [], "raw_dice": []}
-
-                    # Collect mean_dice values
-                    if "mean_dice" in model_metrics:
-                        self.all_results[model_name]["mean_dice"].append(float(model_metrics["mean_dice"]))
-
-                    # Collect raw_dice values
-                    if "raw_dice" in model_metrics:
-                        raw_dice = model_metrics["raw_dice"]
-                        if isinstance(raw_dice, list):
-                            self.all_results[model_name]["raw_dice"].extend([float(x) for x in raw_dice])
-
-        # Calculate final aggregated results
-        final_results = {}
-        for model_name, results_data in self.all_results.items():
-            raw_dice_values = results_data["raw_dice"]
-
-            # Calculate overall mean dice
-            overall_mean_dice = sum(raw_dice_values) / len(raw_dice_values) if raw_dice_values else 0.0
-
-            final_results[model_name] = {"mean_dice": float(overall_mean_dice), "num_samples": len(raw_dice_values)}
-
-        print(f"Round {server_round} - Aggregated evaluation results: {final_results}")
-
-        # Return the mean dice averaged across all models as the top-level scalar
-        all_mean_dice = [v["mean_dice"] for v in final_results.values() if "mean_dice" in v]
-        aggregated_metric = sum(all_mean_dice) / len(all_mean_dice) if all_mean_dice else 0.0
-        return aggregated_metric, final_results
-
-    def _parse_evaluation_metrics(self, evaluation_data):
-        """Parse evaluation metrics from Flower's Scalar types to Python types."""
-        # This is a placeholder - the actual implementation depends on how
-        # the metrics are serialized in the Message
-        # For now, assume they are already in the correct format
-        return evaluation_data
-
-
 # Create ServerApp
 app = ServerApp()
 
@@ -193,7 +114,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
 
     run_config = context.run_config
     num_rounds = int(run_config.get("num-server-rounds", 1))
-    model_id = run_config.get("flip-model-id", "monai-flower-tutorial-model")
+    model_id = run_config.get("flip-model-id", "monai-flower-evaluation-model")
 
     flip.update_status(model_id, ModelStatus.INITIATED)
 
@@ -203,7 +124,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # Expected config structure:
     #   "models": {
     #     "<model_name>": {
-    #       "checkpoint": "<filename.pt>",   # relative to MODEL_CHECKPOINTS_DIR
+    #       "checkpoint": "<filename.pt>",   # relative to MODEL_CHECKPOINTS
     #       "path": "<architecture_key>"     # key in models.model_paths
     #     },
     #     ...
@@ -219,9 +140,9 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         if not checkpoints_dir:
             raise ValueError("LOCAL_DEV is set but 'model-checkpoints' is not defined in pyproject.toml config.")
     else:
-        checkpoints_dir = os.getenv("MODEL_CHECKPOINTS_DIR")
+        checkpoints_dir = os.getenv("MODEL_CHECKPOINTS")
         if checkpoints_dir is None:
-            raise ValueError("MODEL_CHECKPOINTS_DIR environment variable is not set")
+            raise ValueError("MODEL_CHECKPOINTS environment variable is not set")
 
     loaded_models: Dict[str, torch.nn.Module] = {}
     for model_name, model_cfg in models_config.items():
@@ -232,36 +153,74 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
             raise FileNotFoundError(f"Checkpoint for model '{model_name}' not found at: {checkpoint_file}")
 
         model = get_model_for_path(arch_path)
-        checkpoint = torch.load(checkpoint_file, map_location="cpu")
+        checkpoint = torch.load(checkpoint_file, map_location="cpu", weights_only=True)
         model.load_state_dict(checkpoint, strict=False)
         loaded_models[model_name] = model
-        print(f"Loaded model '{model_name}' (arch='{arch_path}') from {checkpoint_file}")
+        log(INFO, f"Loaded model '{model_name}' (arch='{arch_path}') from {checkpoint_file}")
 
     flip.update_status(model_id, ModelStatus.PREPARED)
 
     # Pack all models into a single ArrayRecord with namespaced keys.
     arrays = pack_models(loaded_models)
 
-    # Build the evaluation output template from the model names so the
-    # validator and aggregator know what to expect.
-    evaluation_output = {model_name: {"mean_dice": 0.0, "raw_dice": []} for model_name in models_config.keys()}
+    # Parse metrics specification from config
+    metrics_config = context.run_config.get("metrics", {})
+    if not metrics_config:
+        msg = "No metrics configuration found in pyproject.toml. Please define [tool.flwr.app.config.metrics]."
+        raise ValueError(msg)
+
+    metrics_spec = parse_metrics_config(metrics_config)
+    log(INFO, f"Metrics specification: {metrics_spec}")
 
     # Use custom evaluation strategy
     strategy = EvaluationStrategy(
-        evaluation_output=evaluation_output,
+        metrics_spec=metrics_spec,
+        model_names=list(models_config.keys()),
         fraction_train=0.0,  # No training
         fraction_evaluate=1.0,  # All clients evaluate
     )
 
-    strategy.start(
+    _ = strategy.start(
         grid=grid,
         initial_arrays=arrays,
         num_rounds=num_rounds,
     )
 
-    flip.update_status(model_id, ModelStatus.TRAINING_STARTED)
+    log(INFO, f"\n{'=' * 60}")
+    log(INFO, "Evaluation complete!")
+    log(INFO, f"{'=' * 60}")
 
-    # Final results are now stored in strategy.all_results
-    print(f"Final aggregated results: {strategy.all_results}")
+    # Get output directory using WORKING_DIR environment variable
+    working_dir = os.getenv("WORKING_DIR", "/app")
+    output_dir = Path(f"{working_dir}/{model_id}/evaluation_outputs")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    flip.update_status(model_id, ModelStatus.RESULTS_UPLOADED)
+    # Prepare evaluation results
+    evaluation_results = {
+        "num_rounds": num_rounds,
+        "models_evaluated": list(models_config.keys()),
+        "metrics_spec": {k: v.__name__ for k, v in metrics_spec.items()},
+        "results": strategy.all_results,
+    }
+
+    # Save evaluation results to JSON
+    json_path = output_dir / "evaluation_results.json"
+    try:
+        with open(json_path, "w") as f:
+            json.dump(evaluation_results, f, indent=2)
+        log(INFO, "✓ Evaluation results saved to %s", json_path)
+    except Exception as e:
+        log(INFO, "Failed to save evaluation results: %s", str(e))
+        flip.update_status(model_id, ModelStatus.ERROR)
+        return
+
+    try:
+        flip.upload_results_to_s3(output_dir, model_id)
+        flip.update_status(model_id, ModelStatus.RESULTS_UPLOADED)
+    except Exception as e:
+        log(INFO, "Failed to upload results to S3: %s", str(e))
+        flip.update_status(model_id, ModelStatus.ERROR)
+        return
+
+    log(INFO, "\n✓ Evaluation complete. All outputs saved to %s", output_dir)
+    log(INFO, "  - Results JSON: evaluation_results.json")

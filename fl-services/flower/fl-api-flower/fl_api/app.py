@@ -52,7 +52,7 @@ _submission_in_progress = False
 
 
 def _get_allowed_job_folders() -> set[str]:
-    raw_value = os.getenv("ALLOWED_JOB_FOLDERS", "numpy,monai")
+    raw_value = os.getenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation,3d_spleen_segmentation_evaluation")
     return {item.strip() for item in raw_value.split(",") if item.strip()}
 
 
