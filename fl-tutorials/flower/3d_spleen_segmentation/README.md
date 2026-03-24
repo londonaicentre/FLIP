@@ -74,8 +74,3 @@ By default, the app reads from:
 
 - `data/spleen/sample_get_dataframe_response.csv`
 - `data/spleen/accession-resources`
-
-## Notes
-
-- Training only (no evaluation endpoint).
-- Read-only IO; no checkpoints, plots, or metrics are written to disk.
