@@ -155,6 +155,7 @@ up-trust-ec2: create-networks
 	@echo "✅ Trust services started successfully!"
 
 up-local-trust-stag: create-networks
+	docker context use default
 	@echo "🚢 Starting local on-prem Trust services for staging..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-local-trust-stag PROD=stag
 	@echo "✅ Local Trust services started successfully!"

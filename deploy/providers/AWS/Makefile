@@ -23,6 +23,12 @@ include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
+ifeq ($(LOCK),)
+LOCK=true
+else
+LOCK=false
+endif
+
 # Export PROD so child processes (e.g. check_status.py) can determine the environment
 export PROD
 
@@ -63,6 +69,27 @@ export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
+export TF_VAR_create_central_hub_elastic_ip=${CREATE_CENTRAL_HUB_ELASTIC_IP}
+
+CENTRALHUB_IMAGES = \
+	$(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG) \
+	$(DOCKER_REGISTRY)flip-api:$(DOCKER_TAG)
+
+TRUST_IMAGES = \
+	$(DOCKER_REGISTRY)trust-api:$(DOCKER_TAG) \
+	$(DOCKER_REGISTRY)imaging-api:$(DOCKER_TAG) \
+	$(DOCKER_REGISTRY)data-access-api:$(DOCKER_TAG)
+
+.PHONY: trigger-builds
+trigger-builds: ## Trigger all GitHub Actions "Build and Push" workflows for the current branch
+	@echo "🔨 Triggering GitHub Actions build workflows..."
+	@branch=$$(git rev-parse --abbrev-ref HEAD) && \
+	gh workflow list --json name,id \
+	  --jq '.[] | select(.name | startswith("Build and Push")) | .id' | \
+	while read -r id; do \
+	  gh workflow run "$$id" --ref "$$branch"; \
+	done
+	@echo "✅ Build workflows triggered!"
 
 prettier:
 	terraform fmt -recursive
@@ -98,114 +125,33 @@ init: ## Initialize Terraform configuration
 
 .PHONY: import-persistent
 import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement
-	@echo "🔄 Importing persistent resources..."
-	@echo "1️⃣  FLIP S3 Bucket..."
-	@BUCKET_NAME=$(TF_VAR_FLIP_BUCKET_NAME); \
-	if [ -n "$$BUCKET_NAME" ]; then \
-		if aws s3api head-bucket --bucket "$$BUCKET_NAME" --profile $(AWS_PROFILE) 2>/dev/null; then \
-			echo "   Found bucket: $$BUCKET_NAME"; \
-			if terraform state show aws_s3_bucket.flip_bucket >/dev/null 2>&1; then \
-				echo "   ✓ FLIP S3 bucket (already in state)"; \
-			else \
-				echo "   Importing bucket into state..."; \
-				terraform import aws_s3_bucket.flip_bucket "$$BUCKET_NAME" 2>&1 | grep -v "Resource already managed" || echo "   ✓ FLIP S3 bucket imported"; \
-			fi; \
-			terraform import aws_s3_bucket_cors_configuration.flip_bucket_cors "$$BUCKET_NAME" 2>/dev/null || echo "   ✓ FLIP S3 CORS"; \
-			terraform import aws_s3_object.app_destination_bucket "$$BUCKET_NAME/app_destination_bucket/" 2>/dev/null || echo "   ✓ app_destination_bucket folder"; \
-			terraform import aws_s3_object.model_files "$$BUCKET_NAME/model_files/" 2>/dev/null || echo "   ✓ model_files folder"; \
-			terraform import aws_s3_object.uploaded_federated_data "$$BUCKET_NAME/uploaded_federated_data/" 2>/dev/null || echo "   ✓ uploaded_federated_data folder"; \
-		else \
-			echo "   ⚠️  Bucket $$BUCKET_NAME does not exist in AWS"; \
-		fi; \
+	@bash scripts/import-resources.sh
+
+
+.PHONY: force-unlock
+force-unlock: ## Force unlock Terraform state - provide LOCK_ID=<id> as argument
+	@if [ -z "$(LOCK_ID)" ]; then \
+		echo "❌ LOCK_ID not provided. Usage: make force-unlock LOCK_ID=<lock-id>"; \
+		exit 1; \
 	fi
-	@echo ""
-	@echo "2️⃣  AI Centre S3 Bucket..."
-	@AICENTRE_BUCKET_NAME=$(TF_VAR_AICENTRE_BUCKET_NAME); \
-	if [ -n "$$AICENTRE_BUCKET_NAME" ]; then \
-		if aws s3api head-bucket --bucket "$$AICENTRE_BUCKET_NAME" --profile $(AWS_PROFILE) 2>/dev/null; then \
-			echo "   Found bucket: $$AICENTRE_BUCKET_NAME"; \
-			if terraform state show aws_s3_bucket.aicentre_bucket >/dev/null 2>&1; then \
-				echo "   ✓ AI Centre S3 bucket (already in state)"; \
-			else \
-				echo "   Importing bucket into state..."; \
-				terraform import aws_s3_bucket.aicentre_bucket "$$AICENTRE_BUCKET_NAME" 2>&1 | grep -v "Resource already managed" || echo "   ✓ AI Centre S3 bucket imported"; \
-			fi; \
-			terraform import aws_s3_bucket_cors_configuration.aicentre_bucket_cors "$$AICENTRE_BUCKET_NAME" 2>/dev/null || echo "   ✓ AI Centre S3 CORS"; \
-		else \
-			echo "   ⚠️  Bucket $$AICENTRE_BUCKET_NAME does not exist in AWS - will be created"; \
-		fi; \
-	else \
-		echo "   ⚠️  AICENTRE_BUCKET_NAME not set in environment"; \
-	fi
-	@echo ""
-	@echo "3️⃣  Secrets Manager..."
-	@SECRET_ARN=$$(aws secretsmanager list-secrets --include-planned-deletion --profile $(AWS_PROFILE) --query 'SecretList[?Name==`FLIP_API`].ARN' --output text 2>/dev/null); \
-	if [ -n "$$SECRET_ARN" ]; then \
-		DELETION_DATE=$$(aws secretsmanager describe-secret --secret-id FLIP_API --profile $(AWS_PROFILE) --query 'DeletedDate' --output text 2>/dev/null); \
-		if [ -n "$$DELETION_DATE" ] && [ "$$DELETION_DATE" != "None" ]; then \
-			echo "   Restoring scheduled-for-deletion secret..."; \
-			aws secretsmanager restore-secret --secret-id FLIP_API --profile $(AWS_PROFILE) 2>/dev/null && echo "   ✅ Restored!"; \
-		fi; \
-		terraform import 'module.flip_api_secret.aws_secretsmanager_secret.this[0]' "$$SECRET_ARN" 2>/dev/null || echo "   ✓ Secret"; \
-		VERSION_ID=$$(aws secretsmanager describe-secret --secret-id FLIP_API --profile $(AWS_PROFILE) --query 'VersionIdsToStages | keys(@) | [0]' --output text 2>/dev/null); \
-		if [ -n "$$VERSION_ID" ]; then \
-			terraform import 'module.flip_api_secret.aws_secretsmanager_secret_version.this[0]' "$$SECRET_ARN|$$VERSION_ID" 2>/dev/null || echo "   ✓ Secret version"; \
-		fi; \
-	fi
-	@echo ""
-	@echo "4️⃣  Cognito..."
-	@POOL_ID=$$(aws cognito-idp list-user-pools --max-results 20 --profile $(AWS_PROFILE) --query 'UserPools[?Name==`flip-user-pool`].Id' --output text 2>/dev/null); \
-	if [ -n "$$POOL_ID" ]; then \
-		terraform import aws_cognito_user_pool.flip_user_pool "$$POOL_ID" 2>/dev/null || echo "   ✓ User pool"; \
-		DOMAIN=$$(aws cognito-idp describe-user-pool --user-pool-id "$$POOL_ID" --profile $(AWS_PROFILE) --query 'UserPool.Domain' --output text 2>/dev/null); \
-		if [ -n "$$DOMAIN" ] && [ "$$DOMAIN" != "None" ]; then \
-			terraform import aws_cognito_user_pool_domain.main "$$DOMAIN" 2>/dev/null || echo "   ✓ Domain"; \
-		fi; \
-		terraform import random_string.cognito_domain "$$DOMAIN" 2>/dev/null || echo "   ✓ Random string"; \
-		CLIENT_ID=$$(aws cognito-idp list-user-pool-clients --user-pool-id "$$POOL_ID" --profile $(AWS_PROFILE) --query 'UserPoolClients[0].ClientId' --output text 2>/dev/null); \
-		if [ -n "$$CLIENT_ID" ]; then \
-			terraform import aws_cognito_user_pool_client.client "$$POOL_ID/$$CLIENT_ID" 2>/dev/null || echo "   ✓ Client"; \
-		fi; \
-		terraform import aws_cognito_user.admin_user "$$POOL_ID/aicentreflip@gmail.com" 2>/dev/null || echo "   ✓ Admin user"; \
-		terraform import aws_cognito_user.researcher_user "$$POOL_ID/rafaelagd@gmail.com" 2>/dev/null || echo "   ✓ Researcher user"; \
-	fi
-	@echo ""
-	@echo "5️⃣  SES Email Identity..."
-	@EXISTING_SES_EMAIL=$$(aws ses list-identities --profile $(AWS_PROFILE) --query 'Identities[0]' --output text 2>/dev/null); \
-	if [ -n "$$EXISTING_SES_EMAIL" ] && [ "$$EXISTING_SES_EMAIL" != "None" ]; then \
-		if [ "$$EXISTING_SES_EMAIL" = "$(TF_VAR_SES_VERIFIED_EMAIL)" ]; then \
-			echo "   ✓ Existing SES identity matches configuration: $$EXISTING_SES_EMAIL"; \
-			terraform import aws_ses_email_identity.flip_sender "$$EXISTING_SES_EMAIL" 2>/dev/null || echo "   ✓ SES Email Identity (already imported)"; \
-		else \
-			echo "   ⚠️  Existing SES identity ($$EXISTING_SES_EMAIL) does NOT match configuration ($(TF_VAR_SES_VERIFIED_EMAIL))"; \
-			echo "   ℹ️  Skipping import - Terraform will destroy and recreate with correct email"; \
-		fi; \
-	else \
-		echo "   ℹ️  No existing SES identity found - Terraform will create $(TF_VAR_SES_VERIFIED_EMAIL)"; \
-	fi
-	@echo ""
-	@echo "6️⃣  ACM Certificate..."
-	@CERT_ARN=$$(aws acm list-certificates --profile $(AWS_PROFILE) --region $(TF_VAR_AWS_REGION) --query "CertificateSummaryList[?DomainName=='$(TF_VAR_flip_alb_subdomain)'].CertificateArn" --output text 2>/dev/null); \
-	if [ -n "$$CERT_ARN" ]; then \
-		terraform import aws_acm_certificate.flip "$$CERT_ARN" 2>/dev/null || echo "   ✓ ACM certificate"; \
-		terraform import aws_acm_certificate_validation.flip "$$CERT_ARN" 2>/dev/null || echo "   ✓ Certificate validation"; \
-		VALIDATION_RECORDS=$$(aws acm describe-certificate --certificate-arn "$$CERT_ARN" --profile $(AWS_PROFILE) --region $(TF_VAR_AWS_REGION) --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Name' --output text 2>/dev/null); \
-		if [ -n "$$VALIDATION_RECORDS" ]; then \
-			HOSTED_ZONE_ID=$$(aws route53 list-hosted-zones --profile $(AWS_PROFILE) --query "HostedZones[?Name=='$(TF_VAR_flip_alb_subdomain).'].Id" --output text 2>/dev/null | cut -d'/' -f3); \
-			if [ -n "$$HOSTED_ZONE_ID" ]; then \
-				RECORD_NAME=$$(aws acm describe-certificate --certificate-arn "$$CERT_ARN" --profile $(AWS_PROFILE) --region $(TF_VAR_AWS_REGION) --query 'Certificate.DomainValidationOptions[0].ResourceRecord.Name' --output text 2>/dev/null); \
-				terraform import "aws_route53_record.cert_validation[\"$(TF_VAR_flip_alb_subdomain)\"]" "$${HOSTED_ZONE_ID}_$${RECORD_NAME}_CNAME" 2>/dev/null || echo "   ✓ Route53 validation record"; \
-			fi; \
-		fi; \
-	fi
-	@echo ""
-	@echo "ℹ️  Note: Terraform state bucket ($(FLIP_TFSTATE_BUCKET_NAME)) is managed externally via create_backend.sh"
-	@echo "✅ Persistent resources imported!"
+	@bash scripts/manage-aws.sh force-unlock $(LOCK_ID)
+
+.PHONY: delete-flip-keypair
+delete-flip-keypair: ## Delete the flip-keypair from AWS (run before apply if it exists)
+	@bash scripts/manage-aws.sh delete-keypair flip-keypair
+
+.PHONY: list-eips
+list-eips: ## List all Elastic IPs in the region
+	@bash scripts/manage-aws.sh list-eips
+
+.PHONY: release-unused-eips
+release-unused-eips: ## Release unassociated Elastic IPs to free up quota
+	@bash scripts/manage-aws.sh release-unused-eips
 
 .PHONY: plan
-plan:
+plan: ## Plan Terraform changes (with environment file loaded)
 	@echo "📋 Planning Terraform changes..."
-	@terraform plan -out=plan.tfplan
+	@terraform plan -out=plan.tfplan -lock=${LOCK}
 
 .PHONY: plan-cert
 plan-cert: ## Plan only the ACM certificate (step 1 of 2 for HTTPS)
@@ -230,17 +176,32 @@ update-trust-secret: ## Update Secrets Manager with the current trust-ca.crt (ru
 	@terraform apply -target='module.flip_api_secret.aws_secretsmanager_secret_version.this[0]' -auto-approve
 	@echo "✅ Secrets Manager updated with new trust CA certificate!"
 
+.PHONY: refresh
+refresh: ## Refresh Terraform state to sync with actual AWS resources
+	@echo "🔄 Refreshing Terraform state..."
+	@terraform refresh
+	@echo "✅ State refreshed!"
+
 .PHONY: gen-trust-ec2-certs
-gen-trust-ec2-certs: ## Generate TLS certs for the cloud Trust EC2 using its Terraform-provisioned public IP
+gen-trust-ec2-certs: refresh ## Generate TLS certs for the cloud Trust EC2 using its Terraform-provisioned public IP
 	@echo "🔑 Generating TLS certificates for cloud Trust EC2..."
 	@TRUST_HOST="$$(terraform output -raw TrustEc2PublicIp)" \
 		bash ../../../trust/certs/generate-trust-certs.sh
 	@echo "📋 Copying CA cert to Terraform directory (picked up by Secrets Manager on next apply)..."
 	@cp ../../../trust/certs/trust-ca.crt ./trust-ca.crt
-	@echo "📦 Deploying server certificate and key to Trust EC2..."
+	@echo "📦 Waiting for Trust EC2 to be fully initialized and SSH-ready..."
 	@TRUST_IP="$$(terraform output -raw TrustEc2PublicIp)"; \
-	ssh -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new ubuntu@$$TRUST_IP "sudo mkdir -p /opt/flip/certs && sudo chown ubuntu:ubuntu /opt/flip/certs" && \
-	scp -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new \
+	echo "   Waiting for SSH to be available on $$TRUST_IP..."; \
+	for i in $$(seq 1 60); do \
+		ssh -i ~/.ssh/host-aws -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null ubuntu@$$TRUST_IP "exit 0" 2>/dev/null && echo "   ✓ SSH ready (attempt $$i)" && break; \
+		if [ $$i -eq 60 ]; then echo "   ✗ SSH did not become available after 5 minutes."; exit 1; fi; \
+		echo "   ... waiting (attempt $$i/60)"; \
+		sleep 5; \
+	done
+	@echo "📤 Deploying server certificate and key to Trust EC2..."
+	@TRUST_IP="$$(terraform output -raw TrustEc2PublicIp)"; \
+	ssh -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null ubuntu@$$TRUST_IP "sudo mkdir -p /opt/flip/certs && sudo chown ubuntu:ubuntu /opt/flip/certs" && \
+	scp -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
 		../../../trust/certs/trust-server.crt \
 		../../../trust/certs/trust-server.key \
 		ubuntu@$$TRUST_IP:/opt/flip/certs/
@@ -252,7 +213,7 @@ regen-trust-certs: ## Re-generate TLS certs for Trust EC2, deploy to EC2, and up
 	@echo "📋 Copying new CA cert to provider directory..."
 	@cp ../../../trust/certs/trust-ca.crt trust-ca.crt
 	@echo "📦 Copying certificates to Trust EC2..."
-	@scp -i ~/.ssh/host-aws \
+	@scp -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
 		../../../trust/certs/trust-server.crt \
 		../../../trust/certs/trust-server.key \
 		../../../trust/certs/trust-ca.crt \
@@ -264,7 +225,7 @@ regen-trust-certs: ## Re-generate TLS certs for Trust EC2, deploy to EC2, and up
 	@echo "✅ Certificate rotation complete!"
 
 .PHONY: apply
-apply: ## Apply Terraform configuration to update AWS infrastructure
+apply: ## Apply Terraform configuration to update AWS infrastructure (with environment file loaded)
 	@echo "🛠️ Applying Terraform configuration..."
 	@terraform apply plan.tfplan
 
@@ -293,21 +254,49 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 write-trust-ca: ## Fetch trust_ca_cert from Secrets Manager and write to CH EC2 host for volume mount
 	@echo "🔐 Fetching Trust CA cert from Secrets Manager and writing to CH EC2..."
 	@CH_IP=$$(terraform output -raw Ec2PublicIp) && \
+	  echo "   Waiting for SSH to be available on $$CH_IP..." && \
+	  for i in $$(seq 1 120); do \
+	    ssh -i ~/.ssh/host-aws -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null ubuntu@$$CH_IP "exit 0" 2>/dev/null && echo "   ✓ SSH ready (attempt $$i)" && break; \
+	    if [ $$i -eq 120 ]; then echo "   ✗ SSH did not become available after 10 minutes."; exit 1; fi; \
+	    echo "   ... waiting (attempt $$i/120)"; \
+	    sleep 5; \
+	  done && \
 	  CA_CERT=$$(AWS_PROFILE=$(AWS_PROFILE) aws secretsmanager get-secret-value \
 	    --secret-id $(AWS_SECRET_NAME) \
 	    --query 'SecretString' --output text | python3 -c \
 	    "import json,sys; s=json.load(sys.stdin); print(s['trust_ca_cert'])") && \
-	  ssh -i ~/.ssh/host-aws ubuntu@$$CH_IP "mkdir -p /opt/flip/certs && printf '%s\n' '$$CA_CERT' > /opt/flip/certs/trust-ca.crt && chmod 0644 /opt/flip/certs/trust-ca.crt" && \
+	  ssh -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null ubuntu@$$CH_IP "mkdir -p /opt/flip/certs && printf '%s\n' '$$CA_CERT' > /opt/flip/certs/trust-ca.crt && chmod 0644 /opt/flip/certs/trust-ca.crt" && \
 	  echo "✅ Trust CA cert written to CH EC2 at /opt/flip/certs/trust-ca.crt"
 
 .PHONY: deploy-centralhub
 deploy-centralhub: write-trust-ca ## Deploy FLIP containers to flip context with environment from Terraform
+	@echo "🔍 Checking central hub images (tag: $(DOCKER_TAG))..."
+	@missing=false; \
+	for image in $(CENTRALHUB_IMAGES); do \
+	  if ! docker manifest inspect "$$image" >/dev/null 2>&1; then \
+	    echo "   ⚠️  Missing: $$image"; \
+	    missing=true; \
+	  fi; \
+	done; \
+	if [ "$$missing" = "true" ]; then \
+	  echo "🔨 Images missing — triggering builds and waiting 2 minutes..."; \
+	  $(MAKE) trigger-builds; \
+	  sleep 120; \
+	else \
+	  echo "   ✅ All central hub images found."; \
+	fi
 	@echo "📋 Loading environment variables from Terraform outputs..."
+	@echo "🔑 Refreshing SSH host key for CH EC2 (ensures Docker context SSH works after re-provisioning)..."
+	@CH_IP=$$(terraform output -raw Ec2PublicIp) && \
+	  ssh-keygen -R "$$CH_IP" 2>/dev/null || true && \
+	  ssh-keyscan -H "$$CH_IP" >> ~/.ssh/known_hosts
 	@echo "👷 Create docker context if not exists, pointing to flip to ssh://flip"
 	@docker context create flip --docker "host=ssh://flip" || echo "   Context 'flip' already exists"
 	@# Switch to flip context
 	@echo "🔄 Switching to flip Docker context..."
 	@docker context use flip
+	@echo "🐳 Initialising Docker Swarm on CH EC2 (required for overlay networks)..."
+	@docker swarm init || echo "   Swarm already initialized"
 	@echo "🐳 Deploying containers..."
 	@$(MAKE) -C ../../../ up-centralhub-ec2 PROD=${PROD}
 	@echo "✅ Deployment complete!"
@@ -320,20 +309,41 @@ LOCAL_TRUST_NUMBER ?= 2
 
 .PHONY: deploy-trust
 deploy-trust: update-env ## Deploy trust relationships after central hub is deployed
+	@echo "🔍 Checking trust images (tag: $(DOCKER_TAG))..."
+	@missing=false; \
+	for image in $(TRUST_IMAGES); do \
+	  if ! docker manifest inspect "$$image" >/dev/null 2>&1; then \
+	    echo "   ⚠️  Missing: $$image"; \
+	    missing=true; \
+	  fi; \
+	done; \
+	if [ "$$missing" = "true" ]; then \
+	  echo "🔨 Images missing — triggering builds and waiting 2 minutes..."; \
+	  $(MAKE) trigger-builds; \
+	  sleep 120; \
+	else \
+	  echo "   ✅ All trust images found."; \
+	fi
 	@echo "⚙️  Configure .ssh/config for flip context..."
 	@set -x AWS_PROFILE ${AWS_PROFILE}
 	@terraform output
 	@python3 update_ssh_config.py --aws-profile ${AWS_PROFILE} || true
 	@echo "✅ .ssh/config updated!"
+	@echo "🔑 Refreshing SSH host key for Trust EC2 (ensures Docker context SSH works after re-provisioning)..."
+	@TRUST_IP=$$(terraform output -raw TrustEc2PublicIp) && \
+	  ssh-keygen -R "$$TRUST_IP" 2>/dev/null || true && \
+	  ssh-keyscan -H "$$TRUST_IP" >> ~/.ssh/known_hosts
 	@echo "👷 Create docker context if not exists, pointing to flip-trust to ssh://flip-trust"
 	@docker context create flip-trust --docker "host=ssh://flip-trust" || echo "   Context 'flip-trust' already exists"
 	@echo "🔄 Switching to flip-trust Docker context..."
 	@docker context use flip-trust
 	@echo "🐳 Deploying containers to Trust EC2 ..."
 	docker swarm init || echo "   Swarm already initialized"
+	@echo "🔧 Creating Docker networks on Trust EC2..."
+	$(MAKE) -C ../../../ create-networks
 	@echo "🗒️ Copying TLS certificates to Trust EC2..."
-	ssh -i ~/.ssh/host-aws ubuntu@$$(terraform output -raw TrustEc2PublicIp) "mkdir -p /opt/flip/certs"
-	scp -i ~/.ssh/host-aws \
+	ssh -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null ubuntu@$$(terraform output -raw TrustEc2PublicIp) "mkdir -p /opt/flip/certs"
+	scp -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
 		../../../trust/certs/trust-server.crt \
 		../../../trust/certs/trust-server.key \
 		../../../trust/certs/trust-ca.crt \
@@ -344,9 +354,10 @@ deploy-trust: update-env ## Deploy trust relationships after central hub is depl
 	@echo "✅ Trust deployment complete!"
 
 .PHONY: add-local-trust
-add-local-trust: ## Provision an on-prem Trust host via Ansible and register it with the Central Hub
-	## LOCAL_TRUST_SSH_KEY is optional. When omitted, Ansible runs locally (no SSH) — use this
+add-local-trust: ## Provision an on-prem Trust host and register it with the Central Hub
+	## LOCAL_TRUST_SSH_KEY is optional. When omitted, runs locally (no SSH) — use this
 	## when the trust host IS the operator workstation or is not reachable via its public IP.
+	## Local mode generates TLS certs and prints the sudo commands to run (UFW, cert install, kit deploy).
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make add-local-trust LOCAL_TRUST_IP=<public-ip> [LOCAL_TRUST_SSH_KEY=<path>]"; echo "   Omit LOCAL_TRUST_SSH_KEY to provision the local machine (no SSH)."; echo ""; exit 1)
 	@echo "🔧 Provisioning on-premises Trust host at $(LOCAL_TRUST_IP)..."
 	@uv sync
@@ -364,33 +375,30 @@ add-local-trust: ## Provision an on-prem Trust host via Ansible and register it 
 			-e trust_api_port=$(TRUST_API_PORT); \
 	else \
 		echo "💻 Running locally (no SSH — operator machine is the trust host)..."; \
-		if [ -z "$$ANSIBLE_BECOME_PASS" ]; then \
-			echo ""; \
-			echo "❌  ANSIBLE_BECOME_PASS is not set. Run this in your fish terminal first:"; \
-			echo ""; \
-			echo "     set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')"; \
-			echo ""; \
-			echo "   Then re-run this make target."; \
-			echo ""; \
-			exit 1; \
-		fi; \
-		echo "🔐 Authenticating sudo and creating temporary NOPASSWD entry..."; \
-		CURR_USER=$$(id -un); \
-		echo "$$ANSIBLE_BECOME_PASS" | sudo -S sh -c \
-			"echo '$$CURR_USER ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/flip-ansible-local && chmod 440 /etc/sudoers.d/flip-ansible-local" \
-			2>/dev/null || { echo "❌  sudo authentication failed — check your password."; exit 1; }; \
-		echo "✅ Authenticated. Running Ansible playbook..."; \
-		trap 'sudo -n rm -f /etc/sudoers.d/flip-ansible-local' EXIT INT TERM; \
-		ANSIBLE_BECOME_PASS= uv run ansible-playbook \
-			-i "localhost," \
-			-e ansible_connection=local \
-			-e ansible_python_interpreter=/usr/bin/python3 \
-			../../../deploy/providers/local/site_local_trust.yml \
-			-e trust_public_ip=$(LOCAL_TRUST_IP) \
-			-e ch_public_ip="$$CH_IP" \
-			-e trust_api_port=$(TRUST_API_PORT); \
-		PLAY_RC=$$?; \
-		exit $$PLAY_RC; \
+		echo ""; \
+		echo "🔑 Generating local trust TLS certificates..."; \
+		LOCAL_CERT_DIR=/tmp/flip-local-trust-certs; \
+		mkdir -p $$LOCAL_CERT_DIR; \
+		TRUST_HOST=$(LOCAL_TRUST_IP) OUT_DIR=$$LOCAL_CERT_DIR bash ../../../trust/certs/generate-trust-certs.sh || exit 1; \
+		cp $$LOCAL_CERT_DIR/trust-ca.crt ../../../trust/certs/local-trust-ca.crt; \
+		echo ""; \
+		echo "✅ Local trust CA saved to trust/certs/local-trust-ca.crt"; \
+		echo ""; \
+		echo "⚠️  Run the following commands on this machine to complete Trust host setup:"; \
+		echo ""; \
+		echo "  # 1. Install TLS certificates (required by the Trust nginx-tls container):"; \
+		echo "  sudo mkdir -p /opt/flip/certs"; \
+		echo "  sudo cp $$LOCAL_CERT_DIR/trust-ca.crt /opt/flip/certs/trust-ca.crt"; \
+		echo "  sudo cp $$LOCAL_CERT_DIR/trust-server.crt /opt/flip/certs/trust-server.crt"; \
+		echo "  sudo cp $$LOCAL_CERT_DIR/trust-server.key /opt/flip/certs/trust-server.key"; \
+		echo ""; \
+		echo "  # 2. Configure firewall — allow Central Hub ($$CH_IP) access to Trust ports:"; \
+		echo "  sudo ufw allow from $$CH_IP to any port $(TRUST_API_PORT) proto tcp comment 'FLIP Trust-API HTTPS from AWS CH'"; \
+		echo "  sudo ufw allow from $$CH_IP to any port 8002 proto tcp comment 'FL Server port from AWS CH'"; \
+		echo "  sudo ufw allow from $$CH_IP to any port 8003 proto tcp comment 'FL Admin port from AWS CH'"; \
+		echo "  sudo ufw default deny incoming"; \
+		echo "  sudo ufw default allow outgoing"; \
+		echo "  sudo ufw enable"; \
 	fi
 	@echo "📦 Downloading Trust_$(LOCAL_TRUST_NUMBER) FL participant kit from S3..."
 	@LOCAL_TRUST_KIT_DIR=/tmp/Trust_$(LOCAL_TRUST_NUMBER)_kit && \
@@ -406,15 +414,16 @@ add-local-trust: ## Provision an on-prem Trust host via Ansible and register it 
 	    rsync -av --delete -e "ssh -i $(LOCAL_TRUST_SSH_KEY)" \
 	      $$LOCAL_TRUST_KIT_DIR/local/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local/; \
 	  else \
-	    sudo mkdir -p /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/startup /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/transfer && \
-	    sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/startup/ /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/startup/ && \
-	    sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/local/ /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local/; \
+	    echo ""; \
+	    echo "  # 3. Deploy the Trust_$(LOCAL_TRUST_NUMBER) FL participant kit (kit staged at $$LOCAL_TRUST_KIT_DIR):"; \
+	    echo "  sudo mkdir -p /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/startup /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/transfer"; \
+	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/startup/ /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/startup/"; \
+	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/local/ /opt/flip/services/Trust_$(LOCAL_TRUST_NUMBER)/local/"; \
 	  fi && \
-	  rm -rf $$LOCAL_TRUST_KIT_DIR && \
-	  echo "✅ Trust_$(LOCAL_TRUST_NUMBER) FL kit deployed"
+	  echo "✅ Trust_$(LOCAL_TRUST_NUMBER) FL kit staged at $$LOCAL_TRUST_KIT_DIR"
 	@echo "📋 Building CA bundle (EC2 trust CA + local trust CA) for Secrets Manager..."
 	@# trust-ca.crt is the cloud Trust EC2 CA (written by gen-trust-ec2-certs).
-	@# local-trust-ca.crt is the on-prem trust CA (just fetched by Ansible above).
+	@# local-trust-ca.crt is the on-prem trust CA (generated by generate-trust-certs.sh above).
 	@# Bundle them so flip-api can verify HTTPS connections to both trusts.
 	@if [ -f ./trust-ca.crt ]; then \
 		cat ./trust-ca.crt ../../../trust/certs/local-trust-ca.crt > /tmp/trust-ca-bundle.crt && \
@@ -447,16 +456,7 @@ add-local-trust: ## Provision an on-prem Trust host via Ansible and register it 
 .PHONY: set-local-trust-endpoint
 set-local-trust-endpoint: ## Update FLIP_API Trust_1-endpoint to the local trust HTTPS URL
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make set-local-trust-endpoint LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
-	@echo "🔐 Updating $(AWS_SECRET_NAME) secret Trust_1-endpoint to https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)..."
-	@AWS_PROFILE=$(AWS_PROFILE) aws secretsmanager get-secret-value \
-		--secret-id $(AWS_SECRET_NAME) \
-		--query SecretString \
-		--output text | \
-	python3 -c "import json, sys; s=json.load(sys.stdin); s['Trust_1-endpoint']='https://$(LOCAL_TRUST_IP):$(TRUST_API_PORT)'; print(json.dumps(s))" | \
-	AWS_PROFILE=$(AWS_PROFILE) aws secretsmanager update-secret \
-		--secret-id $(AWS_SECRET_NAME) \
-		--secret-string file:///dev/stdin >/dev/null
-	@echo "✅ $(AWS_SECRET_NAME) Trust_1-endpoint updated."
+	@bash scripts/manage-secrets.sh set-local-trust-endpoint $(LOCAL_TRUST_IP)
 
 .PHONY: test-local-trust
 test-local-trust: ## Verify HTTPS connectivity to an on-premises Trust host
@@ -501,29 +501,35 @@ check:
 	@python3 check_status.py || true
 
 
+.PHONY: backup-eips
+backup-eips: ## Backup current Elastic IPs before destruction (preserves allocation IDs for reassociation)
+	@bash scripts/backup-eips.sh
+
 .PHONY: destroy
-destroy: ## Destroy infrastructure while preserving Cognito and Secrets Manager resources
-	@echo "💥 Destroying ephemeral infrastructure..."
-	@terraform destroy -auto-approve \
-		-target=module.flip_vpc \
-		-target=module.ec2_security_group \
-		-target=module.rds_security_group \
-		-target=aws_db_subnet_group.flip_db_subnet_group \
-		-target=module.flip_db \
-		-target=module.alb \
-		-target=module.alb_security_group \
-		-target=module.ec2_role \
-		-target=aws_iam_instance_profile.ec2_profile \
-		-target=aws_key_pair.flip_keypair \
-		-target=aws_instance.ec2_instance \
-		-target=aws_cloudwatch_log_group.flip_log_group \
-		-target=aws_iam_role_policy.ec2_secret \
-		-target=aws_ses_template.flip_access_request \
-		-target=aws_ses_template.flip_xnat_credentials \
-		-target=module.trust_ec2 \
-		-target=aws_key_pair.host_key \
-		-target=local_file.env
-	@echo "✅ Targeted destroy complete!"
+destroy: backup-eips ## Destroy ephemeral infrastructure (EC2, RDS, VPC) - preserves Cognito, Secrets, S3, EIPs
+	@echo ""
+	@echo "⚠️  SELECTIVE DESTRUCTION - PRESERVING:"
+	@echo "   ✓ Cognito user pool and identities"
+	@echo "   ✓ AWS Secrets Manager (FLIP_API secret)"
+	@echo "   ✓ S3 buckets (FLIP + AI Centre data)"
+	@echo "   ✓ ACM certificates and Route53 records"
+	@echo "   ✓ Elastic IPs (for Central Hub and Trust EC2)"
+	@echo ""
+	@echo "🗑️  DESTROYING:"
+	@echo "   • EC2 instances (flip, trust) - instances only, EIPs preserved"
+	@echo "   • RDS database (PostgreSQL)"
+	@echo "   • VPC and security groups"
+	@echo "   • ALB/NLB load balancers"
+	@echo "   • IAM roles and policies"
+	@echo "   • CloudWatch logs"
+	@echo ""
+	@read -p "Type 'yes' to confirm destruction: " confirm && [ "$$confirm" = "yes" ] || (echo "Aborted."; exit 1)
+	@echo ""
+	@bash scripts/destroy-preserve-eips.sh
+	@echo ""
+	@echo "⚠️  IMPORTANT: Review EIP state before re-applying:"
+	@echo "   make list-eips   # Check that your EIPs are still allocated"
+
 
 .PHONY: help
 help: ## Show this help message
@@ -569,12 +575,19 @@ full-deploy-stag: github-login aws-login init import-persistent plan apply updat
 full-deploy-stag-hybrid: ## Full staging hybrid deployment including endpoint update and CH redeploy
 	## This wraps full-deploy-stag, then updates Trust_1-endpoint and redeploys Central Hub.
 	## You still need to start the local trust stack on the trust host.
-	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-stag-hybrid LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
-	@$(MAKE) full-deploy-stag LOCAL_TRUST_IP=$(LOCAL_TRUST_IP) LOCAL_TRUST_SSH_KEY="$(LOCAL_TRUST_SSH_KEY)" LOCAL_TRUST_SSH_USER="$(LOCAL_TRUST_SSH_USER)" LOCAL_TRUST_NUMBER="$(LOCAL_TRUST_NUMBER)"
-	@$(MAKE) set-local-trust-endpoint LOCAL_TRUST_IP=$(LOCAL_TRUST_IP)
-	@$(MAKE) deploy-centralhub PROD=stag
-	@echo ""
-	@echo "✅ Hybrid staging deployment complete."
-	@echo "➡️  Final manual step: start the local trust stack on the trust host:"
-	@echo "   cd ../../../trust && env PROD=stag make up-local-trust-stag"
-	@echo "➡️  Then verify: make test-local-trust LOCAL_TRUST_IP=$(LOCAL_TRUST_IP)"
+	## If LOCAL_TRUST_IP is not provided, it will be auto-detected using curl.
+	@if [ -z "$(LOCAL_TRUST_IP)" ]; then \
+		echo "🔍 Detecting public IP for LOCAL_TRUST_IP..."; \
+		LOCAL_TRUST_IP=$$(curl -s https://api.ipify.org) && \
+		echo "✅ Detected LOCAL_TRUST_IP: $$LOCAL_TRUST_IP" || (echo "❌  Failed to detect IP. Provide LOCAL_TRUST_IP manually."; echo "   Usage: make full-deploy-stag-hybrid LOCAL_TRUST_IP=<public-ip>"; exit 1); \
+	else \
+		LOCAL_TRUST_IP="$(LOCAL_TRUST_IP)"; \
+	fi && \
+	$(MAKE) full-deploy-stag LOCAL_TRUST_IP=$$LOCAL_TRUST_IP LOCAL_TRUST_SSH_KEY="$(LOCAL_TRUST_SSH_KEY)" LOCAL_TRUST_SSH_USER="$(LOCAL_TRUST_SSH_USER)" LOCAL_TRUST_NUMBER="$(LOCAL_TRUST_NUMBER)" && \
+	$(MAKE) set-local-trust-endpoint LOCAL_TRUST_IP=$$LOCAL_TRUST_IP && \
+	$(MAKE) deploy-centralhub PROD=stag && \
+	echo "" && \
+	echo "✅ Hybrid staging deployment complete." && \
+	echo "➡️  Final manual step: start the local trust stack on the trust host:" && \
+	echo "   cd ../../../trust && env PROD=stag make up-local-trust-stag" && \
+	echo "➡️  Then verify: make test-local-trust LOCAL_TRUST_IP=$$LOCAL_TRUST_IP"

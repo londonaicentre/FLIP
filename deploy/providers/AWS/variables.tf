@@ -168,3 +168,9 @@ variable "local_trust_public_ip" {
   type        = string
   default     = ""
 }
+
+variable "create_central_hub_elastic_ip" {
+  description = "Whether to create an Elastic IP for the Central Hub EC2 instance. When true, ensures a persistent IP address across instance restarts and redeployments."
+  type        = bool
+  default     = true
+}

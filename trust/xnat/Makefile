@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down clean xnat-shell xnat-war-download xnat-plugins-download \
+.PHONY: build up deploy down clean xnat-shell xnat-war-download xnat-plugins-download \
 	xnat-reset xnat-configure-trust-1 xnat-configure-trust-2 \
 	create-network-trust-1 create-network-trust-2 up-xnat-1 up-xnat-2 \
 	down-xnat-1 down-xnat-2
@@ -91,6 +91,9 @@ build:
 
 up: xnat-reset up-xnat-1 up-xnat-2
 
+# Complete deployment workflow: reset directories, create networks, and deploy all XNAT instances
+deploy: xnat-reset up-xnat-1 up-xnat-2
+
 up-xnat-1: create-network-trust-1
 	XNAT_PATH=${XNAT_PATH} \
 	XNAT_PORT=${XNAT_PORT_TRUST_1} \
@@ -144,6 +147,8 @@ xnat-plugins-download:
 # Creates directory structure for XNAT data volumes.
 # Docker Swarm requires host directories to exist before bind-mounting.
 # Note: needs root privileges to clean up previous data.
+# In production/staging, creates directories at /opt/flip/xnat/
+# In development, creates directories relative to current directory using port numbers
 xnat-reset:
 	@case "$$(pwd)" in */trust/xnat) ;; *) \
 		echo "ERROR: xnat-reset must be run from the trust/xnat/ directory (pwd: $$(pwd))"; exit 1;; \
@@ -154,17 +159,29 @@ xnat-reset:
 	if ! echo "$(XNAT_PORT_TRUST_2)" | grep -qE '^[0-9]+$$'; then \
 		echo "ERROR: XNAT_PORT_TRUST_2 must be set to a numeric value, got '$(XNAT_PORT_TRUST_2)'"; exit 1; \
 	fi
-	echo "Deleting previous XNAT data and creating new directories ..."; \
-	sudo rm -rf ${XNAT_PORT_TRUST_1}; \
-	sudo rm -rf ${XNAT_PORT_TRUST_2}; \
-	mkdir -p ${XNAT_PORT_TRUST_1}/xnat-data/tomcat_logs; \
-	mkdir -p ${XNAT_PORT_TRUST_1}/xnat-data/archive; \
-	mkdir -p ${XNAT_PORT_TRUST_1}/xnat-data/build; \
-	mkdir -p ${XNAT_PORT_TRUST_1}/xnat-data/cache; \
-	mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/tomcat_logs; \
-	mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/archive; \
-	mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/build; \
-	mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/cache;
+	@echo "Deleting previous XNAT data and creating new directories ..."; \
+	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \
+		echo "  📍 Using production path: /opt/flip/xnat/"; \
+		sudo rm -rf /opt/flip/xnat; \
+		sudo mkdir -p /opt/flip/xnat/xnat-data/tomcat_logs; \
+		sudo mkdir -p /opt/flip/xnat/xnat-data/archive; \
+		sudo mkdir -p /opt/flip/xnat/xnat-data/build; \
+		sudo mkdir -p /opt/flip/xnat/xnat-data/cache; \
+		sudo mkdir -p /opt/flip/xnat/xnat-db-data; \
+		sudo chown -R $(USER):$(USER) /opt/flip/xnat; \
+	else \
+		echo "  📍 Using development path: ./[XNAT_PORT]/xnat-data"; \
+		sudo rm -rf ${XNAT_PORT_TRUST_1}; \
+		sudo rm -rf ${XNAT_PORT_TRUST_2}; \
+		mkdir -p ${XNAT_PORT_TRUST_1}/xnat-data/tomcat_logs; \
+		mkdir -p ${XNAT_PORT_TRUST_1}/xnat-data/archive; \
+		mkdir -p ${XNAT_PORT_TRUST_1}/xnat-data/build; \
+		mkdir -p ${XNAT_PORT_TRUST_1}/xnat-data/cache; \
+		mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/tomcat_logs; \
+		mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/archive; \
+		mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/build; \
+		mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/cache; \
+	fi
 
 # Configure XNAT instances with initial settings and run dcm2niix setup script
 # Finds the container ID by name and runs the configuration scripts inside it

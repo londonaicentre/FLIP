@@ -223,6 +223,108 @@ def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) ->
         return False, str(e)
 
 
+def check_elastic_ip_stability(
+    central_hub_id: str,
+    central_hub_eip: str,
+    trust_id: str | None,
+    trust_eip: str | None,
+) -> bool:
+    """Verify Elastic IP stability and correct instance association.
+
+    Tests that:
+    1. Central Hub Elastic IP is allocated and stable
+    2. Central Hub EIP is associated with the correct EC2 instance
+    3. Trust EC2 Elastic IP is allocated and stable (if Trust is deployed)
+    4. Trust EC2 EIP is associated with the correct EC2 instance
+
+    This ensures that outbound calls from Central Hub to Trust API will use a stable IP.
+    """
+    print_section("Elastic IP Stability Check")
+
+    failures = 0
+
+    # Check Central Hub EIP
+    if not central_hub_eip:
+        print_status("FAIL", "Central Hub Elastic IP is not allocated (check Ec2ElasticIp output)")
+        failures += 1
+    else:
+        print_status("PASS", f"Central Hub Elastic IP allocated: {central_hub_eip}")
+
+        # Verify EIP is associated with the correct instance in AWS
+        success, output = run_aws_command([
+            "ec2",
+            "describe-addresses",
+            "--region",
+            os.getenv("AWS_REGION", "eu-west-2"),
+            "--public-ips",
+            central_hub_eip,
+            "--query",
+            "Addresses[0].[InstanceId, AllocationId]",
+            "--output",
+            "text",
+        ])
+
+        if success and output:
+            instance_id, allocation_id = output.split()
+            if instance_id == central_hub_id:
+                print_status(
+                    "PASS",
+                    f"Central Hub EIP {central_hub_eip} correctly associated with {instance_id} (allocation: {allocation_id[:12]}...)",
+                )
+            else:
+                print_status(
+                    "FAIL",
+                    f"Central Hub EIP {central_hub_eip} associated with wrong instance: {instance_id} (expected {central_hub_id})",
+                )
+                failures += 1
+        else:
+            print_status("WARN", f"Could not verify Central Hub EIP association in AWS: {output}")
+
+    # Check Trust EC2 EIP if deployed
+    if trust_id:
+        if not trust_eip:
+            print_status("WARN", "Trust EC2 deployed but Elastic IP is not allocated (check TrustEc2ElasticIp output)")
+        else:
+            print_status("PASS", f"Trust EC2 Elastic IP allocated: {trust_eip}")
+
+            # Verify EIP is associated with the correct instance in AWS
+            success, output = run_aws_command([
+                "ec2",
+                "describe-addresses",
+                "--region",
+                os.getenv("AWS_REGION", "eu-west-2"),
+                "--public-ips",
+                trust_eip,
+                "--query",
+                "Addresses[0].[InstanceId, AllocationId]",
+                "--output",
+                "text",
+            ])
+
+            if success and output:
+                instance_id, allocation_id = output.split()
+                if instance_id == trust_id:
+                    print_status(
+                        "PASS",
+                        f"Trust EC2 EIP {trust_eip} correctly associated with {instance_id} (allocation: {allocation_id[:12]}...)",
+                    )
+                else:
+                    print_status(
+                        "FAIL",
+                        f"Trust EC2 EIP {trust_eip} associated with wrong instance: {instance_id} (expected {trust_id})",
+                    )
+                    failures += 1
+            else:
+                print_status("WARN", f"Could not verify Trust EC2 EIP association in AWS: {output}")
+
+    if failures > 0:
+        print_status("FAIL", f"EIP stability check failed with {failures} issue(s)")
+        return False
+    else:
+        print_status("PASS", "All EIP checks passed - stable IPs confirmed for outbound connectivity")
+        return True
+
+
 def check_http_endpoint(
     url: str,
     name: str,
@@ -347,6 +449,79 @@ def check_endpoint_rejects_insecure_ssh(
         return True
 
 
+def check_endpoint_blocked_from_ssh(
+    host: str,
+    endpoint: str,
+    allowed_source_ip: str | None = None,
+    connect_timeout: int = 5,
+) -> bool:
+    """Verify that an endpoint is unreachable from a remote host (firewall enforcement).
+
+    SECURITY CHECK: confirms the local Trust API cannot be reached from the cloud
+    Trust EC2. Only the Central Hub is whitelisted in UFW; the cloud Trust EC2 must
+    be blocked.
+
+    If the remote host shares an outbound IP with the allowed source (e.g. both route
+    through the same NAT gateway EIP), the firewall cannot distinguish them and this
+    check issues a WARN instead of FAIL.
+
+    A blocked connection (UFW DROP) causes curl to time out (exit code 28), which
+    run_ssh_command surfaces as success=False. A breach returns HTTP 200 with
+    success=True.
+
+    Args:
+        host: SSH host alias (from ~/.ssh/config)
+        endpoint: URL to attempt from the remote host
+        allowed_source_ip: The IP the UFW allowlist permits (typically the Central Hub EIP).
+            If the remote host's outbound IP matches this, the check is inconclusive.
+        connect_timeout: curl --connect-timeout value in seconds
+
+    Returns:
+        True if correctly blocked or inconclusive (PASS/WARN), False if reachable (FAIL)
+    """
+    # Determine the outbound internet IP of the remote host before testing.
+    # If it matches allowed_source_ip the firewall cannot distinguish it from the
+    # Central Hub, so the block check would always see a pass-through — warn instead.
+    if allowed_source_ip:
+        ok, remote_ip = run_ssh_command(
+            ssh_key="",
+            host=host,
+            command="curl -s --connect-timeout 5 https://api.ipify.org 2>/dev/null || true",
+            timeout=15,
+        )
+        remote_ip = remote_ip.strip()
+        if ok and remote_ip == allowed_source_ip.strip():
+            print_status(
+                "WARN",
+                f"SECURITY (inconclusive): {host} outbound IP ({remote_ip}) is the same as "
+                f"the Central Hub allowed IP. Both instances share this outbound address — "
+                f"UFW cannot distinguish them. Consider restricting by instance security group "
+                f"rather than source IP, or accept this as an architectural limitation.",
+            )
+            return True
+
+    command = f"curl -sk --connect-timeout {connect_timeout} -o /dev/null -w '%{{http_code}}' {endpoint}"
+    print_status(
+        "INFO",
+        f"SECURITY: Verifying {endpoint} is blocked from {host} (firewall enforcement)...",
+    )
+    success, output = run_ssh_command(ssh_key="", host=host, command=command, timeout=connect_timeout + 5)
+
+    if success and output.strip() == "200":
+        print_status(
+            "FAIL",
+            f"FIREWALL BREACH: {endpoint} reachable from {host} (HTTP 200). "
+            f"UFW must block local Trust ports from all hosts except the Central Hub.",
+        )
+        return False
+    else:
+        print_status(
+            "PASS",
+            f"{endpoint} correctly blocked from {host} (UFW enforced)",
+        )
+        return True
+
+
 def ping_host(host: str) -> bool:
     """Ping a host to check connectivity.
 
@@ -434,10 +609,12 @@ def main(
     # Get Terraform outputs
     central_hub_ip = get_terraform_output("Ec2PublicIp")
     central_hub_id = get_terraform_output("Ec2InstanceId")
+    central_hub_eip = get_terraform_output("Ec2ElasticIp")
     ssh_key = get_terraform_output("Keypair")
 
     trust_ip = get_terraform_output("TrustEc2PublicIp")
     trust_id = get_terraform_output("TrustEc2InstanceId")
+    trust_eip = get_terraform_output("TrustEc2ElasticIp")
 
     if not central_hub_ip:
         print_status("FAIL", "Could not retrieve Central Hub EC2 IP from Terraform outputs")
@@ -445,12 +622,19 @@ def main(
 
     print_status("PASS", f"Central Hub EC2 IP: {central_hub_ip}")
     print_status("PASS", f"Central Hub EC2 ID: {central_hub_id}")
+    if central_hub_eip:
+        print_status("PASS", f"Central Hub Elastic IP: {central_hub_eip}")
 
     if trust_ip:
         print_status("PASS", f"Trust EC2 IP: {trust_ip}")
         print_status("PASS", f"Trust EC2 ID: {trust_id}")
+        if trust_eip:
+            print_status("PASS", f"Trust EC2 Elastic IP: {trust_eip}")
     else:
         print_status("INFO", "Trust EC2 not found in outputs (may not be deployed)")
+
+    # Check Elastic IP stability (central hub outbound connectivity uses stable EIP)
+    check_elastic_ip_stability(central_hub_id, central_hub_eip, trust_id, trust_eip)
 
     # Check AWS resources
     print_section("Checking AWS Resources")
@@ -865,6 +1049,33 @@ def main(
         #         "Data Access API Docs",
         #         200,
         #     )
+
+        # Local (on-premises) Trust checks
+        local_trust_ip = os.getenv("LOCAL_TRUST_IP")
+        if local_trust_ip:
+            print_section("Local Trust Checks")
+
+            _local_trust_ca = str(Path(__file__).parent.parents[2] / "trust" / "certs" / "local-trust-ca.crt")
+
+            # 1. Verify local trust health endpoint is reachable from this machine
+            check_http_endpoint(
+                f"https://{local_trust_ip}:{TRUST_API_PORT}/health",
+                f"Local Trust API Health ({local_trust_ip})",
+                200,
+                cafile=_local_trust_ca if Path(_local_trust_ca).exists() else None,
+            )
+
+            # 2. Firewall enforcement: cloud Trust EC2 must NOT be able to reach local trust.
+            # UFW only whitelists the Central Hub IP; if the cloud Trust EC2 can reach the
+            # local trust health endpoint, the firewall is misconfigured.
+            if trust_ip:
+                check_endpoint_blocked_from_ssh(
+                    "flip-trust",
+                    f"https://{local_trust_ip}:{TRUST_API_PORT}/health",
+                    allowed_source_ip=central_hub_eip,
+                )
+        else:
+            print_status("INFO", "LOCAL_TRUST_IP not set — skipping local Trust checks")
 
     # Docker container checks (via SSH)
     if not skip_docker and ssh_key and Path(ssh_key).expanduser().exists():

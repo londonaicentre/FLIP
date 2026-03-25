@@ -62,6 +62,21 @@
         upgrade: yes
         update_cache: yes
 
+- name: reboot if kernel update requires it
+  hosts: ec2
+  become: true
+  tasks:
+    - name: check if reboot is required
+      stat:
+        path: /run/reboot-required
+      register: reboot_required_file
+
+    - name: reboot and wait for EC2 to come back
+      reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 30
+      when: reboot_required_file.stat.exists
+
 - name: install docker, adding ubuntu to docker group
   hosts: ec2
   become: true

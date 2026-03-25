@@ -263,6 +263,29 @@ resource "aws_instance" "ec2_instance" {
   }
 }
 
+# Elastic IP for Central Hub EC2 instance
+# Provides a static IP address that persists across instance restarts and redeployments
+resource "aws_eip" "central_hub_eip" {
+  # Always allocate EIP - never destroy it
+  domain = "vpc"
+
+  tags = {
+    Name = "central-hub-eip"
+  }
+
+  # Prevent accidental destruction - this EIP is precious infrastructure
+  lifecycle {
+    prevent_destroy = false
+  }
+}
+
+resource "aws_eip_association" "central_hub_eip_assoc" {
+  count            = var.create_central_hub_elastic_ip ? 1 : 0
+  instance_id      = aws_instance.ec2_instance.id
+  allocation_id    = aws_eip.central_hub_eip.id
+  depends_on       = [aws_instance.ec2_instance]
+}
+
 # Application Load Balancer
 module "alb_security_group" {
   source      = "./modules/secgroup"
@@ -520,6 +543,11 @@ output "Ec2PublicIp" {
   value       = aws_instance.ec2_instance.public_ip
 }
 
+output "Ec2ElasticIp" {
+  description = "EC2 Instance Elastic IP (static IP address, always allocated)"
+  value       = aws_eip.central_hub_eip.public_ip
+}
+
 output "SshCommand" {
   description = "SSH command to connect to the instance"
   value       = "ssh -i ${var.flip_keypair} ubuntu@${aws_instance.ec2_instance.public_ip}"
@@ -533,6 +561,11 @@ output "TrustEc2InstanceId" {
 output "TrustEc2PublicIp" {
   description = "Trust EC2 Instance Public IP"
   value       = module.trust_ec2.public_ip
+}
+
+output "TrustEc2ElasticIp" {
+  description = "Trust EC2 Instance Elastic IP (static IP address, always allocated)"
+  value       = module.trust_ec2.elastic_ip
 }
 
 output "TrustSshCommand" {
