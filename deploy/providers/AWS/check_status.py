@@ -45,7 +45,6 @@ import sys
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
 
 import click
 
@@ -141,7 +140,7 @@ def check_command(command: str) -> bool:
         return False
 
 
-def get_terraform_output(output_name: str) -> Optional[str]:
+def get_terraform_output(output_name: str) -> str | None:
     """Get a specific output value from Terraform.
 
     Args:
@@ -166,7 +165,7 @@ def get_terraform_output(output_name: str) -> Optional[str]:
         return None
 
 
-def run_aws_command(args: list[str]) -> Tuple[bool, str]:
+def run_aws_command(args: list[str]) -> tuple[bool, str]:
     """Run an AWS CLI command.
 
     Args:
@@ -188,7 +187,7 @@ def run_aws_command(args: list[str]) -> Tuple[bool, str]:
         return False, str(e)
 
 
-def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) -> Tuple[bool, str]:
+def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) -> tuple[bool, str]:
     """Run a command via SSH.
 
     Args:

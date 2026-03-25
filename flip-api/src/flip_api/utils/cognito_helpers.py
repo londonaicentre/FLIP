@@ -12,7 +12,8 @@
 
 import logging
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 from uuid import UUID
 
 import boto3
@@ -69,7 +70,7 @@ def get_user_pool_id(request: Request) -> str:
     return get_pool_id(request)
 
 
-def get_cognito_users(params: Optional[Dict[str, Any]] = None) -> List[CognitoUser]:
+def get_cognito_users(params: dict[str, Any] | None = None) -> list[CognitoUser]:
     """
     Get users from Cognito user pool.
 
@@ -94,7 +95,7 @@ def get_cognito_users(params: Optional[Dict[str, Any]] = None) -> List[CognitoUs
         response = client.list_users(**params)
 
         cognito_users = response.get("Users", [])
-        users: List[CognitoUser] = []
+        users: list[CognitoUser] = []
 
         for user in cognito_users:
             attributes = {attr["Name"]: attr["Value"] for attr in user.get("Attributes", [])}
@@ -119,7 +120,7 @@ def get_cognito_users(params: Optional[Dict[str, Any]] = None) -> List[CognitoUs
 
 
 def get_user_by_email_or_id(
-    user_pool_id: str, email: Optional[str] = None, user_id: Optional[UUID] = None
+    user_pool_id: str, email: str | None = None, user_id: UUID | None = None
 ) -> CognitoUser:
     """
     Get a user from Cognito by email or ID.
@@ -165,7 +166,7 @@ def get_user_by_email_or_id(
     return users[0]
 
 
-def get_username(user_id: str, user_pool_id: str) -> Optional[str]:
+def get_username(user_id: str, user_pool_id: str) -> str | None:
     """
     Get a username from Cognito by user ID.
 
@@ -289,9 +290,9 @@ def revoke_token(refresh_token: str, client_id: str) -> None:
 
 def get_user_role_data(
     paging_info: PagingInfo,
-    users: List[CognitoUser],
+    users: list[CognitoUser],
     session: Session,
-) -> List[IUser]:
+) -> list[IUser]:
     """
     Get user role data with pagination and filtering.
 
@@ -313,7 +314,7 @@ def get_user_role_data(
     role_results = session.exec(statement).all()
 
     # Group roles by user_id
-    user_roles_map: Dict[str, List[IRole]] = defaultdict(list)
+    user_roles_map: dict[str, list[IRole]] = defaultdict(list)
     for user_id, role in role_results:
         if role and role.id is not None:
             user_roles_map[str(user_id)].append(
@@ -343,7 +344,7 @@ def get_user_role_data(
     return final_users
 
 
-def get_all_roles(db: Session) -> List[UUID]:
+def get_all_roles(db: Session) -> list[UUID]:
     """
     Get all role IDs from the database.
 
@@ -364,7 +365,7 @@ def get_all_roles(db: Session) -> List[UUID]:
     return role_ids
 
 
-def validate_roles(user_roles: List[UUID], roles_from_db: List[UUID]) -> None:
+def validate_roles(user_roles: list[UUID], roles_from_db: list[UUID]) -> None:
     """
     Validate that all user roles exist in the database.
 
@@ -439,7 +440,7 @@ def create_cognito_user(email: str, user_pool_id: str) -> UUID:
             )
 
 
-def filter_enabled_users(user_pool_id: str, users: List[UUID]) -> List[UUID]:
+def filter_enabled_users(user_pool_id: str, users: list[UUID]) -> list[UUID]:
     """
     Filter out disabled users from a list of user IDs.
 

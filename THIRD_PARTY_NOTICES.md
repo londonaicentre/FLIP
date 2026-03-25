@@ -7,4 +7,4 @@ School of Medicine.
 Copyright (c) 2020, Washington University School of Medicine
 
 Licensed under the BSD 2-Clause License.
-See trust/xnat/xnat-docker-compose/LICENSE.txt.
+See trust/xnat/LICENSE.txt.

@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Annotated, List
+from typing import Annotated
 
 import pandas as pd
 from fastapi import Depends, HTTPException, status
@@ -84,31 +84,34 @@ async def retrieve_images_for_project(project_id: str, query: str, headers: XNAT
 
     # For each accession ID, unencrypt it and find the study
     accession_ids: list[str] = cohort_df["accession_id"]
-    studies_list: List[ImportStudy] = []
+    studies_list: list[ImportStudy] = []
 
-    for accession_number in accession_ids:
+    total_accessions = len(accession_ids)
+    for idx, accession_number in enumerate(accession_ids, 1):
         # TODO Unlike in the old repo, accession numbers are now not encrypted in OMOP database.
         # accession_number = decrypt(encrypted_accession_number)
 
-        logger.info(f"Querying PACS for accession number: {accession_number}")
+        logger.info(f"Querying PACS for accession number {idx}/{total_accessions}")
 
         try:
             studies_found = query_by_accession_number(accession_number, headers)
         except Exception as e:
-            logger.error(f"Unexpected error querying PACS with accession number: {accession_number}: {e}")
+            logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_accessions}: {e}")
             continue
 
         # TODO What if multiple studies are found here for a given accession number?
         # We should probably introduce a way to handle this by e.g. filtering data
         # For now, we will just take the first one
         if not studies_found:
-            logger.warning(f"No study found for accession number: {accession_number}")
+            logger.warning(f"No study found for accession number {idx}/{total_accessions}")
             continue
         else:
             study = studies_found[0]
             # If multiple studies are found, log a warning and use the first one, for now.
             if len(studies_found) > 1:
-                logger.warning(f"Multiple studies found for accession number {accession_number}. Using the first one.")
+                logger.warning(
+                    f"Multiple studies found for accession number {idx}/{total_accessions}. Using the first one."
+                )
 
         import_study = ImportStudy(
             studyInstanceUid=study.study_instance_uid,
@@ -286,36 +289,39 @@ async def retry_retrieve_images_for_project(project_id: str, query: str, headers
 
     # Create list of accession numbers that have failed
     failed_accession_numbers = import_status.failed + import_status.queue_failed
-    logger.info(f"Retrying import for accession numbers: {failed_accession_numbers}")
+    logger.info(f"Retrying import for {len(failed_accession_numbers)} failed accession numbers")
 
     # For each accession ID, unencrypt it and find the study
-    studies_list: List[ImportStudy] = []
+    studies_list: list[ImportStudy] = []
 
-    for accession_number in failed_accession_numbers:
+    total_retries = len(failed_accession_numbers)
+    for idx, accession_number in enumerate(failed_accession_numbers, 1):
         # TODO Unlike in the old repo, accession numbers are now not encrypted in OMOP database.
         # accession_number = decrypt(encrypted_accession_number)
 
-        logger.info(f"Querying PACS for accession number: {accession_number}")
+        logger.info(f"Querying PACS for accession number {idx}/{total_retries}")
 
         try:
             studies_found = query_by_accession_number(accession_number, headers)
         except Exception as e:
-            logger.error(f"Unexpected error querying PACS with accession number: {accession_number}: {e}")
+            logger.error(f"Unexpected error querying PACS for accession number {idx}/{total_retries}: {e}")
             continue
 
         # TODO What if multiple studies are found here for a given accession number?
         # We should probably introduce a way to handle this by e.g. filtering data
         # For now, we will just take the first one
         if not studies_found:
-            logger.warning(f"No study found for accession number: {accession_number}")
+            logger.warning(f"No study found for accession number {idx}/{total_retries}")
             continue
         else:
             study = studies_found[0]
             # If multiple studies are found, log a warning and use the first one, for now.
             if len(studies_found) > 1:
-                logger.warning(f"Multiple studies found for accession number {accession_number}. Using the first one.")
+                logger.warning(
+                    f"Multiple studies found for accession number {idx}/{total_retries}. Using the first one."
+                )
 
-        logger.info(f"Study found for accession number {accession_number}: {study}")
+        logger.info(f"Study found for accession number {idx}/{total_retries}")
 
         import_study = ImportStudy(
             studyInstanceUid=study.study_instance_uid,

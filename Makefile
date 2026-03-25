@@ -118,7 +118,7 @@ up: check-aws-access create-networks
 	@echo "🚢 Starting trust services..."
 	$(MAKE) -C trust up
 	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -C trust/xnat up-swarm
+	$(MAKE) -C trust/xnat up
 	@echo "✅ All services started successfully!"
 
 # Minimal $(MAKE) up
@@ -131,7 +131,7 @@ up-trusts: create-networks
 	@echo "🚢 Starting Trust services..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust up
 	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-swarm
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up
 	@echo "✅ Trust services started successfully!"
 
 # Uses --pull always to ensure the latest FL images and 'stag'/'prod' version are used
@@ -151,7 +151,7 @@ up-trust-ec2: create-networks
 	@echo "🚢 Starting Trust services..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-1-ec2 PROD=${PROD}
 	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-1-ec2 PROD=${PROD}
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-1 PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
 up-local-trust-stag: create-networks
@@ -165,7 +165,7 @@ central-hub: create-networks
 # Stop all containers
 down:
 	@echo "🛑 Stopping all services..."
-	$(MAKE) -C trust/xnat down-swarm
+	$(MAKE) -C trust/xnat down
 	$(MAKE) -C trust down
 	${DOCKER_COMMAND} down --remove-orphans
 	@echo "🛌 All services stopped successfully!"

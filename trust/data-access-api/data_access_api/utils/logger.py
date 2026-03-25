@@ -10,7 +10,15 @@
 # limitations under the License.
 #
 
-import logging
+from log_config import configure_logging, get_logger
 
-logger = logging.getLogger("uvicorn")
-logger.setLevel(logging.DEBUG)
+from data_access_api.config import get_settings
+
+_settings = get_settings()
+
+configure_logging(
+    api_name="data-access-api",
+    level=_settings.LOG_LEVEL,
+)
+
+logger = get_logger(__name__)

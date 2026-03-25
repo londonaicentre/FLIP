@@ -12,7 +12,6 @@
 
 import json
 from datetime import datetime
-from typing import List, Optional, Tuple
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -56,7 +55,7 @@ from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
 
 
-def update_project_user_access(project_id: UUID, user_ids: List[UUID], session: Session) -> None:
+def update_project_user_access(project_id: UUID, user_ids: list[UUID], session: Session) -> None:
     """
     Updates the user access for a project by creating new ProjectUserAccess entries for the provided user IDs.
 
@@ -281,7 +280,7 @@ def edit_project_service(
         )
 
 
-def get_project_query(project_from_db: IProjectResponse) -> Optional[IProjectQuery] | None:
+def get_project_query(project_from_db: IProjectResponse) -> IProjectQuery | None:
     """
     If the project has a query, try to return it if it is valid. Otherwise, return None.
 
@@ -307,7 +306,7 @@ def get_project_query(project_from_db: IProjectResponse) -> Optional[IProjectQue
     return None
 
 
-def get_approved_trusts_for_project(project_id: UUID, session: Session) -> List[Trust]:
+def get_approved_trusts_for_project(project_id: UUID, session: Session) -> list[Trust]:
     """
     Gets trust that are approved for a specific project.
 
@@ -333,7 +332,7 @@ def get_approved_trusts_for_project(project_id: UUID, session: Session) -> List[
     return [Trust(id=r.id, name=r.name, endpoint=r.endpoint) for r in results]
 
 
-def get_trusts_approval_status_for_project(project_id: UUID, session: Session) -> List[IApprovedTrust]:
+def get_trusts_approval_status_for_project(project_id: UUID, session: Session) -> list[IApprovedTrust]:
     """
     Gets all trusts linked to a project and their approval status.
 
@@ -380,7 +379,7 @@ def get_project_models_service(
     session: Session,
     query_params: dict = {},
     all_results: bool = False,
-) -> Tuple[IPagedResponse[IModelsInfoResponse], PagingInfo]:
+) -> tuple[IPagedResponse[IModelsInfoResponse], PagingInfo]:
     """
     Retrieves models for a project with pagination and optional search.
 
@@ -448,7 +447,7 @@ def get_project_models_service(
     return IPagedResponse[IModelsInfoResponse](data=models_response, total_rows=total_rows), paging_details
 
 
-def get_users_with_access_service(project_id: UUID, session: Session) -> List[UserAccessInfo]:
+def get_users_with_access_service(project_id: UUID, session: Session) -> list[UserAccessInfo]:
     """
     Retrieves a list of users who have access to a specific project.
 
@@ -570,7 +569,7 @@ def approve_project(
 
 def stage_project_service(
     project_id: UUID,
-    trust_ids: List[UUID],
+    trust_ids: list[UUID],
     current_user_id: UUID,  # Added for consistency and potential auditing
     session: Session,
 ) -> None:
@@ -666,7 +665,7 @@ def unstage_project_service(project_id: UUID, current_user_id: UUID, session: Se
     logger.info(f"Project {project_id} unstaged by user {current_user_id}.")
 
 
-def get_reimport_queries_service(max_reimport_count: int, session: Session) -> List[IReimportQuery]:
+def get_reimport_queries_service(max_reimport_count: int, session: Session) -> list[IReimportQuery]:
     """
     Fetch queries eligible for reimport, using SQLModel-style selects of models.
     Assumes relationships:
@@ -685,7 +684,7 @@ def get_reimport_queries_service(max_reimport_count: int, session: Session) -> L
             )
         )
 
-        rows = session.exec(stmt).all()  # List[tuple[Queries, XNATProjectStatus, Trust]]
+        rows = session.exec(stmt).all()  # list[tuple[Queries, XNATProjectStatus, Trust]]
 
         return [
             IReimportQuery(
@@ -789,7 +788,7 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
     return project_response
 
 
-def get_users_with_access(project_id: UUID, session: Session) -> List[UUID]:
+def get_users_with_access(project_id: UUID, session: Session) -> list[UUID]:
     """
     Retrieves a list of user IDs who have access to a specific project.
 

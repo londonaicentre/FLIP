@@ -10,14 +10,10 @@
 # limitations under the License.
 #
 
-from typing import Annotated
+from pydantic import BaseModel, Field
 
-from pydantic import BaseModel, Field, constr
-
-# Schemas
-
-trim_str = Annotated[str, constr(min_length=1, strip_whitespace=True)]
+from flip_api.domain.schemas.types import TrimStr
 
 
 class UpdateTrustStatusSchema(BaseModel):
-    fl_client_endpoint: trim_str = Field(..., description="'fl_client_endpoint' is required")
+    fl_client_endpoint: TrimStr = Field(..., description="'fl_client_endpoint' is required")

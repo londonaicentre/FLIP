@@ -12,7 +12,6 @@
 
 import json
 import warnings
-from typing import List, Optional
 
 import requests
 from requests.models import Response
@@ -34,7 +33,7 @@ except requests.exceptions.RequestException as e:
     AUTH_TOKEN = {"Authorization": "Bearer <your_token_here>"}
 
 
-def create_new_project(client, project_data: ProjectDetails) -> Optional[Response]:
+def create_new_project(client, project_data: ProjectDetails) -> Response | None:
     print(f"  🏗️ Creating new project: {project_data.name}")
     try:
         response = client.post(
@@ -59,7 +58,7 @@ def create_new_project(client, project_data: ProjectDetails) -> Optional[Respons
         return None
 
 
-def add_project_query(client, query_info: dict) -> Optional[Response]:
+def add_project_query(client, query_info: dict) -> Response | None:
     print(f"  📝 Adding query to project: {query_info.get('name', 'Unnamed Query')}")
     try:
         response = client.post(
@@ -84,7 +83,7 @@ def add_project_query(client, query_info: dict) -> Optional[Response]:
         return None
 
 
-def submit_query_to_trusts(client, query_info: dict) -> Optional[Response]:
+def submit_query_to_trusts(client, query_info: dict) -> Response | None:
     print("  📤 Submitting query to trusts...")
     try:
         response = client.post(
@@ -114,7 +113,7 @@ def submit_query_to_trusts(client, query_info: dict) -> Optional[Response]:
         return None
 
 
-def client_approve_project(client, project_id: str, trust_ids: List[str]) -> Optional[Response]:
+def client_approve_project(client, project_id: str, trust_ids: list[str]) -> Response | None:
     print(f"  ✅ Approving project {project_id} for {len(trust_ids)} trusts")
     try:
         response = client.post(
@@ -139,7 +138,7 @@ def client_approve_project(client, project_id: str, trust_ids: List[str]) -> Opt
         return None
 
 
-def create_unstaged_project(client, project_name: str, project_description: str) -> Optional[str]:
+def create_unstaged_project(client, project_name: str, project_description: str) -> str | None:
     print(f"🚀 Creating unstaged project: {project_name}")
     project_data = ProjectDetails(
         name=project_name,
@@ -166,7 +165,7 @@ def create_unstaged_project_with_query(
     client,
     project_name: str = "Unstaged Project with Query",
     project_description: str = "This is an unstaged project with a query",
-) -> Optional[str]:
+) -> str | None:
     """
     Create an unstaged project and add a query to it.
     """
@@ -217,7 +216,7 @@ def create_unstaged_project_with_query(
 
 def create_staged_project(
     client, project_name: str = "Staged Project", project_description: str = "This is a staged project"
-) -> Optional[str]:
+) -> str | None:
     """Create a staged project and approve it."""
     print(f"🚀 Creating staged project: {project_name}")
 
@@ -272,7 +271,7 @@ def create_staged_project(
 
 def create_approved_project(
     client, project_name: str = "Approved Project", project_description: str = "This is an approved project"
-) -> Optional[str]:
+) -> str | None:
     """Create an approved project."""
     print(f"🚀 Creating approved project: {project_name}")
 
@@ -315,7 +314,7 @@ def create_approved_project_with_model(
     project_description: str = "This is an approved project with a model",
     model_name: str = "3D Spleen Segmentation Model",
     model_description: str = "Evaluation model for 3D spleen segmentation",
-) -> Optional[dict]:
+) -> dict | None:
     """Create an approved project with a model ready for training."""
     print(f"🚀 Creating approved project with model: {project_name}")
 

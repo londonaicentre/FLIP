@@ -1,0 +1,65 @@
+// Grafana Alloy configuration -- replaces Promtail for Docker log collection.
+// Discovers containers via the Docker socket, parses JSON logs from
+// log_config, and pushes to Loki.
+
+discovery.docker "docker" {
+  host             = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "docker" {
+  targets = []
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "project"
+  }
+
+}
+
+loki.source.docker "docker" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.docker.docker.targets
+  forward_to       = [loki.process.json_parse.receiver]
+  relabel_rules    = discovery.relabel.docker.rules
+  refresh_interval = "5s"
+}
+
+// Parse JSON log lines from log_config and promote fields to Loki labels.
+loki.process "json_parse" {
+  forward_to = [loki.write.loki.receiver]
+
+  stage.json {
+    expressions = {
+      level      = "level",
+      api        = "api",
+      event      = "event",
+      request_id = "request_id",
+    }
+  }
+
+  stage.labels {
+    values = {
+      level = "",
+      api   = "",
+      event = "",
+    }
+  }
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -10,15 +10,19 @@
 # limitations under the License.
 #
 
-import os
+from typing import Literal
 
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    ENV: str = os.getenv("ENV", "development")
-    environment: str = ENV
-    LOG_LEVEL: str = "DEBUG"
+    """Common settings shared across all environments (development and production)."""
+
+    # Environment flag
+    ENV: Literal["development", "production"] = "development"
+
+    #
+    LOG_LEVEL: str = "INFO"
 
     #
     XNAT_PORT: int

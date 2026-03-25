@@ -10,17 +10,16 @@
 # limitations under the License.
 #
 
-from typing import Optional
 
 from pydantic import BaseModel
 
 
 class ISiteBanner(BaseModel):
     message: str
-    link: Optional[str] = None
+    link: str | None = None
     enabled: bool
 
 
 class ISiteDetails(BaseModel):
     deploymentMode: bool
-    banner: Optional[ISiteBanner] = None
+    banner: ISiteBanner | None = None

@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Annotated, List
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -253,7 +253,7 @@ def get_project_endpoint(project_id: str, headers: XNATAuthHeaders) -> Project:
 
 
 @router.get("/{project_id}/subjects", summary="Get XNAT Project Subjects")
-def get_project_subjects_endpoint(project_id: str, headers: XNATAuthHeaders) -> List[Subject]:
+def get_project_subjects_endpoint(project_id: str, headers: XNATAuthHeaders) -> list[Subject]:
     """
     Retrieves a list of subjects in a specific project in XNAT.
 
@@ -277,7 +277,7 @@ def get_project_subjects_endpoint(project_id: str, headers: XNATAuthHeaders) -> 
 
 
 @router.get("/{project_id}/experiments", summary="Get XNAT Project Experiments")
-def get_project_experiments_endpoint(project_id: str, headers: XNATAuthHeaders) -> List[Experiment]:
+def get_project_experiments_endpoint(project_id: str, headers: XNATAuthHeaders) -> list[Experiment]:
     """
     Retrieves a list of experiments in a specific project in XNAT.
 

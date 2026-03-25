@@ -9,18 +9,11 @@
 # version: '3.7'
 services:
   xnat-web:
-    image: ghcr.io/londonaicentre/xnat-web:stag
+    image: ${DOCKER_REGISTRY}xnat-web:${DOCKER_TAG}
     deploy:
       replicas: 1
       restart_policy:
         condition: any
-      resources:
-        reservations:
-          cpus: "2"
-          memory: 4G
-        limits:
-          cpus: "6"
-          memory: 8G
       placement:
         constraints: [node.role == manager]
     ports:
@@ -28,7 +21,6 @@ services:
     environment:
       - CATALINA_OPTS=-Xms${XNAT_MIN_HEAP} -Xmx${XNAT_MAX_HEAP} -Dxnat.home=${XNAT_HOME} -XX:+UseG1GC -Djava.awt.headless=true -XX:+ParallelRefProcEnabled -XX:ParallelGCThreads=6 -XX:+UseStringDeduplication
       - XNAT_HOME=${XNAT_HOME}
-      - DATA_PATH=${XNAT_PATH}/xnat-docker-compose/${XNAT_PORT}/xnat-data
       - XNAT_ADMIN_USER=${XNAT_ADMIN_USER}
       - XNAT_ADMIN_INITIAL_PASSWORD=${XNAT_ADMIN_INITIAL_PASSWORD}
       - XNAT_ADMIN_PASSWORD=${XNAT_ADMIN_PASSWORD}
@@ -37,37 +29,16 @@ services:
       - XNAT_PORT=${XNAT_PORT}
       - PACS_DICOM_PORT=${PACS_DICOM_PORT}
     volumes:
-      # added to allow for the plugins to be mounted while developing - in production they will already be in the image
-      - ${XNAT_PATH}/xnat-docker-compose/xnat/plugins:${XNAT_HOME}/plugins
-      - ${XNAT_PATH}/xnat-docker-compose/${XNAT_PORT}/xnat-data/tomcat_logs:${XNAT_HOME}/logs
-      - ${XNAT_PATH}/xnat-docker-compose/${XNAT_PORT}/xnat-data/archive:${XNAT_ROOT}/archive
-      - ${XNAT_PATH}/xnat-docker-compose/${XNAT_PORT}/xnat-data/build:${XNAT_ROOT}/build
-      - ${XNAT_PATH}/xnat-docker-compose/${XNAT_PORT}/xnat-data/cache:${XNAT_ROOT}/cache
       - /var/run/docker.sock:/var/run/docker.sock
-      # added to allow for the config to be mounted
-      - ${XNAT_PATH}/xnat-docker-compose/xnat/config:${XNAT_ROOT}/config
-    depends_on:
-      - xnat-db
 
   xnat-db:
-    image: ghcr.io/londonaicentre/xnat-db:stag
+    image: ${DOCKER_REGISTRY}xnat-db:${DOCKER_TAG}
     deploy:
       replicas: 1
       restart_policy:
         condition: any
       placement:
         constraints: [node.role == manager]
-      resources:
-        reservations:
-          cpus: "2"
-          memory: 2G
-        limits:
-          cpus: "4"
-          memory: 4G
-    volumes:
-      # - ./postgres-data:/var/lib/postgresql/data
-      #
-      - ./postgres:/docker-entrypoint-initdb.d
     environment:
       - POSTGRES_PASSWORD=${XNAT_DATASOURCE_ADMIN_PASSWORD}
       - POSTGRES_DB=${XNAT_DATASOURCE_NAME}
@@ -76,21 +47,15 @@ services:
       - XNAT_DATASOURCE_PASSWORD=${XNAT_DATASOURCE_PASSWORD}
 
   xnat-nginx:
-    image: ghcr.io/londonaicentre/xnat-nginx:stag
+    image: ${DOCKER_REGISTRY}xnat-nginx:${DOCKER_TAG}
     deploy:
       replicas: 1
-      resources:
-        limits:
-          cpus: "1"
-          memory: 200M
       restart_policy:
         condition: any
       placement:
         constraints: [node.role == manager]
     # ports:
     #   - "80:80"
-    depends_on:
-      - xnat-web
 
 networks:
   default:

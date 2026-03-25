@@ -12,14 +12,14 @@
 
 import os
 import ssl
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 import httpx
 
 from flip_api.utils.logger import logger
 
 
-def trust_ssl_context() -> Union[ssl.SSLContext, bool]:
+def trust_ssl_context() -> ssl.SSLContext | bool:
     """Return an SSLContext that trusts the Trust CA, or True for default verification.
 
     Reads `TRUST_CA_BUNDLE` environment variable which should point to a PEM file.
@@ -43,7 +43,7 @@ def trust_ssl_context() -> Union[ssl.SSLContext, bool]:
     return True
 
 
-def http_get(url: str, request_id: Optional[str] = None) -> Any:
+def http_get(url: str, request_id: str | None = None) -> Any:
     """Perform an HTTP GET request to the specified URL with optional request ID for tracing."""
     headers = {"x-request-id": request_id} if request_id else {}
     with httpx.Client(verify=trust_ssl_context()) as client:
@@ -60,7 +60,7 @@ def http_get(url: str, request_id: Optional[str] = None) -> Any:
 
 
 def http_post(
-    url: str, request_id: Optional[str] = None, data: Optional[Dict] = None, timeout: Optional[float] = None
+    url: str, request_id: str | None = None, data: dict | None = None, timeout: float | None = None
 ) -> Any:
     """Perform an HTTP POST request to the specified URL with optional request ID for tracing."""
     headers = (
@@ -85,7 +85,7 @@ def http_post(
             raise
 
 
-def http_delete(url: str, request_id: Optional[str] = None) -> Any:
+def http_delete(url: str, request_id: str | None = None) -> Any:
     """Perform an HTTP DELETE request to the specified URL with optional request ID for tracing."""
     headers = {"x-request-id": request_id} if request_id else {}
     with httpx.Client(verify=trust_ssl_context()) as client:

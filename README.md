@@ -102,7 +102,7 @@ The XNAT services are deployed using Docker Swarm mode for better resource manag
 **Swarm-specific commands:**
 
 - XNAT services are deployed as Docker stacks (`xnat1` and `xnat2`)
-- The Swarm deployment uses the [trust/xnat/xnat-docker-compose/docker-compose-stack.yml](trust/xnat/xnat-docker-compose/docker-compose-stack.yml) file
+- The Swarm deployment uses the [trust/xnat/docker-compose-stack.yml](trust/xnat/docker-compose-stack.yml) file
 - Networks are created as overlay networks with `--attachable` flag for flexibility
 
 **Note:** Docker Swarm mode must be initialized on your system. If not already initialized, run:
@@ -126,18 +126,13 @@ Then create the networks again:
 make create-networks
 ```
 
-To manually manage XNAT Swarm services:
+To manually manage XNAT services (uses Docker Swarm):
 
 ```bash
-# Start XNAT services in Swarm mode
 cd trust/xnat
-make up-swarm
-
-# Stop XNAT services in Swarm mode
-make down-swarm
-
-# Get a shell in the XNAT container (Swarm mode)
-make xnat-shell-swarm
+make up          # Start XNAT services
+make down        # Stop XNAT services
+make xnat-shell  # Get a shell in the XNAT container
 ```
 
 ### Basic Usage

@@ -10,9 +10,15 @@
 # limitations under the License.
 #
 
-import logging
+from log_config import configure_logging, get_logger
 
 from imaging_api.config import get_settings
 
-logger = logging.getLogger("uvicorn")
-logger.setLevel(get_settings().LOG_LEVEL)
+_settings = get_settings()
+
+configure_logging(
+    api_name="imaging-api",
+    level=_settings.LOG_LEVEL,
+)
+
+logger = get_logger(__name__)

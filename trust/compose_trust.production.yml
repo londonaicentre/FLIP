@@ -15,6 +15,8 @@
 
 services:
 
+  # --- Application services ---
+
   omop-db:
     image: ghcr.io/londonaicentre/omop-db:stag
     restart: always
@@ -63,6 +65,7 @@ services:
       DEBUG: ${DEBUG}
       ENV: production
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
+      LOG_LEVEL: ${TRUST_LOG_LEVEL}
     # NOTE the volume BASE_IMAGES_DOWNLOAD_DIR is mounted to share images downloaded from XNAT with FL clients
     volumes:
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
@@ -80,6 +83,7 @@ services:
       DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT_TRUST_1}
       DEBUG: ${DEBUG}
       ENV: production
+      LOG_LEVEL: ${TRUST_LOG_LEVEL}
 
   nginx-tls:
     build:
@@ -101,11 +105,50 @@ services:
       CENTRAL_HUB_API_URL: ${CENTRAL_HUB_API_URL}
       DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
       IMAGING_API_URL: ${IMAGING_API_URL}
-      DEBUG_PORT: ${TRUST_DEBUG_PORT_TRUST_1}
+      DEBUG_PORT: ${TRUST_DEBUG_PORT}
       DEBUG: ${DEBUG}
       PRIVATE_API_KEY_HEADER: ${PRIVATE_API_KEY_HEADER}
       PRIVATE_API_KEY: ${PRIVATE_API_KEY}
       ENV: production
+      LOG_LEVEL: ${TRUST_LOG_LEVEL}
+
+  # --- Observability infrastructure ---
+
+  loki:
+    image: grafana/loki:3.4.0
+    restart: always
+    command: -config.file=/etc/loki/loki-config.yml
+    ports:
+      - "${LOKI_PORT}:3100"
+    volumes:
+      - /opt/flip/config/observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - /opt/flip/volumes/loki:/loki
+
+  alloy:
+    image: grafana/alloy:v1.9.0
+    restart: always
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - /etc/alloy/config.alloy
+    volumes:
+      - /opt/flip/config/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+
+  grafana:
+    image: grafana/grafana:11.5.0
+    restart: always
+    ports:
+      - "${GRAFANA_PORT}:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - /opt/flip/volumes/grafana:/var/lib/grafana
+      - /opt/flip/config/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - loki
 
 networks:
   default:

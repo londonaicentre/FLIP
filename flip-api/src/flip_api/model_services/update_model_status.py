@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
@@ -36,7 +35,7 @@ def update_model_status_endpoint(
     model_id: UUID = Path(..., title="Model ID"),
     model_status: ModelStatus = Path(..., title="New model status"),
     db: Session = Depends(get_session),
-    user_id: Optional[UUID] = Depends(verify_token),
+    user_id: UUID | None = Depends(verify_token),
 ) -> dict[str, str]:
     """
     Update the status of a specific model.

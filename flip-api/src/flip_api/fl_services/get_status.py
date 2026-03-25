@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -33,7 +32,7 @@ router = APIRouter(prefix="/fl", tags=["fl_services"])
 
 
 # [#114] ✅
-@router.get("/status", response_model=List[INetStatus])
+@router.get("/status", response_model=list[INetStatus])
 def get_status_endpoint(
     request: Request,
     db: Session = Depends(get_session),
@@ -60,7 +59,7 @@ def get_status_endpoint(
     try:
         nets = get_nets(db)
 
-        net_statuses: List[INetStatus] = []
+        net_statuses: list[INetStatus] = []
 
         for net in nets:
             server_status = fetch_server_status(net.endpoint)
@@ -91,7 +90,7 @@ def get_status_endpoint(
 
             # For each net, we would like to know which Trusts are connected and their statuses.
             trusts = get_trusts(db)
-            trust_client_statuses: List[IClientStatus] = []
+            trust_client_statuses: list[IClientStatus] = []
             for trust in trusts:
                 connected_client_info = None
 

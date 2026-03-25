@@ -28,7 +28,7 @@ jobs:
       packages: write
     defaults:
       run:
-        working-directory: ./trust/xnat/xnat-docker-compose/postgres
+        working-directory: ./trust/xnat/postgres
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: londonaicentre/xnat-db

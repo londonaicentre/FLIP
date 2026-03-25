@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
@@ -36,7 +35,7 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
 @router.post(
     "/{project_id}/approve",
     summary="Approve a staged project for specified trusts.",
-    response_model=List[ITrust],
+    response_model=list[ITrust],
     status_code=status.HTTP_200_OK,
 )
 def approve_project_endpoint(

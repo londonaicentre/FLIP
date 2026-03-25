@@ -11,7 +11,7 @@
 #
 
 import uuid
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, model_validator
@@ -38,7 +38,7 @@ class User(BaseModel):
     verified: bool
     firstName: str
     lastName: str
-    lastSuccessfulLogin: Optional[int] = None
+    lastSuccessfulLogin: int | None = None
 
 
 class CreateUser(BaseModel):
@@ -92,7 +92,7 @@ class Project(BaseModel):
     secondary_ID: str
     pi_lastname: str
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     ID: str
     URI: str
 
@@ -102,8 +102,8 @@ class CreatedProject(BaseModel):
 
     ID: UUID
     name: str
-    created_users: List[CreatedUser]
-    added_users: List[User]
+    created_users: list[CreatedUser]
+    added_users: list[User]
 
 
 class CentralHubProject(BaseModel):
@@ -113,7 +113,7 @@ class CentralHubProject(BaseModel):
     trust_id: UUID
     project_name: str
     query: str
-    users: List[CentralHubUser] = []
+    users: list[CentralHubUser] = []
 
 
 class Subject(BaseModel):
@@ -145,7 +145,7 @@ class Experiment(BaseModel):
     insert_date: str
     xsiType: str = Field(..., alias="xsiType")
     uri: str = Field(..., alias="URI")
-    subject_assessor_data_id: Optional[str] = Field(None, alias="xnat:subjectassessordata/id")
+    subject_assessor_data_id: str | None = Field(None, alias="xnat:subjectassessordata/id")
 
 
 # #########################
@@ -177,7 +177,7 @@ class Study(BaseModel):
     study_description: str = Field(..., alias="studyDescription")
     accession_number: str = Field(..., alias="accessionNumber")
     study_date: str = Field(..., alias="studyDate")
-    modalities_in_study: List[str] = Field(..., alias="modalitiesInStudy")
+    modalities_in_study: list[str] = Field(..., alias="modalitiesInStudy")
     referring_physician_name: str = Field(..., alias="referringPhysicianName")
     patient: Patient
 
@@ -187,7 +187,7 @@ class StudyQuery(BaseModel):
 
     accession_number: str = Field(..., alias="accessionNumber")
     pacs_id: int = Field(default=PACS_ID, alias="pacsId")
-    modality: Optional[str] = Field(default="", alias="modality")
+    modality: str | None = Field(default="", alias="modality")
 
 
 class ImportStudy(BaseModel):
@@ -195,7 +195,7 @@ class ImportStudy(BaseModel):
 
     study_instance_uid: str = Field(..., alias="studyInstanceUid")
     accession_number: str = Field(..., alias="accessionNumber")
-    relabel_map: Dict[str, str] = Field(default={}, alias="relabelMap")
+    relabel_map: dict[str, str] = Field(default={}, alias="relabelMap")
 
     def set_relabel_map(self):
         """Sets the relabel_map dictionary for subject and session."""
@@ -218,7 +218,7 @@ class ImportStudyRequest(BaseModel):
     port: int = Field(default=XNAT_PORT, alias="port")
     project_id: str = Field(..., alias="projectId")
     force_import: bool = Field(default=True, alias="forceImport")
-    studies: Annotated[List[ImportStudy], Field(..., min_length=1)]
+    studies: Annotated[list[ImportStudy], Field(..., min_length=1)]
 
     @model_validator(mode="before")
     @classmethod
@@ -258,11 +258,11 @@ class ImportStudyResponse(BaseModel):
 class ImportStatus(BaseModel):
     """Tracks the status of imported studies."""
 
-    successful: List[str] = []
-    failed: List[str] = []
-    processing: List[str] = []
-    queued: List[str] = []
-    queue_failed: List[str] = []
+    successful: list[str] = []
+    failed: list[str] = []
+    processing: list[str] = []
+    queued: list[str] = []
+    queue_failed: list[str] = []
 
 
 class ImportStatusCount(BaseModel):

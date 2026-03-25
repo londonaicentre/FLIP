@@ -71,7 +71,7 @@ def get_records(query: str) -> pd.DataFrame:
     Raises:
         HTTPException: If the query is invalid or if there is an error during execution.
     """
-    logger.info(f"Executing SQL query: {query}")
+    logger.info("Executing SQL query")
 
     cached = get_cached_result(query)
     if cached is not None:
@@ -261,7 +261,7 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
 
     if record_count < COHORT_QUERY_THRESHOLD:
         logger.info(
-            f"Query {query_input.query} returned insufficient results ({COHORT_QUERY_THRESHOLD}, {record_count})"
+            f"Query returned insufficient results ({COHORT_QUERY_THRESHOLD}, {record_count})"
         )
         raise HTTPException(
             status_code=400,

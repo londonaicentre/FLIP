@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -62,7 +61,7 @@ def set_user_roles(
 
         # Get all available roles for validation
         role_ids_from_db = db.exec(select(UserRole.role_id).distinct()).all()
-        role_ids: List[UUID] = [r for r in role_ids_from_db if r is not None]
+        role_ids: list[UUID] = [r for r in role_ids_from_db if r is not None]
         validate_roles(user_roles_ids, role_ids)  # This will raise an HTTPException if any role is invalid
 
         # Delete existing roles

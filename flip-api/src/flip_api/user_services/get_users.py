@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -78,7 +77,7 @@ def get_users(
         # Get users from Cognito
         users = get_cognito_users(params={"UserPoolId": user_pool_id})
 
-        data: List[IUser] = []
+        data: list[IUser] = []
 
         # Get user role data if users exist
         if users:

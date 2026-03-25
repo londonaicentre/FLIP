@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -49,8 +48,8 @@ class CentralHubProject(BaseModel):
     project_id: UUID  # This is the central hub project ID
     trust_id: UUID
     project_name: str
-    query: Optional[str] = None
-    users: List[CentralHubUser] = []
+    query: str | None = None
+    users: list[CentralHubUser] = []
 
 
 class UpdateProfileRequest(BaseModel):

@@ -346,7 +346,6 @@ deploy/providers/AWS/trust-ca.crt
 trust/terraform.tfstate
 
 .claude/settings.local.json
-CLAUDE.md
 
 *.gz
 
@@ -364,3 +363,10 @@ SECURITY_INCIDENT.md
 trust/certs/
 
 *.crt
+
+# Email template preview files (generated locally for testing)
+deploy/providers/AWS/email_previews/
+
+*.jar
+
+*.war

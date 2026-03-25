@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -75,7 +74,7 @@ class OMOPTrustResults(BaseModel):
 
     trust_name: str = Field(..., alias="trustName")
     trust_id: str = Field(..., alias="trustId")
-    data: List[Results]
+    data: list[Results]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -86,14 +85,14 @@ class OMOPResult(BaseModel):
     """Model for OMOP results."""
 
     name: str
-    results: List[OMOPTrustResults]
+    results: list[OMOPTrustResults]
 
 
 class OmopCohortResultsResponse(BaseModel):
     """Response model for OMOP cohort results."""
 
     record_count: int = Field(..., alias="recordCount")
-    trusts_results: List[OMOPResult] = Field(..., alias="trustsResults")
+    trusts_results: list[OMOPResult] = Field(..., alias="trustsResults")
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -132,13 +131,13 @@ class TrustDetails(BaseModel):
 
     name: str
     statusCode: int
-    message: Optional[str] = None
+    message: str | None = None
 
 
 class SubmitCohortQueryOutput(BaseModel):
     """Output model for cohort query submission."""
 
-    trust: List[TrustDetails]
+    trust: list[TrustDetails]
     query_id: UUID = Field(..., alias="queryId")
 
     model_config = ConfigDict(

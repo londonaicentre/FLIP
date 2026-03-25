@@ -12,7 +12,6 @@
 
 import base64
 import os
-from typing import Optional
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
@@ -32,7 +31,7 @@ def get_aes_key() -> bytes:
 
 
 # --- Step 2: AES-CBC encryption ---
-def encrypt(plaintext: str, key: Optional[bytes] = None) -> str:
+def encrypt(plaintext: str, key: bytes | None = None) -> str:
     """Encrypt plaintext using AES-CBC with PKCS7 padding. Returns Base64-encoded ciphertext."""
     if key is None:
         key = get_aes_key()
@@ -53,7 +52,7 @@ def encrypt(plaintext: str, key: Optional[bytes] = None) -> str:
 
 
 # --- Step 3: AES-CBC decryption ---
-def decrypt(encoded_payload: str, key: Optional[bytes] = None) -> str:
+def decrypt(encoded_payload: str, key: bytes | None = None) -> str:
     """Decrypt Base64-encoded ciphertext using AES-CBC with PKCS7 padding. Returns the original plaintext."""
     if key is None:
         key = get_aes_key()

@@ -39,10 +39,11 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
 [tool.ruff]
 line-length = 120
+target-version = "py312"
 
 [tool.ruff.lint]
 preview = true
-select = ['I', 'F', 'E', 'W', 'PT']
+select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP045']
 exclude = [
     "src/flip_api/translation/*"
 ]

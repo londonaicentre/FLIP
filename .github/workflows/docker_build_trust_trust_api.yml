@@ -18,6 +18,7 @@ on:
     branches: [main, develop]
     paths:
       - "trust/trust-api/**"
+      - "trust/observability/log_config/**"
       - ".github/workflows/docker_build_trust_trust_api.yml"
 
 jobs:
@@ -83,6 +84,9 @@ jobs:
 
       - name: Log in to GitHub Container Registry
         run: echo ${{ secrets.GITHUB_TOKEN }} | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
+
+      - name: Copy shared logging library into build context
+        run: cp -r ../observability/log_config ./log_config
 
       - name: Build Docker image
         run: |

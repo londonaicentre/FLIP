@@ -167,6 +167,12 @@
         # Data directory for Trust 1 (where XNAT images will be downloaded for the FL client to use)
         # NOTE if this is not created here, it will be created later by Docker Compose but owned by root, and will cause permission issues
         - /opt/flip/data/trust-1
+        # XNAT bind-mount directories (Docker Swarm does not auto-create them)
+        - /opt/flip/xnat
+        - /opt/flip/xnat/xnat-data/tomcat_logs
+        - /opt/flip/xnat/xnat-data/archive
+        - /opt/flip/xnat/xnat-data/build
+        - /opt/flip/xnat/xnat-data/cache
 
 - name: download participant kit services to Trust EC2
   hosts: trust_ec2
@@ -195,6 +201,64 @@
         executable: /bin/bash
       register: trust_sync
       changed_when: "'download:' in trust_sync.stdout or 'copy:' in trust_sync.stdout"
+
+- name: deploy observability config files to Trust EC2
+  hosts: trust_ec2
+  become: true
+  tasks:
+    - name: create observability config directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      loop:
+        - /opt/flip/config/observability
+        - /opt/flip/config/observability/alloy
+        - /opt/flip/config/observability/loki
+        - /opt/flip/config/observability/grafana/provisioning/datasources
+        - /opt/flip/config/observability/grafana/provisioning/dashboards
+
+    - name: copy Alloy config
+      copy:
+        src: ../../../trust/observability/alloy/config.alloy
+        dest: /opt/flip/config/observability/alloy/config.alloy
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+
+    - name: copy Loki config
+      copy:
+        src: ../../../trust/observability/loki/loki-config.yml
+        dest: /opt/flip/config/observability/loki/loki-config.yml
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+
+    - name: copy Grafana Loki datasource provisioning
+      copy:
+        src: ../../../trust/observability/grafana/provisioning/datasources/loki.yml
+        dest: /opt/flip/config/observability/grafana/provisioning/datasources/loki.yml
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+
+    - name: copy Grafana dashboard provider config
+      copy:
+        src: ../../../trust/observability/grafana/provisioning/dashboards/dashboards.yml
+        dest: /opt/flip/config/observability/grafana/provisioning/dashboards/dashboards.yml
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+
+    - name: copy Grafana Trust APIs dashboard
+      copy:
+        src: ../../../trust/observability/grafana/provisioning/dashboards/trust-apis.json
+        dest: /opt/flip/config/observability/grafana/provisioning/dashboards/trust-apis.json
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
 
 - name: install and configure CloudWatch agent on Central Hub
   hosts: central_hub

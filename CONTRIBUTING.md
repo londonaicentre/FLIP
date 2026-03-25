@@ -224,10 +224,11 @@ The project-wide ruff rules are:
 ```toml
 [tool.ruff]
 line-length = 120
+target-version = "py312"
 
 [tool.ruff.lint]
 preview = true
-select = ['I', 'F', 'E', 'W', 'PT']
+select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP045']
 ```
 
 We also use [mypy](https://github.com/python/mypy) for static type checking.

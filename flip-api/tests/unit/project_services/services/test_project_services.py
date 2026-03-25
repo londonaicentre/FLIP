@@ -11,7 +11,6 @@
 #
 
 from datetime import datetime
-from typing import List
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -64,7 +63,7 @@ def sample_project_id() -> UUID:
 
 
 @pytest.fixture
-def sample_user_ids() -> List[UUID]:
+def sample_user_ids() -> list[UUID]:
     return [uuid4(), uuid4(), uuid4()]  # Sample user IDs as UUIDs
 
 
@@ -82,7 +81,7 @@ def sample_project() -> Projects:
 
 
 @pytest.fixture
-def sample_trust_ids() -> List[UUID]:
+def sample_trust_ids() -> list[UUID]:
     return [uuid4(), uuid4(), uuid4()]
 
 
@@ -96,7 +95,7 @@ def sample_iproject_details() -> IProjectDetails:
 
 
 class TestCreateProject:
-    def test_create_project_success(self, mock_db_session: MagicMock, sample_user_ids: List[UUID]):
+    def test_create_project_success(self, mock_db_session: MagicMock, sample_user_ids: list[UUID]):
         payload = ProjectDetails(name="New Project", description="Project Description", users=sample_user_ids)
         current_user_id = uuid4()
 
@@ -253,7 +252,7 @@ class TestEditProjectService:
 
 class TestApproveProject:
     def test_approve_project_success(
-        self, mock_db_session: MagicMock, sample_project: Projects, sample_trust_ids: List[UUID]
+        self, mock_db_session: MagicMock, sample_project: Projects, sample_trust_ids: list[UUID]
     ):
         project_approval = IProjectApproval(project_id=sample_project.id, trust_ids=sample_trust_ids)
         user_id = uuid4()
@@ -280,7 +279,7 @@ class TestApproveProject:
             )
             mock_db_session.commit.assert_called_once()
 
-    def test_approve_project_not_found(self, mock_db_session: MagicMock, sample_trust_ids: List[UUID]):
+    def test_approve_project_not_found(self, mock_db_session: MagicMock, sample_trust_ids: list[UUID]):
         project_approval = IProjectApproval(project_id=uuid4(), trust_ids=sample_trust_ids)
         user_id = uuid4()
 
@@ -290,7 +289,7 @@ class TestApproveProject:
             approve_project(mock_db_session, project_approval, user_id)
 
     def test_approve_project_trust_not_found(
-        self, mock_db_session: MagicMock, sample_project: Projects, sample_trust_ids: List[UUID]
+        self, mock_db_session: MagicMock, sample_project: Projects, sample_trust_ids: list[UUID]
     ):
         project_approval = IProjectApproval(project_id=sample_project.id, trust_ids=sample_trust_ids)
         user_id = uuid4()
@@ -306,7 +305,7 @@ class TestApproveProject:
 
 class TestStageProjectService:
     def test_stage_project_service_success(
-        self, mock_db_session: MagicMock, sample_project: Projects, sample_trust_ids: List[UUID]
+        self, mock_db_session: MagicMock, sample_project: Projects, sample_trust_ids: list[UUID]
     ):
         project_id = sample_project.id
         current_user_id = uuid4()
@@ -326,7 +325,7 @@ class TestStageProjectService:
                 session=mock_db_session,
             )
 
-    def test_stage_project_service_not_found(self, mock_db_session: MagicMock, sample_trust_ids: List[UUID]):
+    def test_stage_project_service_not_found(self, mock_db_session: MagicMock, sample_trust_ids: list[UUID]):
         project_id = uuid4()
         current_user_id = uuid4()
 
@@ -482,7 +481,7 @@ class TestGetReimportQueries:
         )
         trust = Trust(id=trust_id, name="Example Trust", endpoint="https://trust.example.com")
 
-        # Should be a List[tuple[Queries, XNATProjectStatus, Trust]]
+        # Should be a list[tuple[Queries, XNATProjectStatus, Trust]]
         mock_session.exec.return_value.all.return_value = [(query, xnat_project_status, trust)]
 
         result = get_reimport_queries_service(max_reimport_count=5, session=mock_session)

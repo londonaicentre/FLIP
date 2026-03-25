@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Any, List, Optional
+from typing import Any
 from uuid import UUID
 
 from sqlmodel import Session, select
@@ -59,7 +59,7 @@ def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, sess
     logger.info(f"Output: {audit_response}")
 
 
-def update_model_status(model_id: UUID, status: ModelStatus | None, session: Session) -> Optional[ModelStatus]:
+def update_model_status(model_id: UUID, status: ModelStatus | None, session: Session) -> ModelStatus | None:
     """
     Update the status of a model
 
@@ -93,7 +93,7 @@ def update_model_status(model_id: UUID, status: ModelStatus | None, session: Ses
 
 
 def add_log(
-    model_id: UUID, log: str, session: Session, transaction: Optional[Any] = None, success: bool = True
+    model_id: UUID, log: str, session: Session, transaction: Any | None = None, success: bool = True
 ) -> None:
     """
     Add a log entry to the database
@@ -199,7 +199,7 @@ def delete_models(project_id: UUID, user_id: str, session: Session, ensure_delet
     return len(model_ids)
 
 
-def get_model_status(model_id: UUID, session: Session) -> Optional[IDetailedModelStatus]:
+def get_model_status(model_id: UUID, session: Session) -> IDetailedModelStatus | None:
     """
     Get the status of a model.
 
@@ -219,7 +219,7 @@ def get_model_status(model_id: UUID, session: Session) -> Optional[IDetailedMode
     return IDetailedModelStatus(status=model.status, deleted=model.deleted)
 
 
-def validate_trusts(model_id: UUID, trusts: List[str], session: Session) -> bool:
+def validate_trusts(model_id: UUID, trusts: list[str], session: Session) -> bool:
     """
     Validate whether the trusts are associated with the model.
 
@@ -255,7 +255,7 @@ def validate_trusts(model_id: UUID, trusts: List[str], session: Session) -> bool
     return True
 
 
-def get_metrics(model_id: UUID, session: Session) -> List[IModelMetrics]:
+def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
     """
     Get the metrics for a given model.
 

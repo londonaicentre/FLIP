@@ -11,7 +11,10 @@
 #
 
 from fastapi import FastAPI
+from log_config import LoggingMiddleware
 
+# Ensure structured logging is configured on import
+import trust_api.utils.logger  # noqa: F401
 from trust_api.routers.cohort import router as cohort_router
 from trust_api.routers.health import router as health_router
 from trust_api.routers.imaging import router as imaging_router
@@ -23,6 +26,8 @@ app = FastAPI(
     docs_url="/docs",  # Swagger UI
     redoc_url="/redoc",  # ReDoc UI
 )
+
+app.add_middleware(LoggingMiddleware)
 
 app.include_router(cohort_router)
 app.include_router(health_router)

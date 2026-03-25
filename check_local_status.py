@@ -42,7 +42,6 @@ import sys
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple
 
 
 # Color codes for terminal output
@@ -134,7 +133,7 @@ def check_command(command: str) -> bool:
         return False
 
 
-def run_command(args: list[str], timeout: int = 30) -> Tuple[bool, str]:
+def run_command(args: list[str], timeout: int = 30) -> tuple[bool, str]:
     """Run a shell command.
 
     Args:
@@ -358,7 +357,7 @@ def main(
     project_dir: Path,
     skip_endpoints: bool,
     skip_docker: bool,
-    env_file: Optional[Path],
+    env_file: Path | None,
 ) -> None:
     """FLIP Local Development Status Checker.
 

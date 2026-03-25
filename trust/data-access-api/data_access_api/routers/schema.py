@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Any, Dict, List
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -67,4 +67,4 @@ class StatisticsResponse(BaseModel):
     trust_id: str
     record_count: int
     created: str
-    data: List[Dict[str, Any]]
+    data: list[dict[str, Any]]

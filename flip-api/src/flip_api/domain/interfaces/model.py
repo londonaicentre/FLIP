@@ -12,7 +12,6 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, validator
@@ -48,7 +47,7 @@ class IModelLog(BaseModel):
     timestamp: datetime = Field(alias="@timestamp")
     model: str
     status: str
-    trust: Optional[str] = None
+    trust: str | None = None
     message: str
 
 
@@ -105,7 +104,7 @@ class IQuery(BaseModel):
     id: UUID
     name: str
     query: str
-    results: Optional[List[TrustsResults]] = Field(default=None)
+    results: list[TrustsResults] | None = Field(default=None)
 
 
 class IModelResponse(BaseModel):
@@ -114,8 +113,8 @@ class IModelResponse(BaseModel):
     model_description: str = Field(..., alias="modelDescription")
     project_id: UUID = Field(..., alias="projectId")
     status: ModelStatus
-    query: Optional[IQuery] = Field(default=None)
-    files: Optional[List[UploadedFiles]] = None
+    query: IQuery | None = Field(default=None)
+    files: list[UploadedFiles] | None = None
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -149,7 +148,7 @@ class ILog(BaseModel):
     model_id: UUID = Field(..., alias="modelId")
     log_date: datetime = Field(..., alias="logDate")
     success: bool
-    trust_name: Optional[str] = Field(default=None, alias="trustName")
+    trust_name: str | None = Field(default=None, alias="trustName")
     log: str
 
     model_config = ConfigDict(
@@ -176,11 +175,11 @@ class IModelMetricsValue(BaseModel):
 
 
 class IModelMetricsData(BaseModel):
-    data: List[IModelMetricsValue]
+    data: list[IModelMetricsValue]
     seriesLabel: str
 
 
 class IModelMetrics(BaseModel):
     yLabel: str
     xLabel: str
-    metrics: List[IModelMetricsData]
+    metrics: list[IModelMetricsData]

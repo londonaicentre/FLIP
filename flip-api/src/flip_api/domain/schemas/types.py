@@ -1,6 +1,4 @@
-#!/bin/bash
-#
-# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -12,15 +10,11 @@
 # limitations under the License.
 #
 
+from typing import Annotated
+from uuid import UUID
 
-# Usage: ./download_if_missing.sh <file> <url>
+from pydantic import Field, StringConstraints
 
-FILE="$1"
-URL="$2"
+TrimStr = Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]
 
-if [ ! -f "$FILE" ]; then
-  echo "Downloading $FILE..."
-  curl -L -o "$FILE" "$URL"
-else
-  echo "✔ File '$FILE' already exists, skipping download."
-fi
+NonEmptyUUIDList = Annotated[list[UUID], Field(min_length=1)]

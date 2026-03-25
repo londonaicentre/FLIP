@@ -390,3 +390,138 @@ Trust services can run on AWS EC2 or on-premises. Both models use the same Docke
 | **8002** | FL Server | 🟡 **CONDITIONAL** | gRPC (open to trust IPs only) |
 | **8003** | FL Admin | 🟡 **CONDITIONAL** | Admin (open to trust IPs only) |
 | **8020** | Trust API | 🟢 **OPEN** | HTTPS (nginx-tls → trust-api) |
+
+---
+
+## Email Templates
+
+All email templates are stored as standalone HTML files under `templates/`, organised by service. Both Terraform and the Python test utility load from the same files, ensuring a single source of truth.
+
+### Template Structure
+
+```sh
+deploy/providers/AWS/
+├── templates/
+│   ├── cognito/
+│   │   ├── invite.html                      # Temporary password invitation
+│   │   ├── password_reset_code.html         # Password reset with verification code
+│   │   └── password_reset_link.html         # Password reset with direct link
+│   └── ses/
+│       ├── flip-access-request.html         # Access request notification
+│       ├── flip-access-request.txt          # Plain-text fallback
+│       ├── flip-xnat-credentials.html       # XNAT credential notification
+│       └── flip-xnat-credentials.txt        # Plain-text fallback
+├── services.tf                              # Cognito config - loads cognito/ templates via file()
+├── main.tf                                  # SES config - loads ses/ templates via file()
+├── test_email_templates.py                  # Test utility for all templates
+```
+
+### How Templates Are Loaded
+
+**Cognito templates** (services.tf):
+
+```hcl
+email_message = file("${path.module}/templates/cognito/invite.html")
+```
+
+**SES templates** (main.tf):
+
+```hcl
+html = file("${path.module}/templates/ses/flip-access-request.html")
+text = file("${path.module}/templates/ses/flip-access-request.txt")
+```
+
+Changes to template files are automatically picked up on next `terraform apply` or test run.
+
+### Template Placeholders
+
+**Cognito templates** use single-brace placeholders substituted by AWS Cognito:
+
+| Placeholder | Replaced By | Example |
+| --- | --- | --- |
+| `{username}` | Cognito username (email) | john.smith@example.com |
+| `{####}` | 6-digit temporary password or verification code | 123456 |
+| `{flip_alb_subdomain}` | ALB domain from Terraform var | flip-app.example.com |
+| `{reset_link}` | Password reset link with token | https://flip.../reset?token=xyz |
+
+**SES templates** use double-brace (Mustache) placeholders substituted at send time:
+
+| Placeholder | Replaced By | Used In |
+| --- | --- | --- |
+| `{{name}}` | Requestor's name | access-request |
+| `{{email}}` | Requestor's email | access-request |
+| `{{purpose}}` | Access request purpose | access-request |
+| `{{trust_name}}` | Trust name | xnat-credentials |
+| `{{project_name}}` | XNAT project name | xnat-credentials |
+| `{{project_id}}` | XNAT project ID | xnat-credentials |
+| `{{username}}` | XNAT username | xnat-credentials |
+| `{{password}}` | XNAT password | xnat-credentials |
+
+### Quick Local Testing
+
+```bash
+cd deploy/providers/AWS
+
+# Test all templates and generate HTML previews
+python3 test_email_templates.py
+
+# View in browser with local HTTP server
+python3 test_email_templates.py --serve
+# Open http://localhost:8000/flip_email_invite.html
+
+# Test with custom data
+python3 test_email_templates.py \
+  --username "user@health.org" \
+  --subdomain "flip-stag.example.com"
+```
+
+The validation script checks:
+
+- HTML structure and syntax
+- Placeholder substitution for both Cognito and SES templates
+- FLIP branding colors (#61366e, #9452A8)
+- Required text elements present
+- Generates browser-viewable preview files
+
+### Testing Emails End-to-End
+
+After deploying, test that emails are delivered correctly by using the **Register User** workflow in FLIP. Registering a new user through the platform triggers the Cognito invitation email with the temporary password. This is the simplest way to verify the templates render correctly in a real email client.
+
+### Email Client Compatibility
+
+| Client | Support | Notes |
+|--------|---------|-------|
+| Gmail Web | Full | CSS gradients supported |
+| Outlook Web | Full | CSS gradients with fallback |
+| Apple Mail | Full | Dark mode compatible |
+| Outlook Desktop | Mostly | Table layout reliable |
+| Thunderbird | Full | Standard HTML support |
+| Yahoo Mail | Good | Limited CSS support |
+
+For professional cross-client testing: [Litmus](https://www.litmus.com/) or [Email on Acid](https://www.emailonacid.com/)
+
+### SES Prerequisites
+
+Before testing emails:
+
+1. **Verify SES Email** in AWS Console (SES → Configuration → Identities)
+2. **Sandbox Mode** (default): can only send to verified email addresses. Request production access in SES console.
+3. **Check Send Quota**: `aws ses get-account-sending-enabled --region eu-west-2`
+
+### Troubleshooting Email Issues
+
+| Issue | Solution |
+|-------|----------|
+| Email gradients don't render | Most clients support gradients; solid color fallback in template |
+| Button not clickable | Some clients disable links for security; check email client settings |
+| Text wraps awkwardly | Tables use responsive max-width: 600px (standard) |
+| Colors wrong in dark mode | Test in both light/dark modes; colors are contrast checked |
+| Logo not loading | Verify the image URL is accessible (hosted on GitHub raw content) |
+| Email not delivered | Check SES verification status and sandbox mode restrictions |
+
+### Making Template Changes
+
+1. **Edit template file** in `templates/cognito/` or `templates/ses/`
+2. **Test locally**: `python3 test_email_templates.py` (verify all 5 pass)
+3. **Review**: Check generated `email_previews/*.html` files in browser
+4. **Deploy**: Changes are picked up on next `terraform apply`

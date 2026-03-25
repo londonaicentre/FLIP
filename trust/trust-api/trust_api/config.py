@@ -10,23 +10,28 @@
 # limitations under the License.
 #
 
-import os
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Common settings shared across all environments (development and production)."""
+
+    # Environment flag
+    ENV: Literal["development", "production"] = "development"
+
     # env file is 3 directories up from this file
     # Get current directory: imaging-api/imaging_api/config.py
-    ENV: str = os.getenv("ENV", "development")
-    environment: str = ENV
-
     model_config = SettingsConfigDict(
-        env_file=str(Path(__file__).parent.parent.parent.parent / f".env.{environment}"),
+        env_file=str(Path(__file__).parent.parent.parent.parent / f".env.{ENV}"),
         env_file_encoding="utf-8",
         extra="allow",
     )
+
+    #
+    LOG_LEVEL: str = "INFO"
 
     #
     CENTRAL_HUB_API_URL: str

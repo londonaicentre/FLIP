@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -19,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 class IRoles(BaseModel):
     """Model for user roles."""
 
-    roles: List[UUID] = Field(..., description="List of role GUIDs assigned to the user")
+    roles: list[UUID] = Field(..., description="List of role GUIDs assigned to the user")
 
 
 class IRegisterUser(IRoles):
@@ -43,4 +42,4 @@ class IRegisterUserDto(BaseModel):
 
     user_id: UUID = Field(..., description="User ID from Cognito")
     email: EmailStr = Field(..., description="User's email address")
-    roles: List[UUID] = Field(..., description="List of role GUIDs assigned to the user")
+    roles: list[UUID] = Field(..., description="List of role GUIDs assigned to the user")

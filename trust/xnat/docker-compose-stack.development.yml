@@ -1,0 +1,39 @@
+# Development overlay for docker-compose-stack.yml
+# - Mounts plugins and config from the host for hot-reload during development
+#   (in production, these are baked into the Docker image)
+# - Overrides resource constraints for development machines with more CPU/RAM
+services:
+  xnat-web:
+    deploy:
+      resources:
+        reservations:
+          cpus: "2"
+          memory: 4G
+        limits:
+          cpus: "6"
+          memory: 8G
+    environment:
+      - DATA_PATH=${XNAT_PATH}/${XNAT_PORT}/xnat-data
+    volumes:
+      - ${XNAT_PATH}/xnat/plugins:${XNAT_HOME}/plugins
+      - ${XNAT_PATH}/xnat/config:${XNAT_ROOT}/config
+      # XNAT's container service plugin executes Docker commands on the host
+      # (via the mounted Docker socket). Those host-spawned containers need
+      # access to XNAT data through host paths, so these must be bind-mounted.
+      # /${XNAT_PORT} isolates data directories per XNAT instance.
+      - ${XNAT_PATH}/${XNAT_PORT}/xnat-data/tomcat_logs:${XNAT_HOME}/logs
+      - ${XNAT_PATH}/${XNAT_PORT}/xnat-data/archive:${XNAT_ROOT}/archive
+      - ${XNAT_PATH}/${XNAT_PORT}/xnat-data/build:${XNAT_ROOT}/build
+      - ${XNAT_PATH}/${XNAT_PORT}/xnat-data/cache:${XNAT_ROOT}/cache
+
+  xnat-db:
+    volumes:
+      - ./postgres:/docker-entrypoint-initdb.d
+    deploy:
+      resources:
+        reservations:
+          cpus: "2"
+          memory: 2G
+        limits:
+          cpus: "4"
+          memory: 4G

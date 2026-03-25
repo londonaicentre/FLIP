@@ -89,7 +89,6 @@ async def download_and_unzip_images(
 
     # Get subject ID from experiment
     subject_id = get_subject_id_from_experiment_response(experiment_response)
-    logger.info(f"Subject ID: {subject_id}")
 
     # Format download URL
     download_url = format_download_url(

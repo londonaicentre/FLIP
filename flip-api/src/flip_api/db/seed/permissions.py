@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List
 from uuid import UUID
 
 from sqlmodel import Session, select
@@ -18,7 +17,7 @@ from sqlmodel import Session, select
 from flip_api.db.models.user_models import Permission, PermissionRef
 
 
-def seed_permissions(session: Session) -> List[str]:
+def seed_permissions(session: Session) -> list[str]:
     """Seed permissions into the database."""
     for perm_data in PermissionRef:
         # Check if permission exists

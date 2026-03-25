@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List
 from uuid import UUID
 
 import boto3
@@ -44,7 +43,7 @@ router = APIRouter(prefix="/trust", tags=["trusts_services"])
 
 
 def send_xnat_login_to_new_users(
-    imaging_project_id: UUID, imaging_project_name: str, trust: ITrust, created_users: List[ICreatedImagingUser]
+    imaging_project_id: UUID, imaging_project_name: str, trust: ITrust, created_users: list[ICreatedImagingUser]
 ):
     """
     Sends XNAT login credentials to new users in the imaging project.

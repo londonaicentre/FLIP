@@ -1,0 +1,16 @@
+# Production overlay for docker-compose-stack.yml
+# Mounts persistent data volumes on the host for XNAT data survival across restarts.
+# In development, XNAT stores data inside the container (ephemeral).
+services:
+  xnat-web:
+    environment:
+      - DATA_PATH=/opt/flip/xnat/xnat-data
+    volumes:
+      - /opt/flip/xnat/xnat-data/tomcat_logs:${XNAT_HOME}/logs
+      - /opt/flip/xnat/xnat-data/archive:${XNAT_ROOT}/archive
+      - /opt/flip/xnat/xnat-data/build:${XNAT_ROOT}/build
+      - /opt/flip/xnat/xnat-data/cache:${XNAT_ROOT}/cache
+
+  xnat-db:
+    volumes:
+      - /opt/flip/xnat/xnat-db-data:/var/lib/postgresql/data

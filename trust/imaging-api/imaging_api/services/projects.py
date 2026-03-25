@@ -12,7 +12,7 @@
 
 import urllib.parse
 import uuid
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import requests
 
@@ -83,7 +83,7 @@ def get_project(project_id: str, headers: dict[str, str]) -> Project:
     raise NotFoundError(f"Project with ID '{project_id}' not found.")
 
 
-def get_all_projects(headers: dict[str, str]) -> List[Project]:
+def get_all_projects(headers: dict[str, str]) -> list[Project]:
     """
     Fetches all XNAT projects using the correct REST API endpoint.
 
@@ -278,7 +278,7 @@ def enable_project_command(project_id: str, container: str, headers: dict[str, s
 
 def add_central_hub_users_to_project(
     central_hub_project: CentralHubProject, project_id: str, headers: dict[str, str]
-) -> Tuple[List[CreatedUser], List[User]]:
+) -> tuple[list[CreatedUser], list[User]]:
     """
     Adds list of central hub users to an imaging project on XNAT.
 
@@ -291,11 +291,11 @@ def add_central_hub_users_to_project(
         headers (dict[str, str]): XNAT authentication headers
 
     Returns:
-        Tuple[List[imaging_api.routers.schemas.CreatedUser], List[imaging_api.routers.schemas.User]]: List of created
+        tuple[list[imaging_api.routers.schemas.CreatedUser], list[imaging_api.routers.schemas.User]]: List of created
         users and added users.
     """
-    created_users: List[CreatedUser] = []
-    added_users: List[User] = []
+    created_users: list[CreatedUser] = []
+    added_users: list[User] = []
 
     if not central_hub_project.users:
         logger.info("No users provided to add to project.")
@@ -305,23 +305,18 @@ def add_central_hub_users_to_project(
         # If central hub user is disabled, do not attempt to create account.
         if central_hub_user.is_disabled:
             logger.info(
-                "Central Hub user with email '%s' is disabled. "
+                "Central Hub user is disabled. "
                 "It will not be created on XNAT or added to the imaging project.",
-                central_hub_user.email,
             )
             continue
 
         # Check if user already exists on XNAT, check by 'email' key
         try:
             user_profile = get_user_profile_by("email", central_hub_user.email, headers)
-            logger.info(
-                "User with email '%s' exists on XNAT. Username: '%s'",
-                central_hub_user.email,
-                user_profile.username,
-            )
+            logger.info("User '%s' already exists on XNAT", user_profile.username)
 
         except NotFoundError:
-            logger.info(f"User with email '{central_hub_user.email}' not found on XNAT. Creating user...")
+            logger.info("User not found on XNAT. Creating user...")
             # Create user on XNAT from Central Hub user
             created_user, user_profile = create_user_from_central_hub_user(central_hub_user, headers)
             # Append to list of created users
@@ -419,7 +414,7 @@ async def delete_project(project_id: str, headers: dict[str, str]) -> Project:
     return project
 
 
-def get_subjects(project_id: str, headers: dict[str, str]) -> List[Subject]:
+def get_subjects(project_id: str, headers: dict[str, str]) -> list[Subject]:
     """
     Retrieves a list of subjects in a specific project in XNAT.
 
@@ -444,7 +439,7 @@ def get_subjects(project_id: str, headers: dict[str, str]) -> List[Subject]:
         raise Exception(f"Error: XNAT subjects fetch failed: {response.status_code} - {response.text}")
 
 
-def get_experiments(project_id: str, headers: dict[str, str]) -> List[Experiment]:
+def get_experiments(project_id: str, headers: dict[str, str]) -> list[Experiment]:
     """
     Fetches all XNAT experiments from a project.
 
@@ -508,7 +503,7 @@ def get_experiment(project_id: str, experiment_id_or_label: str, headers: dict[s
         raise Exception(f"Error: XNAT experiment fetch failed: {response.status_code} - {response.text}")
 
 
-def get_subject_id_from_experiment_response(experiment_response: Dict[str, Any]) -> str:
+def get_subject_id_from_experiment_response(experiment_response: dict[str, Any]) -> str:
     """
     Extracts the XNAT subject ID from the XNAT experiment response JSON.
 

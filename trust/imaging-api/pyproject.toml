@@ -43,7 +43,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = "imaging_api"
+pythonpath = ["imaging_api", "../observability"]
 python_files = ["test_*.py", "*_test.py"]
 addopts = []
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
@@ -58,7 +58,8 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
 [tool.ruff]
 line-length = 120
+target-version = "py312"
 
 [tool.ruff.lint]
 preview = true
-select = ['I', 'F', 'E', 'W', 'PT']
+select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP045']

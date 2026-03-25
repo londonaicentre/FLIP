@@ -77,6 +77,12 @@
         - "{{ flip_dir }}"
         - "{{ flip_dir }}/data/trust-1"
         - "{{ cert_dir }}"
+        # XNAT bind-mount directories (Docker Swarm does not auto-create them)
+        - "{{ flip_dir }}/xnat"
+        - "{{ flip_dir }}/xnat/xnat-data/tomcat_logs"
+        - "{{ flip_dir }}/xnat/xnat-data/archive"
+        - "{{ flip_dir }}/xnat/xnat-data/build"
+        - "{{ flip_dir }}/xnat/xnat-data/cache"
 
     - name: Create FL client kit directories
       file:

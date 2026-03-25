@@ -11,7 +11,6 @@
 #
 
 import json
-from typing import List, Set
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -150,14 +149,14 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
 
         # 2. Parse and prepare data
         # QueryResult.data is stored as a JSON string, so we need to parse it as TrustSpecificData objects
-        parsed_trust_data_list: List[TrustSpecificData] = []
+        parsed_trust_data_list: list[TrustSpecificData] = []
         for json_str_data in fetched_data.data:
             parsed_trust_data_list.append(TrustSpecificData(**json.loads(json_str_data)))
 
         # 3. Aggregate
         total_record_count = sum(ptd.record_count for ptd in parsed_trust_data_list)
 
-        all_field_names: Set[str] = set()
+        all_field_names: set[str] = set()
         for trust_data_item in parsed_trust_data_list:
             if trust_data_item.data:
                 for datum in trust_data_item.data:
@@ -165,11 +164,11 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
 
         logger.debug(f"Found field names for aggregation: {all_field_names} for query_id: {query_id}")
 
-        aggregated_field_results: List[AggregatedFieldResult] = []
+        aggregated_field_results: list[AggregatedFieldResult] = []
 
         if total_record_count > 0:  # Only aggregate if there's data
             for field_name in sorted(list(all_field_names)):  # Sort for consistent output
-                current_field_trust_results: List[AggregatedTrustFieldResult] = []
+                current_field_trust_results: list[AggregatedTrustFieldResult] = []
                 for i, trust_specific_data_item in enumerate(parsed_trust_data_list):
                     # Only include trusts that contributed to the record count for this field
                     if trust_specific_data_item.record_count > 0 and trust_specific_data_item.data:

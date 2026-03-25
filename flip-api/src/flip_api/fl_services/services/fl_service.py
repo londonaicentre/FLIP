@@ -11,7 +11,7 @@
 #
 
 import json
-from typing import Any, List
+from typing import Any
 from uuid import UUID
 
 from fastapi import Request
@@ -151,7 +151,7 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
     return server_status
 
 
-def check_client_status(endpoint: str) -> List[IClientStatus] | None:
+def check_client_status(endpoint: str) -> list[IClientStatus] | None:
     """
     Fetch the status of all clients from the FL API.
 
@@ -189,7 +189,7 @@ def fetch_server_status(endpoint: str) -> IServerStatus | None:
     return server_status
 
 
-def fetch_client_status(endpoint: str) -> List[IClientStatus] | None:
+def fetch_client_status(endpoint: str) -> list[IClientStatus] | None:
     """
     Fetch the status of the clients from the FL API.
 
@@ -206,7 +206,7 @@ def fetch_client_status(endpoint: str) -> List[IClientStatus] | None:
     return client_statuses
 
 
-def is_client_available(client_name: str, client_statuses: List[IClientStatus]) -> bool:
+def is_client_available(client_name: str, client_statuses: list[IClientStatus]) -> bool:
     """
     Check if a specific client is available based on its status.
 
@@ -226,7 +226,7 @@ def is_client_available(client_name: str, client_statuses: List[IClientStatus]) 
     return False
 
 
-def validate_client_availability(clients: List[str], endpoint: str) -> None:
+def validate_client_availability(clients: list[str], endpoint: str) -> None:
     """
     Validate the availability of clients by checking their status.
     It sends a GET request to the FL API service to check the status of the clients.
@@ -274,9 +274,9 @@ def abort_job(endpoint: str, job_id: str) -> dict:
 def start_training(
     model_id: UUID,
     fl_job_id: UUID,
-    clients: List[str],
+    clients: list[str],
     endpoint: str,
-    bundle_urls: List[str],
+    bundle_urls: list[str],
     session: Session,
 ):
     """
@@ -712,7 +712,7 @@ def verify_bundle_paths(
     logger.info(f"Bundle verification succeeded: {len(expected)} files present.")
 
 
-def get_bundle_urls(s3_path: str) -> List[str]:
+def get_bundle_urls(s3_path: str) -> list[str]:
     """
     Creates pre-signed URLs for the bundle files in S3 (containing the application files and model files) that the FL
     API will use for training.
@@ -861,7 +861,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     logger.info(f"Abort job response ({target=}, {clients=}): {response}")
 
 
-def add_fl_job(model_id: UUID, clients: List[str], session: Session) -> None:
+def add_fl_job(model_id: UUID, clients: list[str], session: Session) -> None:
     """
     Insert a new FL job into the database.
 

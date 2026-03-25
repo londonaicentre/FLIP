@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Any, List
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, validator
@@ -23,7 +23,7 @@ class Results(BaseModel):
 
 class OmopData(BaseModel):
     name: str
-    results: List[Results]
+    results: list[Results]
 
 
 class OmopCohortResults(BaseModel):
@@ -31,7 +31,7 @@ class OmopCohortResults(BaseModel):
     trust_id: UUID
     created: str
     record_count: int
-    data: List[OmopData]
+    data: list[OmopData]
 
     @validator("data", pre=True, always=True)
     def ensure_data_is_list(cls, value):
@@ -63,17 +63,17 @@ class TrainingLog(BaseModel):
 
 
 class ProjectApprovalBody(BaseModel):
-    trusts: List[UUID] = Field(..., description="List of Trust IDs to be approved for the project.")
+    trusts: list[UUID] = Field(..., description="List of Trust IDs to be approved for the project.")
 
 
 class ProjectApproval(BaseModel):
     project_id: UUID = Field(..., description="Project ID to be approved.")
-    trust_ids: List[UUID] = Field(..., description="List of Trust IDs to be approved for the project.")
+    trust_ids: list[UUID] = Field(..., description="List of Trust IDs to be approved for the project.")
 
 
 class TrustSpecificData(BaseModel):  # Parsed from query_result.data JSON string
     record_count: int
-    data: List[OmopData]
+    data: list[OmopData]
 
 
 class AggregatedTrustFieldResult(BaseModel):
@@ -84,16 +84,16 @@ class AggregatedTrustFieldResult(BaseModel):
 
 class AggregatedFieldResult(BaseModel):
     name: str  # Field name
-    results: List[AggregatedTrustFieldResult]
+    results: list[AggregatedTrustFieldResult]
 
 
 class AggregatedCohortStats(BaseModel):  # Stored as JSON in query_stats.stats
     record_count: int
-    trusts_results: List[AggregatedFieldResult]
+    trusts_results: list[AggregatedFieldResult]
 
 
 # Helper structure for data fetched from DB for aggregation
 class FetchedAggregationData(BaseModel):
-    trust_name: List[str]
-    trust_id: List[str]
-    data: List[str]  # List of JSON strings, each is a TrustSpecificData
+    trust_name: list[str]
+    trust_id: list[str]
+    data: list[str]  # List of JSON strings, each is a TrustSpecificData

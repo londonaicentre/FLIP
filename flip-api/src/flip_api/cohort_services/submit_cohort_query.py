@@ -11,7 +11,6 @@
 #
 
 import re
-from typing import List
 from uuid import UUID
 
 import httpx
@@ -140,7 +139,7 @@ def submit_cohort_query(
 
         logger.info(f"Trusts found: {len(trusts)}")
 
-        result: List[TrustDetails] = []
+        result: list[TrustDetails] = []
 
         # Encrypt project_id before sending to trusts
         encrypted_project_id = encrypt(str(cohort_query.project_id))

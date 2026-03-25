@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -39,7 +38,7 @@ class ITrust(BaseModel):
     id: UUID
     name: str
     endpoint: str
-    fl_client_endpoint: Optional[str] = Field(default=None, description="FL Client Endpoint URL")
+    fl_client_endpoint: str | None = Field(default=None, description="FL Client Endpoint URL")
 
 
 class ICreateImagingProject(BaseModel):
@@ -48,8 +47,8 @@ class ICreateImagingProject(BaseModel):
     project_id: UUID  # This is the central hub project ID
     trust_id: UUID
     project_name: str  # This is the name of the project on the central hub
-    query: Optional[str] = None
-    users: List[CognitoUser] = []
+    query: str | None = None
+    users: list[CognitoUser] = []
 
 
 class ICreatedImagingUser(BaseModel):
@@ -65,9 +64,9 @@ class ICreatedImagingProject(BaseModel):
 
     imaging_project_id: UUID
     name: str
-    created_users: List[ICreatedImagingUser]
+    created_users: list[ICreatedImagingUser]
     # TODO Consider adding the below if we want to notify existing users they have been added to a new imaging project
-    # added_users: List[User]
+    # added_users: list[User]
 
 
 class ISesTemplateData(BaseModel):

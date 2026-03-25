@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Annotated, List
+from typing import Annotated
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -35,7 +35,7 @@ XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 
 
 @router.get("", summary="Get XNAT Users")
-def get_users(headers: XNATAuthHeaders) -> List[User]:
+def get_users(headers: XNATAuthHeaders) -> list[User]:
     """Get a list of all users on XNAT."""
     return get_xnat_users(headers)
 

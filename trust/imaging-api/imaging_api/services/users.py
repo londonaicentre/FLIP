@@ -11,7 +11,6 @@
 #
 
 import re
-from typing import List, Tuple
 
 import requests
 
@@ -25,7 +24,7 @@ from imaging_api.utils.passwords import generate_complex_password
 XNAT_URL = get_settings().XNAT_URL
 
 
-def get_xnat_users(headers: dict[str, str]) -> List[User]:
+def get_xnat_users(headers: dict[str, str]) -> list[User]:
     """
     Gets all users from XNAT.
 
@@ -115,7 +114,7 @@ def get_user_profile_by(key: str, value: str, headers: dict[str, str]) -> User:
         if getattr(user, key) == value:
             return user
 
-    raise NotFoundError(f"User with {key} '{value}' not found")
+    raise NotFoundError(f"User not found by {key}")
 
 
 def user_exists(username: str, headers: dict[str, str]) -> bool:
@@ -141,7 +140,7 @@ def user_exists(username: str, headers: dict[str, str]) -> bool:
 
 def create_user_from_central_hub_user(
     central_hub_user: CentralHubUser, headers: dict[str, str]
-) -> Tuple[CreatedUser, User]:
+) -> tuple[CreatedUser, User]:
     """
     Convert central hub user to XNAT CreateUser request object, and create user on XNAT.
 
@@ -156,7 +155,6 @@ def create_user_from_central_hub_user(
     create_user_request = to_create_imaging_user(central_hub_user, headers)
     # Actually create
     user_profile = create_user(create_user_request, headers)
-    logger.info(f"User with email '{central_hub_user.email}' has been created. Username: '{user_profile.username}'")
     created_user = CreatedUser(
         username=user_profile.username,
         encrypted_password=encrypt(create_user_request.password),
@@ -176,12 +174,12 @@ def create_user(user: CreateUser, headers: dict[str, str]) -> User:
     Returns:
         imaging_api.routers.schemas.User: The created user profile.
     """
-    logger.info(f"Creating user: {user}")
+    logger.info(f"Creating user '{user.username}' on XNAT")
 
     response = requests.post(f"{XNAT_URL}/xapi/users", headers=headers, json=user.model_dump())
 
     if response.status_code == 201:
-        logger.info(f"User {user.username} created successfully!")
+        logger.info(f"User '{user.username}' created successfully on XNAT")
         user_profile = get_user_profile_by("username", user.username, headers)
         return user_profile
 
