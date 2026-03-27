@@ -81,4 +81,9 @@
     // deactivate pylance error checking
     "python.analysis.typeCheckingMode": "off",
     // deactivate mypy missing library stubs errors
+    "[terraform]": {
+        "editor.defaultFormatter": "hashicorp.terraform",
+        "editor.formatOnSave": true,
+        "editor.formatOnSaveMode": "file"
+    },
 }

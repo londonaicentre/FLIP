@@ -490,7 +490,7 @@ After deploying, test that emails are delivered correctly by using the **Registe
 ### Email Client Compatibility
 
 | Client | Support | Notes |
-|--------|---------|-------|
+| -------- | --------- | ------- |
 | Gmail Web | Full | CSS gradients supported |
 | Outlook Web | Full | CSS gradients with fallback |
 | Apple Mail | Full | Dark mode compatible |
@@ -511,7 +511,7 @@ Before testing emails:
 ### Troubleshooting Email Issues
 
 | Issue | Solution |
-|-------|----------|
+| ------- | ---------- |
 | Email gradients don't render | Most clients support gradients; solid color fallback in template |
 | Button not clickable | Some clients disable links for security; check email client settings |
 | Text wraps awkwardly | Tables use responsive max-width: 600px (standard) |

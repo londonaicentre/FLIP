@@ -280,10 +280,10 @@ resource "aws_eip" "central_hub_eip" {
 }
 
 resource "aws_eip_association" "central_hub_eip_assoc" {
-  count            = var.create_central_hub_elastic_ip ? 1 : 0
-  instance_id      = aws_instance.ec2_instance.id
-  allocation_id    = aws_eip.central_hub_eip.id
-  depends_on       = [aws_instance.ec2_instance]
+  count         = var.create_central_hub_elastic_ip ? 1 : 0
+  instance_id   = aws_instance.ec2_instance.id
+  allocation_id = aws_eip.central_hub_eip.id
+  depends_on    = [aws_instance.ec2_instance]
 }
 
 # Application Load Balancer
