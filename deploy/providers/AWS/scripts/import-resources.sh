@@ -147,6 +147,38 @@ else
     log_warn "NLB_SUBDOMAIN not set in environment"
 fi
 
+# 9. Transit Gateway Cross-Account Attachment (persistent hybrid networking)
+echo ""
+log_info "9️⃣  Transit Gateway cross-account attachment..."
+
+TGW_ID=$(aws_cmd ec2 describe-transit-gateways \
+    --filters "Name=tag:Name,Values=flip-transit-gateway" \
+    --query 'TransitGateways[0].TransitGatewayId' --output text 2>/dev/null || echo "")
+
+if [ -n "$TGW_ID" ] && [ "$TGW_ID" != "None" ]; then
+    log_success "Found Transit Gateway: $TGW_ID"
+    TGW_RT_ID=$(aws_cmd ec2 describe-transit-gateway-route-tables \
+        --filters "Name=transit-gateway-id,Values=${TGW_ID}" "Name=tag:Name,Values=flip-tgw-route-table" \
+        --query 'TransitGatewayRouteTables[0].TransitGatewayRouteTableId' --output text 2>/dev/null || echo "")
+
+    VPC_ID=$(aws_cmd ec2 describe-vpcs \
+        --filters "Name=tag:Name,Values=${VPC_NAME}" \
+        --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
+    if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+        VPC_ATTACH_ID=$(aws_cmd ec2 describe-transit-gateway-attachments \
+            --filters "Name=transit-gateway-id,Values=${TGW_ID}" "Name=resource-type,Values=vpc" "Name=resource-id,Values=${VPC_ID}" \
+            --query 'TransitGatewayAttachments[0].TransitGatewayAttachmentId' --output text 2>/dev/null || echo "")
+        if [ -n "$VPC_ATTACH_ID" ] && [ "$VPC_ATTACH_ID" != "None" ]; then
+            terraform import aws_ec2_transit_gateway_vpc_attachment.flip_vpc_attachment "$VPC_ATTACH_ID" 2>/dev/null || log_success "TGW VPC attachment (already in state)"
+            if [ -n "$TGW_RT_ID" ] && [ "$TGW_RT_ID" != "None" ]; then
+                terraform import aws_ec2_transit_gateway_route_table_propagation.flip_vpc_propagation "${TGW_RT_ID}_${VPC_ATTACH_ID}" 2>/dev/null || log_success "TGW VPC propagation (already in state)"
+            fi
+        fi
+    fi
+else
+    log_info "No Transit Gateway found with tag Name=flip-transit-gateway (cross-account attachment will be created by Terraform if configured)"
+fi
+
 echo ""
 log_info "Note: Terraform state bucket (${FLIP_TFSTATE_BUCKET_NAME}) is managed externally via create_backend.sh"
 log_success "Persistent resources imported!"

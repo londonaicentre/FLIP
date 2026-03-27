@@ -174,3 +174,59 @@ variable "create_central_hub_elastic_ip" {
   type        = bool
   default     = true
 }
+
+############################
+# VPN Configuration Variables
+############################
+
+variable "on_prem_cidr" {
+  description = "CIDR block for on-premises network (e.g., xx.xx.xxx.xxx/xx). Required for VPN route configuration."
+  type        = string
+  default     = ""
+}
+
+variable "on_prem_public_ip" {
+  description = "Static public IP address of the on-premises VPN gateway/firewall device. Must be provided by on-premises IT team. Leave empty to skip VPN creation."
+  type        = string
+  default     = ""
+}
+
+variable "on_prem_bgp_asn" {
+  description = "BGP Autonomous System Number for on-premises customer gateway. Must be unique within the network."
+  type        = number
+  default     = 65000
+}
+
+variable "enable_vpn" {
+  description = "Enable creation of VPN connection to on-premises network. Set to false for cloud-only deployments (no on-premises trusts)."
+  type        = bool
+  default     = false
+}
+
+############################
+# Networking Account (Centralized TGW & VPN)
+############################
+
+variable "networking_account_id" {
+  description = "AWS Account ID of the Networking Account (owns centralized TGW and VPN connection)"
+  type        = string
+  default     = "222257058857"
+}
+
+variable "networking_account_tgw_id" {
+  description = "Transit Gateway ID from Networking Account (e.g., tgw-xxxxxxxxxx). Request from network team."
+  type        = string
+  default     = ""
+}
+
+variable "networking_account_tgw_route_table_id" {
+  description = "TGW Route Table ID from Networking Account (for route propagation). Request from network team."
+  type        = string
+  default     = ""
+}
+
+variable "enable_tgw_route_propagation" {
+  description = "Enable Prod/Staging VPC CIDR propagation to Networking Account TGW route table. Set to true to auto-advertise VPC routes."
+  type        = bool
+  default     = true
+}

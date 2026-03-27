@@ -19,9 +19,10 @@ done || true
 log_info "📋 Backing up Terraform configuration..."
 cp main.tf main.tf.backup
 cp modules/trust_ec2/main.tf modules/trust_ec2/main.tf.backup
+cp tgw-attachments.tf tgw-attachments.tf.backup
 
-log_info "🗑️  Disabling prevent_destroy in EIP resources temporarily..."
-sed -i 's/prevent_destroy = true/prevent_destroy = false/g' main.tf modules/trust_ec2/main.tf
+log_info "🗑️  Disabling prevent_destroy in protected resources temporarily..."
+sed -i 's/prevent_destroy = true/prevent_destroy = false/g' main.tf modules/trust_ec2/main.tf tgw-attachments.tf
 
 log_info "💥 Proceeding with infrastructure destruction..."
 
@@ -87,11 +88,12 @@ terraform destroy -auto-approve \
   -target=aws_key_pair.host_key \
   -target=local_file.env 2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use"
 
-log_info "🔒 Re-enabling prevent_destroy in EIP resources..."
+log_info "🔒 Re-enabling prevent_destroy in protected resources..."
 mv main.tf.backup main.tf
 mv modules/trust_ec2/main.tf.backup modules/trust_ec2/main.tf
+mv tgw-attachments.tf.backup tgw-attachments.tf
 
-log_success "✅ Infrastructure destroyed! EIPs preserved and protect_destroy re-enabled."
+log_success "✅ Infrastructure destroyed! Protected resources (EIPs and TGW attachment lifecycle guards) restored."
 log_info ""
 log_info "✓ Elastic IPs remain allocated:"
 log_info "  - Central Hub EIP: $(terraform output -raw CentralHubEip 2>/dev/null || echo 'N/A')"

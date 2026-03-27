@@ -39,6 +39,13 @@ $(error "For production deployments, AWS_PROFILE must be set to 'FlipDeveloperAc
 endif
 endif
 
+# VPN is only supported against the production account/trust connection.
+ifneq ($(filter true TRUE 1 yes YES,$(ENABLE_VPN)),)
+ifneq ($(PROD),true)
+$(error "ENABLE_VPN=true is only supported when PROD=true (production account)")
+endif
+endif
+
 ## SETTING VARIABLES FOR TERRAFORM
 export TF_VAR_max_azs=2
 export TF_VAR_vpc_cidr=10.0.0.0/16
@@ -70,6 +77,14 @@ export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_create_central_hub_elastic_ip=${CREATE_CENTRAL_HUB_ELASTIC_IP}
+export TF_VAR_enable_vpn=${ENABLE_VPN}
+export TF_VAR_on_prem_cidr=${ON_PREM_CIDR}
+export TF_VAR_on_prem_public_ip=${ON_PREM_PUBLIC_IP}
+export TF_VAR_on_prem_bgp_asn=${ON_PREM_BGP_ASN}
+export TF_VAR_networking_account_id=${NETWORKING_ACCOUNT_ID}
+export TF_VAR_networking_account_tgw_id=${NETWORKING_ACCOUNT_TGW_ID}
+export TF_VAR_networking_account_tgw_route_table_id=${NETWORKING_ACCOUNT_TGW_ROUTE_TABLE_ID}
+export TF_VAR_enable_tgw_route_propagation=true
 
 CENTRALHUB_IMAGES = \
 	$(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG) \
@@ -124,7 +139,7 @@ init: ## Initialize Terraform configuration
 
 
 .PHONY: import-persistent
-import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement
+import-persistent: ## Import persistent resources (S3, Secrets, Cognito, TGW attachment) to prevent replacement
 	@bash scripts/import-resources.sh
 
 
