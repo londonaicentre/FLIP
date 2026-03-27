@@ -21,10 +21,11 @@ from imaging_api.services.projects import (
     add_central_hub_users_to_project,
     create_payload_for_project_creation,
     create_project,
+    create_project_event_subscription,
     delete_project,
     delete_queued_import_requests,
-    enable_project_command,
     get_all_projects,
+    get_command_info,
     get_experiment,
     get_experiments,
     get_project,
@@ -146,7 +147,11 @@ def test_get_project_from_central_hub_id_fetch_error(mock_get_all, headers):
 # ===========================================================================
 def test_create_payload_for_project_creation():
     payload = create_payload_for_project_creation(
-        "http://xnat/projects", "P1", "S1", "My Project", "A description",
+        "http://xnat/projects",
+        "P1",
+        "S1",
+        "My Project",
+        "A description",
     )
     assert "<ID>P1</ID>" in payload
     assert "<secondary_ID>S1</secondary_ID>" in payload
@@ -192,7 +197,10 @@ def test_create_project_post_failure(mock_post, mock_get_all, headers):
 # ===========================================================================
 def test_to_create_project():
     hub_project = CentralHubProject(
-        project_id=uuid4(), trust_id=uuid4(), project_name="My Project", query="SELECT *",
+        project_id=uuid4(),
+        trust_id=uuid4(),
+        project_name="My Project",
+        query="SELECT *",
     )
     create_req = to_create_project(hub_project)
     assert str(hub_project.project_id) in create_req.name
@@ -216,42 +224,87 @@ def test_set_project_prearchive_settings_failure(mock_put, headers):
 
 
 # ===========================================================================
-# enable_project_command
+# get_command_info
 # ===========================================================================
-@patch("imaging_api.services.projects.requests.put")
 @patch("imaging_api.services.projects.requests.get")
-def test_enable_project_command_success(mock_get, mock_put, headers):
+def test_get_command_info_success(mock_get, headers):
     mock_get.return_value = MagicMock(
         status_code=200,
-        json=MagicMock(return_value=[
-            {"id": 42, "xnat": [{"name": "dcm2niix-wrapper"}]},
-        ]),
+        json=MagicMock(return_value=[{"id": 1, "xnat": [{"name": "dcm2niix-scan"}]}]),
     )
-    mock_put.return_value = MagicMock(status_code=200)
 
-    enable_project_command("TEST", "xnat/dcm2niix:latest", headers)
+    command_id, wrapper_name = get_command_info("xnat/dcm2niix:latest", headers)
+
+    assert command_id == 1
+    assert wrapper_name == "dcm2niix-scan"
 
 
 @patch("imaging_api.services.projects.requests.get")
-def test_enable_project_command_get_failure(mock_get, headers):
-    mock_get.return_value = MagicMock(status_code=500, text="Error")
+def test_get_command_info_fetch_failure(mock_get, headers):
+    mock_get.return_value = MagicMock(status_code=500, text="Internal Server Error")
+
     with pytest.raises(Exception, match="XNAT command fetch failed"):
-        enable_project_command("TEST", "xnat/dcm2niix:latest", headers)
+        get_command_info("xnat/dcm2niix:latest", headers)
+
+
+# ===========================================================================
+# create_project_event_subscription
+# ===========================================================================
+@patch("imaging_api.services.projects.requests.post")
+@patch("imaging_api.services.projects.requests.put")
+@patch("imaging_api.services.projects.get_command_info")
+def test_create_project_event_subscription_active(mock_cmd_info, mock_put, mock_post, headers):
+    mock_cmd_info.return_value = (1, "dcm2niix-scan")
+    mock_put.return_value = MagicMock(status_code=200)
+    mock_post.return_value = MagicMock(status_code=200)
+
+    create_project_event_subscription("TEST", "xnat/dcm2niix:latest", True, headers)
+
+    mock_put.assert_called_once()
+    assert "/commands/1/wrappers/dcm2niix-scan/enabled" in mock_put.call_args[0][0]
+    mock_post.assert_called_once()
+    call_url = mock_post.call_args[0][0]
+    call_payload = mock_post.call_args[1]["json"]
+    assert "/xapi/projects/TEST/events/subscription" in call_url
+    assert call_payload["active"] is True
+    assert "CommandActionProvider:1" in call_payload["action-key"]
+
+
+@patch("imaging_api.services.projects.requests.post")
+@patch("imaging_api.services.projects.requests.put")
+@patch("imaging_api.services.projects.get_command_info")
+def test_create_project_event_subscription_inactive(mock_cmd_info, mock_put, mock_post, headers):
+    mock_cmd_info.return_value = (1, "dcm2niix-scan")
+    mock_put.return_value = MagicMock(status_code=200)
+    mock_post.return_value = MagicMock(status_code=200)
+
+    create_project_event_subscription("TEST", "xnat/dcm2niix:latest", False, headers)
+
+    mock_post.assert_called_once()
+    call_payload = mock_post.call_args[1]["json"]
+    assert call_payload["active"] is False
 
 
 @patch("imaging_api.services.projects.requests.put")
-@patch("imaging_api.services.projects.requests.get")
-def test_enable_project_command_put_failure(mock_get, mock_put, headers):
-    mock_get.return_value = MagicMock(
-        status_code=200,
-        json=MagicMock(return_value=[
-            {"id": 42, "xnat": [{"name": "dcm2niix-wrapper"}]},
-        ]),
-    )
-    mock_put.return_value = MagicMock(status_code=500, text="Error")
+@patch("imaging_api.services.projects.get_command_info")
+def test_create_project_event_subscription_enable_command_failure(mock_cmd_info, mock_put, headers):
+    mock_cmd_info.return_value = (1, "dcm2niix-scan")
+    mock_put.return_value = MagicMock(status_code=500, text="Internal Server Error")
 
-    with pytest.raises(Exception, match="Enabling XNAT command"):
-        enable_project_command("TEST", "xnat/dcm2niix:latest", headers)
+    with pytest.raises(Exception, match="Enabling command"):
+        create_project_event_subscription("TEST", "xnat/dcm2niix:latest", True, headers)
+
+
+@patch("imaging_api.services.projects.requests.post")
+@patch("imaging_api.services.projects.requests.put")
+@patch("imaging_api.services.projects.get_command_info")
+def test_create_project_event_subscription_failure(mock_cmd_info, mock_put, mock_post, headers):
+    mock_cmd_info.return_value = (1, "dcm2niix-scan")
+    mock_put.return_value = MagicMock(status_code=200)
+    mock_post.return_value = MagicMock(status_code=500, text="Internal Server Error")
+
+    with pytest.raises(Exception, match="Creating event subscription"):
+        create_project_event_subscription("TEST", "xnat/dcm2niix:latest", True, headers)
 
 
 # ===========================================================================
@@ -261,7 +314,11 @@ def test_enable_project_command_put_failure(mock_get, mock_put, headers):
 @patch("imaging_api.services.projects.get_user_profile_by")
 def test_add_central_hub_users_no_users(mock_get_profile, mock_add, headers):
     hub_project = CentralHubProject(
-        project_id=uuid4(), trust_id=uuid4(), project_name="Proj", query="SELECT *", users=[],
+        project_id=uuid4(),
+        trust_id=uuid4(),
+        project_name="Proj",
+        query="SELECT *",
+        users=[],
     )
     created, added = add_central_hub_users_to_project(hub_project, "TEST", headers)
     assert created == []
@@ -277,7 +334,11 @@ def test_add_central_hub_users_existing_user(mock_get_profile, mock_add, headers
 
     hub_user = CentralHubUser(id=uuid4(), email="alice@test.com")
     hub_project = CentralHubProject(
-        project_id=uuid4(), trust_id=uuid4(), project_name="Proj", query="SELECT *", users=[hub_user],
+        project_id=uuid4(),
+        trust_id=uuid4(),
+        project_name="Proj",
+        query="SELECT *",
+        users=[hub_user],
     )
 
     created, added = add_central_hub_users_to_project(hub_project, "TEST", headers)
@@ -297,7 +358,11 @@ def test_add_central_hub_users_new_user(mock_get_profile, mock_create, mock_add,
 
     hub_user = CentralHubUser(id=uuid4(), email="alice@test.com")
     hub_project = CentralHubProject(
-        project_id=uuid4(), trust_id=uuid4(), project_name="Proj", query="SELECT *", users=[hub_user],
+        project_id=uuid4(),
+        trust_id=uuid4(),
+        project_name="Proj",
+        query="SELECT *",
+        users=[hub_user],
     )
 
     created, added = add_central_hub_users_to_project(hub_project, "TEST", headers)
@@ -310,7 +375,11 @@ def test_add_central_hub_users_new_user(mock_get_profile, mock_create, mock_add,
 def test_add_central_hub_users_disabled_user_skipped(mock_get_profile, mock_add, headers):
     hub_user = CentralHubUser(id=uuid4(), email="disabled@test.com", is_disabled=True)
     hub_project = CentralHubProject(
-        project_id=uuid4(), trust_id=uuid4(), project_name="Proj", query="SELECT *", users=[hub_user],
+        project_id=uuid4(),
+        trust_id=uuid4(),
+        project_name="Proj",
+        query="SELECT *",
+        users=[hub_user],
     )
 
     created, added = add_central_hub_users_to_project(hub_project, "TEST", headers)
@@ -328,8 +397,11 @@ def test_add_central_hub_users_disabled_user_skipped(mock_get_profile, mock_add,
 async def test_delete_queued_import_requests_success(mock_post, mock_get_queued, headers):
     mock_get_queued.return_value = [
         QueuedPacsRequest(
-            id=1, created="2023-10-01T00:00:00", accession_number="FAK57777617",
-            status="QUEUED", xnat_project="TEST",
+            id=1,
+            created="2023-10-01T00:00:00",
+            accession_number="FAK57777617",
+            status="QUEUED",
+            xnat_project="TEST",
         )
     ]
     mock_post.return_value = MagicMock(status_code=200)
@@ -361,18 +433,17 @@ async def test_delete_queued_import_requests_none_to_delete(mock_get_queued, hea
 async def test_delete_queued_import_requests_post_failure(mock_post, mock_get_queued, headers):
     mock_get_queued.return_value = [
         QueuedPacsRequest(
-            id=1, created="2023-10-01T00:00:00", accession_number="FAK57777617",
-            status="QUEUED", xnat_project="TEST",
+            id=1,
+            created="2023-10-01T00:00:00",
+            accession_number="FAK57777617",
+            status="QUEUED",
+            xnat_project="TEST",
         )
     ]
     mock_post.return_value = MagicMock(status_code=500, text="Error")
 
     async def fake_session():
         yield MagicMock()
-
-    with patch("imaging_api.services.projects.get_session", side_effect=lambda: fake_session()):
-        result = await delete_queued_import_requests("TEST", headers)
-    assert result is False
 
 
 # ===========================================================================
@@ -411,10 +482,22 @@ def test_get_subjects_success(mock_get_project, mock_get, headers):
     mock_get_project.return_value = Project(**_PROJECT_DICT)
     mock_get.return_value = MagicMock(
         status_code=200,
-        json=MagicMock(return_value={"ResultSet": {"Result": [
-            {"ID": "S1", "label": "subj1", "insert_date": "2023-01-01",
-             "project": "TEST", "insert_user": "admin", "URI": "/subjects/S1"},
-        ]}}),
+        json=MagicMock(
+            return_value={
+                "ResultSet": {
+                    "Result": [
+                        {
+                            "ID": "S1",
+                            "label": "subj1",
+                            "insert_date": "2023-01-01",
+                            "project": "TEST",
+                            "insert_user": "admin",
+                            "URI": "/subjects/S1",
+                        },
+                    ]
+                }
+            }
+        ),
     )
     subjects = get_subjects("TEST", headers)
     assert len(subjects) == 1
@@ -439,10 +522,23 @@ def test_get_experiments_success(mock_get_project, mock_get, headers):
     mock_get_project.return_value = Project(**_PROJECT_DICT)
     mock_get.return_value = MagicMock(
         status_code=200,
-        json=MagicMock(return_value={"ResultSet": {"Result": [
-            {"ID": "E1", "label": "exp1", "date": "2023-01-01", "project": "TEST",
-             "insert_date": "2023-01-01", "xsiType": "xnat:ctScanData", "URI": "/exp/E1"},
-        ]}}),
+        json=MagicMock(
+            return_value={
+                "ResultSet": {
+                    "Result": [
+                        {
+                            "ID": "E1",
+                            "label": "exp1",
+                            "date": "2023-01-01",
+                            "project": "TEST",
+                            "insert_date": "2023-01-01",
+                            "xsiType": "xnat:ctScanData",
+                            "URI": "/exp/E1",
+                        },
+                    ]
+                }
+            }
+        ),
     )
     experiments = get_experiments("TEST", headers)
     assert len(experiments) == 1

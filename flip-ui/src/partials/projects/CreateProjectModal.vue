@@ -31,6 +31,7 @@
                 <Form
                     class="fixed inset-y-0 right-0 flex max-w-full pl-10"
                     :validation-schema="schema"
+                    :initial-values="{ dicom_to_nifti: 'true' }"
                     @submit="submitForm"
                 >
                     <TransitionChild
@@ -85,6 +86,26 @@
                                                 placeholder="Optional description"
                                                 hint="A small description of what your project is trying to achieve."
                                             />
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                                    Convert DICOMs to NIfTI
+                                                </label>
+                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                                    Automatically convert DICOM scans to NIfTI format when images are imported from PACS into XNAT.
+                                                </p>
+                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                                    When enabled, NIfTI files can be requested using the ResourceType parameter.
+                                                </p>
+                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                                                    Disable this if you will be working with DICOM files directly.
+                                                </p>
+                                                <AiSwitch
+                                                    name="dicom_to_nifti"
+                                                    value="true"
+                                                    :label="{ enabled: 'Enabled', disabled: 'Disabled' }"
+                                                    data-test="dicom-to-nifti-toggle"
+                                                />
+                                            </div>
                                         </div>
 
                                         <div class="mt-6">
@@ -124,6 +145,7 @@ import { ref } from "vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
+import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
 import AiTextArea from "@/components/AiTextArea/AiTextArea.vue";
 import { routeChange } from "@/router";
 import { createProject, IProjectCreate } from "@/services/project-service";
@@ -167,6 +189,8 @@ const submitForm = async(v: unknown) => {
         values.users = users.map(u => {
             return u.id;
         });
+
+        values.dicom_to_nifti = !!(values as Record<string, unknown>).dicom_to_nifti;
 
         const { id: projectId } = await createProject("/projects", values as IProjectCreate);
 

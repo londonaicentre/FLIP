@@ -50,6 +50,7 @@ class CentralHubProject(BaseModel):
     project_name: str
     query: str | None = None
     users: list[CentralHubUser] = []
+    dicom_to_nifti: bool = True
 
 
 class UpdateProfileRequest(BaseModel):

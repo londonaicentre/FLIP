@@ -90,36 +90,40 @@ echo "Command ID: $CMD_ID"
 dcm2niix_wrapper_name=$(echo "$RESPONSE" | jq -r '.[0].xnat[0].name')
 echo "Wrapper Name: $dcm2niix_wrapper_name"
 
-# Enable the dcm2niix command
+# Enable the dcm2niix command at the site level (makes it available for per-project use)
+# See https://wiki.xnat.org/container-service/container-service-api for more details
 echo "Enabling $DCM2NIIX_NAME command..."
 curl -s -X PUT "$XNAT_URL/xapi/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}"
 
-# Keep in mind that this does not enable the command at the project level
-# This should be done in the imaging-api when a project is created
-# But I think the default is that it will be enabled at the project level
-
-# Replace ${CMD_ID} in the file and store in a variable
-dcm2niix_event=$(sed "s/\${CMD_ID}/$CMD_ID/g" dcm2niix_event.json)
-echo "dcm2niix_event: $dcm2niix_event"
+# Note: this only enables the command site-wide so it can be used per-project.
 
 # ----------------------------------------------------------------
 # EVENT SERVICE
 # ----------------------------------------------------------------
 
-# Enable Event Service
+# Enable Event Service (required for per-project event subscriptions to work)
 echo "Enabling event service..."
 curl -s -X PUT "$XNAT_URL/xapi/events/prefs" \
   -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
   -H "Content-Type: application/json" \
   -d '{"enabled": true}'
 
-# Create event subscription for scan created
-echo "Creating event subscription for dcm2niix..."
-curl -s -X POST "$XNAT_URL/xapi/events/subscription" \
-  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
-  -H "Content-Type: application/json" \
-  -d "$dcm2niix_event"
+# Note: We intentionally do NOT create a site-wide event subscription here.
+# Per-project event subscriptions are created by the imaging-api during project creation,
+# controlled by the dicom_to_nifti flag. This ensures dcm2niix only auto-triggers
+# for projects that have opted in to DICOM-to-NIfTI conversion.
+
+# Clean up any legacy site-wide event subscriptions (from prior versions)
+echo "Cleaning up legacy site-wide event subscriptions..."
+SUBS=$(curl -s "$XNAT_URL/xapi/events/subscriptions" \
+  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}")
+SITE_SUB_IDS=$(echo "$SUBS" | jq -r '.[] | select(.["project-id"] == null or .["project-id"] == "") | .id')
+for SUB_ID in $SITE_SUB_IDS; do
+  echo "Deleting site-wide subscription $SUB_ID..."
+  curl -s -X DELETE "$XNAT_URL/xapi/events/subscription/$SUB_ID" \
+    -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}"
+done
 
 echo " "
 echo "XNAT configuration complete!"

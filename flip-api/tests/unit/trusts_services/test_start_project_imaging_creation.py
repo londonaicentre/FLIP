@@ -77,6 +77,7 @@ def mock_get_project():
             name="Test Project",
             query=query,
             owner_id=user_id,
+            dicom_to_nifti=True,
         )
         yield mock_get_project
 
@@ -393,3 +394,41 @@ async def test_insert_status_error(
 
     assert exc_info.value.status_code == 500
     assert "An error occurred while starting project imaging creation" in exc_info.value.detail
+
+
+# Test case for dicom_to_nifti=False being forwarded to trust
+@pytest.mark.asyncio
+async def test_dicom_to_nifti_false_forwarded_to_trust(
+    mock_request,
+    mock_get_session,
+    mock_has_permissions,
+    mock_get_project,
+    mock_get_user_pool_id,
+    mock_get_users_with_access,
+    mock_get_cognito_users,
+    mock_trust_response,
+    mock_trust_client,
+    mock_boto3_ses_client,
+    mock_decrypt,
+):
+    # Override fixture to set dicom_to_nifti=False
+    mock_get_project.return_value.dicom_to_nifti = False
+
+    mock_ses = mock_boto3_ses_client.return_value
+    mock_ses.send_templated_email.return_value = {"MessageId": "12345"}
+
+    with patch("httpx.AsyncClient", return_value=mock_trust_client):
+        await start_project_imaging_creation(
+            request=mock_request,
+            project_id=project_id,
+            trust=trust_example,
+            db=mock_get_session,
+            user_id=user_id,
+        )
+
+    # Verify the POST body includes dicom_to_nifti=False
+    post_call = mock_trust_client.__aenter__.return_value.post
+    call_kwargs = post_call.call_args
+
+    body = call_kwargs.kwargs.get("json", {})
+    assert body["dicom_to_nifti"] is False

@@ -19,7 +19,8 @@ export const CreateProjectModal = {
     projectDescription: "[data-test=project-description]",
     createButton: "[data-test=create-project-btn]",
     closeModal: "[data-test=close-create-project-btn]",
-    createProject: "[data-test=close-create-project-btn]"
+    createProject: "[data-test=close-create-project-btn]",
+    dicomToNiftiToggle: "[data-test=dicom-to-nifti-toggle]"
 };
 
 export const AddProjectUsers = {

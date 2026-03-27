@@ -59,7 +59,7 @@ DOCKER_TAG=dev make up
 
 When running from the root Makefile, `DOCKER_TAG` is resolved automatically.
 
-`make up` will create the required data directories, deploy the XNAT stack via Docker Swarm, and automatically configure both XNAT instances (service account, admin password, SCP receiver, PACS registration, dcm2niix).
+`make up` will create the required data directories, deploy the XNAT stack via Docker Swarm, and automatically configure both XNAT instances (service account, admin password, SCP receiver, PACS registration, dcm2niix command).
 
 In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.
 
@@ -102,6 +102,21 @@ This can also be done manually from XNAT:
 * Click on **Import from PACS** on the right-hand sidebar.
 * Select **Orthanc** as your **Source PACS** (the selected SCP Receiver should default to **XNAT:8104**).
 * [Query PACS](https://wiki.xnat.org/xnat-tools/using-dqr-searching-the-pacs-and-importing-data#UsingDQR:SearchingthePACSandImportingData-Querying/SearchingforImageSessions).
+
+## DICOM Anonymization
+
+XNAT includes a built-in anonymization engine that processes incoming DICOM data to remove Protected Health Information (PHI) from DICOM headers. FLIP replaces the default XNAT anonymization script with a comprehensive site-wide script (`anon_script.das`) that removes patient identifiers, institutional identifiers, physician/operator identifiers, and pseudonymizes UIDs.
+
+The anonymization script is configured automatically during XNAT initialization via `configure-xnat.sh`. It is applied to all incoming DICOM data when the SCP receiver has `anonymizationEnabled` set to `true`.
+
+## DICOM to NIfTI Conversion
+
+XNAT uses two mechanisms for dcm2niix conversion:
+
+- **Command** (Container Service): The dcm2niix command is registered and enabled **site-wide** during initial XNAT setup (`configure-dcm2niix.sh`). This makes it available for manual use from the XNAT UI in any project.
+- **Event Subscription** (Event Service): Per-project event subscriptions auto-trigger dcm2niix when DICOM scans are uploaded. These are created by the **Imaging API** during FLIP project creation, controlled by the `dicom_to_nifti` project setting.
+
+The setup script (`configure-dcm2niix.sh`) intentionally does **not** create a site-wide event subscription. This ensures dcm2niix only auto-triggers for projects that have opted in via the `dicom_to_nifti` flag.
 
 ## Resource limits
 

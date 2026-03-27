@@ -142,6 +142,7 @@ class Projects(SQLModel, table=True):
     deleted: bool = Field(default=False)
     creation_timestamp: Annotated[datetime, Field(default_factory=datetime.utcnow)]
     status: ProjectStatus = Field(default=ProjectStatus.UNSTAGED)
+    dicom_to_nifti: bool = Field(default=True)
 
 
 class ProjectsAudit(SQLModel, table=True):

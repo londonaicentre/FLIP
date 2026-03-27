@@ -141,6 +141,7 @@ class ProjectDetails(BaseModel, from_attributes=True):
     name: str = Field()
     description: str | None = Field(max_length=250, default=None)
     users: list[UUID] = Field(default_factory=list)
+    dicom_to_nifti: bool = Field(default=True)
 
     @field_validator("description")
     @classmethod

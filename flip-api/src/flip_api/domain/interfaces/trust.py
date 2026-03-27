@@ -49,6 +49,7 @@ class ICreateImagingProject(BaseModel):
     project_name: str  # This is the name of the project on the central hub
     query: str | None = None
     users: list[CognitoUser] = []
+    dicom_to_nifti: bool = True
 
 
 class ICreatedImagingUser(BaseModel):

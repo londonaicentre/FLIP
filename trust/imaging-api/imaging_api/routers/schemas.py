@@ -114,6 +114,7 @@ class CentralHubProject(BaseModel):
     project_name: str
     query: str
     users: list[CentralHubUser] = []
+    dicom_to_nifti: bool = True
 
 
 class Subject(BaseModel):

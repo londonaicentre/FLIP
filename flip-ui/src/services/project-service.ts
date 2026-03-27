@@ -55,6 +55,7 @@ export interface IProjectCreate {
     name: string;
     description: string;
     users?: string[];
+    dicom_to_nifti?: boolean;
 }
 
 export interface ICreateProjectResponse {

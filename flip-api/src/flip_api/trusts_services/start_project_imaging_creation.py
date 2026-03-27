@@ -167,6 +167,7 @@ async def start_project_imaging_creation(
             project_name=project.name,
             query=project.query.query if project.query else None,
             users=[user for user in cognito_users if user.id in unique_users],
+            dicom_to_nifti=project.dicom_to_nifti,
         )
 
         # Make request to trust to create imaging project
