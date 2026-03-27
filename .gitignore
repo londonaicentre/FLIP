@@ -334,6 +334,7 @@ flip-fl-api/transfer/*/*
 # Environment files with sensitive credentials
 .env.development    
 .env.stag
+.env.prod
 .env.production
 
 # Trust TLS certificates (generated locally, never committed)
