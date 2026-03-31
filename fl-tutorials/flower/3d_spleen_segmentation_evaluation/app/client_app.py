@@ -21,6 +21,7 @@ import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common import log
+from flwr.common.record import ConfigRecord
 from monai.data import DataLoader, Dataset
 
 from app.data_loading import FLIP_BASE
@@ -159,6 +160,8 @@ def evaluate(msg: Message, context: Context) -> Message:
     log(INFO, f"DEBUG: Sending flattened_metrics: {flattened_metrics}")
 
     # Construct and return the reply Message
+    # Send client_name in ConfigRecord (MetricRecord only accepts numeric types)
     metric_record = MetricRecord(flattened_metrics)
-    content = RecordDict({"metrics": metric_record})
+    config_record = ConfigRecord({"client_name": client_name})
+    content = RecordDict({"metrics": metric_record, "config": config_record})
     return Message(content=content, reply_to=msg)

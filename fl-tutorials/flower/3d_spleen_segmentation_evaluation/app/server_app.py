@@ -205,7 +205,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         "num_rounds": num_rounds,
         "models_evaluated": list(models_config.keys()),
         "metrics_spec": {k: v.__name__ for k, v in metrics_spec.items()},
-        "results": strategy.all_results,
+        "results": strategy.per_client_results,
     }
 
     # Save evaluation results to JSON

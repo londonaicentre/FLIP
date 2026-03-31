@@ -113,6 +113,8 @@ class EvaluationStrategy(FedAvg):
         self.model_names = model_names
         self.validator = MetricsValidator(metrics_spec=metrics_spec, model_names=model_names)
         self.all_results: Dict[str, Dict[str, List]] = {}
+        # Store per-client results: {model_name: {client_id: {metric_name: value}}}
+        self.per_client_results: Dict[str, Dict[str, Dict[str, float]]] = {}
 
     def aggregate_evaluate(
         self,
@@ -149,6 +151,11 @@ class EvaluationStrategy(FedAvg):
             metrics = metrics_outer["metrics"]
             log(INFO, f"DEBUG: Client {client_id} inner metrics: {metrics}")
 
+            # Get client name from message config record (sent by client via SUPERNODE_NAME env var)
+            config_outer = dict(msg.content.get("config", {}))
+            client_name = config_outer.get("client_name", client_id)
+            log(INFO, f"DEBUG: Client {client_id} using client_name: {client_name}")
+
             # Reconstruct evaluation results from flattened keys
             # Keys are in format: "evaluation.model_name.metric_name"
             client_eval = {}
@@ -163,32 +170,41 @@ class EvaluationStrategy(FedAvg):
                         client_eval[model_name][metric_name] = value
 
             if not client_eval:
-                log(INFO, f"Warning: No evaluation results from client {client_id}")
+                log(INFO, f"Warning: No evaluation results from client {client_name}")
                 continue
 
             # Validate the evaluation results
             is_valid, message = self.validator.validate(client_eval)
             if not is_valid:
-                log(INFO, f"Warning: Invalid evaluation results from client {client_id}: {message}")
+                log(INFO, f"Warning: Invalid evaluation results from client {client_name}: {message}")
                 continue
 
-            log(INFO, f"Client {client_id} - Valid evaluation results received")
+            log(INFO, f"Client {client_name} - Valid evaluation results received")
 
             # Aggregate results
             for model_name, model_metrics in client_eval.items():
                 if model_name not in self.all_results:
                     self.all_results[model_name] = {metric_name: [] for metric_name in self.metrics_spec.keys()}
+                if model_name not in self.per_client_results:
+                    self.per_client_results[model_name] = {}
+
+                # Store per-client results using client name
+                if client_name not in self.per_client_results[model_name]:
+                    self.per_client_results[model_name][client_name] = {}
 
                 # Collect metrics (only scalar numeric types: float or int)
                 for metric_name in self.metrics_spec.keys():
                     if metric_name in model_metrics:
                         metric_value = model_metrics[metric_name]
                         # Convert to float for aggregation (works for both int and float types)
-                        self.all_results[model_name][metric_name].append(float(metric_value))
+                        float_value = float(metric_value)
+                        self.all_results[model_name][metric_name].append(float_value)
+                        self.per_client_results[model_name][client_name][metric_name] = float_value
 
         # Calculate final aggregated results and return as MetricRecord
         aggregated_metrics = MetricRecord()
 
+        # Add aggregated (mean) metrics
         for model_name, metrics_data in self.all_results.items():
             for metric_name, values in metrics_data.items():
                 if not values:
@@ -199,6 +215,12 @@ class EvaluationStrategy(FedAvg):
                 # Ensure native Python types (not numpy)
                 aggregated_metrics[f"{model_name}.{metric_name}_mean"] = float(mean_value)
                 aggregated_metrics[f"{model_name}.{metric_name}_count"] = int(len(values))
+
+        # Add per-client metrics
+        for model_name, client_data in self.per_client_results.items():
+            for client_name, metrics in client_data.items():
+                for metric_name, value in metrics.items():
+                    aggregated_metrics[f"{model_name}.{client_name}.{metric_name}"] = float(value)
 
         log(INFO, f"Round {server_round} - Aggregated evaluation results: {dict(aggregated_metrics)}")
 

@@ -17,21 +17,17 @@ import json
 import os
 from logging import INFO
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Type
 
 import torch
-from app.models import get_model_for_path
 from flip import FLIP
-from flip.constants import PTConstants
 from flip.constants.flip_constants import ModelStatus
 from flwr.app import ArrayRecord, Context
 from flwr.common import log
 from flwr.serverapp import Grid, ServerApp
 
+from app.models import get_model_for_path
 from app.strategy import EvaluationStrategy
-
-FinalModelFilename = PTConstants.FinalModelFilename
-CrossValResultsJsonFilename = PTConstants.CrossValResultsJsonFilename
 
 
 def parse_models_config(run_config: Dict) -> Dict:
@@ -55,6 +51,41 @@ def parse_models_config(run_config: Dict) -> Dict:
                 model_name, field = parts
                 models.setdefault(model_name, {})[field] = value
     return models
+
+
+def parse_metrics_config(metrics_config: Dict[str, str]) -> Dict[str, Type]:
+    """Parse metrics configuration from pyproject.toml.
+
+    Converts string type names (\"float\", \"int\") to actual Python types.
+    Only native numeric types are allowed - no lists or complex types.
+
+    Args:
+        metrics_config: Dictionary mapping metric names to type strings.
+
+    Returns:
+        Dictionary mapping metric names to Python type objects.
+
+    Raises:
+        ValueError: If an unsupported type string is encountered.
+
+    """
+    # Only allow native numeric types (float, int) - no lists or other types
+    type_mapping = {
+        "float": float,
+        "int": int,
+    }
+
+    metrics_spec = {}
+    for metric_name, type_str in metrics_config.items():
+        if type_str not in type_mapping:
+            msg = (
+                f"Unsupported type '{type_str}' for metric '{metric_name}'. "
+                f"Only native numeric types are allowed: {list(type_mapping.keys())}"
+            )
+            raise ValueError(msg)
+        metrics_spec[metric_name] = type_mapping[type_str]
+
+    return metrics_spec
 
 
 # Separator used to namespace per-model parameter keys inside a single ArrayRecord.
@@ -134,12 +165,17 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # Pack all models into a single ArrayRecord with namespaced keys.
     arrays = pack_models(loaded_models)
 
-    # Define the metrics specification: {metric_name: expected_type}
-    # Users can customize this based on their evaluation needs
-    metrics_spec = {
-        "mean_dice": float,
-        "raw_dice": list,
+    # Parse metrics specification from config
+    # TOML nested tables are flattened in run_config, so extract keys starting with "metrics."
+    metrics_config = {
+        key.split(".", 1)[1]: value for key, value in context.run_config.items() if key.startswith("metrics.")
     }
+    if not metrics_config:
+        msg = "No metrics configuration found in pyproject.toml. Please define [tool.flwr.app.config.metrics]."
+        raise ValueError(msg)
+
+    metrics_spec = parse_metrics_config(metrics_config)
+    log(INFO, f"Metrics specification: {metrics_spec}")
 
     # Use custom evaluation strategy
     strategy = EvaluationStrategy(
@@ -149,7 +185,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         fraction_evaluate=1.0,  # All clients evaluate
     )
 
-    result = strategy.start(
+    _ = strategy.start(
         grid=grid,
         initial_arrays=arrays,
         num_rounds=num_rounds,
@@ -169,7 +205,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         "num_rounds": num_rounds,
         "models_evaluated": list(models_config.keys()),
         "metrics_spec": {k: v.__name__ for k, v in metrics_spec.items()},
-        "results": strategy.all_results,
+        "results": strategy.per_client_results,
     }
 
     # Save evaluation results to JSON
