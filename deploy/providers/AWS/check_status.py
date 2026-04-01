@@ -610,7 +610,8 @@ def main(
     central_hub_ip = get_terraform_output("Ec2PublicIp")
     central_hub_id = get_terraform_output("Ec2InstanceId")
     central_hub_eip = get_terraform_output("Ec2ElasticIp")
-    ssh_key = get_terraform_output("Keypair")
+    # Note: Keypair output no longer exists in SSH-over-SSM setup; SSH uses ~/.ssh/host-aws
+    ssh_key = None
 
     trust_ip = get_terraform_output("TrustEc2PublicIp")
     trust_id = get_terraform_output("TrustEc2InstanceId")
