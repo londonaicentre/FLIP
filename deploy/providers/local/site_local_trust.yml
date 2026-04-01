@@ -197,14 +197,6 @@
         proto: tcp
         comment: "FL Admin port from AWS CH"
 
-    - name: Allow SSH from Central Hub IP
-      community.general.ufw:
-        rule: allow
-        src: "{{ ch_public_ip }}"
-        port: "22"
-        proto: tcp
-        comment: "SSH from AWS CH for remote provisioning"
-
     - name: Set UFW default policy — deny incoming
       community.general.ufw:
         policy: deny
