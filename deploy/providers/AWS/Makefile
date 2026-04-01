@@ -46,7 +46,6 @@ export TF_VAR_max_azs=2
 export TF_VAR_vpc_cidr=10.0.0.0/16
 export TF_VAR_public_subnets=["10.0.1.0/24", "10.0.2.0/24"]
 export TF_VAR_private_subnets=["10.0.101.0/24", "10.0.102.0/24"]
-export TF_VAR_flip_keypair=~/.ssh/host-aws
 export TF_VAR_ec2_public_key_path=/home/${USER}/.ssh/host-aws.pub
 export TF_VAR_flip_user_pool_name=flip-user-pool
 export TF_VAR_flip_cognito_client=flip-cognito-client
@@ -142,10 +141,6 @@ force-unlock: ## Force unlock Terraform state - provide LOCK_ID=<id> as argument
 	fi
 	@bash scripts/manage-aws.sh force-unlock $(LOCK_ID)
 
-.PHONY: delete-flip-keypair
-delete-flip-keypair: ## Delete the flip-keypair from AWS (run before apply if it exists)
-	@bash scripts/manage-aws.sh delete-keypair flip-keypair
-
 .PHONY: list-eips
 list-eips: ## List all Elastic IPs in the region
 	@bash scripts/manage-aws.sh list-eips
@@ -195,22 +190,20 @@ gen-trust-ec2-certs: refresh ## Generate TLS certs for the cloud Trust EC2 using
 		bash ../../../trust/certs/generate-trust-certs.sh
 	@echo "📋 Copying CA cert to Terraform directory (picked up by Secrets Manager on next apply)..."
 	@cp ../../../trust/certs/trust-ca.crt ./trust-ca.crt
-	@echo "📦 Waiting for Trust EC2 to be fully initialized and SSH-ready..."
-	@TRUST_IP="$$(terraform output -raw TrustEc2PublicIp)"; \
-	echo "   Waiting for SSH to be available on $$TRUST_IP..."; \
+	@echo "📦 Waiting for Trust EC2 SSM agent to be ready..."
+	@TRUST_ID="$$(terraform output -raw TrustEc2InstanceId)"; \
 	for i in $$(seq 1 60); do \
-		ssh -i ~/.ssh/host-aws -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null ubuntu@$$TRUST_IP "exit 0" 2>/dev/null && echo "   ✓ SSH ready (attempt $$i)" && break; \
-		if [ $$i -eq 60 ]; then echo "   ✗ SSH did not become available after 5 minutes."; exit 1; fi; \
+		aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$$TRUST_ID" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null | grep -q "Online" && echo "   ✓ SSM agent online (attempt $$i)" && break; \
+		if [ $$i -eq 60 ]; then echo "   ✗ SSM agent did not come online after 5 minutes."; exit 1; fi; \
 		echo "   ... waiting (attempt $$i/60)"; \
 		sleep 5; \
 	done
 	@echo "📤 Deploying server certificate and key to Trust EC2..."
-	@TRUST_IP="$$(terraform output -raw TrustEc2PublicIp)"; \
-	ssh -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null ubuntu@$$TRUST_IP "sudo mkdir -p /opt/flip/certs && sudo chown ubuntu:ubuntu /opt/flip/certs" && \
-	scp -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+	@ssh flip-trust "sudo mkdir -p /opt/flip/certs && sudo chown ubuntu:ubuntu /opt/flip/certs" && \
+	scp \
 		../../../trust/certs/trust-server.crt \
 		../../../trust/certs/trust-server.key \
-		ubuntu@$$TRUST_IP:/opt/flip/certs/
+		flip-trust:/opt/flip/certs/
 	@echo "✅ TLS certificates generated and deployed to Trust EC2!"
 .PHONY: regen-trust-certs
 regen-trust-certs: ## Re-generate TLS certs for Trust EC2, deploy to EC2, and update Secrets Manager
@@ -219,11 +212,11 @@ regen-trust-certs: ## Re-generate TLS certs for Trust EC2, deploy to EC2, and up
 	@echo "📋 Copying new CA cert to provider directory..."
 	@cp ../../../trust/certs/trust-ca.crt trust-ca.crt
 	@echo "📦 Copying certificates to Trust EC2..."
-	@scp -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+	@scp \
 		../../../trust/certs/trust-server.crt \
 		../../../trust/certs/trust-server.key \
 		../../../trust/certs/trust-ca.crt \
-		ubuntu@$$(terraform output -raw TrustEc2PublicIp):/opt/flip/certs/
+		flip-trust:/opt/flip/certs/
 	@echo "🔄 Restarting nginx-tls on Trust EC2 to load new certificate..."
 	@ssh flip-trust "docker restart trust1-nginx-tls-1"
 	@echo "🔐 Updating Secrets Manager..."
@@ -236,12 +229,10 @@ apply: ## Apply Terraform configuration to update AWS infrastructure (with envir
 	@terraform apply plan.tfplan
 
 .PHONY: ssh-config
-ssh-config: ## Update local .ssh/config for flip contexts
-	@echo "⚙️  Configure .ssh/config for flip context..."
-	@set -x AWS_PROFILE ${AWS_PROFILE}
-	@terraform output
-	@python3 update_ssh_config.py --aws-profile ${AWS_PROFILE} || true
-	@echo "✅ .ssh/config updated!"
+ssh-config: ## Update local .ssh/config for flip SSH-over-SSM contexts
+	@echo "⚙️  Configure .ssh/config for SSH-over-SSM..."
+	@python3 update_ssm_ssh_config.py --aws-profile ${AWS_PROFILE}
+	@echo "✅ .ssh/config updated with SSM ProxyCommand entries!"
 
 .PHONY: update-env
 update-env: ## Update environment file with Terraform outputs
@@ -259,11 +250,11 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 .PHONY: write-trust-ca
 write-trust-ca: ## Fetch trust_ca_cert from Secrets Manager and write to CH EC2 host for volume mount
 	@echo "🔐 Fetching Trust CA cert from Secrets Manager and writing to CH EC2..."
-	@CH_IP=$$(terraform output -raw Ec2PublicIp) && \
-	  echo "   Waiting for SSH to be available on $$CH_IP..." && \
+	@CH_ID=$$(terraform output -raw Ec2InstanceId) && \
+	  echo "   Waiting for SSM agent to be available on $$CH_ID..." && \
 	  for i in $$(seq 1 120); do \
-	    ssh -i ~/.ssh/host-aws -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null ubuntu@$$CH_IP "exit 0" 2>/dev/null && echo "   ✓ SSH ready (attempt $$i)" && break; \
-	    if [ $$i -eq 120 ]; then echo "   ✗ SSH did not become available after 10 minutes."; exit 1; fi; \
+	    aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$$CH_ID" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null | grep -q "Online" && echo "   ✓ SSM agent online (attempt $$i)" && break; \
+	    if [ $$i -eq 120 ]; then echo "   ✗ SSM agent did not become available after 10 minutes."; exit 1; fi; \
 	    echo "   ... waiting (attempt $$i/120)"; \
 	    sleep 5; \
 	  done && \
@@ -271,7 +262,7 @@ write-trust-ca: ## Fetch trust_ca_cert from Secrets Manager and write to CH EC2 
 	    --secret-id $(AWS_SECRET_NAME) \
 	    --query 'SecretString' --output text | python3 -c \
 	    "import json,sys; s=json.load(sys.stdin); print(s['trust_ca_cert'])") && \
-	  ssh -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null ubuntu@$$CH_IP "mkdir -p /opt/flip/certs && printf '%s\n' '$$CA_CERT' > /opt/flip/certs/trust-ca.crt && chmod 0644 /opt/flip/certs/trust-ca.crt" && \
+	  ssh flip "mkdir -p /opt/flip/certs && printf '%s\n' '$$CA_CERT' > /opt/flip/certs/trust-ca.crt && chmod 0644 /opt/flip/certs/trust-ca.crt" && \
 	  echo "✅ Trust CA cert written to CH EC2 at /opt/flip/certs/trust-ca.crt"
 
 .PHONY: deploy-centralhub
@@ -292,10 +283,6 @@ deploy-centralhub: write-trust-ca ## Deploy FLIP containers to flip context with
 	  echo "   ✅ All central hub images found."; \
 	fi
 	@echo "📋 Loading environment variables from Terraform outputs..."
-	@echo "🔑 Refreshing SSH host key for CH EC2 (ensures Docker context SSH works after re-provisioning)..."
-	@CH_IP=$$(terraform output -raw Ec2PublicIp) && \
-	  ssh-keygen -R "$$CH_IP" 2>/dev/null || true && \
-	  ssh-keyscan -H "$$CH_IP" >> ~/.ssh/known_hosts
 	@echo "👷 Create docker context if not exists, pointing to flip to ssh://flip"
 	@docker context create flip --docker "host=ssh://flip" || echo "   Context 'flip' already exists"
 	@# Switch to flip context
@@ -314,7 +301,7 @@ LOCAL_TRUST_SSH_USER ?= ubuntu
 LOCAL_TRUST_NUMBER ?= 2
 
 .PHONY: deploy-trust
-deploy-trust: update-env ## Deploy trust relationships after central hub is deployed
+deploy-trust: update-env ssh-config ## Deploy trust relationships after central hub is deployed
 	@echo "🔍 Checking trust images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(TRUST_IMAGES); do \
@@ -330,15 +317,6 @@ deploy-trust: update-env ## Deploy trust relationships after central hub is depl
 	else \
 	  echo "   ✅ All trust images found."; \
 	fi
-	@echo "⚙️  Configure .ssh/config for flip context..."
-	@set -x AWS_PROFILE ${AWS_PROFILE}
-	@terraform output
-	@python3 update_ssh_config.py --aws-profile ${AWS_PROFILE} || true
-	@echo "✅ .ssh/config updated!"
-	@echo "🔑 Refreshing SSH host key for Trust EC2 (ensures Docker context SSH works after re-provisioning)..."
-	@TRUST_IP=$$(terraform output -raw TrustEc2PublicIp) && \
-	  ssh-keygen -R "$$TRUST_IP" 2>/dev/null || true && \
-	  ssh-keyscan -H "$$TRUST_IP" >> ~/.ssh/known_hosts
 	@echo "👷 Create docker context if not exists, pointing to flip-trust to ssh://flip-trust"
 	@docker context create flip-trust --docker "host=ssh://flip-trust" || echo "   Context 'flip-trust' already exists"
 	@echo "🔄 Switching to flip-trust Docker context..."
@@ -348,12 +326,12 @@ deploy-trust: update-env ## Deploy trust relationships after central hub is depl
 	@echo "🔧 Creating Docker networks on Trust EC2..."
 	$(MAKE) -C ../../../ create-networks
 	@echo "🗒️ Copying TLS certificates to Trust EC2..."
-	ssh -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null ubuntu@$$(terraform output -raw TrustEc2PublicIp) "mkdir -p /opt/flip/certs"
-	scp -i ~/.ssh/host-aws -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+	ssh flip-trust "mkdir -p /opt/flip/certs"
+	scp \
 		../../../trust/certs/trust-server.crt \
 		../../../trust/certs/trust-server.key \
 		../../../trust/certs/trust-ca.crt \
-		ubuntu@$$(terraform output -raw TrustEc2PublicIp):/opt/flip/certs/
+		flip-trust:/opt/flip/certs/
 	@echo "✅ Certificates copied!"
 	@echo "🚀 Deploying Trust services..."
 	$(MAKE) -C ../../../ up-trust-ec2 PROD=${PROD}

@@ -8,7 +8,7 @@ source "$SCRIPT_DIR/utils.sh"
 
 check_aws_profile
 
-action="${1:?Action required: list-eips, release-unused-eips, delete-keypair, force-unlock}"
+action="${1:?Action required: list-eips, release-unused-eips, force-unlock}"
 
 case "$action" in
     list-eips)
@@ -33,16 +33,6 @@ case "$action" in
         fi
         ;;
     
-    delete-keypair)
-        keypair="${2:-flip-keypair}"
-        log_info "Deleting key pair: $keypair"
-        if aws_cmd ec2 delete-key-pair --key-name "$keypair" 2>/dev/null; then
-            log_success "Key pair $keypair deleted"
-        else
-            log_warn "Key pair $keypair doesn't exist or already deleted"
-        fi
-        ;;
-    
     force-unlock)
         lock_id="${2:?Lock ID is required: force-unlock <lock-id>}"
         log_info "Force unlocking Terraform state (ID: $lock_id)..."
@@ -56,7 +46,7 @@ case "$action" in
     
     *)
         log_error "Unknown action: $action"
-        echo "Usage: $(basename "$0") {list-eips|release-unused-eips|delete-keypair|force-unlock} [args]"
+        echo "Usage: $(basename "$0") {list-eips|release-unused-eips|force-unlock} [args]"
         exit 1
         ;;
 esac

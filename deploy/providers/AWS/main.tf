@@ -68,10 +68,6 @@ module "ec2_security_group" {
     {
       port        = var.FL_API_PORT
       description = "FLIP FL API"
-    },
-    {
-      port        = 22
-      description = "SSH access"
     }
   ]
 }
@@ -96,10 +92,6 @@ module "trust_security_group" {
     {
       port        = var.PACS_UI_PORT
       description = "Orthanc PACS UI access"
-    },
-    {
-      port        = 22
-      description = "SSH access"
     }
   ]
 }
@@ -526,10 +518,6 @@ resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
 }
 
 # Outputs
-output "Keypair" {
-  value = var.flip_keypair
-}
-
 output "Ec2InstanceId" {
   description = "EC2 Instance ID"
   value       = aws_instance.ec2_instance.id
@@ -545,9 +533,9 @@ output "Ec2ElasticIp" {
   value       = try(aws_eip.central_hub_eip[0].public_ip, null)
 }
 
-output "SshCommand" {
-  description = "SSH command to connect to the instance"
-  value       = "ssh -i ${var.flip_keypair} ubuntu@${aws_instance.ec2_instance.public_ip}"
+output "SsmSessionCommand" {
+  description = "SSM Session Manager command to connect to Central Hub EC2"
+  value       = "aws ssm start-session --target ${aws_instance.ec2_instance.id}"
 }
 
 output "TrustEc2InstanceId" {
@@ -565,9 +553,9 @@ output "TrustEc2ElasticIp" {
   value       = module.trust_ec2.elastic_ip
 }
 
-output "TrustSshCommand" {
-  description = "SSH command to connect to the Trust EC2 instance"
-  value       = "ssh -i ${var.flip_keypair} ubuntu@${module.trust_ec2.public_ip}"
+output "SsmSessionCommandTrust" {
+  description = "SSM Session Manager command to connect to Trust EC2"
+  value       = "aws ssm start-session --target ${module.trust_ec2.instance_id}"
 }
 
 output "DbEndpoint" {
@@ -629,8 +617,8 @@ resource "aws_ses_template" "flip_xnat_credentials" {
 module "trust_ec2" {
   source = "./modules/trust_ec2"
 
-  name_prefix   = "trust"
-  instance_type = "t3.xlarge"
+  name_prefix    = "trust"
+  instance_type  = "t3.xlarge"
   ssh_public_key = file(var.ec2_public_key_path)
   subnet_id      = element(module.flip_vpc.public_subnets, 0)
 

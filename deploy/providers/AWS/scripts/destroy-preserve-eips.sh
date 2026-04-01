@@ -56,7 +56,6 @@ terraform destroy -auto-approve \
   -target=module.alb_security_group \
   -target=module.ec2_role \
   -target=aws_iam_instance_profile.ec2_profile \
-  -target=aws_key_pair.flip_keypair \
   -target=aws_instance.ec2_instance \
   -target=aws_cloudwatch_log_group.flip_log_group \
   -target=aws_iam_role_policy.ec2_secret \
@@ -64,12 +63,10 @@ terraform destroy -auto-approve \
   -target=aws_ses_template.flip_xnat_credentials \
   -target=module.trust_ec2.aws_instance.trust_host \
   -target=module.trust_ec2.aws_security_group.trust_host_sg \
-  -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.ssh \
   -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.trust_api \
   -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.xnat \
   -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.pacs_ui \
   -target=module.trust_ec2.aws_vpc_security_group_egress_rule.allow_all \
-  -target=aws_key_pair.host_key \
   -target=local_file.env 2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use"
 
 log_info "🔒 Re-enabling prevent_destroy in EIP resources..."
