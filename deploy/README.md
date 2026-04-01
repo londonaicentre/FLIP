@@ -44,17 +44,19 @@ if you have already configured SSO, you can then login with:
 aws sso login
 ```
 
-#### Step 3: Get SSH key configured
+#### Step 3: Install AWS SSM Session Manager Plugin
 
-Generate an SSH key pair for EC2 instance access:
+Install the Session Manager plugin required for SSH-over-SSM tunneling:
+
+- [AWS Session Manager plugin installation guide](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+
+Verify installation:
 
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/host-aws -C "YOUR_EMAIL@example.com"
+session-manager-plugin --version
 ```
 
-This key will automatically be uploaded to AWS during deployment and can be found in the AWS console under AWS EC2 > Network & Security > Key Pairs.
-
-See `TF_VAR_flip_keypair` and `TF_VAR_ec2_public_key_path` in the Terraform environment configuration if you need to customize the key name or path.
+SSH to EC2 now runs through Session Manager tunnels (no public port 22). Keep a local SSH key at `~/.ssh/host-aws` for SSH client authentication over the tunnel.
 
 ### Final configuration
 

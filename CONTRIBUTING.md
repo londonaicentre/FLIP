@@ -86,7 +86,7 @@ code --install-extension recommended_extensions.vsix
 
 Key extensions include:
 
-- `ms-vscode-remote.vscode-remote-extensionpack` — connect to Docker containers and remote servers via SSH for in-container development, avoiding the need to rebuild images on every change
+- `ms-vscode-remote.vscode-remote-extensionpack` — connect to Docker containers and remote hosts for in-container development (when remote access is needed, use SSH-over-SSM for AWS environments)
 - Python linting/formatting (ruff, mypy)
 - Docker tooling
 

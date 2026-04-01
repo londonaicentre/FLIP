@@ -31,8 +31,9 @@ Both models use self-signed TLS certificates and an nginx-tls sidecar so that al
 3. **Python 3.12+**
 4. **UV environment manager** installed via [uv installation guide](https://docs.astral.sh/uv/guides/install-python/)
 5. **GitHub CLI** installed via [GitHub CLI installation guide](https://cli.github.com/)
-6. **SSH key pair** created at `~/.ssh/host-aws` (see [deploy README](../../README.md))
-7. **Environment files** configured: (see [deploy README](../../README.md))
+6. **AWS SSM Session Manager plugin** installed (see [deploy README](../../README.md))
+7. **Local SSH key** at `~/.ssh/host-aws` for SSH authentication over the SSM tunnel
+8. **Environment files** configured: (see [deploy README](../../README.md))
    - `.env.stag` (staging) or `.env.production` (production) in project root
    - Service-specific `.env` files (see Environment Configuration section)
 
@@ -82,7 +83,7 @@ This command executes the following steps in order:
 4. **`import-all`**: Import existing AWS resources to prevent replacement
 5. **`plan`**: Generate and review Terraform execution plan
 6. **`apply`**: Apply infrastructure changes
-7. **`ssh-config`**: Update `~/.ssh/config` with EC2 instance IPs
+7. **`ssh-config`**: Update `~/.ssh/config` with SSH-over-SSM host aliases
 8. **`ansible-init`**: Configure EC2 instances with Docker and CloudWatch
 9. **`deploy-centralhub`**: Deploy Central Hub services via Docker Compose
 10. **`deploy-trust`**: Deploy Trust services via Docker Compose
@@ -108,7 +109,7 @@ make plan
 # 5. Apply infrastructure
 make apply
 
-# 6. Configure SSH access
+# 6. Configure SSH-over-SSM access
 make ssh-config
 
 # 7. Setup EC2 instances with Ansible
@@ -184,7 +185,24 @@ This validates:
 - ✅ Cognito User Pool configuration
 - ✅ Docker services on EC2 instances
 - ✅ HTTP endpoint availability
-- ✅ SSH connectivity
+- ✅ SSM Session Manager connectivity
+
+## Remote Access via SSM Session Manager
+
+Direct shell access to EC2 instances uses AWS Systems Manager Session Manager:
+
+```bash
+aws ssm start-session --target <instance-id>
+```
+
+For Docker contexts, Ansible, and scp workflows, use SSH-over-SSM aliases configured by:
+
+```bash
+make ssh-config
+```
+
+This writes `flip` and `flip-trust` host entries with an SSM `ProxyCommand` so existing SSH-based tooling continues to work without exposing port 22 publicly.
+
 - ✅ CloudWatch Logs configuration
 
 ## TLS Certificates (HTTPS)

@@ -220,7 +220,8 @@ When in doubt, update the docs. Outdated documentation is worse than no document
 2. Install Python deps per service: `cd <service-dir> && uv sync`
 3. Install UI deps: `cd flip-ui && npm install`
 4. Configure AWS: `aws configure sso` (required for `flip-api` and `make up`)
-5. Docker networks: `make create-networks`
+5. Install AWS Session Manager plugin (for SSH-over-SSM access to AWS hosts)
+6. Docker networks: `make create-networks`
 
 ### Key Environment Variables
 
@@ -362,6 +363,7 @@ When making infrastructure or deployment changes, **always think through both en
 ## Security Rules
 
 - Never commit secrets or credentials — pre-commit hooks enforce this
+- Prefer SSH-over-SSM for AWS EC2 access; do not expose public port 22
 - Never bypass TLS certificate validation (`curl -k` is prohibited)
 - Use `AES_KEY_BASE64` for encrypted trust communication
 - AWS Cognito for hub authentication, private API keys for inter-service auth
