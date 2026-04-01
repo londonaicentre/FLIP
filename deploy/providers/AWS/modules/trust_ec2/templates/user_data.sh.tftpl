@@ -3,7 +3,10 @@
 # Port 22 is NOT exposed in security groups; all SSH connections
 # are tunneled through AWS Systems Manager Session Manager.
 mkdir -p /home/ubuntu/.ssh
-echo '${ssh_public_key}' >> /home/ubuntu/.ssh/authorized_keys
+touch /home/ubuntu/.ssh/authorized_keys
+if ! grep -qxF '${ssh_public_key}' /home/ubuntu/.ssh/authorized_keys; then
+  echo '${ssh_public_key}' >> /home/ubuntu/.ssh/authorized_keys
+fi
 chown -R ubuntu:ubuntu /home/ubuntu/.ssh
 chmod 700 /home/ubuntu/.ssh
 chmod 600 /home/ubuntu/.ssh/authorized_keys
