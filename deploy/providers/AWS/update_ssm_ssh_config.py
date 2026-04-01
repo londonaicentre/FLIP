@@ -63,12 +63,13 @@ def _terraform_output(name: str) -> str:
     return value
 
 
-def _build_host_block(alias: str, instance_id: str, region: str) -> str:
+def _build_host_block(alias: str, instance_id: str, region: str, profile: str | None = None) -> str:
     """Return a managed SSH config block for one host alias."""
+    profile_arg = f" --profile {profile}" if profile else ""
     proxy_command = (
         "    ProxyCommand aws ssm start-session --target %h --document-name "
         "AWS-StartSSHSession --parameters 'portNumber=%p' --region "
-        f"{region}"
+        f"{region}{profile_arg}"
     )
     return (
         "# Managed by FLIP - SSH over SSM Session Manager\n"
@@ -77,6 +78,7 @@ def _build_host_block(alias: str, instance_id: str, region: str) -> str:
         "    User ubuntu\n"
         "    IdentitiesOnly yes\n"
         "    IdentityFile ~/.ssh/host-aws\n"
+        "    StrictHostKeyChecking accept-new\n"
         f"{proxy_command}\n"
     )
 
@@ -124,7 +126,7 @@ def main(ssh_config: Path, terraform_dir: Path, dry_run: bool, aws_profile: str)
         updated_content = current_content
         for host in HOST_CONFIGS:
             instance_id = _terraform_output(host.instance_output)
-            new_block = _build_host_block(host.alias, instance_id, region)
+            new_block = _build_host_block(host.alias, instance_id, region, aws_profile)
             updated_content = _replace_or_append_host_block(updated_content, host.alias, new_block)
 
         if updated_content == current_content:
