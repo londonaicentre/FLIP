@@ -184,7 +184,7 @@ refresh: ## Refresh Terraform state to sync with actual AWS resources
 	@echo "✅ State refreshed!"
 
 .PHONY: gen-trust-ec2-certs
-gen-trust-ec2-certs: refresh ## Generate TLS certs for the cloud Trust EC2 using its Terraform-provisioned public IP
+gen-trust-ec2-certs: ssh-config ## Generate TLS certs for the cloud Trust EC2 using SSH-over-SSM
 	@echo "🔑 Generating TLS certificates for cloud Trust EC2..."
 	@TRUST_HOST="$$(terraform output -raw TrustEc2PublicIp)" \
 		bash ../../../trust/certs/generate-trust-certs.sh
@@ -248,7 +248,7 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) -e fl_kit_date=$(FL_KIT_DATE)
 
 .PHONY: write-trust-ca
-write-trust-ca: ## Fetch trust_ca_cert from Secrets Manager and write to CH EC2 host for volume mount
+write-trust-ca: ssh-config ## Fetch trust_ca_cert from Secrets Manager and write to CH EC2 host for volume mount
 	@echo "🔐 Fetching Trust CA cert from Secrets Manager and writing to CH EC2..."
 	@CH_ID=$$(terraform output -raw Ec2InstanceId) && \
 	  echo "   Waiting for SSM agent to be available on $$CH_ID..." && \
