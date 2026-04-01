@@ -54,6 +54,8 @@
 - name: update packages
   hosts: ec2
   become: true
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: update and upgrade apt packages
       apt:
@@ -63,6 +65,8 @@
 - name: reboot if kernel update requires it
   hosts: ec2
   become: true
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: check if reboot is required
       stat:
@@ -82,10 +86,13 @@
     - geerlingguy.docker
   vars:
     docker_users: [ubuntu]
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
 
 - name: install AWS CLI v2 on EC2 instances (if missing)
   hosts: ec2
   become: true
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: install prerequisites for AWS CLI
       apt:
@@ -121,6 +128,8 @@
 - name: create Central Hub application directories, create data directory for FL server and change ownership
   hosts: central_hub
   become: true
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: create Central Hub application directories
       file:
@@ -141,6 +150,7 @@
     central_s3_sources:
       - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/fl-server-net-1/"
       - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/flip-fl-api-net-1/"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: ensure central services directory exists
       file:
@@ -167,6 +177,8 @@
 - name: create Trust EC2 application directories
   hosts: trust_ec2
   become: true
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: create Trust application directories
       file:
@@ -194,6 +206,7 @@
   vars:
     trust_services_dir: "/opt/flip/services"
     trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/Trust_1/"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: ensure trust services directory exists
       file:
@@ -280,6 +293,7 @@
   vars:
     cloudwatch_agent_deb: "https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb"
     log_group_name: "/aws/ec2/flip"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: install prerequisites
       apt:
@@ -314,6 +328,7 @@
   vars:
     cloudwatch_agent_deb: "https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb"
     log_group_name: "/aws/ec2/flip-trust"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: install prerequisites
       apt:
@@ -350,6 +365,7 @@
     s3_prefix: "omop"
     base_dir: "/opt/flip/volumes"
     trust1_key: "trust1_pgdata_20260106.tar.gz"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: install tar
       apt:
@@ -400,6 +416,7 @@
     archive: "trust1_orthanc_data_20260106.tar.gz"
     base_dir: "/opt/flip/orthanc"
     data_dir: "/opt/flip/orthanc/orthanc-storage"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: install tar
       apt:
