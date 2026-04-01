@@ -15,6 +15,10 @@
 set -euo pipefail
 
 mkdir -p /home/app/.flwr
+
+# Configure the superlink connection for the Flower API. 
+# If SUPERLINK_ROOT_CERTIFICATES is set, use it to configure a secure connection. 
+# Otherwise, configure an insecure connection.
 if [ -n "${SUPERLINK_ROOT_CERTIFICATES:-}" ]; then
 cat >/home/app/.flwr/config.toml <<EOF
 [superlink.local]
