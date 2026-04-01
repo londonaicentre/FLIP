@@ -636,6 +636,8 @@ module "trust_ec2" {
 }
 
 # CloudTrail: SSM Session Manager events (StartSession, TerminateSession, SendCommand)
-# are logged as management events by the existing AWS CloudTrail trail.
-# No dedicated trail is needed. Verify after deployment with:
+# are automatically logged as management events IF CloudTrail is configured in this AWS account.
+# PREREQUISITE: Ensure at least one CloudTrail trail exists and is logging management events.
+# This module does not provision CloudTrail. If CloudTrail is not configured, SSM session
+# events will not be logged. After ensuring CloudTrail is active, verify logging with:
 #   aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=StartSession

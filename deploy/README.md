@@ -56,7 +56,19 @@ Verify installation:
 session-manager-plugin --version
 ```
 
-SSH to EC2 now runs through Session Manager tunnels (no public port 22). Keep a local SSH key at `~/.ssh/host-aws` for SSH client authentication over the tunnel.
+#### Step 4: Generate SSH Key for EC2 Access
+
+SSH-over-SSM still requires local SSH client authentication. Generate a local SSH key pair (only the public key will be injected into EC2):
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/host-aws -C "your-email@example.com"
+```
+
+When prompted for a passphrase, you may press Enter to skip it (or set one for additional security). This creates:
+- `~/.ssh/host-aws` — private key (keep secure, used by SSH client)
+- `~/.ssh/host-aws.pub` — public key (injected into EC2 instances during deployment)
+
+**Important:** This key is only for SSH client authentication over the SSM tunnel; it is not uploaded as an EC2 key pair.
 
 ### Final configuration
 

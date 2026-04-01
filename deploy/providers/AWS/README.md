@@ -192,7 +192,17 @@ This validates:
 Direct shell access to EC2 instances uses AWS Systems Manager Session Manager:
 
 ```bash
-aws ssm start-session --target <instance-id>
+aws ssm start-session --target <instance-id> --region eu-west-2 --profile <aws-profile>
+```
+
+**Important:** SSM commands require the correct AWS account and region. Set `AWS_PROFILE` and `AWS_REGION` environment variables, or pass `--profile` and `--region` to the command to avoid connecting to the wrong environment:
+
+```bash
+# Use staging AWS profile and region
+AWS_PROFILE=staging AWS_REGION=eu-west-2 aws ssm start-session --target i-1234567890abcdef0
+
+# Or pass them explicitly
+aws ssm start-session --target i-1234567890abcdef0 --profile staging --region eu-west-2
 ```
 
 For Docker contexts, Ansible, and scp workflows, use SSH-over-SSM aliases configured by:
@@ -201,7 +211,7 @@ For Docker contexts, Ansible, and scp workflows, use SSH-over-SSM aliases config
 make ssh-config
 ```
 
-This writes `flip` and `flip-trust` host entries with an SSM `ProxyCommand` so existing SSH-based tooling continues to work without exposing port 22 publicly.
+This writes `flip` and `flip-trust` host entries with an SSM `ProxyCommand` so existing SSH-based tooling continues to work without exposing port 22 publicly. The aliases automatically use the AWS profile from the environment when the script was run.
 
 - ✅ CloudWatch Logs configuration
 
