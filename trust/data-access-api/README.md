@@ -55,8 +55,12 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 
 | Variable | Description |
 | --- | --- |
-| `OMOP_DB_URL` | PostgreSQL connection string for the OMOP database |
-| `DATA_ACCESS_API_PORT` | Port the service listens on |
+| `OMOP_DB_SERVICE_NAME` | Docker service name or hostname of the OMOP database |
+| `OMOP_DB_PORT` | Port of the OMOP database |
+| `DATA_ACCESS_POSTGRES_USER` | PostgreSQL username for OMOP database access |
+| `DATA_ACCESS_POSTGRES_PASSWORD` | PostgreSQL password for OMOP database access |
+| `OMOP_POSTGRES_DB` | Name of the OMOP PostgreSQL database |
+| `AES_KEY_BASE64` | AES encryption key for decrypting project identifiers |
 
 ## Further Reading
 

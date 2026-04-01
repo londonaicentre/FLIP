@@ -139,10 +139,11 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | Variable | Description |
 | --- | --- |
 | `XNAT_URL` | URL of the XNAT instance |
-| `XNAT_USER` | XNAT service account username |
-| `XNAT_PASSWORD` | XNAT service account password |
-| `ORTHANC_URL` | URL of the Orthanc PACS |
-| `IMAGING_API_PORT` | Port the service listens on |
+| `XNAT_SERVICE_USER` | XNAT service account username |
+| `XNAT_SERVICE_PASSWORD` | XNAT service account password |
+| `XNAT_DATABASE_URL` | PostgreSQL connection string for the XNAT database |
+| `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
+| `AES_KEY_BASE64` | AES encryption key for decrypting project identifiers |
 
 ## Further Reading
 

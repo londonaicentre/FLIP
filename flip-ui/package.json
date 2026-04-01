@@ -52,7 +52,7 @@
         "@vueuse/core": "^8.7.5",
         "autoprefixer": "^10.4.7",
         "aws-amplify": "^6.15.3",
-        "aws-sdk": "^1.18.0",
+        "aws-sdk": "^2.814.0",
         "axios": "^1.10.0",
         "c8": "^11.0.0",
         "codemirror-editor-vue3": "^2.1.7",
@@ -98,6 +98,10 @@
         "vue3-highlightjs": "^1.0.5",
         "vuejs-smart-table": "^1.0.0-beta.5",
         "yup": "^0.32.9"
+    },
+    "overrides": {
+        "undici": ">=6.24.0",
+        "xml2js": ">=0.5.0"
     },
     "babel": {
         "presets": [

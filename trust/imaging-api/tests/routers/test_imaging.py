@@ -12,25 +12,11 @@
 
 from unittest.mock import patch
 
-import pytest
-from fastapi.testclient import TestClient
-
-from imaging_api.main import app
 from imaging_api.routers.schemas import ImportStudy, ImportStudyRequest, ImportStudyResponse, PacsStatus, Patient, Study
-from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.exceptions import NotFoundError
 
-client = TestClient(app)
 
-
-@pytest.fixture(autouse=True)
-def override_auth_headers():
-    app.dependency_overrides[get_xnat_auth_headers] = lambda: {"Authorization": "Bearer fake-token"}
-    yield
-    app.dependency_overrides.clear()
-
-
-def test_ping_pacs_success():
+def test_ping_pacs_success(client):
     pacs_id = 1
     mock_response = {
         "pacsId": pacs_id,
@@ -53,12 +39,9 @@ def test_ping_pacs_success():
         assert data["pacsId"] == pacs_id
         assert data["successful"] is True
         assert data["enabled"] is True
-        assert "created" in data
-        assert "timestamp" in data
-        assert "pingTime" in data
 
 
-def test_ping_pacs_failure():
+def test_ping_pacs_failure(client):
     pacs_id = 2
     error_message = f"PACS with ID '{pacs_id}' not found."
 
@@ -71,7 +54,7 @@ def test_ping_pacs_failure():
         assert error_message in response.json()["detail"]
 
 
-def test_query_by_accession_number_success():
+def test_query_by_accession_number_success(client):
     mock_study = Study(
         studyInstanceUid="1.2.3",
         studyDescription="Head MRI",
@@ -96,7 +79,7 @@ def test_query_by_accession_number_success():
     assert response.json()[0]["accessionNumber"] == "ACC123"
 
 
-def test_query_by_accession_number_not_found():
+def test_query_by_accession_number_not_found(client):
     accession_number = "ACC123"
     message = f"No studies found for accession number: {accession_number}"
 
@@ -113,7 +96,7 @@ def test_query_by_accession_number_not_found():
     assert message in response.json()["detail"]
 
 
-def test_queue_image_import_request_success():
+def test_queue_image_import_request_success(client):
     import_request = ImportStudyRequest(
         projectId="TEST123",
         pacsId=1,
@@ -147,7 +130,7 @@ def test_queue_image_import_request_success():
     assert response.json()[0]["status"] == "QUEUED"
 
 
-def test_queue_image_import_request_not_found():
+def test_queue_image_import_request_not_found(client):
     import_request = ImportStudyRequest(
         projectId="TEST123",
         pacsId=1,

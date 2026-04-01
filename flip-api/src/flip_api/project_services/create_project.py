@@ -50,7 +50,7 @@ def create_project_endpoint(
         db (Session): The database session.
 
     Returns:
-        ProjectDetails: The created project details.
+        IId: The ID of the created project.
 
     Raises:
         HTTPException: If the user does not have permission to create projects, if the project details are invalid,

@@ -85,7 +85,6 @@ class FLLogs(SQLModel, table=True):
     log: str = Field()
 
 
-
 class Model(SQLModel, table=True):
     __tablename__ = "model"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)

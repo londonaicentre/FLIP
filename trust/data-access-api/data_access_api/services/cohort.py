@@ -27,7 +27,7 @@ from data_access_api.utils.sql_parsers import extract_missing_identifier
 COHORT_QUERY_THRESHOLD = get_settings().COHORT_QUERY_THRESHOLD
 
 
-def validate_query(query: str) -> bool | HTTPException:
+def validate_query(query: str) -> bool:
     """
     Validates the SQL query to ensure it is safe to execute.
     This function checks that the query not contain sql injection risks or other unsafe elements.
@@ -36,7 +36,7 @@ def validate_query(query: str) -> bool | HTTPException:
         query (str): The SQL query to validate.
 
     Returns:
-        bool: True if the query is valid, False otherwise.
+        bool: True if the query is valid.
 
     Raises:
         HTTPException: If the query is invalid or contains unsafe elements.

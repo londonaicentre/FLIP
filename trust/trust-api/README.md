@@ -59,11 +59,11 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 
 | Variable | Description |
 | --- | --- |
-| `TRUST_ID` | Identifier for this Trust instance |
+| `CENTRAL_HUB_API_URL` | URL of the Central Hub API (for callbacks) |
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
 | `IMAGING_API_URL` | Internal URL of the imaging-api |
-| `FLIP_API_URL` | URL of the Central Hub API (for callbacks) |
-| `ENCRYPTION_KEY` | Shared key for decrypting project identifiers |
+| `PRIVATE_API_KEY` | Shared key for service-to-service authentication |
+| `PRIVATE_API_KEY_HEADER` | Header name for the private API key |
 
 ## Further Reading
 

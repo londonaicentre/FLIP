@@ -22,10 +22,12 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "readthedocs-sphinx-search>=0.3.2",
+    "requests>=2.33.0",
     "setuptools>=80.8.0",
     "sphinx-autoapi>=3.6.0",
     "sphinx-rtd-theme>=3.0.2",
     "sphinxcontrib-bibtex>=2.6.3",
+    "urllib3>=2.6.0",
 ]
 
 [project.scripts]

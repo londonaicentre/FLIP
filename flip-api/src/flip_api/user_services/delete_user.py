@@ -48,7 +48,7 @@ def delete_user(
         token_id: ID of the authenticated user
 
     Returns:
-        Empty response with 204 status code
+        dict[str, Any]: Empty dictionary on success.
 
     Raises:
         HTTPException: If the user doesn't have permission or other errors occur
