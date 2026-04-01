@@ -26,6 +26,9 @@ COPY --chown=app:app tutorials/monai/pyproject.toml .
 RUN sed -i 's/.*flwr\[simulation\].*//' pyproject.toml \
   && python -m pip install -U --no-cache-dir .
 
+# Copy register-supernode-keys.sh
+COPY --chown=app:app register-supernode-keys.sh /scripts/register-supernode-keys.sh
+
 FROM base AS development
 
 COPY --from=fliputils_dist *.whl /wheels/
