@@ -27,9 +27,9 @@ variable "instance_type" {
   default = "t3.small"
 }
 
-variable "key_name" {
-  type    = string
-  default = "~/.ssh/id_rsa"
+variable "ssh_public_key" {
+  description = "SSH public key content to inject via cloud-init for SSH-over-SSM access"
+  type        = string
 }
 
 variable "subnet_id" {

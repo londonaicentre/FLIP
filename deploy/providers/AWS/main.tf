@@ -234,12 +234,6 @@ resource "aws_cloudwatch_log_group" "flip_log_group" {
   retention_in_days = 7
 }
 
-# Key Pair for SSH access
-resource "aws_key_pair" "flip_keypair" {
-  key_name   = "flip-keypair"
-  public_key = file("${var.flip_keypair}.pub")
-}
-
 # EC2 Instance
 data "aws_ssm_parameter" "ubuntu" {
   name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
@@ -255,7 +249,9 @@ resource "aws_instance" "ec2_instance" {
   ami                         = data.aws_ssm_parameter.ubuntu.value
   vpc_security_group_ids      = [module.ec2_security_group.security_group.id]
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
-  key_name                    = aws_key_pair.flip_keypair.key_name
+  user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
+    ssh_public_key = file(var.ec2_public_key_path)
+  })
   root_block_device {
     volume_size           = 30
     volume_type           = "gp3"
@@ -635,8 +631,8 @@ module "trust_ec2" {
 
   name_prefix   = "trust"
   instance_type = "t3.xlarge"
-  key_name      = aws_key_pair.host_key.key_name
-  subnet_id     = element(module.flip_vpc.public_subnets, 0)
+  ssh_public_key = file(var.ec2_public_key_path)
+  subnet_id      = element(module.flip_vpc.public_subnets, 0)
 
   # use the trust SG, not the central EC2 SG
   security_group_ids = [module.trust_security_group.security_group.id]
@@ -651,7 +647,7 @@ module "trust_ec2" {
   iam_instance_profile_name = aws_iam_instance_profile.ec2_profile.name
 }
 
-resource "aws_key_pair" "host_key" {
-  key_name   = "host-aws"
-  public_key = file(var.ec2_public_key_path)
-}
+# CloudTrail: SSM Session Manager events (StartSession, TerminateSession, SendCommand)
+# are logged as management events by the existing AWS CloudTrail trail.
+# No dedicated trail is needed. Verify after deployment with:
+#   aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=StartSession

@@ -44,12 +44,9 @@ variable "POSTGRES_DB" {
   type = string
 }
 
-variable "flip_keypair" {
-  type = string
-}
-
 variable "ec2_public_key_path" {
-  type = string
+  description = "Path to SSH public key file. Injected into EC2 instances via cloud-init for SSH-over-SSM access (replaces AWS key pair)."
+  type        = string
 }
 
 variable "AES_KEY_BASE64" {

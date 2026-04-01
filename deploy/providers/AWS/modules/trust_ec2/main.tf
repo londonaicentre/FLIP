@@ -23,15 +23,6 @@ resource "aws_security_group" "trust_host_sg" {
   vpc_id      = data.aws_subnet.selected.vpc_id
 }
 
-resource "aws_vpc_security_group_ingress_rule" "ssh" {
-  count             = length(var.security_group_ids) == 0 ? 1 : 0
-  security_group_id = aws_security_group.trust_host_sg[0].id
-  cidr_ipv4         = "0.0.0.0/0"
-  from_port         = 22
-  ip_protocol       = "tcp"
-  to_port           = 22
-}
-
 resource "aws_vpc_security_group_ingress_rule" "trust_api" {
   count             = length(var.security_group_ids) == 0 ? 1 : 0
   security_group_id = aws_security_group.trust_host_sg[0].id
@@ -80,11 +71,14 @@ resource "aws_instance" "trust_host" {
   ami                         = data.aws_ssm_parameter.ubuntu.value
   instance_type               = var.instance_type
   subnet_id                   = var.subnet_id
-  key_name                    = var.key_name
   vpc_security_group_ids      = local.sg_ids
   associate_public_ip_address = true
 
   iam_instance_profile = var.iam_instance_profile_name
+
+  user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
+    ssh_public_key = var.ssh_public_key
+  })
 
   root_block_device {
     volume_size           = 50
