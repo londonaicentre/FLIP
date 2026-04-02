@@ -521,8 +521,14 @@ help: ## Show this help message
 	@echo ""
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?##"}; {printf "  \033[36m%-20s\033[0m %s\n", $$0, $$1, $$2}'
 
+.PHONY: verify-deploy-readiness
+verify-deploy-readiness: ## Verify that all deployment prerequisites are met before running full-deploy
+	@echo "🔍 Verifying deployment readiness..."
+	@python3 verify_deploy_readiness.py
+	@echo ""
+
 .PHONY: full-deploy
-full-deploy: ## Full AWS deployment: provision infrastructure, generate TLS certs, deploy cloud Trust + Central Hub
+full-deploy: verify-deploy-readiness ## Full AWS deployment: provision infrastructure, generate TLS certs, deploy cloud Trust + Central Hub
 	## Step order:
 	## 1. login + init + import: auth, Terraform init, import any pre-existing resources
 	## 2. First plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, secrets – CA cert placeholder)
@@ -535,7 +541,7 @@ full-deploy: ## Full AWS deployment: provision infrastructure, generate TLS cert
 full-deploy: github-login aws-login init import-persistent plan apply update-env gen-trust-ec2-certs plan apply ssh-config ansible-init deploy-centralhub deploy-trust status
 
 .PHONY: full-deploy-stag
-full-deploy-stag: ## Full staging deployment with on-prem local trust (requires LOCAL_TRUST_IP=<public-ip>)
+full-deploy-stag: verify-deploy-readiness ## Full staging deployment with on-prem local trust (requires LOCAL_TRUST_IP=<public-ip>)
 	## Step order:
 	## 1. login + init + import: auth, Terraform init, import pre-existing persistent resources
 	## 2. First plan+apply (PROD=stag): provision all AWS infrastructure (EC2, RDS, VPC, ALB, secrets)
