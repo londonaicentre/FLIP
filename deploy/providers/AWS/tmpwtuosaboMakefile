@@ -1,0 +1,3 @@
+.PHONY: test-target
+test-target:
+	@echo 'test'

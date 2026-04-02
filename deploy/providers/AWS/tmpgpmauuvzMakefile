@@ -1,0 +1,3 @@
+.PHONY: target1
+target1:
+	@echo 'target1'

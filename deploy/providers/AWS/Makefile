@@ -482,7 +482,7 @@ check:
 	@terraform state list
 	@echo ""
 	@terraform output
-	@python3 check_status.py || true
+	@uv run python3 check_status.py
 
 
 .PHONY: backup-eips

@@ -155,13 +155,18 @@ def get_terraform_output(output_name: str) -> str | None:
             capture_output=True,
             text=True,
             check=True,
-            timeout=10,
+            timeout=30,
         )
         output = result.stdout.strip()
         if output and output != "null":
             return output
         return None
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.strip() if exc.stderr else ""
+        print_status("WARN", f"Failed to get terraform output '{output_name}': {stderr}")
+        return None
+    except subprocess.TimeoutExpired:
+        print_status("WARN", f"Terraform output '{output_name}' timed out")
         return None
 
 
