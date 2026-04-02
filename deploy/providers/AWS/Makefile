@@ -190,11 +190,10 @@ gen-trust-ec2-certs: ssh-config ## Generate TLS certs for the cloud Trust EC2 us
 		bash ../../../trust/certs/generate-trust-certs.sh
 	@echo "📋 Copying CA cert to Terraform directory (picked up by Secrets Manager on next apply)..."
 	@cp ../../../trust/certs/trust-ca.crt ./trust-ca.crt
-	@echo "📦 Waiting for Trust EC2 SSM agent to be ready..."
-	@TRUST_ID="$$(terraform output -raw TrustEc2InstanceId)"; \
-	for i in $$(seq 1 60); do \
-		aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$$TRUST_ID" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null | grep -q "Online" && echo "   ✓ SSM agent online (attempt $$i)" && break; \
-		if [ $$i -eq 60 ]; then echo "   ✗ SSM agent did not come online after 5 minutes."; exit 1; fi; \
+	@echo "📦 Waiting for Trust EC2 SSH-over-SSM to be ready..."
+	@for i in $$(seq 1 60); do \
+		ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o BatchMode=yes flip-trust "echo OK" >/dev/null 2>&1 && echo "   ✓ SSH-over-SSM online (attempt $$i)" && break; \
+		if [ $$i -eq 60 ]; then echo "   ✗ SSH-over-SSM did not come online after 5 minutes."; exit 1; fi; \
 		echo "   ... waiting (attempt $$i/60)"; \
 		sleep 5; \
 	done
@@ -231,7 +230,7 @@ apply: ## Apply Terraform configuration to update AWS infrastructure (with envir
 .PHONY: ssh-config
 ssh-config: ## Update local .ssh/config for flip SSH-over-SSM contexts
 	@echo "⚙️  Configure .ssh/config for SSH-over-SSM..."
-	@python3 update_ssm_ssh_config.py --aws-profile ${AWS_PROFILE}
+	@uv run python3 update_ssm_ssh_config.py --aws-profile ${AWS_PROFILE}
 	@echo "✅ .ssh/config updated with SSM ProxyCommand entries!"
 
 .PHONY: update-env
