@@ -282,6 +282,8 @@ class TestFLIPStandardProdUpdateStatus:
             patch("flip.core.standard.requests.put", return_value=mock_response) as mock_put,
         ):
             mock_constants.CENTRAL_HUB_API_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
             mock_constants.PRIVATE_API_KEY_HEADER = "x-api-key"
             mock_constants.PRIVATE_API_KEY = "test-key"
 
@@ -322,6 +324,8 @@ class TestFLIPStandardProdSendHandledException:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.CENTRAL_HUB_API_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
             mock_constants.PRIVATE_API_KEY_HEADER = "x-api-key"
             mock_constants.PRIVATE_API_KEY = "test-key"
 
