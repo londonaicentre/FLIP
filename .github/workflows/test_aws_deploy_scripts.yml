@@ -1,0 +1,67 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: AWS Deploy Scripts CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "deploy/providers/AWS/**"
+      - ".github/workflows/test_aws_deploy_scripts.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "deploy/providers/AWS/**"
+
+permissions:
+  contents: read
+
+jobs:
+  ssh-config-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./deploy/providers/AWS
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run linting (ruff)
+        run: uv run ruff check . --select I,F,E,W,PT,UP006,UP007,UP035,UP045
+
+      - name: Run type checking (mypy)
+        run: uv run mypy update_ssm_ssh_config.py check_status.py
+
+      - name: Run unit tests (pytest)
+        run: uv run pytest test_update_ssm_ssh_config.py -v --tb=short --cov=. --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./deploy/providers/AWS/coverage.xml
+          flags: aws-deploy-scripts
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
