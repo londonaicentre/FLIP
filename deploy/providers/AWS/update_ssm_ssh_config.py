@@ -51,8 +51,14 @@ HOST_CONFIGS: tuple[HostConfig, ...] = (
 
 def _run(cmd: list[str], timeout: int = 20) -> str:
     """Run a shell command and return stripped stdout."""
-    result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
-    return result.stdout.strip()
+    try:
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
+        return result.stdout.strip()
+    except FileNotFoundError as exc:
+        cmd_name = cmd[0] if cmd else "<unknown>"
+        raise click.ClickException(
+            f"Required command '{cmd_name}' was not found. Please ensure it is installed and on your PATH."
+        ) from exc
 
 
 def _terraform_output(name: str) -> str:
@@ -84,8 +90,18 @@ def _build_host_block(alias: str, instance_id: str, region: str, profile: str | 
 
 
 def _replace_or_append_host_block(content: str, alias: str, new_block: str) -> str:
-    """Replace Host block for alias if present; otherwise append it."""
-    host_regex = re.compile(rf"(?ms)^Host\s+{re.escape(alias)}\n(?:^[ \t].*\n?)*")
+    """Replace Host block for alias if present; otherwise append it.
+
+    Matches the optional comment line (# Managed by FLIP...), the Host line, and all
+    indented configuration lines that follow.
+    """
+    # Match: optional comment line + Host line + indented config lines
+    # (?:^# Managed by FLIP.*\n)? - optional comment line
+    # ^Host\s+{alias}\n - Host line
+    # (?:^[ \t][^\n]*\n)* - indented config lines
+    host_regex = re.compile(
+        rf"(?m)(?:^# Managed by FLIP[^\n]*\n)?^Host\s+{re.escape(alias)}\n(?:^[ \t][^\n]*\n)*"
+    )
     if host_regex.search(content):
         return host_regex.sub(new_block, content, count=1)
     suffix = "" if content.endswith("\n") else "\n"
