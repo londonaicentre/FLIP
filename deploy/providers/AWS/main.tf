@@ -242,7 +242,7 @@ resource "aws_instance" "ec2_instance" {
   vpc_security_group_ids      = [module.ec2_security_group.security_group.id]
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
   user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
-    ssh_public_key = file(var.ec2_public_key_path)
+    ssh_public_key = trimspace(file(var.ec2_public_key_path))
   })
   root_block_device {
     volume_size           = 30
@@ -619,7 +619,7 @@ module "trust_ec2" {
 
   name_prefix    = "trust"
   instance_type  = "t3.xlarge"
-  ssh_public_key = file(var.ec2_public_key_path)
+  ssh_public_key = trimspace(file(var.ec2_public_key_path))
   subnet_id      = element(module.flip_vpc.public_subnets, 0)
 
   # use the trust SG, not the central EC2 SG

@@ -77,7 +77,7 @@ resource "aws_instance" "trust_host" {
   iam_instance_profile = var.iam_instance_profile_name
 
   user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
-    ssh_public_key = var.ssh_public_key
+    ssh_public_key = trimspace(var.ssh_public_key)
   })
 
   root_block_device {
