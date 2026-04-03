@@ -1,0 +1,89 @@
+/*
+ * Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/**
+ * Centralized application configuration module.
+ *
+ * Reads all environment variables from import.meta.env (Vite) and validates
+ * that required variables are present. Throws descriptive errors on startup
+ * if any required variable is missing, ensuring fail-fast behaviour.
+ *
+ * Required variables (application will not start without these):
+ *   - VITE_AWS_BASE_URL
+ *   - VITE_AWS_USER_POOL_ID
+ *   - VITE_AWS_CLIENT_ID
+ *
+ * Optional variables (have sensible defaults):
+ *   - VITE_AWS_REGION           (default: "eu-west-2")
+ *   - VITE_AWS_CLIENT_SECRET    (default: undefined)
+ *   - VITE_BLACKLISTED_MODEL_FILES (default: "")
+ *   - VITE_RELEASE_VERSION      (default: "")
+ *   - VITE_MAX_REIMPORT_COUNT   (default: 10)
+ *   - VITE_LOCAL                (default: "false")
+ */
+
+export interface AppConfig {
+    awsBaseUrl: string;
+    awsUserPoolId: string;
+    awsClientId: string;
+    awsRegion: string;
+    awsClientSecret: string | undefined;
+    blacklistedModelFiles: string;
+    releaseVersion: string;
+    maxReimportCount: number;
+    isLocalMode: boolean;
+}
+
+const REQUIRED_VARS = ["VITE_AWS_BASE_URL", "VITE_AWS_USER_POOL_ID", "VITE_AWS_CLIENT_ID"] as const;
+
+/**
+ * Validates that all required environment variables are present.
+ * Throws an error listing all missing variables if any are absent.
+ */
+function validateConfig(env: Record<string, string | undefined>): void {
+    const missing = REQUIRED_VARS.filter((key) => !env[key]);
+
+    if (missing.length > 0) {
+        throw new Error(
+            `Missing required environment variables: ${missing.join(", ")}. ` +
+            "Please set these in your .env.development file (development) or " +
+            "via your hosting environment (production). " +
+            "See flip-ui/README.md for configuration details."
+        );
+    }
+}
+
+/**
+ * Builds and returns the validated application configuration.
+ * Reads from import.meta.env and fails fast if required variables are absent.
+ */
+export function getConfig(): AppConfig {
+    const env = import.meta.env as Record<string, string | undefined>;
+
+    validateConfig(env);
+
+    const rawMaxReimport = env["VITE_MAX_REIMPORT_COUNT"];
+    const maxReimportCount = rawMaxReimport ? parseInt(rawMaxReimport, 10) : 10;
+
+    return {
+        awsBaseUrl: env["VITE_AWS_BASE_URL"] as string,
+        awsUserPoolId: env["VITE_AWS_USER_POOL_ID"] as string,
+        awsClientId: env["VITE_AWS_CLIENT_ID"] as string,
+        awsRegion: env["VITE_AWS_REGION"] ?? "eu-west-2",
+        awsClientSecret: env["VITE_AWS_CLIENT_SECRET"],
+        blacklistedModelFiles: env["VITE_BLACKLISTED_MODEL_FILES"] ?? "",
+        releaseVersion: env["VITE_RELEASE_VERSION"] ?? "",
+        maxReimportCount: isNaN(maxReimportCount) ? 10 : maxReimportCount,
+        isLocalMode: env["VITE_LOCAL"] === "true",
+    };
+}

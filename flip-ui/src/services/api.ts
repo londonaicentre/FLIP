@@ -15,6 +15,7 @@ import { fetchAuthSession } from 'aws-amplify/auth';
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from "axios";
 
 import { useAuthStore } from "@/store/auth";
+import { getConfig } from "@/utils/config";
 import { Snackbar } from "@/utils/snackbar";
 
 export interface IResponse<T> extends AxiosResponse<T> { }
@@ -38,12 +39,10 @@ class Http {
 
     private initHttp() {
         const authStore = useAuthStore();
-        const devMode = process.env.NODE_ENV === "development";
-
-        console.log("Initializing HTTP client in", devMode ? "development" : "production", "mode");
+        const config = getConfig();
 
         const http = axios.create({
-            baseURL: devMode ? process.env.VITE_AWS_BASE_URL : window.AWS_BASE_URL,
+            baseURL: config.awsBaseUrl,
             timeout: 30_000,
             headers: {}
         });

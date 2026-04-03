@@ -14,6 +14,18 @@
 import { config } from '@vue/test-utils'
 import { afterAll, afterEach, beforeAll, vi } from 'vitest'
 
+// Provide required environment variables so config validation passes in every test file.
+// These are test-only placeholder values; they do not represent real credentials.
+if (!import.meta.env['VITE_AWS_BASE_URL']) {
+  import.meta.env['VITE_AWS_BASE_URL'] = 'http://localhost:8080/api'
+}
+if (!import.meta.env['VITE_AWS_USER_POOL_ID']) {
+  import.meta.env['VITE_AWS_USER_POOL_ID'] = 'eu-west-2_TestPool'
+}
+if (!import.meta.env['VITE_AWS_CLIENT_ID']) {
+  import.meta.env['VITE_AWS_CLIENT_ID'] = 'test-client-id'
+}
+
 // Global test setup
 beforeAll(async () => {
   console.log('Setting up test environment...')

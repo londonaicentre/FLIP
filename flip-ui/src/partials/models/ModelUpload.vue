@@ -114,6 +114,7 @@ import { deleteModelFile, downloadModelFile, processScannedFile } from "@/servic
 import { JobTypes } from "@/services/model-service";
 import { createPreSignedUrl, uploadFile as uploadFileService } from "@/utils/file";
 import { formatBytes, getRandomId } from "@/utils/helpers";
+import { getConfig } from "@/utils/config";
 import { Snackbar } from "@/utils/snackbar";
 
 import { useAuthStore } from "@/store/auth";
@@ -187,9 +188,7 @@ const uploadFile = async (fileList: FileList) => {
         uploadingFiles.value.push(fileInfo);
     });
 
-    const devMode = process.env.NODE_ENV === "development";
-
-    const blacklistedEnvVar = devMode ? process.env.VITE_BLACKLISTED_MODEL_FILES : window.BLACKLISTED_MODEL_FILES;
+    const blacklistedEnvVar = getConfig().blacklistedModelFiles;
 
     let blacklistedModelFiles: string[] = [];
 

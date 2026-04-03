@@ -27,6 +27,16 @@ import { makeServer } from "../mocks/server";
 import App from "./App.vue";
 import router from "./router";
 import { authConfig } from "./utils/auth";
+import { getConfig } from "./utils/config";
+
+let appConfig;
+try {
+    appConfig = getConfig();
+} catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    document.body.innerHTML = `<pre style="color:red;padding:2rem;font-family:monospace;">Configuration Error: ${message}</pre>`;
+    throw error;
+}
 
 const app = createApp(App);
 const pinia = createPinia();
@@ -34,7 +44,7 @@ app.use(pinia);
 
 Amplify.configure(authConfig);
 
-if (process.env.VITE_LOCAL === "true") {
+if (appConfig.isLocalMode) {
     console.info("Running locally, will use mocked API.");
     makeServer();
 }

@@ -10,21 +10,3 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-
-const AWS_BASE_URL = "http://localhost:8080/api";
-const AWS_USER_POOL_ID = "eu-west-2_4QdpwX1GW";
-const AWS_CLIENT_ID = "5hcskgab29jpmti0esd655lfsv";
-const BLACKLISTED_MODEL_FILES = "";
-const RELEASE_VERSION = "";
-const MAX_REIMPORT_COUNT = parseInt("10", 10);
-
-if (global === undefined) {
-    var global = window;
-    global.AWS_BASE_URL = AWS_BASE_URL;
-    global.AWS_USER_POOL_ID = AWS_USER_POOL_ID;
-    global.AWS_CLIENT_ID = AWS_CLIENT_ID;
-    global.BLACKLISTED_MODEL_FILES = BLACKLISTED_MODEL_FILES;
-    global.RELEASE_VERSION = RELEASE_VERSION;
-    global.MAX_REIMPORT_COUNT = MAX_REIMPORT_COUNT;
-}

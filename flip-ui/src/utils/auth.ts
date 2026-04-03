@@ -20,6 +20,7 @@ import router, { routeChange } from "@/router";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 
+import { getConfig } from "./config";
 import { Snackbar } from "./snackbar";
 
 /**
@@ -60,7 +61,7 @@ export const authCheck = async (
             return next();
         }
 
-        if (process.env.VITE_LOCAL === "true") {
+        if (getConfig().isLocalMode) {
             return next();
         }
 
@@ -111,15 +112,15 @@ export const isUserUnconfirmedCheck = async (
 
 export const apiGateway = "CentralHubAPIGateway";
 
-const devMode = process.env.NODE_ENV === "development";
+const _config = getConfig();
 
 export const authConfig = {
     Auth: {
         Cognito: {
-            region: process.env.VITE_AWS_REGION || 'eu-west-2',
-            userPoolId: process.env.VITE_AWS_USER_POOL_ID,
-            userPoolClientId: process.env.VITE_AWS_CLIENT_ID,
-            clientSecret: process.env.VITE_AWS_CLIENT_SECRET,
+            region: _config.awsRegion,
+            userPoolId: _config.awsUserPoolId,
+            userPoolClientId: _config.awsClientId,
+            clientSecret: _config.awsClientSecret,
             authenticationFlowType: 'USER_PASSWORD_AUTH',
             loginWith: {}
         }

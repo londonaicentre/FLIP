@@ -43,15 +43,39 @@ https://localhost
 
 ## Configuration
 
-The flip-ui requires the following environment variables, set via [`.env.development.example`](../.env.development.example) in
-development or via the hosting environment in production:
+All configuration is sourced from environment variables. The application will **fail immediately at startup** if any
+required variable is missing, rather than silently using incorrect defaults. Set these variables in
+[`.env.development.example`](../.env.development.example) (copied to `.env.development`) for local development, or
+via your hosting environment in production.
+
+### Required Variables
+
+The application will not start if any of these are absent:
 
 | Variable | Description |
 | --- | --- |
+| `VITE_AWS_BASE_URL` | Full base URL of the flip-api backend, including `/api` (e.g. `http://localhost:8080/api`) |
 | `VITE_AWS_USER_POOL_ID` | AWS Cognito User Pool ID for authentication |
 | `VITE_AWS_CLIENT_ID` | AWS Cognito App Client ID |
-| `VITE_AWS_BASE_URL` | Full base URL of the flip-api backend, including `/api` |
-| `VITE_LOCAL` | Set to `true` for local mock mode (bypasses Cognito) |
+
+### Optional Variables
+
+These have sensible defaults and may be omitted:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `VITE_AWS_REGION` | `eu-west-2` | AWS region for Cognito |
+| `VITE_AWS_CLIENT_SECRET` | _(none)_ | AWS Cognito App Client Secret (only if configured on the pool) |
+| `VITE_BLACKLISTED_MODEL_FILES` | `""` | Comma-separated list of model file names that cannot be uploaded |
+| `VITE_RELEASE_VERSION` | `""` | Application release version string shown in the UI |
+| `VITE_MAX_REIMPORT_COUNT` | `10` | Maximum number of times a model may be reimported |
+| `VITE_LOCAL` | `false` | Set to `true` to use the mock API server and bypass Cognito |
+
+### Troubleshooting Missing Variables
+
+If the application fails to start with a **Configuration Error**, the browser will display a message listing the
+missing variable names. Copy `.env.development.example` to `.env.development` and populate all required values, then
+restart the development server.
 
 Authentication is handled through [AWS Cognito](https://docs.aws.amazon.com/cognito/). A valid Cognito User Pool and
 Client ID are required for a production deployment.
