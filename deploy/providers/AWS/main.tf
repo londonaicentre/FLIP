@@ -180,6 +180,12 @@ module "flip_api_secret" {
       "Trust_2" = "https://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
     }
     trust_ca_cert = try(file("${path.module}/trust-ca.crt"), "")
+
+    # Added for ECS: referenced by task definitions via valueFrom with JSON key syntax.
+    # db_password is the FLIP central-hub RDS master password.
+    # github_pat is a PAT with read:packages scope for GHCR image pulls.
+    db_password = var.db_password
+    github_pat  = var.github_pat
   })
 }
 
@@ -489,6 +495,62 @@ resource "aws_lb_listener_rule" "api_routing" {
 }
 
 ############################
+# ECS Tasks Security Group
+# Attached to all Fargate tasks running in private subnets.
+# Ingress is allowed only from the ALB security group on the API container port
+# and from within the VPC CIDR for internal service-to-service calls.
+############################
+
+resource "aws_security_group" "ecs_tasks" {
+  name        = "ecs-tasks-sg"
+  vpc_id      = module.flip_vpc.vpc_id
+  description = "Security group for all FLIP ECS Fargate tasks"
+
+  # Allow ALB → flip-api on container port 8000
+  ingress {
+    description     = "flip-api from ALB"
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [module.alb_security_group.security_group.id]
+  }
+
+  # Allow internal VPC traffic so ECS tasks can call each other
+  # (e.g. trust-api → imaging-api, trust-api → data-access-api)
+  ingress {
+    description = "Internal VPC service-to-service"
+    from_port   = 8000
+    to_port     = 8000
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  # Allow all outbound (to reach RDS, S3, Secrets Manager, SSM, Cognito endpoints)
+  egress {
+    description = "All outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "ecs-tasks-sg"
+  }
+}
+
+# Allow ECS tasks to reach the FLIP RDS instance (PostgreSQL)
+resource "aws_security_group_rule" "rds_ingress_from_ecs" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.ecs_tasks.id
+  security_group_id        = module.rds_security_group.security_group.id
+  description              = "PostgreSQL from ECS tasks"
+}
+
+############################
 # On-Premises Trust (optional)
 # Activated by setting local_trust_public_ip in the env file or via
 # TF_VAR_local_trust_public_ip when running `make add-local-trust`.
@@ -602,6 +664,41 @@ output "FlServerEndpoint" {
 output "FlServerRawNlbDns" {
   description = "Raw AWS NLB DNS name for FL server debugging"
   value       = module.fl_server_nlb.dns_name
+}
+
+output "EcsClusterName" {
+  description = "ECS cluster name"
+  value       = aws_ecs_cluster.flip.name
+}
+
+output "EcsClusterArn" {
+  description = "ECS cluster ARN"
+  value       = aws_ecs_cluster.flip.arn
+}
+
+output "EcsFlipApiServiceName" {
+  description = "ECS service name for flip-api"
+  value       = aws_ecs_service.flip_api.name
+}
+
+output "EcsTrustApiServiceName" {
+  description = "ECS service name for trust-api"
+  value       = aws_ecs_service.trust_api.name
+}
+
+output "EcsImagingApiServiceName" {
+  description = "ECS service name for imaging-api"
+  value       = aws_ecs_service.imaging_api.name
+}
+
+output "EcsDataAccessApiServiceName" {
+  description = "ECS service name for data-access-api"
+  value       = aws_ecs_service.data_access_api.name
+}
+
+output "EcsFlipApiTargetGroupArn" {
+  description = "ARN of the ALB target group for the ECS flip-api service"
+  value       = aws_lb_target_group.ecs_flip_api.arn
 }
 
 ############################

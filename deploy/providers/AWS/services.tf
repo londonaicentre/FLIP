@@ -13,6 +13,26 @@
 # limitations under the License.
 
 ############################
+# GitHub Container Registry credentials
+# ECS uses this secret via repositoryCredentials in the task definition to pull
+# private images from ghcr.io/londonaicentre/.
+############################
+
+resource "aws_secretsmanager_secret" "ghcr_credentials" {
+  name                    = "ecsGithubCredentials"
+  description             = "GitHub Container Registry credentials for ECS image pulls"
+  recovery_window_in_days = 30
+}
+
+resource "aws_secretsmanager_secret_version" "ghcr_credentials" {
+  secret_id = aws_secretsmanager_secret.ghcr_credentials.id
+  secret_string = jsonencode({
+    username = var.github_username
+    password = var.github_pat
+  })
+}
+
+############################
 # S3
 ############################
 

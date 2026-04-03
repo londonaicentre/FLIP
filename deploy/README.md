@@ -140,3 +140,124 @@ aws cognito-idp admin-create-user \
 - [ ] Email templates render correctly in Gmail, Outlook, Apple Mail
 - [ ] Links in email templates resolve to correct environment subdomain (e.g., `https://flip-staging.example.com`)
 - [ ] SMS fallback messages deliver (if SMS is enabled in Cognito)
+
+---
+
+## ECS Container Orchestration
+
+FLIP Central Hub services (`flip-api`, `trust-api`, `imaging-api`, `data-access-api`) run on AWS ECS Fargate. ECS replaces the previous Ansible/systemd-managed service deployment with declarative task definitions, rolling updates, CloudWatch-native logging, and automatic task health recovery.
+
+### Architecture
+
+```
+Internet → ALB (HTTPS :443 / HTTP :8080)
+                │
+                ▼
+        ECS Fargate Tasks (private subnets)
+          ├── flip-api    (port 8000, ALB-integrated)
+          ├── trust-api   (port 8000, internal)
+          ├── imaging-api (port 8000, internal)
+          └── data-access-api (port 8000, internal)
+                │
+                ▼
+        RDS PostgreSQL (private subnets)
+```
+
+Tasks run in private subnets and reach the internet via the NAT gateway (for AWS API calls and GHCR pulls). The ALB in public subnets routes traffic to task ENI IPs using target type `ip`.
+
+### New Terraform files
+
+| File | Purpose |
+|------|---------|
+| `providers/AWS/ecs.tf` | ECS cluster (Fargate), CloudWatch log groups |
+| `providers/AWS/iam.tf` | `ecsTaskExecutionRole` (image pull, secrets, logs) and `ecsTaskRole` (runtime AWS access) |
+| `providers/AWS/ecs_tasks.tf` | Task definitions for all 4 services |
+| `providers/AWS/ecs_services.tf` | ECS services + ALB target group and listener rules for `flip-api` |
+| `providers/AWS/parameter_store.tf` | SSM Parameter Store entries (`/flip/*`) for non-sensitive config |
+
+### Required variables for ECS deployment
+
+Add these to your `.env.stag` / `.env.production` file (and the corresponding `TF_VAR_` exports in the Makefile):
+
+| Variable | Description | Sensitive |
+|----------|-------------|-----------|
+| `docker_image_tag` | Docker image tag to deploy (e.g. `latest`, `v1.2.3`) | No |
+| `fl_backend` | FL framework: `flower` or `nvflare` | No |
+| `db_password` | FLIP RDS master user password | **Yes** |
+| `github_username` | GitHub username for GHCR image pulls | No |
+| `github_pat` | GitHub PAT with `read:packages` scope | **Yes** |
+| `PRIVATE_API_KEY` | Shared inter-service auth key | **Yes** |
+| `central_hub_api_url` | URL of Central Hub API reachable from Trust (e.g. `https://dev.flip.aicentre.co.uk:8080`) | No |
+| `data_access_api_url` | Internal URL of `data-access-api` | No |
+| `imaging_api_url` | Internal URL of `imaging-api` | No |
+| `xnat_url` | XNAT server URL | No |
+| `xnat_service_user` | XNAT service account username | No |
+| `xnat_service_password` | XNAT service account password | **Yes** |
+| `pacs_id` | Orthanc PACS identifier | No |
+| `xnat_database_url` | XNAT PostgreSQL connection URL | **Yes** |
+| `omop_db_service_name` | OMOP DB hostname | No |
+| `data_access_postgres_user` | OMOP DB username | No |
+| `data_access_postgres_password` | OMOP DB password | **Yes** |
+| `omop_postgres_db` | OMOP database name | No |
+
+### Deploying ECS services
+
+ECS services are deployed as part of the standard Terraform apply:
+
+```bash
+cd deploy/providers/AWS
+
+# Plan (verify ECS resources are included)
+make plan
+
+# Apply
+make apply
+
+# Monitor service health after deployment
+aws ecs describe-services \
+  --cluster flip-ecs-cluster \
+  --services flip-api-service trust-api-service imaging-api-service data-access-api-service \
+  --query 'services[*].{name:serviceName,running:runningCount,desired:desiredCount,status:status}'
+```
+
+### Forcing a new deployment (after pushing a new image)
+
+```bash
+# Re-deploy all services with the current task definition (picks up new image tag)
+aws ecs update-service --cluster flip-ecs-cluster --service flip-api-service --force-new-deployment
+aws ecs update-service --cluster flip-ecs-cluster --service trust-api-service --force-new-deployment
+aws ecs update-service --cluster flip-ecs-cluster --service imaging-api-service --force-new-deployment
+aws ecs update-service --cluster flip-ecs-cluster --service data-access-api-service --force-new-deployment
+```
+
+To deploy a specific image tag, update `docker_image_tag` in your env file and run `make apply`.
+
+### Viewing logs
+
+Container stdout/stderr is captured by CloudWatch Logs via the `awslogs` driver:
+
+```bash
+# Stream flip-api logs in real time
+aws logs tail /ecs/flip-api --follow
+
+# Available log groups
+aws logs describe-log-groups --log-group-name-prefix /ecs/
+```
+
+### Checking task health
+
+```bash
+# List running tasks
+aws ecs list-tasks --cluster flip-ecs-cluster --service-name flip-api-service
+
+# Inspect a task (see stopped reason if unhealthy)
+aws ecs describe-tasks --cluster flip-ecs-cluster --tasks <task-arn>
+```
+
+### Rollback to EC2
+
+If ECS services need to be paused and traffic reverted to the original EC2 instance:
+
+1. Scale down ECS services: `aws ecs update-service --cluster flip-ecs-cluster --service flip-api-service --desired-count 0`
+2. In the ALB listener rules, lower the priority of the ECS rules or delete them to restore the EC2 default target group routing.
+3. Restore via Terraform: revert the listener rule resources and run `make apply`.
