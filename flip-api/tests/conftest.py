@@ -10,27 +10,61 @@
 # limitations under the License.
 #
 
-from unittest.mock import patch
+import os
+from pathlib import Path
 
-import pytest
-import requests
-from pytest_factoryboy import register
+from dotenv import load_dotenv
 
-from tests.fixtures import db_fixtures
-from tests.fixtures.main_fixtures import (  # noqa: F401
+# --------------------------------------------------------------------------- #
+# Environment setup — MUST run before any app code is imported because
+# pydantic-settings eagerly validates env vars on import.
+#
+# 1. Load the common, source-controlled env file (.env.development.example)
+#    so that every developer and CI run against the same base configuration.
+#    override=True ensures these values take precedence over any
+#    .env.development that the Makefile may have exported.
+# 2. Force-set variables whose example-file values are placeholders or that
+#    need deterministic test values (valid emails, keys, passwords).
+# --------------------------------------------------------------------------- #
+_COMMON_ENV_FILE = Path(__file__).resolve().parent.parent.parent / ".env.development.example"
+load_dotenv(_COMMON_ENV_FILE, override=True)
+
+_TEST_ENV_DEFAULTS = {
+    "PRIVATE_API_KEY": "test-key",
+    "AES_KEY_BASE64": "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA=",  # 32-byte key, base64
+    "POSTGRES_PASSWORD": "test_password",
+    "AWS_REGION": "eu-west-2",
+    "AWS_COGNITO_USER_POOL_ID": "eu-west-2_TestPool",
+    "AWS_COGNITO_APP_CLIENT_ID": "test-client-id",
+    "AWS_SES_ADMIN_EMAIL_ADDRESS": "test@example.com",
+    "AWS_SES_SENDER_EMAIL_ADDRESS": "test@example.com",
+    "SES_VERIFIED_EMAIL": "test@example.com",
+}
+
+for key, value in _TEST_ENV_DEFAULTS.items():
+    os.environ[key] = value
+
+from unittest.mock import patch  # noqa: E402
+
+import pytest  # noqa: E402
+import requests  # noqa: E402
+from pytest_factoryboy import register  # noqa: E402
+
+from tests.fixtures import db_fixtures  # noqa: E402
+from tests.fixtures.main_fixtures import (  # noqa: E402, F401
     client,
     mock_db_session,
     mock_db_session_with_exec,
     session,
 )
-from tests.fixtures.model_fixtures import create_model_data, model_id  # noqa: F401
-from tests.fixtures.project_fixture import (  # noqa: F401
+from tests.fixtures.model_fixtures import create_model_data, model_id  # noqa: E402, F401
+from tests.fixtures.project_fixture import (  # noqa: E402, F401
     create_project_data,
     mock_project,
     project_id,
     project_with_approved_trusts,
 )
-from tests.fixtures.user_fixtures import mock_request, user_data, user_email, user_id  # noqa: F401
+from tests.fixtures.user_fixtures import mock_request, user_data, user_email, user_id  # noqa: E402, F401
 
 register(db_fixtures.ProjectFactory)
 register(db_fixtures.ModelFactory)

@@ -11,10 +11,18 @@
 #
 
 import os
+from pathlib import Path
 
-# Set dummy environment variables required by Settings() before any app code
-# is imported.  These are only used in tests; real values come from Docker
-# Compose environment or .env files in deployed environments.
+from dotenv import load_dotenv
+
+# Load the common, source-controlled env file so that every developer and CI
+# run against the same base configuration.  override=True ensures these values
+# take precedence over any .env.development that the Makefile may have exported.
+_COMMON_ENV_FILE = Path(__file__).resolve().parent.parent.parent.parent / ".env.development.example"
+load_dotenv(_COMMON_ENV_FILE, override=True)
+
+# Override specific variables that have placeholder values in the example file
+# or that need deterministic test values (e.g. valid keys, credentials, URLs).
 _TEST_ENV_DEFAULTS = {
     "PACS_ID": "1",
     "XNAT_URL": "http://localhost:8080",
@@ -28,4 +36,4 @@ _TEST_ENV_DEFAULTS = {
 }
 
 for key, value in _TEST_ENV_DEFAULTS.items():
-    os.environ.setdefault(key, value)
+    os.environ[key] = value
