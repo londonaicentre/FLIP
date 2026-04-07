@@ -284,8 +284,6 @@ class TestFLIPStandardProdUpdateStatus:
             mock_constants.CENTRAL_HUB_API_URL = "https://hub.example.com"
             mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
             mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
-            mock_constants.PRIVATE_API_KEY_HEADER = "x-api-key"
-            mock_constants.PRIVATE_API_KEY = "test-key"
 
             flip_prod.update_status(valid_model_id, ModelStatus.TRAINING_STARTED)
 
@@ -326,8 +324,6 @@ class TestFLIPStandardProdSendHandledException:
             mock_constants.CENTRAL_HUB_API_URL = "https://hub.example.com"
             mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
             mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
-            mock_constants.PRIVATE_API_KEY_HEADER = "x-api-key"
-            mock_constants.PRIVATE_API_KEY = "test-key"
 
             flip_prod.send_handled_exception("Error message", "client-1", valid_model_id)
 
