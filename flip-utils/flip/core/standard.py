@@ -42,7 +42,21 @@ from flip.utils.utils import Utils
 
 
 class FLIPStandardProd(FLIPBase):
-    """Production implementation of FLIP for standard job types."""
+    """Production implementation of FLIP for standard job types.
+
+    Method usage by FL role:
+
+    **Server-only** (fl-server on Central Hub → calls flip-api):
+        - ``update_status()`` — update model training status
+        - ``send_metrics()`` — forward per-client training/evaluation metrics
+        - ``send_handled_exception()`` — forward client exception logs
+        - ``upload_results_to_s3()`` — upload trained model to S3
+
+    **Client-only** (fl-client on trust side → calls local trust APIs):
+        - ``get_dataframe()`` — fetch cohort data from data-access-api
+        - ``get_images()`` — download images from imaging-api
+        - ``download_data_from_s3()`` — download federated data from S3
+    """
 
     def __init__(self):
         super().__init__()
@@ -231,7 +245,7 @@ class FLIPStandardProd(FLIPBase):
             )
             response = requests.put(
                 endpoint,
-                headers={FlipConstants.PRIVATE_API_KEY_HEADER: FlipConstants.PRIVATE_API_KEY},
+                headers={FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY},
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -274,7 +288,7 @@ class FLIPStandardProd(FLIPBase):
             response = requests.post(
                 endpoint,
                 json=payload,
-                headers={FlipConstants.PRIVATE_API_KEY_HEADER: FlipConstants.PRIVATE_API_KEY},
+                headers={FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY},
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -322,7 +336,7 @@ class FLIPStandardProd(FLIPBase):
             response = requests.post(
                 endpoint,
                 json=payload,
-                headers={FlipConstants.PRIVATE_API_KEY_HEADER: FlipConstants.PRIVATE_API_KEY},
+                headers={FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY},
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
