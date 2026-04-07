@@ -49,7 +49,7 @@ class ProdSettings(_Common):
 
     Used when LOCAL_DEV=false. Settings are grouped by which FL role uses them:
     - **Server-only** (fl-server on Central Hub): CENTRAL_HUB_API_URL, INTERNAL_SERVICE_KEY*
-    - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL, PRIVATE_API_KEY*
+    - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL
     - **Shared**: IMAGES_DIR, NET_ID, UPLOADED_FEDERATED_DATA_BUCKET
     """
 
@@ -63,8 +63,6 @@ class ProdSettings(_Common):
     # -- Client-only: fl-client on trust side calls local APIs using these --
     DATA_ACCESS_API_URL: HttpUrl = "http://localhost:8001"  # type: ignore[assignment]
     IMAGING_API_URL: HttpUrl = "http://localhost:8002"  # type: ignore[assignment]
-    PRIVATE_API_KEY_HEADER: str = "X-API-Key"
-    PRIVATE_API_KEY: str = ""
 
     # -- Shared --
     IMAGES_DIR: str = ""
