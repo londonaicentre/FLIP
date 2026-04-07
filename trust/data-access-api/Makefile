@@ -19,6 +19,13 @@ else
 MAIN_ENV_FILE=../../.env.development
 endif
 
+# Always load the common, source-controlled example file first so that every
+# developer starts from the same baseline.  The environment-specific file
+# (if present) is loaded afterwards and can override values for non-test targets.
+ifneq ("$(wildcard ../../.env.development.example)","")
+include ../../.env.development.example
+export $(shell sed 's/=.*//' ../../.env.development.example)
+endif
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
