@@ -10,13 +10,6 @@
 # limitations under the License.
 #
 
-# Load environment variables from the common, source-controlled example file by default.
-# If a local .env.development exists it is loaded as a fallback for non-test targets
-# (e.g. up, build, debug) that may need developer-specific overrides.
-ifneq ("$(wildcard ../../.env.development.example)","")
-include ../../.env.development.example
-export $(shell sed 's/=.*//' ../../.env.development.example)
-endif
 ifneq ("$(wildcard ../../.env.development)","")
 include ../../.env.development
 export $(shell sed 's/=.*//' ../../.env.development)
