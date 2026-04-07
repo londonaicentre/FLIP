@@ -291,6 +291,13 @@ Integration tests for the FL base application are also available (see the [flip-
 
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 
+**Test environment variables**: Unit tests load environment variables from the source-controlled
+[`.env.development.example`](.env.development.example) file via `python-dotenv` in each service's `conftest.py`.
+This ensures every developer and CI run tests against the same configuration, regardless of what is in their local
+`.env.development`. Service-specific test defaults (e.g. dummy credentials, valid AES keys) are then applied on top
+to override any placeholder values. If you add a new environment variable that tests depend on, add a sensible default
+to the relevant `conftest.py` `_TEST_ENV_DEFAULTS` dictionary.
+
 All new functionality should be accompanied by an appropriate set of tests. Existing tests throughout the services can serve as examples.
 
 Add these sections to the service's `pyproject.toml` to configure pytest and coverage:
