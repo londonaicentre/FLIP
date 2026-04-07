@@ -79,8 +79,6 @@ class TestProdSettings:
             "DATA_ACCESS_API_URL": "https://data-access.example.com",
             "IMAGING_API_URL": "https://imaging.example.com",
             "IMAGES_DIR": "/data/images",
-            "PRIVATE_API_KEY_HEADER": "X-API-Key",
-            "PRIVATE_API_KEY": "secret-key-123",
             "NET_ID": "net-1",
             "UPLOADED_FEDERATED_DATA_BUCKET": "s3://my-bucket",
         }
