@@ -47,17 +47,25 @@ class DevSettings(_Common):
 class ProdSettings(_Common):
     """Production environment configuration.
 
-    Used when LOCAL_DEV=false. Requires API URLs and credentials.
+    Used when LOCAL_DEV=false. Settings are grouped by which FL role uses them:
+    - **Server-only** (fl-server on Central Hub): CENTRAL_HUB_API_URL, INTERNAL_SERVICE_KEY*
+    - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL
+    - **Shared**: IMAGES_DIR, NET_ID, UPLOADED_FEDERATED_DATA_BUCKET
     """
 
     LOCAL_DEV: bool = False
 
+    # -- Server-only: fl-server on Central Hub calls flip-api using these --
     CENTRAL_HUB_API_URL: HttpUrl = "http://localhost:8000"  # type: ignore[assignment]
+    INTERNAL_SERVICE_KEY_HEADER: str = "X-Internal-Service-Key"
+    INTERNAL_SERVICE_KEY: str = ""
+
+    # -- Client-only: fl-client on trust side calls local APIs using these --
     DATA_ACCESS_API_URL: HttpUrl = "http://localhost:8001"  # type: ignore[assignment]
     IMAGING_API_URL: HttpUrl = "http://localhost:8002"  # type: ignore[assignment]
+
+    # -- Shared --
     IMAGES_DIR: str = ""
-    PRIVATE_API_KEY_HEADER: str = "X-API-Key"
-    PRIVATE_API_KEY: str = ""
     NET_ID: str = "default"
     UPLOADED_FEDERATED_DATA_BUCKET: str = "s3://default-bucket"
 
