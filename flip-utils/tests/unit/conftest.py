@@ -45,7 +45,5 @@ def pytest_sessionstart(session):
     os.environ.setdefault("DATA_ACCESS_API_URL", "https://data.example.com")
     os.environ.setdefault("IMAGING_API_URL", "https://imaging.example.com")
     os.environ.setdefault("IMAGES_DIR", "/images")
-    os.environ.setdefault("PRIVATE_API_KEY_HEADER", "x-api-key")
-    os.environ.setdefault("PRIVATE_API_KEY", "test-key")
     os.environ.setdefault("NET_ID", "net-1")
     os.environ.setdefault("UPLOADED_FEDERATED_DATA_BUCKET", "s3://test-bucket")
