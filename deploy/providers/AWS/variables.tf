@@ -44,6 +44,16 @@ variable "POSTGRES_DB" {
   type = string
 }
 
+variable "postgres_version" {
+  description = "PostgreSQL engine version for the RDS instance. Update this value to upgrade the database version. EOL schedule: 15 → Oct 2027, 16 → Oct 2028."
+  type        = string
+  default     = "15.7"
+}
+
+variable "flip_keypair" {
+  type = string
+}
+
 variable "ec2_public_key_path" {
   description = "Path to SSH public key file. Injected into EC2 instances via cloud-init for SSH-over-SSM access (replaces AWS key pair)."
   type        = string

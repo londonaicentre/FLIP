@@ -138,7 +138,7 @@ module "flip_db" {
   version                    = "~> 6.0"
   identifier                 = "flip-database"
   engine                     = "postgres"
-  engine_version             = "13.22"
+  engine_version             = var.postgres_version
   auto_minor_version_upgrade = false
   instance_class             = "db.t3.micro"
   allocated_storage          = 20
@@ -148,7 +148,7 @@ module "flip_db" {
   vpc_security_group_ids     = [module.rds_security_group.security_group.id]
   backup_retention_period    = 7
   skip_final_snapshot        = true
-  family                     = "postgres13"
+  family                     = "postgres${split(".", var.postgres_version)[0]}"
 }
 
 ############################

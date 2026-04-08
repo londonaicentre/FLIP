@@ -382,7 +382,7 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
   - Automatic Docker network creation for inter-service communication
   - Optional Elastic IP for static addressing
 - **ALB**: Application Load Balancer for traffic routing
-- **RDS**: PostgreSQL 13.22 managed database
+- **RDS**: PostgreSQL 15 managed database (EOL: October 2027)
 - **CloudWatch**: Logging and monitoring for both EC2 instances
 - **Secrets Manager**: Secure storage for API secrets and database credentials
 - **S3 Backend**: Remote state storage with environment-specific buckets
