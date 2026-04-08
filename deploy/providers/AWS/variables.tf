@@ -47,7 +47,7 @@ variable "POSTGRES_DB" {
 variable "postgres_version" {
   description = "PostgreSQL engine version for the RDS instance. Update this value to upgrade the database version. EOL schedule: 15 → Oct 2027, 16 → Oct 2028."
   type        = string
-  default     = "16.1"
+  default     = "14"
 }
 
 variable "ec2_public_key_path" {
