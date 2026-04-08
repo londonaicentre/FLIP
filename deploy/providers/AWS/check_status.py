@@ -644,7 +644,10 @@ def main(
         print_status("INFO", "Trust EC2 not found in outputs (may not be deployed)")
 
     # Check Elastic IP stability (central hub outbound connectivity uses stable EIP)
-    check_elastic_ip_stability(central_hub_id, central_hub_eip, trust_id, trust_eip)
+    if central_hub_id and central_hub_eip:
+        check_elastic_ip_stability(central_hub_id, central_hub_eip, trust_id, trust_eip)
+    else:
+        print_status("WARN", "Skipping Elastic IP stability check - Central Hub ID or EIP not available")
 
     # Check AWS resources
     print_section("Checking AWS Resources")
@@ -816,16 +819,19 @@ def main(
             with socket.create_connection((alb_subdomain, 443), timeout=10) as sock:
                 with context.wrap_socket(sock, server_hostname=alb_subdomain) as ssock:
                     cert = ssock.getpeercert()
-                    subject = cert.get("subject", [[("commonName", "N/A")]])[0][0][1]
-                    print_status(
-                        "PASS",
-                        f"HTTPS connection successful - Certificate issued to: {subject}",
-                    )
+                    if cert is not None:
+                        subject = cert.get("subject", [[("commonName", "N/A")]])[0][0][1]
+                        print_status(
+                            "PASS",
+                            f"HTTPS connection successful - Certificate issued to: {subject}",
+                        )
 
-                    # Check certificate expiry
-                    not_after = cert.get("notAfter", "")
-                    if not_after:
-                        print_status("INFO", f"Certificate expires: {not_after}")
+                        # Check certificate expiry
+                        not_after = cert.get("notAfter", "")
+                        if not_after:
+                            print_status("INFO", f"Certificate expires: {not_after}")
+                    else:
+                        print_status("WARN", "Could not retrieve certificate information")
         except ssl.SSLError as e:
             print_status("FAIL", f"SSL/TLS handshake failed: {e}")
         except socket.timeout:
