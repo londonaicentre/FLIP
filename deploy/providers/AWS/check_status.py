@@ -274,12 +274,14 @@ def check_elastic_ip_stability(
             if instance_id == central_hub_id:
                 print_status(
                     "PASS",
-                    f"Central Hub EIP {central_hub_eip} correctly associated with {instance_id} (allocation: {allocation_id[:12]}...)",
+                    f"Central Hub EIP {central_hub_eip} correctly associated with "
+                    f"{instance_id} (allocation: {allocation_id[:12]}...)",
                 )
             else:
                 print_status(
                     "FAIL",
-                    f"Central Hub EIP {central_hub_eip} associated with wrong instance: {instance_id} (expected {central_hub_id})",
+                    f"Central Hub EIP {central_hub_eip} associated with wrong instance: "
+                    f"{instance_id} (expected {central_hub_id})",
                 )
                 failures += 1
         else:
@@ -311,12 +313,14 @@ def check_elastic_ip_stability(
                 if instance_id == trust_id:
                     print_status(
                         "PASS",
-                        f"Trust EC2 EIP {trust_eip} correctly associated with {instance_id} (allocation: {allocation_id[:12]}...)",
+                        f"Trust EC2 EIP {trust_eip} correctly associated with "
+                        f"{instance_id} (allocation: {allocation_id[:12]}...)",
                     )
                 else:
                     print_status(
                         "FAIL",
-                        f"Trust EC2 EIP {trust_eip} associated with wrong instance: {instance_id} (expected {trust_id})",
+                        f"Trust EC2 EIP {trust_eip} associated with wrong instance: "
+                        f"{instance_id} (expected {trust_id})",
                     )
                     failures += 1
             else:
@@ -789,7 +793,8 @@ def main(
                     if failure_reason == "CAA_ERROR":
                         print_status(
                             "INFO",
-                            "CAA_ERROR: Domain has CAA records that block AWS ACM. Contact domain admin to add 'amazon.com' to CAA records.",
+                            "CAA_ERROR: Domain has CAA records that block AWS ACM. "
+                            "Contact domain admin to add 'amazon.com' to CAA records.",
                         )
                 else:
                     print_status("WARN", f"Certificate status: {status}")
@@ -811,9 +816,10 @@ def main(
             with socket.create_connection((alb_subdomain, 443), timeout=10) as sock:
                 with context.wrap_socket(sock, server_hostname=alb_subdomain) as ssock:
                     cert = ssock.getpeercert()
+                    subject = cert.get("subject", [[("commonName", "N/A")]])[0][0][1]
                     print_status(
                         "PASS",
-                        f"HTTPS connection successful - Certificate issued to: {cert.get('subject', [[('commonName', 'N/A')]])[0][0][1]}",
+                        f"HTTPS connection successful - Certificate issued to: {subject}",
                     )
 
                     # Check certificate expiry
@@ -893,9 +899,7 @@ def main(
         print_section("Application Endpoint Checks")
 
         # Central Hub EC2 ports
-        UI_PORT = os.getenv("UI_PORT", "")
         API_PORT = os.getenv("API_PORT", "")
-        FL_API_PORT = os.getenv("FL_API_PORT", "")
         # Parse NET_ENDPOINTS to determine which FL networks are configured
         NET_ENDPOINTS = os.getenv("NET_ENDPOINTS", "{}")
         try:
@@ -950,10 +954,13 @@ def main(
             container = f"flip-fl-api-net-{net_num}"
             success, output = run_ssh_command(
                 ssh_key=ssh_key_path,
-                host=f"ubuntu@{central_hub_ip}",
+                host="flip",
                 command=(
                     f"docker exec {container} python -c "
-                    f"\"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/docs', timeout=5); print(r.status)\""
+                    "'import urllib.request; "
+                    "r=urllib.request.urlopen("
+                    "'\"'\"'http://localhost:8000/docs'\"'\"', timeout=5); "
+                    "print(r.status)'"
                 ),
             )
             if success and output.strip() == "200":
@@ -969,10 +976,15 @@ def main(
         for nets in configured_net_numbers:
             success, message = run_ssh_command(
                 ssh_key=ssh_key_path,
-                host=f"ubuntu@{central_hub_ip}",
+                host="flip",
                 command=(
                     f"docker exec flip-api python -c "
-                    f"\"import urllib.request; r=urllib.request.urlopen('http://fl-api-net-{nets}:8000/check_client_status', timeout=5); import sys; sys.stdout.write(r.read().decode())\""
+                    "'import urllib.request; "
+                    f"r=urllib.request.urlopen("
+                    f"'\"'\"'http://fl-api-net-{nets}:8000/check_client_status'\"'\"', "
+                    "timeout=5); "
+                    "import sys; "
+                    "sys.stdout.write(r.read().decode())'"
                 ),
             )
             if not success or not message:

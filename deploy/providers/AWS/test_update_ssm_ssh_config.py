@@ -24,7 +24,6 @@ Tests cover:
 - Edge cases: empty files, trailing newlines, existing blocks
 """
 
-import pytest
 from update_ssm_ssh_config import _build_host_block, _replace_or_append_host_block
 
 

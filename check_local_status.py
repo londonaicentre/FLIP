@@ -410,10 +410,8 @@ def main(
     TRUST_API_PORT = env_vars.get("TRUST_API_PORT", "8100")
     IMAGING_API_PORT = env_vars.get("IMAGING_API_PORT", "8200")
     DATA_ACCESS_API_PORT = env_vars.get("DATA_ACCESS_API_PORT", "8300")
-    POSTGRES_PORT = env_vars.get("POSTGRES_PORT", "5432")
     XNAT_PORT_TRUST_1 = env_vars.get("XNAT_PORT_TRUST_1", "8104")
     XNAT_PORT_TRUST_2 = env_vars.get("XNAT_PORT_TRUST_2", "8106")
-    PACS_UI_PORT_TRUST_1 = env_vars.get("PACS_UI_PORT_TRUST_1", "8042")
     PACS_UI_PORT_TRUST_2 = env_vars.get("PACS_UI_PORT_TRUST_2", "8044")
 
     # Parse NET_ENDPOINTS to determine which FL networks are configured
@@ -640,7 +638,9 @@ def main(
                         fl_service_name,
                         "python",
                         "-c",
-                        f"import httpx; print(httpx.get('http://localhost:{fl_port}/health', follow_redirects=True).status_code)",
+                        "import httpx; "
+                        f"print(httpx.get('http://localhost:{fl_port}/health', "
+                        "follow_redirects=True).status_code)",
                     ],
                     timeout=10,
                 )

@@ -19,7 +19,6 @@
 import tempfile
 from pathlib import Path
 
-import pytest
 from verify_deploy_readiness import (
     check_bash_syntax,
     check_file_exists,

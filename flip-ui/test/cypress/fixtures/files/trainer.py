@@ -11,27 +11,24 @@
 #
 
 
-import os
-
 import sys
+
 sys.path.append('.')
 
-import os
-import pandas as pd
-from flnode.pipeline.opener import Opener
+from pathlib import Path
+
 import nibabel as nib
 import numpy as np
-import matplotlib.pyplot as plt
-import torch
-from pathlib import Path
+import pandas as pd
+from flnode.pipeline.opener import Opener
 from sklearn.model_selection import train_test_split
+
 
 class MonaiOpener(Opener):
     def __init__(self, data_dir):
         self.data_dir = Path(data_dir)
         self.image_dir = self.data_dir / 'images'
         self.label_dir = self.data_dir / 'labels'
-
 
     def get_image_and_label_list(self):
         # assumes image and label pairs are stored with identical filnames in data_dir/images and data_dir/labels
@@ -54,7 +51,6 @@ class MonaiOpener(Opener):
 
         # get size of each image
         image_sizes = [nib.load(f['img']).shape for f in self.image_and_label_files]
-
 
         logger.info(f"Total paired image  and labels: {self.num_total}")
         logger.info(f"Total images with no label found: {self.num_unpaired}")
@@ -83,8 +79,16 @@ class MonaiOpener(Opener):
             self.get_image_and_label_list()
 
         random_state = 0
-        train, val_and_test = train_test_split(self.image_and_label_files, train_size=1 - frac_val - frac_test, random_state=random_state)
-        val, test = train_test_split(val_and_test, train_size=frac_val/ (frac_val+frac_test), random_state=random_state)
+        train, val_and_test = train_test_split(
+            self.image_and_label_files,
+            train_size=1 - frac_val - frac_test,
+            random_state=random_state,
+        )
+        val, test = train_test_split(
+            val_and_test,
+            train_size=frac_val / (frac_val + frac_test),
+            random_state=random_state,
+        )
 
         return (train, val, test)
 

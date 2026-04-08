@@ -95,7 +95,12 @@ class EmailTemplateTester:
             "{flip_alb_subdomain}": self.test_user.subdomain,
             "{reset_link}": self.test_user.reset_link,
             # Cognito link-based placeholder: {## Link Text ##} becomes <a href="reset-url">Link Text</a>
-            "{## Reset Password ##}": f'<a href="{self.test_user.reset_link}" style="display: inline-block; padding: 12px 32px; color: #ffffff; text-decoration: none; font-weight: 600; font-size: 16px;">{self.test_user.reset_link_text}</a>',
+            "{## Reset Password ##}": (
+                f'<a href="{self.test_user.reset_link}" '
+                'style="display: inline-block; padding: 12px 32px; color: #ffffff; '
+                'text-decoration: none; font-weight: 600; font-size: 16px;">'
+                f'{self.test_user.reset_link_text}</a>'
+            ),
             # SES placeholders
             "{{name}}": self.test_ses.name,
             "{{email}}": self.test_ses.email,
@@ -197,11 +202,20 @@ class EmailTemplateTester:
     <meta charset="utf-8">
     <title>FLIP Email - {name.replace("_", " ").title()}</title>
     <style>
-        body {{ font-family: system-ui, sans-serif; background: #f0f0f0; margin: 0; padding: 20px; }}
-        .metadata {{ background: #fff; padding: 20px; margin-bottom: 20px; border-radius: 4px; border-left: 4px solid #61366e; }}
+        body {{
+            font-family: system-ui, sans-serif; background: #f0f0f0;
+            margin: 0; padding: 20px;
+        }}
+        .metadata {{
+            background: #fff; padding: 20px; margin-bottom: 20px;
+            border-radius: 4px; border-left: 4px solid #61366e;
+        }}
         .metadata h2 {{ margin: 0 0 10px 0; color: #301A37; }}
         .metadata p {{ margin: 5px 0; color: #666; font-size: 14px; }}
-        .metadata code {{ background: #f5f5f5; padding: 2px 6px; border-radius: 3px; font-family: monospace; }}
+        .metadata code {{
+            background: #f5f5f5; padding: 2px 6px;
+            border-radius: 3px; font-family: monospace;
+        }}
         .email-preview {{ background: #fff; border-radius: 4px; overflow: hidden; }}
         .test-info {{ background: #FEF3F2; padding: 10px 20px; border-top: 1px solid #E51170; color: #BF360C; font-size: 12px; }}
     </style>

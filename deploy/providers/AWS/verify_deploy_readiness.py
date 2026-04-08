@@ -154,9 +154,21 @@ def main() -> int:
 
     # Check Makefile dependencies
     print("🔗 MAKEFILE DEPENDENCIES")
-    all_passed &= check_makefile_dependency("gen-trust-ec2-certs", "ssh-config", "gen-trust-ec2-certs depends on ssh-config")
-    all_passed &= check_makefile_dependency("write-trust-ca", "ssh-config", "write-trust-ca depends on ssh-config")
-    all_passed &= check_makefile_dependency("deploy-centralhub", "write-trust-ca", "deploy-centralhub depends on write-trust-ca")
+    all_passed &= check_makefile_dependency(
+        "gen-trust-ec2-certs",
+        "ssh-config",
+        "gen-trust-ec2-certs depends on ssh-config",
+    )
+    all_passed &= check_makefile_dependency(
+        "write-trust-ca",
+        "ssh-config",
+        "write-trust-ca depends on ssh-config",
+    )
+    all_passed &= check_makefile_dependency(
+        "deploy-centralhub",
+        "write-trust-ca",
+        "deploy-centralhub depends on write-trust-ca",
+    )
     print()
 
     # Check unit tests
@@ -170,7 +182,7 @@ def main() -> int:
             print("   ✅ Unit tests passing")
         all_passed &= True
     else:
-        print(f"   ⚠️  Unit tests check skipped (uv/pytest may not be installed)")
+        print("   ⚠️  Unit tests check skipped (uv/pytest may not be installed)")
     print()
 
     # Check documentation
