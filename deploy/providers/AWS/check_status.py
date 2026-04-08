@@ -857,7 +857,7 @@ def main(
             print_status("INFO", "Testing SSH connectivity to Central Hub...")
             success, _ = run_ssh_command(
                 ssh_key_path,
-                f"ubuntu@{central_hub_ip}",
+                "flip",
                 "echo 'SSH connection successful'",
                 timeout=5,
             )
@@ -866,7 +866,7 @@ def main(
             else:
                 print_status(
                     "FAIL",
-                    "Cannot SSH to Central Hub (check key permissions and security groups)",
+                    "Cannot SSH to Central Hub (check SSH config for 'flip' alias and security groups)",
                 )
 
             # Check Trust EC2 SSH connectivity
@@ -874,7 +874,7 @@ def main(
                 print_status("INFO", "Testing SSH connectivity to Trust EC2...")
                 success, _ = run_ssh_command(
                     ssh_key_path,
-                    f"ubuntu@{trust_ip}",
+                    "flip-trust",
                     "echo 'SSH connection successful'",
                     timeout=5,
                 )
