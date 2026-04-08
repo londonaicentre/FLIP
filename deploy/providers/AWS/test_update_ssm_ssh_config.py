@@ -126,9 +126,9 @@ class TestReplaceOrAppendHostBlock:
         result = _replace_or_append_host_block(old_content, "flip", new_block)
 
         assert "Host github.com" in result
-        assert "github.com" in result
+        assert "HostName github.com" in result
         assert "Host production-server" in result
-        assert "prod.example.com" in result
+        assert "HostName prod.example.com" in result
         assert "i-new456" in result
         assert "old-ip" not in result
 
@@ -244,7 +244,7 @@ class TestIntegration:
 
         # Check all expected content
         assert "Host github.com" in result
-        assert "github.com" in result
+        assert "HostName github.com" in result
         assert "i-new-flip" in result
         assert "i-new-trust" in result
         assert "old-flip-ip" not in result
