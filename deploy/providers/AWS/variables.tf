@@ -45,7 +45,7 @@ variable "POSTGRES_DB" {
 }
 
 variable "postgres_version" {
-  description = "PostgreSQL engine version for the RDS instance. Update this value to upgrade the database version. EOL schedule: 15 → Oct 2027, 16 → Oct 2028."
+  description = "PostgreSQL engine version for the RDS instance. Update this value to upgrade the database version. EOL schedule: 17 → Oct 2032."
   type        = string
   default     = "17.6"
 }
