@@ -99,7 +99,7 @@ class EmailTemplateTester:
                 f'<a href="{self.test_user.reset_link}" '
                 'style="display: inline-block; padding: 12px 32px; color: #ffffff; '
                 'text-decoration: none; font-weight: 600; font-size: 16px;">'
-                f'{self.test_user.reset_link_text}</a>'
+                f"{self.test_user.reset_link_text}</a>"
             ),
             # SES placeholders
             "{{name}}": self.test_ses.name,
@@ -217,7 +217,9 @@ class EmailTemplateTester:
             border-radius: 3px; font-family: monospace;
         }}
         .email-preview {{ background: #fff; border-radius: 4px; overflow: hidden; }}
-        .test-info {{ background: #FEF3F2; padding: 10px 20px; border-top: 1px solid #E51170; color: #BF360C; font-size: 12px; }}
+        .test-info {{
+            background: #FEF3F2; padding: 10px 20px; border-top: 1px solid #E51170; color: #BF360C; font-size: 12px;
+            }}
     </style>
 </head>
 <body>
