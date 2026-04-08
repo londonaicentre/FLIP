@@ -410,7 +410,7 @@ Trust services can run on AWS EC2 or on-premises. Both models use the same Docke
 
 | Port | Service | Status | Purpose |
 | ------ | --------- | --------- | --------- |
-| **22** | SSH | 🟢 **OPEN** | Remote administration |
+| **22** | SSH | 🔴 **CLOSED** | ~~Remote administration~~ (Replaced by SSM Session Manager) |
 | **80** | HTTP | 🟢 **OPEN** | ALB traffic |
 | **3000** | FLIP UI | 🟢 **OPEN** | Frontend application |
 | **8000** | FLIP API | 🟢 **OPEN** | Backend API |

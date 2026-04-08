@@ -50,12 +50,8 @@ variable "postgres_version" {
   default     = "15.7"
 }
 
-variable "flip_keypair" {
-  type = string
-}
-
 variable "ec2_public_key_path" {
-  description = "Path to SSH public key file. Injected into EC2 instances via cloud-init for SSH-over-SSM access (replaces AWS key pair)."
+  description = "Path to SSH public key file. Injected into EC2 instances via cloud-init for SSH-over-SSM client authentication."
   type        = string
 }
 
