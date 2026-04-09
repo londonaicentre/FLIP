@@ -180,3 +180,31 @@ variable "create_central_hub_elastic_ip" {
   type        = bool
   default     = true
 }
+
+############################
+# RDS Schedule Variables
+############################
+
+variable "enable_rds_schedule" {
+  description = "Enable scheduled stop/start of the RDS instance to save costs. When true, the database stops at night and starts in the morning (UK time)."
+  type        = bool
+  default     = false
+}
+
+variable "rds_stop_cron" {
+  description = "Cron expression for stopping the RDS instance. Default: 20:00 every day."
+  type        = string
+  default     = "cron(0 20 * * ? *)"
+}
+
+variable "rds_start_cron" {
+  description = "Cron expression for starting the RDS instance. Default: 07:00 Monday-Friday."
+  type        = string
+  default     = "cron(0 7 ? * MON-FRI *)"
+}
+
+variable "rds_schedule_timezone" {
+  description = "Timezone for the RDS stop/start schedule. Default: Europe/London (handles GMT/BST automatically)."
+  type        = string
+  default     = "Europe/London"
+}

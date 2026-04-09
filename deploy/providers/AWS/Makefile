@@ -77,6 +77,11 @@ else
 export TF_VAR_create_central_hub_elastic_ip=${CREATE_CENTRAL_HUB_ELASTIC_IP}
 endif
 
+# RDS scheduled shutdown (opt-in, set ENABLE_RDS_SCHEDULE=true in env file to activate)
+ifdef ENABLE_RDS_SCHEDULE
+export TF_VAR_enable_rds_schedule=$(ENABLE_RDS_SCHEDULE)
+endif
+
 CENTRALHUB_IMAGES = \
 	$(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG) \
 	$(DOCKER_REGISTRY)flip-api:$(DOCKER_TAG)
