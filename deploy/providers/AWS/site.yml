@@ -353,45 +353,53 @@
     base_dir: "/opt/flip/volumes"
     trust1_key: "trust1_pgdata_20260106.tar.gz"
   tasks:
-    - name: install tar
-      apt:
-        name:
-          - tar
-        state: present
-        update_cache: yes
+    # Mock OMOP data is only needed in staging; production connects to a real OMOP database.
+    - name: skip mock OMOP restore in production
+      debug:
+        msg: "Skipping mock OMOP data restore (production uses real OMOP database)"
+      when: deploy_env | default('staging') == 'production'
 
-    - name: create trust1 directories
-      file:
-        path: "{{ item }}"
-        state: directory
-        mode: "0755"
-      loop:
-        - "{{ base_dir }}"
-        - "{{ base_dir }}/trust1"
-        - "{{ base_dir }}/trust1/db_data"
+    - block:
+        - name: install tar
+          apt:
+            name:
+              - tar
+            state: present
+            update_cache: yes
 
-    - name: download trust1 PGDATA archive from S3
-      command: >
-        aws s3 cp
-        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ trust1_key }}
-        {{ base_dir }}/trust1/trust1_pgdata.tar.gz
-      args:
-        creates: "{{ base_dir }}/trust1/trust1_pgdata.tar.gz"
+        - name: create trust1 directories
+          file:
+            path: "{{ item }}"
+            state: directory
+            mode: "0755"
+          loop:
+            - "{{ base_dir }}"
+            - "{{ base_dir }}/trust1"
+            - "{{ base_dir }}/trust1/db_data"
 
-    - name: clear existing PGDATA directory
-      shell: rm -rf {{ base_dir }}/trust1/db_data/*
-      changed_when: false
+        - name: download trust1 PGDATA archive from S3
+          command: >
+            aws s3 cp
+            s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ trust1_key }}
+            {{ base_dir }}/trust1/trust1_pgdata.tar.gz
+          args:
+            creates: "{{ base_dir }}/trust1/trust1_pgdata.tar.gz"
 
-    - name: extract trust1 PGDATA
-      command: >
-        tar -xzf {{ base_dir }}/trust1/trust1_pgdata.tar.gz
-        -C {{ base_dir }}/trust1/db_data
+        - name: clear existing PGDATA directory
+          shell: rm -rf {{ base_dir }}/trust1/db_data/*
+          changed_when: false
 
-    - name: set Postgres ownership and permissions
-      shell: |
-        chown -R 999:999 {{ base_dir }}/trust1/db_data
-        chmod 700 {{ base_dir }}/trust1/db_data
-      changed_when: false
+        - name: extract trust1 PGDATA
+          command: >
+            tar -xzf {{ base_dir }}/trust1/trust1_pgdata.tar.gz
+            -C {{ base_dir }}/trust1/db_data
+
+        - name: set Postgres ownership and permissions
+          shell: |
+            chown -R 999:999 {{ base_dir }}/trust1/db_data
+            chmod 700 {{ base_dir }}/trust1/db_data
+          changed_when: false
+      when: deploy_env | default('staging') != 'production'
 
 - name: restore trust1 Orthanc storage on Trust EC2
   hosts: trust_ec2
@@ -403,43 +411,51 @@
     base_dir: "/opt/flip/orthanc"
     data_dir: "/opt/flip/orthanc/orthanc-storage"
   tasks:
-    - name: install tar
-      apt:
-        name:
-          - tar
-        state: present
-        update_cache: yes
+    # Mock Orthanc data is only needed in staging; production connects to a real PACS.
+    - name: skip mock Orthanc restore in production
+      debug:
+        msg: "Skipping mock Orthanc data restore (production uses real PACS)"
+      when: deploy_env | default('staging') == 'production'
 
-    - name: ensure orthanc base directory exists
-      file:
-        path: "{{ base_dir }}"
-        state: directory
-        mode: "0755"
+    - block:
+        - name: install tar
+          apt:
+            name:
+              - tar
+            state: present
+            update_cache: yes
 
-    - name: download Orthanc archive from S3
-      command: >
-        aws s3 cp
-        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ archive }}
-        {{ base_dir }}/orthanc-storage.tar.gz
-      args:
-        creates: "{{ base_dir }}/orthanc-storage.tar.gz"
+        - name: ensure orthanc base directory exists
+          file:
+            path: "{{ base_dir }}"
+            state: directory
+            mode: "0755"
 
-    - name: clear existing Orthanc storage
-      shell: rm -rf {{ data_dir }}/*
-      changed_when: false
+        - name: download Orthanc archive from S3
+          command: >
+            aws s3 cp
+            s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ archive }}
+            {{ base_dir }}/orthanc-storage.tar.gz
+          args:
+            creates: "{{ base_dir }}/orthanc-storage.tar.gz"
 
-    - name: ensure orthanc data directory exists
-      file:
-        path: "{{ data_dir }}"
-        state: directory
-        mode: "0755"
+        - name: clear existing Orthanc storage
+          shell: rm -rf {{ data_dir }}/*
+          changed_when: false
 
-    - name: extract Orthanc data into orthanc-storage
-      command: >
-        tar -xzf {{ base_dir }}/orthanc-storage.tar.gz -C {{ data_dir }}
+        - name: ensure orthanc data directory exists
+          file:
+            path: "{{ data_dir }}"
+            state: directory
+            mode: "0755"
 
-    - name: ensure Orthanc storage is writable
-      file:
-        path: "{{ data_dir }}"
-        mode: "0755"
-        recurse: true
+        - name: extract Orthanc data into orthanc-storage
+          command: >
+            tar -xzf {{ base_dir }}/orthanc-storage.tar.gz -C {{ data_dir }}
+
+        - name: ensure Orthanc storage is writable
+          file:
+            path: "{{ data_dir }}"
+            mode: "0755"
+            recurse: true
+      when: deploy_env | default('staging') != 'production'

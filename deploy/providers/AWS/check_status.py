@@ -1024,7 +1024,11 @@ def main(
             check_http_endpoint(f"http://{trust_ip}:{XNAT_PORT}", "XNAT Service", 200)
 
             # Check Orthanc PACS is reachable (401 is expected - requires authentication)
-            check_http_endpoint(f"http://{trust_ip}:{ORTHANC_PORT}", "Orthanc PACS Service", [200, 401])
+            # Orthanc is a mock service that only runs in staging, not production.
+            if _prod_env != "true":
+                check_http_endpoint(f"http://{trust_ip}:{ORTHANC_PORT}", "Orthanc PACS Service", [200, 401])
+            else:
+                print_status("INFO", "Skipping Orthanc check (mock service not used in production)")
 
         #     # Check Imaging API health endpoint
         #     check_http_endpoint(
@@ -1232,15 +1236,18 @@ def main(
                         if not client_found:
                             print_status("WARN", f"FL client '{client}' not found or not running")
 
-                    # Check OMOP database
-                    if "omop-db" in trust_containers and "Up" in trust_containers:
-                        for line in trust_containers.split("\n"):
-                            if "omop-db" in line and "Up" in line:
-                                status = line.split(":", 1)[1] if ":" in line else ""
-                                print_status("PASS", f"OMOP database is running ({status})")
-                                break
+                    # Check OMOP database (mock service, only in staging)
+                    if _prod_env != "true":
+                        if "omop-db" in trust_containers and "Up" in trust_containers:
+                            for line in trust_containers.split("\n"):
+                                if "omop-db" in line and "Up" in line:
+                                    status = line.split(":", 1)[1] if ":" in line else ""
+                                    print_status("PASS", f"OMOP database is running ({status})")
+                                    break
+                        else:
+                            print_status("WARN", "OMOP database not found or not running")
                     else:
-                        print_status("WARN", "OMOP database not found or not running")
+                        print_status("INFO", "Skipping OMOP database check (mock service not used in production)")
 
                 # Check Docker networks on Trust EC2
                 print_status("INFO", "Checking Trust Docker networks...")
