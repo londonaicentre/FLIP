@@ -25,6 +25,28 @@ Deploy components at the trust level:
 
 See also the dedicated README files under each folder.
 
+## Development vs production
+
+The **omop-db** and **orthanc** services are mocks used for local development and staging only.
+In production, trusts connect to real PACS and OMOP database systems provided by the hospital,
+so the mock containers are not started.
+
+This is controlled via [Docker Compose profiles](https://docs.docker.com/compose/how-tos/profiles/).
+In `compose_trust.production.yml` both services carry `profiles: ["mock-services"]`, which means
+they are excluded by default. The trust `Makefile` activates the profile automatically for staging
+(`PROD=stag`) but leaves it inactive for production (`PROD=true`). In development the services have
+no profile and always start.
+
+| Environment | `PROD` value | Mock services started |
+|---|---|---|
+| Development | _(unset)_ | Yes (always) |
+| Staging | `stag` | Yes (via `COMPOSE_PROFILES=mock-services`) |
+| Production | `true` | No |
+
+The Ansible provisioning playbook (`deploy/providers/AWS/site.yml`) and the health-check script
+(`deploy/providers/AWS/check_status.py`) also skip mock-data download and mock-service checks
+in production, respectively.
+
 ## Setup
 
 ### TLS certificates

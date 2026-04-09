@@ -51,6 +51,14 @@ A Common Data Model is needed as Trust data sources will have different formats,
 
 The OMOP CDM is implemented as a PostgreSQL database in the Data Centre at each Trust.
 
+.. note::
+
+   In development and staging, a **mock** OMOP database (``omop-db``) and a mock PACS server
+   (``orthanc``) are deployed as Docker containers alongside the trust services. In production
+   these containers are **not started** — trusts connect to real hospital systems instead. See
+   the `Trust README <../../../trust/README.md>`_ for details on how this is controlled via
+   Docker Compose profiles.
+
 XNAT
 ====
 
