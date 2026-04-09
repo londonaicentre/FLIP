@@ -18,6 +18,8 @@ __DCKR_SUFFIX=production
 else ifeq ($(PROD),stag)
 MAIN_ENV_FILE=../.env.stag
 __DCKR_SUFFIX=production
+# Staging uses mock omop-db and orthanc; production connects to real services.
+export COMPOSE_PROFILES=mock-services
 else
 MAIN_ENV_FILE=../.env.development
 __DCKR_SUFFIX=development

@@ -19,6 +19,7 @@ services:
 
   omop-db:
     image: ghcr.io/londonaicentre/omop-db:stag
+    profiles: ["mock-services"]
     restart: always
     ports:
       - "${OMOP_DB_PORT}:5432"
@@ -31,6 +32,7 @@ services:
 
   orthanc:
     image: ghcr.io/londonaicentre/orthanc:${DOCKER_TAG}
+    profiles: ["mock-services"]
     restart: always
     ports:
       # - "${PACS_DICOM_PORT}:4242"
