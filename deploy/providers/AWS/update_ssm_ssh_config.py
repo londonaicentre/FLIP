@@ -86,6 +86,9 @@ def _build_host_block(alias: str, instance_id: str, region: str, profile: str | 
         "    IdentityFile ~/.ssh/host-aws\n"
         "    StrictHostKeyChecking accept-new\n"
         f"{proxy_command}\n"
+        "    ControlMaster auto\n"
+        f"    ControlPath ~/.ssh/cm-{alias}-%r@%h:%p\n"
+        "    ControlPersist 10m\n"
     )
 
 
