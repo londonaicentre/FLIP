@@ -194,7 +194,7 @@ ui-off:
 	@echo "🛑 Stopping UI..."
 	$(DOCKER_COMMAND) down --remove-orphans flip-ui
 tests:
-	cd flip-ui && $(MAKE) tests && \
+	cd flip-ui && $(MAKE) unit_test && \
 	cd ../flip-api && $(MAKE) test
 
 debug-all:

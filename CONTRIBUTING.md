@@ -40,7 +40,7 @@ When creating issues, please use the appropriate issue template:
 
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London. It is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
-The project spans two repositories:
+The project spans three repositories:
 
 | Repository | Description |
 | --- | --- |
@@ -59,6 +59,8 @@ FLIP/
 └── trust/              # Services deployed in individual trust environments
     ├── data-access-api/    # Data access API
     ├── imaging-api/        # Imaging API
+    ├── nginx/              # nginx TLS termination proxy
+    ├── observability/      # Observability stack (Grafana, Loki, Alloy)
     ├── omop-db/            # Mocked OMOP database
     ├── orthanc/            # Mocked PACS service (Orthanc)
     ├── trust-api/          # Trust API

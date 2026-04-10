@@ -29,6 +29,9 @@ async def create_imaging_project(central_hub_project: CentralHubProject):
 
     Args:
         central_hub_project (trust_api.routers.schemas.CentralHubProject): The central hub project data.
+
+    Returns:
+        dict: The JSON response from the imaging API.
     """
     logger.info(f"Creating imaging project with input: {central_hub_project}")
     response = await make_request(
@@ -47,6 +50,9 @@ async def delete_imaging_project(imaging_project_id: str):
 
     Args:
         imaging_project_id (str): The ID of the imaging project to delete.
+
+    Returns:
+        dict: The JSON response from the imaging API.
     """
     logger.info(f"Deleting imaging project with ID: {imaging_project_id}")
     return await make_request(
@@ -64,6 +70,9 @@ async def get_imaging_project_status(imaging_project_id: str, encoded_query: str
     Args:
         imaging_project_id (str): The ID of the imaging project.
         encoded_query (str): Project cohort query base64 url encoded.
+
+    Returns:
+        dict: The JSON response from the imaging API containing import status.
     """
     logger.info(f"Retrieving imaging project with ID: {imaging_project_id}")
     response = await make_request(
@@ -83,6 +92,9 @@ async def reimport_studies(imaging_project_id: str, encoded_query: str):
     Args:
         imaging_project_id (str): The ID of the imaging project.
         encoded_query (str): Project cohort query base64 url encoded.
+
+    Returns:
+        dict: The JSON response from the imaging API.
     """
     logger.info(f"Reimporting studies for imaging project with ID: {imaging_project_id}")
     return await make_request(
@@ -99,6 +111,9 @@ async def update_profile(update_profile_request: UpdateProfileRequest):
 
     Args:
         update_profile_request (UpdateProfileRequest): The request data for updating the profile.
+
+    Returns:
+        dict: The JSON response from the imaging API.
     """
     logger.info(f"Updating profile with input: {update_profile_request}")
     return await make_request(

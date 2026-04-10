@@ -216,7 +216,6 @@ The repository is organised as follows:
   - `omop-db`: Contains a mocked OMOP database
   - `orthanc`: Contains a mocked PACS service (uses [Orthanc](https://www.orthanc-server.com/))
   - `trust-api`: Contains the trust API service
-  - `nginx`: Contains the nginx TLS termination proxy for trust HTTPS endpoints
   - `xnat`: Contains a mocked [XNAT](https://www.xnat.org/) service
 
 ### HTTPS / TLS
