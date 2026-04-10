@@ -16,10 +16,13 @@ on:
     pull_request:
         types: [opened]
 
+permissions:
+  contents: read
+
 jobs:
     import-acceptance-criteria:
         runs-on: ubuntu-latest
-        permissions:
+        permissions: # override top-level read-only default to allow PR updates
             pull-requests: write
             issues: read
 

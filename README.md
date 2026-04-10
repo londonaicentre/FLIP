@@ -139,6 +139,22 @@ make down-swarm
 make xnat-shell-swarm
 ```
 
+### Trust API Key Setup
+
+Before starting the platform, generate per-trust API keys and write them into `.env.development` using:
+
+```bash
+make generate-dev-keys
+```
+
+This generates a unique key for each trust found in `.env.development`, and writes both `TRUST_API_KEYS` and `TRUST_API_KEY_HASHES` (JSON dicts) directly into the env file.
+
+To generate a key for a single trust (e.g. when adding a new trust):
+
+```bash
+make -C flip-api generate-trust-key TRUST_NAME=Trust_1
+```
+
 ### Basic Usage
 
 To start the full platform locally:

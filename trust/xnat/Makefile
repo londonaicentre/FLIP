@@ -195,14 +195,20 @@ clean-swarm:
 # find the container ID and run the configuration scripts inside it
 xnat-configure-trust-1-swarm:
 	@echo "⏳ Waiting for ${project1}_xnat-web container to be ready..."
-	@timeout 120 bash -c 'until [ "$$(docker ps --filter "name=${project1}_xnat-web" -q)" != "" ]; do echo "  Waiting for container..."; sleep 5; done' || { echo "❌ ERROR: ${project1}_xnat-web container never started"; exit 1; }
+	@elapsed=0; while [ "$$(docker ps --filter "name=${project1}_xnat-web" -q)" = "" ]; do \
+		if [ $$elapsed -ge 120 ]; then echo "❌ ERROR: ${project1}_xnat-web container never started"; exit 1; fi; \
+		echo "  Waiting for container..."; sleep 5; elapsed=$$((elapsed + 5)); \
+	done
 	CONTAINER=$$(docker ps --filter "name=${project1}_xnat-web" -q); \
 	docker exec $$CONTAINER bash -c "cd /data/xnat/config && bash configure-xnat.sh"; \
 	docker exec $$CONTAINER bash -c "cd /data/xnat/config && bash configure-dcm2niix.sh"
 
 xnat-configure-trust-2-swarm:
 	@echo "⏳ Waiting for ${project2}_xnat-web container to be ready..."
-	@timeout 120 bash -c 'until [ "$$(docker ps --filter "name=${project2}_xnat-web" -q)" != "" ]; do echo "  Waiting for container..."; sleep 5; done' || { echo "❌ ERROR: ${project2}_xnat-web container never started"; exit 1; }
+	@elapsed=0; while [ "$$(docker ps --filter "name=${project2}_xnat-web" -q)" = "" ]; do \
+		if [ $$elapsed -ge 120 ]; then echo "❌ ERROR: ${project2}_xnat-web container never started"; exit 1; fi; \
+		echo "  Waiting for container..."; sleep 5; elapsed=$$((elapsed + 5)); \
+	done
 	CONTAINER=$$(docker ps --filter "name=${project2}_xnat-web" -q); \
 	docker exec $$CONTAINER bash -c "cd /data/xnat/config && bash configure-xnat.sh"; \
 	docker exec $$CONTAINER bash -c "cd /data/xnat/config && bash configure-dcm2niix.sh"

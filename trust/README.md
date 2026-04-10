@@ -26,7 +26,7 @@ See also the dedicated README files under each folder.
 
 ## Setup
 
-## Start Orthanc and trust services
+### Start Orthanc and trust services
 
 Orthanc, Imaging API, Data Access API and Trust API can be started using the Makefile provided at the repository level:
 
@@ -35,6 +35,8 @@ make up
 ```
 
 DICOMs can be uploaded to Orthanc at <http://localhost:8042>.
+
+The Trust API polls the Central Hub for tasks. In development, it connects to the hub over HTTP on the internal Docker network.
 
 ## OMOP Database
 

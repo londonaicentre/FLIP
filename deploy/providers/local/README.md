@@ -13,41 +13,37 @@
 
 # FLIP Local (On-Premises) Trust Deployment
 
-Ansible playbook and supporting files to provision an on-premises Ubuntu host as a FLIP Trust node, secured with HTTPS via an nginx-tls sidecar. The provisioned host connects back to a Central Hub running in AWS.
+Ansible playbook and supporting files to provision an on-premises Ubuntu host as a FLIP Trust node. The provisioned host polls the Central Hub (running in AWS) for tasks — all communication is outbound from the trust.
 
 This is the **local provider** counterpart to the [AWS provider](../AWS/README.md), which manages the Central Hub and (optionally) cloud-hosted Trust instances. Together they form the hybrid deployment model described in [docs/hybrid-local-trust-https-plan.md](../../../docs/hybrid-local-trust-https-plan.md).
 
 ## Architecture
 
 ```sh
-        Internet
-            │
-            |
-            │
-            ▼
-     ┌──────────┐             ┌──────────┐
-     │ AWS CH    │             │ On Prem   │
-     │ (Central  │-------------│ Router    │
-     │  Hub)     │     │       │ NAT fwd   │
-     └────┬─────┘     │       └────┬─────┘
-          │            │            │
-    HTTPS │            │      HTTPS │
-          │            │            │
-     ┌────▼─────┐     │       ┌────▼────┐
-     │ Trust A   │     │       │ Trust B  │
-     │ (AWS EC2) │     │       │ (local)  │
-     └──────────┘     |       └─────────┘
-                       │
-              All links use HTTPS
-          (self-signed CA + nginx-tls)
+         Internet
+             │
+             ▼
+     ┌───────────────┐
+     │    AWS CH      │
+     │  (Central Hub) │
+     └───▲───────▲───┘
+         │       │
+  polls  │       │  polls
+ (HTTPS) │       │ (HTTPS)
+         │       │
+  ┌──────┴───┐ ┌─┴─────────┐
+  │ Trust A   │ │  Trust B   │
+  │ (AWS EC2) │ │  (local)   │
+  └──────────┘ └───────────┘
+
+  Trusts poll the hub (outbound only)
 ```
 
 Each local Trust host runs:
 
 | Service | Port | Protocol |
 | --- | --- | --- |
-| **nginx-tls** | `TRUST_API_PORT` (default 8020) | HTTPS (external) |
-| trust-api | 8000 | HTTP (internal, behind nginx) |
+| trust-api | 8000 | HTTP (polls hub outbound) |
 | imaging-api | 8000 | HTTP (internal) |
 | data-access-api | 8000 | HTTP (internal) |
 | fl-client | 8002, 8003 | TCP (FL server/admin) |
@@ -83,7 +79,7 @@ cd deploy/providers/AWS
 make full-deploy-stag-hybrid LOCAL_TRUST_IP=<public-ip> [LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key]
 ```
 
-This wrapper target runs the full AWS + local trust provisioning pipeline, updates `Trust_1-endpoint` in `FLIP_API`, and redeploys Central Hub so the new secret values are loaded.
+This wrapper target runs the full AWS + local trust provisioning pipeline, updates the trust configuration in AWS Secrets Manager (per-trust `TRUST_API_KEY`, `AES_KEY_BASE64`, and `TRUST_API_KEY_HASHES`), and redeploys Central Hub so the new secret values are loaded.
 You still need to start the local trust stack on the trust host:
 
 ```bash
@@ -112,55 +108,25 @@ make add-local-trust LOCAL_TRUST_IP=<public-ip>
 
 1. Runs the Ansible playbook (`site_local_trust.yml`) which:
    - Installs Docker and required system packages
-   - Generates a self-signed CA and server TLS certificate with the host's public IP as SAN
-   - Configures UFW firewall to allow `TRUST_API_PORT`, 8002, 8003 **only from the Central Hub IP**
-   - Fetches the local trust CA certificate back to `trust/certs/local-trust-ca.crt`
-2. Creates a **CA bundle** (`deploy/providers/AWS/trust-ca.crt`) by concatenating the cloud Trust EC2 CA (generated earlier by `gen-trust-ec2-certs`) with the new local trust CA. This lets `flip-api` verify HTTPS connections to **both** trusts using a single bundle.
-3. Downloads the `Trust_2` FL participant kit from S3 and deploys it to `/opt/flip/services/Trust_2/{startup,local,transfer}` on the trust host.
-4. Runs a targeted `terraform apply` to:
-   - Upload the CA bundle to Secrets Manager (`trust_ca_cert` key in `FLIP_API` secret)
+   - Configures UFW firewall to allow FL ports 8002, 8003 **only from the Central Hub IP**
+2. Downloads the `Trust_2` FL participant kit from S3 and deploys it to `/opt/flip/services/Trust_2/{startup,local,transfer}` on the trust host.
+3. Runs a targeted `terraform apply` to:
    - Add security group rules allowing FL traffic from the local trust's public IP
 
 ### Post-provisioning manual steps
 
-1. **Configure router port forwarding** — Forward `TRUST_API_PORT/tcp` (default 8020) from the router's WAN interface to the trust host's LAN IP. Optionally forward 8002/tcp and 8003/tcp for federated learning.
-
-2. **Update the trust endpoint in Secrets Manager** — Recommended helper target:
-
-   ```bash
-   make set-local-trust-endpoint LOCAL_TRUST_IP=<public-ip>
-   ```
-
-3. **Start the trust stack** on the trust host:
+1. **Start the trust stack** on the trust host:
 
    ```bash
    cd trust
    env PROD=stag make up-local-trust-stag
    ```
 
-4. **Verify (CA-validated)** from the operator workstation:
+2. **Verify** the trust can poll the hub (check trust-api logs for successful task polling).
 
-   ```bash
-   make test-local-trust LOCAL_TRUST_IP=<public-ip>
-   ```
+## Communication Model
 
-5. **Restart flip-api** on the Central Hub to pick up the new CA cert from Secrets Manager.
-
-## Certificate Model (Critical)
-
-There are two different certificate verification contexts in this hybrid setup:
-
-1. **Central Hub -> Trust API runtime path (must verify CA)**
-   - `flip-api` verifies trust HTTPS endpoints using a CA bundle from `FLIP_API.trust_ca_cert`.
-   - That bundle is written on CH EC2 to `/opt/flip/certs/trust-ca.crt` and mounted into `flip-api`.
-   - The bundle must contain both:
-     - cloud Trust EC2 CA (`trust/certs/trust-ca.crt`), and
-     - local trust CA (`trust/certs/local-trust-ca.crt`).
-
-2. **Operator/external diagnostics path (must be CA-validated)**
-   - `make test-local-trust` uses `--cacert ../../../trust/certs/local-trust-ca.crt`.
-
-If `make test-local-trust` fails with certificate errors, re-run `make add-local-trust` to regenerate/fetch CA certs and rebuild the bundle.
+Trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound from the trust**. The hub never makes inbound requests to trusts. This simplifies networking: no inbound firewall rules or NAT port-forwarding are needed for the trust API port.
 
 ## Ansible Playbook Details
 
@@ -179,8 +145,6 @@ The main playbook. It can be run standalone or via the `add-local-trust` Makefil
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `trust_api_port` | `8443` | Port for the nginx-tls HTTPS listener |
-| `cert_dir` | `/opt/flip/certs` | Directory for TLS certificates on the trust host |
 | `flip_dir` | `/opt/flip` | Root application directory |
 
 **Direct usage** (without the Makefile):
@@ -195,8 +159,7 @@ uv run ansible-playbook \
   --private-key ~/.ssh/trust_key \
   ../../../deploy/providers/local/site_local_trust.yml \
   -e trust_public_ip=<public-ip> \
-  -e ch_public_ip=<central-hub-ip> \
-  -e trust_api_port=8020
+  -e ch_public_ip=<central-hub-ip>
 ```
 
 ### `requirements.yml`
@@ -204,7 +167,6 @@ uv run ansible-playbook \
 Ansible Galaxy dependencies:
 
 - `community.general` (>= 8.0.0) — UFW module
-- `community.crypto` (>= 2.0.0) — TLS certificate generation
 - `geerlingguy.docker` — Docker installation role
 
 Install with:
@@ -217,16 +179,9 @@ uv run ansible-galaxy install -r deploy/providers/local/requirements.yml
 
 ### Port Forwarding (NAT)
 
-Configure a port-forwarding rule on the home router:
+Since trusts poll the hub outbound, **no inbound port forwarding is needed for the trust API**.
 
-| Setting | Value |
-| --- | --- |
-| **External port** | `8020` (or `TRUST_API_PORT`) |
-| **Internal IP** | Trust host LAN IP (e.g. `192.168.1.100`) |
-| **Internal port** | `8020` |
-| **Protocol** | TCP |
-
-For federated learning, also forward:
+For federated learning, forward FL ports from the router to the trust host:
 
 | External Port | Internal Port | Protocol | Purpose |
 | --- | --- | --- | --- |
@@ -245,26 +200,21 @@ Some residential ISPs use Carrier-Grade NAT (CGNAT), which prevents inbound port
 curl ifconfig.me
 ```
 
-The returned IP should match the router's WAN IP. If they differ, contact the ISP to request a public IP or opt out of CGNAT.
+The returned IP should match the router's WAN IP. If they differ, contact the ISP to request a public IP or opt out of CGNAT. Note: CGNAT only affects FL port forwarding — trust API polling works regardless since it's outbound.
 
 ### Dynamic Public IP
 
 If the public IP changes (common with residential broadband):
 
-1. Regenerate TLS certificates: `TRUST_HOST=<new-ip> make -C trust generate-trust-certs`
-2. Copy certs to `/opt/flip/certs/` and restart `nginx-tls`
-3. Re-run `make add-local-trust LOCAL_TRUST_IP=<new-ip>` to refresh certs and CA bundle
-4. Update endpoint URL in Secrets Manager: `make set-local-trust-endpoint LOCAL_TRUST_IP=<new-ip>`
-5. Update the Terraform security group: `TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply`
+1. Update the Terraform security group for FL ports: `TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply`
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
-| `Connection refused` on HTTPS test | Trust stack running? (`docker ps` on trust host) |
-| `Connection timed out` | Router port forwarding configured? ISP blocking the port? |
-| `SSL certificate verify failed` | CA cert mismatch — re-run `make add-local-trust` to regenerate and re-distribute |
-| UFW blocking connections | `sudo ufw status verbose` on trust host — verify CH IP is allowed |
+| Trust not polling hub | Trust stack running? (`docker ps` on trust host). Check trust-api logs for polling errors. |
+| `Connection timed out` (FL) | Router port forwarding configured for FL ports? ISP blocking? |
+| UFW blocking FL connections | `sudo ufw status verbose` on trust host — verify CH IP is allowed on FL ports |
 | Ansible `Permission denied` | SSH key correct? User has sudo? `ANSIBLE_BECOME_PASS` set for local mode? |
 
 ## Related Documentation

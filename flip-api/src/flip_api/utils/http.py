@@ -10,14 +10,24 @@
 # limitations under the License.
 #
 
-from typing import Any, Dict, Optional
+"""HTTP utilities for internal service-to-service calls on the central hub.
+
+Used exclusively by the FL service to communicate with FL Net API endpoints
+(e.g. flip-fl-api-net-1:8000). These are plain HTTP calls between co-located
+Docker services — no TLS required.
+
+NOT used for hub↔trust communication, which is handled via the task polling
+system (trusts poll the hub; see private_services/trust_tasks.py).
+"""
+
+from typing import Any
 
 import httpx
 
 from flip_api.utils.logger import logger
 
 
-def http_get(url: str, request_id: Optional[str] = None) -> Any:
+def http_get(url: str, request_id: str | None = None) -> Any:
     """Perform an HTTP GET request to the specified URL with optional request ID for tracing."""
     headers = {"x-request-id": request_id} if request_id else {}
     with httpx.Client() as client:
@@ -34,7 +44,7 @@ def http_get(url: str, request_id: Optional[str] = None) -> Any:
 
 
 def http_post(
-    url: str, request_id: Optional[str] = None, data: Optional[Dict] = None, timeout: Optional[float] = None
+    url: str, request_id: str | None = None, data: dict | None = None, timeout: float | None = None
 ) -> Any:
     """Perform an HTTP POST request to the specified URL with optional request ID for tracing."""
     headers = (
@@ -59,7 +69,7 @@ def http_post(
             raise
 
 
-def http_delete(url: str, request_id: Optional[str] = None) -> Any:
+def http_delete(url: str, request_id: str | None = None) -> Any:
     """Perform an HTTP DELETE request to the specified URL with optional request ID for tracing."""
     headers = {"x-request-id": request_id} if request_id else {}
     with httpx.Client() as client:

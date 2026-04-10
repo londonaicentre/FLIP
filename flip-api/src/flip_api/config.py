@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import EmailStr, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,20 +19,23 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Common settings shared across all environments (development and production)."""
 
+    # Environment flag
+    ENV: Literal["development", "production"] = "development"
+
     model_config = SettingsConfigDict(
-        env_file="../.env.development",
+        env_file=f"../.env.{ENV}",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
-    # Environment flag
-    ENV: Literal["development", "production"] = "development"
+    # Per-trust API key header name (for authenticating requests from trusts to the FLIP API)
+    TRUST_API_KEY_HEADER: str
 
-    PRIVATE_API_KEY_HEADER: str
-    PRIVATE_API_KEY: str
+    # Internal service auth (fl-server on the Central Hub)
+    INTERNAL_SERVICE_KEY_HEADER: str
 
     # AWS settings
-    AWS_PROFILE: Optional[str] = None
+    AWS_PROFILE: str | None = None
     AWS_REGION: str
     AWS_COGNITO_USER_POOL_ID: str
     AWS_COGNITO_APP_CLIENT_ID: str
@@ -46,7 +49,7 @@ class Settings(BaseSettings):
     UPLOADED_FEDERATED_DATA_BUCKET: str
     FL_APP_BASE_BUCKET: str
     FL_APP_DESTINATION_BUCKET: str
-    PRE_SIGNED_URL: Optional[str] = None
+    PRE_SIGNED_URL: str | None = None
 
     # Reimport imaging project studies
     PROJECT_REIMPORT_RATE: int = 60  # How often to reimport studies for a given project (in minutes)
@@ -68,12 +71,20 @@ class Settings(BaseSettings):
 
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
+    TRUST_NAMES: list[str]
 
     # FL settings
     FL_BACKEND: Literal["nvflare", "flower"] = "nvflare"
 
+    # Trust task queue settings
+    HEARTBEAT_TIMEOUT_SECONDS: int = 30  # How long since last heartbeat before a trust is considered offline
+    TASK_STALE_TIMEOUT_MINUTES: int = 30  # Tasks older than this in IN_PROGRESS are considered stale
+    TASK_MAX_RETRIES: int = 3  # Max times a stale task can be retried before being marked FAILED
+    SCHEDULER_STALE_TASK_RECOVERY_RATE: int = 10  # How often to check for stale tasks (in minutes)
+    MAX_TASK_RESULT_LENGTH: int = 10_000_000  # Max size (in characters) for task result payloads
+
     # Variables only used in testing
-    FLIP_API_URL: str = "http://localhost:8080/"  # this is currently only used in tests (TODO review)
+    FLIP_API_URL: str = "http://localhost:8080/api"  # this is currently only used in tests (TODO review)
     ADMIN_USER_PASSWORD: SecretStr | None = None  # only used in integration tests to make actual logins
 
 
@@ -85,7 +96,8 @@ class DevSettings(Settings):
 
     AES_KEY_BASE64: str  # in dev, get AES key from env variable
 
-    TRUST_ENDPOINTS: dict[str, str]  # in dev, get trust endpoints from env variables
+    TRUST_API_KEY_HASHES: dict[str, str]  # in dev, get API key hashes for each trust from env variable
+    INTERNAL_SERVICE_KEY_HASH: str  # in dev, get internal service auth key hash from env variable
 
 
 class ProdSettings(Settings):

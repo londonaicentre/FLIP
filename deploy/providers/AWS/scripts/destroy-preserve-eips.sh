@@ -4,6 +4,10 @@
 set -e
 source "$(dirname "$0")/utils.sh"
 
+if [ "$PROD" = "true" ]; then
+  log_warn "PRODUCTION environment detected — VPC will NOT be destroyed (Transit Gateway attachment)"
+fi
+
 log_warn "🔓 Temporarily disabling prevent_destroy on EIP resources..."
 
 # Using sed to temporarily modify the tf files
@@ -12,7 +16,11 @@ cp main.tf main.tf.backup
 cp modules/trust_ec2/main.tf modules/trust_ec2/main.tf.backup
 
 log_info "🗑️  Disabling prevent_destroy in EIP resources temporarily..."
-sed -i 's/prevent_destroy = true/prevent_destroy = false/g' main.tf modules/trust_ec2/main.tf
+if [[ "$OSTYPE" == "darwin"* ]]; then
+  sed -i '' 's/prevent_destroy = true/prevent_destroy = false/g' main.tf modules/trust_ec2/main.tf
+else
+  sed -i 's/prevent_destroy = true/prevent_destroy = false/g' main.tf modules/trust_ec2/main.tf
+fi
 
 log_info "💥 Proceeding with infrastructure destruction..."
 
@@ -28,12 +36,12 @@ if [ -n "$DB_INSTANCE_ID" ]; then
     --db-instance-identifier "$DB_INSTANCE_ID" \
     --skip-final-snapshot \
     2>&1 | grep -E "DBInstance|Status|Error" || true
-  
+
   log_info "  Waiting for database deletion (this may take a few minutes)..."
   aws_cmd rds wait db-instance-deleted \
     --db-instance-identifier "$DB_INSTANCE_ID" \
     2>&1 || log_warn "  Timeout waiting for DB deletion - proceeding anyway"
-  
+
   sleep 5  # Give AWS a moment to fully cleanup
 else
   log_info "  No RDS database instance found"
@@ -46,100 +54,40 @@ terraform destroy -auto-approve \
   -target=aws_db_subnet_group.flip_db_subnet_group \
   2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
 
-# Step 3: Destroy Route53 and load balancer rules first (they reference load balancers)
-log_info "Step 3: Destroying Route53 records and load balancer rules..."
-terraform destroy -auto-approve \
-  -target=aws_route53_record.alb \
-  -target=aws_route53_record.fl_server_nlb \
-  -target=aws_lb_listener_rule.api_routing \
-  -target=aws_security_group_rule.local_trust_fl_server_nlb \
-  -target=aws_security_group_rule.fl_server_ingress_from_nlb \
-  2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
+# Step 3: Destroy remaining infrastructure (VPC, security groups, etc.)
+log_info "Step 3: Destroying remaining infrastructure..."
 
-# Step 3b: Destroy load balancers (they have ENIs in subnets)
-log_info "Step 3b: Destroying load balancers..."
-terraform destroy -auto-approve \
-  -target=module.alb \
-  -target=module.alb_security_group \
-  -target=module.fl_server_nlb \
-  2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
+DESTROY_TARGETS=(
+  -target=module.ec2_security_group
+  -target=module.rds_security_group
+  -target=module.alb
+  -target=module.alb_security_group
+  -target=module.ec2_role
+  -target=aws_iam_instance_profile.ec2_profile
+  -target=aws_key_pair.flip_keypair
+  -target=aws_instance.ec2_instance
+  -target=aws_cloudwatch_log_group.flip_log_group
+  -target=aws_iam_role_policy.ec2_secret
+  -target=aws_ses_template.flip_access_request
+  -target=aws_ses_template.flip_xnat_credentials
+  -target=module.trust_ec2.aws_instance.trust_host
+  -target=module.trust_ec2.aws_security_group.trust_host_sg
+  -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.ssh
+  -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.xnat
+  -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.pacs_ui
+  -target=module.trust_ec2.aws_vpc_security_group_egress_rule.allow_all
+  -target=aws_key_pair.host_key
+  -target=local_file.env
+)
 
-log_info "  Waiting for load balancer ENIs to fully detach from subnets..."
-sleep 10
-
-# Step 4: Destroy EIP associations (so instances can be freely destroyed)
-log_info "Step 4: Destroying EIP associations..."
-terraform destroy -auto-approve \
-  -target=aws_eip_association.central_hub_eip_assoc \
-  -target=module.trust_ec2.aws_eip_association.trust_eip_assoc \
-  2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
-
-# Step 5: Destroy EC2 instances and security groups
-log_info "Step 5: Destroying EC2 instances and security groups..."
-terraform destroy -auto-approve \
-  -target=aws_instance.ec2_instance \
-  -target=module.trust_ec2.aws_instance.trust_host \
-  -target=module.trust_ec2.aws_security_group.trust_host_sg \
-  -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.trust_api \
-  -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.xnat \
-  -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.pacs_ui \
-  -target=module.trust_ec2.aws_vpc_security_group_egress_rule.allow_all \
-  -target=module.ec2_security_group \
-  -target=module.trust_security_group \
-  -target=module.rds_security_group \
-  2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
-
-# Step 6: Clean up any remaining dependencies in subnets and destroy VPC
-log_info "Step 6: Extended cleanup and VPC destruction (this may take several minutes)..."
-log_info "  Waiting 20 seconds for all AWS resources to fully clean up..."
-sleep 20
-
-# Try to destroy VPC module - terraform should handle all cleanup
-log_info "  Attempting VPC destruction..."
-terraform destroy -auto-approve \
-  -target=module.flip_vpc \
-  2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
-
-# If VPC destruction failed, try manual cleanup
-DESTROY_STATUS=$?
-if [ $DESTROY_STATUS -ne 0 ]; then
-  log_warn "  VPC destruction encountered issues, attempting AWS CLI cleanup..."
-
-  # Get VPC ID from Terraform state
-  VPC_ID=$(terraform state show -json 2>/dev/null | grep -o '"vpc_id":"[^"]*' | head -1 | cut -d'"' -f4 || echo "")
-
-  if [ -n "$VPC_ID" ]; then
-    log_info "  Found VPC ID: $VPC_ID"
-
-    # Delete all network interfaces in the VPC (except AWS-managed ones)
-    log_info "  Deleting dangling network interfaces..."
-    ENIS=$(aws_cmd ec2 describe-network-interfaces \
-      --filters "Name=vpc-id,Values=$VPC_ID" \
-      --query 'NetworkInterfaces[?Attachment.InstanceId==null].NetworkInterfaceId' \
-      --output text 2>/dev/null || echo "")
-
-    for ENI in $ENIS; do
-      log_info "    Deleting ENI: $ENI"
-      aws_cmd ec2 delete-network-interface --network-interface-id "$ENI" 2>/dev/null || true
-    done
-  fi
-
-  log_info "  Retrying VPC destruction after cleanup..."
-  terraform destroy -auto-approve \
-    -target=module.flip_vpc \
-    2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
+# Only destroy VPC in non-production — production VPC has Transit Gateway attachment
+if [ "$PROD" != "true" ]; then
+  DESTROY_TARGETS+=(-target=module.flip_vpc)
 fi
 
-# Step 7: Destroy remaining infrastructure
-log_info "Step 7: Destroying remaining infrastructure..."
 terraform destroy -auto-approve \
-  -target=module.ec2_role \
-  -target=aws_iam_instance_profile.ec2_profile \
-  -target=aws_cloudwatch_log_group.flip_log_group \
-  -target=aws_iam_role_policy.ec2_secret \
-  -target=aws_ses_template.flip_access_request \
-  -target=aws_ses_template.flip_xnat_credentials \
-  -target=local_file.env 2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
+  "${DESTROY_TARGETS[@]}" \
+  2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use"
 
 log_info "🔒 Re-enabling prevent_destroy in EIP resources..."
 mv main.tf.backup main.tf
@@ -150,3 +98,7 @@ log_info ""
 log_info "✓ Elastic IPs remain allocated:"
 log_info "  - Central Hub EIP: $(terraform output -raw CentralHubEip 2>/dev/null || echo 'N/A')"
 log_info "  - Trust EC2 EIP: $(terraform output -raw TrustEc2Eip 2>/dev/null || echo 'N/A')"
+if [ "$PROD" = "true" ]; then
+  log_info ""
+  log_info "✓ VPC preserved (Transit Gateway attachment)"
+fi

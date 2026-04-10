@@ -37,7 +37,7 @@ WORKDIR /app
 USER ${UNAME}
 
 # Sync dependencies using uv
-RUN uv sync
+RUN uv sync --frozen
 
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"

@@ -134,6 +134,26 @@ class TrustIntersectStatus(str, Enum):
     INITIALISED = "INITIALISED"
 
 
+class TaskStatus(str, Enum):
+    """Status of a trust task in the task queue."""
+
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+class TaskType(str, Enum):
+    """Type of task dispatched to a trust."""
+
+    COHORT_QUERY = "cohort_query"
+    CREATE_IMAGING = "create_imaging"
+    DELETE_IMAGING = "delete_imaging"
+    GET_IMAGING_STATUS = "get_imaging_status"
+    REIMPORT_STUDIES = "reimport_studies"
+    UPDATE_USER_PROFILE = "update_user_profile"
+
+
 class XNATImageStatus(str, Enum):
     """Status of the XNAT imaging project."""
 

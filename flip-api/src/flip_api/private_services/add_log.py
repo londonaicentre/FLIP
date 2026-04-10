@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
-from flip_api.auth.access_manager import check_authorization_token
+from flip_api.auth.access_manager import authenticate_internal_service
 from flip_api.db.database import get_session
 from flip_api.domain.schemas.private import TrainingLog
 from flip_api.model_services.services.model_service import add_log, validate_trusts
@@ -30,16 +30,18 @@ def add_log_endpoint(
     model_id: UUID,
     training_log: TrainingLog,
     db: Session = Depends(get_session),
-    token: str = Depends(check_authorization_token),
+    _: None = Depends(authenticate_internal_service),
 ) -> dict[str, str]:
     """
     Add a log entry to the database for a specific model.
+
+    This endpoint is internal-only: it accepts requests from the fl-server on the
+    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER).
 
     Args:
         model_id (UUID): The ID of the model.
         training_log (TrainingLog): The log entry to be added.
         db (Session): The database session.
-        token (str): The authorization token.
 
     Returns:
         dict[str, str]: A confirmation message indicating the log entry was created.
@@ -47,7 +49,6 @@ def add_log_endpoint(
     Raises:
         HTTPException: If the trust is not associated with the model or if there is an internal server error.
     """
-    del token  # Token is validated by the dependency
     try:
         if not validate_trusts(model_id=model_id, trusts=[training_log.trust], session=db):
             error_msg = f"The trust: {training_log.trust} is not associated with model: {model_id}"

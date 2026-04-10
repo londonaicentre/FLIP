@@ -44,6 +44,13 @@ variable "POSTGRES_DB" {
   type = string
 }
 
+variable "postgres_version" {
+  description = "PostgreSQL engine version for the RDS instance. Update this value to upgrade the database version. EOL schedule: 16 → Oct 2028, 17 → Nov 2029."
+  type        = string
+  default     = "17.4"
+}
+
+
 variable "flip_keypair" {
   type = string
 }
@@ -54,6 +61,16 @@ variable "ec2_public_key_path" {
 
 variable "AES_KEY_BASE64" {
   type = string
+}
+
+variable "TRUST_API_KEY_HASHES" {
+  description = "JSON string mapping trust names to SHA-256 hashes of their API keys"
+  type        = string
+}
+
+variable "INTERNAL_SERVICE_KEY_HASH" {
+  description = "SHA-256 hash of the internal service key used for fl-server-to-hub auth"
+  type        = string
 }
 
 variable "FLIP_BUCKET_NAME" {
@@ -146,11 +163,6 @@ variable "flip_nlb_subdomain" {
 variable "SES_VERIFIED_EMAIL" {
   description = "SES verified email address for FLIP"
   type        = string
-}
-
-variable "TRUST_API_PORT" {
-  description = "Port for Trust API"
-  type        = number
 }
 
 variable "XNAT_PORT" {

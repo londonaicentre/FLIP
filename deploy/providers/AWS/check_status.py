@@ -916,7 +916,6 @@ def main(
         except (json.JSONDecodeError, ValueError):
             configured_net_numbers = [1]  # Default to net-1 only
         # Trust EC2 ports
-        TRUST_API_PORT = os.getenv("TRUST_API_PORT", "")
         XNAT_PORT = os.getenv("XNAT_PORT_TRUST_1", "")
         ORTHANC_PORT = os.getenv("PACS_UI_PORT_TRUST_1", "")
         # IMAGING_API_PORT = os.getenv("IMAGING_API_PORT", "")
@@ -1020,31 +1019,12 @@ def main(
         if trust_ip:
             print_status("INFO", "Checking Trust EC2 service endpoints...")
 
-            # Trust API is now served over HTTPS via the nginx-tls sidecar.
-            # Use -k (skip verify) for SSH-based loopback and cross-EC2 checks since
-            # those go directly to the self-signed cert.  For the direct check from
-            # this machine we use the local trust-ca.crt when available.
-            _trust_ca = str(Path(__file__).parent / "trust-ca.crt")
-
-            # Check if Trust API is reachable from Trust EC2 via SSH
-            check_endpoint_over_ssh("flip-trust", f"https://localhost:{TRUST_API_PORT}/health", 200, verify_ssl=False)
-
-            # Check Trust is reachable from Central Hub EC2 via SSH
-            check_endpoint_over_ssh("flip", f"https://{trust_ip}:{TRUST_API_PORT}/health", 200, verify_ssl=False)
-
-            # SECURITY CHECKS: Verify HTTP is rejected (Trust API must be HTTPS-only)
-            check_endpoint_rejects_insecure_ssh("flip-trust", f"https://localhost:{TRUST_API_PORT}/health")
-            check_endpoint_rejects_insecure_ssh("flip", f"https://{trust_ip}:{TRUST_API_PORT}/health")
-
-            # Note: Direct external connectivity to Trust EC2 internal services (Trust API, XNAT, Orthanc)
-            # is not tested from the local machine because:
-            # 1. These services are accessed internally via SSH tunnels (already tested above)
-            # 2. Security groups intentionally restrict direct internet access to internal services
-            # 3. External direct connections would timeout/fail by design
-            # The SSH-based tests (check_endpoint_over_ssh) above confirm these services are working.
+            # Trust API uses outbound polling — no inbound port is exposed.
+            # Direct the operator to check trust-api logs for successful polling.
             print_status(
                 "INFO",
-                "Trust EC2 internal services validated via SSH tunnels (external direct access intentionally blocked by security groups)",
+                "Trust API uses outbound polling. "
+                "Verify by checking trust-api logs for successful hub polling and heartbeats.",
             )
 
         #     # Check Imaging API health endpoint
@@ -1072,30 +1052,17 @@ def main(
         #     )
 
         # Local (on-premises) Trust checks
+        # In the outbound-only polling model, the local trust polls the hub —
+        # we cannot verify connectivity from here. Direct the operator to check
+        # trust-api logs for successful task polling and heartbeats.
         local_trust_ip = os.getenv("LOCAL_TRUST_IP")
         if local_trust_ip:
             print_section("Local Trust Checks")
-
-            # Resolve path to repo root (path goes: file -> AWS -> providers -> deploy -> FLIP)
-            _local_trust_ca = str(Path(__file__).parent.parents[3] / "trust" / "certs" / "local-trust-ca.crt")
-
-            # 1. Verify local trust health endpoint is reachable from this machine
-            check_http_endpoint(
-                f"https://{local_trust_ip}:{TRUST_API_PORT}/health",
-                f"Local Trust API Health ({local_trust_ip})",
-                200,
-                cafile=_local_trust_ca if Path(_local_trust_ca).exists() else None,
+            print_status(
+                "INFO",
+                f"Local trust at {local_trust_ip} uses outbound polling. "
+                "Verify by checking trust-api logs for successful hub polling and heartbeats.",
             )
-
-            # 2. Firewall enforcement: cloud Trust EC2 must NOT be able to reach local trust.
-            # UFW only whitelists the Central Hub IP; if the cloud Trust EC2 can reach the
-            # local trust health endpoint, the firewall is misconfigured.
-            if trust_ip:
-                check_endpoint_blocked_from_ssh(
-                    "flip-trust",
-                    f"https://{local_trust_ip}:{TRUST_API_PORT}/health",
-                    allowed_source_ip=central_hub_eip,
-                )
         else:
             print_status("INFO", "LOCAL_TRUST_IP not set — skipping local Trust checks")
 
@@ -1321,11 +1288,12 @@ def main(
                     except ValueError:
                         print_status("WARN", "Could not parse Trust memory usage")
 
-                # Check for any exited containers on Trust EC2
+                # Check for any exited containers on Trust EC2 (exclude Docker Swarm task history)
                 success, trust_exited = run_ssh_command(
                     "",
                     "flip-trust",
-                    "docker ps -a --filter 'status=exited' --format '{{.Names}}' 2>/dev/null",
+                    "docker ps -a --filter 'status=exited' --format '{{.Names}}' 2>/dev/null"
+                    " | grep -vE '\\.[0-9]+\\.[a-z0-9]{25}' || true",
                 )
                 if success and trust_exited:
                     print_status("WARN", f"Trust EC2 exited containers found: {trust_exited}")

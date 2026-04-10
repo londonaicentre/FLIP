@@ -22,6 +22,14 @@ export const CreateProjectModal = {
     createProject: "[data-test=close-create-project-btn]"
 };
 
+export const ProjectStatusComponent = {
+    container: "[data-test=project-status-container]",
+    filterInput: "[data-test=filter-project-status]",
+    noProjectStatusMessage: "[data-test=no-project-status-message]",
+    overviewProjectCreation: "[data-test=overview-project-creation]",
+    overviewImageRetrieval: "[data-test=overview-image-retrieval]",
+};
+
 export const AddProjectUsers = {
     infoAlert: "[data-test=add-user-project-info]",
     addUserInput: "[data-test=add-user-project-input]",

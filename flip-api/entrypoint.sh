@@ -38,59 +38,20 @@ until pg_isready -h $DB_HOST; do
   sleep 1
 done
 
->&2 echo "Postgres is up"
+>&2 echo "Postgres is up - executing seeding command"
+${seed_cmd}
 
-# Check if seeding is needed and possible (seed file exists)
-if [ -f "src/flip_api/db/seed/seed_essential_data.py" ]; then
-    >&2 echo "Executing database seeding command..."
-    ${seed_cmd}
-    
-    # Check if seeding was successful
-    if [ $? -ne 0 ]; then
-        >&2 echo "⚠️  Warning: Database seeding failed, but continuing with API startup (database may already be seeded)"
+# Check if seeding was successful
+if [ $? -eq 0 ]; then
+    >&2 echo "Seeding database complete - starting FastAPI server"
+    if [ "$DEBUG" = "true" ]; then
+        echo "🚨 Starting API in debug mode... 🐛"
+        exec uv run python ${debug_cmd} ${fast_api_cmd}
     else
-        >&2 echo "✅ Database seeding complete"
+        echo "🚢 Starting API in normal mode... "
+        exec uv run python ${fast_api_cmd}
     fi
 else
-    >&2 echo "⚠️  Seed script not found at src/flip_api/db/seed/seed_essential_data.py - skipping seeding"
-    >&2 echo "This is normal in production if using pre-seeded database or external migrations"
-fi
-
-# Common setup for all paths: Trust CA certificate handling and API startup
-if [ -n "${TRUST_CA_CERT:-}" ]; then
-    echo "Writing Trust CA certificate to /etc/ssl/trust/trust-ca.crt"
-    mkdir -p /etc/ssl/trust
-    printf '%s\n' "$TRUST_CA_CERT" > /etc/ssl/trust/trust-ca.crt
-    chmod 0644 /etc/ssl/trust/trust-ca.crt
-    export TRUST_CA_BUNDLE=/etc/ssl/trust/trust-ca.crt
-fi
-
-# If TRUST_CA_BUNDLE is set to a path (mount from compose), ensure directory exists
-if [ -n "${TRUST_CA_BUNDLE:-}" ] && [ ! -f "${TRUST_CA_BUNDLE}" ]; then
-    echo "Warning: TRUST_CA_BUNDLE is set to ${TRUST_CA_BUNDLE} but file does not exist"
-fi
-
-# If running in AWS, attempt to fetch 'trust_ca_cert' from Secrets Manager and write it
-# This makes the CA available for httpx verification when the secret contains a PEM.
-python - <<'PY' || true
-import os
-try:
-    from flip_api.utils.get_secrets import get_secret
-    ca = get_secret('trust_ca_cert')
-    if ca:
-        os.makedirs('/etc/ssl/trust', exist_ok=True)
-        with open('/etc/ssl/trust/trust-ca.crt', 'w') as f:
-            f.write(ca)
-        print('Wrote trust CA certificate from Secrets Manager to /etc/ssl/trust/trust-ca.crt')
-except Exception as e:
-    print('No trust_ca_cert found in secrets or failed to write CA:', e)
-PY
-export TRUST_CA_BUNDLE=${TRUST_CA_BUNDLE:-/etc/ssl/trust/trust-ca.crt}
-
-if [ "$DEBUG" = "true" ]; then
-    echo "🚨 Starting API in debug mode... 🐛"
-    exec uv run python ${debug_cmd} ${fast_api_cmd}
-else
-    echo "🚢 Starting API in normal mode... "
-    exec uv run python ${fast_api_cmd}
+    >&2 echo "Seeding database failed - exiting"
+    exit 1
 fi

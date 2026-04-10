@@ -32,7 +32,8 @@ run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
 
 build:
-	$(docker_command) build $(service_name)
+	TRUST_NETWORK_NAME="deploy_trust-network-1" \
+	$(docker_command) -p trust1 build $(service_name)
 up:
 #   For testing, set network to trust 1
 	TRUST_NETWORK_NAME="deploy_trust-network-1" \

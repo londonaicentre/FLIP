@@ -15,6 +15,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from flip_api.config import get_settings
 from flip_api.fl_services.run_jobs import run_jobs_scheduled_task
 from flip_api.fl_services.services.fl_service import keep_fl_api_session_alive
+from flip_api.private_services.stale_task_recovery import recover_stale_tasks_scheduled_task
 from flip_api.project_services.reimport_imaging_project_studies import (
     reimport_imaging_project_studies_scheduled_task,
 )
@@ -38,6 +39,11 @@ scheduler.add_job(
     reimport_imaging_project_studies_scheduled_task,
     "interval",
     minutes=get_settings().SCHEDULER_REIMPORT_IMAGING_PROJECT_STUDIES_RATE,
+)
+scheduler.add_job(
+    recover_stale_tasks_scheduled_task,
+    "interval",
+    minutes=get_settings().SCHEDULER_STALE_TASK_RECOVERY_RATE,
 )
 
 

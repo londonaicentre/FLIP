@@ -43,11 +43,10 @@ def request_body():
 @pytest.fixture
 def mock_trusts():
     return [
-        ITrust(id=trust_id_1, name="Trust 1", endpoint="https://trust1.endpoint/api"),
+        ITrust(id=trust_id_1, name="Trust 1"),
         ITrust(
             id=trust_id_2,
             name="Trust 2",
-            endpoint="https://trust2.endpoint/api",
             flClientEndpoint="https://trust2.endpoint/fl",
         ),
     ]

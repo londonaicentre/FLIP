@@ -72,7 +72,7 @@ def update_model_status_endpoint(
                 )
         else:
             # FIXME
-            # if not check_authorization_token(request):
+            # if not authenticate_trust(request):
             # raise HTTPException(
             #     status_code=status.HTTP_403_FORBIDDEN, detail="No userId passed, Authorization token is invalid."
             # )

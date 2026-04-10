@@ -62,10 +62,8 @@ services:
       - IMAGES_DIR=/app/data/images
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
-      - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
-      - IMAGING_API_URL=${IMAGING_API_URL}
-      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
-      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+      - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
     restart: unless-stopped
     init: true
@@ -86,10 +84,8 @@ services:
   #     - IMAGES_DIR=/app/data/images
   #     - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
   #     - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
-  #     - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
-  #     - IMAGING_API_URL=${IMAGING_API_URL}
-  #     - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
-  #     - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+  #     - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+  #     - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
   #     # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
   #   restart: unless-stopped
   #   init: true

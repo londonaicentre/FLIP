@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlmodel import Session
 
-from flip_api.auth.access_manager import check_authorization_token
+from flip_api.auth.access_manager import authenticate_internal_service
 from flip_api.db.database import get_session
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.model_services.update_model_status import update_model_status_endpoint
@@ -34,17 +34,18 @@ def invoke_model_status_update_endpoint(
     model_id: UUID,
     model_status: ModelStatus = Path(..., title="New model status"),
     db: Session = Depends(get_session),
-    token: str = Depends(check_authorization_token),  # Enforces authorization
+    _: None = Depends(authenticate_internal_service),
 ) -> dict[str, str]:
     """
     Invokes the internal process for updating a model's status.
-    This endpoint acts as a passthrough to the underlying model status update service.
+
+    This endpoint is internal-only: it accepts requests from the fl-server on the
+    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER).
 
     Args:
         model_id (UUID): The ID of the model whose status is to be updated.
         model_status (ModelStatus): The new status to set for the model.
         db (Session): The database session, provided by dependency injection.
-        token (str): The authorization token, validated by the dependency.
 
     Returns:
         dict[str, str]: A dictionary containing the result of the status update operation.
@@ -52,14 +53,10 @@ def invoke_model_status_update_endpoint(
     Raises:
         HTTPException: If there is an error during the status update process.
     """
-    del token  # Token is validated by the dependency
     endpoint_path = f"/model/{model_id}/status/{model_status.value}"
     logger.debug(f"Attempting to call the model status update service for model_id: {model_id} via {endpoint_path}")
 
     try:
-        # The original TypeScript passes the entire 'event' and an empty 'context'.
-        # Here, we pass specific parts (model_id, model_status) and the db session.
-        # The 'token' is implicitly validated by the dependency.
         response_data = update_model_status_endpoint(model_id=model_id, model_status=model_status, db=db, user_id=None)
 
         logger.info(f"Model status update service called and executed successfully for model_id: {model_id}")

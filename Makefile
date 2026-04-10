@@ -12,7 +12,7 @@
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access
+		check-aws-access up-local-trust-stag generate-trust-api-keys generate-internal-service-key
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -31,26 +31,8 @@ $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 # replace environment variables by the values from the .env files
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
-# Export all variables except DOCKER_TAG (which we'll set dynamically below)
-# export $(shell sed 's/=.*//' $(MAIN_ENV_FILE) | grep -v '^DOCKER_TAG$$')
-# NOTE The above no longer works as CICD tags are not based on PR numbers anymore since github actions are run manually.
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
-
-# Override DOCKER_TAG with PR number if available (uses GitHub CLI)
-# Falls back to "stag" if no PR is found or gh CLI is not available
-# Using 'override' to ensure this takes precedence over the value from .env files
-ifeq ($(PROD),true)
-override DOCKER_TAG := prod
-else ifeq ($(PROD),stag)
-override DOCKER_TAG := stag
-else
-override DOCKER_TAG := $(shell gh pr view --json number -q '"pr-" + (.number | tostring)' 2>/dev/null || echo "stag")
-endif
-export DOCKER_TAG
-# NOTE The above no longer works as CICD tags are not based on PR numbers anymore since github actions are run manually.
-# override DOCKER_TAG := $(shell gh pr view --json number -q '"pr-" + (.number | tostring)' 2>/dev/null || echo "stag")
-# export DOCKER_TAG
 
 # ---- FL backend selection (flower | nvflare) ----
 FL_BACKEND ?= flower
@@ -109,7 +91,7 @@ build:
 
 # Run all services
 # Uses --pull always to ensure the latest FL images are used
-up: check-aws-access create-networks
+up: check-aws-access generate-internal-service-key create-networks
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -121,7 +103,7 @@ up: check-aws-access create-networks
 	@echo "✅ All services started successfully!"
 
 # Minimal $(MAKE) up
-up-no-trust: create-networks
+up-no-trust: generate-internal-service-key create-networks
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
@@ -133,8 +115,8 @@ up-trusts: create-networks
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-swarm
 	@echo "✅ Trust services started successfully!"
 
-# Uses --pull always to ensure the latest FL images and 'stag' version are used
-up-centralhub-stag: create-networks
+# Uses --pull always to ensure the latest FL images and 'stag'/'prod' version are used
+up-centralhub-ec2: create-networks-centralhub
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting central hub API services..."
@@ -153,7 +135,13 @@ up-trust-stag: create-networks
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-1-stag PROD=stag
 	@echo "✅ Trust services started successfully!"
 
-central-hub: create-networks
+up-local-trust-stag: create-networks
+	docker context use default
+	@echo "🚢 Starting local on-prem Trust services for staging..."
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-local-trust-stag PROD=stag
+	@echo "✅ Local Trust services started successfully!"
+
+central-hub: create-networks-centralhub
 	$(MAKE) -C flip-api up
 
 # Stop all containers
@@ -200,8 +188,10 @@ debug-off-all:
 	DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
 	$(MAKE) -C trust debug-off
 
-create-networks:
+create-networks-centralhub:
 	@{ docker network inspect central-hub-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-network || true; }
+
+create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks
 
 remove-networks:
@@ -262,6 +252,12 @@ unit_test:
 	$(MAKE) -C trust/data-access-api unit_test
 	$(MAKE) -C trust/imaging-api unit_test
 	$(MAKE) -C trust/trust-api unit_test 
+
+generate-trust-api-keys:
+	$(MAKE) -C flip-api generate-trust-api-keys $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE))
+
+generate-internal-service-key:
+	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
 
 check-aws-access:
 	@echo "🔎 Checking AWS CLI access..."

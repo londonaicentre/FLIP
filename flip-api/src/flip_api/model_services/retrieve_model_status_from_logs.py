@@ -74,7 +74,7 @@ def retrieve_model_status_from_logs(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Elasticsearch URL not found.")
 
     try:
-        response = httpx.post(f"{elastic_url}/centralhub-eks/_search", json=query_body)
+        response = httpx.post(f"{elastic_url}/centralhub-eks/_search", json=query_body, verify=True)
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code == 404:

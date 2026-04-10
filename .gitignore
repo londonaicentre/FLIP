@@ -332,9 +332,11 @@ flip-fl-api/transfer/*/*
 *.tfplan
 
 # Environment files with sensitive credentials
-.env.development    
+.env.development
 .env.stag
 .env.production
+
+
 
 trust/terraform.tfstate
 
@@ -357,3 +359,12 @@ SECURITY_INCIDENT.md
 trust/certs/
 
 *.crt
+*.jar
+
+*.war
+*.tf.backup
+.deployment-structure-analysis.md
+deploy/providers/AWS/REFACTORING.md
+
+# Email template preview files (generated locally for testing)
+deploy/providers/AWS/email_previews/

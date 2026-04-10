@@ -21,9 +21,9 @@ services:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
       # Provisioned NVFLARE secrets (certificates, fed_client.json)
-      - ${FL_PROVISIONED_DIR}/net-1/services/Trust_${TRUST_NUMBER}/local:/app/local
-      - ${FL_PROVISIONED_DIR}/net-1/services/Trust_${TRUST_NUMBER}/startup:/app/startup
-      - ${FL_PROVISIONED_DIR}/net-1/services/Trust_${TRUST_NUMBER}/transfer:/app/transfer
+      - ${FL_PROVISIONED_DIR}/net-1/services/${TRUST_NAME}/local:/app/local
+      - ${FL_PROVISIONED_DIR}/net-1/services/${TRUST_NAME}/startup:/app/startup
+      - ${FL_PROVISIONED_DIR}/net-1/services/${TRUST_NAME}/transfer:/app/transfer
     environment:
       - NET_ID=net-1
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
@@ -32,11 +32,10 @@ services:
       - MIN_CLIENTS=${MIN_CLIENTS}
       - IMAGES_DIR=/app/data/images
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
-      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      # FL clients intentionally do not have access to Central Hub API credentials.
+      # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
       - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
       - IMAGING_API_URL=${IMAGING_API_URL}
-      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
-      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
     networks:
       - default
       - deploy_shared-net-1
@@ -49,9 +48,9 @@ services:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
       # Provisioned NVFLARE secrets (certificates, fed_client.json)
-      - ${FL_PROVISIONED_DIR}/net-2/services/Trust_${TRUST_NUMBER}/local:/app/local
-      - ${FL_PROVISIONED_DIR}/net-2/services/Trust_${TRUST_NUMBER}/startup:/app/startup
-      - ${FL_PROVISIONED_DIR}/net-2/services/Trust_${TRUST_NUMBER}/transfer:/app/transfer
+      - ${FL_PROVISIONED_DIR}/net-2/services/${TRUST_NAME}/local:/app/local
+      - ${FL_PROVISIONED_DIR}/net-2/services/${TRUST_NAME}/startup:/app/startup
+      - ${FL_PROVISIONED_DIR}/net-2/services/${TRUST_NAME}/transfer:/app/transfer
     environment:
       - NET_ID=net-2
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
@@ -60,11 +59,10 @@ services:
       - MIN_CLIENTS=${MIN_CLIENTS}
       - IMAGES_DIR=/app/data/images
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
-      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      # FL clients intentionally do not have access to Central Hub API credentials.
+      # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
       - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
       - IMAGING_API_URL=${IMAGING_API_URL}
-      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
-      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
     networks:
       - default
       - deploy_shared-net-2

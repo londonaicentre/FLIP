@@ -26,7 +26,10 @@ ENCODED_KEY = base64.b64encode(RAW_KEY_BYTES).decode()
 @pytest.fixture
 def mock_settings():
     """Mock settings for AWS region."""
-    with patch("flip_api.utils.encryption.get_settings") as mock_get_settings:
+    with (
+        patch("flip_api.utils.encryption.get_settings") as mock_get_settings,
+        patch("flip_api.utils.encryption._aes_key_cache", None),
+    ):
         mock_get_settings.return_value.ENV = "production"
         mock_get_settings.return_value.AES_KEY_BASE64 = ENCODED_KEY
         yield mock_get_settings

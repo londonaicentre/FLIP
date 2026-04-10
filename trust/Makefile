@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 create-networks remove-networks recreate-networks tests
+.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 up-local-trust-stag create-networks remove-networks recreate-networks tests
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=../.env.production
@@ -50,6 +50,8 @@ network2 = deploy_trust-network-2
 trust1 = trust1
 trust2 = trust2
 
+get_json_value = $(shell python3 ../flip-api/src/flip_api/scripts/env_utils.py '$(1)' $(2))
+
 OMOP_DB_CMD=make -C ./omop-db
 DOCKER_COMPOSE_CMD=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f compose_trust.debug.override.yml
@@ -64,7 +66,6 @@ PULL_ALWAYS_FLAG=
 endif
 
 TRUST_1_VARS = \
-	TRUST_NUMBER=1 \
 	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST1} \
 	OMOP_DB_PORT=${OMOP_DB_PORT_TRUST_1} \
 	PACS_UI_PORT=${PACS_UI_PORT_TRUST_1} \
@@ -76,10 +77,12 @@ TRUST_1_VARS = \
 	TRUST_DEBUG_PORT=${TRUST_DEBUG_PORT_TRUST_1} \
 	IMAGING_DEBUG_PORT=${IMAGING_DEBUG_PORT_TRUST_1} \
 	DATA_ACCESS_DEBUG_PORT=${DATA_ACCESS_DEBUG_PORT_TRUST_1} \
+	GRAFANA_PORT=${GRAFANA_PORT_TRUST_1} \
+	LOKI_PORT=${LOKI_PORT_TRUST_1} \
 	TRUST_NETWORK_NAME=${network1} \
-	TRUST_NAME=trust1
+	TRUST_NAME=Trust_1 \
+	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),Trust_1)
 TRUST_2_VARS = \
-	TRUST_NUMBER=2 \
 	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST2} \
 	OMOP_DB_PORT=${OMOP_DB_PORT_TRUST_2} \
 	PACS_UI_PORT=${PACS_UI_PORT_TRUST_2} \
@@ -90,12 +93,15 @@ TRUST_2_VARS = \
 	TRUST_DEBUG_PORT=${TRUST_DEBUG_PORT_TRUST_2} \
 	IMAGING_DEBUG_PORT=${IMAGING_DEBUG_PORT_TRUST_2} \
 	DATA_ACCESS_DEBUG_PORT=${DATA_ACCESS_DEBUG_PORT_TRUST_2} \
+	GRAFANA_PORT=${GRAFANA_PORT_TRUST_2} \
+	LOKI_PORT=${LOKI_PORT_TRUST_2} \
 	TRUST_NETWORK_NAME=${network2} \
-	TRUST_NAME=trust2
+	TRUST_NAME=Trust_2 \
+	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),Trust_2)
 
 build:
-	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} build --no-cache
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} build
+	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust1} build --no-cache
+	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} build
 
 # Uses --pull always to ensure the latest FL images and omop-db image are used
 # ensure omop data is up to date before bringing up trust 1
@@ -112,8 +118,8 @@ down-trust-1:
 
 restart-trust-1: down-trust-1 up-trust-1
 
-# Uses --pull always to ensure the latest FL images, 'stag' version, and omop-db images are used
-up-trust-1-stag:
+# Uses --pull always to ensure the latest FL images, 'stag' or 'prod' version, and omop-db images are used
+up-trust-1-ec2:
 # omop data will be downloaded onto the ec2 instance as part of deploy/providers/AWS/site.yml, so no need to do it here
 # NOTE eventually if we get AWSCLI on the ec2 instance by default then we could run update-omop-data here too.
 	@echo "🚢 Starting Trust 1 services..."
@@ -121,9 +127,23 @@ up-trust-1-stag:
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p ${trust1} up -d --pull always
 
-down-trust-1-stag:
+down-trust-1-ec2:
 	@echo "🛑 Stopping Trust 1 services..."
 	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust1} down --remove-orphans
+
+# LOCAL_TRUST_NAME controls which NVFlare participant kit the FL client mounts.
+# Local (on-prem) trusts use Trust_2 kit; EC2 trusts use Trust_1 kit (default).
+# LOCAL_TRUST_NAME is defined in deploy/providers/AWS/Makefile
+up-local-trust-stag:
+	## Starts Trust 1 compose stack
+	## Uses project name 'trust1' so trust-api, imaging-api, etc. keep their normal names,
+	## but overrides TRUST_NAME so the FL client mounts Trust_2/ kit dir.
+	@echo "🚢 Starting local Trust services (TRUST_NAME=$(LOCAL_TRUST_NAME))..."
+	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
+	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
+	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST1}
+	$(TRUST_1_VARS) TRUST_NAME=$(LOCAL_TRUST_NAME) TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),$(LOCAL_TRUST_NAME)) DEBUG=$(DEBUG) \
+		$(DOCKER_COMPOSE_CMD) -p $(trust1) up -d --pull always
 
 # Uses --pull always to ensure the latest FL images and omop-db image are used
 # ensure omop data is up to date before bringing up trust 2
@@ -159,10 +179,10 @@ create-networks-core:
 	@{ docker network inspect deploy_shared-net-2 >/dev/null 2>&1 || docker network create --driver bridge deploy_shared-net-2 || true; }
 
 create-networks-trust-1:
-	@{ docker network inspect deploy_trust-network-1 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-1 || true; }
+	@{ docker network inspect deploy_trust-network-1 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-1; }
 
 create-networks-trust-2:
-	@{ docker network inspect deploy_trust-network-2 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-2 || true; }
+	@{ docker network inspect deploy_trust-network-2 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-2; }
 
 create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2
 

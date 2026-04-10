@@ -46,10 +46,6 @@ variable "create_elastic_ip" {
   default = false
 }
 
-variable "TRUST_API_PORT" {
-  type    = number
-}
-
 variable "XNAT_PORT" {
   type    = number
 }

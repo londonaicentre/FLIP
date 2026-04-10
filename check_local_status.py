@@ -199,6 +199,96 @@ def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 
         return False
 
 
+def check_https_loopback_insecure(url: str, name: str, expected_status: int = 200) -> bool:
+    """Check HTTPS endpoint with certificate verification disabled (--insecure, -k).
+
+    DIAGNOSTIC EXCEPTION: This function uses insecure (-k) mode ONLY for localhost/loopback
+    checks where the certificate SAN does not cover 'localhost' (e.g. it was issued for the
+    machine's public IP). This is acceptable for local health diagnostics.
+
+    WARNING: Do NOT use this pattern for general HTTPS checks or non-loopback endpoints.
+    See CONTRIBUTING.md for guidance on secure transport validation.
+
+    Args:
+        url: The URL to check (should be localhost/127.0.0.1)
+        name: Descriptive name of the endpoint
+        expected_status: Expected HTTP status code (default 200)
+
+    Returns:
+        True if endpoint responds with expected status, False otherwise
+    """
+    print_status("INFO", f"Checking {name} (HTTPS insecure) at {url}...")
+
+    success, output = run_command(
+        ["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", url],
+        timeout=15,
+    )
+
+    if not success:
+        print_status("FAIL", f"{name} HTTPS check failed: {output}")
+        return False
+
+    status = output.strip()
+    if status == str(expected_status):
+        print_status("PASS", f"{name} is responding over HTTPS (HTTP {status})")
+        return True
+    else:
+        print_status("FAIL", f"{name} returned HTTP {status} over HTTPS (expected {expected_status})")
+        return False
+
+
+def check_endpoint_rejects_insecure(url: str, name: str) -> bool:
+    """Verify that an HTTP endpoint properly rejects insecure connections.
+
+    For endpoints that MUST be HTTPS-only, this verifies that HTTP requests are rejected.
+    Returns True if the connection is properly rejected (fails or redirects).
+    Returns False (FAIL) if an insecure connection succeeds with 200.
+
+    Args:
+        url: The URL to check (typically HTTP version of an HTTPS endpoint)
+        name: Descriptive name of the endpoint
+
+    Returns:
+        True if insecure connection is properly rejected, False if it unwisely succeeds
+    """
+    print_status("INFO", f"Verifying {name} rejects insecure connection at {url}...")
+
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=5) as response:
+            if response.status == 200:
+                print_status(
+                    "FAIL",
+                    f"{name} CRITICALLY responded with HTTP 200 to insecure request. Endpoint should be HTTPS-only.",
+                )
+                return False
+            else:
+                print_status(
+                    "PASS",
+                    f"{name} properly rejected insecure connection (HTTP {response.status})",
+                )
+                return True
+    except urllib.error.HTTPError as e:
+        if e.code == 200:
+            print_status(
+                "FAIL",
+                f"{name} CRITICALLY responded with HTTP 200 to insecure request",
+            )
+            return False
+        else:
+            print_status(
+                "PASS",
+                f"{name} properly rejected insecure connection (HTTP {e.code})",
+            )
+            return True
+    except (urllib.error.URLError, ConnectionRefusedError, TimeoutError):
+        print_status("PASS", f"{name} properly rejected insecure connection")
+        return True
+    except Exception as e:
+        print_status("PASS", f"{name} properly rejected insecure connection: {e}")
+        return True
+
+
 def load_env_file(env_file: Path) -> dict:
     """Load environment variables from a file.
 
@@ -554,9 +644,11 @@ def main(
         # Check Trust endpoints if they exist
         print_section("Trust Service Endpoint Checks")
 
+        # Trust API is exposed directly (no nginx-tls proxy — all communication is outbound polling)
         check_http_endpoint(f"http://localhost:{TRUST_API_PORT}/health", "Trust API Health", 200)
         check_http_endpoint(f"http://localhost:{TRUST_API_PORT}/docs", "Trust API Docs", 200)
 
+        # Imaging and Data Access APIs are plain HTTP internal services
         check_http_endpoint(f"http://localhost:{IMAGING_API_PORT}/health", "Imaging API Health", 200)
         check_http_endpoint(f"http://localhost:{IMAGING_API_PORT}/docs", "Imaging API Docs", 200)
 
