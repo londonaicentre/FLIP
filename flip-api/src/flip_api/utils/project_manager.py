@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import Optional
 from uuid import UUID
 
 from sqlmodel import Session
@@ -21,7 +22,7 @@ from flip_api.domain.schemas.status import ProjectStatus
 from flip_api.utils.logger import logger
 
 
-def get_project_by_id(project_id: UUID, db: Session) -> Projects | None:
+def get_project_by_id(project_id: UUID, db: Session) -> Optional[Projects]:
     """
     Get project by ID from database, ignoring soft-deleted ones.
 
@@ -30,7 +31,7 @@ def get_project_by_id(project_id: UUID, db: Session) -> Projects | None:
         db (Session): The SQLModel session to use for database operations.
 
     Returns:
-        Projects | None: The project object if found, otherwise None.
+        Optional[Projects]: The project object if found, otherwise None.
     """
     logger.debug(f"Getting project with id: '{project_id}'")
 

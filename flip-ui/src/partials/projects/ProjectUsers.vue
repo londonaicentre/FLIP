@@ -76,7 +76,7 @@
     </div>
     <div class="flex flex-col-reverse items-start w-full h-full mb-2 space-y-2 space-y-reverse overflow-y-auto">
         <div
-            v-for="(row, i) in displayUsers"
+            v-for="(row, i) in userList"
             :key="row.id"
             data-test="added-user-project-list"
             class="flex flex-row items-center w-full px-4 py-2 border border-gray-300 rounded-md dark:border-gray-600"
@@ -97,7 +97,7 @@
             </button>
         </div>
         <div
-            v-if="!displayUsers.length"
+            v-if="!userList.length"
             class="flex flex-row items-center justify-center w-full p-6 text-sm text-gray-600 border-2 border-gray-300 border-dashed rounded-md dark:text-gray-400 dark:border-gray-600"
         >
             No Project Users
@@ -108,7 +108,7 @@
 <script setup lang="ts">
 import { AxiosError } from "axios";
 import { Form } from "vee-validate";
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import { directive as vTippy } from "vue-tippy";
 import { object } from "yup";
 
@@ -116,7 +116,6 @@ import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
 import { IProjectUser, validateUser } from "@/services/user-service";
-import { useAuthStore } from "@/store/auth";
 import { emailValidation } from "@/utils/forms/validation";
 
 export interface IProjectUsersProps {
@@ -133,13 +132,9 @@ const props = withDefaults(
     { readonly: false }
 );
 
-const authStore = useAuthStore();
-const currentUserId = authStore.user?.userId;
-
 const formSubmit = ref<boolean>(false);
 let enteredEmail: string;
 const userList = ref<IProjectUser[]>(props.users);
-const displayUsers = computed(() => userList.value.filter(u => u.id !== currentUserId));
 const invalidUser = ref<string[]>([]);
 const userIsDirty = ref(false);
 

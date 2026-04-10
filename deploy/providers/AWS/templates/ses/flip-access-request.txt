@@ -10,16 +10,5 @@
 # limitations under the License.
 #
 
-FLIP - Federated Learning & Interoperability Platform
-
-Hello,
-
-A new access request has been submitted on FLIP.
-
-Request details:
-  Name: {{name}}
-  Email: {{email}}
-  Purpose: {{purpose}}
-
-The FLIP Team
-Federated Learning and Interoperability Platform
+User {{name}} ({{email}}) has requested access to FLIP.
+Purpose: {{purpose}}

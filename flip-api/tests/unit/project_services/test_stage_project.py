@@ -32,7 +32,7 @@ TEST_USER_ID = uuid.uuid4()
 @pytest.fixture
 def app_fixture() -> FastAPI:
     app = FastAPI()
-    app.include_router(stage_project_router, prefix="/api")
+    app.include_router(stage_project_router)
     return app
 
 
@@ -81,12 +81,12 @@ def test_stage_project_success(
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
         patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
         patch("flip_api.project_services.stage_project.stage_project_service"),
     ):
         # Act
-        response = client.post(f"/api/projects/{test_project_id}/stage", json=stage_request_payload)
+        response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
 
     # Assert
     assert response.status_code == status.HTTP_204_NO_CONTENT
@@ -99,11 +99,11 @@ def test_stage_project_access_denied(app_fixture, client, test_user_id, test_pro
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip_api.project_services.stage_project.can_modify_project", return_value=False),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=False),
         patch("flip_api.project_services.stage_project.get_project") as mock_get_project,
     ):
         # Act
-        response = client.post(f"/api/projects/{test_project_id}/stage", json=stage_request_payload)
+        response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
 
     # Assert
     assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -118,11 +118,11 @@ def test_stage_project_not_found(app_fixture, client, test_user_id, test_project
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
         patch("flip_api.project_services.stage_project.get_project", return_value=None),
     ):
         # Act
-        response = client.post(f"/api/projects/{test_project_id}/stage", json=stage_request_payload)
+        response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
 
     # Assert
     assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -139,11 +139,11 @@ def test_stage_project_not_unstaged_status(app_fixture, client, test_user_id, te
     mock_project_data.status = ProjectStatus.STAGED
 
     with (
-        patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
         patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
     ):
         # Act
-        response = client.post(f"/api/projects/{test_project_id}/stage", json=stage_request_payload)
+        response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
 
     # Assert
     assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -164,11 +164,11 @@ def test_stage_project_no_query(app_fixture, client, test_user_id, test_project_
     mock_project_data.query = None
 
     with (
-        patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
         patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
     ):
         # Act
-        response = client.post(f"/api/projects/{test_project_id}/stage", json=stage_request_payload)
+        response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
 
     # Assert
     assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -193,11 +193,11 @@ def test_stage_project_invalid_trusts_queried(
     mock_project_data.query.trusts_queried = 0
 
     with (
-        patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
         patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
     ):
         # Act
-        response = client.post(f"/api/projects/{test_project_id}/stage", json=stage_request_payload)
+        response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
 
     # Assert
     assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -217,7 +217,7 @@ def test_stage_project_value_error_from_service(
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
         patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
         patch(
             "flip_api.project_services.stage_project.stage_project_service",
@@ -225,7 +225,7 @@ def test_stage_project_value_error_from_service(
         ),
     ):
         # Act
-        response = client.post(f"/api/projects/{test_project_id}/stage", json=stage_request_payload)
+        response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
 
     # Assert
     assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -241,14 +241,14 @@ def test_stage_project_generic_exception(
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
+        patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
         patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
         patch(
             "flip_api.project_services.stage_project.stage_project_service", side_effect=Exception("Database error")
         ),
     ):
         # Act
-        response = client.post(f"/api/projects/{test_project_id}/stage", json=stage_request_payload)
+        response = client.post(f"/projects/{test_project_id}/stage", json=stage_request_payload)
 
     # Assert
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -264,7 +264,7 @@ def test_stage_project_invalid_project_id_format(app_fixture, client, stage_requ
     invalid_project_id = "not-a-valid-uuid"
 
     # Act
-    response = client.post(f"/api/projects/{invalid_project_id}/stage", json=stage_request_payload)
+    response = client.post(f"/projects/{invalid_project_id}/stage", json=stage_request_payload)
 
     # Assert
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -280,7 +280,7 @@ def test_stage_project_missing_trusts_in_payload(app_fixture, client, test_user_
     invalid_payload = {}  # Missing trusts field
 
     # Act
-    response = client.post(f"/api/projects/{test_project_id}/stage", json=invalid_payload)
+    response = client.post(f"/projects/{test_project_id}/stage", json=invalid_payload)
 
     # Assert
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY

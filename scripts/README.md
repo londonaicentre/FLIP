@@ -60,6 +60,7 @@ pre-commit run --all-files
 - **check-merge-conflict**: Detects merge conflict markers
 - **check-yaml**: Validates YAML syntax
 - **end-of-file-fixer**: Ensures files end with a newline
+- **trailing-whitespace**: Removes trailing whitespace
 - **detect-private-key**: Detects private SSH/SSL keys
 
 #### Component-Specific Scans
@@ -73,9 +74,22 @@ trufflehog git file://. --only-verified
 
 ## Emergency: Remove Secrets from Git History
 
-If secrets were accidentally committed, follow the [GitHub guide on removing sensitive data](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) using tools such as `git filter-repo` or BFG Repo-Cleaner.
+If secrets were accidentally committed, use the cleanup script:
 
-⚠️ **WARNING**: This rewrites git history. Only use when absolutely necessary. Coordinate with all team members before force-pushing.
+```bash
+./scripts/remove-env-from-history.sh
+```
+
+⚠️ **WARNING**: This rewrites git history. Only use when absolutely necessary.
+
+This script will:
+
+- Remove `.env.development` from all git history
+- Update `.gitignore` to prevent future commits
+- Create a backup branch before making changes
+- Provide instructions for force-pushing and team coordination
+
+**See [SECURITY_INCIDENT.md](../SECURITY_INCIDENT.md) for complete incident response procedures.**
 
 ## Tools Used
 

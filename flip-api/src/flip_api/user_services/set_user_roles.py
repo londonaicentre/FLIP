@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -18,7 +19,7 @@ from sqlmodel import Session, col, delete, select
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.user_models import PermissionRef, Role, User, UserRole, UsersAudit
+from flip_api.db.models.user_models import PermissionRef, User, UserRole, UsersAudit
 from flip_api.domain.interfaces.user import IRoles
 from flip_api.utils.cognito_helpers import validate_roles
 from flip_api.utils.logger import logger
@@ -59,9 +60,9 @@ def set_user_roles(
 
         user_roles_ids = roles_data.roles
 
-        # Get all available roles for validation (query Role table)
-        role_ids_from_db = db.exec(select(Role.id)).all()
-        role_ids: list[UUID] = [r for r in role_ids_from_db if r is not None]
+        # Get all available roles for validation
+        role_ids_from_db = db.exec(select(UserRole.role_id).distinct()).all()
+        role_ids: List[UUID] = [r for r in role_ids_from_db if r is not None]
         validate_roles(user_roles_ids, role_ids)  # This will raise an HTTPException if any role is invalid
 
         # Delete existing roles

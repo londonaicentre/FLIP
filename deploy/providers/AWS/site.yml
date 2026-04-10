@@ -34,50 +34,33 @@
       register: terraform_output
     - name: add Central Hub EC2 instance to Ansible inventory
       add_host:
-        name: flip
+        name: "{{ terraform_output.outputs.Ec2PublicIp.value }}"
         groups:
           - ec2
           - central_hub
-        ansible_host: flip
-        ansible_user: ubuntu
+        ansible_ssh_user: ubuntu
+        ansible_ssh_private_key_file: "{{ terraform_output.outputs.Keypair.value }}"
+        ansible_ssh_common_args: "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
         ansible_ec2_instance_id: "{{ terraform_output.outputs.Ec2InstanceId.value }}"
     - name: add Trust EC2 instance to Ansible inventory
       add_host:
-        name: flip-trust
+        name: "{{ terraform_output.outputs.TrustEc2PublicIp.value }}"
         groups:
           - ec2
           - trust_ec2
-        ansible_host: flip-trust
-        ansible_user: ubuntu
+        ansible_ssh_user: ubuntu
+        ansible_ssh_private_key_file: "{{ terraform_output.outputs.Keypair.value }}"
+        ansible_ssh_common_args: "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
         ansible_ec2_instance_id: "{{ terraform_output.outputs.TrustEc2InstanceId.value }}"
 
 - name: update packages
   hosts: ec2
   become: true
-  vars:
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: update and upgrade apt packages
       apt:
         upgrade: yes
         update_cache: yes
-
-- name: reboot if kernel update requires it
-  hosts: ec2
-  become: true
-  vars:
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
-  tasks:
-    - name: check if reboot is required
-      stat:
-        path: /run/reboot-required
-      register: reboot_required_file
-
-    - name: reboot and wait for EC2 to come back
-      reboot:
-        reboot_timeout: 300
-        post_reboot_delay: 30
-      when: reboot_required_file.stat.exists
 
 - name: install docker, adding ubuntu to docker group
   hosts: ec2
@@ -86,13 +69,10 @@
     - geerlingguy.docker
   vars:
     docker_users: [ubuntu]
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
 
 - name: install AWS CLI v2 on EC2 instances (if missing)
   hosts: ec2
   become: true
-  vars:
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: install prerequisites for AWS CLI
       apt:
@@ -128,8 +108,6 @@
 - name: create Central Hub application directories, create data directory for FL server and change ownership
   hosts: central_hub
   become: true
-  vars:
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: create Central Hub application directories
       file:
@@ -150,7 +128,6 @@
     central_s3_sources:
       - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/fl-server-net-1/"
       - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/flip-fl-api-net-1/"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: ensure central services directory exists
       file:
@@ -177,8 +154,6 @@
 - name: create Trust EC2 application directories
   hosts: trust_ec2
   become: true
-  vars:
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: create Trust application directories
       file:
@@ -192,13 +167,6 @@
         # Data directory for Trust 1 (where XNAT images will be downloaded for the FL client to use)
         # NOTE if this is not created here, it will be created later by Docker Compose but owned by root, and will cause permission issues
         - /opt/flip/data/trust-1
-        # XNAT bind-mount directories (Docker Swarm does not auto-create them)
-        - /opt/flip/xnat
-        - /opt/flip/xnat/xnat-data/tomcat_logs
-        - /opt/flip/xnat/xnat-data/archive
-        - /opt/flip/xnat/xnat-data/build
-        - /opt/flip/xnat/xnat-data/cache
-        - /opt/flip/xnat/xnat-db-data
 
 - name: download participant kit services to Trust EC2
   hosts: trust_ec2
@@ -206,7 +174,6 @@
   vars:
     trust_services_dir: "/opt/flip/services"
     trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/Trust_1/"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: ensure trust services directory exists
       file:
@@ -229,71 +196,12 @@
       register: trust_sync
       changed_when: "'download:' in trust_sync.stdout or 'copy:' in trust_sync.stdout"
 
-- name: deploy observability config files to Trust EC2
-  hosts: trust_ec2
-  become: true
-  tasks:
-    - name: create observability config directories
-      file:
-        path: "{{ item }}"
-        state: directory
-        owner: ubuntu
-        group: ubuntu
-        mode: "0755"
-      loop:
-        - /opt/flip/config/observability
-        - /opt/flip/config/observability/alloy
-        - /opt/flip/config/observability/loki
-        - /opt/flip/config/observability/grafana/provisioning/datasources
-        - /opt/flip/config/observability/grafana/provisioning/dashboards
-
-    - name: copy Alloy config
-      copy:
-        src: ../../../trust/observability/alloy/config.alloy
-        dest: /opt/flip/config/observability/alloy/config.alloy
-        owner: ubuntu
-        group: ubuntu
-        mode: "0644"
-
-    - name: copy Loki config
-      copy:
-        src: ../../../trust/observability/loki/loki-config.yml
-        dest: /opt/flip/config/observability/loki/loki-config.yml
-        owner: ubuntu
-        group: ubuntu
-        mode: "0644"
-
-    - name: copy Grafana Loki datasource provisioning
-      copy:
-        src: ../../../trust/observability/grafana/provisioning/datasources/loki.yml
-        dest: /opt/flip/config/observability/grafana/provisioning/datasources/loki.yml
-        owner: ubuntu
-        group: ubuntu
-        mode: "0644"
-
-    - name: copy Grafana dashboard provider config
-      copy:
-        src: ../../../trust/observability/grafana/provisioning/dashboards/dashboards.yml
-        dest: /opt/flip/config/observability/grafana/provisioning/dashboards/dashboards.yml
-        owner: ubuntu
-        group: ubuntu
-        mode: "0644"
-
-    - name: copy Grafana Trust APIs dashboard
-      copy:
-        src: ../../../trust/observability/grafana/provisioning/dashboards/trust-apis.json
-        dest: /opt/flip/config/observability/grafana/provisioning/dashboards/trust-apis.json
-        owner: ubuntu
-        group: ubuntu
-        mode: "0644"
-
 - name: install and configure CloudWatch agent on Central Hub
   hosts: central_hub
   become: true
   vars:
     cloudwatch_agent_deb: "https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb"
     log_group_name: "/aws/ec2/flip"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: install prerequisites
       apt:
@@ -328,7 +236,6 @@
   vars:
     cloudwatch_agent_deb: "https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb"
     log_group_name: "/aws/ec2/flip-trust"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: install prerequisites
       apt:
@@ -365,7 +272,6 @@
     s3_prefix: "omop"
     base_dir: "/opt/flip/volumes"
     trust1_key: "trust1_pgdata_20260106.tar.gz"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: install tar
       apt:
@@ -416,7 +322,6 @@
     archive: "trust1_orthanc_data_20260106.tar.gz"
     base_dir: "/opt/flip/orthanc"
     data_dir: "/opt/flip/orthanc/orthanc-storage"
-    ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
   tasks:
     - name: install tar
       apt:

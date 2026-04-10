@@ -10,21 +10,20 @@
 # limitations under the License.
 #
 
-from typing import Any
+from typing import Annotated, Any, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, conlist
 
 from flip_api.domain.schemas.status import BucketAction, BucketStatus, FileUploadStatus
-from flip_api.domain.schemas.types import NonEmptyUUIDList
 
 
 class ModelFiles(BaseModel):
     """Model for file paths in the model."""
 
-    algo: str | None = None
-    opener: str | None = None
-    model: str | None = None
+    algo: Optional[str] = None
+    opener: Optional[str] = None
+    model: Optional[str] = None
 
 
 class ModelFilesList(BaseModel):
@@ -50,7 +49,7 @@ class ScannedFileMessage(BaseModel):
 
 
 class ScannedFileInput(BaseModel):
-    Records: list[dict[str, Any]]
+    Records: List[Dict[str, Any]]
 
 
 class UploadFileBody(BaseModel):
@@ -59,15 +58,21 @@ class UploadFileBody(BaseModel):
     fileName: str = Field(..., description="Name of the file to upload")
 
 
-class ModelFile(BaseModel):
-    id: str | None = None
-    name: str
-    size: int | None = None
-    type: str | None = None
-    status: FileUploadStatus | None = None
+class ModelFileDelete(BaseModel):
     model_id: UUID
-    created: str | None = None
-    modified: str | None = None
+    fileName: str
+    user_id: UUID
+
+
+class ModelFile(BaseModel):
+    id: Optional[str] = None
+    name: str
+    size: Optional[int] = None
+    type: Optional[str] = None
+    status: Optional[FileUploadStatus] = None
+    model_id: UUID
+    created: Optional[str] = None
+    modified: Optional[str] = None
 
 
 class PreSignedUrlResponse(BaseModel):
@@ -95,4 +100,4 @@ class IdList(BaseModel):
     Ensures each item in the list is a valid UUID.
     """
 
-    ids: NonEmptyUUIDList
+    ids: Annotated[list[UUID], conlist(UUID, min_length=1)]

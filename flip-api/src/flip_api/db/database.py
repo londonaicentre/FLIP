@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from collections.abc import Generator
+from typing import Generator
 from urllib.parse import quote_plus
 
 from sqlmodel import Session, create_engine

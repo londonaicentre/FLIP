@@ -12,6 +12,7 @@
 
 from datetime import datetime
 from enum import Enum
+from typing import List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, validator
@@ -23,6 +24,15 @@ from flip_api.domain.schemas.status import ModelStatus, TrustIntersectStatus
 
 class ModelStatusEdit(str, Enum):
     PENDING = "PENDING"
+
+
+class ImageType(str, Enum):
+    CLIENT = "CLIENT"
+    SERVER = "SERVER"
+
+
+class IImage(BaseModel):
+    imageRef: str
 
 
 class IModelDetails(BaseModel):
@@ -38,7 +48,7 @@ class IModelLog(BaseModel):
     timestamp: datetime = Field(alias="@timestamp")
     model: str
     status: str
-    trust: str | None = None
+    trust: Optional[str] = None
     message: str
 
 
@@ -95,7 +105,7 @@ class IQuery(BaseModel):
     id: UUID
     name: str
     query: str
-    results: list[TrustsResults] | None = Field(default=None)
+    results: Optional[List[TrustsResults]] = Field(default=None)
 
 
 class IModelResponse(BaseModel):
@@ -104,8 +114,8 @@ class IModelResponse(BaseModel):
     model_description: str = Field(..., alias="modelDescription")
     project_id: UUID = Field(..., alias="projectId")
     status: ModelStatus
-    query: IQuery | None = Field(default=None)
-    files: list[UploadedFiles] | None = None
+    query: Optional[IQuery] = Field(default=None)
+    files: Optional[List[UploadedFiles]] = None
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -139,7 +149,7 @@ class ILog(BaseModel):
     model_id: UUID = Field(..., alias="modelId")
     log_date: datetime = Field(..., alias="logDate")
     success: bool
-    trust_name: str | None = Field(default=None, alias="trustName")
+    trust_name: Optional[str] = Field(default=None, alias="trustName")
     log: str
 
     model_config = ConfigDict(
@@ -166,11 +176,11 @@ class IModelMetricsValue(BaseModel):
 
 
 class IModelMetricsData(BaseModel):
-    data: list[IModelMetricsValue]
+    data: List[IModelMetricsValue]
     seriesLabel: str
 
 
 class IModelMetrics(BaseModel):
     yLabel: str
     xLabel: str
-    metrics: list[IModelMetricsData]
+    metrics: List[IModelMetricsData]

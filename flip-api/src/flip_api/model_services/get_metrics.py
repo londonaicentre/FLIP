@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
@@ -27,7 +28,7 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 
 
 # [#114] ✅
-@router.get("/{model_id}/metrics", response_model=list[IModelMetrics], status_code=status.HTTP_200_OK)
+@router.get("/{model_id}/metrics", response_model=List[IModelMetrics], status_code=status.HTTP_200_OK)
 def get_metrics_endpoint(
     model_id: UUID = Path(..., title="Model ID"),
     db: Session = Depends(get_session),
@@ -42,7 +43,7 @@ def get_metrics_endpoint(
         user_id (UUID): User ID from authentication.
 
     Returns:
-        list[IModelMetrics]: A list of metrics associated with the specified model.
+        List[IModelMetrics]: A list of metrics associated with the specified model.
 
     Raises:
         HTTPException: If the user does not have access to the model, if the model does not exist, or if there is a

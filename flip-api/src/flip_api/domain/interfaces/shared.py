@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Any
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -30,7 +30,7 @@ Base = declarative_base()
 # Core Types
 # ---------------------------
 
-ProcessEnv = dict[str, str | None]
+ProcessEnv = Dict[str, Optional[str]]
 
 
 class IId(BaseModel):
@@ -47,7 +47,7 @@ class IFileInfo:
     status: FileUploadStatus
     size: int
     type: str
-    tag: FileUploadTag | None
+    tag: Optional[FileUploadTag]
 
 
 class IScannedFileRecord:
@@ -66,11 +66,11 @@ class IScannedFileMessage:
 
 
 class IScannedFileInput:
-    Records: list[IScannedFileRecord]
+    Records: List[IScannedFileRecord]
 
 
 class SQLArray:
-    array: list[str]
+    array: List[str]
 
 
 class ICount:

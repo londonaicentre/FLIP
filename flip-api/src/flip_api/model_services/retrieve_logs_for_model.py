@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 
 
 # [#114] ✅
-@router.get("/{model_id}/logs", response_model=list[ILog], status_code=status.HTTP_200_OK)
+@router.get("/{model_id}/logs", response_model=List[ILog], status_code=status.HTTP_200_OK)
 def retrieve_logs_for_model_endpoint(
     model_id: UUID = Path(..., title="Model ID"),
     db: Session = Depends(get_session),
@@ -43,7 +44,7 @@ def retrieve_logs_for_model_endpoint(
         user_id (UUID): User ID from authentication.
 
     Returns:
-        list[FLLogs]: A list of logs associated with the specified model.
+        List[FLLogs]: A list of logs associated with the specified model.
 
     Raises:
         HTTPException: If the user does not have access to the model, if the model does not exist, or if there is a

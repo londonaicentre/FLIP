@@ -52,7 +52,7 @@ def retrieve_model_files_list(
     try:
         # Check user access
         if not can_access_model(user_id, model_id, db):
-            logger.error(f"User ID: {user_id} does not have access to model {model_id}")
+            logger.error(f"User ID: {user_id} does not have access to Model ID: {model_id}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"User with ID: {user_id} is denied access to this model",

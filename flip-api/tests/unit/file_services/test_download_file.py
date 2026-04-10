@@ -42,8 +42,8 @@ def mock_s3_client():
 
 @pytest.fixture
 def mock_access_manager():
-    """Mock can_modify_model function."""
-    with patch("flip_api.file_services.download_file.can_modify_model") as mock_access:
+    """Mock can_access_model function."""
+    with patch("flip_api.file_services.download_file.can_access_model") as mock_access:
         # Default to allowing access
         mock_access.return_value = True
         yield mock_access
@@ -121,7 +121,7 @@ def test_download_file_access_denied(
 
     # Verify the status code is 403 (Forbidden)
     assert excinfo.value.status_code == status.HTTP_403_FORBIDDEN
-    assert "is not allowed" in str(excinfo.value.detail)
+    assert "denied access" in str(excinfo.value.detail)
 
 
 def test_download_file_not_found(

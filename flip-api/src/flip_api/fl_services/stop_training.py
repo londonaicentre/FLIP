@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
-from flip_api.auth.access_manager import can_modify_model
+from flip_api.auth.access_manager import can_access_model
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.domain.schemas.status import ModelStatus
@@ -48,12 +48,12 @@ def stop_training(
         None
 
     Raises:
-        HTTPException: If the user is not allowed or if there is an error while stopping training.
+        HTTPException: If the user does not have access to the model or if there is an error while stopping training.
     """
-    if not can_modify_model(user_id, model_id, db):
+    if not can_access_model(user_id, model_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User with ID: {user_id} is not allowed to modify this model and cannot stop training",
+            detail=f"User with ID: {user_id} is denied access to this model and cannot stop training",
         )
 
     try:

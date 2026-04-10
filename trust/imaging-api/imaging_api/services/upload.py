@@ -90,6 +90,7 @@ async def upload_data_to_xnat(
 
     # Parse subject ID from experiment response
     subject_id = get_subject_id_from_experiment_response(experiment_response)
+    logger.info(f"Subject ID: {subject_id}")
 
     # Create scan in XNAT
     # Note this function will not complain if the scan already exists.

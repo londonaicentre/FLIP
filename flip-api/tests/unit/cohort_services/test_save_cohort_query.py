@@ -43,9 +43,8 @@ def mock_db_session():
     return MockSession()
 
 
-@patch("flip_api.cohort_services.save_cohort_query.can_modify_project", return_value=True)
 @patch("flip_api.cohort_services.save_cohort_query.has_project_status", return_value=True)
-def test_save_cohort_query(mock_has_project_status, mock_can_modify, mock_db_session, mock_auth_token):
+def test_save_cohort_query(mock_has_project_status, mock_db_session, mock_auth_token):
     # Sample input data
     cohort_query_input = CohortQueryInput(name="Test Query", query="SELECT * FROM table", project_id=project_id)
 
@@ -67,11 +66,8 @@ def test_save_cohort_query(mock_has_project_status, mock_can_modify, mock_db_ses
     assert result.name == cohort_query_input.name
 
 
-@patch("flip_api.cohort_services.save_cohort_query.can_modify_project", return_value=True)
 @patch("flip_api.cohort_services.save_cohort_query.has_project_status", return_value=False)
-def test_save_cohort_query_invalid_project_status(
-    mock_has_project_status, mock_can_modify, mock_db_session, mock_auth_token
-):
+def test_save_cohort_query_invalid_project_status(mock_has_project_status, mock_db_session, mock_auth_token):
     cohort_query_input = CohortQueryInput(name="Invalid Project", query="SELECT 1", project_id=project_id)
 
     request = MagicMock()
@@ -84,11 +80,8 @@ def test_save_cohort_query_invalid_project_status(
     assert exc_info.value.status_code == 400
 
 
-@patch("flip_api.cohort_services.save_cohort_query.can_modify_project", return_value=True)
 @patch("flip_api.cohort_services.save_cohort_query.has_project_status", return_value=True)
-def test_save_cohort_query_query_id_not_created(
-    mock_has_project_status, mock_can_modify, mock_db_session, mock_auth_token
-):
+def test_save_cohort_query_query_id_not_created(mock_has_project_status, mock_db_session, mock_auth_token):
     # Mock refresh to simulate `new_query.id` is None
     def refresh_side_effect(obj):
         obj.id = None
@@ -107,9 +100,8 @@ def test_save_cohort_query_query_id_not_created(
     assert exc_info.value.status_code == 400
 
 
-@patch("flip_api.cohort_services.save_cohort_query.can_modify_project", return_value=True)
 @patch("flip_api.cohort_services.save_cohort_query.has_project_status")
-def test_save_cohort_query_internal_error(mock_has_project_status, mock_can_modify, mock_db_session, mock_auth_token):
+def test_save_cohort_query_internal_error(mock_has_project_status, mock_db_session, mock_auth_token):
     # Simulate an unexpected error being raised
     mock_has_project_status.side_effect = Exception("Unexpected DB failure")
 

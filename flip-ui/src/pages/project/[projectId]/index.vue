@@ -83,11 +83,10 @@
                                 />
                             </template>
                         </AiGuard>
-                        <AiGuard :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess() || isObserver">
+                        <AiGuard :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess()">
                             <AiButton light data-test="edit-project-btn" @click.capture="openEditProjectDrawer">
-                                <icon-mdi-pencil-outline v-if="!isObserver" class="mr-2" />
-                                <icon-mdi-eye-outline v-else class="mr-2" />
-                                {{ isObserver ? "View Project" : "Edit Project" }}
+                                <icon-mdi-pencil-outline class="mr-2" />
+                                Edit Project
                             </AiButton>
                         </AiGuard>
                     </div>
@@ -149,7 +148,7 @@
             :show="editDrawerOpen"
             :name="project.name"
             :users="project.users"
-            :project-unstaged="isProjectUnstaged() && !isObserver"
+            :project-unstaged="isProjectUnstaged()"
             :description="project.description"
             :updating="projectUpdating"
             :owner-id="project.ownerId"
@@ -241,14 +240,12 @@ const { project } = storeToRefs(projectStore);
 
 const editProjectPermissions: UserPermissions[] = ["CanManageProjects"];
 const unstageProjectPermissions: UserPermissions[] = ["CanUnstageProjects"];
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
 
 const projectApproved = computed(() => {
     return project?.value?.status === "APPROVED";
 });
 
 const isOwnerOrHasAccess = () => {
-    if (!authStore.hasPermissions(["CanManageProjects"])) return false;
     const projectOwner = project?.value?.ownerId;
     const currentUserId = authStore.user?.userId;
 

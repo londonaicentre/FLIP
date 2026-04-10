@@ -15,8 +15,6 @@
 
 services:
 
-  # --- Application services ---
-
   omop-db:
     image: ghcr.io/londonaicentre/omop-db:latest
     restart: always
@@ -70,13 +68,11 @@ services:
       DEBUG: ${DEBUG}
       ENV: development
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
-      LOG_LEVEL: ${TRUST_LOG_LEVEL}
     # NOTE the volume BASE_IMAGES_DOWNLOAD_DIR is mounted to share images downloaded from XNAT with FL clients
     volumes:
       - ./imaging-api/imaging_api:/app/imaging_api
       - ./imaging-api/tests:/app/tests
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
-      - ./observability/log_config:/app/log_config:ro
 
   data-access-api:
     build:
@@ -99,26 +95,9 @@ services:
       DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT_TRUST_1}
       DEBUG: ${DEBUG}
       ENV: development
-      LOG_LEVEL: ${TRUST_LOG_LEVEL}
     volumes:
       - ./data-access-api/data_access_api:/app/data_access_api
       - ./data-access-api/tests:/app/tests
-      - ./observability/log_config:/app/log_config:ro
-
-  nginx-tls:
-    build:
-      context: ./nginx
-      dockerfile: Dockerfile
-    # No ports here: each trust instance declares its own host port in its override
-    # file (compose_trust-1_override.yml, compose_trust-2_override.yml) so that
-    # multiple instances on the same host do not conflict.
-    volumes:
-      - ./certs:/etc/nginx/certs:ro
-    depends_on:
-      - trust-api
-    networks:
-      - default
-      - central-hub-trust-apis-network
 
   trust-api:
     build:
@@ -126,68 +105,27 @@ services:
         UID: ${UID}
         GID: ${GID}
         UNAME: ${UNAME}
-        DEBUG_PORT: ${TRUST_DEBUG_PORT}
+        DEBUG_PORT: ${TRUST_DEBUG_PORT_TRUST_1}
       context: ./trust-api
       dockerfile: Dockerfile
       target: development
     # ports:
-    #   - "${TRUST_API_PORT}:8000"   # nginx-tls exposes the external port; keep this commented
+    #   - "${TRUST_API_PORT}:8000"
     environment:
       CENTRAL_HUB_API_URL: ${CENTRAL_HUB_API_URL}
       DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
       IMAGING_API_URL: ${IMAGING_API_URL}
-      DEBUG_PORT: ${TRUST_DEBUG_PORT}
+      DEBUG_PORT: ${TRUST_DEBUG_PORT_TRUST_1}
       DEBUG: ${DEBUG}
       PRIVATE_API_KEY_HEADER: ${PRIVATE_API_KEY_HEADER}
       PRIVATE_API_KEY: ${PRIVATE_API_KEY}
       ENV: development
-      LOG_LEVEL: ${TRUST_LOG_LEVEL}
     volumes:
       - ./trust-api/trust_api:/app/trust_api
       - ./trust-api/tests:/app/tests
-      - ./observability/log_config:/app/log_config:ro
     networks:
       - default
       - central-hub-trust-apis-network
-
-  # --- Observability infrastructure ---
-
-  loki:
-    image: grafana/loki:3.4.0
-    command: -config.file=/etc/loki/loki-config.yml
-    ports:
-      - "${LOKI_PORT}:3100"
-    volumes:
-      - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
-      - loki-data:/loki
-
-  alloy:
-    image: grafana/alloy:v1.9.0
-    command:
-      - run
-      - --server.http.listen-addr=0.0.0.0:12345
-      - /etc/alloy/config.alloy
-    volumes:
-      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    depends_on:
-      - loki
-
-  grafana:
-    image: grafana/grafana:11.5.0
-    ports:
-      - "${GRAFANA_PORT}:3000"
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
-    volumes:
-      - grafana-data:/var/lib/grafana
-      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
-    depends_on:
-      - loki
-
-volumes:
-  loki-data:
-  grafana-data:
 
 networks:
   default:

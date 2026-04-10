@@ -1,0 +1,28 @@
+# Portions derived from the XNAT docker-compose project
+# Copyright (c) 2020, Washington University School of Medicine
+# Licensed under the BSD 2-Clause License.
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Modifications Copyright (c) 2026,
+# Guy's and St Thomas' NHS Foundation Trust & King's College London
+
+# Created by .ignore support plugin (hsz.mobi)
+*.swo
+*.swp
+
+# Ignore Gradle project-specific cache directory
+.gradle/
+
+# Ignore build manifests
+manifest*.json
+
+# Ignore gradle.properties to allow setting persistent property overrides
+gradle.properties
+
+# Ignore log and env files, as well as mounted data folders and plugin folders.
+*.log
+*-data/
+xnat/plugins/*.jar
+xnat/build-artifacts/*.war
+
+xnat/webapps

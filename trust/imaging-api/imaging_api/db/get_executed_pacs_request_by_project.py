@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -19,7 +20,7 @@ from imaging_api.db.models import ExecutedPacsRequest, ExecutedPacsRequestORM
 from imaging_api.utils.logger import logger
 
 
-async def get_executed_pacs_request_by_project(project_id: str, session: AsyncSession) -> list[ExecutedPacsRequest]:
+async def get_executed_pacs_request_by_project(project_id: str, session: AsyncSession) -> List[ExecutedPacsRequest]:
     """
     Get all executed PACS requests for a given project.
 
@@ -28,7 +29,7 @@ async def get_executed_pacs_request_by_project(project_id: str, session: AsyncSe
         session (AsyncSession): The database session.
 
     Returns:
-        list[ExecutedPacsRequest]: A list of executed PACS requests.
+        List[ExecutedPacsRequest]: A list of executed PACS requests.
 
     Raises:
         HTTPException: If project_id is empty.

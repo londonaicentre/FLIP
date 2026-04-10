@@ -11,76 +11,12 @@
 #
 
 from unittest.mock import patch
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException, status
-from fastapi.testclient import TestClient
 
-from flip_api.auth.dependencies import verify_token
-from flip_api.domain.schemas.users import CognitoUser
-from flip_api.main import app
 from flip_api.user_services.get_user import get_user
-
-client = TestClient(app)
-
-
-# ---------------------
-# Fixtures
-# ---------------------
-
-
-@pytest.fixture(autouse=True)
-def override_deps():
-    """Override auth dependency for all tests using TestClient."""
-    app.dependency_overrides[verify_token] = lambda: uuid4()
-    yield
-    app.dependency_overrides.clear()
-
-
-# ---------------------
-# TestClient tests (exercises full response serialization)
-# ---------------------
-
-
-def test_get_user_by_email_response_serialization():
-    """Test that the endpoint correctly serializes a CognitoUser response with aliased fields."""
-    cognito_user = CognitoUser(id=uuid4(), email="test@example.com", is_disabled=False)
-
-    with (
-        patch("flip_api.user_services.get_user.get_user_pool_id", return_value="test-pool"),
-        patch("flip_api.user_services.get_user.get_user_by_email_or_id", return_value=cognito_user),
-    ):
-        response = client.get(f"/api/users/{cognito_user.email}")
-
-    assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    assert data["id"] == str(cognito_user.id)
-    assert data["email"] == cognito_user.email
-    assert data["isDisabled"] is False
-    assert "is_disabled" not in data
-
-
-def test_get_user_by_uuid_response_serialization():
-    """Test that the endpoint correctly serializes a CognitoUser response when looked up by UUID."""
-    user_uuid = uuid4()
-    cognito_user = CognitoUser(id=user_uuid, email="test@example.com", is_disabled=True)
-
-    with (
-        patch("flip_api.user_services.get_user.get_user_pool_id", return_value="test-pool"),
-        patch("flip_api.user_services.get_user.get_user_by_email_or_id", return_value=cognito_user),
-    ):
-        response = client.get(f"/api/users/{user_uuid}")
-
-    assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    assert data["id"] == str(user_uuid)
-    assert data["isDisabled"] is True
-
-
-# ---------------------
-# Direct function call tests
-# ---------------------
 
 
 def test_get_user_by_email(mock_request, user_email, user_data):

@@ -15,10 +15,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
-from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.interfaces.site import ISiteDetails
 from flip_api.site_services.services.details_service import get_site_details, update_site_details
 from flip_api.utils.logger import logger
@@ -37,7 +35,7 @@ def get_details(db: Session = Depends(get_session), user_id: UUID = Depends(veri
         user_id (UUID): User ID from authentication.
 
     Returns:
-        ISiteDetails: Current site details including banner and deployment mode.
+        SiteDetails: Current site details including banner and deployment mode.
 
     Raises:
         HTTPException: If site details cannot be fetched due to an error.
@@ -61,22 +59,16 @@ def update_details(
     Update site details.
 
     Args:
-        site_details (ISiteDetails): Updated site configuration.
+        site_details (SiteDetails): Updated site configuration.
         db (Session): Database session.
         user_id (UUID): User ID from authentication.
 
     Returns:
-        ISiteDetails: Updated site details including banner and deployment mode.
+        SiteDetails: Updated site details including banner and deployment mode.
 
     Raises:
         HTTPException: If site details cannot be updated due to an error.
     """
-    if not has_permissions(user_id, [PermissionRef.CAN_MANAGE_SITE_BANNER], db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions to update site details",
-        )
-
     try:
         update_site_details(site_details, db)
         return get_site_details(db)

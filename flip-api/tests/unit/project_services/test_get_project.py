@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from datetime import datetime
 from unittest.mock import MagicMock, patch
 from uuid import UUID
 
@@ -21,7 +20,6 @@ from fastapi.testclient import TestClient
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.domain.schemas.status import ProjectStatus
-from flip_api.domain.schemas.users import CognitoUser
 from flip_api.main import app
 
 # Test constants
@@ -97,7 +95,7 @@ def test_get_project_details_no_access(client, mock_db):
     # Arrange
     with patch("flip_api.project_services.get_project.can_access_project", return_value=False):
         # Act
-        response = client.get(f"/api/projects/{TEST_PROJECT_ID}")
+        response = client.get(f"/projects/{TEST_PROJECT_ID}")
 
         # Assert
         assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -112,7 +110,7 @@ def test_get_project_details_not_found(client, mock_db):
         patch("flip_api.project_services.get_project.get_project", return_value=None),
     ):
         # Act
-        response = client.get(f"/api/projects/{TEST_PROJECT_ID}")
+        response = client.get(f"/projects/{TEST_PROJECT_ID}")
 
         # Assert
         assert response.status_code == status.HTTP_404_NOT_FOUND
@@ -122,75 +120,7 @@ def test_get_project_details_not_found(client, mock_db):
 def test_get_project_details_invalid_id(client, mock_db):
     """Test invalid project ID"""
     # Act
-    response = client.get("/api/projects/not-a-uuid")
+    response = client.get("/projects/not-a-uuid")
 
     # Assert - FastAPI should return 422 for invalid UUID
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
-
-
-def test_get_project_details_returns_users_as_objects(client, mock_db, mock_project):
-    """Test that users are returned as objects with id, email, and isDisabled fields."""
-    owner_user = CognitoUser(id=TEST_OWNER_ID, email="owner@example.com", is_disabled=False)
-    access_user = CognitoUser(id=TEST_USER_ID, email="user@example.com", is_disabled=False)
-
-    mock_project.description = "Test description"
-    mock_project.creation_timestamp = datetime(2023, 1, 1)
-
-    with (
-        patch("flip_api.project_services.get_project.can_access_project", return_value=True),
-        patch("flip_api.project_services.get_project.get_project", return_value=mock_project),
-        patch("flip_api.project_services.get_project.get_trusts_approval_status_for_project", return_value=[]),
-        patch("flip_api.project_services.get_project.get_users_with_access", return_value=[TEST_USER_ID]),
-        patch("flip_api.project_services.get_project.get_project_query", return_value=None),
-        patch("flip_api.project_services.get_project.get_settings") as mock_settings,
-        patch("flip_api.project_services.get_project.get_user_by_email_or_id") as mock_get_user,
-    ):
-        mock_settings.return_value.AWS_COGNITO_USER_POOL_ID = "test-pool"
-        # First call: owner lookup (by user_id=TEST_OWNER_ID), second call: access user lookup
-        mock_get_user.side_effect = [owner_user, access_user]
-
-        response = client.get(f"/api/projects/{TEST_PROJECT_ID}")
-
-    assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-
-    # Users should be objects with id, email, isDisabled — not plain email strings
-    assert isinstance(data["users"], list)
-    assert len(data["users"]) == 2
-    user_emails = {u["email"] for u in data["users"]}
-    assert user_emails == {"owner@example.com", "user@example.com"}
-    for user in data["users"]:
-        assert "id" in user
-        assert "email" in user
-        assert "isDisabled" in user
-        assert user["isDisabled"] is False
-
-
-def test_get_project_details_filters_disabled_users(client, mock_db, mock_project):
-    """Test that disabled users are excluded from the users list."""
-    owner_user = CognitoUser(id=TEST_OWNER_ID, email="owner@example.com", is_disabled=False)
-    disabled_user = CognitoUser(id=TEST_USER_ID, email="disabled@example.com", is_disabled=True)
-
-    mock_project.description = "Test description"
-    mock_project.creation_timestamp = datetime(2023, 1, 1)
-
-    with (
-        patch("flip_api.project_services.get_project.can_access_project", return_value=True),
-        patch("flip_api.project_services.get_project.get_project", return_value=mock_project),
-        patch("flip_api.project_services.get_project.get_trusts_approval_status_for_project", return_value=[]),
-        patch("flip_api.project_services.get_project.get_users_with_access", return_value=[TEST_USER_ID]),
-        patch("flip_api.project_services.get_project.get_project_query", return_value=None),
-        patch("flip_api.project_services.get_project.get_settings") as mock_settings,
-        patch("flip_api.project_services.get_project.get_user_by_email_or_id") as mock_get_user,
-    ):
-        mock_settings.return_value.AWS_COGNITO_USER_POOL_ID = "test-pool"
-        mock_get_user.side_effect = [owner_user, disabled_user]
-
-        response = client.get(f"/api/projects/{TEST_PROJECT_ID}")
-
-    assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-
-    # Only the non-disabled owner should be in the list
-    assert len(data["users"]) == 1
-    assert data["users"][0]["email"] == "owner@example.com"

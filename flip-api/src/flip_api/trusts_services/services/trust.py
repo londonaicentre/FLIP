@@ -11,6 +11,7 @@
 #
 
 # app/crud.py
+from typing import List, Optional
 from uuid import UUID
 
 from sqlmodel import Session, col, select
@@ -20,7 +21,7 @@ from flip_api.domain.interfaces.trust import ITrust
 from flip_api.utils.logger import logger
 
 
-def get_trusts(session: Session, ids: list[UUID] | None = None) -> list[ITrust]:
+def get_trusts(session: Session, ids: Optional[List[UUID]] = None) -> List[ITrust]:
     """
     Retrieve a list of Trusts from the database.
     If IDs are provided, only those Trusts will be returned.
@@ -28,10 +29,10 @@ def get_trusts(session: Session, ids: list[UUID] | None = None) -> list[ITrust]:
 
     Args:
         session (Session): The SQLModel session to use for the query.
-        ids (list[UUID] | None): A list of Trust IDs to filter by. If None, all Trusts are returned.
+        ids (Optional[List[UUID]]): A list of Trust IDs to filter by. If None, all Trusts are returned.
 
     Returns:
-        list[ITrust]: A list of Trust objects.
+        List[ITrust]: A list of Trust objects.
 
     Raises:
         ValueError: If no Trusts are found or if the database response is empty.

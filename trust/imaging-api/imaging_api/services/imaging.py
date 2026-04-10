@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 
 import requests
 from pydantic import TypeAdapter
@@ -85,7 +86,7 @@ def check_pacs(headers: dict[str, str], pacs_id: int = PACS_ID) -> None:
     logger.info(f"PACS with ID '{pacs_id}' is reachable.")
 
 
-def query_by_accession_number(accession_number: str, headers: dict[str, str]) -> list[Study]:
+def query_by_accession_number(accession_number: str, headers: dict[str, str]) -> List[Study]:
     """
     Queries the imaging provider (PACS) to retrieve a list of studies associated with the provided accession number.
 
@@ -94,7 +95,7 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        list[Study]: A list of Study objects that match the accession number.
+        List[Study]: A list of Study objects that match the accession number.
 
     Raises:
         Exception: If there is an error during the query request.
@@ -110,26 +111,26 @@ def query_by_accession_number(accession_number: str, headers: dict[str, str]) ->
     logger.debug(f"Query response: {response.text} - {response.status_code} - {response.reason}")
 
     if response.status_code == 200:
-        logger.info("Successfully queried PACS via DQR")
+        logger.info(f"Successfully queried PACS via DQR for accession number: {accession_number}")
     elif response.status_code == 204:
-        logger.warning("No studies found via DQR")
+        logger.warning(f"No studies found for accession number: {accession_number}")
         return []
     elif response.status_code == 401:
-        raise Exception("Unauthorized to query PACS via DQR")
+        raise Exception(f"Unauthorized to query PACS via DQR for accession number: {accession_number}")
     else:
-        raise Exception("Failed to query PACS via DQR")
+        raise Exception(f"Failed to query PACS via DQR for accession number: {accession_number}")
 
     # Convert raw API response to a list of Study models
     response_data = response.json()
     studies = [Study(**study) for study in response_data]
 
-    logger.info(f"Found {len(studies)} studies via DQR")
+    logger.info(f"Studies found for accession number {accession_number}: {studies}")
     return studies
 
 
 def queue_image_import_request(
     import_request: ImportStudyRequest, headers: dict[str, str]
-) -> list[ImportStudyResponse]:
+) -> List[ImportStudyResponse]:
     """
     Queues an image import request via DQR for the provided XNAT project ID.
     Handles duplicate studies by StudyInstanceUID and checks if all studies were successfully queued.
@@ -142,17 +143,14 @@ def queue_image_import_request(
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        list[ImportStudyResponse]: A list of ImportStudyResponse objects representing the queued import requests.
+        List[ImportStudyResponse]: A list of ImportStudyResponse objects representing the queued import requests.
 
     Raises:
         imaging_api.utils.exceptions.NotFoundError: If the project with the given ID is not found or if no studies are
         found on PACS.
         Exception: If there is an error during the import request.
     """
-    logger.info(
-        f"Queuing image import request for project '{import_request.project_id}' "
-        f"with {len(import_request.studies)} studies"
-    )
+    logger.info(f"Queuing image import request: {import_request}")
 
     # Calling DQR API with a non-existent project works, which is pointless,
     # because we load the PACS but don't actually retrieve anything.
@@ -171,10 +169,10 @@ def queue_image_import_request(
     )
 
     if response.status_code == 200:
-        import_response: list[ImportStudyResponse] = TypeAdapter(list[ImportStudyResponse]).validate_json(response.text)
+        import_response: List[ImportStudyResponse] = TypeAdapter(list[ImportStudyResponse]).validate_json(response.text)
         logger.info(f"Import response returned {len(import_response)} studies.")
     elif response.status_code == 404:
-        raise NotFoundError(f"Not found error for project '{import_request.project_id}'")
+        raise NotFoundError(f"Not found error for request: {import_request}")
     else:
         raise Exception(f"Failed to queue image import via DQR for project '{import_request.project_id}'")
 

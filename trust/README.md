@@ -19,7 +19,6 @@ Deploy components at the trust level:
 * Imaging API ([imaging-api](imaging-api))
 * Data Access API ([data-access-api](data-access-api))
 * Trust API ([trust-api](trust-api))
-* nginx TLS termination ([nginx](nginx)) — terminates HTTPS on `TRUST_API_PORT` and proxies to `trust-api`
 * OMOP Database ([omop-db](omop-db))
 * XNAT ([xnat](xnat))
 
@@ -27,32 +26,7 @@ See also the dedicated README files under each folder.
 
 ## Setup
 
-### TLS certificates
-
-The Trust API is served over HTTPS via an nginx TLS termination proxy. Before starting the trust services
-you must generate the TLS certificates for your machine's IP or hostname:
-
-```sh
-TRUST_HOST=<ip-or-hostname> make generate-trust-certs
-```
-
-This creates a local CA and a server certificate under `trust/certs/` (git-ignored). The CA certificate
-(`trust-ca.crt`) must be distributed to the Central Hub so it can verify the Trust's self-signed cert —
-see `deploy/providers/AWS/` for how this is done in production.
-
-To verify the generated certificates:
-
-```sh
-make verify-trust-certs
-```
-
-To smoke-test the HTTPS endpoint after the services are running:
-
-```sh
-TRUST_HOST=<ip-or-hostname> make test-trust-https
-```
-
-### Start Orthanc and trust services
+## Start Orthanc and trust services
 
 Orthanc, Imaging API, Data Access API and Trust API can be started using the Makefile provided at the repository level:
 
@@ -61,8 +35,6 @@ make up
 ```
 
 DICOMs can be uploaded to Orthanc at <http://localhost:8042>.
-
-The Trust API is accessible over HTTPS at `https://<TRUST_HOST>:<TRUST_API_PORT>`.
 
 ## OMOP Database
 

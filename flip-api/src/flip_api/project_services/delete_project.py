@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from sqlmodel import Session
 
-from flip_api.auth.access_manager import can_modify_project
+from flip_api.auth.access_manager import can_access_project
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.fl_services.services.fl_service import abort_model_training
@@ -52,15 +52,15 @@ def delete_project_endpoint(
         None
 
     Raises:
-        HTTPException: If the user is not allowed, if the project does not exist, or if there are validation errors.
+        HTTPException: If the user does not have permission to delete projects, if the project does not exist, or if
+                       there are validation errors.
     """
     logger.debug(f"Attempting to delete project by user: {user_id}")
 
     # Check user permissions
-    if not can_modify_project(user_id, project_id, db):
+    if not can_access_project(user_id, project_id, db):
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User with ID: {user_id} is not allowed to modify this project",
+            status_code=status.HTTP_403_FORBIDDEN, detail=f"User with ID: {user_id} is denied access to this project"
         )
 
     # Get imaging projects from trusts and delete them

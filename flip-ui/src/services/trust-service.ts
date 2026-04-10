@@ -25,7 +25,7 @@ export async function getTrusts(): Promise<ITrustResponse[]> {
     try {
         const response = await _http.get<ITrustResponse[]>("/trust");
 
-        return Array.isArray(response.data) ? response.data : [];
+        return response.data;
 
     } catch (error) {
         return [];

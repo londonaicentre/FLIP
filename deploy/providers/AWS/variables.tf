@@ -44,15 +44,12 @@ variable "POSTGRES_DB" {
   type = string
 }
 
-variable "postgres_version" {
-  description = "PostgreSQL engine version for the RDS instance. Update this value to upgrade the database version. EOL schedule: 17 → Oct 2032."
-  type        = string
-  default     = "17.6"
+variable "flip_keypair" {
+  type = string
 }
 
 variable "ec2_public_key_path" {
-  description = "Path to SSH public key file. Injected into EC2 instances via cloud-init for SSH-over-SSM client authentication."
-  type        = string
+  type = string
 }
 
 variable "AES_KEY_BASE64" {
@@ -164,16 +161,4 @@ variable "XNAT_PORT" {
 variable "PACS_UI_PORT" {
   description = "Port for Orthanc PACS UI"
   type        = number
-}
-
-variable "local_trust_public_ip" {
-  description = "Public IP of an on-premises Trust host. When non-empty, AWS security group rules are created to allow FL communication on ports 8002 and 8003 from this IP to the Central Hub."
-  type        = string
-  default     = ""
-}
-
-variable "create_central_hub_elastic_ip" {
-  description = "Whether to create an Elastic IP for the Central Hub EC2 instance. When true, ensures a persistent IP address across instance restarts and redeployments."
-  type        = bool
-  default     = true
 }

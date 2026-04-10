@@ -21,10 +21,6 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "ansible-core>=2.19.2",
-    "click>=8.0.0",
-    "cryptography>=46.0.5",
-    "requests>=2.33.0",
-    "urllib3>=2.6.0",
 ]
 
 [build-system]
@@ -33,7 +29,7 @@ build-backend = "setuptools.build_meta"
 
 [dependency-groups]
 dev = [
-    "black>=26.3.1",
+    "black>=25.1.0",
     "frictionless>=5.18.1",
     "ipykernel>=6.29.5",
     "isort>=6.0.1",
@@ -42,10 +38,8 @@ dev = [
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
     "ruff>=0.12.3",
-    "simpleeval>=1.0.4",
     "taskipy>=1.14.1",
     "terraform-local>=0.24.1",
-    "tornado>=6.5.2",
 ]
 
 
@@ -53,17 +47,21 @@ dev = [
 exclude_lines = ["if __name__ == .__main__.:"]
 omit = ["*.venv/*", "*/tests/*", "*/__init__.py", "*/translation/*"]
 
-[tool.pytest]
+[tool.pytest.ini_options]
+python_files = ["test_*.py", "*_test.py"]
+addopts = []
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
+
+[tool.pytest.ini_options_debug]
 python_files = ["test_*.py", "*_test.py"]
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py312"
 
 [tool.ruff.lint]
 preview = true
-select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP045']
+select = ['I', 'F', 'E', 'W', 'PT']
 exclude = [
     "src/flip_api/translation/*"
 ]

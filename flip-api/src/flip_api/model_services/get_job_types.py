@@ -12,6 +12,7 @@
 
 """Endpoint for retrieving available job types and their required files (moved to model_services)."""
 
+from typing import Dict, List
 
 from fastapi import APIRouter
 
@@ -21,8 +22,8 @@ from flip_api.utils.logger import logger
 router = APIRouter(prefix="/model", tags=["model_services"])
 
 
-@router.get("/job-types", response_model=dict[str, list[str]])
-def get_job_types_endpoint() -> dict[str, list[str]]:
+@router.get("/job-types", response_model=Dict[str, List[str]])
+def get_job_types_endpoint() -> Dict[str, List[str]]:
     """
     Retrieve all available job types and their required files.
 
@@ -31,7 +32,7 @@ def get_job_types_endpoint() -> dict[str, list[str]]:
     which files are required for training based on the config.json job_type.
 
     Returns:
-        dict[str, list[str]]: A dictionary where keys are job type names
+        Dict[str, List[str]]: A dictionary where keys are job type names
             (e.g., 'standard', 'evaluation') and values are lists of required
             file names (e.g., ['trainer.py', 'validator.py', 'config.json']).
 

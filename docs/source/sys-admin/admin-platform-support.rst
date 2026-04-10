@@ -31,7 +31,7 @@ The Trust component of FLIP runs in a Secure Enclave at each Trust to facilitate
 
 As per security principles, no personally identifying data leaves the Secure Enclave.
 
-FLIP implements a microservice-based architecture. The ``imaging-api`` and ``data-access-api`` are deployed as Dockerised microservices, orchestrated by the ``trust-api``.
+FLIP implements a microservice-based architecture. The Image Service and Data Service are deployed as Dockerised microservices, orchestrated by a Trust API.
 
 **********
 Components
@@ -80,9 +80,9 @@ FLIP jobs are distributed by the central hub FL scheduler to an available net.
 Security
 *********
 
-All traffic between the Central Hub and the Secure Enclaves is secured over HTTPS using TLS with self-signed CA certificates. Each Trust runs an nginx TLS termination proxy that serves the Trust API over HTTPS. The Central Hub verifies Trust endpoints using a CA bundle containing the certificates of all connected Trusts.
+All traffic between the Central Hub and the Secure Enclaves are secured via the means of tunnelling through a VPN tunnel, linking both the Central Hub and the Secure Enclaves. 
 
-Certificate generation, distribution, and verification are handled automatically during provisioning. See the `Trust README <../../../trust/README.md>`_ and `Local Deployment Guide <../../../deploy/providers/local/README.md>`_ for details on the certificate model.
+This VPN tunnel means that all traffic is encrypted with at least AES-256 encryption, while traversing between the locations.
 
 .. figure:: ../assets/support/flip_architecture-flip_network_architecture.png
    :align: center
@@ -163,7 +163,7 @@ As a system, the FLIP solution handles the following types of data:
 Backup
 ======
 
-The data partitions for the PostgreSQL (OMOP), XNAT and Loki (log files) instances are all mounted on the dedicated storage array. This is a RAID 6 PNY appliance with high resilience.
+The data partitions for the PostgreSQL (OMOP), XNAT and Elasticsearch (log files) instances are all mounted on the dedicated storage array. This is a RAID 6 PNY appliance with high resilience.
 
 Backup scripts will be run daily to backup each data store to a /backups/ directory on the storage appliance. This should be backed up up by the Trust using their specific backup process, ideally overnight.
 
@@ -187,31 +187,24 @@ Access to FLIP will be reviewed annually, with dormant accounts being removed.
 RBAC
 ====
 
-FLIP employs role based access control to permit functionality for accounts, managed through the FLIP API and UI. FLIP currently has three access profiles: **Admin**, **Researcher** and **Observer**. For full details of permissions assigned to each role, see :ref:`rbac-roles`.
+FLIP employs role based access control to permit functionality for accounts, this is handled by AWS Cognito through the FLIP UI. FLIP currently has two access profiles, **Administrator** and **Model Developer**. 
 
-Admin
------
+Administrator
+-------------
 
-FLIP Admins have all platform permissions including:
+FLIP Administrators have permissions to:
 
-- Create and manage FLIP user accounts
-- Approve and unstage projects
-- Delete any project
-- Manage deployment mode and site banner
-- All Researcher capabilities
+- Create new FLIP user accounts
+- Modify the permissions of existing user accounts
+- Approve existing projects
+
 
 Researcher
 ----------
 
 Researchers are model developers with the following permissions:
 
-- Create and manage projects
-- Run and save cohort queries
-- Create models and upload files
-- Initiate model training
-- Stage projects for approval
-
-Observer
---------
-
-Observers have read-only access to projects they are assigned to. They cannot create, edit, or delete resources.
+- Create new projects
+- Add existing users to projects
+- Submit projects for approval
+- Train models

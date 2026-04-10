@@ -28,7 +28,7 @@
                                 There is no cohort query assigned to this project.
                             </div>
                         </div>
-                        <AiButton v-if="!isObserver" primary data-test="create-query-btn" @click="addCohortQuery">
+                        <AiButton primary data-test="create-query-btn" @click="addCohortQuery">
                             Create Cohort Query
                         </AiButton>
                     </div>
@@ -85,7 +85,6 @@ import { useRouter } from "vue-router";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import { IProjectQuery } from "@/services/project-service";
-import { useAuthStore } from "@/store/auth";
 import { useProjectStore } from "@/store/project";
 
 
@@ -94,10 +93,7 @@ interface IQueryDetails {
 }
 
 const router = useRouter();
-const authStore = useAuthStore();
 const project = useProjectStore().project;
-
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
 
 const props = defineProps<IQueryDetails>();
 

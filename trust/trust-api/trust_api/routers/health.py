@@ -16,11 +16,11 @@ router = APIRouter(prefix="/health", tags=["Health"])
 
 
 @router.get("")
-async def health_check() -> dict[str, str]:
+async def health_check():
     """
     Health check endpoint for the Trust API
 
     Returns:
-        dict[str, str]: A dictionary with the status of the service.
+        dict: A dictionary with the status of the service
     """
     return {"status": "ok"}

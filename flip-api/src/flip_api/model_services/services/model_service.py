@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Any
+from typing import Any, List, Optional
 from uuid import UUID
 
 from sqlmodel import Session, select
@@ -59,7 +59,7 @@ def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, sess
     logger.info(f"Output: {audit_response}")
 
 
-def update_model_status(model_id: UUID, status: ModelStatus | None, session: Session) -> ModelStatus | None:
+def update_model_status(model_id: UUID, status: ModelStatus | None, session: Session) -> Optional[ModelStatus]:
     """
     Update the status of a model
 
@@ -69,7 +69,7 @@ def update_model_status(model_id: UUID, status: ModelStatus | None, session: Ses
         session (Session): The database session
 
     Returns:
-        flip.domain.schemas.status.ModelStatus | None: The updated status of the model
+        Optional[flip.domain.schemas.status.ModelStatus]: The updated status of the model
     """
     logger.info(f"Attempting to set the model's status... ID: {model_id}, Status: {status}")
 
@@ -93,7 +93,7 @@ def update_model_status(model_id: UUID, status: ModelStatus | None, session: Ses
 
 
 def add_log(
-    model_id: UUID, log: str, session: Session, transaction: Any | None = None, success: bool = True
+    model_id: UUID, log: str, session: Session, transaction: Optional[Any] = None, success: bool = True
 ) -> None:
     """
     Add a log entry to the database
@@ -102,7 +102,7 @@ def add_log(
         model_id (UUID): The ID of the model.
         log (str): The log message to be added.
         session (Session): The database session.
-        transaction (Any | None): Optional transaction to control commit behavior.
+        transaction (Optional[Any]): Optional transaction to control commit behavior.
         success (bool): Indicates if the log entry is a success or failure.
 
     Returns:
@@ -199,7 +199,7 @@ def delete_models(project_id: UUID, user_id: str, session: Session, ensure_delet
     return len(model_ids)
 
 
-def get_model_status(model_id: UUID, session: Session) -> IDetailedModelStatus | None:
+def get_model_status(model_id: UUID, session: Session) -> Optional[IDetailedModelStatus]:
     """
     Get the status of a model.
 
@@ -208,7 +208,7 @@ def get_model_status(model_id: UUID, session: Session) -> IDetailedModelStatus |
         session (Session): The database session.
 
     Returns:
-        dict | None: A dictionary containing the model's status and deleted status.
+        Optional[dict]: A dictionary containing the model's status and deleted status.
     """
     logger.debug("Attempting to get the model's status...")
 
@@ -219,13 +219,13 @@ def get_model_status(model_id: UUID, session: Session) -> IDetailedModelStatus |
     return IDetailedModelStatus(status=model.status, deleted=model.deleted)
 
 
-def validate_trusts(model_id: UUID, trusts: list[str], session: Session) -> bool:
+def validate_trusts(model_id: UUID, trusts: List[str], session: Session) -> bool:
     """
     Validate whether the trusts are associated with the model.
 
     Args:
         model_id (UUID): The ID of the model.
-        trusts (list[str]): A list of trust names to validate.
+        trusts (List[str]): A list of trust names to validate.
         session (Session): The database session.
 
     Returns:
@@ -255,7 +255,7 @@ def validate_trusts(model_id: UUID, trusts: list[str], session: Session) -> bool
     return True
 
 
-def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
+def get_metrics(model_id: UUID, session: Session) -> List[IModelMetrics]:
     """
     Get the metrics for a given model.
 
@@ -264,7 +264,7 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
         session (Session): The database session.
 
     Returns:
-        list[IModelMetrics]: A list of metrics associated with the model.
+        List[IModelMetrics]: A list of metrics associated with the model.
     """
     logger.debug("Attempting to retrieve the metrics results for the model...")
 

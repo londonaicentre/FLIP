@@ -68,6 +68,10 @@ module "ec2_security_group" {
     {
       port        = var.FL_API_PORT
       description = "FLIP FL API"
+    },
+    {
+      port        = 22
+      description = "SSH access"
     }
   ]
 }
@@ -92,6 +96,10 @@ module "trust_security_group" {
     {
       port        = var.PACS_UI_PORT
       description = "Orthanc PACS UI access"
+    },
+    {
+      port        = 22
+      description = "SSH access"
     }
   ]
 }
@@ -138,7 +146,7 @@ module "flip_db" {
   version                    = "~> 6.0"
   identifier                 = "flip-database"
   engine                     = "postgres"
-  engine_version             = var.postgres_version
+  engine_version             = "13.22"
   auto_minor_version_upgrade = false
   instance_class             = "db.t3.micro"
   allocated_storage          = 20
@@ -148,7 +156,7 @@ module "flip_db" {
   vpc_security_group_ids     = [module.rds_security_group.security_group.id]
   backup_retention_period    = 7
   skip_final_snapshot        = true
-  family                     = "postgres${split(".", var.postgres_version)[0]}"
+  family                     = "postgres13"
 }
 
 ############################
@@ -168,10 +176,9 @@ module "flip_api_secret" {
   secret_string = jsonencode({
     aes_key = var.AES_KEY_BASE64
     trust_endpoints = {
-      "Trust_1" = "https://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}",
-      "Trust_2" = "https://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
+      "Trust_1" = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}",
+      "Trust_2" = "http://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
     }
-    trust_ca_cert = try(file("${path.module}/trust-ca.crt"), "")
   })
 }
 
@@ -226,6 +233,12 @@ resource "aws_cloudwatch_log_group" "flip_log_group" {
   retention_in_days = 7
 }
 
+# Key Pair for SSH access
+resource "aws_key_pair" "flip_keypair" {
+  key_name   = "flip-keypair"
+  public_key = file("${var.flip_keypair}.pub")
+}
+
 # EC2 Instance
 data "aws_ssm_parameter" "ubuntu" {
   name = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
@@ -241,38 +254,12 @@ resource "aws_instance" "ec2_instance" {
   ami                         = data.aws_ssm_parameter.ubuntu.value
   vpc_security_group_ids      = [module.ec2_security_group.security_group.id]
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
-  user_data = templatefile("${path.module}/templates/user_data.sh.tftpl", {
-    ssh_public_key = trimspace(file(var.ec2_public_key_path))
-  })
+  key_name                    = aws_key_pair.flip_keypair.key_name
   root_block_device {
     volume_size           = 30
     volume_type           = "gp3"
     delete_on_termination = true
   }
-}
-
-# Elastic IP for Central Hub EC2 instance
-# Provides a static IP address that persists across instance restarts and redeployments
-resource "aws_eip" "central_hub_eip" {
-  count = var.create_central_hub_elastic_ip ? 1 : 0
-  # Allocate EIP only if enabled
-  domain = "vpc"
-
-  tags = {
-    Name = "central-hub-eip"
-  }
-
-  # Prevent accidental destruction - this EIP is precious infrastructure
-  lifecycle {
-    prevent_destroy = false
-  }
-}
-
-resource "aws_eip_association" "central_hub_eip_assoc" {
-  count         = var.create_central_hub_elastic_ip ? 1 : 0
-  instance_id   = aws_instance.ec2_instance.id
-  allocation_id = aws_eip.central_hub_eip[0].id
-  depends_on    = [aws_instance.ec2_instance]
 }
 
 # Application Load Balancer
@@ -353,14 +340,6 @@ module "alb" {
       port      = var.API_PORT
       protocol  = "HTTP"
       target_id = aws_instance.ec2_instance.id
-
-      health_check = {
-        enabled  = true
-        protocol = "HTTP"
-        path     = "/api/health"
-        port     = "traffic-port"
-        matcher  = "200"
-      }
     },
     ec2-instance-fl-api = {
       port      = var.FL_API_PORT
@@ -459,10 +438,11 @@ resource "aws_route53_record" "fl_server_nlb" {
   }
 }
 
-# Listener rule for path-based routing to the API namespace
-resource "aws_lb_listener_rule" "api_routing" {
+# Listener rule for path-based routing to API
+# Routes specific API paths to avoid conflicts with UI routes
+resource "aws_lb_listener_rule" "api_path_routing" {
   listener_arn = module.alb.listeners["https-listener"].arn
-  priority     = 98
+  priority     = 100
 
   action {
     type             = "forward"
@@ -471,53 +451,69 @@ resource "aws_lb_listener_rule" "api_routing" {
 
   condition {
     path_pattern {
-      values = ["/api", "/api/*"]
+      values = ["/cohort/*", "/files/*", "/fl/*", "/model/*", "/health"]
     }
   }
 }
 
-############################
-# On-Premises Trust (optional)
-# Activated by setting local_trust_public_ip in the env file or via
-# TF_VAR_local_trust_public_ip when running `make add-local-trust`.
-############################
+# Additional listener rule for API documentation paths
+resource "aws_lb_listener_rule" "api_docs_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 101
 
-resource "aws_security_group_rule" "local_trust_fl_server" {
-  count             = var.local_trust_public_ip != "" ? 1 : 0
-  type              = "ingress"
-  from_port         = 8002
-  to_port           = 8002
-  protocol          = "tcp"
-  cidr_blocks       = ["${var.local_trust_public_ip}/32"]
-  security_group_id = module.ec2_security_group.security_group.id
-  description       = "FL Server from on-prem Trust"
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/docs", "/openapi.json", "/redoc", "/prompts/*", "/roles/*"]
+    }
+  }
 }
 
-resource "aws_security_group_rule" "local_trust_fl_admin" {
-  count             = var.local_trust_public_ip != "" ? 1 : 0
-  type              = "ingress"
-  from_port         = 8003
-  to_port           = 8003
-  protocol          = "tcp"
-  cidr_blocks       = ["${var.local_trust_public_ip}/32"]
-  security_group_id = module.ec2_security_group.security_group.id
-  description       = "FL Admin from on-prem Trust"
+# Additional listener rule for trust and site API paths
+resource "aws_lb_listener_rule" "api_trust_site_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 102
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/trust/*", "/site/*"]
+    }
+  }
 }
 
-# Allow the local (on-prem) trust FL client to reach the FL server via the NLB.
-# Without this rule the NLB security group drops the connection before it reaches the EC2.
-resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
-  count             = var.local_trust_public_ip != "" ? 1 : 0
-  type              = "ingress"
-  from_port         = var.FL_SERVER_PORT
-  to_port           = var.FL_SERVER_PORT
-  protocol          = "tcp"
-  cidr_blocks       = ["${var.local_trust_public_ip}/32"]
-  security_group_id = module.fl_server_nlb.security_group_id
-  description       = "FL Server NLB from on-prem Trust"
+# Listener rule for user and project API endpoints (priority 99 - higher priority)
+# Note: /users and /projects in UI are frontend routes, not API endpoints
+# API endpoints for users/projects should use more specific paths or HTTP methods
+resource "aws_lb_listener_rule" "api_user_project_routing" {
+  listener_arn = module.alb.listeners["https-listener"].arn
+  priority     = 99
+
+  action {
+    type             = "forward"
+    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/user/*", "/project/*"]
+    }
+  }
 }
 
 # Outputs
+output "Keypair" {
+  value = var.flip_keypair
+}
+
 output "Ec2InstanceId" {
   description = "EC2 Instance ID"
   value       = aws_instance.ec2_instance.id
@@ -528,14 +524,9 @@ output "Ec2PublicIp" {
   value       = aws_instance.ec2_instance.public_ip
 }
 
-output "Ec2ElasticIp" {
-  description = "EC2 Instance Elastic IP (static IP address, allocated when create_central_hub_elastic_ip is true)"
-  value       = try(aws_eip.central_hub_eip[0].public_ip, null)
-}
-
-output "SsmSessionCommand" {
-  description = "SSM Session Manager command to connect to Central Hub EC2"
-  value       = "aws ssm start-session --target ${aws_instance.ec2_instance.id}"
+output "SshCommand" {
+  description = "SSH command to connect to the instance"
+  value       = "ssh -i ${var.flip_keypair} ubuntu@${aws_instance.ec2_instance.public_ip}"
 }
 
 output "TrustEc2InstanceId" {
@@ -548,14 +539,9 @@ output "TrustEc2PublicIp" {
   value       = module.trust_ec2.public_ip
 }
 
-output "TrustEc2ElasticIp" {
-  description = "Trust EC2 Instance Elastic IP (static IP address, always allocated)"
-  value       = module.trust_ec2.elastic_ip
-}
-
-output "SsmSessionCommandTrust" {
-  description = "SSM Session Manager command to connect to Trust EC2"
-  value       = "aws ssm start-session --target ${module.trust_ec2.instance_id}"
+output "TrustSshCommand" {
+  description = "SSH command to connect to the Trust EC2 instance"
+  value       = "ssh -i ${var.flip_keypair} ubuntu@${module.trust_ec2.public_ip}"
 }
 
 output "DbEndpoint" {
@@ -617,10 +603,10 @@ resource "aws_ses_template" "flip_xnat_credentials" {
 module "trust_ec2" {
   source = "./modules/trust_ec2"
 
-  name_prefix    = "trust"
-  instance_type  = "t3.xlarge"
-  ssh_public_key = trimspace(file(var.ec2_public_key_path))
-  subnet_id      = element(module.flip_vpc.public_subnets, 0)
+  name_prefix   = "trust"
+  instance_type = "t3.xlarge"
+  key_name      = aws_key_pair.host_key.key_name
+  subnet_id     = element(module.flip_vpc.public_subnets, 0)
 
   # use the trust SG, not the central EC2 SG
   security_group_ids = [module.trust_security_group.security_group.id]
@@ -635,9 +621,7 @@ module "trust_ec2" {
   iam_instance_profile_name = aws_iam_instance_profile.ec2_profile.name
 }
 
-# CloudTrail: SSM Session Manager events (StartSession, TerminateSession, SendCommand)
-# are automatically logged as management events IF CloudTrail is configured in this AWS account.
-# PREREQUISITE: Ensure at least one CloudTrail trail exists and is logging management events.
-# This module does not provision CloudTrail. If CloudTrail is not configured, SSM session
-# events will not be logged. After ensuring CloudTrail is active, verify logging with:
-#   aws cloudtrail lookup-events --lookup-attributes AttributeKey=EventName,AttributeValue=StartSession
+resource "aws_key_pair" "host_key" {
+  key_name   = "host-aws"
+  public_key = file(var.ec2_public_key_path)
+}

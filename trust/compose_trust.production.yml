@@ -15,8 +15,6 @@
 
 services:
 
-  # --- Application services ---
-
   omop-db:
     image: ghcr.io/londonaicentre/omop-db:stag
     restart: always
@@ -45,11 +43,6 @@ services:
 
   imaging-api:
     image: ghcr.io/londonaicentre/imaging-api:${DOCKER_TAG}
-    # Override the default CMD so that the production image uses uvicorn directly
-    # instead of `fastapi dev --reload-exclude` (which fails on older fastapi CLI versions).
-    # The entrypoint.sh fix (uvicorn for non-debug mode) will remove the need for this
-    # override once the next image build is pushed.
-    command: ["uv", "run", "python", "-m", "uvicorn", "imaging_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "${IMAGING_API_PORT}:8000"
     environment:
@@ -65,7 +58,6 @@ services:
       DEBUG: ${DEBUG}
       ENV: production
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
-      LOG_LEVEL: ${TRUST_LOG_LEVEL}
     # NOTE the volume BASE_IMAGES_DOWNLOAD_DIR is mounted to share images downloaded from XNAT with FL clients
     volumes:
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
@@ -83,72 +75,20 @@ services:
       DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT_TRUST_1}
       DEBUG: ${DEBUG}
       ENV: production
-      LOG_LEVEL: ${TRUST_LOG_LEVEL}
-
-  nginx-tls:
-    build:
-      context: ./nginx
-      dockerfile: Dockerfile
-    ports:
-      - "${TRUST_API_PORT}:8000"
-    volumes:
-      - /opt/flip/certs:/etc/nginx/certs:ro
-    depends_on:
-      - trust-api
 
   trust-api:
     image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}
-    # ports removed — nginx-tls owns TRUST_API_PORT and proxies to trust-api
-    # over the internal Docker network, preventing direct unauthenticated HTTP
-    # access from outside the container network.
+    ports:
+      - "${TRUST_API_PORT}:8000"
     environment:
       CENTRAL_HUB_API_URL: ${CENTRAL_HUB_API_URL}
       DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
       IMAGING_API_URL: ${IMAGING_API_URL}
-      DEBUG_PORT: ${TRUST_DEBUG_PORT}
+      DEBUG_PORT: ${TRUST_DEBUG_PORT_TRUST_1}
       DEBUG: ${DEBUG}
       PRIVATE_API_KEY_HEADER: ${PRIVATE_API_KEY_HEADER}
       PRIVATE_API_KEY: ${PRIVATE_API_KEY}
       ENV: production
-      LOG_LEVEL: ${TRUST_LOG_LEVEL}
-
-  # --- Observability infrastructure ---
-
-  loki:
-    image: grafana/loki:3.4.0
-    restart: always
-    command: -config.file=/etc/loki/loki-config.yml
-    ports:
-      - "${LOKI_PORT}:3100"
-    volumes:
-      - /opt/flip/config/observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
-      - /opt/flip/volumes/loki:/loki
-
-  alloy:
-    image: grafana/alloy:v1.9.0
-    restart: always
-    command:
-      - run
-      - --server.http.listen-addr=0.0.0.0:12345
-      - /etc/alloy/config.alloy
-    volumes:
-      - /opt/flip/config/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    depends_on:
-      - loki
-
-  grafana:
-    image: grafana/grafana:11.5.0
-    restart: always
-    ports:
-      - "${GRAFANA_PORT}:3000"
-    environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
-    volumes:
-      - /opt/flip/volumes/grafana:/var/lib/grafana
-      - /opt/flip/config/observability/grafana/provisioning:/etc/grafana/provisioning:ro
-    depends_on:
-      - loki
 
 networks:
   default:

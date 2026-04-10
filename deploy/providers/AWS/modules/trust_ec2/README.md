@@ -34,10 +34,10 @@ Usage example (call from the root module)
 module "trust_ec2" {
   source = "./modules/trust_ec2"
 
-  name_prefix   = "trust"
+  name_prefix  = "trust"
   instance_type = "t3.small"
-  ssh_public_key = file(var.ec2_public_key_path)
-  subnet_id      = element(module.flip_vpc.public_subnets, 0)
+  key_name     = var.flip_keypair
+  subnet_id    = element(module.flip_vpc.public_subnets, 0)
   security_group_ids = [module.alb_security_group.security_group.id]
 
   create_elastic_ip = true

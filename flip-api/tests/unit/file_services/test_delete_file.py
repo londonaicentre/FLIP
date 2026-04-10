@@ -40,7 +40,7 @@ def mocked_settings():
         yield mock
 
 
-@patch("flip_api.file_services.delete_file.can_modify_model", return_value=True)
+@patch("flip_api.file_services.delete_file.can_access_model", return_value=True)
 def test_delete_model_file_success(session: Session, monkeypatch, mocked_settings):
     """Test successful file deletion from S3 and database."""
     # Mock S3 client
@@ -63,8 +63,8 @@ def test_delete_model_file_success(session: Session, monkeypatch, mocked_setting
 
 def test_delete_model_file_no_access(session: Session, monkeypatch):
     """Test when the user does not have access to the model."""
-    # Mock can_modify_model to return False
-    monkeypatch.setattr("flip_api.file_services.delete_file.can_modify_model", lambda *args: False)
+    # Mock can_access_model to return False
+    monkeypatch.setattr("flip_api.file_services.delete_file.can_access_model", lambda *args: False)
 
     # Call the function and assert HTTPException is raised
     with pytest.raises(HTTPException) as exc_info:
@@ -75,7 +75,7 @@ def test_delete_model_file_no_access(session: Session, monkeypatch):
     assert str(user_id) in exc_info.value.detail
 
 
-@patch("flip_api.file_services.delete_file.can_modify_model", return_value=True)
+@patch("flip_api.file_services.delete_file.can_access_model", return_value=True)
 def test_delete_model_file_s3_error(session: Session, monkeypatch):
     """Test when there is an error deleting from S3."""
     # Mock S3 client to raise an exception
@@ -97,3 +97,20 @@ def test_delete_model_file_s3_error(session: Session, monkeypatch):
     # Assertions
     assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Error deleting" in exc_info.value.detail
+
+
+def test_delete_model_file_general_exception(session: Session, monkeypatch):
+    """Test when a general exception occurs."""
+    # Mock ModelFileDelete to raise an exception
+    monkeypatch.setattr(
+        "flip_api.file_services.delete_file.ModelFileDelete",
+        lambda *args, **kwargs: (_ for _ in ()).throw(Exception("General error")),
+    )
+
+    # Call the function and assert HTTPException is raised
+    with pytest.raises(HTTPException) as exc_info:
+        delete_model_file(model_id, file_name, session, user_id)
+
+    # Assertions
+    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "Internal server error" in exc_info.value.detail

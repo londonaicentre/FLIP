@@ -27,9 +27,9 @@ variable "instance_type" {
   default = "t3.small"
 }
 
-variable "ssh_public_key" {
-  description = "SSH public key content to inject via cloud-init for SSH-over-SSM access"
-  type        = string
+variable "key_name" {
+  type    = string
+  default = "~/.ssh/id_rsa"
 }
 
 variable "subnet_id" {
@@ -47,15 +47,15 @@ variable "create_elastic_ip" {
 }
 
 variable "TRUST_API_PORT" {
-  type = number
+  type    = number
 }
 
 variable "XNAT_PORT" {
-  type = number
+  type    = number
 }
 
 variable "PACS_UI_PORT" {
-  type = number
+  type    = number
 }
 
 variable "iam_instance_profile_name" {

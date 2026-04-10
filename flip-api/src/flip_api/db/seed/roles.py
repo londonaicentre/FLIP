@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 
 from sqlmodel import Session, select
 
@@ -26,15 +27,10 @@ CURRENT_ROLES = [
         "name": "Admin",
         "description": "A role for administrators.",
     },
-    {
-        "id": RoleRef.OBSERVER.value,
-        "name": "Observer",
-        "description": "Read-only access to assigned projects. Cannot create, edit, or delete resources.",
-    },
 ]
 
 
-def seed_roles(session: Session) -> list[str]:
+def seed_roles(session: Session) -> List[str]:
     """Seed roles into the database."""
     for role_data in CURRENT_ROLES:
         # Check if role exists

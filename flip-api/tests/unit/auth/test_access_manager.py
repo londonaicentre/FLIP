@@ -10,19 +10,15 @@
 # limitations under the License.
 #
 
-from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from unittest.mock import patch
 
 import pytest
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
-from sqlmodel import Session
 
 # Module to be tested
 from flip_api.auth.access_manager import (
     API_KEY_HEADER_NAME,
-    can_modify_model,
-    can_modify_project,
     check_authorization_token,
 )
 from flip_api.config import Settings
@@ -40,9 +36,6 @@ client = TestClient(app_under_test)
 
 VALID_TEST_KEY = "test_secret_key_12345_valid"
 WRONG_TEST_KEY = "wrong_secret_key_67890_invalid"
-
-PATCH_HAS_PERMISSIONS = "flip_api.auth.access_manager.has_permissions"
-PATCH_CAN_MODIFY_PROJECT = "flip_api.auth.access_manager.can_modify_project"
 
 
 @pytest.fixture
@@ -111,144 +104,3 @@ class TestCheckAuthorizationToken:
             check_authorization_token(api_key=VALID_TEST_KEY)
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert exc_info.value.detail == "Server configuration error: API key mechanism not set up."
-
-
-class TestCanModifyProject:
-    def test_returns_true_when_user_has_manage_projects_permission(self):
-        user_id = uuid4()
-        project_id = uuid4()
-        db = MagicMock(spec=Session)
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=True):
-            result = can_modify_project(user_id, project_id, db)
-
-        assert result is True
-        db.exec.assert_not_called()
-
-    def test_returns_true_when_user_is_project_owner(self):
-        user_id = uuid4()
-        project_id = uuid4()
-        db = MagicMock(spec=Session)
-        mock_project = MagicMock()
-        mock_project.owner_id = user_id
-        db.exec.return_value.first.return_value = mock_project
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
-            result = can_modify_project(user_id, project_id, db)
-
-        assert result is True
-
-    def test_returns_false_when_user_is_not_project_owner(self):
-        user_id = uuid4()
-        project_id = uuid4()
-        db = MagicMock(spec=Session)
-        mock_project = MagicMock()
-        mock_project.owner_id = uuid4()
-        db.exec.return_value.first.return_value = mock_project
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
-            result = can_modify_project(user_id, project_id, db)
-
-        assert result is False
-
-    def test_returns_false_when_project_not_found(self):
-        user_id = uuid4()
-        project_id = uuid4()
-        db = MagicMock(spec=Session)
-        db.exec.return_value.first.return_value = None
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
-            result = can_modify_project(user_id, project_id, db)
-
-        assert result is False
-
-    def test_returns_false_on_database_exception(self):
-        user_id = uuid4()
-        project_id = uuid4()
-        db = MagicMock(spec=Session)
-        db.exec.side_effect = Exception("DB connection error")
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
-            result = can_modify_project(user_id, project_id, db)
-
-        assert result is False
-
-
-class TestCanModifyModel:
-    def test_returns_true_when_user_has_manage_projects_permission(self):
-        user_id = uuid4()
-        model_id = uuid4()
-        db = MagicMock(spec=Session)
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=True):
-            result = can_modify_model(user_id, model_id, db)
-
-        assert result is True
-        db.exec.assert_not_called()
-
-    def test_returns_false_when_model_not_found(self):
-        user_id = uuid4()
-        model_id = uuid4()
-        db = MagicMock(spec=Session)
-        db.exec.return_value.first.return_value = None
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
-            result = can_modify_model(user_id, model_id, db)
-
-        assert result is False
-
-    def test_returns_false_when_model_has_no_project_id(self):
-        user_id = uuid4()
-        model_id = uuid4()
-        db = MagicMock(spec=Session)
-        mock_model = MagicMock()
-        mock_model.project_id = None
-        db.exec.return_value.first.return_value = mock_model
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
-            result = can_modify_model(user_id, model_id, db)
-
-        assert result is False
-
-    def test_returns_true_when_can_modify_project_returns_true(self):
-        user_id = uuid4()
-        model_id = uuid4()
-        mock_project_id = uuid4()
-        db = MagicMock(spec=Session)
-        mock_model = MagicMock()
-        mock_model.project_id = mock_project_id
-        db.exec.return_value.first.return_value = mock_model
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False), \
-             patch(PATCH_CAN_MODIFY_PROJECT, return_value=True) as mock_cmp:
-            result = can_modify_model(user_id, model_id, db)
-
-        assert result is True
-        mock_cmp.assert_called_once_with(user_id, mock_project_id, db)
-
-    def test_returns_false_when_can_modify_project_returns_false(self):
-        user_id = uuid4()
-        model_id = uuid4()
-        mock_project_id = uuid4()
-        db = MagicMock(spec=Session)
-        mock_model = MagicMock()
-        mock_model.project_id = mock_project_id
-        db.exec.return_value.first.return_value = mock_model
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False), \
-             patch(PATCH_CAN_MODIFY_PROJECT, return_value=False) as mock_cmp:
-            result = can_modify_model(user_id, model_id, db)
-
-        assert result is False
-        mock_cmp.assert_called_once_with(user_id, mock_project_id, db)
-
-    def test_returns_false_on_database_exception(self):
-        user_id = uuid4()
-        model_id = uuid4()
-        db = MagicMock(spec=Session)
-        db.exec.side_effect = Exception("DB connection error")
-
-        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
-            result = can_modify_model(user_id, model_id, db)
-
-        assert result is False

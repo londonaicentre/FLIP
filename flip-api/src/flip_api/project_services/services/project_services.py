@@ -12,6 +12,7 @@
 
 import json
 from datetime import datetime
+from typing import List, Optional, Tuple
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -55,13 +56,13 @@ from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
 
 
-def update_project_user_access(project_id: UUID, user_ids: list[UUID], session: Session) -> None:
+def update_project_user_access(project_id: UUID, user_ids: List[UUID], session: Session) -> None:
     """
     Updates the user access for a project by creating new ProjectUserAccess entries for the provided user IDs.
 
     Args:
         project_id (UUID): The ID of the project for which to update user access.
-        user_ids (list[UUID]): A list of user IDs to grant access to the project.
+        user_ids (List[UUID]): A list of user IDs to grant access to the project.
         session (Session): The SQLModel session to use for database operations.
 
     Returns:
@@ -115,7 +116,6 @@ def create_project(
             owner_id=current_user_id,
             status=ProjectStatus.UNSTAGED,  # Default status
             creation_timestamp=datetime.utcnow(),
-            dicom_to_nifti=payload.dicom_to_nifti,
         )
         session.add(new_project)
         session.flush()  # Ensure the project is added and has an ID
@@ -281,7 +281,7 @@ def edit_project_service(
         )
 
 
-def get_project_query(project_from_db: IProjectResponse) -> IProjectQuery | None:
+def get_project_query(project_from_db: IProjectResponse) -> Optional[IProjectQuery] | None:
     """
     If the project has a query, try to return it if it is valid. Otherwise, return None.
 
@@ -290,7 +290,7 @@ def get_project_query(project_from_db: IProjectResponse) -> IProjectQuery | None
         a query.
 
     Returns:
-        IProjectQuery | None: The project query if it exists and is valid, otherwise None.
+        Optional[IProjectQuery]: The project query if it exists and is valid, otherwise None.
     """
     logger.debug(project_from_db)
     query = project_from_db.query
@@ -307,7 +307,7 @@ def get_project_query(project_from_db: IProjectResponse) -> IProjectQuery | None
     return None
 
 
-def get_approved_trusts_for_project(project_id: UUID, session: Session) -> list[Trust]:
+def get_approved_trusts_for_project(project_id: UUID, session: Session) -> List[Trust]:
     """
     Gets trust that are approved for a specific project.
 
@@ -316,7 +316,7 @@ def get_approved_trusts_for_project(project_id: UUID, session: Session) -> list[
         session (Session): The SQLModel session to use for database operations.
 
     Returns:
-        list[Trust]: A list of Trust objects that are approved for the specified project.
+        List[Trust]: A list of Trust objects that are approved for the specified project.
     """
     stmt = (
         select(Trust.id, Trust.name, Trust.endpoint)
@@ -333,7 +333,7 @@ def get_approved_trusts_for_project(project_id: UUID, session: Session) -> list[
     return [Trust(id=r.id, name=r.name, endpoint=r.endpoint) for r in results]
 
 
-def get_trusts_approval_status_for_project(project_id: UUID, session: Session) -> list[IApprovedTrust]:
+def get_trusts_approval_status_for_project(project_id: UUID, session: Session) -> List[IApprovedTrust]:
     """
     Gets all trusts linked to a project and their approval status.
 
@@ -342,7 +342,7 @@ def get_trusts_approval_status_for_project(project_id: UUID, session: Session) -
         session (Session): The SQLModel session to use for database operations.
 
     Returns:
-        list[IApprovedTrust]: A list of IApprovedTrust objects containing trust details and their approval status for
+        List[IApprovedTrust]: A list of IApprovedTrust objects containing trust details and their approval status for
         the specified project.
     """
     # This query assumes ProjectTrustIntersect has all trusts linked to a project,
@@ -380,7 +380,7 @@ def get_project_models_service(
     session: Session,
     query_params: dict = {},
     all_results: bool = False,
-) -> tuple[IPagedResponse[IModelsInfoResponse], PagingInfo]:
+) -> Tuple[IPagedResponse[IModelsInfoResponse], PagingInfo]:
     """
     Retrieves models for a project with pagination and optional search.
 
@@ -391,7 +391,7 @@ def get_project_models_service(
         all_results (bool, optional): Whether to retrieve all results without pagination. Defaults to False.
 
     Returns:
-        tuple[IPagedResponse[IModelsInfoResponse], PagingInfo]: A tuple containing the paged response with model info
+        Tuple[IPagedResponse[IModelsInfoResponse], PagingInfo]: A tuple containing the paged response with model info
         and paging details.
     """
     paging_details = get_paging_details(query_string_parameters=query_params)
@@ -448,7 +448,7 @@ def get_project_models_service(
     return IPagedResponse[IModelsInfoResponse](data=models_response, total_rows=total_rows), paging_details
 
 
-def get_users_with_access_service(project_id: UUID, session: Session) -> list[UserAccessInfo]:
+def get_users_with_access_service(project_id: UUID, session: Session) -> List[UserAccessInfo]:
     """
     Retrieves a list of users who have access to a specific project.
 
@@ -457,7 +457,7 @@ def get_users_with_access_service(project_id: UUID, session: Session) -> list[Us
         session (Session): The SQLModel session to use for database operations.
 
     Returns:
-        list[UserAccessInfo]: A list of UserAccessInfo objects containing user IDs of those who have access to the
+        List[UserAccessInfo]: A list of UserAccessInfo objects containing user IDs of those who have access to the
         project.
     """
     stmt = select(ProjectUserAccess.user_id).where(ProjectUserAccess.project_id == project_id)
@@ -570,7 +570,7 @@ def approve_project(
 
 def stage_project_service(
     project_id: UUID,
-    trust_ids: list[UUID],
+    trust_ids: List[UUID],
     current_user_id: UUID,  # Added for consistency and potential auditing
     session: Session,
 ) -> None:
@@ -579,7 +579,7 @@ def stage_project_service(
 
     Args:
         project_id (UUID): The ID of the project to stage.
-        trust_ids (list[UUID]): List of Trust IDs to stage the project for.
+        trust_ids (List[UUID]): List of Trust IDs to stage the project for.
         current_user_id (UUID): The ID of the user performing the action, for auditing.
         session (Session): SQLModel session for database operations.
 
@@ -666,7 +666,7 @@ def unstage_project_service(project_id: UUID, current_user_id: UUID, session: Se
     logger.info(f"Project {project_id} unstaged by user {current_user_id}.")
 
 
-def get_reimport_queries_service(max_reimport_count: int, session: Session) -> list[IReimportQuery]:
+def get_reimport_queries_service(max_reimport_count: int, session: Session) -> List[IReimportQuery]:
     """
     Fetch queries eligible for reimport, using SQLModel-style selects of models.
     Assumes relationships:
@@ -685,7 +685,7 @@ def get_reimport_queries_service(max_reimport_count: int, session: Session) -> l
             )
         )
 
-        rows = session.exec(stmt).all()  # list[tuple[Queries, XNATProjectStatus, Trust]]
+        rows = session.exec(stmt).all()  # List[tuple[Queries, XNATProjectStatus, Trust]]
 
         return [
             IReimportQuery(
@@ -783,14 +783,13 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
         creation_timestamp=project.creation_timestamp,
         status=project.status,
         query=query_data,
-        dicom_to_nifti=project.dicom_to_nifti,
     )  # type: ignore[call-arg]
 
     logger.debug(f"Returning project response: {project_response}")
     return project_response
 
 
-def get_users_with_access(project_id: UUID, session: Session) -> list[UUID]:
+def get_users_with_access(project_id: UUID, session: Session) -> List[UUID]:
     """
     Retrieves a list of user IDs who have access to a specific project.
 
@@ -799,7 +798,7 @@ def get_users_with_access(project_id: UUID, session: Session) -> list[UUID]:
         session (Session): The SQLModel session to use for database operations.
 
     Returns:
-        list[UUID]: A list of user IDs with access to the project.
+        List[UUID]: A list of user IDs with access to the project.
     """
     logger.debug("Attempting to get project users...")
 

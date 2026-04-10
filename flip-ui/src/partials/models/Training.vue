@@ -25,7 +25,6 @@
                         </div>
                         <div class="flex mt-4 md:mt-0 md:ml-4">
                             <AiButton
-                                v-if="!isObserver"
                                 primary
                                 type="submit"
                                 :disabled="!canTrain"
@@ -35,7 +34,7 @@
                             >
                                 Initiate Training
                             </AiButton>
-                            <TrainingActionsMenu v-if="!isObserver" :status="getStatus" />
+                            <TrainingActionsMenu :status="getStatus" />
                         </div>
                     </div>
                 </div>
@@ -100,7 +99,6 @@ import {
     ModelStatus,
     ModelStatusEnum
 } from "@/services/model-service";
-import { useAuthStore } from "@/store/auth";
 import { Snackbar } from "@/utils/snackbar";
 
 import Timeline from "./Timeline.vue";
@@ -120,9 +118,6 @@ interface ITrainingProps {
 const props = defineProps<ITrainingProps>();
 
 const emits = defineEmits(["started"]);
-
-const authStore = useAuthStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
 
 const route = useRoute();
 

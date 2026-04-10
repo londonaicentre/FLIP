@@ -11,6 +11,7 @@
 #
 
 import os
+from typing import List, Optional
 from uuid import UUID
 
 from fastapi.security import OAuth2PasswordBearer
@@ -30,16 +31,16 @@ ALGORITHM = "HS256"
 
 class TokenPayload(BaseModel):
     sub: str
-    exp: int | None = None
+    exp: Optional[int] = None
 
 
-def has_permissions(user_id: UUID, required_permissions: list[PermissionRef], db: Session) -> bool:
+def has_permissions(user_id: UUID, required_permissions: List[PermissionRef], db: Session) -> bool:
     """
     Check if a user has the required permissions.
 
     Args:
         user_id (UUID): The ID of the user to check permissions for.
-        required_permissions (list[PermissionRef]): A list of permissions to check against the user's roles.
+        required_permissions (List[PermissionRef]): A list of permissions to check against the user's roles.
         db (Session): The database session to query user roles and permissions.
 
     Returns:

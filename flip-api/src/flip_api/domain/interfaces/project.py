@@ -11,21 +11,21 @@
 #
 
 from datetime import datetime
-from typing import Annotated
+from typing import List, Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, validator
+from typing_extensions import Annotated
 
 from flip_api.domain.schemas.status import ModelStatus, ProjectStatus
-from flip_api.domain.schemas.users import CognitoUser
 
 
 class IProjectQuery(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     name: str = Field()
     query: str = Field()
-    trusts_queried: int | None = Field(default=None, alias="trustsQueried")
-    total_cohort: int | None = Field(default=None, alias="totalCohort")
+    trusts_queried: Optional[int] = Field(default=None, alias="trustsQueried")
+    total_cohort: Optional[int] = Field(default=None, alias="totalCohort")
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -36,12 +36,11 @@ class IProjectResponse(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     name: str
     description: str = Field(default="")
-    query: IProjectQuery | None = None
+    query: Optional[IProjectQuery] = None
     owner_id: UUID = Field(..., alias="ownerId")
     creation_timestamp: Annotated[datetime, Field(default_factory=datetime.utcnow)]
     status: ProjectStatus = Field(default=ProjectStatus.UNSTAGED)
-    query_id: UUID | None = Field(default=None)
-    dicom_to_nifti: bool = Field(default=True)
+    query_id: Optional[UUID] = Field(default=None)
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -55,7 +54,7 @@ class IProject(BaseModel):  # Base for IProject to avoid repetition
     description: str = Field(default="")
     owner_id: UUID = Field(..., alias="ownerId")
     deleted: bool = Field(default=False)
-    approved: bool | None = None
+    approved: Optional[bool] = None
     creation_timestamp: str = Field(..., alias="creationtimestamp")  # This is a string to match the Vue.js handling
     status: ProjectStatus = Field(default=ProjectStatus.UNSTAGED)
 
@@ -73,9 +72,9 @@ class IApprovedTrust(BaseModel):
 
 class IReturnedProject(IProject):  # Extends IProject
     owner_email: EmailStr = Field(..., alias="ownerEmail")
-    approved_trusts: list[IApprovedTrust] | None = Field(default=None, alias="approvedTrusts")
-    query: IProjectQuery | None = Field(default=None)
-    users: list[CognitoUser]
+    approved_trusts: Optional[List[IApprovedTrust]] = Field(default=None, alias="approvedTrusts")
+    query: Optional[IProjectQuery] = Field(default=None)
+    users: List[EmailStr]
     model_config = ConfigDict(populate_by_name=True)
 
 
@@ -100,7 +99,7 @@ class IModelsInfoResponse(BaseModel):
 class IEditProject(BaseModel):
     name: str = Field(..., description="Project name")
     description: str = Field(default="", description="Project description")
-    users: list[UUID] | None = Field(default=[], description="List of user IDs to add to the project")  # type: ignore[arg-type]
+    users: Optional[List[UUID]] = Field(default=[], description="List of user IDs to add to the project")  # type: ignore[arg-type]
 
     # Handles cases where no users are added when editing a project (in which case the input is '[null]')
     @validator("users", pre=True)
@@ -115,12 +114,12 @@ class IEditProject(BaseModel):
 class IProjectDetails(BaseModel):
     name: str = Field(..., description="Project name")
     description: str = Field(default="", description="Project description")
-    users: list[UUID] | None = Field(default=[], description="List of user IDs to add to the project")  # type: ignore[arg-type]
+    users: Optional[List[UUID]] = Field(default=[], description="List of user IDs to add to the project")  # type: ignore[arg-type]
 
 
 class IProjectApproval(BaseModel):
     project_id: UUID = Field(..., description="The ID of the project to approve.")
-    trust_ids: list[UUID] = Field(
+    trust_ids: List[UUID] = Field(
         ...,
         description="List of Trust IDs to approve the project for.",
     )
@@ -131,7 +130,7 @@ class ICountResponse(BaseModel):
 
 
 class IStageProjectRequest(BaseModel):
-    trusts: list[UUID]
+    trusts: List[UUID]
 
 
 # Imaging Related Interfaces
@@ -149,8 +148,8 @@ class IImagingImportStatus(BaseModel):
 
 class IImagingStatusResponse(BaseModel):
     project_creation_completed: bool = Field(alias="projectCreationCompleted")
-    import_status: IImagingImportStatus | None = Field(default=None, alias="importStatus")
-    reimport_count: int | None = Field(default=None, alias="reimportCount")
+    import_status: Optional[IImagingImportStatus] = Field(default=None, alias="importStatus")
+    reimport_count: Optional[int] = Field(default=None, alias="reimportCount")
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -184,7 +183,7 @@ class IReimportQuery(BaseModel):
     query_id: UUID = Field()
     query: str = Field()
     xnat_project_id: UUID = Field()
-    last_reimport: Annotated[datetime | None, Field(default_factory=datetime.utcnow)]
+    last_reimport: Annotated[Optional[datetime], Field(default_factory=datetime.utcnow)]
     trust_id: UUID = Field()
     trust_endpoint: str = Field()  # Assuming it's a URL string
     trust_name: str = Field()

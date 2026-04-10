@@ -48,11 +48,11 @@ or as part of the full platform:
 make up
 ```
 
-The API is served on the port defined by `API_PORT` in [`.env.development.example`](../.env.development.example)
-(default: `8080`). Interactive API documentation (Swagger UI) is available at:
+The API is served on the port defined by `FLIP_API_PORT` in [`.env.development.example`](../.env.development.example)
+(default: `8000`). Interactive API documentation (Swagger UI) is available at:
 
 ```
-http://localhost:<API_PORT>/api/docs
+http://localhost:<FLIP_API_PORT>/docs
 ```
 
 ## Configuration
@@ -62,16 +62,12 @@ The flip-api is configured via environment variables. In development these are s
 
 | Variable | Description |
 | --- | --- |
-| `DB_HOST` | PostgreSQL host |
-| `DB_PORT` | PostgreSQL port |
-| `POSTGRES_USER` | PostgreSQL username |
-| `POSTGRES_DB` | PostgreSQL database name |
+| `DATABASE_URL` | PostgreSQL connection string |
 | `AWS_REGION` | AWS region for Cognito and S3 |
-| `AWS_COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID |
-| `AWS_COGNITO_APP_CLIENT_ID` | AWS Cognito App Client ID |
-| `AES_KEY_BASE64` | AES encryption key for Trust communication (base64-encoded) |
-| `UPLOADED_MODEL_FILES_BUCKET` | S3 bucket for uploaded model files |
-| `UPLOADED_FEDERATED_DATA_BUCKET` | S3 bucket for storing models and artefacts |
+| `COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID |
+| `COGNITO_CLIENT_ID` | AWS Cognito App Client ID |
+| `ENCRYPTION_KEY` | Key used for encrypting project IDs sent to Trusts |
+| `S3_BUCKET_NAME` | S3 bucket for storing models and artefacts |
 
 See [`.env.development.example`](../.env.development.example) for the full list of required variables.
 

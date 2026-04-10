@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import Optional
 from uuid import UUID
 
 from sqlmodel import Session, select
@@ -63,7 +64,7 @@ def insert_status(
     project_id: UUID,
     status: XNATImageStatus,
     db: Session,
-    query_id: UUID | None = None,
+    query_id: Optional[UUID] | Optional[UUID] = None,
 ) -> int:
     """
     Insert a new XNAT project status record
@@ -74,7 +75,7 @@ def insert_status(
         project_id (str): ID of the project
         status (XNATImageStatus): Status to set
         db (Session): Database session
-        query_id (str | None): Optional query ID
+        query_id (Optional[str]): Optional query ID
 
     Returns:
         int: Number of rows inserted

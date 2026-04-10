@@ -11,7 +11,7 @@
 #
 
 from datetime import datetime
-from typing import cast
+from typing import List, Optional, cast
 from uuid import UUID
 
 from sqlalchemy import Column
@@ -178,7 +178,7 @@ def get_net_by_model_id(model_id: UUID, session: Session) -> INetDetails:
         raise DatabaseError("Error getting net by model ID") from e
 
 
-def get_net_by_name(name: str, session: Session) -> INetDetails | None:
+def get_net_by_name(name: str, session: Session) -> Optional[INetDetails]:
     """
     Get information for a net by name
 
@@ -187,7 +187,7 @@ def get_net_by_name(name: str, session: Session) -> INetDetails | None:
         session (Session): SQLModel session
 
     Returns:
-        INetDetails | None: Details of the net or None if not found
+        Optional[INetDetails]: Details of the net or None if not found
     """
     logger.info(f"Getting {name} info from db...")
 
@@ -209,7 +209,7 @@ def get_net_by_name(name: str, session: Session) -> INetDetails | None:
         raise DatabaseError("Database error while getting net by name") from e
 
 
-def get_nets(session: Session) -> list[INetDetails]:
+def get_nets(session: Session) -> List[INetDetails]:
     """
     Fetches all nets from the database.
 
@@ -217,7 +217,7 @@ def get_nets(session: Session) -> list[INetDetails]:
         session (Session): The database session.
 
     Returns:
-        list[INetDetails]: A list of all nets.
+        List[INetDetails]: A list of all nets.
     """
     logger.info("Getting net info from db...")
     try:
@@ -236,7 +236,7 @@ def get_nets(session: Session) -> list[INetDetails]:
         raise DatabaseError("Error getting nets") from e
 
 
-def check_for_available_net(session: Session) -> ISchedulerResponse | None:
+def check_for_available_net(session: Session) -> Optional[ISchedulerResponse]:
     """
     Checks for any available nets and marks one as busy if found.
 
@@ -244,7 +244,7 @@ def check_for_available_net(session: Session) -> ISchedulerResponse | None:
         session (Session): The database session.
 
     Returns:
-        ISchedulerResponse | None: The scheduler response if an available net is found, otherwise None.
+        Optional[ISchedulerResponse]: The scheduler response if an available net is found, otherwise None.
     """
     logger.info("Checking for any available nets...")
 
@@ -273,7 +273,7 @@ def check_for_available_net(session: Session) -> ISchedulerResponse | None:
         raise DatabaseError("Error checking for available net") from e
 
 
-def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse | None:
+def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> Optional[IJobResponse]:
     """
     Checks for any queued jobs for a given scheduler.
 
@@ -282,7 +282,7 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         session (Session): The database session.
 
     Returns:
-        IJobResponse | None: The job response if a queued job is found, otherwise None.
+        Optional[IJobResponse]: The job response if a queued job is found, otherwise None.
     """
     logger.info("Checking for any queued jobs...")
 

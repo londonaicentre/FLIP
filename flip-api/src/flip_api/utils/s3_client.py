@@ -11,7 +11,7 @@
 #
 
 from collections import defaultdict
-from typing import Any
+from typing import Any, Dict, List, Tuple
 from urllib.parse import urlparse
 
 import boto3
@@ -21,7 +21,7 @@ from flip_api.config import get_settings
 from flip_api.utils.logger import logger
 
 
-def parse_s3_path(s3_path: str) -> tuple[str, str]:
+def parse_s3_path(s3_path: str) -> Tuple[str, str]:
     """
     Parse an S3 path into bucket and key components.
 
@@ -113,7 +113,7 @@ class S3Client:
             logger.error(f"Error deleting object {key} from bucket {bucket}: {e}")
             raise Exception(f"Unable to delete object {key} from bucket {bucket}")
 
-    def delete_objects(self, s3_paths: list[str]) -> dict[str, Any]:
+    def delete_objects(self, s3_paths: List[str]) -> Dict[str, Any]:
         """
         Delete multiple objects from one or more S3 buckets in grouped batch requests.
 
@@ -121,7 +121,7 @@ class S3Client:
             s3_paths: List of full S3 paths (e.g., s3://bucket-name/key)
 
         Returns:
-            dict[str, Any]: Dictionary containing deletion results per bucket.
+            Dict[str, Any]: Dictionary containing deletion results per bucket.
 
         Raises:
             Exception: If batch deletion fails for any bucket
@@ -166,7 +166,7 @@ class S3Client:
             logger.exception("Failed to delete S3 objects.")
             raise
 
-    def get_object(self, s3_path: str) -> dict[str, Any]:
+    def get_object(self, s3_path: str) -> Dict[str, Any]:
         """
         Get object from S3 bucket.
 
@@ -174,7 +174,7 @@ class S3Client:
             s3_path: Full S3 path (e.g., s3://bucket-name/key)
 
         Returns:
-            dict[str, Any]: Response containing object data.
+            Dict[str, Any]: Response containing object data.
 
         Raises:
             EndpointConnectionError: If connection to the S3 endpoint fails.
@@ -190,7 +190,7 @@ class S3Client:
                 error=e,
             )
 
-    def head_object(self, s3_path: str) -> dict[str, Any]:
+    def head_object(self, s3_path: str) -> Dict[str, Any]:
         """
         Get object metadata from S3.
 
@@ -198,7 +198,7 @@ class S3Client:
             s3_path: Full S3 path (e.g., s3://bucket-name/key)
 
         Returns:
-            dict[str, Any]: Metadata of the object.
+            Dict[str, Any]: Metadata of the object.
 
         Raises:
             Exception: If getting object metadata fails.
@@ -253,7 +253,7 @@ class S3Client:
             logger.error(f"Error copying {source_s3_path} to {dest_s3_path}: {e}")
             raise Exception(f"Unable to copy object: {e}")
 
-    def list_objects(self, s3_path: str, delimiter: str = "") -> list[str]:
+    def list_objects(self, s3_path: str, delimiter: str = "") -> List[str]:
         """
         List object keys under a given S3 path (non-paginated) and return full S3 paths.
 

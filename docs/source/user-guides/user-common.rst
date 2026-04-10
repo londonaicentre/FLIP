@@ -4,13 +4,13 @@ Common user functions
 
 .. warning:: Must have a valid FLIP account. If you do not have one, please liaise with your local FLIP system administrator and/or information asset owner (IAO), and provide your email address and confirmation of which role(s) you require.
 
-Although this page covers functions common to all FLIP users regardless of :ref:`rbac-roles` throughout the various stages involved in preparing an AI model for federated learning, actions related to project process flow are described from the perspective of users with a ``researcher`` role. Users with the ``observer`` role have read-only access to projects they are assigned to; actions such as creating projects, running queries and uploading files are not available to observers.
+Although this page covers functions common to all FLIP users regardless of :ref:`rbac-roles` throughout the various stages involved in preparing an AI model for federated learning, actions related to project process flow are described from the perspective of users with a ``researcher`` role.
 
 While users with ``admin`` roles may perform all the functions of those with ``researcher`` roles, the former are solely responsible for approving and un-staging a project. For information, please refer to the :ref:`admin-project-and-user-management` subsection or the broader :ref:`sys-admin` section.
 
 FLIP uses the concept of a *project*, in which multiple AI models can be managed. Projects can have multiple users associated with them, allowing individuals to view and contribute to the project. The typical project flow involves the creation of a project, running a cohort query, staging the project for approval, uploading the model plus any associated files and initiating the training. Once training is complete, the results of training can be downloaded.
 
-To facilitate federated learning and concurrent training of multiple models on the platform, FLIP supports both :term:`NVIDIA FLARE` and the :term:`Flower Framework` as federated learning backends. This page covers concepts such as FL *nets* and job scheduling. For details on framework-specific file requirements and job types, see :ref:`the FL nodes component page <flip-fl-nodes>`.
+To facilitate federated learning and concurrent training of multiple models on the platform, :term:`NVIDIA FLARE` has been chosen as the SDK to enable collaborative workflow and so this page also covers concepts of NVIDIA FLARE *nets* and job scheduling.
 
 .. _initial-login:
 
@@ -305,20 +305,18 @@ Model Files
 
    A model must be created before proceeding to upload model files and prepare the model for training.
 
-**For NVIDIA FLARE apps**, the minimum required files are:
+As a minimum, the following files are required:
 
 - ``validator.py``
 - ``trainer.py``
 
 Additional files may be uploaded, especially if these are referenced by the validator or trainer. A config file may also be uploaded (see :ref:`training-configuration` section for more information), in which optional variables can be defined.
 
-**For Flower apps**, the required files differ (e.g. ``client_app.py``, ``pyproject.toml``). See the :ref:`FL nodes documentation <flip-fl-nodes>` for Flower-specific file requirements and job types.
-
-For more information on model training and model files, please see the `FLIP tutorials <https://github.com/londonaicentre/flip-fl-base/tree/main/tutorials>`_.
+For more information on model training and model files, please see the `FLIP Sample Application <https://github.com/AI4VBH/flip-sample-application>`_.
 
 .. warning::
 
-   Please ensure that any model files uploaded to FLIP have been tested locally using the FLIP tutorials workflow, and have been validated to ensure they are free of syntax errors.
+   Please ensure that any model files uploaded to FLIP have been tested locally using the FLIP Sample Application, and have been validated to ensure they are free of syntax errors.
 
    Linting tools such as `Pylint <https://pypi.org/project/pylint/>`_ and `JSON Lint <https://www.npmjs.com/package/jsonlint>`_ can provide a simple way to validate any Python or JSON are free of errors before uploading.
 
@@ -347,10 +345,6 @@ If model files need to be managed further after uploading, the uploader function
 Training Configuration
 ----------------------
 
-.. note::
-
-   The following configuration applies to **NVIDIA FLARE** apps. For Flower apps, training configuration is managed via ``pyproject.toml``. See the :ref:`FL nodes documentation <flip-fl-nodes>` for details.
-
 Prior to commencing training you may also upload an optional ``config.json`` file (see example below). The config file defines variables which are used during FLIP training (e.g. ``GLOBAL_ROUNDS``, ``LOCAL_ROUNDS``, ``AGGREGATION_WEIGHTS``, ``AGGREGATOR``).
 
 .. code-block:: json
@@ -358,8 +352,8 @@ Prior to commencing training you may also upload an optional ``config.json`` fil
     {
       "GLOBAL_ROUNDS": 5,
       "LOCAL_ROUNDS": 2,
-      "IGNORE_RESULT_ERROR": false,
-      "AGGREGATOR": "InTimeAccumulateWeightedAggregator",
+      "IGNORE_RESULT_ERROR": false
+      "AGGREGATOR": "InTimeAccumulateWeightedAggregator"
       "AGGREGATION_WEIGHTS": {
          "KCH": 1.0,
          "UCLH": 0.5
@@ -368,7 +362,7 @@ Prior to commencing training you may also upload an optional ``config.json`` fil
 
 .. note::
 
-   All config properties have default values. If a ``config.json`` file is not uploaded, or some properties are missing from the file, default values will be utilised at runtime.
+   All config properties have default values. If a ``config.json`` file is not uploaded, or some properties are missing from the file, default vaules will be utilised at runtime.
    See default values specified below.
 
 **GLOBAL_ROUNDS**
@@ -436,7 +430,7 @@ Delete Files
 Training
 ========
 
-FLIP allows for multiple models to be deployed to and trained at multiple Trust sites concurrently, using either :term:`NVIDIA FLARE` or the :term:`Flower Framework` to train, test and aggregate at each of the relevant nodes and report back to the user interface once the training is complete.
+FLIP allows for multiple models to be deployed to and trained at multiple Trust sites concurrently, and uses :term:`NVIDIA FLARE` to train, test and aggregate at each of the relevant nodes and report back to the user interface once the training is complete.
 
 FLIP uses the concept of *nets* that are deployed on the Central Hub and remote hardware at each Trust. Each *net* consists of a controller and worker (to manage the model training cycle) and FLIP uses a task scheduler to manage the resources available on the hardware at Trust sites. The scheduler maintains a queue of waiting *tasks*, when a *net* becomes free a *task* is assigned to it.
 

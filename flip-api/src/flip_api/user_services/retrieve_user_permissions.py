@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -41,7 +42,7 @@ def has_role(user_id: UUID, db: Session) -> bool:
     return user_role is not None
 
 
-def get_user_permissions(user_id: UUID, db: Session) -> list[Permission]:
+def get_user_permissions(user_id: UUID, db: Session) -> List[Permission]:
     """
     Retrieve all permissions for a given user based on their roles.
 
@@ -50,13 +51,13 @@ def get_user_permissions(user_id: UUID, db: Session) -> list[Permission]:
         db (Session): The database session.
 
     Returns:
-        list[Permission]: A list of Permission objects associated with the user's roles.
+        List[Permission]: A list of Permission objects associated with the user's roles.
     """
     # Get user roles
     user_roles = db.exec(select(UserRole).where(col(UserRole.user_id) == user_id)).all()
 
     # Get all permissions for these roles
-    user_permissions: list[Permission] = []
+    user_permissions: List[Permission] = []
     for user_role in user_roles:
         role_permissions = db.exec(select(RolePermission).where(col(RolePermission.role_id) == user_role.role_id)).all()
         user_permissions.extend(

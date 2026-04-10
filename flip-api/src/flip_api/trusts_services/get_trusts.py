@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -24,11 +25,11 @@ router = APIRouter(prefix="/trust", tags=["trusts_services"])
 
 
 # [#114] ✅
-@router.get("", status_code=status.HTTP_200_OK, response_model=list[IBasicTrust])
+@router.get("", status_code=status.HTTP_200_OK, response_model=List[IBasicTrust])
 def get_trusts(
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-) -> list[IBasicTrust]:
+) -> List[IBasicTrust]:
     """
     Retrieve all trusts with their ID and name.
 

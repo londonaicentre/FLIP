@@ -41,8 +41,8 @@ def fake_request():
 
 
 @pytest.fixture
-def mock_can_modify_model():
-    with patch("flip_api.fl_services.initiate_training.can_modify_model") as mock:
+def mock_can_access_model():
+    with patch("flip_api.fl_services.initiate_training.can_access_model") as mock:
         mock.return_value = True
         yield mock
 
@@ -67,7 +67,7 @@ def mock_add_log():
 
 
 def test_initiate_training_success(
-    model_id, fake_request, mock_db, mock_can_modify_model, mock_add_fl_job, mock_update_model_status, mock_add_log
+    model_id, fake_request, mock_db, mock_can_access_model, mock_add_fl_job, mock_update_model_status, mock_add_log
 ):
     payload = IInitiateTrainingInputPayload(trusts=["client1"])
     response = initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
@@ -77,8 +77,8 @@ def test_initiate_training_success(
     assert mock_add_log.call_count == 2
 
 
-def test_initiate_training_forbidden(model_id, fake_request, mock_db, mock_can_modify_model):
-    mock_can_modify_model.return_value = False
+def test_initiate_training_forbidden(model_id, fake_request, mock_db, mock_can_access_model):
+    mock_can_access_model.return_value = False
     payload = IInitiateTrainingInputPayload(trusts=["client1"])
 
     with pytest.raises(HTTPException) as exc_info:
@@ -87,7 +87,7 @@ def test_initiate_training_forbidden(model_id, fake_request, mock_db, mock_can_m
 
 
 def test_initiate_training_model_not_found(
-    model_id, fake_request, mock_db, mock_can_modify_model, mock_add_fl_job, mock_add_log
+    model_id, fake_request, mock_db, mock_can_access_model, mock_add_fl_job, mock_add_log
 ):
     with patch("flip_api.fl_services.initiate_training.update_model_status", return_value=False):
         payload = IInitiateTrainingInputPayload(trusts=["client1"])
@@ -96,7 +96,7 @@ def test_initiate_training_model_not_found(
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
 
 
-def test_initiate_training_failure(model_id, fake_request, mock_db, mock_can_modify_model):
+def test_initiate_training_failure(model_id, fake_request, mock_db, mock_can_access_model):
     with patch("flip_api.fl_services.initiate_training.add_fl_job", side_effect=Exception("Unexpected error")):
         payload = IInitiateTrainingInputPayload(trusts=["client1"])
         with pytest.raises(HTTPException) as exc_info:

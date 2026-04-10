@@ -99,7 +99,7 @@
                                                         data-test="project-search"
                                                     />
                                                 </div>
-                                                <div v-if="!isObserver" class="flex">
+                                                <div class="flex">
                                                     <AiButton
                                                         light
                                                         block
@@ -219,7 +219,7 @@ import { Popover,
     PopoverPanel } from "@headlessui/vue";
 import { debouncedWatch } from "@vueuse/core";
 import useSWRV from "swrv";
-import { computed, ref } from "vue";
+import { ref } from "vue";
 
 import AiBreadcrumbs from "@/components/AiBreadcrumbs/AiBreadcrumbs.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
@@ -238,7 +238,6 @@ import { getInitials } from "@/utils/helpers";
 const pageSize = 20;
 const authStore = useAuthStore();
 const modalsStore = useModalsStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
 const search = ref("");
 const pageNumber = ref(1);
 const searchQueryParam = ref("");

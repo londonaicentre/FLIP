@@ -75,7 +75,7 @@
                             </div>
                             <div class="flex gap-2 grow">
                                 <Transition name="fade">
-                                    <AiButton v-if="!isObserver && file.status === FileUploadStatus.COMPLETED" small :loading="downloadingFile === file.name" @click="() => downloadFile(file.name)">
+                                    <AiButton v-if="file.status === FileUploadStatus.COMPLETED" small :loading="downloadingFile === file.name" @click="() => downloadFile(file.name)">
                                         <icon-ph-download-duotone />
                                     </AiButton>
                                 </Transition>
@@ -116,8 +116,6 @@ import { createPreSignedUrl, uploadFile as uploadFileService } from "@/utils/fil
 import { formatBytes, getRandomId } from "@/utils/helpers";
 import { Snackbar } from "@/utils/snackbar";
 
-import { useAuthStore } from "@/store/auth";
-
 import FileUpload from "./FileUpload.vue";
 
 interface IModelUploadProps {
@@ -133,8 +131,6 @@ const props = defineProps<IModelUploadProps>();
 
 const emits = defineEmits(["uploaded", "deletedFile"]);
 
-const authStore = useAuthStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
 const route = useRoute();
 const internalFiles = ref<FileInfo[]>([]);
 const uploadingFiles = ref<FileInfo[]>([]);

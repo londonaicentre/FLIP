@@ -1,0 +1,9 @@
+{
+    "permissions": [
+        "CanManageUsers",
+        "CanManageProjects",
+        "CanAccessAdminPanel",
+        "CanManageDeployments",
+        "CanManageSiteBanner"
+    ]
+}

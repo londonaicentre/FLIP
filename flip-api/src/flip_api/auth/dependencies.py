@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Any
+from typing import Any, Dict
 from uuid import UUID
 
 import jwt
@@ -110,7 +110,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
         )
 
 
-def get_token_payload(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict[str, Any]:
+def get_token_payload(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
     """
     Alternative function to get the full token payload if needed elsewhere.
 
@@ -118,7 +118,7 @@ def get_token_payload(credentials: HTTPAuthorizationCredentials = Depends(securi
         credentials (HTTPAuthorizationCredentials): The HTTP authorization credentials from the Bearer token.
 
     Returns:
-        dict[str, Any]: The decoded JWT payload.
+        Dict[str, Any]: The decoded JWT payload.
 
     Raises:
         HTTPException: If the credentials are invalid or if there is an error during decoding.

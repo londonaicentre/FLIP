@@ -74,7 +74,7 @@ Register User
 ^^^^^^^^^^^^^
 
 1. Click the 'Register User' button
-2. Enter the new user's email address and assigned roles e.g., ``admin``, ``researcher`` and/or ``observer``
+2. Enter the new user's email address and assigned roles e.g., ``admin`` and/or ``researcher``
 3. Click the 'Register User' button
 4. The user will be emailed a one-time password to use on their :ref:`initial-login`
 

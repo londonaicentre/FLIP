@@ -40,7 +40,7 @@ When creating issues, please use the appropriate issue template:
 
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London. It is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
-The project spans three repositories:
+The project spans two repositories:
 
 | Repository | Description |
 | --- | --- |
@@ -59,8 +59,6 @@ FLIP/
 └── trust/              # Services deployed in individual trust environments
     ├── data-access-api/    # Data access API
     ├── imaging-api/        # Imaging API
-    ├── nginx/              # nginx TLS termination proxy
-    ├── observability/      # Observability stack (Grafana, Loki, Alloy)
     ├── omop-db/            # Mocked OMOP database
     ├── orthanc/            # Mocked PACS service (Orthanc)
     ├── trust-api/          # Trust API
@@ -88,7 +86,7 @@ code --install-extension recommended_extensions.vsix
 
 Key extensions include:
 
-- `ms-vscode-remote.vscode-remote-extensionpack` — connect to Docker containers and remote hosts for in-container development (when remote access is needed, use SSH-over-SSM for AWS environments)
+- `ms-vscode-remote.vscode-remote-extensionpack` — connect to Docker containers and remote servers via SSH for in-container development, avoiding the need to rebuild images on every change
 - Python linting/formatting (ruff, mypy)
 - Docker tooling
 
@@ -182,22 +180,6 @@ make ci
 
 This runs all jobs defined in `.github/workflows/` locally.
 
-### Testing local Trust HTTPS deployment (secure mode only)
-
-For hybrid/on-premises Trust deployment testing, validate connectivity with certificate verification enabled:
-
-```bash
-make -C deploy/providers/AWS test-local-trust LOCAL_TRUST_IP=<public-ip>
-```
-
-Security requirements:
-
-- Do not bypass TLS certificate validation in commands, scripts, or documentation examples.
-- Do not use insecure transport checks (for example `curl -k`) in normal testing or validation flows.
-- If certificate verification fails, fix certificates/CA bundle and endpoint configuration instead of disabling verification.
-
-Risk note: bypassing certificate validation can hide man-in-the-middle attacks and endpoint misconfiguration, and can lead to approving unsafe deployments.
-
 ## The contribution process
 
 *Fork the repository before making changes* [Learn how to fork](https://help.github.com/en/github/getting-started-with-github/fork-a-repo). All contributions to the `develop` branch must be made via pull requests. This allows us to review your changes and ensure they meet our quality standards before merging them into the main codebase.
@@ -226,11 +208,10 @@ The project-wide ruff rules are:
 ```toml
 [tool.ruff]
 line-length = 120
-target-version = "py312"
 
 [tool.ruff.lint]
 preview = true
-select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP045']
+select = ['I', 'F', 'E', 'W', 'PT']
 ```
 
 We also use [mypy](https://github.com/python/mypy) for static type checking.

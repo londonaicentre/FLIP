@@ -55,9 +55,8 @@ export default defineConfig(({ mode }) => {
             open: true,
             host: true,
             allowedHosts: [
-                "app.flip.aicentre.co.uk",
                 "stag.flip.aicentre.co.uk",
-            ],
+        ],
         },
         resolve: {
             alias: [
@@ -109,7 +108,6 @@ export default defineConfig(({ mode }) => {
             globals: true,
             environment: "jsdom",
             setupFiles: ["./test/setup.ts"],
-            include: ["src/**/*.spec.ts"],
             coverage: { reporter: ["text", "json", "cobertura"] },
             deps: {
                 optimizer: {

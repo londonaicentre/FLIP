@@ -11,14 +11,13 @@
 #
 
 from datetime import datetime
-from typing import Generic, TypeVar
+from typing import Generic, List, Optional, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, conlist, field_validator
 from sqlmodel import SQLModel
 
 from flip_api.domain.schemas.status import XNATImageStatus
-from flip_api.domain.schemas.types import NonEmptyUUIDList
 
 
 class UserAccessInfo(SQLModel):  # Or BaseModel
@@ -41,23 +40,23 @@ class ApprovedTrustInfo(SQLModel):  # Or BaseModel
 class ProjectDetailResponse(SQLModel):  # Or BaseModel
     id: UUID
     name: str
-    description: str | None = None
+    description: Optional[str] = None
     status: str
     owner_id: UUID
     created_at: datetime
     updated_at: datetime
-    query_id: UUID | None = None  # Assuming your Project model has this
+    query_id: Optional[UUID] = None  # Assuming your Project model has this
 
-    owner_email: str | None = None
-    query_details: ProjectQueryInfo | None = None
-    approved_trusts: list[ApprovedTrustInfo] = []
-    users_with_access: list[UserAccessInfo] = []
+    owner_email: Optional[str] = None
+    query_details: Optional[ProjectQueryInfo] = None
+    approved_trusts: List[ApprovedTrustInfo] = []
+    users_with_access: List[UserAccessInfo] = []
 
 
 class ProjectListItemSchema(BaseModel):
     id: UUID
     name: str
-    description: str | None = None
+    description: Optional[str] = None
     owner_id: UUID = Field(alias="ownerId")
     created_at: datetime = Field(alias="created")
     status: str
@@ -76,7 +75,7 @@ class PagedResponse(BaseModel, Generic[T]):
     page_size: int
     total_pages: int
     total_records: int
-    data: list[T]
+    data: List[T]
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -134,14 +133,13 @@ class XnatProjectStatusInfo(BaseModel):
 
 
 class ApproveProjectBodyPayload(BaseModel):
-    trusts: list[UUID] = Field(..., description="List of Trust IDs to approve for the project.")
+    trusts: List[UUID] = Field(..., description="List of Trust IDs to approve for the project.")
 
 
 class ProjectDetails(BaseModel, from_attributes=True):
     name: str = Field()
-    description: str | None = Field(max_length=250, default=None)
-    users: list[UUID] = Field(default_factory=list)
-    dicom_to_nifti: bool = Field(default=True)
+    description: Optional[str] = Field(max_length=250, default=None)
+    users: List[UUID] = Field(default_factory=list)
 
     @field_validator("description")
     @classmethod
@@ -162,7 +160,7 @@ class ProjectDetails(BaseModel, from_attributes=True):
 
 
 class StageProjectRequest(BaseModel):
-    trusts: NonEmptyUUIDList = Field(..., description="A non-empty list of Trust UUIDs")
+    trusts: conlist(UUID, min_length=1) = Field(..., description="A non-empty list of Trust UUIDs")  # type: ignore[valid-type]
 
     model_config = ConfigDict(
         json_schema_extra={

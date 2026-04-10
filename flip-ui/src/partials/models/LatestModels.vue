@@ -18,7 +18,7 @@
                 <h2 class="text-lg font-semibold font-heading grow leading-loose">
                     Latest Models
                 </h2>
-                <div v-if="!isObserver && projectStore.project?.status === 'APPROVED' && data?.data.length">
+                <div v-if="projectStore.project?.status === 'APPROVED' && data?.data.length">
                     <AiButton light data-test="add-model-btn" @click="addModel">
                         Create Model
                     </AiButton>
@@ -34,7 +34,7 @@
                             There are no models assigned to this project.
                         </div>
                     </div>
-                    <AiButton v-if="!isObserver" primary data-test="create-model-btn" @click="addModel">
+                    <AiButton primary data-test="create-model-btn" @click="addModel">
                         Create Model
                     </AiButton>
                 </div>
@@ -114,7 +114,6 @@
 
 <script setup lang="ts">
 import useSWRV from "swrv";
-import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
@@ -122,16 +121,12 @@ import AiButton from "@/components/AiButton/AiButton.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
 import { getModels } from "@/services/model-service";
-import { useAuthStore } from "@/store/auth";
 import { useModalsStore } from "@/store/modals";
 import { useProjectStore } from "@/store/project";
 
-const authStore = useAuthStore();
 const modalStore = useModalsStore();
 const projectStore = useProjectStore();
 const route = useRoute();
-
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
 
 const { data, error } = useSWRV(
     () => {

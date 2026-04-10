@@ -34,7 +34,7 @@
         ]
     },
     "include": [
-        "mocks/**/*.ts",
+        "api/**/*.ts",
         "src/**/*.ts",
         "src/**/*.tsx",
         "src/**/*.vue"

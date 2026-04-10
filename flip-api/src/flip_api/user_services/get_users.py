@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -29,7 +30,7 @@ router = APIRouter(prefix="/users", tags=["user_services"])
 
 # [#114] ✅
 @router.get(
-    "",
+    "/",
     summary="Get Users",
     description="Get a list of users with pagination. Requires CAN_MANAGE_USERS permission.",
     response_model=IPagedData[IUser],
@@ -77,7 +78,7 @@ def get_users(
         # Get users from Cognito
         users = get_cognito_users(params={"UserPoolId": user_pool_id})
 
-        data: list[IUser] = []
+        data: List[IUser] = []
 
         # Get user role data if users exist
         if users:

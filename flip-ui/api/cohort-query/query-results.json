@@ -1,0 +1,61 @@
+{
+    "Status": "Retrieved",
+    "AggregatedStats": {
+        "Stats": {
+            "TotalCount": 10,
+            "Age": {
+                "Mean": 28.0
+            },
+            "Gender": {
+                "Male": 4,
+                "Female": 4,
+                "MissingData": 2
+            },
+            "ClientVisit": {
+                "Inpatient": 6,
+                "Emergency": 4,
+                "MissingData": 0
+            }
+        }
+    },
+    "TrustsResults": [
+        {
+            "Data": {
+                "TotalCount": 10,
+                "Age": {
+                    "Mean": 56
+                },
+                "Gender": {
+                    "Male": 4,
+                    "Female": 4,
+                    "MissingData": 2
+                },
+                "ClientVisit": {
+                    "Emergency": 4,
+                    "Inpatient": 6,
+                    "MissingData": 0
+                }
+            },
+            "TrustName": "trust1"
+        },
+        {
+            "Data": {
+                "TotalCount": 0,
+                "Age": {
+                    "Mean": 0
+                },
+                "Gender": {
+                    "Male": 0,
+                    "Female": 0,
+                    "MissingData": 0
+                },
+                "ClientVisit": {
+                    "Emergency": 0,
+                    "Inpatient": 0,
+                    "MissingData": 0
+                }
+            },
+            "TrustName": "trust2"
+        }
+    ]
+}

@@ -20,14 +20,13 @@ from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from data_access_api.config import get_settings
 from data_access_api.db.database import engine
 from data_access_api.routers.schema import CohortQueryInput, StatisticsResponse
-from data_access_api.services.query_cache import get_cached_result, set_cached_result
 from data_access_api.utils.logger import logger
 from data_access_api.utils.sql_parsers import extract_missing_identifier
 
 COHORT_QUERY_THRESHOLD = get_settings().COHORT_QUERY_THRESHOLD
 
 
-def validate_query(query: str) -> bool:
+def validate_query(query: str) -> bool | HTTPException:
     """
     Validates the SQL query to ensure it is safe to execute.
     This function checks that the query not contain sql injection risks or other unsafe elements.
@@ -36,7 +35,7 @@ def validate_query(query: str) -> bool:
         query (str): The SQL query to validate.
 
     Returns:
-        bool: True if the query is valid.
+        bool: True if the query is valid, False otherwise.
 
     Raises:
         HTTPException: If the query is invalid or contains unsafe elements.
@@ -71,11 +70,7 @@ def get_records(query: str) -> pd.DataFrame:
     Raises:
         HTTPException: If the query is invalid or if there is an error during execution.
     """
-    logger.info("Executing SQL query")
-
-    cached = get_cached_result(query)
-    if cached is not None:
-        return cached
+    logger.info(f"Executing SQL query: {query}")
 
     try:
         # TODO: Trace the query filtering to understand what the final user can see.
@@ -85,7 +80,6 @@ def get_records(query: str) -> pd.DataFrame:
         # data.
         # TODO check if we can check column types -- could be used to exclude primary keys, foreign keys, etc.
         df = pd.read_sql(query, engine)
-        set_cached_result(query, df)
         return df
 
     except DBAPIError as e:
@@ -261,7 +255,7 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
 
     if record_count < COHORT_QUERY_THRESHOLD:
         logger.info(
-            f"Query returned insufficient results ({COHORT_QUERY_THRESHOLD}, {record_count})"
+            f"Query {query_input.query} returned insufficient results ({COHORT_QUERY_THRESHOLD}, {record_count})"
         )
         raise HTTPException(
             status_code=400,
@@ -273,10 +267,10 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
     if "person_id" in df.columns:
         logger.info("person_id column found in the query results; including age and sex distribution calculations.")
         age = get_age_distribution(df)
-        age["results"] = make_other_category(age["results"], min_count=COHORT_QUERY_THRESHOLD)
+        age["results"] = make_other_category(get_age_distribution(df)["results"], min_count=COHORT_QUERY_THRESHOLD)
 
         sex = get_sex_distribution(df)
-        sex["results"] = make_other_category(sex["results"], min_count=COHORT_QUERY_THRESHOLD)
+        sex["results"] = make_other_category(get_sex_distribution(df)["results"], min_count=COHORT_QUERY_THRESHOLD)
 
         stats.data += [age, sex]
     return stats

@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
@@ -35,7 +36,7 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
 @router.post(
     "/{project_id}/approve",
     summary="Approve a staged project for specified trusts.",
-    response_model=list[ITrust],
+    response_model=List[ITrust],
     status_code=status.HTTP_200_OK,
 )
 def approve_project_endpoint(
@@ -57,7 +58,7 @@ def approve_project_endpoint(
         db (Session): The database session.
 
     Returns:
-        list[ITrust]: A list of trusts that the project has been approved for.
+        List[ITrust]: A list of trusts that the project has been approved for.
 
     Raises:
         HTTPException: If the user does not have permission to approve projects, if the project does not exist,

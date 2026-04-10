@@ -11,7 +11,7 @@
 #
 
 from datetime import datetime
-from typing import Annotated, Optional
+from typing import Annotated, List, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import JSON, Column
@@ -19,6 +19,7 @@ from sqlmodel import Field, Relationship, SQLModel
 
 from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction
 from flip_api.domain.schemas.file import FileUploadStatus
+from flip_api.domain.schemas.images import ImageType
 from flip_api.domain.schemas.status import (
     JobStatus,
     ModelStatus,
@@ -44,7 +45,7 @@ class FLScheduler(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     net_id: UUID = Field(foreign_key="fl_nets.id", alias="netid")
     status: NetStatus = Field(default=NetStatus.AVAILABLE)
-    job_id: UUID | None = Field(default=None, foreign_key="fl_job.id", alias="jobid")
+    job_id: Optional[UUID] = Field(default=None, foreign_key="fl_job.id", alias="jobid")
 
     job: Optional["FLJob"] = Relationship(back_populates="scheduler")
     net: Optional["FLNets"] = Relationship(back_populates="schedulers")
@@ -56,10 +57,10 @@ class FLJob(SQLModel, table=True):
     model_id: UUID = Field(foreign_key="model.id")
     status: JobStatus = Field(default=JobStatus.QUEUED)
     created: Annotated[datetime, Field(default_factory=datetime.utcnow)]
-    started: datetime | None = Field(default=None)
-    completed: datetime | None = Field(default=None)
-    clients: list[str] = Field(sa_column=Column(JSON), default=[])
-    fl_backend_job_id: str | None = None
+    started: Optional[datetime] = Field(default=None)
+    completed: Optional[datetime] = Field(default=None)
+    clients: List[str] = Field(sa_column=Column(JSON), default=[])
+    fl_backend_job_id: Optional[str] = None
 
     scheduler: Optional["FLScheduler"] = Relationship(back_populates="job")
 
@@ -70,7 +71,7 @@ class FLMetrics(SQLModel, table=True):
     trust: str = Field()
     model_id: UUID = Field(foreign_key="model.id")
     global_round: int = Field()
-    timestamp: datetime | None = Field(default_factory=datetime.utcnow)
+    timestamp: Optional[datetime] = Field(default_factory=datetime.utcnow)
     label: str = Field()
     result: float = Field()
 
@@ -79,10 +80,19 @@ class FLLogs(SQLModel, table=True):
     __tablename__ = "fl_logs"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     model_id: UUID = Field(foreign_key="model.id")
-    log_date: Annotated[datetime | None, Field(default_factory=datetime.utcnow)]
+    log_date: Annotated[Optional[datetime], Field(default_factory=datetime.utcnow)]
     success: bool = Field()
-    trust_name: str | None = Field(default=None, nullable=True)
+    trust_name: Optional[str] = Field(default=None, nullable=True)
     log: str = Field()
+
+
+class Image(SQLModel, table=True):
+    __tablename__ = "image"  # type: ignore
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    imageref: str = Field()
+    effectivefrom: Annotated[datetime, Field(default_factory=datetime.utcnow)]
+    model_id: Optional[UUID] = Field(default=None, foreign_key="model.id")
+    type: ImageType = Field()
 
 
 class Model(SQLModel, table=True):
@@ -92,7 +102,7 @@ class Model(SQLModel, table=True):
     description: str = Field()
     status: ModelStatus = Field()
     deleted: bool = Field(default=False)
-    project_id: UUID | None = Field(default=None, foreign_key="projects.id")
+    project_id: Optional[UUID] = Field(default=None, foreign_key="projects.id")
     owner_id: UUID = Field()
     creation_timestamp: Annotated[datetime, Field(default_factory=datetime.utcnow)]
 
@@ -101,15 +111,15 @@ class ModelTrustIntersect(SQLModel, table=True):
     __tablename__ = "model_trust_intersect"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     status: TrustIntersectStatus = Field()
-    model_id: UUID | None = Field(default=None, foreign_key="model.id")
-    trust_id: UUID | None = Field(default=None, foreign_key="trust.id")
-    fl_client_endpoint: str | None = Field(default=None)
+    model_id: Optional[UUID] = Field(default=None, foreign_key="model.id")
+    trust_id: Optional[UUID] = Field(default=None, foreign_key="trust.id")
+    fl_client_endpoint: Optional[str] = Field(default=None)
 
 
 class ModelsAudit(SQLModel, table=True):
     __tablename__ = "models_audit"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    model_id: UUID | None = Field(default=None, foreign_key="model.id")
+    model_id: Optional[UUID] = Field(default=None, foreign_key="model.id")
     action: ModelAuditAction = Field()
     user_id: UUID = Field()
     audit_date: Annotated[datetime, Field(default_factory=datetime.utcnow)]
@@ -118,8 +128,8 @@ class ModelsAudit(SQLModel, table=True):
 class ProjectTrustIntersect(SQLModel, table=True):
     __tablename__ = "project_trust_intersect"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    project_id: UUID | None = Field(default=None, foreign_key="projects.id")
-    trust_id: UUID | None = Field(default=None, foreign_key="trust.id")
+    project_id: Optional[UUID] = Field(default=None, foreign_key="projects.id")
+    trust_id: Optional[UUID] = Field(default=None, foreign_key="trust.id")
     approved: bool = Field()
 
 
@@ -132,13 +142,12 @@ class Projects(SQLModel, table=True):
     deleted: bool = Field(default=False)
     creation_timestamp: Annotated[datetime, Field(default_factory=datetime.utcnow)]
     status: ProjectStatus = Field(default=ProjectStatus.UNSTAGED)
-    dicom_to_nifti: bool = Field(default=True)
 
 
 class ProjectsAudit(SQLModel, table=True):
     __tablename__ = "projects_audit"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    project_id: UUID | None = Field(default=None, foreign_key="projects.id")
+    project_id: Optional[UUID] = Field(default=None, foreign_key="projects.id")
     action: ProjectAuditAction = Field()
     user_id: UUID = Field()
     audit_date: Annotated[datetime, Field(default_factory=datetime.utcnow)]
@@ -147,7 +156,7 @@ class ProjectsAudit(SQLModel, table=True):
 class ProjectUserAccess(SQLModel, table=True):
     __tablename__ = "project_user_access"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    project_id: UUID | None = Field(default=None, foreign_key="projects.id")
+    project_id: Optional[UUID] = Field(default=None, foreign_key="projects.id")
     user_id: UUID = Field()
 
 
@@ -157,14 +166,14 @@ class Queries(SQLModel, table=True):
     name: str = Field()
     query: str = Field()
     created: Annotated[datetime, Field(default_factory=datetime.utcnow)]
-    project_id: UUID | None = Field(default=None, foreign_key="projects.id")
+    project_id: Optional[UUID] = Field(default=None, foreign_key="projects.id")
 
 
 class QueryResult(SQLModel, table=True):
     __tablename__ = "query_result"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     query_id: UUID = Field(default=None, foreign_key="queries.id")
-    trust_id: UUID | None = Field(default=None, foreign_key="trust.id")
+    trust_id: Optional[UUID] = Field(default=None, foreign_key="trust.id")
     data: str = Field()
 
 
@@ -173,14 +182,14 @@ class QueryStats(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     stats: str = Field()
     stats_received: Annotated[datetime, Field(default_factory=datetime.utcnow)]
-    query_id: UUID | None = Field(default=None, foreign_key="queries.id")
+    query_id: Optional[UUID] = Field(default=None, foreign_key="queries.id")
 
 
 class SiteBanner(SQLModel, table=True):
     __tablename__ = "site_banner"  # type: ignore
     id: int = Field(default=1, primary_key=True)
     message: str
-    link: str | None = None
+    link: Optional[str] = None
     enabled: bool
 
 
@@ -204,17 +213,17 @@ class UploadedFiles(SQLModel, table=True):
     status: FileUploadStatus = Field()
     size: float = Field()
     type: str = Field()
-    tag: str | None = Field(default=None)
-    model_id: UUID | None = Field(default=None, foreign_key="model.id")
+    tag: Optional[str] = Field(default=None)
+    model_id: Optional[UUID] = Field(default=None, foreign_key="model.id")
 
 
 class XNATProjectStatus(SQLModel, table=True):
     __tablename__ = "xnat_project_status"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     xnat_project_id: UUID = Field()
-    project_id: UUID | None = Field(default=None, foreign_key="projects.id")
-    trust_id: UUID | None = Field(default=None, foreign_key="trust.id")
+    project_id: Optional[UUID] = Field(default=None, foreign_key="projects.id")
+    trust_id: Optional[UUID] = Field(default=None, foreign_key="trust.id")
     retrieve_image_status: XNATImageStatus = Field()
-    query_at_creation: UUID | None = Field(default=None)
+    query_at_creation: Optional[UUID] = Field(default=None)
     last_reimport: Annotated[datetime, Field(default_factory=datetime.utcnow)]
     reimport_count: int = Field(default=0)

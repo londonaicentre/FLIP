@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 
 from sqlmodel import Session, col, select
 
@@ -19,7 +20,7 @@ from flip_api.domain.schemas.status import NetStatus
 from flip_api.utils.logger import logger
 
 
-def seed_fl_scheduler(session: Session, nets: list[FLNets]) -> list[FLScheduler]:
+def seed_fl_scheduler(session: Session, nets: List[FLNets]) -> List[FLScheduler]:
     """Seed FL scheduler entries."""
     logger.debug("Seeding Federated Learning Scheduler")
     for net in nets:

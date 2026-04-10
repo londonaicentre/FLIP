@@ -11,9 +11,14 @@
 #
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from trust_api.main import app
+from trust_api.routers.health import router
+
+# Create a test FastAPI app and include the router
+app = FastAPI()
+app.include_router(router)
 
 
 @pytest.fixture

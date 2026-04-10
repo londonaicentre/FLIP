@@ -49,7 +49,7 @@ def override_dependencies():
 @pytest.fixture
 def mock_services(monkeypatch):
     mocks = {
-        "can_modify_project": MagicMock(return_value=True),
+        "can_access_project": MagicMock(return_value=True),
         "get_imaging_projects": MagicMock(return_value=[]),
         "delete_imaging_project": MagicMock(),
         "get_project_models_service": MagicMock(return_value=(MagicMock(data=[]), None)),
@@ -57,7 +57,7 @@ def mock_services(monkeypatch):
         "delete_project": MagicMock(),
     }
 
-    monkeypatch.setattr(delete_project_module, "can_modify_project", mocks["can_modify_project"])
+    monkeypatch.setattr(delete_project_module, "can_access_project", mocks["can_access_project"])
     monkeypatch.setattr(delete_project_module, "get_imaging_projects", mocks["get_imaging_projects"])
     monkeypatch.setattr(delete_project_module, "delete_imaging_project", mocks["delete_imaging_project"])
     monkeypatch.setattr(delete_project_module, "get_project_models_service", mocks["get_project_models_service"])
@@ -70,20 +70,20 @@ def mock_services(monkeypatch):
 def test_delete_project_success(override_dependencies, mock_services):
     project_id = uuid4()
 
-    response = client.delete(f"/api/projects/{project_id}")
+    response = client.delete(f"/projects/{project_id}")
 
     assert response.status_code == status.HTTP_204_NO_CONTENT
     mock_services["delete_project"].assert_called_once()
 
 
 def test_delete_project_forbidden(override_dependencies, mock_services):
-    mock_services["can_modify_project"].return_value = False
+    mock_services["can_access_project"].return_value = False
     project_id = uuid4()
 
-    response = client.delete(f"/api/projects/{project_id}")
+    response = client.delete(f"/projects/{project_id}")
 
     assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert "not allowed to modify" in response.json()["detail"]
+    assert "denied access" in response.json()["detail"]
 
 
 def test_delete_project_abort_training_called(override_dependencies, mock_services):
@@ -92,7 +92,7 @@ def test_delete_project_abort_training_called(override_dependencies, mock_servic
     mock_services["get_project_models_service"].return_value = (MagicMock(data=[model_mock]), None)
 
     project_id = uuid4()
-    response = client.delete(f"/api/projects/{project_id}")
+    response = client.delete(f"/projects/{project_id}")
 
     assert response.status_code == status.HTTP_204_NO_CONTENT
     mock_services["abort_model_training"].assert_called_once_with(

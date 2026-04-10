@@ -10,21 +10,7 @@
 # limitations under the License.
 #
 
-from uuid import uuid4
-
-from imaging_api.routers.schemas import CentralHubProject, ImportStudyRequest
-
-
-def test_central_hub_project_defaults_dicom_to_nifti_true():
-    """CentralHubProject should default dicom_to_nifti to True for backward compatibility."""
-    project = CentralHubProject(
-        project_id=uuid4(),
-        trust_id=uuid4(),
-        project_name="Test",
-        query="SELECT 1",
-        users=[],
-    )
-    assert project.dicom_to_nifti is True
+from imaging_api.routers.schemas import ImportStudyRequest
 
 
 def test_import_study_request_deduplicates_studies():

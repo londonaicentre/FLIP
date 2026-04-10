@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Any
+from typing import Any, Dict, List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -29,12 +29,12 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 
 
 # [#114] ✅
-@router.get("/{file_ids}", response_model=list[dict[str, Any]])
+@router.get("/{file_ids}", response_model=List[Dict[str, Any]])
 def get_uploaded_files_info(
     file_ids: str,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-) -> list[dict[str, Any]]:
+) -> List[Dict[str, Any]]:
     """
     Get information about uploaded files based on a list of IDs.
 
@@ -44,7 +44,7 @@ def get_uploaded_files_info(
         user_id (UUID): ID of the user (obtained from auth token)
 
     Returns:
-        list[dict[str, Any]]: A list of dictionaries containing file information
+        List[Dict[str, Any]]: A list of dictionaries containing file information
 
     Raises:
         HTTPException: If no files are found or if there is an error during the operation.
@@ -109,12 +109,12 @@ def get_uploaded_files_info(
 
 # TODO [#114] This endpoint was not defined in the old repo.
 # Alternative implementation with a POST request and request body
-@router.post("/", response_model=list[dict[str, Any]])
+@router.post("/", response_model=List[Dict[str, Any]])
 def get_uploaded_files_info_post(
     id_list: IdList,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-) -> list[dict[str, Any]]:
+) -> List[Dict[str, Any]]:
     """
     Get information about uploaded files based on a list of IDs (POST method).
 
@@ -124,7 +124,7 @@ def get_uploaded_files_info_post(
         user_id (UUID): ID of the user (obtained from auth token)
 
     Returns:
-        list[dict[str, Any]]: A list of dictionaries containing file information
+        List[Dict[str, Any]]: A list of dictionaries containing file information
 
     Raises:
         HTTPException: If no files are found or if there is an error during the operation.

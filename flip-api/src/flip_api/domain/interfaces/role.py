@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -30,4 +31,4 @@ class IRole(BaseModel):
 class IRolesResponse(BaseModel):
     """Model for roles response."""
 
-    roles: list[IRole] = Field(..., description="List of user roles")
+    roles: List[IRole] = Field(..., description="List of user roles")

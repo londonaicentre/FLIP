@@ -72,7 +72,7 @@ def cohort_query_step_function_endpoint(
             )
 
         # Save Cohort Query
-        save_query_response = save_cohort_query(request=request, cohort_query=cohort_query, db=db, user_id=user_id)
+        save_query_response = save_cohort_query(request=request, cohort_query=cohort_query, db=db)
 
         # Submit Cohort Query
         submit_query_input = SubmitCohortQuery(
@@ -83,7 +83,7 @@ def cohort_query_step_function_endpoint(
             query_id=save_query_response.query_id,
         )
 
-        submit_response = submit_cohort_query(request=request, cohort_query=submit_query_input, db=db, user_id=user_id)
+        submit_response = submit_cohort_query(request=request, cohort_query=submit_query_input, db=db)
 
         return submit_response
 

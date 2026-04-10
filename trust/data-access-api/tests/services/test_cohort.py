@@ -30,15 +30,6 @@ from data_access_api.services.cohort import (
     validate_query,
     verify_cardinality,
 )
-from data_access_api.services.query_cache import clear_cache
-
-
-@pytest.fixture(autouse=True)
-def _clear_query_cache():
-    """Clear the query cache before each test to prevent cross-test interference."""
-    clear_cache()
-    yield
-    clear_cache()
 
 
 @pytest.fixture
@@ -905,9 +896,8 @@ def test_get_statistics_with_person_id_column(mock_read_sql):
     assert {"value": "M", "count": 18} in sex_data["results"]
     assert {"value": "F", "count": 12} in sex_data["results"]
 
-    # Verify read_sql was called for age and sex distribution queries
-    # (duplicate calls for the same query are served from the query cache)
-    assert mock_read_sql.call_count >= 2
+    # Verify read_sql was called multiple times (main query + age + sex distributions)
+    assert mock_read_sql.call_count >= 3
 
 
 @patch("pandas.read_sql")

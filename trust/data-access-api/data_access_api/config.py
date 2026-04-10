@@ -10,37 +10,28 @@
 # limitations under the License.
 #
 
+import os
 from pathlib import Path
-from typing import Literal
 
-from pydantic import PositiveInt, SecretStr
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Common settings shared across all environments (development and production)."""
-
-    # Environment flag
-    ENV: Literal["development", "production"] = "development"
-
     # env file is 3 directories up from this file
     # Get current directory: data-access-api/data_access_api/config.py
+    ENV: str = os.getenv("ENV", "development")
+    environment: str = ENV
     model_config = SettingsConfigDict(
         env_file=[
-            str(Path(__file__).parent.parent.parent.parent / f".env.{ENV}"),
+            str(Path(__file__).parent.parent.parent.parent / f".env.{environment}"),
         ],
         env_file_encoding="utf-8",
         extra="allow",
     )
 
     #
-    LOG_LEVEL: str = "INFO"
-
-    #
     COHORT_QUERY_THRESHOLD: int = 10  # Minimum number of records required to return statistics
-    CACHE_TTL_DAYS: int = 60  # Number of days before cached query results expire
-    CACHE_MAX_RESULT_ROWS: PositiveInt = 50_000  # Max rows per cached result; larger results skip caching
-    CACHE_MAX_ENTRIES: PositiveInt = 64  # Max number of cached query results
 
     #
     OMOP_DB_SERVICE_NAME: str = "omop-db"  # The name of the OMOP database service in Docker Compose or Kubernetes

@@ -15,8 +15,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from flip_api.domain.schemas.users import CognitoUser
-
 
 @pytest.fixture
 def mock_request():
@@ -40,4 +38,9 @@ def user_email():
 @pytest.fixture
 def user_data():
     """Sample user data returned from Cognito."""
-    return CognitoUser(id=uuid.uuid4(), email="test.user@example.com", is_disabled=False)
+    return {
+        "id": str(uuid.uuid4()),
+        "email": "test.user@example.com",
+        "is_disabled": False,
+        "roles": [{"rolename": "Researcher", "roledescription": "A researcher"}],
+    }

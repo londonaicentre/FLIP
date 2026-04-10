@@ -11,7 +11,7 @@
 #
 
 import json
-from typing import Any
+from typing import Any, List
 from uuid import UUID
 
 from fastapi import Request
@@ -151,7 +151,7 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
     return server_status
 
 
-def check_client_status(endpoint: str) -> list[IClientStatus] | None:
+def check_client_status(endpoint: str) -> List[IClientStatus] | None:
     """
     Fetch the status of all clients from the FL API.
 
@@ -159,7 +159,7 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        list[IClientStatus] | None: A list of client statuses if available, otherwise None.
+        List[IClientStatus] | None: A list of client statuses if available, otherwise None.
     """
     url = f"{endpoint}/check_client_status"
     logger.debug(f"Checking client status at '{url}'")
@@ -189,7 +189,7 @@ def fetch_server_status(endpoint: str) -> IServerStatus | None:
     return server_status
 
 
-def fetch_client_status(endpoint: str) -> list[IClientStatus] | None:
+def fetch_client_status(endpoint: str) -> List[IClientStatus] | None:
     """
     Fetch the status of the clients from the FL API.
 
@@ -197,7 +197,7 @@ def fetch_client_status(endpoint: str) -> list[IClientStatus] | None:
         endpoint (str): The endpoint of the server to fetch the status from.
 
     Returns:
-        list[IClientStatus] | None: A list of client statuses if available, otherwise None.
+        List[IClientStatus] | None: A list of client statuses if available, otherwise None.
     """
     client_statuses = check_client_status(endpoint)
     if not client_statuses:
@@ -206,13 +206,13 @@ def fetch_client_status(endpoint: str) -> list[IClientStatus] | None:
     return client_statuses
 
 
-def is_client_available(client_name: str, client_statuses: list[IClientStatus]) -> bool:
+def is_client_available(client_name: str, client_statuses: List[IClientStatus]) -> bool:
     """
     Check if a specific client is available based on its status.
 
     Args:
         client_name (str): The name of the client to check.
-        client_statuses (list[IClientStatus]): A list of client statuses to check against.
+        client_statuses (List[IClientStatus]): A list of client statuses to check against.
 
     Returns:
         bool: True if the client is available, False otherwise.
@@ -226,14 +226,14 @@ def is_client_available(client_name: str, client_statuses: list[IClientStatus]) 
     return False
 
 
-def validate_client_availability(clients: list[str], endpoint: str) -> None:
+def validate_client_availability(clients: List[str], endpoint: str) -> None:
     """
     Validate the availability of clients by checking their status.
     It sends a GET request to the FL API service to check the status of the clients.
     If any client is unavailable, it raises a ValueError.
 
     Args:
-        clients (list[str]): A list of client names to check the availability of.
+        clients (List[str]): A list of client names to check the availability of.
         endpoint (str): The endpoint of the FL API service.
 
     Returns:
@@ -274,9 +274,9 @@ def abort_job(endpoint: str, job_id: str) -> dict:
 def start_training(
     model_id: UUID,
     fl_job_id: UUID,
-    clients: list[str],
+    clients: List[str],
     endpoint: str,
-    bundle_urls: list[str],
+    bundle_urls: List[str],
     session: Session,
 ):
     """
@@ -287,9 +287,9 @@ def start_training(
     Args:
         model_id (UUID): The ID of the model to start training for.
         fl_job_id (UUID): The ID of the FL job to add the backend job id given successful job submission.
-        clients (list[str]): A list of client names to start training on.
+        clients (List[str]): A list of client names to start training on.
         endpoint (str): The endpoint of the FL API service.
-        bundle_urls (list[str]): A list of URLs for the application bundle.
+        bundle_urls (List[str]): A list of URLs for the application bundle.
         session (Session): An instance of the database connection.
 
     Raises:
@@ -712,7 +712,7 @@ def verify_bundle_paths(
     logger.info(f"Bundle verification succeeded: {len(expected)} files present.")
 
 
-def get_bundle_urls(s3_path: str) -> list[str]:
+def get_bundle_urls(s3_path: str) -> List[str]:
     """
     Creates pre-signed URLs for the bundle files in S3 (containing the application files and model files) that the FL
     API will use for training.
@@ -721,7 +721,7 @@ def get_bundle_urls(s3_path: str) -> list[str]:
         s3_path (str): The S3 path of the bundle to get the URLs for.
 
     Returns:
-        list[str]: A list of pre-signed URLs for the bundle files.
+        List[str]: A list of pre-signed URLs for the bundle files.
 
     Raises:
         ClientError: If there is an error listing objects or generating pre-signed URLs.
@@ -861,13 +861,13 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     logger.info(f"Abort job response ({target=}, {clients=}): {response}")
 
 
-def add_fl_job(model_id: UUID, clients: list[str], session: Session) -> None:
+def add_fl_job(model_id: UUID, clients: List[str], session: Session) -> None:
     """
     Insert a new FL job into the database.
 
     Args:
         model_id (UUID): The ID of the model for which the FL job is being created.
-        clients (list[str]): A list of client names associated with the FL job.
+        clients (List[str]): A list of client names associated with the FL job.
         session (Session): The SQLModel session to use for the database operation.
 
     Raises:

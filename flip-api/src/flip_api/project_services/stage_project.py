@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session
 
-from flip_api.auth.access_manager import can_modify_project
+from flip_api.auth.access_manager import can_access_project
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.project import ProjectStatus
@@ -70,7 +70,7 @@ def stage_project_endpoint(
     """
     logger.info(f"User {current_user_id} attempting to stage project {project_id} for trusts: {payload.trusts}")
 
-    if not can_modify_project(user_id=current_user_id, project_id=project_id, db=session):
+    if not can_access_project(user_id=current_user_id, project_id=project_id, db=session):
         logger.error(f"User {current_user_id} is not allowed to stage project {project_id}.")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import EmailStr, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,20 +19,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Common settings shared across all environments (development and production)."""
 
-    # Environment flag
-    ENV: Literal["development", "production"] = "development"
-
     model_config = SettingsConfigDict(
-        env_file=f"../.env.{ENV}",
+        env_file="../.env.development",
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    # Environment flag
+    ENV: Literal["development", "production"] = "development"
 
     PRIVATE_API_KEY_HEADER: str
     PRIVATE_API_KEY: str
 
     # AWS settings
-    AWS_PROFILE: str | None = None
+    AWS_PROFILE: Optional[str] = None
     AWS_REGION: str
     AWS_COGNITO_USER_POOL_ID: str
     AWS_COGNITO_APP_CLIENT_ID: str
@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     UPLOADED_FEDERATED_DATA_BUCKET: str
     FL_APP_BASE_BUCKET: str
     FL_APP_DESTINATION_BUCKET: str
-    PRE_SIGNED_URL: str | None = None
+    PRE_SIGNED_URL: Optional[str] = None
 
     # Reimport imaging project studies
     PROJECT_REIMPORT_RATE: int = 60  # How often to reimport studies for a given project (in minutes)
@@ -69,14 +69,11 @@ class Settings(BaseSettings):
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
 
-    # SSL / TLS settings
-    TRUST_CA_BUNDLE: str | None = None  # Path to the Trust CA certificate PEM file
-
     # FL settings
     FL_BACKEND: Literal["nvflare", "flower"] = "nvflare"
 
     # Variables only used in testing
-    FLIP_API_URL: str = "http://localhost:8080/api"  # this is currently only used in tests (TODO review)
+    FLIP_API_URL: str = "http://localhost:8080/"  # this is currently only used in tests (TODO review)
     ADMIN_USER_PASSWORD: SecretStr | None = None  # only used in integration tests to make actual logins
 
 

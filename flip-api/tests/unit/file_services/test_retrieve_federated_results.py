@@ -168,7 +168,7 @@ def test_retrieve_federated_results_endpoint_calls_function(override_dependencie
         mock_s3.get_presigned_url.return_value = expected_output[0]
 
         client = TestClient(app)
-        response = client.get(f"/api/files/model/{model_id}/fl/results")
+        response = client.get(f"/files/model/{model_id}/fl/results")
 
         assert response.status_code == 200
         assert response.json() == expected_output
@@ -192,7 +192,7 @@ class TestRetrieveFederatedResults:
                 retrieve_federated_results(model_id=sample_model_id, db=mock_db_session, user_id=user_id)
 
             assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-            assert "is denied access" in exc_info.value.detail
+            assert "denied access to this model" in exc_info.value.detail
 
     def test_model_not_found(self, empty_db_session, mocked_settings, sample_model_id, user_id):
         """Test handling of non-existent model."""

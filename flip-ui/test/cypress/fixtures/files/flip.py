@@ -23,10 +23,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from cleanup import CleanupImages
 from nvflare.apis.event_type import EventType
 from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
+
+from cleanup import CleanupImages
 
 
 class ClientEventHandler(FLComponent):

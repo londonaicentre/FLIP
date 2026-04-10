@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 from uuid import UUID
 
 import boto3
@@ -36,14 +37,13 @@ from flip_api.project_services.services.project_services import get_project, get
 from flip_api.utils.cognito_helpers import get_cognito_users, get_user_pool_id
 from flip_api.utils.constants import IMAGING_CREDENTIALS_TEMPLATE_NAME
 from flip_api.utils.encryption import decrypt
-from flip_api.utils.http import trust_ssl_context
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
 
 
 def send_xnat_login_to_new_users(
-    imaging_project_id: UUID, imaging_project_name: str, trust: ITrust, created_users: list[ICreatedImagingUser]
+    imaging_project_id: UUID, imaging_project_name: str, trust: ITrust, created_users: List[ICreatedImagingUser]
 ):
     """
     Sends XNAT login credentials to new users in the imaging project.
@@ -54,7 +54,7 @@ def send_xnat_login_to_new_users(
         imaging_project_id (UUID): ID of the project.
         imaging_project_name (str): Name of the project.
         trust (ITrust): Trust information.
-        created_users (list[ICreatedImagingUser]): List of users with their credentials.
+        created_users (List[ICreatedImagingUser]): List of users with their credentials.
 
     Returns:
          None
@@ -167,13 +167,12 @@ async def start_project_imaging_creation(
             project_name=project.name,
             query=project.query.query if project.query else None,
             users=[user for user in cognito_users if user.id in unique_users],
-            dicom_to_nifti=project.dicom_to_nifti,
         )
 
         # Make request to trust to create imaging project
         endpoint = f"{trust.endpoint}/imaging"
         try:
-            async with httpx.AsyncClient(timeout=30.0, verify=trust_ssl_context()) as client:
+            async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
                     url=endpoint,
                     json=request_data.model_dump(mode="json"),

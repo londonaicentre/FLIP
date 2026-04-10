@@ -26,7 +26,7 @@
             <div class="flex flex-col w-full overflow-hidden grow">
                 <!-- TopBar -->
                 <AiHeader :title="route.name?.toString() ?? ''" :current-page="route.fullPath" :is-dark="isDark" @toggle-dark="toggleDark">
-                    <AiUserDropdown :is-dark="isDark" :email-address="emailAddress" :role="userRole" @sign-out="signOut" @toggle-dark-mode="toggleDark" />
+                    <AiUserDropdown :is-dark="isDark" :email-address="emailAddress" @sign-out="signOut" @toggle-dark-mode="toggleDark" />
                 </AiHeader>
 
                 <!-- Main Content -->
@@ -60,7 +60,7 @@
 import { useDark, useToggle, whenever } from "@vueuse/core";
 import useSWRV from "swrv";
 import { fetcherFn, revalidateOptions } from "swrv/dist/types";
-import { computed, ref, watch } from "vue";
+import { ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 
 import AiErrorAlert from "@/components/AiAlert/AiErrorAlert.vue";
@@ -92,12 +92,6 @@ const siteSettings = useSiteSettings();
 const headerTitle = ref(route.name?.toString() ?? "");
 const pageRoute = ref(route.fullPath?.toString() ?? "");
 const emailAddress = authStore.user?.attributes?.email ?? "";
-
-const userRole = computed(() => {
-    if (authStore.hasPermissions(["CanAccessAdminPanel"])) return "Admin";
-    if (authStore.hasPermissions(["CanManageProjects"])) return "Researcher";
-    return "Observer";
-});
 
 const hasProject = ref(false);
 const isProjectPage = ref(false);

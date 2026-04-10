@@ -51,7 +51,6 @@
                 <div class="p-4">
                     <div class="inline-flex justify-end w-full space-x-4">
                         <AiButton
-                            v-if="!isObserver"
                             class="ml-2"
                             primary
                             small
@@ -104,7 +103,7 @@
 
 <script setup lang="ts">
 import { Form } from "vee-validate";
-import { computed, ref, watch } from "vue";
+import { ref, watch } from "vue";
 import { array, object, string } from "yup";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
@@ -112,7 +111,6 @@ import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import { ITrustResponse } from "@/services/trust-service";
-import { useAuthStore } from "@/store/auth";
 import { useTrustStore } from "@/store/trusts";
 
 interface IProjectStagingProps {
@@ -132,17 +130,12 @@ defineProps<IProjectStagingProps>();
 
 const emits = defineEmits(["staged"]);
 
-const authStore = useAuthStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
-
 const loadingTrusts = ref<boolean>(true);
 const trustsToStage = ref<ITrustToStage[]>();
 const trustStore = useTrustStore();
 
 watch(trustStore, () => {
-    const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
-
-    trustsToStage.value = trusts.map((trust) => ({
+    trustsToStage.value = trustStore.getTrusts.map((trust) => ({
         ...trust,
         staged: false
     }));

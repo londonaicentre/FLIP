@@ -30,7 +30,7 @@
                             </div>
                             <span class="flex-col flex-1 hidden min-w-0 md:flex">
                                 <span class="font-semibold truncate select-none">
-                                    {{ emailAddress }}{{ role ? ` (${role})` : '' }}
+                                    {{ emailAddress }}
                                 </span>
                             </span>
                             <icon-heroicons-outline-selector
@@ -61,7 +61,7 @@
                     <p
                         class="text-sm font-semibold text-gray-700 dark:text-gray-400 truncate"
                     >
-                        {{ emailAddress }}{{ role ? ` (${role})` : '' }}
+                        {{ emailAddress }}
                     </p>
                 </div>
                 <div class="px-1 py-1">
@@ -132,7 +132,6 @@ import { routeChange } from "@/router";
 interface IAiUserDropdownProps {
     emailAddress: string;
     isDark: boolean;
-    role?: string;
 }
 
 const props = withDefaults(

@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Request, status
@@ -64,7 +65,7 @@ def update_trust_status(
     trust_id: str = Path(..., description="ID of the trust"),
     model_id: UUID = Path(..., description="ID of the model"),
     trust_status: str = Path(..., description="New status to set"),
-    data: UpdateTrustStatusSchema | None = Body(None),
+    data: Optional[UpdateTrustStatusSchema] = Body(None),
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
 ) -> dict[str, str]:
@@ -76,7 +77,7 @@ def update_trust_status(
         trust_id (str): ID of the trust.
         model_id (UUID): ID of the model.
         trust_status (str): New status to set.
-        data (UpdateTrustStatusSchema | None): Request body containing additional data.
+        data (Optional[UpdateTrustStatusSchema]): Request body containing additional data.
         db (Session): Database session.
         user_id (UUID): ID of the authenticated user.
 

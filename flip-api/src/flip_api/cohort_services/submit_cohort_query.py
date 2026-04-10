@@ -11,6 +11,7 @@
 #
 
 import re
+from typing import List
 from uuid import UUID
 
 import httpx
@@ -21,7 +22,6 @@ import sqlparse  # type: ignore[import]
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
-from flip_api.auth.access_manager import can_modify_project
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
@@ -32,7 +32,6 @@ from flip_api.domain.schemas.cohort import (
     TrustDetails,
 )
 from flip_api.utils.encryption import encrypt
-from flip_api.utils.http import trust_ssl_context
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/cohort", tags=["cohort_services"])
@@ -115,14 +114,10 @@ def submit_cohort_query(
 
     Raises:
         HTTPException: If the query contains forbidden commands, if the SQL syntax is invalid, if no trusts are found,
-        or if there is an error communicating with the trusts.
+        or if there is an
     """
     try:
-        if not can_modify_project(user_id, cohort_query.project_id, db):
-            raise HTTPException(
-                status_code=403,
-                detail=f"User with ID: {user_id} is not allowed to modify this project",
-            )
+        # Validation of inputs is handled by Pydantic
 
         # Additional validation
         if contains_forbidden_commands(cohort_query.query):
@@ -144,7 +139,7 @@ def submit_cohort_query(
 
         logger.info(f"Trusts found: {len(trusts)}")
 
-        result: list[TrustDetails] = []
+        result: List[TrustDetails] = []
 
         # Encrypt project_id before sending to trusts
         encrypted_project_id = encrypt(str(cohort_query.project_id))
@@ -164,7 +159,7 @@ def submit_cohort_query(
                 # Make request to trust
                 # headers = dict(request.headers)
 
-                with httpx.Client(verify=trust_ssl_context()) as client:
+                with httpx.Client() as client:
                     response = client.post(
                         f"{trust.endpoint}/cohort",
                         json=request_body.model_dump(mode="json"),

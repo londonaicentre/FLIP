@@ -336,16 +336,10 @@ flip-fl-api/transfer/*/*
 .env.stag
 .env.production
 
-# Trust TLS certificates (generated locally, never committed)
-trust/certs/*.key
-trust/certs/*.crt
-trust/certs/*.srl
-# Trust CA cert copied to Terraform deploy dir for use with `file()` in main.tf
-deploy/providers/AWS/trust-ca.crt
-
 trust/terraform.tfstate
 
 .claude/settings.local.json
+CLAUDE.md
 
 *.gz
 
@@ -363,13 +357,3 @@ SECURITY_INCIDENT.md
 trust/certs/
 
 *.crt
-
-*.jar
-
-*.war
-*.tf.backup
-.deployment-structure-analysis.md
-deploy/providers/AWS/REFACTORING.md
-
-# Email template preview files (generated locally for testing)
-deploy/providers/AWS/email_previews/

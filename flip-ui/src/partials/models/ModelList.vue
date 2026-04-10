@@ -55,7 +55,7 @@
                             data-test="model-search"
                         />
                     </div>
-                    <div v-if="!isObserver">
+                    <div>
                         <AiButton
                             light
                             data-test="add-model-btn"
@@ -141,7 +141,7 @@
 import { TransitionRoot } from "@headlessui/vue";
 import { debouncedWatch } from "@vueuse/core";
 import useSWRV from "swrv";
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import { useRoute } from "vue-router";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
@@ -149,7 +149,6 @@ import AiPagination from "@/components/AiPagination/AiPagination.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
 import { routeChange } from "@/router";
 import { getModels } from "@/services/model-service";
-import { useAuthStore } from "@/store/auth";
 import { useModalsStore } from "@/store/modals";
 
 interface IModelListProps {
@@ -167,8 +166,6 @@ const searchQueryParam = ref("");
 
 const modalStore = useModalsStore();
 const route = useRoute();
-const authStore = useAuthStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
 
 debouncedWatch(
     search,

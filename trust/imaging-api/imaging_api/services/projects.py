@@ -12,7 +12,7 @@
 
 import urllib.parse
 import uuid
-from typing import Any
+from typing import Any, Dict, List, Tuple
 
 import requests
 
@@ -83,7 +83,7 @@ def get_project(project_id: str, headers: dict[str, str]) -> Project:
     raise NotFoundError(f"Project with ID '{project_id}' not found.")
 
 
-def get_all_projects(headers: dict[str, str]) -> list[Project]:
+def get_all_projects(headers: dict[str, str]) -> List[Project]:
     """
     Fetches all XNAT projects using the correct REST API endpoint.
 
@@ -91,7 +91,7 @@ def get_all_projects(headers: dict[str, str]) -> list[Project]:
         headers (dict[str, str]): XNAT authentication headers
 
     Returns:
-        list[Project]: List of XNAT project objects
+        List[Project]: List of XNAT project objects
     """
     try:
         response = requests.get(f"{XNAT_URL}/data/projects", headers=headers)
@@ -241,93 +241,44 @@ def set_project_prearchive_settings(project_id: str, headers: dict[str, str]) ->
         )
 
 
-def get_command_info(container: str, headers: dict[str, str]) -> tuple[int, str]:
+def enable_project_command(project_id: str, container: str, headers: dict[str, str]) -> None:
     """
-    Fetches the XNAT command ID and wrapper name for a given container image.
+    Enables a command for a specific project in XNAT.
 
     Args:
-        container (str): Container image name, e.g. "xnat/dcm2niix:latest".
-        headers (dict[str, str]): XNAT authentication headers.
+        project_id (str): Unique identifier for the project
+        container (str): Name of the command container. For example, for dcm2niix command, "xnat/dcm2niix:latest".
+        headers (dict[str, str]): XNAT authentication headers
 
     Returns:
-        tuple[int, str]: A tuple of (command_id, wrapper_name).
+        None
 
     Raises:
-        Exception: If the command cannot be fetched from XNAT.
+        Exception: If there is an error during the process of enabling the command for the project.
     """
     container_name_formatted = urllib.parse.quote(container)
     response = requests.get(f"{XNAT_URL}/xapi/commands?image={container_name_formatted}", headers=headers)
     if response.status_code != 200:
         raise Exception(f"Error: XNAT command fetch failed: {response.status_code} - {response.text}")
 
+    # Now use put request to enable the dcm2niix command for the project
     command = response.json()[0]
-    return command["id"], command["xnat"][0]["name"]
+    command_id = command["id"]
+    command_xnat_name = command["xnat"][0]["name"]
 
-
-def create_project_event_subscription(project_id: str, container: str, active: bool, headers: dict[str, str]) -> None:
-    """
-    Creates a project-scoped event subscription in XNAT that auto-triggers a command on scan upload.
-
-    The subscription listens for ScanEvent:CREATED events within the specified project and triggers
-    the given container command when a scan with DICOM resources is created. The active flag controls
-    whether the subscription is enabled or deactivated on creation.
-
-    Args:
-        project_id (str): XNAT project ID to scope the subscription to.
-        container (str): Container image name, e.g. "xnat/dcm2niix:latest".
-        headers (dict[str, str]): XNAT authentication headers.
-        active (bool): If True, the subscription is active immediately. If False, it is created
-            but deactivated (can be toggled later via the XNAT API).
-
-    Raises:
-        Exception: If the subscription creation fails.
-    """
-    command_id, wrapper_name = get_command_info(container, headers)
-
-    # Enable the command at the project level — required by XNAT to validate the action key
-    # in project-scoped event subscriptions
     response = requests.put(
-        f"{XNAT_URL}/xapi/projects/{project_id}/commands/{command_id}/wrappers/{wrapper_name}/enabled",
+        f"{XNAT_URL}/xapi/projects/{project_id}/commands/{command_id}/wrappers/{command_xnat_name}/enabled",
         headers=headers,
     )
-    if response.status_code != 200:
-        raise Exception(
-            f"Error: Enabling command '{container}' for project '{project_id}' failed: "
-            f"{response.status_code} - {response.text}"
-        )
-
-    subscription_payload = {
-        "name": "DICOM-NIfTI Conversion",
-        "event-selector": "org.nrg.xnat.eventservice.events.ScanEvent:CREATED",
-        "action-key": f"org.nrg.containers.services.CommandActionProvider:{command_id}",
-        "attributes": {},
-        "active": active,
-        "event-filter": {
-            "event-type": "org.nrg.xnat.eventservice.events.ScanEvent",
-            "status": "CREATED",
-            "project-ids": [project_id],
-            "payload-filter": '(@.resources.length() > 0 && "DICOM" in @.resources[*].label)',
-        },
-        "act-as-event-user": False,
-    }
-
-    response = requests.post(
-        f"{XNAT_URL}/xapi/projects/{project_id}/events/subscription",
-        headers=headers,
-        json=subscription_payload,
-    )
-    if response.status_code in (200, 201):
-        state = "active" if active else "inactive"
-        logger.info(f"Event subscription for '{container}' created ({state}) for project '{project_id}'")
+    if response.status_code == 200:
+        logger.info(f"Command '{container}' enabled for project '{project_id}'")
     else:
-        raise Exception(
-            f"Error: Creating event subscription for '{container}' failed: {response.status_code} - {response.text}"
-        )
+        raise Exception(f"Error: Enabling XNAT command '{container}' failed: {response.status_code} - {response.text}")
 
 
 def add_central_hub_users_to_project(
     central_hub_project: CentralHubProject, project_id: str, headers: dict[str, str]
-) -> tuple[list[CreatedUser], list[User]]:
+) -> Tuple[List[CreatedUser], List[User]]:
     """
     Adds list of central hub users to an imaging project on XNAT.
 
@@ -340,11 +291,11 @@ def add_central_hub_users_to_project(
         headers (dict[str, str]): XNAT authentication headers
 
     Returns:
-        tuple[list[imaging_api.routers.schemas.CreatedUser], list[imaging_api.routers.schemas.User]]: List of created
+        Tuple[List[imaging_api.routers.schemas.CreatedUser], List[imaging_api.routers.schemas.User]]: List of created
         users and added users.
     """
-    created_users: list[CreatedUser] = []
-    added_users: list[User] = []
+    created_users: List[CreatedUser] = []
+    added_users: List[User] = []
 
     if not central_hub_project.users:
         logger.info("No users provided to add to project.")
@@ -354,17 +305,23 @@ def add_central_hub_users_to_project(
         # If central hub user is disabled, do not attempt to create account.
         if central_hub_user.is_disabled:
             logger.info(
-                "Central Hub user is disabled. It will not be created on XNAT or added to the imaging project.",
+                "Central Hub user with email '%s' is disabled. "
+                "It will not be created on XNAT or added to the imaging project.",
+                central_hub_user.email,
             )
             continue
 
         # Check if user already exists on XNAT, check by 'email' key
         try:
             user_profile = get_user_profile_by("email", central_hub_user.email, headers)
-            logger.info("User '%s' already exists on XNAT", user_profile.username)
+            logger.info(
+                "User with email '%s' exists on XNAT. Username: '%s'",
+                central_hub_user.email,
+                user_profile.username,
+            )
 
         except NotFoundError:
-            logger.info("User not found on XNAT. Creating user...")
+            logger.info(f"User with email '{central_hub_user.email}' not found on XNAT. Creating user...")
             # Create user on XNAT from Central Hub user
             created_user, user_profile = create_user_from_central_hub_user(central_hub_user, headers)
             # Append to list of created users
@@ -462,7 +419,7 @@ async def delete_project(project_id: str, headers: dict[str, str]) -> Project:
     return project
 
 
-def get_subjects(project_id: str, headers: dict[str, str]) -> list[Subject]:
+def get_subjects(project_id: str, headers: dict[str, str]) -> List[Subject]:
     """
     Retrieves a list of subjects in a specific project in XNAT.
 
@@ -471,7 +428,7 @@ def get_subjects(project_id: str, headers: dict[str, str]) -> list[Subject]:
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        list[Subject]: List of XNAT subject objects.
+        List[Subject]: List of XNAT subject objects.
 
     Raises:
         Exception: If there is an error while fetching the subjects from XNAT.
@@ -487,7 +444,7 @@ def get_subjects(project_id: str, headers: dict[str, str]) -> list[Subject]:
         raise Exception(f"Error: XNAT subjects fetch failed: {response.status_code} - {response.text}")
 
 
-def get_experiments(project_id: str, headers: dict[str, str]) -> list[Experiment]:
+def get_experiments(project_id: str, headers: dict[str, str]) -> List[Experiment]:
     """
     Fetches all XNAT experiments from a project.
 
@@ -496,7 +453,7 @@ def get_experiments(project_id: str, headers: dict[str, str]) -> list[Experiment
         headers (dict[str, str]): XNAT authentication headers.
 
     Returns:
-        list[Experiment]: List of XNAT experiment objects.
+        List[Experiment]: List of XNAT experiment objects.
 
     Raises:
         Exception: If there is an error while fetching the experiments from XNAT.
@@ -551,12 +508,12 @@ def get_experiment(project_id: str, experiment_id_or_label: str, headers: dict[s
         raise Exception(f"Error: XNAT experiment fetch failed: {response.status_code} - {response.text}")
 
 
-def get_subject_id_from_experiment_response(experiment_response: dict[str, Any]) -> str:
+def get_subject_id_from_experiment_response(experiment_response: Dict[str, Any]) -> str:
     """
     Extracts the XNAT subject ID from the XNAT experiment response JSON.
 
     Args:
-        experiment_response (dict[str, Any]): XNAT experiment response JSON.
+        experiment_response (Dict[str, Any]): XNAT experiment response JSON.
 
     Returns:
         str: Subject ID

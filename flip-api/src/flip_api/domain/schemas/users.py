@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from typing import List
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
@@ -18,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 class UserPermissionsResponse(BaseModel):
     """Response model for user permissions."""
 
-    permissions: list[str] = Field(..., description="List of permissions assigned to the user.")
+    permissions: List[str] = Field(..., description="List of permissions assigned to the user.")
 
 
 class GetUser(BaseModel):
@@ -74,4 +75,4 @@ class IRole(BaseModel):
 class IUser(CognitoUser):
     """Model for user data."""
 
-    roles: list[IRole]
+    roles: List[IRole]
