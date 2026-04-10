@@ -46,16 +46,36 @@ terraform destroy -auto-approve \
   -target=aws_db_subnet_group.flip_db_subnet_group \
   2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
 
-# Step 3: Destroy load balancers first (they have ENIs in subnets)
-log_info "Step 3: Destroying load balancers..."
+# Step 3: Destroy Route53 and load balancer rules first (they reference load balancers)
+log_info "Step 3: Destroying Route53 records and load balancer rules..."
+terraform destroy -auto-approve \
+  -target=aws_route53_record.alb \
+  -target=aws_route53_record.fl_server_nlb \
+  -target=aws_lb_listener_rule.api_routing \
+  -target=aws_security_group_rule.local_trust_fl_server_nlb \
+  -target=aws_security_group_rule.fl_server_ingress_from_nlb \
+  2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
+
+# Step 3b: Destroy load balancers (they have ENIs in subnets)
+log_info "Step 3b: Destroying load balancers..."
 terraform destroy -auto-approve \
   -target=module.alb \
   -target=module.alb_security_group \
   -target=module.fl_server_nlb \
   2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
 
-# Step 4: Destroy EC2 instances and security groups
-log_info "Step 4: Destroying EC2 instances and security groups..."
+log_info "  Waiting for load balancer ENIs to fully detach from subnets..."
+sleep 10
+
+# Step 4: Destroy EIP associations (so instances can be freely destroyed)
+log_info "Step 4: Destroying EIP associations..."
+terraform destroy -auto-approve \
+  -target=aws_eip_association.central_hub_eip_assoc \
+  -target=module.trust_ec2.aws_eip_association.trust_eip_assoc \
+  2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
+
+# Step 5: Destroy EC2 instances and security groups
+log_info "Step 5: Destroying EC2 instances and security groups..."
 terraform destroy -auto-approve \
   -target=aws_instance.ec2_instance \
   -target=module.trust_ec2.aws_instance.trust_host \
@@ -65,11 +85,12 @@ terraform destroy -auto-approve \
   -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.pacs_ui \
   -target=module.trust_ec2.aws_vpc_security_group_egress_rule.allow_all \
   -target=module.ec2_security_group \
+  -target=module.trust_security_group \
   -target=module.rds_security_group \
   2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
 
-# Step 5: Destroy VPC and remaining resources
-log_info "Step 5: Destroying VPC and remaining resources..."
+# Step 6: Destroy VPC and remaining resources
+log_info "Step 6: Destroying VPC and remaining resources..."
 terraform destroy -auto-approve \
   -target=module.flip_vpc \
   -target=module.ec2_role \
