@@ -98,7 +98,7 @@ resource "aws_eip" "trust_eip" {
 
   # Prevent accidental destruction - preserve Trust EC2 EIP across redeployments
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
 

@@ -264,7 +264,7 @@ resource "aws_eip" "central_hub_eip" {
 
   # Prevent accidental destruction - this EIP is precious infrastructure
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
 
