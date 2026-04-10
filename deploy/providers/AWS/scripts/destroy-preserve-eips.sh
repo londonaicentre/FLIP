@@ -46,28 +46,39 @@ terraform destroy -auto-approve \
   -target=aws_db_subnet_group.flip_db_subnet_group \
   2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
 
-# Step 3: Destroy remaining infrastructure (VPC, security groups, etc.)
-log_info "Step 3: Destroying remaining infrastructure..."
+# Step 3: Destroy load balancers first (they have ENIs in subnets)
+log_info "Step 3: Destroying load balancers..."
 terraform destroy -auto-approve \
-  -target=module.flip_vpc \
-  -target=module.ec2_security_group \
-  -target=module.rds_security_group \
   -target=module.alb \
   -target=module.alb_security_group \
-  -target=module.ec2_role \
-  -target=aws_iam_instance_profile.ec2_profile \
+  -target=module.fl_server_nlb \
+  2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
+
+# Step 4: Destroy EC2 instances and security groups
+log_info "Step 4: Destroying EC2 instances and security groups..."
+terraform destroy -auto-approve \
   -target=aws_instance.ec2_instance \
-  -target=aws_cloudwatch_log_group.flip_log_group \
-  -target=aws_iam_role_policy.ec2_secret \
-  -target=aws_ses_template.flip_access_request \
-  -target=aws_ses_template.flip_xnat_credentials \
   -target=module.trust_ec2.aws_instance.trust_host \
   -target=module.trust_ec2.aws_security_group.trust_host_sg \
   -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.trust_api \
   -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.xnat \
   -target=module.trust_ec2.aws_vpc_security_group_ingress_rule.pacs_ui \
   -target=module.trust_ec2.aws_vpc_security_group_egress_rule.allow_all \
-  -target=local_file.env 2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use"
+  -target=module.ec2_security_group \
+  -target=module.rds_security_group \
+  2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
+
+# Step 5: Destroy VPC and remaining resources
+log_info "Step 5: Destroying VPC and remaining resources..."
+terraform destroy -auto-approve \
+  -target=module.flip_vpc \
+  -target=module.ec2_role \
+  -target=aws_iam_instance_profile.ec2_profile \
+  -target=aws_cloudwatch_log_group.flip_log_group \
+  -target=aws_iam_role_policy.ec2_secret \
+  -target=aws_ses_template.flip_access_request \
+  -target=aws_ses_template.flip_xnat_credentials \
+  -target=local_file.env 2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
 
 log_info "🔒 Re-enabling prevent_destroy in EIP resources..."
 mv main.tf.backup main.tf
