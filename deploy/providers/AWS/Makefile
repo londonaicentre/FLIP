@@ -168,7 +168,7 @@ apply-cert: ## Apply only the ACM certificate (step 1 of 2 for HTTPS)
 .PHONY: destroy-cert
 destroy-cert: ## Destroy only the ACM certificate (use with caution - will break HTTPS)
 	@echo "💥 Destroying ACM certificate (Step 1/2)..."
-	@terraform destroy -target=aws_acm_certificate.flip -target=aws_acm_certificate_validation.flip -target=aws_route53_record.cert_validation
+	@terraform destroy -target=aws_acm_certificate.flip -target=aws_acm_certificate_validation.flip -target=aws_route53_record.cert_validation -lock=false
 	@echo "✅ Certificate destroyed! Now run 'make plan' and 'make apply' to remove DNS validation."
 
 .PHONY: update-trust-secret
@@ -242,6 +242,20 @@ update-env: ## Update environment file with Terraform outputs
 ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed try again for 3 times)
 	@echo "☁️🔗 Initiate ansible and install docker on both EC2 instances"
 	@test -n "$(FL_KIT_DATE)" || (echo "FL_KIT_DATE must be set in $(MAIN_ENV_FILE)"; exit 1)
+	@echo "📦 Waiting for Central Hub SSH-over-SSM to be ready..."
+	@for i in $$(seq 1 60); do \
+		ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o BatchMode=yes flip "echo OK" >/dev/null 2>&1 && echo "   ✓ SSH-over-SSM online (attempt $$i)" && break; \
+		if [ $$i -eq 60 ]; then echo "   ✗ SSH-over-SSM did not come online after 5 minutes."; exit 1; fi; \
+		echo "   ... waiting (attempt $$i/60)"; \
+		sleep 5; \
+	done
+	@echo "📦 Waiting for Trust EC2 SSH-over-SSM to be ready..."
+	@for i in $$(seq 1 60); do \
+		ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o BatchMode=yes flip-trust "echo OK" >/dev/null 2>&1 && echo "   ✓ SSH-over-SSM online (attempt $$i)" && break; \
+		if [ $$i -eq 60 ]; then echo "   ✗ SSH-over-SSM did not come online after 5 minutes."; exit 1; fi; \
+		echo "   ... waiting (attempt $$i/60)"; \
+		sleep 5; \
+	done
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
 	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) -e fl_kit_date=$(FL_KIT_DATE)
@@ -249,11 +263,10 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 .PHONY: write-trust-ca
 write-trust-ca: ssh-config ## Fetch trust_ca_cert from Secrets Manager and write to CH EC2 host for volume mount
 	@echo "🔐 Fetching Trust CA cert from Secrets Manager and writing to CH EC2..."
-	@CH_ID=$$(terraform output -raw Ec2InstanceId) && \
-	  echo "   Waiting for SSM agent to be available on $$CH_ID..." && \
+	@echo "   Waiting for Central Hub SSH-over-SSM to be ready..." && \
 	  for i in $$(seq 1 120); do \
-	    aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$$CH_ID" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null | grep -q "Online" && echo "   ✓ SSM agent online (attempt $$i)" && break; \
-	    if [ $$i -eq 120 ]; then echo "   ✗ SSM agent did not become available after 10 minutes."; exit 1; fi; \
+	    ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o BatchMode=yes flip "echo OK" >/dev/null 2>&1 && echo "   ✓ SSH-over-SSM online (attempt $$i)" && break; \
+	    if [ $$i -eq 120 ]; then echo "   ✗ SSH-over-SSM did not come online after 10 minutes."; exit 1; fi; \
 	    echo "   ... waiting (attempt $$i/120)"; \
 	    sleep 5; \
 	  done && \
