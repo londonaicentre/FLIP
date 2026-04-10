@@ -40,6 +40,13 @@ def reset_submission_state():
     app_module._submission_in_progress = False
 
 
+@pytest.fixture(autouse=True)
+def reset_node_mapping():
+    app_module._node_trust_mapping.clear()
+    yield
+    app_module._node_trust_mapping.clear()
+
+
 @pytest.fixture
 def mock_flwr_run(monkeypatch):
     def _mock(*, returncode=0, stdout="", stderr="", exception=None):

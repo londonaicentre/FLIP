@@ -29,6 +29,7 @@ from fl_api.schemas import (
     FlowerCommandResponse,
     FlowerSubmitRunCommandResponse,
     HealthResponse,
+    NodeRegistrationRequest,
     RunRecord,
     ServerInfoModel,
     UploadAppRequest,
@@ -50,6 +51,9 @@ app = FastAPI(
 _state_lock = threading.Lock()
 _submission_in_progress = False
 
+_node_mapping_lock = threading.Lock()
+_node_trust_mapping: dict[str, str] = {}  # Flower node_id → trust name
+
 
 def _get_allowed_job_folders() -> set[str]:
     raw_value = os.getenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation")
@@ -62,36 +66,6 @@ def _get_src_root() -> Path:
 
 def _get_superlink_health_address() -> str:
     return os.getenv("SUPERLINK_HEALTH_ADDRESS", "").strip()
-
-
-def _get_supernode_health_addresses() -> dict[str, str]:
-    raw_value = os.getenv("SUPERNODE_HEALTH_ADDRESSES", "")
-    if not raw_value.strip():
-        return {}
-
-    addresses: dict[str, str] = {}
-    for raw_entry in raw_value.split(","):
-        entry = raw_entry.strip()
-        if not entry:
-            continue
-        if "=" not in entry:
-            logger.warning(
-                "Ignoring invalid SUPERNODE_HEALTH_ADDRESSES entry '%s'. Expected format 'name=host:port'.",
-                entry,
-            )
-            continue
-
-        name, address = (part.strip() for part in entry.split("=", 1))
-        if not name or not address:
-            logger.warning(
-                "Ignoring invalid SUPERNODE_HEALTH_ADDRESSES entry '%s'. Name and address are required.",
-                entry,
-            )
-            continue
-
-        addresses[name] = address
-
-    return addresses
 
 
 def _get_healthcheck_timeout_seconds() -> float:
@@ -204,6 +178,20 @@ def _validate_app_folder(app_folder: str) -> Path:
     return job_dir
 
 
+def _get_federation_nodes(src_root: Path) -> list[dict[str, Any]]:
+    """Query the SuperLink Control API for connected SuperNode statuses."""
+    command = ["uvx", "flwr", "federation", "list", "--federation", "@none/default", "local", "--format", "json"]
+    result = _run_flwr_command(command, src_root, "federation list")
+    payload = _parse_flwr_payload(result, "federation list")
+
+    federation = payload.get("federation", {})
+    nodes = federation.get("nodes", [])
+    if not isinstance(nodes, list):
+        logger.warning("Federation list response does not contain a valid 'nodes' list.")
+        return []
+    return nodes
+
+
 def _parse_runs_payload(payload: dict[str, Any]) -> list[RunRecord]:
     runs = payload.get("runs")
     if not isinstance(runs, list):
@@ -241,6 +229,22 @@ def check_server_status() -> ServerInfoModel:
     return ServerInfoModel(status="RUNNING" if is_running else "STOPPED")
 
 
+@app.post(
+    "/register_node",
+    status_code=status.HTTP_200_OK,
+)
+def register_node(body: NodeRegistrationRequest) -> dict[str, str]:
+    """Register a SuperNode's Flower node_id → trust name mapping.
+
+    Called by each SuperNode at startup so that check_client_status can resolve
+    Flower node IDs to human-readable trust names.
+    """
+    with _node_mapping_lock:
+        _node_trust_mapping[body.node_id] = body.name
+    logger.info("Registered node %s as '%s'", body.node_id, body.name)
+    return {"status": "registered"}
+
+
 @app.get(
     "/check_client_status",
     status_code=status.HTTP_200_OK,
@@ -249,22 +253,36 @@ def check_server_status() -> ServerInfoModel:
 def check_client_status(
     targets: list[str] | None = Query(None),
 ) -> list[ClientInfoModel]:
-    supernode_health_addresses = _get_supernode_health_addresses()
-    timeout_seconds = _get_healthcheck_timeout_seconds()
+    src_root = _get_src_root()
+    nodes = _get_federation_nodes(src_root)
 
-    target_names = targets if targets is not None else list(supernode_health_addresses.keys())
+    # Build node_id → status from the federation list
+    node_statuses: dict[str, str] = {}
+    for node in nodes:
+        nid = str(node.get("node_id", ""))
+        if nid:
+            node_statuses[nid] = node.get("status", "")
+
+    # Build name → online using the in-memory node_id → trust_name mapping
+    with _node_mapping_lock:
+        mapping = dict(_node_trust_mapping)
+
+    name_online: dict[str, bool] = {}
+    for nid, name in mapping.items():
+        name_online[name] = node_statuses.get(nid, "") == "online"
+
+    # Log unmapped nodes for debugging
+    mapped_ids = set(mapping.keys())
+    for nid in node_statuses:
+        if nid not in mapped_ids:
+            logger.debug("Federation node %s has no registered trust name.", nid)
+
+    # If targets are specified, filter; otherwise return all registered names
+    target_names = targets if targets is not None else sorted(name_online.keys())
 
     result: list[ClientInfoModel] = []
     for name in target_names:
-        address = supernode_health_addresses.get(name)
-        if address is None:
-            logger.warning(
-                "Requested health status for unknown target '%s'. Marking as DISCONNECTED.",
-                name,
-            )
-            result.append(ClientInfoModel(name=name, status="DISCONNECTED"))
-            continue
-        is_connected = bool(address) and _check_health(address, timeout_seconds)
+        is_connected = name_online.get(name, False)
         result.append(
             ClientInfoModel(
                 name=name,
