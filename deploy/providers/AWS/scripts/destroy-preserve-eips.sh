@@ -89,10 +89,50 @@ terraform destroy -auto-approve \
   -target=module.rds_security_group \
   2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
 
-# Step 6: Destroy VPC and remaining resources
-log_info "Step 6: Destroying VPC and remaining resources..."
+# Step 6: Clean up any remaining dependencies in subnets and destroy VPC
+log_info "Step 6: Extended cleanup and VPC destruction (this may take several minutes)..."
+log_info "  Waiting 20 seconds for all AWS resources to fully clean up..."
+sleep 20
+
+# Try to destroy VPC module - terraform should handle all cleanup
+log_info "  Attempting VPC destruction..."
 terraform destroy -auto-approve \
   -target=module.flip_vpc \
+  2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
+
+# If VPC destruction failed, try manual cleanup
+DESTROY_STATUS=$?
+if [ $DESTROY_STATUS -ne 0 ]; then
+  log_warn "  VPC destruction encountered issues, attempting AWS CLI cleanup..."
+
+  # Get VPC ID from Terraform state
+  VPC_ID=$(terraform state show -json 2>/dev/null | grep -o '"vpc_id":"[^"]*' | head -1 | cut -d'"' -f4 || echo "")
+
+  if [ -n "$VPC_ID" ]; then
+    log_info "  Found VPC ID: $VPC_ID"
+
+    # Delete all network interfaces in the VPC (except AWS-managed ones)
+    log_info "  Deleting dangling network interfaces..."
+    ENIS=$(aws_cmd ec2 describe-network-interfaces \
+      --filters "Name=vpc-id,Values=$VPC_ID" \
+      --query 'NetworkInterfaces[?Attachment.InstanceId==null].NetworkInterfaceId' \
+      --output text 2>/dev/null || echo "")
+
+    for ENI in $ENIS; do
+      log_info "    Deleting ENI: $ENI"
+      aws_cmd ec2 delete-network-interface --network-interface-id "$ENI" 2>/dev/null || true
+    done
+  fi
+
+  log_info "  Retrying VPC destruction after cleanup..."
+  terraform destroy -auto-approve \
+    -target=module.flip_vpc \
+    2>&1 | grep -v "Warning: Resource targeting is in effect" | grep -v "Warning: Applied changes may be incomplete" | grep -v "Note that the -target option is not suitable for routine use" || true
+fi
+
+# Step 7: Destroy remaining infrastructure
+log_info "Step 7: Destroying remaining infrastructure..."
+terraform destroy -auto-approve \
   -target=module.ec2_role \
   -target=aws_iam_instance_profile.ec2_profile \
   -target=aws_cloudwatch_log_group.flip_log_group \
