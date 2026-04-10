@@ -172,3 +172,45 @@ def test_check_client_status_empty_mapping(client, src_root, mock_flwr_run):
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_check_client_status_with_preregistered_nodes(client, src_root, mock_flwr_run):
+    """Nodes registered before SuperNodes connect (via register-supernode-keys.sh)
+    are correctly resolved when the federation list later reports them online."""
+    app_module._node_trust_mapping.clear()
+
+    # Simulate what register-supernode-keys.sh does: register node mappings
+    # before SuperNodes connect to the SuperLink
+    client.post("/register_node", json={"name": "Trust_1", "node_id": "999"})
+    client.post("/register_node", json={"name": "Trust_2", "node_id": "888"})
+
+    # Now the federation list reports those nodes as online
+    mock_flwr_run(stdout=_federation_json([
+        {"node_id": "999", "owner": "none", "status": "online"},
+        {"node_id": "888", "owner": "none", "status": "online"},
+    ]))
+
+    response = client.get("/check_client_status")
+
+    assert response.status_code == 200
+    statuses = {item["name"]: item["status"] for item in response.json()}
+    assert statuses == {"Trust_1": "CONNECTED", "Trust_2": "CONNECTED"}
+
+
+def test_check_client_status_preregistered_partial_online(client, src_root, mock_flwr_run):
+    """Preregistered nodes show DISCONNECTED if not yet in the federation list."""
+    app_module._node_trust_mapping.clear()
+
+    client.post("/register_node", json={"name": "Trust_1", "node_id": "999"})
+    client.post("/register_node", json={"name": "Trust_2", "node_id": "888"})
+
+    # Only Trust_1's node is online; Trust_2 hasn't connected yet
+    mock_flwr_run(stdout=_federation_json([
+        {"node_id": "999", "owner": "none", "status": "online"},
+    ]))
+
+    response = client.get("/check_client_status")
+
+    assert response.status_code == 200
+    statuses = {item["name"]: item["status"] for item in response.json()}
+    assert statuses == {"Trust_1": "CONNECTED", "Trust_2": "DISCONNECTED"}
