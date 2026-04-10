@@ -255,7 +255,7 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) -e fl_kit_date=$(FL_KIT_DATE) -e pgdata_archive=trust1_pgdata_20260106.tar.gz
 
 .PHONY: deploy-centralhub
-deploy-centralhub: ## Deploy FLIP containers to flip context with environment from Terraform
+deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with environment from Terraform
 	@echo "🔍 Checking central hub images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(CENTRALHUB_IMAGES); do \
@@ -293,12 +293,7 @@ LOCAL_TRUST_NAME ?= Trust_2
 
 
 .PHONY: deploy-trust
-deploy-trust: update-env ## Deploy trust relationships after central hub is deployed
-	@echo "⚙️  Configure .ssh/config for flip context..."
-	@set -x AWS_PROFILE ${AWS_PROFILE}
-	@terraform output
-	@uv run ./update_ssh_config.py --aws-profile ${AWS_PROFILE} || true
-	@echo "✅ .ssh/config updated!"
+deploy-trust: update-env ssh-config ## Deploy trust relationships after central hub is deployed
 	@echo "👷 Create docker context if not exists, pointing to flip-trust to ssh://flip-trust"
 	@docker context create flip-trust --docker "host=ssh://flip-trust" || echo "   Context 'flip-trust' already exists"
 	@echo "🔄 Switching to flip-trust Docker context..."

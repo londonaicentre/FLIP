@@ -53,3 +53,6 @@ terraform.rc
 
 .env
 .venv/
+
+# Temporary files from tests
+tmp*Makefile

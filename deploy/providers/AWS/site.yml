@@ -40,23 +40,27 @@
       register: terraform_output
     - name: add Central Hub EC2 instance to Ansible inventory
       add_host:
-        name: "{{ terraform_output.outputs.Ec2PublicIp.value }}"
+        # Use the SSH alias so Ansible tunnels through SSM Session Manager
+        # The 'flip' Host entry in ~/.ssh/config provides ProxyCommand, IdentityFile,
+        # and StrictHostKeyChecking=accept-new — no additional ssh_common_args needed.
+        name: flip
         groups:
           - ec2
           - central_hub
         ansible_ssh_user: ubuntu
-        ansible_ssh_private_key_file: "{{ terraform_output.outputs.Keypair.value }}"
-        ansible_ssh_common_args: "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        ansible_ssh_private_key_file: "~/.ssh/host-aws"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
         ansible_ec2_instance_id: "{{ terraform_output.outputs.Ec2InstanceId.value }}"
     - name: add Trust EC2 instance to Ansible inventory
       add_host:
-        name: "{{ terraform_output.outputs.TrustEc2PublicIp.value }}"
+        # Use the SSH alias so Ansible tunnels through SSM Session Manager
+        name: flip-trust
         groups:
           - ec2
           - trust_ec2
         ansible_ssh_user: ubuntu
-        ansible_ssh_private_key_file: "{{ terraform_output.outputs.Keypair.value }}"
-        ansible_ssh_common_args: "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        ansible_ssh_private_key_file: "~/.ssh/host-aws"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
         ansible_ec2_instance_id: "{{ terraform_output.outputs.TrustEc2InstanceId.value }}"
 
 - name: update packages

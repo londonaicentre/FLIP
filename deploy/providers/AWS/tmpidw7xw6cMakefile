@@ -1,3 +1,0 @@
-.PHONY: dummy
-dummy:
-	@echo 'dummy'

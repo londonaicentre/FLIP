@@ -624,5 +624,5 @@ module "trust_ec2" {
 
 resource "aws_key_pair" "host_key" {
   key_name   = "host-aws"
-  public_key = file(var.ec2_public_key_path)
+  public_key = trimspace(file(var.ec2_public_key_path))
 }

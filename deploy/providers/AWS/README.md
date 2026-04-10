@@ -351,7 +351,7 @@ Trust services can run on AWS EC2 or on-premises. Both models use the same Docke
 
 | Port | Service | Status | Purpose |
 | ------ | --------- | --------- | --------- |
-| **22** | SSH | 🟢 **OPEN** | Remote administration |
+| **22** | SSH | 🔴 **CLOSED** | Not exposed — remote access is via SSM Session Manager tunnel (see below) |
 | **80** | HTTP | 🟢 **OPEN** | ALB traffic |
 | **3000** | FLIP UI | 🟢 **OPEN** | Frontend application |
 | **8000** | FLIP API | 🟢 **OPEN** | Backend API |
@@ -359,6 +359,55 @@ Trust services can run on AWS EC2 or on-premises. Both models use the same Docke
 | **8002** | FL Server | 🟡 **CONDITIONAL** | gRPC (open to trust IPs only) |
 | **8003** | FL Admin | 🟡 **CONDITIONAL** | Admin (open to trust IPs only) |
 | | | | Trust API: no inbound port needed (trusts poll the hub outbound) |
+
+### Remote Access via SSM Session Manager
+
+EC2 instances are accessed through AWS Systems Manager Session Manager — port 22 is **not** open in any security group. SSH traffic is tunnelled through the SSM agent running on each instance, so no bastion host or inbound firewall rule is needed.
+
+**Prerequisites**
+
+- AWS CLI authenticated for the correct account and region:
+
+  ```bash
+  export AWS_PROFILE=<your-profile>   # e.g. FlipDeveloperAccess-046651569599
+  export AWS_REGION=eu-west-2         # must match the region where instances are deployed
+  aws sso login --profile $AWS_PROFILE
+  ```
+
+- [AWS Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) installed alongside the AWS CLI.
+
+**Updating `~/.ssh/config`**
+
+After `terraform apply`, run:
+
+```bash
+make ssh-config
+```
+
+This calls `update_ssm_ssh_config.py`, which reads the EC2 instance IDs from Terraform outputs and writes `Host flip` / `Host flip-trust` blocks like the following into `~/.ssh/config`:
+
+```text
+# Managed by FLIP - SSH over SSM Session Manager
+Host flip
+    HostName i-0123456789abcdef0
+    User ubuntu
+    IdentitiesOnly yes
+    IdentityFile ~/.ssh/host-aws
+    StrictHostKeyChecking accept-new
+    ProxyCommand aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p' --region eu-west-2 --profile <your-profile>
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-flip-%r@%h:%p
+    ControlPersist 10m
+```
+
+**Connecting**
+
+```bash
+ssh flip        # Central Hub
+ssh flip-trust  # Trust EC2
+```
+
+Both aliases resolve through the SSM tunnel — no public IP or open port 22 is needed. If your AWS session has expired, re-run `aws sso login --profile $AWS_PROFILE` before connecting.
 
 ---
 

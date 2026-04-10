@@ -19,6 +19,8 @@
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from verify_deploy_readiness import (
     check_bash_syntax,
     check_file_exists,
@@ -122,96 +124,43 @@ class TestBashSyntax:
 class TestMakefileTargets:
     """Tests for Makefile target checking."""
 
-    def test_makefile_target_exists(self) -> None:
+    def test_makefile_target_exists(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test detecting existing Make target."""
-        # Create temp Makefile with a target
-        with tempfile.NamedTemporaryFile(mode="w", suffix="Makefile", delete=False, dir=".") as f:
-            f.write(".PHONY: test-target\ntest-target:\n\t@echo 'test'\n")
-            f.flush()
-            original_makefile = Path("Makefile")
-            temp_makefile = Path(f.name)
+        makefile = tmp_path / "Makefile"
+        makefile.write_text(".PHONY: test-target\ntest-target:\n\t@echo 'test'\n")
+        monkeypatch.chdir(tmp_path)
+        result = check_makefile_target("test-target", "Test target")
+        assert result is True
 
-            # Replace Makefile temporarily
-            if original_makefile.exists():
-                original_makefile.rename("Makefile.bak")
-
-            temp_makefile.rename("Makefile")
-
-            try:
-                result = check_makefile_target("test-target", "Test target")
-                assert result is True
-            finally:
-                Path("Makefile").rename(temp_makefile)
-                if Path("Makefile.bak").exists():
-                    Path("Makefile.bak").rename(original_makefile)
-
-    def test_makefile_target_missing(self) -> None:
+    def test_makefile_target_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test detecting missing Make target."""
-        # Create temp Makefile without a specific target
-        with tempfile.NamedTemporaryFile(mode="w", suffix="Makefile", delete=False, dir=".") as f:
-            f.write(".PHONY: dummy\ndummy:\n\t@echo 'dummy'\n")
-            f.flush()
-            original_makefile = Path("Makefile")
-            temp_makefile = Path(f.name)
-
-            if original_makefile.exists():
-                original_makefile.rename("Makefile.bak")
-
-            temp_makefile.rename("Makefile")
-
-            try:
-                result = check_makefile_target("nonexistent-target-xyz", "Missing target")
-                assert result is False
-            finally:
-                Path("Makefile").rename(temp_makefile)
-                if Path("Makefile.bak").exists():
-                    Path("Makefile.bak").rename(original_makefile)
+        makefile = tmp_path / "Makefile"
+        makefile.write_text(".PHONY: dummy\ndummy:\n\t@echo 'dummy'\n")
+        monkeypatch.chdir(tmp_path)
+        result = check_makefile_target("nonexistent-target-xyz", "Missing target")
+        assert result is False
 
 
 class TestMakefileDependencies:
     """Tests for Makefile dependency checking."""
 
-    def test_makefile_dependency_exists(self) -> None:
+    def test_makefile_dependency_exists(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test detecting existing Make dependency."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix="Makefile", delete=False, dir=".") as f:
-            f.write(".PHONY: target1 target2\ntarget1: target2\n\t@echo 'target1'\ntarget2:\n\t@echo 'target2'\n")
-            f.flush()
-            original_makefile = Path("Makefile")
-            temp_makefile = Path(f.name)
+        makefile = tmp_path / "Makefile"
+        makefile.write_text(
+            ".PHONY: target1 target2\ntarget1: target2\n\t@echo 'target1'\ntarget2:\n\t@echo 'target2'\n"
+        )
+        monkeypatch.chdir(tmp_path)
+        result = check_makefile_dependency("target1", "target2", "Dependency check")
+        assert result is True
 
-            if original_makefile.exists():
-                original_makefile.rename("Makefile.bak")
-
-            temp_makefile.rename("Makefile")
-
-            try:
-                result = check_makefile_dependency("target1", "target2", "Dependency check")
-                assert result is True
-            finally:
-                Path("Makefile").rename(temp_makefile)
-                if Path("Makefile.bak").exists():
-                    Path("Makefile.bak").rename(original_makefile)
-
-    def test_makefile_dependency_missing(self) -> None:
+    def test_makefile_dependency_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test detecting missing Make dependency."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix="Makefile", delete=False, dir=".") as f:
-            f.write(".PHONY: target1\ntarget1:\n\t@echo 'target1'\n")
-            f.flush()
-            original_makefile = Path("Makefile")
-            temp_makefile = Path(f.name)
-
-            if original_makefile.exists():
-                original_makefile.rename("Makefile.bak")
-
-            temp_makefile.rename("Makefile")
-
-            try:
-                result = check_makefile_dependency("target1", "nonexistent", "Missing dependency")
-                assert result is False
-            finally:
-                Path("Makefile").rename(temp_makefile)
-                if Path("Makefile.bak").exists():
-                    Path("Makefile.bak").rename(original_makefile)
+        makefile = tmp_path / "Makefile"
+        makefile.write_text(".PHONY: target1\ntarget1:\n\t@echo 'target1'\n")
+        monkeypatch.chdir(tmp_path)
+        result = check_makefile_dependency("target1", "nonexistent", "Missing dependency")
+        assert result is False
 
 
 class TestIntegration:

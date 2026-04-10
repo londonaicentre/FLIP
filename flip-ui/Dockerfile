@@ -43,4 +43,4 @@ RUN npm run build
 
 # TODO eventually the UI will be deployed in CloudFront so we won't need this section
 # For now, serve the built app with Vite preview to avoid dev server host validation issues
-CMD ["npm", "run", "preview"]
+CMD ["npm", "run", "serve"]
