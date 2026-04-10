@@ -38,5 +38,9 @@ FROM development AS production
 # Copy source files for production build
 COPY . .
 
+# Build the application for production
+RUN npm run build
+
 # TODO eventually the UI will be deployed in CloudFront so we won't need this section
-CMD ["npm", "run", "dev"]
+# For now, serve the built app with Vite preview to avoid dev server host validation issues
+CMD ["npm", "run", "preview"]

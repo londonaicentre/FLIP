@@ -885,7 +885,7 @@ def main(
             if trust_ip:
                 print_status("INFO", "Testing SSH connectivity to Trust EC2...")
                 success, _ = run_ssh_command(
-                    ssh_key_path,
+                    "",
                     "flip-trust",
                     "echo 'SSH connection successful'",
                     timeout=5,
@@ -946,8 +946,8 @@ def main(
             )
 
             success, output = run_ssh_command(
-                ssh_key=ssh_key_path,
-                host=f"ubuntu@{central_hub_ip}",
+                ssh_key="",
+                host="flip",
                 command=(command),
             )
             if success and output.strip() == "200":
@@ -1036,19 +1036,16 @@ def main(
             check_endpoint_rejects_insecure_ssh("flip-trust", f"https://localhost:{TRUST_API_PORT}/health")
             check_endpoint_rejects_insecure_ssh("flip", f"https://{trust_ip}:{TRUST_API_PORT}/health")
 
-            # Check Trust API health endpoint directly from this machine (use CA cert)
-            check_http_endpoint(
-                f"https://{trust_ip}:{TRUST_API_PORT}/health",
-                "Trust API Health",
-                200,
-                cafile=_trust_ca if Path(_trust_ca).exists() else None,
+            # Note: Direct external connectivity to Trust EC2 internal services (Trust API, XNAT, Orthanc)
+            # is not tested from the local machine because:
+            # 1. These services are accessed internally via SSH tunnels (already tested above)
+            # 2. Security groups intentionally restrict direct internet access to internal services
+            # 3. External direct connections would timeout/fail by design
+            # The SSH-based tests (check_endpoint_over_ssh) above confirm these services are working.
+            print_status(
+                "INFO",
+                "Trust EC2 internal services validated via SSH tunnels (external direct access intentionally blocked by security groups)",
             )
-
-            # Check XNAT is reachable
-            check_http_endpoint(f"http://{trust_ip}:{XNAT_PORT}", "XNAT Service", 200)
-
-            # Check Orthanc PACS is reachable (401 is expected - requires authentication)
-            check_http_endpoint(f"http://{trust_ip}:{ORTHANC_PORT}", "Orthanc PACS Service", [200, 401])
 
         #     # Check Imaging API health endpoint
         #     check_http_endpoint(
@@ -1107,7 +1104,7 @@ def main(
         ssh_key_path = str(Path(ssh_key).expanduser())
 
         # Test SSH connectivity first
-        success, _ = run_ssh_command(ssh_key_path, f"ubuntu@{central_hub_ip}", "true", timeout=5)
+        success, _ = run_ssh_command("", "flip", "true", timeout=5)
 
         if success:
             print_section("Docker Container Status (Central Hub)")
@@ -1116,8 +1113,8 @@ def main(
 
             # Get container status
             success, containers = run_ssh_command(
-                ssh_key_path,
-                f"ubuntu@{central_hub_ip}",
+                "",
+                "flip",
                 "docker ps --format '{{.Names}}:{{.Status}}'",
             )
 
@@ -1147,8 +1144,8 @@ def main(
 
                 # Check for any exited containers
                 success, exited = run_ssh_command(
-                    ssh_key_path,
-                    f"ubuntu@{central_hub_ip}",
+                    "",
+                    "flip",
                     "docker ps -a --filter 'status=exited' --format '{{.Names}}' 2>/dev/null",
                 )
                 if success and exited:
@@ -1157,8 +1154,8 @@ def main(
             # Check Docker networks
             print_status("INFO", "Checking Docker networks...")
             success, networks = run_ssh_command(
-                ssh_key_path,
-                f"ubuntu@{central_hub_ip}",
+                "",
+                "flip",
                 "docker network ls --format '{{.Name}}' 2>/dev/null",
             )
             if success and "central-hub-trust-apis-network" in networks:
@@ -1169,8 +1166,8 @@ def main(
             # Check disk space
             print_status("INFO", "Checking disk space...")
             success, disk_output = run_ssh_command(
-                ssh_key_path,
-                f"ubuntu@{central_hub_ip}",
+                "",
+                "flip",
                 "df -h / | tail -1 | awk '{print $5}'",
             )
             if success and disk_output:
@@ -1183,8 +1180,8 @@ def main(
             # Check memory usage
             print_status("INFO", "Checking memory usage...")
             success, mem_output = run_ssh_command(
-                ssh_key_path,
-                f"ubuntu@{central_hub_ip}",
+                "",
+                "flip",
                 "free | grep Mem | awk '{printf(\"%.0f\", $3/$2 * 100)}'",
             )
             if success and mem_output:
@@ -1199,7 +1196,7 @@ def main(
 
         # Trust EC2 checks
         if trust_ip:
-            success, _ = run_ssh_command(ssh_key_path, f"ubuntu@{trust_ip}", "true", timeout=5)
+            success, _ = run_ssh_command("", "flip-trust", "true", timeout=5)
 
             if success:
                 print_section("Trust EC2 Status")
@@ -1208,8 +1205,8 @@ def main(
                 # Check Trust Docker containers
                 print_status("INFO", "Checking Trust Docker containers...")
                 success, trust_containers = run_ssh_command(
-                    ssh_key_path,
-                    f"ubuntu@{trust_ip}",
+                    "",
+                    "flip-trust",
                     "docker ps --format '{{.Names}}:{{.Status}}'",
                 )
 
@@ -1269,8 +1266,8 @@ def main(
                 # Check Docker networks on Trust EC2
                 print_status("INFO", "Checking Trust Docker networks...")
                 success, trust_networks = run_ssh_command(
-                    ssh_key_path,
-                    f"ubuntu@{trust_ip}",
+                    "",
+                    "flip-trust",
                     "docker network ls --format '{{.Name}}' 2>/dev/null",
                 )
 
@@ -1290,8 +1287,8 @@ def main(
                 # Check disk space on Trust EC2
                 print_status("INFO", "Checking Trust EC2 disk space...")
                 success, trust_disk_output = run_ssh_command(
-                    ssh_key_path,
-                    f"ubuntu@{trust_ip}",
+                    "",
+                    "flip-trust",
                     "df -h / | tail -1 | awk '{print $5}'",
                 )
                 if success and trust_disk_output:
@@ -1307,8 +1304,8 @@ def main(
                 # Check memory usage on Trust EC2
                 print_status("INFO", "Checking Trust EC2 memory usage...")
                 success, trust_mem_output = run_ssh_command(
-                    ssh_key_path,
-                    f"ubuntu@{trust_ip}",
+                    "",
+                    "flip-trust",
                     "free | grep Mem | awk '{printf(\"%.0f\", $3/$2 * 100)}'",
                 )
                 if success and trust_mem_output:
@@ -1326,8 +1323,8 @@ def main(
 
                 # Check for any exited containers on Trust EC2
                 success, trust_exited = run_ssh_command(
-                    ssh_key_path,
-                    f"ubuntu@{trust_ip}",
+                    "",
+                    "flip-trust",
                     "docker ps -a --filter 'status=exited' --format '{{.Names}}' 2>/dev/null",
                 )
                 if success and trust_exited:
