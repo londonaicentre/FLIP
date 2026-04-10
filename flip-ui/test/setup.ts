@@ -15,16 +15,12 @@ import { config } from '@vue/test-utils'
 import { afterAll, afterEach, beforeAll, vi } from 'vitest'
 
 // Provide required environment variables so config validation passes in every test file.
+// vi.stubEnv is the supported Vitest API for this; it handles restoration automatically
+// and avoids mutating the read-only import.meta.env object directly.
 // These are test-only placeholder values; they do not represent real credentials.
-if (!import.meta.env['VITE_AWS_BASE_URL']) {
-  import.meta.env['VITE_AWS_BASE_URL'] = 'http://localhost:8080/api'
-}
-if (!import.meta.env['VITE_AWS_USER_POOL_ID']) {
-  import.meta.env['VITE_AWS_USER_POOL_ID'] = 'eu-west-2_TestPool'
-}
-if (!import.meta.env['VITE_AWS_CLIENT_ID']) {
-  import.meta.env['VITE_AWS_CLIENT_ID'] = 'test-client-id'
-}
+vi.stubEnv('VITE_AWS_BASE_URL', 'http://localhost:8080/api')
+vi.stubEnv('VITE_AWS_USER_POOL_ID', 'eu-west-2_TestPool')
+vi.stubEnv('VITE_AWS_CLIENT_ID', 'test-client-id')
 
 // Global test setup
 beforeAll(async () => {

@@ -112,20 +112,26 @@ export const isUserUnconfirmedCheck = async (
 
 export const apiGateway = "CentralHubAPIGateway";
 
-const _config = getConfig();
-
-export const authConfig = {
-    Auth: {
-        Cognito: {
-            region: _config.awsRegion,
-            userPoolId: _config.awsUserPoolId,
-            userPoolClientId: _config.awsClientId,
-            clientSecret: _config.awsClientSecret,
-            authenticationFlowType: 'USER_PASSWORD_AUTH',
-            loginWith: {}
+/**
+ * Returns the Amplify auth configuration built from validated environment variables.
+ * Called lazily so that module import does not trigger config validation;
+ * validation happens explicitly in main.ts before the app mounts.
+ */
+export function getAuthConfig() {
+    const cfg = getConfig();
+    return {
+        Auth: {
+            Cognito: {
+                region: cfg.awsRegion,
+                userPoolId: cfg.awsUserPoolId,
+                userPoolClientId: cfg.awsClientId,
+                clientSecret: cfg.awsClientSecret,
+                authenticationFlowType: 'USER_PASSWORD_AUTH',
+                loginWith: {}
+            }
         }
-    }
-};
+    };
+}
 
 let tokenRefreshTimeout = 0;
 

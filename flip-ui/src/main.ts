@@ -26,15 +26,18 @@ import SmartTable from "vuejs-smart-table";
 import { makeServer } from "../mocks/server";
 import App from "./App.vue";
 import router from "./router";
-import { authConfig } from "./utils/auth";
-import { getConfig } from "./utils/config";
+import { getAuthConfig } from "./utils/auth";
+import { AppConfig, getConfig } from "./utils/config";
 
-let appConfig;
+let appConfig: AppConfig;
 try {
     appConfig = getConfig();
 } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    document.body.innerHTML = `<pre style="color:red;padding:2rem;font-family:monospace;">Configuration Error: ${message}</pre>`;
+    const pre = document.createElement("pre");
+    pre.style.cssText = "color:red;padding:2rem;font-family:monospace;";
+    pre.textContent = `Configuration Error: ${message}`;
+    document.body.appendChild(pre);
     throw error;
 }
 
@@ -42,7 +45,7 @@ const app = createApp(App);
 const pinia = createPinia();
 app.use(pinia);
 
-Amplify.configure(authConfig);
+Amplify.configure(getAuthConfig());
 
 if (appConfig.isLocalMode) {
     console.info("Running locally, will use mocked API.");
