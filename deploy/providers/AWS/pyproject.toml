@@ -47,12 +47,7 @@ dev = [
 exclude_lines = ["if __name__ == .__main__.:"]
 omit = ["*.venv/*", "*/tests/*", "*/__init__.py", "*/translation/*"]
 
-[tool.pytest.ini_options]
-python_files = ["test_*.py", "*_test.py"]
-addopts = []
-filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
-
-[tool.pytest.ini_options_debug]
+[tool.pytest]
 python_files = ["test_*.py", "*_test.py"]
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
