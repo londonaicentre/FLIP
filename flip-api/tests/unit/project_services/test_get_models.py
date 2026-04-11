@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import Tuple
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -67,7 +66,7 @@ expected_response_list = [
     expected_model_2_response.model_dump(mode="json"),
 ]
 mock_db_models_list = [expected_model_1_response, expected_model_2_response]
-mock_get_models_service_response: Tuple[IPagedResponse, MagicMock] = (
+mock_get_models_service_response: tuple[IPagedResponse, MagicMock] = (
     IPagedResponse(
         data=mock_db_models_list,
         total_rows=1,
@@ -75,7 +74,7 @@ mock_get_models_service_response: Tuple[IPagedResponse, MagicMock] = (
     MagicMock(page_size=10),
 )
 
-mock_get_models_service_empty_response: Tuple[IPagedResponse, MagicMock] = (
+mock_get_models_service_empty_response: tuple[IPagedResponse, MagicMock] = (
     IPagedResponse(
         data=[],
         total_rows=0,
