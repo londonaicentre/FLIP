@@ -19,6 +19,7 @@ Standalone FastAPI service for Flower deployment runtime.
 ## Endpoints
 
 - `GET /health`
+- `POST /register_node`
 - `GET /check_server_status`
 - `GET /check_client_status?targets=<name>&targets=<name>`
 - `GET /list_runs`
@@ -63,23 +64,23 @@ The server status endpoint checks the Flower SuperLink health service configured
 - `{"status": "RUNNING"}` when gRPC health returns `SERVING`
 - `{"status": "STOPPED"}` otherwise
 
-The client status endpoint checks configured SuperNode health services from
-`SUPERNODE_HEALTH_ADDRESSES` and returns one item per requested target:
-- `{"name": "<target>", "status": "CONNECTED"}` when healthy
+The register node endpoint accepts a JSON body `{"name": "<trust_name>", "node_id": "<flower_node_id>"}`
+and stores the mapping in memory. SuperNodes call this at startup so that `check_client_status`
+can resolve Flower node IDs to human-readable trust names.
+
+The client status endpoint queries the SuperLink Control API via
+`flwr federation list --federation @none/default local --format json` and uses the
+registered node mappings to return one item per trust:
+- `{"name": "<target>", "status": "CONNECTED"}` when the node is online
 - `{"name": "<target>", "status": "DISCONNECTED"}` otherwise
 
-If `targets` are omitted, all configured SuperNode names are checked.
+If `targets` are omitted, all registered trust names are returned.
 
 ## Health status configuration
 
 Set these environment variables in the FL API container:
 
-- `SUPERLINK_HEALTH_ADDRESS` (example: `superlink:9097`)
-- `SUPERNODE_HEALTH_ADDRESSES` (example: `supernode-1=supernode-1:9098,supernode-2=supernode-2:9098`)
-- `FLOWER_HEALTHCHECK_TIMEOUT_SECONDS` (default: `1.0`)
-
-For Flower runtime services, start SuperLink and SuperNodes with `--health-server-address`
-so the gRPC health service is available.
+- `SUPERLINK_HEALTH_ADDRESS` (example: `superlink:9097`) — for server status checks
 
 ## Development startup with Docker Compose
 

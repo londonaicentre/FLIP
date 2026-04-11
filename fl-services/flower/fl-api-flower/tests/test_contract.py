@@ -25,6 +25,7 @@ def test_docs_and_openapi_contract(client):
     spec = openapi_response.json()
     for path in (
         "/health",
+        "/register_node",
         "/check_server_status",
         "/check_client_status",
         "/list_runs",

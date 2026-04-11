@@ -11,8 +11,12 @@
 # limitations under the License.
 #
 
+import json
+
 from fl_api import app as app_module
 from fl_api.schemas import ClientInfoModel, ServerInfoModel
+
+# ── check_server_status (unchanged — still uses gRPC health) ──────────────────
 
 
 def test_check_server_status_running(client, monkeypatch):
@@ -37,57 +41,176 @@ def test_check_server_status_stopped(client, monkeypatch):
     ServerInfoModel.model_validate(response.json())
 
 
-def test_check_client_status_without_targets_mixed_health(client, monkeypatch):
-    monkeypatch.setenv(
-        "SUPERNODE_HEALTH_ADDRESSES",
-        "site-1=supernode-1:9098,site-2=supernode-2:9098",
-    )
+# ── register_node ─────────────────────────────────────────────────────────────
 
-    def fake_check_health(address: str, _timeout: float) -> bool:
-        return address == "supernode-1:9098"
 
-    monkeypatch.setattr(app_module, "_check_health", fake_check_health)
+def test_register_node(client):
+    app_module._node_trust_mapping.clear()
+
+    response = client.post("/register_node", json={"name": "Trust_1", "node_id": "111"})
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "registered"}
+    assert app_module._node_trust_mapping == {"111": "Trust_1"}
+
+
+def test_register_node_updates_existing(client):
+    app_module._node_trust_mapping.clear()
+    app_module._node_trust_mapping["111"] = "Trust_OLD"
+
+    response = client.post("/register_node", json={"name": "Trust_1", "node_id": "111"})
+
+    assert response.status_code == 200
+    assert app_module._node_trust_mapping == {"111": "Trust_1"}
+
+
+# ── check_client_status (federation list) ─────────────────────────────────────
+
+
+def _federation_json(nodes: list[dict]) -> str:
+    return json.dumps({"federation": {"nodes": nodes}})
+
+
+def test_check_client_status_all_online(client, src_root, mock_flwr_run):
+    app_module._node_trust_mapping.clear()
+    app_module._node_trust_mapping["111"] = "Trust_1"
+    app_module._node_trust_mapping["222"] = "Trust_2"
+
+    mock_flwr_run(stdout=_federation_json([
+        {"node_id": "111", "owner": "none", "status": "online"},
+        {"node_id": "222", "owner": "none", "status": "online"},
+    ]))
 
     response = client.get("/check_client_status")
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload == [
-        {"name": "site-1", "status": "CONNECTED"},
-        {"name": "site-2", "status": "DISCONNECTED"},
-    ]
+    assert len(payload) == 2
+    statuses = {item["name"]: item["status"] for item in payload}
+    assert statuses == {"Trust_1": "CONNECTED", "Trust_2": "CONNECTED"}
     for item in payload:
         ClientInfoModel.model_validate(item)
 
 
-def test_check_client_status_with_targets_preserves_order(client, monkeypatch):
-    monkeypatch.setenv(
-        "SUPERNODE_HEALTH_ADDRESSES",
-        "site-1=supernode-1:9098,site-2=supernode-2:9098",
-    )
-    monkeypatch.setattr(app_module, "_check_health", lambda _address, _timeout: True)
+def test_check_client_status_mixed_health(client, src_root, mock_flwr_run):
+    app_module._node_trust_mapping.clear()
+    app_module._node_trust_mapping["111"] = "Trust_1"
+    app_module._node_trust_mapping["222"] = "Trust_2"
 
-    response = client.get("/check_client_status", params=[("targets", "site-2"), ("targets", "site-1")])
+    mock_flwr_run(stdout=_federation_json([
+        {"node_id": "111", "owner": "none", "status": "online"},
+        {"node_id": "222", "owner": "none", "status": "offline"},
+    ]))
+
+    response = client.get("/check_client_status")
+
+    assert response.status_code == 200
+    statuses = {item["name"]: item["status"] for item in response.json()}
+    assert statuses == {"Trust_1": "CONNECTED", "Trust_2": "DISCONNECTED"}
+
+
+def test_check_client_status_node_missing_from_federation(client, src_root, mock_flwr_run):
+    """A registered node that doesn't appear in the federation list is DISCONNECTED."""
+    app_module._node_trust_mapping.clear()
+    app_module._node_trust_mapping["111"] = "Trust_1"
+    app_module._node_trust_mapping["222"] = "Trust_2"
+
+    mock_flwr_run(stdout=_federation_json([
+        {"node_id": "111", "owner": "none", "status": "online"},
+        # Trust_2 (node 222) is not in the list at all
+    ]))
+
+    response = client.get("/check_client_status")
+
+    assert response.status_code == 200
+    statuses = {item["name"]: item["status"] for item in response.json()}
+    assert statuses == {"Trust_1": "CONNECTED", "Trust_2": "DISCONNECTED"}
+
+
+def test_check_client_status_with_targets(client, src_root, mock_flwr_run):
+    app_module._node_trust_mapping.clear()
+    app_module._node_trust_mapping["111"] = "Trust_1"
+    app_module._node_trust_mapping["222"] = "Trust_2"
+
+    mock_flwr_run(stdout=_federation_json([
+        {"node_id": "111", "owner": "none", "status": "online"},
+        {"node_id": "222", "owner": "none", "status": "online"},
+    ]))
+
+    response = client.get("/check_client_status", params=[("targets", "Trust_2")])
 
     assert response.status_code == 200
     payload = response.json()
-    assert [item["name"] for item in payload] == ["site-2", "site-1"]
-    assert all(item["status"] == "CONNECTED" for item in payload)
+    assert len(payload) == 1
+    assert payload[0] == {"name": "Trust_2", "status": "CONNECTED"}
 
 
-def test_check_client_status_unknown_target_returns_disconnected(client, monkeypatch):
-    monkeypatch.setenv("SUPERNODE_HEALTH_ADDRESSES", "site-1=supernode-1:9098")
+def test_check_client_status_unknown_target(client, src_root, mock_flwr_run):
+    """A target not in the node mapping is reported as DISCONNECTED."""
+    app_module._node_trust_mapping.clear()
+    app_module._node_trust_mapping["111"] = "Trust_1"
 
-    calls: list[tuple[str, float]] = []
+    mock_flwr_run(stdout=_federation_json([
+        {"node_id": "111", "owner": "none", "status": "online"},
+    ]))
 
-    def fake_check_health(address: str, timeout: float) -> bool:
-        calls.append((address, timeout))
-        return True
-
-    monkeypatch.setattr(app_module, "_check_health", fake_check_health)
-
-    response = client.get("/check_client_status", params={"targets": ["site-missing"]})
+    response = client.get("/check_client_status", params={"targets": ["Trust_Missing"]})
 
     assert response.status_code == 200
-    assert response.json() == [{"name": "site-missing", "status": "DISCONNECTED"}]
-    assert calls == []
+    assert response.json() == [{"name": "Trust_Missing", "status": "DISCONNECTED"}]
+
+
+def test_check_client_status_empty_mapping(client, src_root, mock_flwr_run):
+    """When no nodes have registered, the response is an empty list."""
+    app_module._node_trust_mapping.clear()
+
+    mock_flwr_run(stdout=_federation_json([
+        {"node_id": "111", "owner": "none", "status": "online"},
+    ]))
+
+    response = client.get("/check_client_status")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_check_client_status_with_preregistered_nodes(client, src_root, mock_flwr_run):
+    """Nodes registered before SuperNodes connect (via register-supernode-keys.sh)
+    are correctly resolved when the federation list later reports them online."""
+    app_module._node_trust_mapping.clear()
+
+    # Simulate what register-supernode-keys.sh does: register node mappings
+    # before SuperNodes connect to the SuperLink
+    client.post("/register_node", json={"name": "Trust_1", "node_id": "999"})
+    client.post("/register_node", json={"name": "Trust_2", "node_id": "888"})
+
+    # Now the federation list reports those nodes as online
+    mock_flwr_run(stdout=_federation_json([
+        {"node_id": "999", "owner": "none", "status": "online"},
+        {"node_id": "888", "owner": "none", "status": "online"},
+    ]))
+
+    response = client.get("/check_client_status")
+
+    assert response.status_code == 200
+    statuses = {item["name"]: item["status"] for item in response.json()}
+    assert statuses == {"Trust_1": "CONNECTED", "Trust_2": "CONNECTED"}
+
+
+def test_check_client_status_preregistered_partial_online(client, src_root, mock_flwr_run):
+    """Preregistered nodes show DISCONNECTED if not yet in the federation list."""
+    app_module._node_trust_mapping.clear()
+
+    client.post("/register_node", json={"name": "Trust_1", "node_id": "999"})
+    client.post("/register_node", json={"name": "Trust_2", "node_id": "888"})
+
+    # Only Trust_1's node is online; Trust_2 hasn't connected yet
+    mock_flwr_run(stdout=_federation_json([
+        {"node_id": "999", "owner": "none", "status": "online"},
+    ]))
+
+    response = client.get("/check_client_status")
+
+    assert response.status_code == 200
+    statuses = {item["name"]: item["status"] for item in response.json()}
+    assert statuses == {"Trust_1": "CONNECTED", "Trust_2": "DISCONNECTED"}
