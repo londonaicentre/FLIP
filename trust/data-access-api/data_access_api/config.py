@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     #
     COHORT_QUERY_THRESHOLD: int = 10  # Minimum number of records required to return statistics
 
+    # Query result cache settings
+    CACHE_TTL_DAYS: int = 1  # Cached results expire after this many days
+    CACHE_MAX_RESULT_ROWS: int = 100_000  # Results larger than this are not cached
+    CACHE_MAX_ENTRIES: int = 256  # Maximum number of entries in the in-memory cache
+
     #
     OMOP_DB_SERVICE_NAME: str = "omop-db"  # The name of the OMOP database service in Docker Compose or Kubernetes
     OMOP_DB_PORT: int = 5432  # Calls from another container use port 5432 (e.g. http://omop-db:5432)
