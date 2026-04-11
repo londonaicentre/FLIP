@@ -11,7 +11,6 @@
 #
 
 import json
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -29,12 +28,12 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 
 
 # [#114] ✅
-@router.get("/model/{model_id}/fl/results", response_model=List[str])
+@router.get("/model/{model_id}/fl/results", response_model=list[str])
 def retrieve_federated_results(
     model_id: UUID,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-) -> List[str]:
+) -> list[str]:
     """
     Retrieve federated results for a model from S3.
 

@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Any, Dict, List
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -26,12 +26,12 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 
 
 # TODO [#114] This endpoint was not defined in the old repo.
-@router.get("/model/{model_id}/get/files", response_model=List[Dict[str, Any]])
+@router.get("/model/{model_id}/get/files", response_model=list[dict[str, Any]])
 def get_model_files_list(
     model_id: UUID,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get list of files for a specific model.
 
