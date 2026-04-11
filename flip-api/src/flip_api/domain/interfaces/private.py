@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import List, TypedDict
+from typing import TypedDict
 
 
 class ICohortResponseAge(TypedDict):
@@ -78,17 +78,17 @@ class IIncomingResultsStats(TypedDict):
 class ICohortResultDataResponse(TypedDict):
     """Cohort result data response."""
 
-    trust_name: List[str]
-    trust_id: List[str]
-    data: List[str]
+    trust_name: list[str]
+    trust_id: list[str]
+    data: list[str]
 
 
 class IDbData(TypedDict):
     """Database data."""
 
-    trust_name: List[str]
-    trust_id: List[str]
-    data: List[IResultsStats]
+    trust_name: list[str]
+    trust_id: list[str]
+    data: list[IResultsStats]
 
 
 class IUpdateRetrieveImageStatus(TypedDict):

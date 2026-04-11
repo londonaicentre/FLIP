@@ -13,7 +13,7 @@
 import json
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Dict, List, Optional
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
@@ -25,7 +25,7 @@ from flip_api.utils.constants import JOB_TYPES_REQUIRED_FILES_FILE
 REQUIRED_JOB_TYPES_FILE = Path(__file__).parent.parent.parent / "assets" / JOB_TYPES_REQUIRED_FILES_FILE
 
 
-def _load_job_types_config() -> Dict[str, List[str]]:
+def _load_job_types_config() -> dict[str, list[str]]:
     """Loads the job types configuration from the JSON file.
 
     Returns:
@@ -53,8 +53,8 @@ _JOB_TYPES_CONFIG = _load_job_types_config()
 class IStartTrainingBody(BaseModel):
     project_id: str
     cohort_query: str
-    trusts: List[str]
-    bundle_urls: List[str]
+    trusts: list[str]
+    bundle_urls: list[str]
 
 
 class ISchedulerResponse(BaseModel):
@@ -65,7 +65,7 @@ class ISchedulerResponse(BaseModel):
 class IJobResponse(BaseModel):
     id: UUID  # FLJob table primary key
     model_id: UUID
-    clients: List[str]
+    clients: list[str]
 
 
 class IJobMetaData(BaseModel):
@@ -84,7 +84,7 @@ class IRequiredTrainingInformation(BaseModel):
 
 
 class IInitiateTrainingInputPayload(BaseModel):
-    trusts: List[Annotated[str, Field(strip_whitespace=True, min_length=1)]]
+    trusts: list[Annotated[str, Field(strip_whitespace=True, min_length=1)]]
 
     @field_validator("trusts")
     @classmethod
@@ -125,18 +125,18 @@ class IClientStatus(BaseModel):
 
 class INetStatus(BaseModel):
     name: str
-    online: Optional[bool] = None
-    registered_clients: Optional[int] = None
-    net_in_use: Optional[bool] = None
-    clients: List[IClientStatus]
+    online: bool | None = None
+    registered_clients: int | None = None
+    net_in_use: bool | None = None
+    clients: list[IClientStatus]
 
 
 class IOverridableConfig(BaseModel):
-    LOCAL_ROUNDS: Optional[int] = None
-    GLOBAL_ROUNDS: Optional[int] = None
-    IGNORE_RESULT_ERROR: Optional[bool] = None
-    AGGREGATOR: Optional[str] = None
-    AGGREGATION_WEIGHTS: Optional[Dict[str, float]] = None
+    LOCAL_ROUNDS: int | None = None
+    GLOBAL_ROUNDS: int | None = None
+    IGNORE_RESULT_ERROR: bool | None = None
+    AGGREGATOR: str | None = None
+    AGGREGATION_WEIGHTS: dict[str, float] | None = None
 
 
 class FLAggregators(Enum):
@@ -166,18 +166,18 @@ class JobRequiredFiles(BaseModel):
             setattr(self, job_type, files)
 
     @classmethod
-    def get_required_files(cls, job_type: JobTypes) -> List[str]:
+    def get_required_files(cls, job_type: JobTypes) -> list[str]:
         """Returns the list of required files for a specific job type (always reloads from disk)."""
         config = _load_job_types_config()
         return config.get(job_type.value, [])
 
     @classmethod
-    def get_all_job_types_with_files(cls) -> Dict[str, List[str]]:
+    def get_all_job_types_with_files(cls) -> dict[str, list[str]]:
         """Returns all job types with their required files (always reloads from disk)."""
         return _load_job_types_config().copy()
 
     @classmethod
-    def get_job_type_names(cls) -> List[str]:
+    def get_job_type_names(cls) -> list[str]:
         """Returns a list of all valid job type names.
 
         Returns:
