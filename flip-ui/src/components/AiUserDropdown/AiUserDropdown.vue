@@ -63,6 +63,9 @@
                     >
                         {{ emailAddress }}
                     </p>
+                    <p v-if="role" class="text-xs text-gray-500 mt-1">
+                        Role: {{ role }}
+                    </p>
                 </div>
                 <div class="px-1 py-1">
                     <MenuItem v-slot="{ active }">
@@ -125,17 +128,18 @@
 </template>
 
 <script lang="ts" setup>
-import { Menu, MenuButton, MenuItem,MenuItems } from "@headlessui/vue";
+import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
 
 import { routeChange } from "@/router";
 
 interface IAiUserDropdownProps {
     emailAddress: string;
     isDark: boolean;
+    role?: "Admin" | "Researcher" | "Observer";
 }
 
 const props = withDefaults(
-    defineProps<IAiUserDropdownProps>(), { emailAddress: "" }
+    defineProps<IAiUserDropdownProps>(), { emailAddress: "", role: undefined }
 );
 
 const emit = defineEmits(["signOut", "toggleDarkMode"]);

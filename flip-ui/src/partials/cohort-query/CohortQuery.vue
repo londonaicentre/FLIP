@@ -33,12 +33,12 @@
                             <div class="space-y-4">
                                 <AiCodeTextArea
                                     :initial-value="project?.query?.query"
-                                    :input-props="{readonly: queryLocked}"
+                                    :input-props="{readonly: isReadonlyQuery}"
                                     name="query"
                                     label=""
                                     data-test="cohort-query"
                                 />
-                                <div v-if="!queryLocked">
+                                <div v-if="!isReadonlyQuery">
                                     <AiButton
                                         primary
                                         :loading="formSubmitting"
@@ -82,6 +82,7 @@ import AiCodeTextArea from "@/components/AiTextArea/AiCodeTextArea.vue";
 import router from "@/router";
 import { ICohortQueryCreate, sendQuery } from "@/services/cohort-query-service";
 import { IProject } from "@/services/project-service";
+import { useAuthStore } from "@/store/auth";
 import { useProjectStore } from "@/store/project";
 import { containsForbiddenCommands } from "@/utils/cohort/query";
 import { Snackbar } from "@/utils/snackbar";
@@ -90,10 +91,13 @@ import QueryResultCharts from "./QueryResultCharts.vue";
 
 const route = useRoute();
 const projectStore = useProjectStore();
+const authStore = useAuthStore();
 
 const queryId = ref<string>("");
 const project = ref<IProject>();
 const formSubmitting = ref<boolean>(false);
+
+const isObserver = computed(() => !authStore.user?.permissions || authStore.user.permissions.length === 0);
 
 const emits = defineEmits(["UpdateProject"]);
 
@@ -121,7 +125,7 @@ const schema = object().shape({
 
 const runCohortQuery = async (v: unknown) => {
 
-    if(formSubmitting.value || queryLocked.value) {
+    if(formSubmitting.value || isReadonlyQuery.value) {
         return;
     }
 
@@ -179,4 +183,6 @@ const hasResults = () => {
 };
 
 const queryLocked = computed(() => project?.value?.status !== "UNSTAGED");
+
+const isReadonlyQuery = computed(() => queryLocked.value || isObserver.value);
 </script>

@@ -43,17 +43,9 @@ export const useSiteDetailsStore = defineStore("siteDetails", {
         }
     },
     actions: {
-        async setSiteDetails(details: ISiteDetails) {
-            try {
-                const response = await updateSiteDetails("/site/details", details);
-                this.$state = { ...response };
-            }
-            catch {
-                Snackbar.error({
-                    title: "Banner Not Updated",
-                    text: "The banner has not been updated."
-                });
-            }
+        setSiteDetails(details: ISiteDetails) {
+            this.banner = details.banner;
+            this.deploymentMode = details.deploymentMode;
         },
         async updateBanner(payload: ISiteBanner) {
 
@@ -68,7 +60,8 @@ export const useSiteDetailsStore = defineStore("siteDetails", {
                     text: "The banner has been updated."
                 });
 
-                this.$state = response;
+                this.banner = response.banner;
+                this.deploymentMode = response.deploymentMode;
             }
             catch {
                 Snackbar.error({
@@ -80,7 +73,7 @@ export const useSiteDetailsStore = defineStore("siteDetails", {
         async updateDeploymentMode(payload: boolean) {
             try {
                 const response = await updateSiteDetails("/site/details", {
-                    ...this.$state,
+                    banner: this.banner,
                     deploymentMode: payload
                 });
 
@@ -89,7 +82,8 @@ export const useSiteDetailsStore = defineStore("siteDetails", {
                     text: "The deployment mode has been updated."
                 });
 
-                this.$state = response;
+                this.banner = response.banner;
+                this.deploymentMode = response.deploymentMode;
             }
             catch {
                 Snackbar.error({
