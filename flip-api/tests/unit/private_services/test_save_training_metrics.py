@@ -114,7 +114,7 @@ class TestSaveTrainingMetricsEndpoint:
     @classmethod
     def setup_class(cls):
         cls.model_id = uuid.uuid4()
-        cls.url = f"/model/{cls.model_id}/metrics"
+        cls.url = f"/api/model/{cls.model_id}/metrics"
         cls.headers = {"Authorization": "Bearer test-token"}
         app.dependency_overrides[authenticate_internal_service] = lambda: None
 
@@ -166,4 +166,6 @@ class TestSaveTrainingMetricsEndpoint:
         assert "invalid token" in response.json()["detail"].lower()
 
         # Restore good auth
+        app.dependency_overrides[authenticate_internal_service] = lambda: None
+        app.dependency_overrides[authenticate_internal_service] = lambda: None
         app.dependency_overrides[authenticate_internal_service] = lambda: None

@@ -29,14 +29,19 @@ def seed_trusts(session: Session) -> list[dict[str, str]]:
     trust_names: list[str] = stt.TRUST_NAMES
 
     for trust_name in trust_names:
-        # Check if trust exists
-        statement = select(Trust).where(col(Trust.name) == trust_name)
-        existing_trust = session.exec(statement).first()
+        try:
+            # Check if trust exists
+            statement = select(Trust).where(col(Trust.name) == trust_name)
+            existing_trust = session.exec(statement).first()
 
-        if not existing_trust:
-            # Create new trust
-            new_trust = Trust(name=trust_name)
-            session.add(new_trust)
+            if not existing_trust:
+                # Create new trust
+                new_trust = Trust(name=trust_name)
+                session.add(new_trust)
+        except Exception as e:
+            logger.error(f"Error processing trust {trust_name}: {e}")
+            continue
+
     session.commit()
 
     # Return trusts

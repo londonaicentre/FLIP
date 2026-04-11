@@ -243,9 +243,7 @@ def test_stage_project_generic_exception(
     with (
         patch("flip_api.project_services.stage_project.can_access_project", return_value=True),
         patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
-        patch(
-            "flip_api.project_services.stage_project.stage_project_service", side_effect=Exception("Database error")
-        ),
+        patch("flip_api.project_services.stage_project.stage_project_service", side_effect=Exception("Database error")),
     ):
         # Act
         response = client.post(f"/api/projects/{test_project_id}/stage", json=stage_request_payload)
@@ -284,4 +282,6 @@ def test_stage_project_missing_trusts_in_payload(app_fixture, client, test_user_
 
     # Assert
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    # FastAPI automatically validates request body and returns 422 for missing required fields
+    # FastAPI automatically validates request body and returns 422 for missing required fields
     # FastAPI automatically validates request body and returns 422 for missing required fields

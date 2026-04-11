@@ -136,7 +136,7 @@ def test_get_project_approved_trusts_project_not_approved(
             "flip_api.project_services.get_project_approved_trusts.get_approved_trusts_for_project"
         ) as mock_get_trusts,
     ):
-        response = client.get(f"/api/api/projects/{TEST_PROJECT_ID}/trusts/approved")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}/trusts/approved")
 
     # Assert
     assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -164,7 +164,7 @@ def test_get_project_approved_trusts_value_error_fetching_trusts(
             side_effect=ValueError("Test Value Error"),
         ) as mock_get_trusts,
     ):
-        response = client.get(f"/api/api/projects/{TEST_PROJECT_ID}/trusts/approved")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}/trusts/approved")
 
     # Assert
     assert response.status_code == status.HTTP_200_OK  # As per current implementation, returns 200 with empty list
@@ -192,7 +192,7 @@ def test_get_project_approved_trusts_generic_exception_fetching_trusts(
             side_effect=Exception("Test Generic Error"),
         ) as mock_get_trusts,
     ):
-        response = client.get(f"/api/api/projects/{TEST_PROJECT_ID}/trusts/approved")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}/trusts/approved")
 
     # Assert
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -226,7 +226,7 @@ def test_get_project_approved_trusts_success_with_data(
             return_value=expected_trusts_data,
         ) as mock_get_trusts,
     ):
-        response = client.get(f"/api/api/projects/{TEST_PROJECT_ID}/trusts/approved")
+        response = client.get(f"/api/projects/{TEST_PROJECT_ID}/trusts/approved")
 
     # Assert
     assert response.status_code == status.HTTP_200_OK
@@ -246,7 +246,7 @@ def test_get_project_approved_trusts_invalid_project_id_format(
     app_fixture.dependency_overrides[verify_token] = lambda: TEST_USER_ID
 
     invalid_project_id = "not-a-uuid"
-    response = client.get(f"/api/api/projects/{invalid_project_id}/trusts/approved")
+    response = client.get(f"/api/projects/{invalid_project_id}/trusts/approved")
 
     # Assert
     # FastAPI's default for invalid UUID path parameters is 422 Unprocessable Entity

@@ -224,9 +224,7 @@ def test_unstage_project_permission_check_called_correctly(app_fixture, client, 
     app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
 
     with (
-        patch(
-            "flip_api.project_services.unstage_project.has_permissions", return_value=True
-        ) as mock_has_permissions,
+        patch("flip_api.project_services.unstage_project.has_permissions", return_value=True) as mock_has_permissions,
         patch("flip_api.project_services.unstage_project.get_project", return_value=None),
     ):
         # Act
@@ -277,4 +275,6 @@ def test_unstage_project_edge_case_empty_uuid(app_fixture, client, test_user_id)
 
     # Assert
     assert response.status_code == status.HTTP_404_NOT_FOUND
+    assert response.json()["detail"] == f"Unable to find project with ID: {zero_uuid}"
+    assert response.json()["detail"] == f"Unable to find project with ID: {zero_uuid}"
     assert response.json()["detail"] == f"Unable to find project with ID: {zero_uuid}"

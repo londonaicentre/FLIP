@@ -84,19 +84,17 @@ def test_seed_trusts_skips_existing(mock_get_settings, mock_session):
 @patch("flip_api.db.seed.trusts.get_settings")
 def test_seed_trusts_skips_trust_on_exception(mock_get_settings, mock_logger, mock_session):
     """Test that trust processing errors are skipped and do not stop seeding."""
-    mock_get_settings.return_value = SimpleNamespace(
-        ENV="development", TRUST_NAMES=["Broken Trust"]
-    )
+    mock_get_settings.return_value = SimpleNamespace(ENV="development", TRUST_NAMES=["Broken Trust"])
 
-    mock_session.exec.side_effect = [
-        Exception("lookup failed"),
-        MagicMock(all=MagicMock(return_value=[])),
-    ]
+    # Mock exec to raise an exception on first call, return empty list on second call
+    mock_query = MagicMock()
+    mock_query.all.return_value = []
+    mock_session.exec.side_effect = [Exception("lookup failed"), mock_query]
 
     result = seed_trusts(mock_session)
 
     mock_session.add.assert_not_called()
     assert mock_session.commit.call_count == 1
     assert result == []
-    mock_logger.info.assert_called_once()
-    assert "Endpoint for Broken Trust not found in secrets. Skipping." in mock_logger.info.call_args[0][0]
+    mock_logger.error.assert_called_once()
+    assert "Error processing trust Broken Trust: lookup failed" in mock_logger.error.call_args[0][0]
