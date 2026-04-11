@@ -41,6 +41,7 @@ class IProjectResponse(BaseModel):
     creation_timestamp: Annotated[datetime, Field(default_factory=datetime.utcnow)]
     status: ProjectStatus = Field(default=ProjectStatus.UNSTAGED)
     query_id: Optional[UUID] = Field(default=None)
+    dicom_to_nifti: bool = Field(default=True)
 
     model_config = ConfigDict(
         populate_by_name=True,

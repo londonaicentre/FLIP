@@ -782,6 +782,7 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
         creation_timestamp=project.creation_timestamp,
         status=project.status,
         query=query_data,
+        dicom_to_nifti=project.dicom_to_nifti,
     )  # type: ignore[call-arg]
 
     logger.debug(f"Returning project response: {project_response}")
