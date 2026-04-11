@@ -276,6 +276,64 @@ def enable_project_command(project_id: str, container: str, headers: dict[str, s
         raise Exception(f"Error: Enabling XNAT command '{container}' failed: {response.status_code} - {response.text}")
 
 
+def create_project_event_subscription(
+    project_id: str, container: str, active: bool, headers: dict[str, str]
+) -> None:
+    """Enable the container command for a project and set whether its event subscription is active.
+
+    When ``active`` is ``True`` the dcm2niix pipeline will run automatically on new DICOM uploads.
+    When ``active`` is ``False`` the command is still registered at project level but the event
+    subscription is disabled, so no automatic conversion occurs.
+
+    Args:
+        project_id (str): Unique identifier for the XNAT project.
+        container (str): Container image name (e.g. ``"xnat/dcm2niix:latest"``).
+        active (bool): Whether the event subscription should be active (driven by ``dicom_to_nifti``).
+        headers (dict[str, str]): XNAT authentication headers.
+
+    Raises:
+        Exception: If any XNAT API call fails.
+    """
+    # Always enable the command at project level so it is available regardless of the active flag
+    enable_project_command(project_id, container, headers)
+
+    if not active:
+        logger.info(f"dicom_to_nifti=False — event subscription left inactive for project '{project_id}'")
+        return
+
+    # Activate the event subscription for automatic dcm2niix processing on DICOM upload
+    container_name_formatted = urllib.parse.quote(container)
+    response = requests.get(f"{XNAT_URL}/xapi/commands?image={container_name_formatted}", headers=headers)
+    if response.status_code != 200:
+        raise Exception(f"Error: XNAT command fetch failed: {response.status_code} - {response.text}")
+
+    command = response.json()[0]
+    command_id = command["id"]
+    command_xnat_name = command["xnat"][0]["name"]
+
+    subscription_payload = {
+        "name": f"{project_id}-dcm2niix-subscription",
+        "event-type": "SessionArchived",
+        "actAsEventUser": False,
+        "command-id": command_id,
+        "wrapper-name": command_xnat_name,
+        "project-id": project_id,
+        "status": "enabled",
+    }
+    sub_response = requests.post(
+        f"{XNAT_URL}/xapi/eventservice/subscriptions",
+        json=subscription_payload,
+        headers=headers,
+    )
+    if sub_response.status_code in (200, 201):
+        logger.info(f"Event subscription created for project '{project_id}' container '{container}'")
+    else:
+        raise Exception(
+            f"Error: Creating event subscription for '{container}' failed: "
+            f"{sub_response.status_code} - {sub_response.text}"
+        )
+
+
 def add_central_hub_users_to_project(
     central_hub_project: CentralHubProject, project_id: str, headers: dict[str, str]
 ) -> Tuple[List[CreatedUser], List[User]]:

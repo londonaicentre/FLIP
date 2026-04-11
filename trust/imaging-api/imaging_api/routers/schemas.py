@@ -114,6 +114,7 @@ class CentralHubProject(BaseModel):
     project_name: str
     query: str
     users: List[CentralHubUser] = []
+    dicom_to_nifti: bool = True  # Whether to activate DICOM-to-NIfTI conversion pipeline for this project
 
 
 class Subject(BaseModel):
