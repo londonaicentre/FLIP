@@ -70,7 +70,7 @@ def get_records(query: str) -> pd.DataFrame:
     Raises:
         HTTPException: If the query is invalid or if there is an error during execution.
     """
-    logger.info(f"Executing SQL query: {query}")
+    logger.debug("Executing SQL query")
 
     try:
         # TODO: Trace the query filtering to understand what the final user can see.
