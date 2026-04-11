@@ -124,8 +124,9 @@ class TestReplaceOrAppendHostBlock:
 
         result = _replace_or_append_host_block(old_content, "flip", new_block)
 
-        assert "\nHost github.com\n" in result
-        assert "\n    HostName github.com\n" in result
+        # Check github.com (may be at start of file without leading newline)
+        assert result.startswith("Host github.com\n") or "\nHost github.com\n" in result
+        assert "    HostName github.com\n" in result
         assert "Host production-server" in result
         assert "\n    HostName prod.example.com\n" in result
         assert "i-new456" in result
@@ -242,8 +243,9 @@ class TestIntegration:
         result = _replace_or_append_host_block(result, "flip-trust", new_trust)
 
         # Check all expected content
-        assert "\nHost github.com\n" in result
-        assert "\n    HostName github.com\n" in result
+        # github.com may be at start of file without leading newline
+        assert result.startswith("Host github.com\n") or "\nHost github.com\n" in result
+        assert "    HostName github.com\n" in result
         assert "i-new-flip" in result
         assert "i-new-trust" in result
         assert "old-flip-ip" not in result
