@@ -1,4 +1,5 @@
 version = 1
+revision = 1
 requires-python = ">=3.12"
 
 [[package]]
@@ -68,10 +69,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "ansible-core" },
-    { name = "click" },
-    { name = "cryptography" },
-    { name = "requests" },
-    { name = "urllib3" },
 ]
 
 [package.dev-dependencies]
@@ -85,24 +82,16 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
-    { name = "simpleeval" },
     { name = "taskipy" },
     { name = "terraform-local" },
-    { name = "tornado" },
 ]
 
 [package.metadata]
-requires-dist = [
-    { name = "ansible-core", specifier = ">=2.19.2" },
-    { name = "click", specifier = ">=8.0.0" },
-    { name = "cryptography", specifier = ">=46.0.5" },
-    { name = "requests", specifier = ">=2.33.0" },
-    { name = "urllib3", specifier = ">=2.6.0" },
-]
+requires-dist = [{ name = "ansible-core", specifier = ">=2.19.2" }]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "black", specifier = ">=26.3.1" },
+    { name = "black", specifier = ">=25.1.0" },
     { name = "frictionless", specifier = ">=5.18.1" },
     { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "isort", specifier = ">=6.0.1" },
@@ -111,10 +100,8 @@ dev = [
     { name = "pytest", specifier = ">=8.4.1" },
     { name = "pytest-cov", specifier = ">=6.2.1" },
     { name = "ruff", specifier = ">=0.12.3" },
-    { name = "simpleeval", specifier = ">=1.0.4" },
     { name = "taskipy", specifier = ">=1.14.1" },
     { name = "terraform-local", specifier = ">=0.24.1" },
-    { name = "tornado", specifier = ">=6.5.2" },
 ]
 
 [[package]]

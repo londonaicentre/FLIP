@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from typing import Any, Dict
+from typing import Any
 from uuid import UUID
 
 import jwt
@@ -110,7 +110,7 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
         )
 
 
-def get_token_payload(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
+def get_token_payload(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict[str, Any]:
     """
     Alternative function to get the full token payload if needed elsewhere.
 
