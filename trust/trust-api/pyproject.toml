@@ -37,7 +37,8 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = "trust_api"
+# trust_api: package under test; ../observability: provides the log_config package
+pythonpath = ["trust_api", "../observability"]
 python_files = ["test_*.py", "*_test.py"]
 addopts = []
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
