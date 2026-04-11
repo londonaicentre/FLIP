@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -38,7 +37,7 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
 
 def get_projects_paginated_orm(
     session: Session,
-    user_id: Optional[UUID],
+    user_id: UUID | None,
     paging_details: PagingInfo,
     filter_details: FilterInfo,
 ) -> IPagedResponse[IProject]:

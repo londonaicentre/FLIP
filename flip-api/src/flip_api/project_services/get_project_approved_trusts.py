@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -33,7 +32,7 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
 @router.get(
     "/{project_id}/trusts/approved",
     summary="Get approved trusts for a specific project.",
-    response_model=List[Trust],
+    response_model=list[Trust],
     status_code=status.HTTP_200_OK,
     responses={
         status.HTTP_400_BAD_REQUEST: {"description": "Project has not been approved yet or invalid input."},
@@ -45,7 +44,7 @@ def get_project_approved_trusts_endpoint(
     project_id: UUID,
     session: Session = Depends(get_session),
     current_user_id: UUID = Depends(verify_token),
-) -> List[Trust]:
+) -> list[Trust]:
     """
     Retrieves a list of trusts that have been approved for the specified project.
     The project must have a status of 'APPROVED'.

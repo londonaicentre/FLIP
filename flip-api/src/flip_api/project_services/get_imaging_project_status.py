@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -36,11 +35,11 @@ router = APIRouter(prefix="/projects", tags=["project_services"])
 @router.get(
     "/{project_id}/image/status",
     summary="Get the status of an imaging project.",
-    response_model=List[IImagingStatus],
+    response_model=list[IImagingStatus],
     status_code=status.HTTP_200_OK,
     responses={
         status.HTTP_200_OK: {
-            "model": List[IImagingStatus],
+            "model": list[IImagingStatus],
             "description": "The status of the imaging project.",
         },
         status.HTTP_403_FORBIDDEN: {
@@ -57,7 +56,7 @@ async def get_imaging_project_status(
     project_id: UUID,
     session: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-) -> List[IImagingStatus]:
+) -> list[IImagingStatus]:
     """
     Get the status of an imaging project.
 
