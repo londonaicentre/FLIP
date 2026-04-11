@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
@@ -34,7 +33,7 @@ router = APIRouter(prefix="/model", tags=["model_services"])
 def retrieve_trusts_in_model_endpoint(
     model_id: UUID = Path(..., title="Model ID"),
     db: Session = Depends(get_session),
-    user_id: Optional[UUID] = Depends(verify_token),
+    user_id: UUID | None = Depends(verify_token),
 ) -> None:
     """
     Retrieve trusts associated with a specific model.
