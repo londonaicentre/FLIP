@@ -11,7 +11,7 @@
 #
 
 import math
-from typing import Dict, Generic, List, Optional, TypeVar, Union
+from typing import Generic, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -35,7 +35,7 @@ class PagingInfo(BaseModel):
 
 
 class FilterInfo(BaseModel):
-    owner: Optional[UUID] = Field(default=None)  # Assuming owner is a UUID
+    owner: UUID | None = Field(default=None)  # Assuming owner is a UUID
 
     model_config = ConfigDict(
         populate_by_name=True,  # Allows using alias in constructor and for export
@@ -44,7 +44,7 @@ class FilterInfo(BaseModel):
 
 
 class IPagedResponse(BaseModel, Generic[T]):
-    data: List[T]
+    data: list[T]
     total_rows: int
 
 
@@ -53,14 +53,14 @@ class IPagedData(BaseModel, Generic[T]):
     page_size: int = Field(alias="pageSize")
     total_pages: int = Field(alias="totalPages")
     total_records: int = Field(alias="totalRecords")
-    data: List[T]
+    data: list[T]
 
     model_config = ConfigDict(
         populate_by_name=True,
     )
 
 
-def get_paging_details(query_string_parameters: Optional[Dict[str, Union[str, int, float]]] = None) -> PagingInfo:
+def get_paging_details(query_string_parameters: dict[str, str | int | float] | None = None) -> PagingInfo:
     """
     Parses query string parameters for pagination details.
 
@@ -109,7 +109,7 @@ def get_paging_details(query_string_parameters: Optional[Dict[str, Union[str, in
     )
 
 
-def get_filter_details(query_string_parameters: Optional[Dict[str, Union[str, UUID]]] = None) -> FilterInfo:
+def get_filter_details(query_string_parameters: dict[str, str | UUID] | None = None) -> FilterInfo:
     """
     Parses query string parameters for filter details.
 

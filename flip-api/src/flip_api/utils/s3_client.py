@@ -11,7 +11,7 @@
 #
 
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple
+from typing import Any
 from urllib.parse import urlparse
 
 import boto3
@@ -21,7 +21,7 @@ from flip_api.config import get_settings
 from flip_api.utils.logger import logger
 
 
-def parse_s3_path(s3_path: str) -> Tuple[str, str]:
+def parse_s3_path(s3_path: str) -> tuple[str, str]:
     """
     Parse an S3 path into bucket and key components.
 
@@ -113,7 +113,7 @@ class S3Client:
             logger.error(f"Error deleting object {key} from bucket {bucket}: {e}")
             raise Exception(f"Unable to delete object {key} from bucket {bucket}")
 
-    def delete_objects(self, s3_paths: List[str]) -> Dict[str, Any]:
+    def delete_objects(self, s3_paths: list[str]) -> dict[str, Any]:
         """
         Delete multiple objects from one or more S3 buckets in grouped batch requests.
 
@@ -166,7 +166,7 @@ class S3Client:
             logger.exception("Failed to delete S3 objects.")
             raise
 
-    def get_object(self, s3_path: str) -> Dict[str, Any]:
+    def get_object(self, s3_path: str) -> dict[str, Any]:
         """
         Get object from S3 bucket.
 
@@ -190,7 +190,7 @@ class S3Client:
                 error=e,
             )
 
-    def head_object(self, s3_path: str) -> Dict[str, Any]:
+    def head_object(self, s3_path: str) -> dict[str, Any]:
         """
         Get object metadata from S3.
 
@@ -253,7 +253,7 @@ class S3Client:
             logger.error(f"Error copying {source_s3_path} to {dest_s3_path}: {e}")
             raise Exception(f"Unable to copy object: {e}")
 
-    def list_objects(self, s3_path: str, delimiter: str = "") -> List[str]:
+    def list_objects(self, s3_path: str, delimiter: str = "") -> list[str]:
         """
         List object keys under a given S3 path (non-paginated) and return full S3 paths.
 
