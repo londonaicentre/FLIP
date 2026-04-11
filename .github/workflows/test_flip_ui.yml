@@ -40,11 +40,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set Node.js version
-        uses: actions/setup-node@v4 #
+        uses: actions/setup-node@v4
         with:
-          node-version: "20.9.0" # Specify the Node.js version you need
-      - name: Install dependencies
-        run: npm install
+          node-version: "22.13.0"
+          cache: "npm"
+          cache-dependency-path: "flip-ui/package-lock.json"
+
+      - name: Install dependencies with retry
+        run: npm install --prefer-offline --no-audit
 
       - name: Run tests with npm
         run: npm run test:unit
