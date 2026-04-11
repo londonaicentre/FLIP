@@ -32,7 +32,7 @@ TEST_USER_ID = uuid.uuid4()
 @pytest.fixture
 def app_fixture() -> FastAPI:
     app = FastAPI()
-    app.include_router(stage_project_router)
+    app.include_router(stage_project_router, prefix="/api")
     return app
 
 

@@ -27,7 +27,7 @@ from flip_api.project_services.unstage_project import router as unstage_project_
 @pytest.fixture
 def app_fixture() -> FastAPI:
     app = FastAPI()
-    app.include_router(unstage_project_router)
+    app.include_router(unstage_project_router, prefix="/api")
     return app
 
 

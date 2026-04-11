@@ -29,7 +29,7 @@ TEST_PROJECT_ID = uuid.uuid4()
 @pytest.fixture
 def app_fixture() -> FastAPI:
     app = FastAPI()
-    app.include_router(edit_project_router)
+    app.include_router(edit_project_router, prefix="/api")
     return app
 
 
@@ -70,7 +70,7 @@ def test_edit_project_success(
 
     with patch("flip_api.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
         response = client.put(
-            f"/projects/{str(TEST_PROJECT_ID)}",
+            f"/api/projects/{str(TEST_PROJECT_ID)}",
             json=mock_edit_payload,
         )
 
@@ -95,7 +95,7 @@ def test_edit_project_no_permission(client: TestClient, app_fixture: FastAPI, mo
 
     with patch("flip_api.project_services.edit_project.can_access_project", return_value=False) as mock_can_access:
         response = client.put(
-            f"/projects/{str(TEST_PROJECT_ID)}",
+            f"/api/projects/{str(TEST_PROJECT_ID)}",
             json=mock_edit_payload,
         )
 
@@ -117,7 +117,7 @@ def test_edit_project_not_found(client: TestClient, app_fixture: FastAPI, mock_e
 
     with patch("flip_api.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
         response = client.put(
-            f"/projects/{project_id}",
+            f"/api/projects/{project_id}",
             json=mock_edit_payload,
         )
 
@@ -139,7 +139,7 @@ def test_edit_project_staged(client: TestClient, app_fixture: FastAPI, mock_edit
 
     with patch("flip_api.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
         response = client.put(
-            f"/projects/{str(TEST_PROJECT_ID)}",
+            f"/api/projects/{str(TEST_PROJECT_ID)}",
             json=mock_edit_payload,
         )
 
@@ -166,7 +166,7 @@ def test_edit_project_db_commit_value_error(
 
     with patch("flip_api.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
         response = client.put(
-            f"/projects/{str(TEST_PROJECT_ID)}",
+            f"/api/projects/{str(TEST_PROJECT_ID)}",
             json=mock_edit_payload,
         )
 
@@ -190,7 +190,7 @@ def test_edit_project_db_commit_generic_exception(
 
     with patch("flip_api.project_services.edit_project.can_access_project", return_value=True) as mock_can_access:
         response = client.put(
-            f"/projects/{str(TEST_PROJECT_ID)}",
+            f"/api/projects/{str(TEST_PROJECT_ID)}",
             json=mock_edit_payload,
         )
 
