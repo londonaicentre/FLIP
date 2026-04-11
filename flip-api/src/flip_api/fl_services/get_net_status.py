@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -70,7 +69,7 @@ def get_net_status(
 
         # For each net, we would like to know which Trusts are connected and their statuses.
         trusts = get_trusts(db)
-        trust_client_statuses: List[IClientStatus] = []
+        trust_client_statuses: list[IClientStatus] = []
         for trust in trusts:
             connected_client_info = None
 
