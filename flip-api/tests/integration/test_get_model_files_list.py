@@ -58,7 +58,7 @@ def test_get_model_files_list_integration(client, db_files):
     # Ensure the model ID is valid
     assert model_id is not None
 
-    response = client.get(f"/model/{model_id}/files")
+    response = client.get(f"/api/model/{model_id}/files")
 
     assert response.status_code == 200
     data = response.json()

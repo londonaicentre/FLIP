@@ -73,7 +73,7 @@ class TestUpdateUser:
         mock_get_username.return_value = "testuser@example.com"
         mock_update_user.return_value = Disabled(disabled=True)
 
-        response = client.put(f"/users/{sample_user_id}", json=disabled_payload)
+        response = client.put(f"/api/users/{sample_user_id}", json=disabled_payload)
         print(response)
 
         assert response.status_code == status.HTTP_200_OK
@@ -85,7 +85,7 @@ class TestUpdateUser:
     def test_update_user_forbidden(self, mock_has_permissions, sample_user_id, disabled_payload):
         mock_has_permissions.return_value = False
 
-        response = client.put(f"/users/{sample_user_id}", json=disabled_payload)
+        response = client.put(f"/api/users/{sample_user_id}", json=disabled_payload)
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
         assert "unable to manage users" in response.json()["detail"]
@@ -96,7 +96,7 @@ class TestUpdateUser:
         mock_has_permissions.return_value = True
         mock_get_username.return_value = None
 
-        response = client.put(f"/users/{sample_user_id}", json=disabled_payload)
+        response = client.put(f"/api/users/{sample_user_id}", json=disabled_payload)
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "could not be found" in response.json()["detail"]
@@ -106,7 +106,7 @@ class TestUpdateUser:
     def test_update_user_exception(self, mock_has_permissions, mock_get_username, sample_user_id, disabled_payload):
         mock_has_permissions.return_value = True
 
-        response = client.put(f"/users/{sample_user_id}", json=disabled_payload)
+        response = client.put(f"/api/users/{sample_user_id}", json=disabled_payload)
 
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert "Unexpected error" in response.json()["detail"]

@@ -114,7 +114,7 @@ def test_retrieve_model_success(
     mock_result.mappings.return_value.first.return_value = mock_raw_sql_result
     override_dependencies.execute.return_value = mock_result
 
-    # response = client.get(f"/model/{test_model_id}")
+    # response = client.get(f"/api/model/{test_model_id}")
     result = retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
 
     assert result.model_id == test_model_id

@@ -88,7 +88,7 @@ def test_retrieve_model_success(
     mock_update_status.return_value = True
     mock_retrieve_model.return_value = mock_model_response
 
-    response = client.post(f"/step/model/{model_id}")
+    response = client.post(f"/api/step/model/{model_id}")
 
     assert response.status_code == 200
     assert response.json() == mock_model_response
@@ -105,7 +105,7 @@ def test_update_model_status_fails(
 ):
     mock_update_status.return_value = False
 
-    response = client.post(f"/step/model/{model_id}")
+    response = client.post(f"/api/step/model/{model_id}")
 
     assert response.status_code == 500
     assert response.json()["detail"] == "Failed to update model status"
@@ -121,7 +121,7 @@ def test_retrieve_model_raises_exception(
     mock_update_status.return_value = True
     mock_retrieve_model.side_effect = Exception("Database connection error")
 
-    response = client.post(f"/step/model/{model_id}")
+    response = client.post(f"/api/step/model/{model_id}")
 
     assert response.status_code == 500
     assert "Failed to retrieve model" in response.json()["detail"]

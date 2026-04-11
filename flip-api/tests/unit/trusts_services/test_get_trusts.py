@@ -57,7 +57,7 @@ def test_get_trusts_endpoint_success():
     app.dependency_overrides[verify_token] = lambda: uuid.uuid4()
 
     # Make the test request to the endpoint
-    response = client.get("/trust")
+    response = client.get("/api/trust")
 
     # Assert that the response status code is 200
     assert response.status_code == 200
@@ -79,7 +79,7 @@ def test_get_trusts_error():
     app.dependency_overrides[verify_token] = lambda: uuid.uuid4()
 
     # Make the test request to the endpoint
-    response = client.get("/trust")
+    response = client.get("/api/trust")
 
     # Assert that the response status code is 500 (Internal Server Error)
     assert response.status_code == 500

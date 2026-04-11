@@ -102,7 +102,7 @@ def test_edit_model_success(
     mock_model_status_editable,
     mock_edit_model,
 ):
-    response = client.put(f"/model/{test_model_id}", json=test_model_details)
+    response = client.put(f"/api/model/{test_model_id}", json=test_model_details)
     assert response.status_code == HTTPStatus.NO_CONTENT
     mock_edit_model.assert_called_once()
 
@@ -110,7 +110,7 @@ def test_edit_model_success(
 def test_edit_model_forbidden(
     mock_can_access_false,
 ):
-    response = client.put(f"/model/{test_model_id}", json=test_model_details)
+    response = client.put(f"/api/model/{test_model_id}", json=test_model_details)
     assert response.status_code == HTTPStatus.FORBIDDEN
     assert "denied access" in response.json()["detail"]
 
@@ -119,7 +119,7 @@ def test_edit_model_not_found(
     mock_can_access_true,
     mock_model_status_none,
 ):
-    response = client.put(f"/model/{test_model_id}", json=test_model_details)
+    response = client.put(f"/api/model/{test_model_id}", json=test_model_details)
     assert response.status_code == HTTPStatus.NOT_FOUND
     assert "does not exist" in response.json()["detail"]
 
@@ -128,7 +128,7 @@ def test_edit_model_deleted_status(
     mock_can_access_true,
     mock_model_status_deleted,
 ):
-    response = client.put(f"/model/{test_model_id}", json=test_model_details)
+    response = client.put(f"/api/model/{test_model_id}", json=test_model_details)
     assert response.status_code == HTTPStatus.BAD_REQUEST
     assert "cannot be edited because it was deleted" in response.json()["detail"]
 
@@ -137,7 +137,7 @@ def test_edit_model_invalid_status(
     mock_can_access_true,
     mock_model_status_uneditable,
 ):
-    response = client.put(f"/model/{test_model_id}", json=test_model_details)
+    response = client.put(f"/api/model/{test_model_id}", json=test_model_details)
     assert response.status_code == HTTPStatus.BAD_REQUEST
     assert "cannot be edited due to its current status" in response.json()["detail"]
 
@@ -147,7 +147,7 @@ def test_edit_model_database_error(
     mock_model_status_editable,
 ):
     with patch("flip_api.model_services.edit_model.edit_model", side_effect=SQLAlchemyError):
-        response = client.put(f"/model/{test_model_id}", json=test_model_details)
+        response = client.put(f"/api/model/{test_model_id}", json=test_model_details)
         assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
         assert "Database error" in response.json()["detail"]
 
@@ -157,6 +157,6 @@ def test_edit_model_unexpected_error(
     mock_model_status_editable,
 ):
     with patch("flip_api.model_services.edit_model.edit_model", side_effect=Exception("Unexpected error")):
-        response = client.put(f"/model/{test_model_id}", json=test_model_details)
+        response = client.put(f"/api/model/{test_model_id}", json=test_model_details)
         assert response.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
         assert "Unexpected error" in response.json()["detail"]

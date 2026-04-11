@@ -73,7 +73,7 @@ class TestUserRegistrationRealAPI:
         print(f"📋 With roles: {user_registration_data['roles']}")
 
         # Make the API call to register the user
-        response = client.post("/step/users/", json=user_registration_data, headers=admin_auth_token)
+        response = client.post("/api/step/users/", json=user_registration_data, headers=admin_auth_token)
 
         # Print response for debugging
         print(f"📡 Response status code: {response.status_code}")
@@ -126,7 +126,7 @@ class TestUserRegistrationRealAPI:
         time.sleep(5)
 
         print("🧹 Cleaning up: Attempting to delete the test user...")
-        delete_response = client.delete(f"/users/{response_data['user_id']}", headers=admin_auth_token)
+        delete_response = client.delete(f"/api/users/{response_data['user_id']}", headers=admin_auth_token)
         if delete_response.status_code == 200:
             print(f"✅ Successfully deleted user {response_data['user_id']} after test.")
         else:
