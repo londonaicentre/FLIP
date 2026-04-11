@@ -16,7 +16,6 @@ import subprocess
 import textwrap
 import time
 from pathlib import Path
-from typing import List, Tuple  # Ensure Tuple is imported
 
 import autopep8
 import libcst as cst
@@ -63,7 +62,7 @@ class CodeTranslator:
             current = current.parent
         (base_dir / "__init__.py").touch(exist_ok=True)  # Ensure base __init__.py
 
-    def get_files_to_upload(self, folder_path: str) -> List[Path]:
+    def get_files_to_upload(self, folder_path: str) -> list[Path]:
         """Get TypeScript files excluding test files."""
         return [file for file in Path(folder_path).rglob("*.ts") if file.is_file() and "test" not in str(file).lower()]
 
@@ -256,7 +255,7 @@ class CodeTranslator:
             print(msg)
             raise ValueError(msg) from e
 
-    def run_type_checking_on_file(self, file_path: Path) -> Tuple[bool, str]:
+    def run_type_checking_on_file(self, file_path: Path) -> tuple[bool, str]:
         """Run mypy static type checking on a single file."""
         if not file_path.exists() or file_path.stat().st_size == 0:
             return True, f"File not found or empty, skipping type checking: {file_path}"
@@ -269,7 +268,7 @@ class CodeTranslator:
         except Exception as e:
             return False, f"Mypy execution failed for {file_path.name}: {str(e)}"
 
-    def run_linting_on_file(self, file_path: Path) -> Tuple[bool, str]:
+    def run_linting_on_file(self, file_path: Path) -> tuple[bool, str]:
         """Run autopep8 and pylint on a single file."""
         if not file_path.exists() or file_path.stat().st_size == 0:
             return True, f"File not found or empty, skipping linting: {file_path}"
@@ -316,7 +315,7 @@ class CodeTranslator:
 
         class TestGenerator(ast.NodeVisitor):
             def __init__(self, module_import_path: str):
-                self.test_cases: List[str] = []
+                self.test_cases: list[str] = []
                 self.imports: set[str] = {f"from {module_import_path} import *"}  # Basic import all
 
             def visit_ClassDef(self, node: ast.ClassDef):
@@ -407,7 +406,7 @@ def test_{node.name}():
             print(msg)
             raise ValueError(msg) from e
 
-    def run_tests_for_file(self, test_file_path: Path | None) -> Tuple[bool, str]:
+    def run_tests_for_file(self, test_file_path: Path | None) -> tuple[bool, str]:
         """Execute pytest on a single test file."""
         if not test_file_path or not test_file_path.exists() or test_file_path.stat().st_size == 0:
             return True, f"Test file not found, empty, or not specified, skipping test run: {test_file_path}"
@@ -485,7 +484,7 @@ def test_{node.name}():
                     break
 
                 self.get_file_content(output_py_file)
-                iteration_errors: List[str] = []
+                iteration_errors: list[str] = []
                 passed_current_iteration_checks = True
 
                 # 1. Automated fixes (e.g., type hints)

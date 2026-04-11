@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List
 
 from sqlmodel import Session, select
 
@@ -30,7 +29,7 @@ CURRENT_ROLES = [
 ]
 
 
-def seed_roles(session: Session) -> List[str]:
+def seed_roles(session: Session) -> list[str]:
     """Seed roles into the database."""
     for role_data in CURRENT_ROLES:
         # Check if role exists
