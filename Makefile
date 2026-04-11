@@ -248,7 +248,7 @@ up-pgadmin:
 
 unit_test:
 	$(MAKE) -C flip-api unit_test
-	$(MAKE) -C flip-ui unit_test
+	$(MAKE) -C flip-ui local_test
 	$(MAKE) -C trust/data-access-api unit_test
 	$(MAKE) -C trust/imaging-api unit_test
 	$(MAKE) -C trust/trust-api unit_test 
