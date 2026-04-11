@@ -26,7 +26,6 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Tuple
 
 import click
 
@@ -128,7 +127,7 @@ def get_terraform_output(output_name: str) -> str:
         exit(1)
 
 
-def find_host_section(content: str, host_name: str, identity_file: str) -> Optional[Tuple[int, int, Optional[str]]]:
+def find_host_section(content: str, host_name: str, identity_file: str) -> tuple[int, int, str | None] | None:
     """Find a specific host section in SSH config content.
 
     Args:

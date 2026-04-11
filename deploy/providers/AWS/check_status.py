@@ -915,9 +915,6 @@ def main(
             configured_net_numbers = [int(net.split("-")[-1]) for net in configured_nets if net.startswith("net-")]
         except (json.JSONDecodeError, ValueError):
             configured_net_numbers = [1]  # Default to net-1 only
-        # Trust EC2 ports
-        XNAT_PORT = os.getenv("XNAT_PORT_TRUST_1", "")
-        ORTHANC_PORT = os.getenv("PACS_UI_PORT_TRUST_1", "")
         # IMAGING_API_PORT = os.getenv("IMAGING_API_PORT", "")
         # DATA_ACCESS_API_PORT = os.getenv("DATA_ACCESS_API_PORT", "")
 
