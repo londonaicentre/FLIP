@@ -292,7 +292,3 @@ def test_get_imaging_project_status_invalid_project_id_format(client: TestClient
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
     app_fixture.dependency_overrides.clear()
-
-    app_fixture.dependency_overrides.clear()
-
-    app_fixture.dependency_overrides.clear()
