@@ -14,9 +14,16 @@
 /**
  * Centralized application configuration module.
  *
- * Reads all environment variables from import.meta.env (Vite) and validates
- * that required variables are present. Throws descriptive errors on startup
- * if any required variable is missing, ensuring fail-fast behaviour.
+ * Configuration is resolved from two sources in priority order:
+ *
+ * 1. **`window.__FLIP_CONFIG__`** (runtime) — for static hosting environments
+ *    such as S3+CloudFront, where a `/config.js` file is generated per
+ *    environment by the deployment pipeline and served alongside the SPA
+ *    bundle. Allows deploying a single build artifact to multiple environments.
+ *
+ * 2. **`import.meta.env`** (build-time) — for Vite dev-server and current
+ *    Docker/EC2-based deployments where VITE_* variables are available at
+ *    startup. Values for keys absent from window.__FLIP_CONFIG__ fall back here.
  *
  * Required variables (application will not start without these):
  *   - VITE_AWS_BASE_URL
@@ -24,12 +31,16 @@
  *   - VITE_AWS_CLIENT_ID
  *
  * Optional variables (have sensible defaults):
- *   - VITE_AWS_REGION           (default: "eu-west-2")
- *   - VITE_AWS_CLIENT_SECRET    (default: undefined)
+ *   - VITE_AWS_REGION              (default: "eu-west-2")
+ *   - VITE_AWS_CLIENT_SECRET       (default: undefined — only set for Cognito
+ *                                   pools with a client secret; note that all
+ *                                   VITE_* vars are embedded in the bundle at
+ *                                   build time, so avoid using this for
+ *                                   confidential values in static deployments)
  *   - VITE_BLACKLISTED_MODEL_FILES (default: "")
- *   - VITE_RELEASE_VERSION      (default: "")
- *   - VITE_MAX_REIMPORT_COUNT   (default: 10)
- *   - VITE_LOCAL                (default: "false")
+ *   - VITE_RELEASE_VERSION         (default: "")
+ *   - VITE_MAX_REIMPORT_COUNT      (default: 10)
+ *   - VITE_LOCAL                   (default: "false")
  */
 
 export interface AppConfig {
@@ -44,7 +55,35 @@ export interface AppConfig {
     isLocalMode: boolean;
 }
 
+const CONFIG_KEYS = [
+    "VITE_AWS_BASE_URL",
+    "VITE_AWS_USER_POOL_ID",
+    "VITE_AWS_CLIENT_ID",
+    "VITE_AWS_REGION",
+    "VITE_AWS_CLIENT_SECRET",
+    "VITE_BLACKLISTED_MODEL_FILES",
+    "VITE_RELEASE_VERSION",
+    "VITE_MAX_REIMPORT_COUNT",
+    "VITE_LOCAL",
+] as const;
+
 const REQUIRED_VARS = ["VITE_AWS_BASE_URL", "VITE_AWS_USER_POOL_ID", "VITE_AWS_CLIENT_ID"] as const;
+
+/**
+ * Merges runtime (window.__FLIP_CONFIG__) and build-time (import.meta.env) config sources.
+ * Runtime values take precedence; build-time values are used as fallback.
+ */
+function resolveEnv(): Record<string, string | undefined> {
+    const runtime: Record<string, string | undefined> =
+        typeof window !== "undefined" && window.__FLIP_CONFIG__ ? window.__FLIP_CONFIG__ : {};
+    const buildtime = import.meta.env as Record<string, string | undefined>;
+
+    const resolved: Record<string, string | undefined> = {};
+    for (const key of CONFIG_KEYS) {
+        resolved[key] = runtime[key] ?? buildtime[key];
+    }
+    return resolved;
+}
 
 /**
  * Validates that all required environment variables are present.
@@ -63,19 +102,28 @@ function validateConfig(env: Record<string, string | undefined>): void {
     }
 }
 
+/** Cached config singleton — built once on first call and reused thereafter. */
+let _cached: AppConfig | null = null;
+
 /**
  * Builds and returns the validated application configuration.
- * Reads from import.meta.env and fails fast if required variables are absent.
+ *
+ * Reads from window.__FLIP_CONFIG__ first (runtime injection, suitable for
+ * S3+CloudFront), then from import.meta.env (Vite build-time substitution).
+ * Fails fast with a descriptive error if required variables are absent.
+ * The result is memoized; subsequent calls return the same object.
  */
 export function getConfig(): AppConfig {
-    const env = import.meta.env as Record<string, string | undefined>;
+    if (_cached) return _cached;
+
+    const env = resolveEnv();
 
     validateConfig(env);
 
     const rawMaxReimport = env["VITE_MAX_REIMPORT_COUNT"];
     const maxReimportCount = rawMaxReimport ? parseInt(rawMaxReimport, 10) : 10;
 
-    return {
+    _cached = {
         awsBaseUrl: env["VITE_AWS_BASE_URL"] as string,
         awsUserPoolId: env["VITE_AWS_USER_POOL_ID"] as string,
         awsClientId: env["VITE_AWS_CLIENT_ID"] as string,
@@ -86,4 +134,15 @@ export function getConfig(): AppConfig {
         maxReimportCount: isNaN(maxReimportCount) ? 10 : maxReimportCount,
         isLocalMode: env["VITE_LOCAL"] === "true",
     };
+
+    return _cached;
+}
+
+/**
+ * Clears the memoized config singleton.
+ * **For use in tests only** — do not call in application code.
+ * @internal
+ */
+export function _resetConfigForTesting(): void {
+    _cached = null;
 }

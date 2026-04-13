@@ -13,7 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getConfig } from "../config";
+import { _resetConfigForTesting, getConfig } from "../config";
 
 const BASE_ENV = {
     VITE_AWS_BASE_URL: "http://localhost:8080/api",
@@ -36,11 +36,16 @@ function setImportMetaEnv(overrides: Record<string, string | undefined>) {
 describe("getConfig", () => {
     beforeEach(() => {
         vi.unstubAllEnvs();
+        _resetConfigForTesting();
     });
 
     afterEach(() => {
         vi.unstubAllEnvs();
+        delete window.__FLIP_CONFIG__;
+        _resetConfigForTesting();
     });
+
+    // ── Required variable validation ─────────────────────────────────────────
 
     describe("required variable validation", () => {
         it("throws when VITE_AWS_BASE_URL is missing", () => {
@@ -69,6 +74,8 @@ describe("getConfig", () => {
         });
     });
 
+    // ── Required variable values ──────────────────────────────────────────────
+
     describe("required variable values", () => {
         it("returns correct awsBaseUrl", () => {
             setImportMetaEnv(BASE_ENV);
@@ -85,6 +92,8 @@ describe("getConfig", () => {
             expect(getConfig().awsClientId).toBe("testclientid123");
         });
     });
+
+    // ── Optional variables with defaults ─────────────────────────────────────
 
     describe("optional variables with defaults", () => {
         beforeEach(() => setImportMetaEnv(BASE_ENV));
@@ -151,6 +160,101 @@ describe("getConfig", () => {
         it("keeps isLocalMode false for non-'true' values of VITE_LOCAL", () => {
             setImportMetaEnv({ ...BASE_ENV, VITE_LOCAL: "1" });
             expect(getConfig().isLocalMode).toBe(false);
+        });
+    });
+
+    // ── Runtime config (window.__FLIP_CONFIG__) ───────────────────────────────
+
+    describe("runtime config (window.__FLIP_CONFIG__)", () => {
+        beforeEach(() => setImportMetaEnv(BASE_ENV));
+
+        it("runtime config takes precedence over build-time env for required vars", () => {
+            window.__FLIP_CONFIG__ = {
+                VITE_AWS_BASE_URL: "https://runtime.example.com/api",
+                VITE_AWS_USER_POOL_ID: "eu-west-2_RuntimePool",
+                VITE_AWS_CLIENT_ID: "runtime-client-id",
+            };
+            const cfg = getConfig();
+            expect(cfg.awsBaseUrl).toBe("https://runtime.example.com/api");
+            expect(cfg.awsUserPoolId).toBe("eu-west-2_RuntimePool");
+            expect(cfg.awsClientId).toBe("runtime-client-id");
+        });
+
+        it("falls back to build-time env for keys absent from runtime config", () => {
+            window.__FLIP_CONFIG__ = {
+                VITE_AWS_BASE_URL: "https://runtime.example.com/api",
+                VITE_AWS_USER_POOL_ID: "eu-west-2_RuntimePool",
+                VITE_AWS_CLIENT_ID: "runtime-client-id",
+                // VITE_AWS_REGION not set — falls back to import.meta.env default
+            };
+            expect(getConfig().awsRegion).toBe("eu-west-2");
+        });
+
+        it("runtime config can override optional variables", () => {
+            window.__FLIP_CONFIG__ = {
+                VITE_AWS_BASE_URL: "https://runtime.example.com/api",
+                VITE_AWS_USER_POOL_ID: "eu-west-2_RuntimePool",
+                VITE_AWS_CLIENT_ID: "runtime-client-id",
+                VITE_AWS_REGION: "us-east-1",
+                VITE_MAX_REIMPORT_COUNT: "25",
+                VITE_BLACKLISTED_MODEL_FILES: "foo.py,bar.py",
+            };
+            const cfg = getConfig();
+            expect(cfg.awsRegion).toBe("us-east-1");
+            expect(cfg.maxReimportCount).toBe(25);
+            expect(cfg.blacklistedModelFiles).toBe("foo.py,bar.py");
+        });
+
+        it("still validates required vars even when runtime config is present", () => {
+            window.__FLIP_CONFIG__ = {
+                VITE_AWS_BASE_URL: "https://runtime.example.com/api",
+                // VITE_AWS_USER_POOL_ID and VITE_AWS_CLIENT_ID omitted
+            };
+            // Also clear build-time env so there is no fallback
+            setImportMetaEnv({ VITE_AWS_BASE_URL: "", VITE_AWS_USER_POOL_ID: "", VITE_AWS_CLIENT_ID: "" });
+            expect(() => getConfig()).toThrowError(/VITE_AWS_USER_POOL_ID/);
+        });
+
+        it("works correctly when window.__FLIP_CONFIG__ is not set at all", () => {
+            // No window.__FLIP_CONFIG__ — falls back to import.meta.env entirely
+            setImportMetaEnv(BASE_ENV);
+            const cfg = getConfig();
+            expect(cfg.awsBaseUrl).toBe("http://localhost:8080/api");
+        });
+
+        it("partially overrides: runtime keys win, build-time keys fill in the rest", () => {
+            setImportMetaEnv({ ...BASE_ENV, VITE_RELEASE_VERSION: "build-version" });
+            window.__FLIP_CONFIG__ = {
+                VITE_AWS_BASE_URL: "https://runtime.example.com/api",
+                VITE_AWS_USER_POOL_ID: "eu-west-2_RuntimePool",
+                VITE_AWS_CLIENT_ID: "runtime-client-id",
+                // VITE_RELEASE_VERSION not in runtime config
+            };
+            const cfg = getConfig();
+            expect(cfg.awsBaseUrl).toBe("https://runtime.example.com/api");  // runtime wins
+            expect(cfg.releaseVersion).toBe("build-version");                 // fallback to build-time
+        });
+    });
+
+    // ── Memoization ───────────────────────────────────────────────────────────
+
+    describe("memoization", () => {
+        it("returns the same object reference on subsequent calls", () => {
+            setImportMetaEnv(BASE_ENV);
+            const first = getConfig();
+            const second = getConfig();
+            expect(first).toBe(second);
+        });
+
+        it("_resetConfigForTesting clears the cache so the next call re-reads env", () => {
+            setImportMetaEnv({ ...BASE_ENV, VITE_RELEASE_VERSION: "v1" });
+            expect(getConfig().releaseVersion).toBe("v1");
+
+            _resetConfigForTesting();
+            vi.unstubAllEnvs();
+
+            setImportMetaEnv({ ...BASE_ENV, VITE_RELEASE_VERSION: "v2" });
+            expect(getConfig().releaseVersion).toBe("v2");
         });
     });
 });

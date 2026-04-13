@@ -23,6 +23,24 @@
 interface Window {
     Cypress: Cypress;
     pinia: Pinia;
+    /**
+     * Optional runtime configuration object injected by /config.js before the
+     * application bundle loads. Used for S3+CloudFront deployments where build-time
+     * env substitution is insufficient — the deployment pipeline generates config.js
+     * per environment without rebuilding the application bundle.
+     * Values present here take precedence over import.meta.env.
+     */
+    __FLIP_CONFIG__?: {
+        VITE_AWS_BASE_URL?: string;
+        VITE_AWS_USER_POOL_ID?: string;
+        VITE_AWS_CLIENT_ID?: string;
+        VITE_AWS_REGION?: string;
+        VITE_AWS_CLIENT_SECRET?: string;
+        VITE_BLACKLISTED_MODEL_FILES?: string;
+        VITE_RELEASE_VERSION?: string;
+        VITE_MAX_REIMPORT_COUNT?: string;
+        VITE_LOCAL?: string;
+    };
 }
 
 declare module "*.vue" {
