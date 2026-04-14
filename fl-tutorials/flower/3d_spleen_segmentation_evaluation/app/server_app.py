@@ -15,7 +15,7 @@
 
 import json
 import os
-from logging import INFO
+from logging import ERROR, INFO
 from pathlib import Path
 from typing import Dict, Type
 
@@ -82,6 +82,7 @@ def parse_metrics_config(metrics_config: Dict[str, str]) -> Dict[str, Type]:
                 f"Unsupported type '{type_str}' for metric '{metric_name}'. "
                 f"Only native numeric types are allowed: {list(type_mapping.keys())}"
             )
+            log(ERROR, msg)
             raise ValueError(msg)
         metrics_spec[metric_name] = type_mapping[type_str]
 
@@ -134,17 +135,23 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # ------------------------------------------------------------------
     models_config: Dict = parse_models_config(run_config)
     if not models_config:
-        raise ValueError("No models specified. Set 'models' in pyproject.toml under [tool.flwr.app.config].")
+        msg = "No models specified. Set 'models' in pyproject.toml under [tool.flwr.app.config]."
+        log(ERROR, msg)
+        raise ValueError(msg)
 
     local_dev = os.getenv("LOCAL_DEV", "false").lower() == "true"
     if local_dev:
         checkpoints_dir = run_config.get("model-checkpoints")
         if not checkpoints_dir:
-            raise ValueError("LOCAL_DEV is set but 'model-checkpoints' is not defined in pyproject.toml config.")
+            msg = "LOCAL_DEV is set but 'model-checkpoints' is not defined in pyproject.toml config."
+            log(ERROR, msg)
+            raise ValueError(msg)
     else:
         checkpoints_dir = os.getenv("MODEL_CHECKPOINTS")
         if checkpoints_dir is None:
-            raise ValueError("MODEL_CHECKPOINTS environment variable is not set")
+            msg = "MODEL_CHECKPOINTS environment variable is not set"
+            log(ERROR, msg)
+            raise ValueError(msg)
 
     loaded_models: Dict[str, torch.nn.Module] = {}
     for model_name, model_cfg in models_config.items():
@@ -152,7 +159,9 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         checkpoint_file = os.path.join(checkpoints_dir, model_cfg["checkpoint"])
 
         if not os.path.exists(checkpoint_file):
-            raise FileNotFoundError(f"Checkpoint for model '{model_name}' not found at: {checkpoint_file}")
+            msg = f"Checkpoint for model '{model_name}' not found at: {checkpoint_file}"
+            log(ERROR, msg)
+            raise FileNotFoundError(msg)
 
         model = get_model_for_path(arch_path)
         checkpoint = torch.load(checkpoint_file, map_location="cpu", weights_only=True)
@@ -172,6 +181,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     }
     if not metrics_config:
         msg = "No metrics configuration found in pyproject.toml. Please define [tool.flwr.app.config.metrics]."
+        log(ERROR, msg)
         raise ValueError(msg)
 
     metrics_spec = parse_metrics_config(metrics_config)
