@@ -72,8 +72,7 @@ def main():
 
     # Extract values safely
     try:
-        ec2_ip = outputs["Ec2PublicIp"]["value"]
-        trust_ip = outputs["TrustEc2PublicIp"]["value"]
+        ec2_ip = outputs["Ec2PrivateIp"]["value"]
         db_endpoint = outputs["DbEndpoint"]["value"]
         db_secret_arn = outputs["DbSecretArn"]["value"]
         cognito_user_pool_id = outputs["CognitoUserPoolId"]["value"]

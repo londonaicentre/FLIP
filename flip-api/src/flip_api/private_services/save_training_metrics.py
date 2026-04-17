@@ -15,7 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
-from flip_api.auth.access_manager import check_authorization_token
+from flip_api.auth.access_manager import authenticate_internal_service
 from flip_api.db.database import get_session
 from flip_api.domain.schemas.private import TrainingMetrics
 from flip_api.model_services.services.model_service import validate_trusts
@@ -37,17 +37,19 @@ def save_training_metrics_endpoint(
     training_metrics: TrainingMetrics,
     request: Request,
     db: Session = Depends(get_session),
-    token: str = Depends(check_authorization_token),  # Enforces authorization
+    _: None = Depends(authenticate_internal_service),
 ) -> None:
     """
     Receives and saves training metrics for a given model ID and trust.
+
+    This endpoint is internal-only: it accepts requests from the fl-server on the
+    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER).
 
     Args:
         model_id (UUID): The unique identifier for the model.
         training_metrics (TrainingMetrics): The training metrics to be saved.
         request (Request): The FastAPI request object, used for logging and context.
         db (Session): Database session dependency.
-        token (str): Authorization token, validated by `check_authorization_token`.
 
     Returns:
         Response: HTTP 204 No Content on success, or appropriate error response.
@@ -56,7 +58,6 @@ def save_training_metrics_endpoint(
         HTTPException: If the trust is not associated with the model.
         HTTPException: If an internal server error occurs during processing.
     """
-    del token  # Token is validated by the dependency
     endpoint_path = request.url.path
 
     logger.debug(
@@ -64,47 +65,27 @@ def save_training_metrics_endpoint(
         f"{endpoint_path}"
     )
 
-    # 1. Custom Model ID Validation (if applicable, mimicking add_log.py pattern)
-    # This part assumes a custom ModelIdSchema.validate method.
-    # If ModelIdSchema is not used or validation is different, this block should be adjusted/removed.
-    # For now, it's commented out to rely on path param typing and specific checks if needed.
-    # ---
-    # from flip_api.domain.schemas.model import ModelIdSchema # Hypothetical import
-    # model_id_error = ModelIdSchema.validate(model_id)
-    # if model_id_error:
-    #     logger.error(f"Invalid model_id '{model_id}' in {endpoint_path}: {model_id_error}")
-    #     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(model_id_error))
-    # ---
-    # Pydantic payload validation is automatically handled by FastAPI based on TrainingMetrics type hint.
-    # If it fails, FastAPI returns a 422 error. The TS code returns 400 for payload errors.
-    # To achieve 400 for Pydantic errors, you'd wrap the call or use a request object and parse manually.
-    # For now, standard 422 from FastAPI for Pydantic model validation is assumed.
-
     try:
-        # 2. Check if the trust is associated with the model_id provided
         if not validate_trusts(model_id=model_id, trusts=[training_metrics.trust], session=db):
             error_msg = f"The trust: {training_metrics.trust} is not associated with model: {model_id}"
             logger.error(error_msg)
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
 
-        # 3. Save Metrics
         save_training_metrics(model_id=model_id, training_metrics=training_metrics, db=db)
 
     except HTTPException as http_exc:
-        # Log and re-raise HTTPExceptions (e.g., from validate_trusts or auth)
         logger.warning(
-            f"Service HTTPException for model {model_id}, trust {training_metrics.trust} in {endpoint_path}: "
-            "{http_exc.detail}"
+            f"Service HTTPException for model {model_id}, trust {training_metrics.trust} "
+            f"in {endpoint_path}: {http_exc.detail}"
         )
         raise http_exc
     except Exception as e:
-        # Catch-all for other exceptions (e.g., from save_training_metrics)
         logger.error(
-            f"Unhandled error processing training metrics for model {model_id}, trust {training_metrics.trust} in "
-            "{endpoint_path}: {e}",
+            f"Unhandled error processing training metrics for model {model_id}, trust {training_metrics.trust} "
+            f"in {endpoint_path}: {e}",
             exc_info=True,
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An internal server error occurred: {str(e)}",
+            detail="An internal server error occurred while saving training metrics.",
         )

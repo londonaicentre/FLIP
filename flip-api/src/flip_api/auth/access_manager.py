@@ -10,6 +10,9 @@
 # limitations under the License.
 #
 
+import hashlib
+import hmac
+import json
 from uuid import UUID
 
 from fastapi import HTTPException, Security, status
@@ -20,6 +23,7 @@ from flip_api.auth.auth_utils import has_permissions
 from flip_api.config import get_settings
 from flip_api.db.models.main_models import Model, Projects, ProjectUserAccess, Queries
 from flip_api.db.models.user_models import PermissionRef
+from flip_api.utils.get_secrets import get_secret
 from flip_api.utils.logger import logger
 
 
@@ -246,66 +250,152 @@ def can_access_cohort_query(user_id: UUID, query_id: UUID, db: Session) -> bool:
         return False
 
 
-# The TypeScript code's event.authorizationToken usually maps to the 'Authorization' header.
-API_KEY_HEADER_NAME = get_settings().PRIVATE_API_KEY_HEADER
+API_KEY_HEADER_NAME = get_settings().TRUST_API_KEY_HEADER
 api_key_header_scheme = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
 
-# Name of the environment variable storing the expected private API key.
-# This is the equivalent of `getSecret("privateApiKey")` in the TypeScript.
-# EXPECTED_API_KEY_ENV_VAR = "PRIVATE_API_KEY"
 
+def verify_trust_identity(trust_name: str, authenticated_trust: str) -> None:
+    """Verify the authenticated trust matches the expected trust name.
 
-def check_authorization_token(api_key: str = Security(api_key_header_scheme)) -> str:
+    Args:
+        trust_name (str): The trust name from the URL path.
+        authenticated_trust (str): The trust name from API key authentication.
+
+    Raises:
+        HTTPException: 403 if the names do not match.
     """
-    Checks the provided API key against the expected key stored in an environment variable.
+    if authenticated_trust != trust_name:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Trust '{authenticated_trust}' is not authorised to act as '{trust_name}'",
+        )
 
-    This function is used as a FastAPI dependency to protect routes.
-    It mirrors the logic of the TypeScript privateKeyAuthorizer.
+
+_trust_api_key_hashes_cache: dict[str, str] | None = None
+
+
+def _get_trust_api_key_hashes() -> dict[str, str]:
+    """Get trust API key hashes from env var (dev) or AWS Secrets Manager (prod).
+
+    Cached after first call — the hashes do not change during the lifetime of a process.
+
+    Returns:
+        dict[str, str]: Mapping of trust names to SHA-256 hex digests of their API keys.
+    """
+    global _trust_api_key_hashes_cache  # noqa: PLW0603
+    if _trust_api_key_hashes_cache is not None:
+        return _trust_api_key_hashes_cache
+
+    stt = get_settings()
+    if stt.ENV == "production":
+        _trust_api_key_hashes_cache = json.loads(get_secret("trust_api_key_hashes"))
+    else:
+        _trust_api_key_hashes_cache = stt.TRUST_API_KEY_HASHES
+
+    return _trust_api_key_hashes_cache
+
+
+INTERNAL_SERVICE_KEY_HEADER_NAME = get_settings().INTERNAL_SERVICE_KEY_HEADER
+internal_key_header_scheme = APIKeyHeader(name=INTERNAL_SERVICE_KEY_HEADER_NAME, auto_error=False)
+
+_internal_service_key_hash_cache: str | None = None
+
+
+def _get_internal_service_key_hash() -> str:
+    """Get internal service key hash from env var (dev) or AWS Secrets Manager (prod).
+
+    Cached after first call — the hash does not change during the lifetime of a process.
+
+    Returns:
+        str: SHA-256 hex digest of the internal service key, or empty string if not configured.
+    """
+    global _internal_service_key_hash_cache  # noqa: PLW0603
+    if _internal_service_key_hash_cache is not None:
+        return _internal_service_key_hash_cache
+
+    stt = get_settings()
+    if stt.ENV == "production":
+        _internal_service_key_hash_cache = get_secret("internal_service_key_hash")
+    else:
+        _internal_service_key_hash_cache = stt.INTERNAL_SERVICE_KEY_HASH
+
+    return _internal_service_key_hash_cache
+
+
+def authenticate_internal_service(api_key: str = Security(internal_key_header_scheme)) -> None:
+    """Authenticate an internal service (e.g., fl-server on the Central Hub).
+
+    The fl-server sends an internal service key in the X-Internal-Service-Key header.
+    This dependency hashes the provided key and compares it against the stored hash
+    using constant-time comparison.
+
+    Args:
+        api_key (str): The internal service key from the request header.
+
+    Raises:
+        HTTPException: 401 if the key is missing, unconfigured, or invalid.
+    """
+    if not api_key:
+        logger.warning("Internal service authentication failed: key missing from request.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated: internal service key is missing.",
+        )
+    expected_hash = _get_internal_service_key_hash()
+    if not expected_hash:
+        logger.warning("Internal service authentication failed: INTERNAL_SERVICE_KEY_HASH not configured.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Internal service auth not configured.",
+        )
+    provided_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    if not hmac.compare_digest(provided_hash, expected_hash):
+        logger.warning("Internal service authentication failed: invalid key.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid internal service key.",
+        )
+
+
+def authenticate_trust(api_key: str = Security(api_key_header_scheme)) -> str:
+    """Authenticate a trust by its per-trust API key and return the trust name.
+
+    Each trust has a unique API key. The hub stores SHA-256 hashes of these keys
+    in TRUST_API_KEY_HASHES (env var in dev, AWS Secrets Manager in prod).
+    This dependency hashes the provided key, looks it up in the mapping, and
+    returns the authenticated trust name.
+
+    Uses hmac.compare_digest for constant-time comparison to prevent timing attacks.
 
     Args:
         api_key (str): The API key extracted from the request header.
-                 FastAPI's Security utility injects this. If auto_error=False on
-                 APIKeyHeader and the header is missing, api_key will be None.
 
     Raises:
-        HTTPException:
-            - 500 if the server is not configured with PRIVATE_API_KEY.
-            - 401 if the API key is missing or invalid.
+        HTTPException: 401 if the key is missing or does not match any trust.
 
     Returns:
-        str: The validated API key if it is correct.
+        str: The name of the authenticated trust (e.g. "Trust_1").
     """
-    expected_api_key = get_settings().PRIVATE_API_KEY
-
-    if not expected_api_key:
-        logger.critical(
-            "CRITICAL: The environment variable for API key authentication is not set. "
-            "The application cannot authenticate private API requests."
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Server configuration error: API key mechanism not set up.",
-        )
-
     if not api_key:
-        # This handles the case where the header is missing (APIKeyHeader auto_error=False)
-        logger.warning("Authentication attempt failed: API key was missing from the request.")
+        logger.warning("Trust authentication failed: API key missing from request.")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated: API key is missing.",
-            headers={"WWW-Authenticate": "ApiKey"},  # Standard header for API key challenges
-        )
-
-    # Direct string comparison is used, similar to 'authorizationToken === secretKey'
-    # For very high-security scenarios, a constant-time comparison might be considered,
-    # but for typical API keys, this is standard.
-    if api_key == expected_api_key:
-        logger.debug("API key authentication successful.")
-        return api_key  # Return the key, signifying successful authentication
-    else:
-        logger.warning(f"Authentication attempt failed: Invalid API key provided. Submitted key: '{api_key[:5]}...'")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API Key.",
             headers={"WWW-Authenticate": "ApiKey"},
         )
+
+    provided_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    trust_hashes = _get_trust_api_key_hashes()
+
+    # Iterate all entries with constant-time comparison to prevent timing side-channels.
+    for trust_name, stored_hash in trust_hashes.items():
+        if hmac.compare_digest(provided_hash, stored_hash):
+            logger.debug("Trust authenticated successfully.")
+            return trust_name
+
+    logger.warning("Trust authentication failed: no matching trust for provided key")
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid API Key.",
+        headers={"WWW-Authenticate": "ApiKey"},
+    )

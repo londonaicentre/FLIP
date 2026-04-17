@@ -20,10 +20,13 @@ on:
       - "trust/xnat/**"
       - ".github/workflows/docker_build_xnat_nginx.yml"
 
+permissions:
+  contents: read
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    permissions:
+    permissions: # override top-level read-only default to allow GHCR push
       contents: read
       packages: write
     defaults:

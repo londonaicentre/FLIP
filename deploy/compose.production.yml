@@ -46,9 +46,9 @@ services:
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
-      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
-      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
-      # - AES_KEY_BASE64=${AES_KEY_BASE64} # in production, AES key is retrieved from AWS Secrets Manager
+      - TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
+      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+      # in production, TRUST_API_KEY_HASHES, INTERNAL_SERVICE_KEY_HASH, and AES_KEY_BASE64 are retrieved from AWS Secrets Manager at runtime
       - AWS_SECRET_NAME=${AWS_SECRET_NAME}
       - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
       - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS}
@@ -59,13 +59,6 @@ services:
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
-      # Path where the Trust CA cert is mounted from the host (written by deploy-centralhub);
-      # trust_ssl_context() reads this to verify Trust API HTTPS connections.
-      - TRUST_CA_BUNDLE=/etc/ssl/trust/trust-ca.crt
-      # - TRUST_ENDPOINTS=${TRUST_ENDPOINTS} # in production, trust endpoints are retrieved from AWS Secrets Manager
-    volumes:
-      # Trust CA cert is written to the host by the write-trust-ca Makefile target and
-      # mounted read-only into the container so trust_ssl_context() can verify HTTPS connections.
-      - /opt/flip/certs/trust-ca.crt:/etc/ssl/trust/trust-ca.crt:ro
+      - TRUST_NAMES=${TRUST_NAMES}
     restart: unless-stopped
     container_name: flip-api

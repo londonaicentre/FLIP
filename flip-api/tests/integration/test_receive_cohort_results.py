@@ -15,8 +15,10 @@ import uuid
 import pytest
 from fastapi import status
 
+from flip_api.auth.access_manager import authenticate_trust
 from flip_api.config import get_settings
 from flip_api.domain.schemas.private import OmopCohortResults
+from flip_api.main import app
 
 
 @pytest.fixture
@@ -47,11 +49,17 @@ def sample_cohort_payload(sample_cohort_dict):
 
 
 class TestReceiveCohortResultsEndpoint:
+    @pytest.fixture(autouse=True)
+    def _mock_auth(self):
+        """Override authenticate_trust for integration tests."""
+        app.dependency_overrides[authenticate_trust] = lambda: "Trust_1"
+        yield
+        app.dependency_overrides.pop(authenticate_trust, None)
+
     def test_receive_results_bad_payload_validation_error(self, real_client):
         response = real_client.post(
             f"{get_settings().FLIP_API_URL}/cohort/results/",
             json={"trust_id": "abc", "record_count": "ten", "data": []},
-            headers={get_settings().PRIVATE_API_KEY_HEADER: get_settings().PRIVATE_API_KEY},
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
@@ -59,7 +67,6 @@ class TestReceiveCohortResultsEndpoint:
         response = real_client.post(
             f"{get_settings().FLIP_API_URL}/cohort/results/",
             json=sample_cohort_dict,
-            headers={get_settings().PRIVATE_API_KEY_HEADER: get_settings().PRIVATE_API_KEY},
         )
 
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR

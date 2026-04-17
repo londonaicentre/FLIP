@@ -186,7 +186,6 @@ class IReimportQuery(BaseModel):
     xnat_project_id: UUID = Field()
     last_reimport: Annotated[datetime | None, Field(default_factory=datetime.utcnow)]
     trust_id: UUID = Field()
-    trust_endpoint: str = Field()  # Assuming it's a URL string
     trust_name: str = Field()
 
     model_config = ConfigDict(

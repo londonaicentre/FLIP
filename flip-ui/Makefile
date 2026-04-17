@@ -23,9 +23,6 @@ $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 # replace environment variables by the values from the .env files
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
-# Export all variables except DOCKER_TAG (which we'll set dynamically below)
-# export $(shell sed 's/=.*//' $(MAIN_ENV_FILE) | grep -v '^DOCKER_TAG$$')
-# NOTE The above no longer works as CICD tags are not based on PR numbers anymore since github actions are run manually.
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 

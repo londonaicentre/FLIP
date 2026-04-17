@@ -22,6 +22,7 @@ services:
       - DEBUG=${DEBUG}
     ports:
       - "${IMAGING_DEBUG_PORT}:${IMAGING_DEBUG_PORT}"
+
   data-access-api:
     environment:
       - DEBUG=${DEBUG}

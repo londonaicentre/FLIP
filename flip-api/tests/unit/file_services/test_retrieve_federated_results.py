@@ -125,7 +125,6 @@ def mocked_settings():
         AWS_SES_SENDER_EMAIL_ADDRESS="sender@example.com",
         UPLOADED_MODEL_FILES_BUCKET="mock-bucket",
         UPLOADED_FEDERATED_DATA_BUCKET="s3://mock-bucket-uploaded/uploaded_federated_data",
-        PRIVATE_API_KEY="mock-api-key",
         FL_APP_BASE_BUCKET="s3://mock-bucket-base-app/base_files",
         SCANNED_MODEL_FILES_BUCKET="s3://mock-bucket-scanned/model_files",
         FL_APP_DESTINATION_BUCKET="s3://mock-bucket-dest/dest_files",

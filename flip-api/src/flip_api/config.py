@@ -28,8 +28,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    PRIVATE_API_KEY_HEADER: str
-    PRIVATE_API_KEY: str
+    # Per-trust API key header name (for authenticating requests from trusts to the FLIP API)
+    TRUST_API_KEY_HEADER: str
+
+    # Internal service auth (fl-server on the Central Hub)
+    INTERNAL_SERVICE_KEY_HEADER: str
 
     # AWS settings
     AWS_PROFILE: str | None = None
@@ -68,12 +71,17 @@ class Settings(BaseSettings):
 
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
-
-    # SSL / TLS settings
-    TRUST_CA_BUNDLE: str | None = None  # Path to the Trust CA certificate PEM file
+    TRUST_NAMES: list[str]
 
     # FL settings
     FL_BACKEND: Literal["nvflare", "flower"] = "nvflare"
+
+    # Trust task queue settings
+    HEARTBEAT_TIMEOUT_SECONDS: int = 30  # How long since last heartbeat before a trust is considered offline
+    TASK_STALE_TIMEOUT_MINUTES: int = 30  # Tasks older than this in IN_PROGRESS are considered stale
+    TASK_MAX_RETRIES: int = 3  # Max times a stale task can be retried before being marked FAILED
+    SCHEDULER_STALE_TASK_RECOVERY_RATE: int = 10  # How often to check for stale tasks (in minutes)
+    MAX_TASK_RESULT_LENGTH: int = 10_000_000  # Max size (in characters) for task result payloads
 
     # Variables only used in testing
     FLIP_API_URL: str = "http://localhost:8080/api"  # this is currently only used in tests (TODO review)
@@ -88,7 +96,8 @@ class DevSettings(Settings):
 
     AES_KEY_BASE64: str  # in dev, get AES key from env variable
 
-    TRUST_ENDPOINTS: dict[str, str]  # in dev, get trust endpoints from env variables
+    TRUST_API_KEY_HASHES: dict[str, str]  # in dev, get API key hashes for each trust from env variable
+    INTERNAL_SERVICE_KEY_HASH: str  # in dev, get internal service auth key hash from env variable
 
 
 class ProdSettings(Settings):

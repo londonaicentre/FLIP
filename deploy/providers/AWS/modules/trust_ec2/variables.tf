@@ -37,25 +37,8 @@ variable "subnet_id" {
 }
 
 variable "security_group_ids" {
-  type    = list(string)
-  default = []
-}
-
-variable "create_elastic_ip" {
-  type    = bool
-  default = false
-}
-
-variable "TRUST_API_PORT" {
-  type = number
-}
-
-variable "XNAT_PORT" {
-  type = number
-}
-
-variable "PACS_UI_PORT" {
-  type = number
+  description = "Security group IDs to attach to the Trust EC2 instance (required)"
+  type        = list(string)
 }
 
 variable "iam_instance_profile_name" {

@@ -14,9 +14,18 @@ import uuid
 
 import factory
 
-from flip_api.db.models.main_models import Model, ModelStatus, Projects, ProjectStatus, ProjectTrustIntersect, Trust
+from flip_api.db.models.main_models import (
+    Model,
+    ModelStatus,
+    Projects,
+    ProjectStatus,
+    ProjectTrustIntersect,
+    Trust,
+    TrustTask,
+)
 from flip_api.db.models.user_models import Role, User, UserRole
 from flip_api.domain.interfaces.user import IRoles
+from flip_api.domain.schemas.status import TaskStatus, TaskType
 
 
 class ProjectFactory(factory.Factory):
@@ -103,7 +112,7 @@ class TrustFactory(factory.Factory):
 
     id = factory.LazyFunction(uuid.uuid4)
     name = factory.Faker("word")
-    endpoint = factory.Faker("url")
+    last_heartbeat = None
 
 
 class ProjectTrustIntersectFactory(factory.Factory):
@@ -116,3 +125,17 @@ class ProjectTrustIntersectFactory(factory.Factory):
     project_id = factory.LazyFunction(uuid.uuid4)
     trust_id = factory.LazyFunction(uuid.uuid4)
     approved = True
+
+
+class TrustTaskFactory(factory.Factory):
+    """Factory for creating TrustTask instances."""
+
+    class Meta:
+        model = TrustTask
+
+    id = factory.LazyFunction(uuid.uuid4)
+    trust_id = factory.LazyFunction(uuid.uuid4)
+    task_type = TaskType.COHORT_QUERY
+    payload = '{"query": "SELECT 1"}'
+    status = TaskStatus.PENDING
+    created_at = factory.Faker("date_time")

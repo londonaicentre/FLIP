@@ -10,16 +10,15 @@
 # limitations under the License.
 #
 
-import asyncio
+from datetime import datetime, timedelta, timezone
 
-import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
+from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
 from flip_api.domain.interfaces.trust import ITrustHealth
-from flip_api.utils.http import trust_ssl_context
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/trust", tags=["trusts_services"])
@@ -28,14 +27,15 @@ router = APIRouter(prefix="/trust", tags=["trusts_services"])
 # [#114] ✅
 @router.get("/health", status_code=status.HTTP_200_OK, response_model=list[ITrustHealth])
 async def check_trusts_health(
-    request: Request,
     db: Session = Depends(get_session),
 ) -> list[ITrustHealth]:
     """
-    Retrieves health status of all trusts by checking their health endpoints.
+    Retrieves health status of all trusts based on their last heartbeat timestamp.
+
+    Instead of making outbound HTTP calls to each trust's /health endpoint, this checks
+    the last_heartbeat field updated by the trust's polling service.
 
     Args:
-        request (Request): The incoming HTTP request, used to pass headers to trust health endpoints.
         db (Session): Database session for querying trusts.
 
     Returns:
@@ -45,9 +45,8 @@ async def check_trusts_health(
         HTTPException: If no trusts are found in the database or if there is an error during the operation.
     """
     try:
-        logger.debug("Attempting to retrieve trusts from the database...")
+        logger.debug("Checking trust health via heartbeat timestamps...")
 
-        # Using SQLModel select instead of raw SQL
         statement = select(Trust)
         result = db.exec(statement).all()
 
@@ -57,59 +56,29 @@ async def check_trusts_health(
             logger.warning("No trusts found in the database")
             raise HTTPException(status_code=404, detail="No trusts found")
 
-        logger.debug("Sending a request to each of the trusts...")
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=get_settings().HEARTBEAT_TIMEOUT_SECONDS)
 
-        # Make concurrent requests to all trusts
-        async with httpx.AsyncClient(timeout=10.0, verify=trust_ssl_context()) as client:
-            tasks = []
+        response: list[ITrustHealth] = []
+        for trust in result:
+            # Trust is online if it has sent a heartbeat within the timeout window
+            if trust.last_heartbeat is not None:
+                last_hb = trust.last_heartbeat
+                if last_hb.tzinfo is None:
+                    last_hb = last_hb.replace(tzinfo=timezone.utc)
+                online = last_hb >= cutoff
+            else:
+                online = False
 
-            for row in result:
-                tasks.append(check_trust_health(client=client, trust=row, headers=dict(request.headers)))
+            response.append(
+                ITrustHealth(trust_id=trust.id, trust_name=trust.name, online=online)  # type: ignore[call-arg]
+            )
 
-            # Wait for all requests to complete
-            trust_health_results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # Filter out any exception results
-            response: list[ITrustHealth] = [res for res in trust_health_results if isinstance(res, ITrustHealth)]
-
-        logger.info(f"Successfully retrieved health status for {len(response)} trusts")
-        logger.debug(f"Trusts health status: {response}")
-
+        logger.info(f"Trust health status: {sum(1 for r in response if r.online)}/{len(response)} online")
         return response
 
     except HTTPException:
-        # Re-raise HTTP exceptions
         raise
     except Exception as e:
         logger.error(f"Error checking trusts health: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-
-async def check_trust_health(client: httpx.AsyncClient, trust: Trust, headers: dict) -> ITrustHealth:
-    """
-    Check health of a single trust
-
-    Args:
-        client (httpx.AsyncClient): AsyncClient for HTTP requests
-        trust (Trust): Trust model instance
-        headers (dict): Headers to include in the request to the trust's health endpoint
-
-    Returns:
-        ITrustHealth: Trust health status
-    """
-    try:
-        # Send request to trust health endpoint
-        response = await client.get(f"{trust.endpoint}/health", headers=headers)
-
-        # If the request was successful (status code 200)
-        if response.status_code == 200:
-            return ITrustHealth(trust_id=trust.id, trust_name=trust.name, online=True)  # type: ignore[call-arg]
-        else:
-            # If the response was not 200, treat it as unhealthy
-            return ITrustHealth(trust_id=trust.id, trust_name=trust.name, online=False)  # type: ignore[call-arg]
-
-    except Exception as e:
-        logger.error(f"{trust.name} failed to report back. Error message: {str(e)}")
-
-        # If an exception is raised during the request, mark the trust as offline
-        return ITrustHealth(trust_id=trust.id, trust_name=trust.name, online=False)  # type: ignore[call-arg]
+        raise HTTPException(status_code=500, detail="Internal server error")

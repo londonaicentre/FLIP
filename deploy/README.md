@@ -13,6 +13,25 @@
 
 # Pre-configurations needed for FLIP Deployment
 
+## Supported PostgreSQL Versions
+
+FLIP uses AWS RDS PostgreSQL with the following version support policy:
+
+- **Current Version**: PostgreSQL 15 (EOL: October 2027) ✓
+- **Minimum Version**: PostgreSQL 15
+- **Deprecated**: PostgreSQL 13 (EOL: November 2025) ❌ EXPIRED
+
+**Version Lifecycle:**
+
+| Version | EOL | Status |
+| ------- | --- | ------ |
+| PostgreSQL 13 | November 2025 | ❌ EXPIRED — do not use |
+| PostgreSQL 14 | October 2026 | ⚠️ Deprecating soon |
+| PostgreSQL 15 | October 2027 | ✓ Current |
+| PostgreSQL 16 | October 2028 | Available for next upgrade |
+
+**Upgrade Policy**: Plan PostgreSQL major version upgrades with a 6-month lead time before EOL. AWS charges premium rates for EOL versions. To change the version, update the `postgres_version` variable in `deploy/providers/AWS/variables.tf`.
+
 ## Deployment Architecture
 
 ### Prerequisites
@@ -140,6 +159,38 @@ aws cognito-idp admin-create-user \
 - [ ] Email templates render correctly in Gmail, Outlook, Apple Mail
 - [ ] Links in email templates resolve to correct environment subdomain (e.g., `https://flip-staging.example.com`)
 - [ ] SMS fallback messages deliver (if SMS is enabled in Cognito)
+
+---
+
+## Service Authentication
+
+FLIP uses two separate authentication mechanisms for service-to-hub communication:
+
+### Trust API Keys (trust-api → flip-api)
+
+Each trust has a unique API key stored in the `TRUST_API_KEYS` JSON dict and sent in the `TRUST_API_KEY_HEADER` header.
+The hub stores only SHA-256 hashes of these keys in `TRUST_API_KEY_HASHES`. Used for task polling, cohort result
+submission, and heartbeat endpoints.
+
+Generate keys with `make generate-trust-api-keys` and `make generate-internal-service-key`.
+
+### Internal Service Key (fl-server → flip-api)
+
+The fl-server on the Central Hub authenticates to flip-api using `INTERNAL_SERVICE_KEY` sent in the
+`INTERNAL_SERVICE_KEY_HEADER` header. The hub validates it against
+`INTERNAL_SERVICE_KEY_HASH`. Used for model status updates, training metrics, and training log endpoints.
+
+FL clients (trust side) **do not** have Central Hub API credentials. Only the fl-server communicates with flip-api.
+FL clients relay metrics and exceptions to the fl-server, which forwards them to the Central Hub.
+
+| Variable | Where used | Purpose |
+|---|---|---|
+| `TRUST_API_KEY_HEADER` | flip-api, trust-api | Header name for trust auth |
+| `TRUST_API_KEYS` | trust-api | JSON dict of trust name → plaintext key |
+| `TRUST_API_KEY_HASHES` | flip-api | JSON dict of trust name → SHA-256 hash |
+| `INTERNAL_SERVICE_KEY_HEADER` | flip-api, fl-server | Header name for internal service auth |
+| `INTERNAL_SERVICE_KEY` | fl-server | Internal service plaintext key |
+| `INTERNAL_SERVICE_KEY_HASH` | flip-api | SHA-256 hash of internal service key |
 
 ---
 

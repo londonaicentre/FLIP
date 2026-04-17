@@ -12,19 +12,19 @@ NC='\033[0m' # No Color
 
 # Helper functions
 log_info() {
-    echo -e "${BLUE}ℹ️  $*${NC}"
+    printf '%b\n' "${BLUE}ℹ️  $*${NC}"
 }
 
 log_success() {
-    echo -e "${GREEN}✅ $*${NC}"
+    printf '%b\n' "${GREEN}✅ $*${NC}"
 }
 
 log_warn() {
-    echo -e "${YELLOW}⚠️  $*${NC}"
+    printf '%b\n' "${YELLOW}⚠️  $*${NC}"
 }
 
 log_error() {
-    echo -e "${RED}❌ ERROR: $*${NC}"
+    printf '%b\n' "${RED}❌ ERROR: $*${NC}"
 }
 
 # AWS wrapper with common args

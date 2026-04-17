@@ -43,7 +43,7 @@ def retrieve_logs_for_model_endpoint(
         user_id (UUID): User ID from authentication.
 
     Returns:
-        list[FLLogs]: A list of logs associated with the specified model.
+        list[ILog]: A list of log objects associated with the specified model.
 
     Raises:
         HTTPException: If the user does not have access to the model, if the model does not exist, or if there is a

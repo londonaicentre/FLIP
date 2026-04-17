@@ -13,15 +13,11 @@
 
 set -e
 
-# Colors for output
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+source "$(dirname "${BASH_SOURCE[0]}")/utils.sh"
 
-echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}   FLIP Monorepo Secret Scanning Setup${NC}"
-echo -e "${BLUE}========================================${NC}"
+log_info "========================================"
+log_info "   FLIP Monorepo Secret Scanning Setup"
+log_info "========================================"
 echo ""
 
 # Get the repository root directory (go up one level from scripts/)
@@ -33,34 +29,34 @@ echo ""
 
 # Check uv availability (project uses uv as package manager)
 if ! command -v uv &> /dev/null; then
-    echo -e "${YELLOW}Warning: uv is not installed. This project uses uv for package management.${NC}"
+    log_warn "Warning: uv is not installed. This project uses uv for package management."
     echo "Install uv with: curl -LsSf https://astral.sh/uv/install.sh | sh"
     echo ""
     exit 1
 fi
 
 # Install pre-commit and detect-secrets using uv
-echo -e "${BLUE}Step 1: Installing pre-commit and detect-secrets...${NC}"
+log_info "Step 1: Installing pre-commit and detect-secrets..."
 if ! uv tool install pre-commit 2>/dev/null; then
-    echo -e "${YELLOW}pre-commit may already be installed, upgrading...${NC}"
+    log_warn "pre-commit may already be installed, upgrading..."
     uv tool upgrade pre-commit || true
 fi
 if ! uv tool install detect-secrets 2>/dev/null; then
-    echo -e "${YELLOW}detect-secrets may already be installed, upgrading...${NC}"
+    log_warn "detect-secrets may already be installed, upgrading..."
     uv tool upgrade detect-secrets || true
 fi
-echo -e "${GREEN}✓ pre-commit and detect-secrets installed via uv${NC}"
-echo -e "${YELLOW}Note: Tools are installed in uv's tool directory (usually ~/.local/bin/)${NC}"
-echo -e "${YELLOW}      Ensure this is in your PATH.${NC}"
+log_success "pre-commit and detect-secrets installed via uv"
+log_warn "Note: Tools are installed in uv's tool directory (usually ~/.local/bin/)"
+log_warn "      Ensure this is in your PATH."
 echo ""
 
 # Install TruffleHog
-echo -e "${BLUE}Step 2: Installing TruffleHog...${NC}"
+log_info "Step 2: Installing TruffleHog..."
 if [[ "$OSTYPE" == "darwin"* ]] && command -v brew &> /dev/null; then
     brew install trufflesecurity/trufflehog/trufflehog
-    echo -e "${GREEN}✓ TruffleHog installed via Homebrew${NC}"
+    log_success "TruffleHog installed via Homebrew"
 else
-    echo -e "${YELLOW}To install TruffleHog:${NC}"
+    log_warn "To install TruffleHog:"
     echo "  • macOS: brew install trufflesecurity/trufflehog/trufflehog"
     echo "  • Linux: Download from https://github.com/trufflesecurity/trufflehog/releases"
     echo "  • Or use Docker: docker pull trufflesecurity/trufflehog:latest"
@@ -68,48 +64,48 @@ fi
 echo ""
 
 # Initialize pre-commit
-echo -e "${BLUE}Step 3: Setting up pre-commit hooks...${NC}"
+log_info "Step 3: Setting up pre-commit hooks..."
 if command -v pre-commit &> /dev/null; then
     pre-commit install
-    echo -e "${GREEN}✓ Pre-commit hooks installed${NC}"
-    
+    log_success "Pre-commit hooks installed"
+
     # Update pre-commit hooks to latest versions
-    echo -e "${BLUE}Updating pre-commit hooks to latest versions...${NC}"
+    log_info "Updating pre-commit hooks to latest versions..."
     pre-commit autoupdate
-    echo -e "${GREEN}✓ Pre-commit hooks updated${NC}"
-    
+    log_success "Pre-commit hooks updated"
+
     # Create baseline for detect-secrets
     if command -v detect-secrets &> /dev/null; then
-        echo -e "${BLUE}Creating detect-secrets baseline...${NC}"
+        log_info "Creating detect-secrets baseline..."
         # Create baseline from scratch
         detect-secrets scan > .secrets.baseline 2>/dev/null || true
-        echo -e "${GREEN}✓ Baseline created: .secrets.baseline${NC}"
+        log_success "Baseline created: .secrets.baseline"
     fi
 else
-    echo -e "${YELLOW}⊘ pre-commit command not found. Install it first.${NC}"
+    log_warn "pre-commit command not found. Install it first."
 fi
 echo ""
 
 # Update .gitignore
-echo -e "${BLUE}Step 4: Updating .gitignore...${NC}"
+log_info "Step 4: Updating .gitignore..."
 if ! grep -q ".security-reports" .gitignore 2>/dev/null; then
     echo "" >> .gitignore
     echo "# Security scan reports" >> .gitignore
     echo ".security-reports/" >> .gitignore
-    echo -e "${GREEN}✓ Added .security-reports/ to .gitignore${NC}"
+    log_success "Added .security-reports/ to .gitignore"
 else
-    echo -e "${GREEN}✓ .gitignore already configured${NC}"
+    log_success ".gitignore already configured"
 fi
 echo ""
 
 # Make scan script executable
 chmod +x "$REPO_ROOT/scripts/scan-secrets.sh"
-echo -e "${GREEN}✓ Made scan-secrets.sh executable${NC}"
+log_success "Made scan-secrets.sh executable"
 echo ""
 
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}   Setup Complete!${NC}"
-echo -e "${GREEN}========================================${NC}"
+log_success "========================================"
+log_success "   Setup Complete!"
+log_success "========================================"
 echo ""
 echo "Available commands:"
 echo ""

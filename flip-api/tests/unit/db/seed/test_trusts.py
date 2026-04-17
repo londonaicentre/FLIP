@@ -27,20 +27,15 @@ def mock_session():
 
 
 @patch("flip_api.db.seed.trusts.get_settings")
-def test_seed_trusts_non_production_creates_new_trusts(mock_get_settings, mock_session):
-    """Test seeding trusts in non-production mode using settings endpoints."""
-    trust_endpoints = {
-        "Trust A": "https://trust-a.example.com",
-        "Trust B": "https://trust-b.example.com",
-    }
-    mock_get_settings.return_value = SimpleNamespace(ENV="development", TRUST_ENDPOINTS=trust_endpoints)
+def test_seed_trusts_creates_new_trusts(mock_get_settings, mock_session):
+    """Test seeding trusts creates new trust records by name."""
+    trust_names = ["Trust A", "Trust B"]
+    mock_get_settings.return_value = SimpleNamespace(ENV="development", TRUST_NAMES=trust_names)
 
     trust_a = MagicMock(spec=Trust)
     trust_a.name = "Trust A"
-    trust_a.endpoint = "https://trust-a.example.com"
     trust_b = MagicMock(spec=Trust)
     trust_b.name = "Trust B"
-    trust_b.endpoint = "https://trust-b.example.com"
     final_trusts = [trust_a, trust_b]
 
     mock_session.exec.side_effect = [
@@ -60,25 +55,18 @@ def test_seed_trusts_non_production_creates_new_trusts(mock_get_settings, mock_s
     assert {t.name for t in added_trusts} == {"Trust A", "Trust B"}
 
     assert result == [
-        {"name": "Trust A", "endpoint": "https://trust-a.example.com"},
-        {"name": "Trust B", "endpoint": "https://trust-b.example.com"},
+        {"name": "Trust A"},
+        {"name": "Trust B"},
     ]
 
 
-@patch("flip_api.db.seed.trusts.get_secret")
 @patch("flip_api.db.seed.trusts.get_settings")
-def test_seed_trusts_production_uses_secret_and_updates_existing(
-    mock_get_settings,
-    mock_get_secret,
-    mock_session,
-):
-    """Test production mode loads endpoints from secrets and updates existing trust."""
-    mock_get_settings.return_value = SimpleNamespace(ENV="production", TRUST_ENDPOINTS={"unused": "unused"})
-    mock_get_secret.return_value = {"Trust Existing": "https://new-endpoint.example.com"}
+def test_seed_trusts_skips_existing(mock_get_settings, mock_session):
+    """Test that seeding does not duplicate existing trusts."""
+    mock_get_settings.return_value = SimpleNamespace(ENV="development", TRUST_NAMES=["Trust Existing"])
 
     existing_trust = MagicMock(spec=Trust)
     existing_trust.name = "Trust Existing"
-    existing_trust.endpoint = "https://old-endpoint.example.com"
 
     mock_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=existing_trust)),
@@ -87,18 +75,16 @@ def test_seed_trusts_production_uses_secret_and_updates_existing(
 
     result = seed_trusts(mock_session)
 
-    mock_get_secret.assert_called_once_with("trust_endpoints")
     mock_session.add.assert_not_called()
-    assert existing_trust.endpoint == "https://new-endpoint.example.com"
     assert mock_session.commit.call_count == 1
-    assert result == [{"name": "Trust Existing", "endpoint": "https://new-endpoint.example.com"}]
+    assert result == [{"name": "Trust Existing"}]
 
 
 @patch("flip_api.db.seed.trusts.get_settings")
 def test_seed_trusts_raises_on_lookup_exception(mock_get_settings, mock_session):
     """Test that trust lookup errors are raised and stop seeding."""
     mock_get_settings.return_value = SimpleNamespace(
-        ENV="development", TRUST_ENDPOINTS={"Broken Trust": "https://broken.example.com"}
+        ENV="development", TRUST_NAMES=["Broken Trust"]
     )
 
     mock_session.exec.side_effect = Exception("lookup failed")

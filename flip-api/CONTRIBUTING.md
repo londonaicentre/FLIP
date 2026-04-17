@@ -22,11 +22,11 @@ For general contribution guidelines (coding style, testing, pull requests), see 
 
 ```bash
 uv sync
-make dev
+make up
 ```
 
-This starts the API with live-reload enabled. The service expects the PostgreSQL database to be running (start it
-first with `make central-hub` or `docker compose up flip-db -d`).
+This starts the API (and the PostgreSQL database) via Docker Compose. To start only the database first, use
+`make central-hub` from the repo root or `docker compose -f deploy/compose.development.yml up flip-db -d`.
 
 ### Running tests
 

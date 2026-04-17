@@ -10,25 +10,45 @@
 # limitations under the License.
 #
 
+import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from log_config import LoggingMiddleware
 
-# Ensure structured logging is configured on import
-import trust_api.utils.logger  # noqa: F401
-from trust_api.routers.cohort import router as cohort_router
 from trust_api.routers.health import router as health_router
-from trust_api.routers.imaging import router as imaging_router
+from trust_api.services.task_poller import run_poller
+from trust_api.utils.logger import logger
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Start the task poller background service."""
+    poller_task = asyncio.create_task(run_poller())
+    logger.info("Trust API started with task poller")
+    yield
+    poller_task.cancel()
+    try:
+        await poller_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("Trust API shutting down")
+
 
 app = FastAPI(
     title="Trust API",
-    description="The entrypoint for the trust, that calls the other trust services.",
-    version="0.1.0",
-    docs_url="/docs",  # Swagger UI
-    redoc_url="/redoc",  # ReDoc UI
+    description="The entrypoint for the trust. Polls the central hub for tasks and processes them locally.",
+    version="0.2.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(LoggingMiddleware)
 
-app.include_router(cohort_router)
+# Health endpoint kept for local monitoring (e.g., Docker healthcheck, load balancer)
 app.include_router(health_router)
-app.include_router(imaging_router)
+
+# NOTE: Cohort and imaging routers removed — these are now handled via task polling.
+# The trust polls the hub for tasks and processes them using local services.

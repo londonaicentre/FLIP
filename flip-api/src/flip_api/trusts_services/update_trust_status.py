@@ -18,7 +18,7 @@ from sqlmodel import Session, select
 from flip_api.auth.access_manager import can_access_model
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import ModelTrustIntersect, Trust, TrustIntersectStatus
+from flip_api.db.models.main_models import ModelTrustIntersect, TrustIntersectStatus
 from flip_api.domain.schemas.trusts import UpdateTrustStatusSchema
 from flip_api.utils.constants import SERVICE_UNAVAILABLE_MESSAGE
 from flip_api.utils.logger import logger
@@ -108,9 +108,8 @@ def update_trust_status(
                 )
         else:
             pass
-            # TODO implement check_authorization_token
-            # Check authorization token
-            # if not check_authorization_token(request.headers):
+            # TODO implement authenticate_trust
+            # if not authenticate_trust(request.headers):
             #     raise HTTPException(
             #         status_code=403,
             #         detail="No userId passed, Authorization token is invalid."
@@ -132,18 +131,7 @@ def update_trust_status(
                 logger.error(error_msg)
                 raise HTTPException(status_code=400, detail=error_msg)
 
-            # Get trust endpoint
-            statement = select(Trust.endpoint).where(Trust.id == trust_id)
-            result = db.execute(statement).scalars().first()
-
-            if not result:
-                error_msg = f"Endpoint does not exist for trust: {trust_id}"
-                logger.error(error_msg)
-                raise HTTPException(status_code=404, detail=error_msg)
-
-            # Transform endpoint
-            trust_endpoint = result.endpoint.split(":32472/flip")
-            fl_client_endpoint = f"{trust_endpoint[0].replace('http://', '')}:{data.fl_client_endpoint}"
+            fl_client_endpoint = data.fl_client_endpoint
 
         # Update the ModelTrustIntersect table
         intersect = db.exec(

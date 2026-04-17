@@ -58,50 +58,34 @@ module "ec2_security_group" {
   description = "Security group for FLIP Central Hub EC2 instance"
   ingress_rules = [
     {
-      port        = var.UI_PORT
-      description = "FLIP UI"
+      port                     = var.UI_PORT
+      description              = "FLIP UI from ALB"
+      source_security_group_id = module.alb_security_group.security_group.id
     },
     {
-      port        = var.API_PORT
-      description = "FLIP API"
+      port                     = var.API_PORT
+      description              = "FLIP API from ALB"
+      source_security_group_id = module.alb_security_group.security_group.id
     },
     {
-      port        = var.FL_API_PORT
-      description = "FLIP FL API"
-    },
-    {
-      port        = 22
-      description = "SSH access"
+      port                     = var.FL_API_PORT
+      description              = "FLIP FL API from ALB"
+      source_security_group_id = module.alb_security_group.security_group.id
     }
   ]
 }
 
 # Trust Security Group for Trust EC2 instance
+# NOTE: Trust API port removed — trusts now poll the hub outbound (no inbound connections needed).
+# XNAT and PACS UI ports kept for direct researcher access to imaging tools.
 
 module "trust_security_group" {
   source      = "./modules/secgroup"
   name        = "trust-security-group"
   vpc_id      = module.flip_vpc.vpc_id
-  description = "Security group for FLIP Trust EC2 instance"
+  description = "Security group for FLIP Trust EC2 instance (no inbound - access via SSM Session Manager and SSM port forwarding)"
 
-  ingress_rules = [
-    {
-      port        = var.TRUST_API_PORT
-      description = "Trust API"
-    },
-    {
-      port        = var.XNAT_PORT
-      description = "XNAT access"
-    },
-    {
-      port        = var.PACS_UI_PORT
-      description = "Orthanc PACS UI access"
-    },
-    {
-      port        = 22
-      description = "SSH access"
-    }
-  ]
+  ingress_rules = []
 }
 
 # Only allow FL server traffic that arrives through the NLB, not direct client or VPC access.
@@ -146,7 +130,7 @@ module "flip_db" {
   version                    = "~> 6.0"
   identifier                 = "flip-database"
   engine                     = "postgres"
-  engine_version             = "13.22"
+  engine_version             = var.postgres_version
   auto_minor_version_upgrade = false
   instance_class             = "db.t3.micro"
   allocated_storage          = 20
@@ -156,7 +140,7 @@ module "flip_db" {
   vpc_security_group_ids     = [module.rds_security_group.security_group.id]
   backup_retention_period    = 7
   skip_final_snapshot        = true
-  family                     = "postgres13"
+  family                     = "postgres${split(".", var.postgres_version)[0]}"
 }
 
 ############################
@@ -174,16 +158,11 @@ module "flip_api_secret" {
   recovery_window_in_days = 30
 
   secret_string = jsonencode({
-    aes_key = var.AES_KEY_BASE64
-    trust_endpoints = {
-      "Trust_1" = "https://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}",
-      "Trust_2" = "https://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
-    }
-    trust_ca_cert = try(file("${path.module}/trust-ca.crt"), "")
+    aes_key                   = var.AES_KEY_BASE64
+    trust_api_key_hashes      = var.TRUST_API_KEY_HASHES
+    internal_service_key_hash = var.INTERNAL_SERVICE_KEY_HASH
 
-    # Added for ECS: referenced by task definitions via valueFrom with JSON key syntax.
-    # db_password is the FLIP central-hub RDS master password.
-    # github_pat is a PAT with read:packages scope for GHCR image pulls.
+    # Referenced by ECS task definitions via valueFrom with JSON key syntax.
     db_password = var.db_password
     github_pat  = var.github_pat
   })
@@ -206,7 +185,6 @@ module "ec2_role" {
     "arn:aws:iam::aws:policy/AmazonCognitoPowerUser", # TODO Restrict this policy to only what we need in production
     "arn:aws:iam::aws:policy/AmazonS3FullAccess",     # TODO Restrict this policy to only what we need in production
     "arn:aws:iam::aws:policy/AmazonSESFullAccess",    # TODO Restrict this policy to only what we need in production
-    "arn:aws:iam::aws:policy/SecretsManagerReadWrite" # TODO could create a read-only policy instead
   ]
   role_requires_mfa = "false"
 }
@@ -234,16 +212,10 @@ resource "aws_iam_role_policy" "ec2_secret" {
   })
 }
 
-# CloudWatch Log Group
-resource "aws_cloudwatch_log_group" "flip_log_group" {
-  name              = "/aws/ec2/flip"
-  retention_in_days = 7
-}
-
 # Key Pair for SSH access
 resource "aws_key_pair" "flip_keypair" {
   key_name   = "flip-keypair"
-  public_key = file("${var.flip_keypair}.pub")
+  public_key = file(pathexpand("${var.flip_keypair}.pub"))
 }
 
 # EC2 Instance
@@ -255,8 +227,8 @@ resource "aws_instance" "ec2_instance" {
   tags = {
     Name = "Ec2Instance"
   }
-  subnet_id                   = module.flip_vpc.public_subnets[0]
-  associate_public_ip_address = true
+  subnet_id                   = module.flip_vpc.private_subnets[0]
+  associate_public_ip_address = false
   instance_type               = "t3.medium"
   ami                         = data.aws_ssm_parameter.ubuntu.value
   vpc_security_group_ids      = [module.ec2_security_group.security_group.id]
@@ -267,30 +239,6 @@ resource "aws_instance" "ec2_instance" {
     volume_type           = "gp3"
     delete_on_termination = true
   }
-}
-
-# Elastic IP for Central Hub EC2 instance
-# Provides a static IP address that persists across instance restarts and redeployments
-resource "aws_eip" "central_hub_eip" {
-  count = var.create_central_hub_elastic_ip ? 1 : 0
-  # Allocate EIP only if enabled
-  domain = "vpc"
-
-  tags = {
-    Name = "central-hub-eip"
-  }
-
-  # Prevent accidental destruction - this EIP is precious infrastructure
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
-resource "aws_eip_association" "central_hub_eip_assoc" {
-  count         = var.create_central_hub_elastic_ip ? 1 : 0
-  instance_id   = aws_instance.ec2_instance.id
-  allocation_id = aws_eip.central_hub_eip[0].id
-  depends_on    = [aws_instance.ec2_instance]
 }
 
 # Application Load Balancer
@@ -406,7 +354,7 @@ module "fl_server_nlb" {
       ip_protocol = "tcp"
       from_port   = tostring(var.FL_SERVER_PORT)
       to_port     = tostring(var.FL_SERVER_PORT)
-      cidr_ipv4   = "${module.trust_ec2.public_ip}/32"
+      cidr_ipv4   = "${module.flip_vpc.nat_public_ips[0]}/32"
     }
   }
 
@@ -556,28 +504,6 @@ resource "aws_security_group_rule" "rds_ingress_from_ecs" {
 # TF_VAR_local_trust_public_ip when running `make add-local-trust`.
 ############################
 
-resource "aws_security_group_rule" "local_trust_fl_server" {
-  count             = var.local_trust_public_ip != "" ? 1 : 0
-  type              = "ingress"
-  from_port         = 8002
-  to_port           = 8002
-  protocol          = "tcp"
-  cidr_blocks       = ["${var.local_trust_public_ip}/32"]
-  security_group_id = module.ec2_security_group.security_group.id
-  description       = "FL Server from on-prem Trust"
-}
-
-resource "aws_security_group_rule" "local_trust_fl_admin" {
-  count             = var.local_trust_public_ip != "" ? 1 : 0
-  type              = "ingress"
-  from_port         = 8003
-  to_port           = 8003
-  protocol          = "tcp"
-  cidr_blocks       = ["${var.local_trust_public_ip}/32"]
-  security_group_id = module.ec2_security_group.security_group.id
-  description       = "FL Admin from on-prem Trust"
-}
-
 # Allow the local (on-prem) trust FL client to reach the FL server via the NLB.
 # Without this rule the NLB security group drops the connection before it reaches the EC2.
 resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
@@ -601,19 +527,19 @@ output "Ec2InstanceId" {
   value       = aws_instance.ec2_instance.id
 }
 
-output "Ec2PublicIp" {
-  description = "EC2 Instance Public IP"
-  value       = aws_instance.ec2_instance.public_ip
+output "Ec2PrivateIp" {
+  description = "Central Hub EC2 Private IP (private subnet)"
+  value       = aws_instance.ec2_instance.private_ip
 }
 
-output "Ec2ElasticIp" {
-  description = "EC2 Instance Elastic IP (static IP address, allocated when create_central_hub_elastic_ip is true)"
-  value       = try(aws_eip.central_hub_eip[0].public_ip, null)
+output "SsmCommand" {
+  description = "SSM Session Manager command to connect to the Central Hub"
+  value       = "aws ssm start-session --target ${aws_instance.ec2_instance.id}"
 }
 
-output "SshCommand" {
-  description = "SSH command to connect to the instance"
-  value       = "ssh -i ${var.flip_keypair} ubuntu@${aws_instance.ec2_instance.public_ip}"
+output "NatGatewayPublicIp" {
+  description = "NAT Gateway public IP (Central Hub outbound traffic source)"
+  value       = module.flip_vpc.nat_public_ips[0]
 }
 
 output "TrustEc2InstanceId" {
@@ -621,19 +547,9 @@ output "TrustEc2InstanceId" {
   value       = module.trust_ec2.instance_id
 }
 
-output "TrustEc2PublicIp" {
-  description = "Trust EC2 Instance Public IP"
-  value       = module.trust_ec2.public_ip
-}
-
-output "TrustEc2ElasticIp" {
-  description = "Trust EC2 Instance Elastic IP (static IP address, always allocated)"
-  value       = module.trust_ec2.elastic_ip
-}
-
-output "TrustSshCommand" {
-  description = "SSH command to connect to the Trust EC2 instance"
-  value       = "ssh -i ${var.flip_keypair} ubuntu@${module.trust_ec2.public_ip}"
+output "TrustSsmCommand" {
+  description = "SSM Session Manager command to connect to the Trust EC2"
+  value       = "aws ssm start-session --target ${module.trust_ec2.instance_id}"
 }
 
 output "DbEndpoint" {
@@ -723,6 +639,13 @@ resource "aws_ses_template" "flip_xnat_credentials" {
   text    = file("${path.module}/templates/ses/flip-xnat-credentials.txt")
 }
 
+resource "aws_ses_template" "flip_xnat_added_to_project" {
+  name    = "flip-xnat-added-to-project"
+  subject = "You have been added to a project at {{trust_name}}"
+  html    = file("${path.module}/templates/ses/flip-xnat-added-to-project.html")
+  text    = file("${path.module}/templates/ses/flip-xnat-added-to-project.txt")
+}
+
 
 ###################
 # Trust
@@ -733,17 +656,11 @@ module "trust_ec2" {
   name_prefix   = "trust"
   instance_type = "t3.xlarge"
   key_name      = aws_key_pair.host_key.key_name
-  subnet_id     = element(module.flip_vpc.public_subnets, 0)
+  subnet_id     = element(module.flip_vpc.private_subnets, 0)
 
   # use the trust SG, not the central EC2 SG
   security_group_ids = [module.trust_security_group.security_group.id]
 
-  TRUST_API_PORT = var.TRUST_API_PORT
-  XNAT_PORT      = var.XNAT_PORT
-  PACS_UI_PORT   = var.PACS_UI_PORT
-
-  # pass the compose file content and env file content from the repo
-  create_elastic_ip = true
   # attaches the same ec2-role-profile instance profile to the Trust instance
   iam_instance_profile_name = aws_iam_instance_profile.ec2_profile.name
 }

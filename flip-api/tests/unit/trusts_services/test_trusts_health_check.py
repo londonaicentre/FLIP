@@ -10,18 +10,16 @@
 # limitations under the License.
 #
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
 from uuid import uuid4
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
-from flip_api.domain.interfaces.trust import ITrustHealth
 from flip_api.main import app
-from flip_api.trusts_services.trusts_health_check import check_trust_health
 
 client = TestClient(app)
 
@@ -29,35 +27,42 @@ client = TestClient(app)
 
 
 @pytest.fixture
-def mock_trusts_data():
+def mock_trusts_online():
+    """Trusts with recent heartbeats (should be online)."""
+    now = datetime.now(timezone.utc)
     return [
-        Trust(id=uuid4(), name="Trust A", endpoint="http://trust-a.com"),
-        Trust(id=uuid4(), name="Trust B", endpoint="http://trust-b.com"),
+        Trust(id=uuid4(), name="Trust A", last_heartbeat=now - timedelta(seconds=5)),
+        Trust(id=uuid4(), name="Trust B", last_heartbeat=now - timedelta(seconds=10)),
     ]
 
 
 @pytest.fixture
-def mock_trust():
-    return Trust(id=uuid4(), name="Trust A", endpoint="http://trust-a.com")
+def mock_trusts_stale():
+    """Trusts with stale heartbeats (should be offline)."""
+    old_time = datetime.now(timezone.utc) - timedelta(minutes=5)
+    return [
+        Trust(id=uuid4(), name="Trust A", last_heartbeat=old_time),
+        Trust(id=uuid4(), name="Trust B", last_heartbeat=old_time),
+    ]
 
 
 @pytest.fixture
-def mock_headers():
-    return {"Authorization": "Bearer test token"}
+def mock_trusts_no_heartbeat():
+    """Trusts that have never sent a heartbeat."""
+    return [
+        Trust(id=uuid4(), name="Trust A", last_heartbeat=None),
+        Trust(id=uuid4(), name="Trust B", last_heartbeat=None),
+    ]
 
 
-# ---- Testing the endpoint ----
+# ---- Tests ----
 
 
 @pytest.mark.asyncio
-@patch("httpx.AsyncClient.get", new_callable=AsyncMock)
-async def test_check_trusts_health_success(mock_http_get, mock_trusts_data):
-    # Return a 200 response for all health checks
-    mock_http_get.return_value.status_code = 200
-
-    # Mock the db session
+async def test_check_trusts_health_online(mock_trusts_online):
+    """Trusts with recent heartbeats should be reported as online."""
     mock_db = MagicMock()
-    mock_db.exec.return_value.all.return_value = mock_trusts_data
+    mock_db.exec.return_value.all.return_value = mock_trusts_online
 
     app.dependency_overrides[get_session] = lambda: mock_db
 
@@ -71,117 +76,102 @@ async def test_check_trusts_health_success(mock_http_get, mock_trusts_data):
     del app.dependency_overrides[get_session]
 
 
-# Test for error handling when no trusts are found in the database
 @pytest.mark.asyncio
-async def test_check_trusts_health_no_trusts_found():
-    # Mock the db session to return an empty list
+async def test_check_trusts_health_stale_heartbeat(mock_trusts_stale):
+    """Trusts with stale heartbeats should be reported as offline."""
     mock_db = MagicMock()
-    mock_db.exec.return_value.all.return_value = []
+    mock_db.exec.return_value.all.return_value = mock_trusts_stale
 
-    # Mock the get_session dependency to return the mocked db session
     app.dependency_overrides[get_session] = lambda: mock_db
 
-    # Make the test request to the endpoint
     response = client.get("/api/trust/health")
 
-    # Assert that the response status code is 404
-    assert response.status_code == 404
-    # Assert the correct error message in the response
-    assert response.json() == {"detail": "No trusts found"}
-
-    # Clean up the dependency overrides
-    del app.dependency_overrides[get_session]
-
-
-# Test for error handling when the health endpoint request fails
-@pytest.mark.asyncio
-async def test_check_trusts_health_http_error(mock_trusts_data):
-    # Mock the db session and return some mock trusts
-    mock_db = MagicMock()
-    mock_db.exec.return_value.all.return_value = mock_trusts_data
-
-    # Mock the get_session dependency to return the mocked db session
-    app.dependency_overrides[get_session] = lambda: mock_db
-
-    # Mock httpx.AsyncClient to simulate a failed health check request
-    mock_httpx = AsyncMock()
-    mock_httpx.get.side_effect = httpx.RequestError("Health check failed", request=None)
-    app.dependency_overrides[httpx.AsyncClient] = lambda: mock_httpx
-
-    # Make the test request to the endpoint
-    response = client.get("/api/trust/health")
-
-    # Assert that the response status code is 200
     assert response.status_code == 200
-    # Assert that the response contains the TrustHealth object with online = False
     assert len(response.json()) == 2
     assert response.json()[0]["online"] is False
     assert response.json()[1]["online"] is False
 
-    # Clean up the dependency overrides
     del app.dependency_overrides[get_session]
-    del app.dependency_overrides[httpx.AsyncClient]
 
 
-# Test for error handling when an exception is raised in the overall process
+@pytest.mark.asyncio
+async def test_check_trusts_health_no_heartbeat(mock_trusts_no_heartbeat):
+    """Trusts that have never sent a heartbeat should be reported as offline."""
+    mock_db = MagicMock()
+    mock_db.exec.return_value.all.return_value = mock_trusts_no_heartbeat
+
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.get("/api/trust/health")
+
+    assert response.status_code == 200
+    assert len(response.json()) == 2
+    assert response.json()[0]["online"] is False
+    assert response.json()[1]["online"] is False
+
+    del app.dependency_overrides[get_session]
+
+
+@pytest.mark.asyncio
+async def test_check_trusts_health_mixed():
+    """Mix of online and offline trusts."""
+    now = datetime.now(timezone.utc)
+    trusts = [
+        Trust(
+            id=uuid4(), name="Online Trust",
+            last_heartbeat=now - timedelta(seconds=5),
+        ),
+        Trust(
+            id=uuid4(), name="Offline Trust",
+            last_heartbeat=now - timedelta(minutes=5),
+        ),
+        Trust(id=uuid4(), name="Never Seen", last_heartbeat=None),
+    ]
+
+    mock_db = MagicMock()
+    mock_db.exec.return_value.all.return_value = trusts
+
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.get("/api/trust/health")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 3
+    assert data[0]["online"] is True
+    assert data[1]["online"] is False
+    assert data[2]["online"] is False
+
+    del app.dependency_overrides[get_session]
+
+
+@pytest.mark.asyncio
+async def test_check_trusts_health_no_trusts_found():
+    """No trusts in the database should return 404."""
+    mock_db = MagicMock()
+    mock_db.exec.return_value.all.return_value = []
+
+    app.dependency_overrides[get_session] = lambda: mock_db
+
+    response = client.get("/api/trust/health")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "No trusts found"}
+
+    del app.dependency_overrides[get_session]
+
+
 @pytest.mark.asyncio
 async def test_check_trusts_health_internal_server_error():
-    # Mock the db session to simulate an exception being thrown
+    """Database error should return 500."""
     mock_db = MagicMock()
     mock_db.exec.side_effect = Exception("Database error")
 
-    # Mock the get_session dependency to return the mocked db session
     app.dependency_overrides[get_session] = lambda: mock_db
 
-    # Make the test request to the endpoint
     response = client.get("/api/trust/health")
 
-    # Assert that the response status code is 500
     assert response.status_code == 500
-    # Assert the error message in the response
-    assert response.json() == {"detail": "Internal server error: Database error"}
+    assert response.json() == {"detail": "Internal server error"}
 
-    # Clean up the dependency overrides
     del app.dependency_overrides[get_session]
-
-
-# --- Testing the function check_trust_health ----
-
-
-@pytest.mark.asyncio
-async def test_check_trust_health_success(mock_trust, mock_headers):
-    mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.get.return_value.status_code = 200
-
-    response = await check_trust_health(client=mock_client, trust=mock_trust, headers=mock_headers)
-
-    assert isinstance(response, ITrustHealth)
-    assert response.trust_id == mock_trust.id
-    assert response.trust_name == mock_trust.name
-    assert response.online is True
-
-
-@pytest.mark.asyncio
-async def test_check_trust_health_unhealthy_status_code(mock_trust, mock_headers):
-    mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.get.return_value.status_code = 503  # Simulate unhealthy
-
-    response = await check_trust_health(client=mock_client, trust=mock_trust, headers=mock_headers)
-
-    assert isinstance(response, ITrustHealth)
-    assert response.trust_id == mock_trust.id
-    assert response.trust_name == mock_trust.name
-    assert response.online is False
-
-
-@pytest.mark.asyncio
-async def test_check_trust_health_exception(mock_trust, mock_headers):
-    mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.get.side_effect = httpx.RequestError("Connection failed", request=None)
-
-    response = await check_trust_health(client=mock_client, trust=mock_trust, headers=mock_headers)
-
-    assert isinstance(response, ITrustHealth)
-    assert response.trust_id == mock_trust.id
-    assert response.trust_name == mock_trust.name
-    assert response.online is False

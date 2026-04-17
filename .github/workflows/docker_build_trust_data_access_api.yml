@@ -21,10 +21,13 @@ on:
       - "trust/observability/log_config/**"
       - ".github/workflows/docker_build_trust_data_access_api.yml"
 
+permissions:
+  contents: read
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
-    permissions:
+    permissions: # override top-level read-only default to allow GHCR push
       contents: read
       packages: write
     defaults:

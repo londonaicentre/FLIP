@@ -8,7 +8,7 @@ This page provides a quick-reference guide to both interactions with the XNAT UI
 
 `XNAT <https://www.xnat.org/>`_ is an open-source imaging informatics software platform dedicated to imaging-based research. XNAT's core functions manage importing, archiving, processing and securely distributing imaging and related study data. Detailed documentation on how to use XNAT is `provided on their wiki <https://wiki.xnat.org/documentation/how-to-use-xnat>`_.
 
-Upon FLIP project approval, respective XNAT projects are generated at each trust and relevant imaging data is imported from trust PACS systems. Model developers are granted access to the XNAT project at each trust in order to perform any data preparation and enrichment activities which may be necessary for the running & training of AI models.
+Upon FLIP project approval, XNAT project creation tasks are queued for each trust. Trusts poll for these tasks and create the XNAT projects locally. Relevant imaging data is then imported from trust PACS systems. Model developers are granted access to the XNAT project at each trust in order to perform any data preparation and enrichment activities which may be necessary for the running & training of AI models.
 
 *******
 XNAT UI

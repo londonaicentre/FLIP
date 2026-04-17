@@ -13,65 +13,83 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
 
-from flip_api.auth.access_manager import check_authorization_token
+from flip_api.auth.access_manager import authenticate_internal_service
 from flip_api.db.database import get_session
 from flip_api.domain.schemas.status import ModelStatus
-from flip_api.model_services.update_model_status import update_model_status_endpoint
+from flip_api.model_services.services.model_service import add_log, update_model_status
 from flip_api.utils.logger import logger
 
 router = APIRouter(tags=["private_services"])
 
 
-# [#114] ✅
 @router.put(
     "/model/{model_id}/status/{model_status}",
-    summary="Invoke model status update process",
+    summary="Update model status (internal service only)",
     response_model=dict[str, str],
 )
 def invoke_model_status_update_endpoint(
     model_id: UUID,
     model_status: ModelStatus = Path(..., title="New model status"),
     db: Session = Depends(get_session),
-    token: str = Depends(check_authorization_token),  # Enforces authorization
+    _: None = Depends(authenticate_internal_service),
 ) -> dict[str, str]:
     """
-    Invokes the internal process for updating a model's status.
-    This endpoint acts as a passthrough to the underlying model status update service.
+    Update a model's status. Restricted to internal FL services via internal service key authentication.
+
+    This endpoint is internal-only: it accepts requests from the fl-server on the
+    Central Hub (authenticated via INTERNAL_SERVICE_KEY_HEADER).
 
     Args:
         model_id (UUID): The ID of the model whose status is to be updated.
         model_status (ModelStatus): The new status to set for the model.
         db (Session): The database session, provided by dependency injection.
-        token (str): The authorization token, validated by the dependency.
 
     Returns:
         dict[str, str]: A dictionary containing the result of the status update operation.
 
     Raises:
-        HTTPException: If there is an error during the status update process.
+        HTTPException: If the model does not exist or there is a database/server error.
     """
-    del token  # Token is validated by the dependency
-    endpoint_path = f"/model/{model_id}/status/{model_status.value}"
-    logger.debug(f"Attempting to call the model status update service for model_id: {model_id} via {endpoint_path}")
+    logger.info(f"Received internal request to update model {model_id} to status '{model_status}'")
 
     try:
-        # The original TypeScript passes the entire 'event' and an empty 'context'.
-        # Here, we pass specific parts (model_id, model_status) and the db session.
-        # The 'token' is implicitly validated by the dependency.
-        response_data = update_model_status_endpoint(model_id=model_id, model_status=model_status, db=db, user_id=None)
+        updated = update_model_status(model_id, model_status, db)
 
-        logger.info(f"Model status update service called and executed successfully for model_id: {model_id}")
-        return response_data
+        if updated is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Model ID: {model_id} does not exist")
 
-    except HTTPException as http_exc:
-        # If perform_model_status_update raises an HTTPException, re-raise it
-        logger.warning(f"HTTPException from service for model {model_id} in {endpoint_path}: {http_exc.detail}")
-        raise http_exc
+        log_message = {
+            ModelStatus.ERROR: "There has been an error whilst running training for this model.",
+            ModelStatus.STOPPED: "Training has been stopped for this model.",
+            ModelStatus.INITIATED: "This model has been selected from the queue and will be prepared for training.",
+            ModelStatus.PREPARED: "This model has been prepared and will begin training.",
+            ModelStatus.TRAINING_STARTED: "Training has started for this model.",
+            ModelStatus.RESULTS_UPLOADED: "The results of this model have been uploaded and can now be downloaded.",
+        }.get(model_status)
+
+        if log_message:
+            add_log(
+                model_id,
+                log_message,
+                db,
+                success=model_status not in [ModelStatus.ERROR, ModelStatus.STOPPED],
+            )
+
+        logger.info(f"Status of model {model_id} updated successfully to {model_status}")
+        return {"success": "status set"}
+
+    except SQLAlchemyError:
+        error_message = "Database error while updating model status."
+        logger.error(error_message)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
+
+    except HTTPException:
+        raise
+
     except Exception as e:
-        logger.error(f"Unhandled error in {endpoint_path}: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An internal server error occurred while invoking model status update.",
-        )
+        error_message = f"Unexpected error while updating model status: {str(e)}"
+        logger.error(error_message, exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_message)
