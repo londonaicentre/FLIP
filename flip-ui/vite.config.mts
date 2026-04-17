@@ -24,7 +24,15 @@ export default defineConfig(({ mode }) => {
                 ["process.env." + key]: `"${val}"`
             };
         },
-        {}
+        {
+            "process.env": "{}",
+            "process.env.NODE_ENV": `"${mode}"`,
+            "process.env.VITE_LOCAL": `"${env.VITE_LOCAL ?? "false"}"`,
+            "process.env.VITE_AWS_REGION": `"${env.VITE_AWS_REGION ?? ""}"`,
+            "process.env.VITE_AWS_USER_POOL_ID": `"${env.VITE_AWS_USER_POOL_ID ?? ""}"`,
+            "process.env.VITE_AWS_CLIENT_ID": `"${env.VITE_AWS_CLIENT_ID ?? ""}"`,
+            "process.env.VITE_AWS_CLIENT_SECRET": `"${env.VITE_AWS_CLIENT_SECRET ?? ""}"`
+        }
     );
 
     return {

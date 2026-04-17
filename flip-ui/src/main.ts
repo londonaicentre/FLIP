@@ -26,15 +26,17 @@ import SmartTable from "vuejs-smart-table";
 import { makeServer } from "../mocks/server";
 import App from "./App.vue";
 import router from "./router";
-import { authConfig } from "./utils/auth";
+import { authConfig, isLocalMode } from "./utils/auth";
 
 const app = createApp(App);
 const pinia = createPinia();
 app.use(pinia);
 
-Amplify.configure(authConfig as Parameters<typeof Amplify.configure>[0]);
+if (!isLocalMode) {
+    Amplify.configure(authConfig as Parameters<typeof Amplify.configure>[0]);
+}
 
-if (process.env.VITE_LOCAL === "true") {
+if (isLocalMode) {
     console.info("Running locally, will use mocked API.");
     makeServer();
 }

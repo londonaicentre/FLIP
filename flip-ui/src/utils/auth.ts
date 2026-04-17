@@ -36,6 +36,9 @@ const unguardedRoutes: string[] = [
     "/terms-of-service"
 ];
 
+const hasCognitoConfig = Boolean(process.env.VITE_AWS_USER_POOL_ID) && Boolean(process.env.VITE_AWS_CLIENT_ID);
+export const isLocalMode = process.env.VITE_LOCAL === "true" || !hasCognitoConfig;
+
 /**
  * Checks auth status for the requested route.
  * Bypasses check for any routes that are included in the unguarded routes list.
@@ -60,7 +63,7 @@ export const authCheck = async (
             return next();
         }
 
-        if (process.env.VITE_LOCAL === "true") {
+        if (isLocalMode) {
             return next();
         }
 
