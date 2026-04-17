@@ -22,6 +22,11 @@ import RegisterUserModal from "@/partials/users/RegisterUserModal.vue";
 describe("Register User Modal", () => {
     it("renders the component successfully", () => {
         const component = mount(RegisterUserModal, {
+            props: {
+                dialog: true,
+                title: "Register User",
+                roles: []
+            },
             global: {
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,

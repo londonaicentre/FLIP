@@ -11,7 +11,7 @@
  * limitations under the License.
  */
 
-import { getRandomId } from "@/utils/helpers";
+import { getInitials, getRandomId } from "@/utils/helpers";
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -31,5 +31,15 @@ describe("getRandomId", () => {
         const spy = vi.spyOn(crypto, "randomUUID").mockReturnValueOnce(mockUUID);
         expect(getRandomId()).toBe(mockUUID);
         spy.mockRestore();
+    });
+});
+
+describe("getInitials", () => {
+    it("returns initials for ascii names", () => {
+        expect(getInitials("John Smith")).toBe("JS");
+    });
+
+    it("supports unicode letters", () => {
+        expect(getInitials("Elodie Durand")).toBe("ED");
     });
 });

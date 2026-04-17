@@ -65,7 +65,7 @@
                                                 default-text="Please select a role"
                                                 :error-message="errors?.selectedRoles ?? ''"
                                                 :options="mapRoleOptions()"
-                                                :selected-options="fields"
+                                                :selected-options="fields as any"
                                                 @push="push"
                                                 @remove="remove"
                                                 @validate="validateField('selectedRoles')"
@@ -101,10 +101,12 @@
 </template>
 
 <script setup lang="ts">
-import { Dialog,
+import {
+    Dialog,
     DialogTitle,
     TransitionChild,
-    TransitionRoot } from "@headlessui/vue";
+    TransitionRoot
+} from "@headlessui/vue";
 import { useField, useFieldArray, useForm } from "vee-validate";
 import { ref, watch } from "vue";
 import { array, object, string } from "yup";
@@ -125,7 +127,7 @@ interface IRegisterUserModalProps {
 
 interface RegisterUserForm {
     email: string;
-    selectedRoles: IOption[];
+    selectedRoles: string[];
 }
 
 const props = withDefaults(
@@ -147,17 +149,17 @@ const schema = object().shape({
 });
 
 const errorStore = useErrorStore();
-const currentlySelected = ref<IOption>();
+const currentlySelected = ref();
 const isSubmitting = ref(false);
 
 const { errors, resetForm, validate, validateField } = useForm<RegisterUserForm>({ validationSchema: schema });
-const { push, remove, fields } = useFieldArray<IOption>("selectedRoles");
+const { push, remove, fields } = useFieldArray("selectedRoles");
 const email = useField("email");
 useField("selectedRoles");
 
 watch(currentlySelected, async (current) => {
     if (current) {
-        if (!fields.value.some((field) => (field.value as IOption).id === current.id)) {
+        if (!fields.value.some((field) => (field.value as IRole).id === current.id)) {
             push(current);
         }
         await validateField("selectedRoles");
@@ -178,7 +180,7 @@ const submitAction = async () => {
     if (valid) {
         const user: IRegisterUserDto = {
             email: email.value.value as string,
-            roles: fields.value.map(item => (item.value as IOption).id)
+            roles: fields.value.map(item => (item.value as IRole).id)
         };
 
         try {

@@ -291,7 +291,7 @@ import { canAccessRoute } from "@/utils/route-validator";
 import { Snackbar } from "@/utils/snackbar";
 
 interface IManagedUser extends IUser {
-    dirty: boolean
+    dirty?: boolean
 }
 
 const authStore = useAuthStore();
@@ -436,10 +436,7 @@ const refreshUsers = async () => {
     const newSelectedUser =
         userData.value?.data.find((user) => user.id === previous.id);
     if (newSelectedUser) {
-        setSelectedUser({
-            ...newSelectedUser,
-            dirty: previous.dirty
-        });
+        setSelectedUser(newSelectedUser);
     }
 };
 </script>

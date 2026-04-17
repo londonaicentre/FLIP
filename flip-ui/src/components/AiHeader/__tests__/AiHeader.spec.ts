@@ -13,8 +13,8 @@
 
 
 
-import { mount } from "@vue/test-utils";
 import { createTestingPinia } from "@pinia/testing";
+import { mount } from "@vue/test-utils";
 import { vi } from "vitest";
 
 import AiHeader from "../AiHeader.vue";
