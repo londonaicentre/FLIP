@@ -20,13 +20,13 @@ from pathlib import Path
 from typing import Dict, Type
 
 import torch
-from app.models import get_model_for_path
 from flip import FLIP
 from flip.constants.flip_constants import ModelStatus
 from flwr.app import ArrayRecord, Context
 from flwr.common import log
 from flwr.serverapp import Grid, ServerApp
 
+from app.models import get_model_for_path
 from app.strategy import EvaluationStrategy
 
 
@@ -127,7 +127,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # Expected config structure:
     #   "models": {
     #     "<model_name>": {
-    #       "checkpoint": "<filename.pt>",   # relative to MODEL_CHECKPOINTS
+    #       "checkpoint": "<filename.pt>",   # relative to MODEL_CHECKPOINTS_DIR
     #       "path": "<architecture_key>"     # key in models.model_paths
     #     },
     #     ...
@@ -139,19 +139,11 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         log(ERROR, msg)
         raise ValueError(msg)
 
-    local_dev = os.getenv("LOCAL_DEV", "false").lower() == "true"
-    if local_dev:
-        checkpoints_dir = run_config.get("model-checkpoints")
-        if not checkpoints_dir:
-            msg = "LOCAL_DEV is set but 'model-checkpoints' is not defined in pyproject.toml config."
-            log(ERROR, msg)
-            raise ValueError(msg)
-    else:
-        checkpoints_dir = os.getenv("MODEL_CHECKPOINTS")
-        if checkpoints_dir is None:
-            msg = "MODEL_CHECKPOINTS environment variable is not set"
-            log(ERROR, msg)
-            raise ValueError(msg)
+    checkpoints_dir = os.getenv("MODEL_CHECKPOINTS_DIR")
+    if not checkpoints_dir:
+        msg = "MODEL_CHECKPOINTS_DIR environment variable is not set"
+        log(ERROR, msg)
+        raise ValueError(msg)
 
     loaded_models: Dict[str, torch.nn.Module] = {}
     for model_name, model_cfg in models_config.items():
@@ -206,7 +198,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     log(INFO, f"{'=' * 60}")
 
     # Get output directory using WORKING_DIR environment variable
-    working_dir = os.getenv("WORKING_DIR", "/app")
+    working_dir = os.getenv("WORKING_DIR", "/app/runs")
     output_dir = Path(f"{working_dir}/{model_id}/evaluation_outputs")
     output_dir.mkdir(parents=True, exist_ok=True)
 
