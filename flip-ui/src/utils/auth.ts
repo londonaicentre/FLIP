@@ -37,7 +37,8 @@ const unguardedRoutes: string[] = [
 ];
 
 const hasCognitoConfig = Boolean(process.env.VITE_AWS_USER_POOL_ID) && Boolean(process.env.VITE_AWS_CLIENT_ID);
-export const isLocalMode = process.env.VITE_LOCAL === "true" || !hasCognitoConfig;
+export const isLocalMode = process.env.VITE_LOCAL === "true";
+export const isAuthConfigured = hasCognitoConfig;
 
 /**
  * Checks auth status for the requested route.
@@ -65,6 +66,11 @@ export const authCheck = async (
 
         if (isLocalMode) {
             return next();
+        }
+
+        if (!isAuthConfigured) {
+            console.error("Missing Cognito configuration. Set VITE_AWS_USER_POOL_ID and VITE_AWS_CLIENT_ID.");
+            return next("/auth/login");
         }
 
         // Check if user has a valid session
@@ -122,7 +128,6 @@ export const authConfig = {
             region: process.env.VITE_AWS_REGION || 'eu-west-2',
             userPoolId: process.env.VITE_AWS_USER_POOL_ID,
             userPoolClientId: process.env.VITE_AWS_CLIENT_ID,
-            clientSecret: process.env.VITE_AWS_CLIENT_SECRET,
             authenticationFlowType: 'USER_PASSWORD_AUTH',
             loginWith: {}
         }

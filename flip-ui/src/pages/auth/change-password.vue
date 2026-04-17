@@ -33,7 +33,7 @@
                 name="email"
                 type="email"
                 data-test="email"
-                :initial-value="route.params['email']?.toString()"
+                :initial-value="(route.query['email'] ?? route.params['email'])?.toString()"
                 label="Email"
                 :pre-icon="AccountOutline"
             />

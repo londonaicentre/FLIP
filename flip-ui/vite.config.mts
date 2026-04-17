@@ -16,22 +16,22 @@ import svgLoader from "vite-svg-loader";
 export default defineConfig(({ mode }) => {
 
     const env = loadEnv(mode, process.cwd());
+    const nodeEnv = mode === "development" || mode === "test" ? mode : "production";
 
     const envWithProcessPrefix = Object.entries(env).reduce(
         (prev, [key, val]) => {
             return {
                 ...prev,
-                ["process.env." + key]: `"${val}"`
+                ["process.env." + key]: JSON.stringify(val)
             };
         },
         {
             "process.env": "{}",
-            "process.env.NODE_ENV": `"${mode}"`,
-            "process.env.VITE_LOCAL": `"${env.VITE_LOCAL ?? "false"}"`,
-            "process.env.VITE_AWS_REGION": `"${env.VITE_AWS_REGION ?? ""}"`,
-            "process.env.VITE_AWS_USER_POOL_ID": `"${env.VITE_AWS_USER_POOL_ID ?? ""}"`,
-            "process.env.VITE_AWS_CLIENT_ID": `"${env.VITE_AWS_CLIENT_ID ?? ""}"`,
-            "process.env.VITE_AWS_CLIENT_SECRET": `"${env.VITE_AWS_CLIENT_SECRET ?? ""}"`
+            "process.env.NODE_ENV": JSON.stringify(nodeEnv),
+            "process.env.VITE_LOCAL": JSON.stringify(env.VITE_LOCAL ?? "false"),
+            "process.env.VITE_AWS_REGION": JSON.stringify(env.VITE_AWS_REGION ?? ""),
+            "process.env.VITE_AWS_USER_POOL_ID": JSON.stringify(env.VITE_AWS_USER_POOL_ID ?? ""),
+            "process.env.VITE_AWS_CLIENT_ID": JSON.stringify(env.VITE_AWS_CLIENT_ID ?? "")
         }
     );
 

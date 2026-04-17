@@ -26,14 +26,18 @@ import SmartTable from "vuejs-smart-table";
 import { makeServer } from "../mocks/server";
 import App from "./App.vue";
 import router from "./router";
-import { authConfig, isLocalMode } from "./utils/auth";
+import { authConfig, isAuthConfigured, isLocalMode } from "./utils/auth";
 
 const app = createApp(App);
 const pinia = createPinia();
 app.use(pinia);
 
-if (!isLocalMode) {
+if (!isLocalMode && isAuthConfigured) {
     Amplify.configure(authConfig as Parameters<typeof Amplify.configure>[0]);
+}
+
+if (!isLocalMode && !isAuthConfigured) {
+    console.error("Cognito configuration is incomplete. Auth is required outside local mock mode.");
 }
 
 if (isLocalMode) {
