@@ -77,6 +77,7 @@ export default defineConfig(({ mode }) => {
         },
         define: envWithProcessPrefix,
         build: {
+            target: "esnext",
             sourcemap: false,
             chunkSizeWarningLimit: 1024,
             rollupOptions: {
@@ -90,6 +91,9 @@ export default defineConfig(({ mode }) => {
             }
         },
         optimizeDeps: {
+            esbuildOptions: {
+                target: "esnext"
+            },
             include: [
                 "echarts/charts",
                 "echarts/components",

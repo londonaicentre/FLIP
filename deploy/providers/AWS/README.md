@@ -383,12 +383,109 @@ Trust services can run on AWS EC2 or on-premises. Both models use the same Docke
 
 | Port | Service | Status | Purpose |
 | ------ | --------- | --------- | --------- |
+| **22** | SSH | 🔴 **CLOSED** | Not exposed — remote access is via SSM Session Manager tunnel (see below) |
 | **80** | HTTP | 🟢 **OPEN** | ALB traffic |
 | **3000** | FLIP UI | 🟢 **OPEN** | Frontend application |
 | **8000** | FLIP API | 🟢 **OPEN** | Backend API |
 | **8001** | FL API | 🟢 **OPEN** | Federated learning API |
 | **8002** | FL Server | 🟡 **CONDITIONAL** | gRPC (open to trust IPs only) |
 | | | | Trust API: no inbound port needed (trusts poll the hub outbound) |
+
+### Remote Access via SSM Session Manager
+
+EC2 instances are accessed through AWS Systems Manager Session Manager — port 22 is **not** open in any security group. SSH traffic is tunnelled through the SSM agent running on each instance, so no bastion host or inbound firewall rule is needed.
+
+**Prerequisites**
+
+- AWS CLI authenticated for the correct account and region:
+
+  ```bash
+  export AWS_PROFILE=<your-profile>   # e.g. FlipDeveloperAccess-046651569599
+  export AWS_REGION=eu-west-2         # must match the region where instances are deployed
+  aws sso login --profile $AWS_PROFILE
+  ```
+
+- [AWS Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) installed (minimum version 1.2.319.0):
+
+  **macOS:**
+
+  ```bash
+  brew install session-manager-plugin
+  brew upgrade session-manager-plugin  # Update if already installed
+  ```
+
+  **Linux (Ubuntu/Debian):**
+
+  ```bash
+  curl "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o "session-manager-plugin.deb"
+  sudo dpkg -i session-manager-plugin.deb
+  ```
+
+  **Verify installation:**
+
+  ```bash
+  session-manager-plugin --version  # Should output version >= 1.2.319.0
+  ```
+
+- SSH key at `~/.ssh/host-aws` (configured in Step 3 of [Pre-configurations README](../README.md#step-3-get-ssh-key-configured))
+
+**Updating `~/.ssh/config`**
+
+After `terraform apply`, run:
+
+```bash
+make ssh-config
+```
+
+This calls `update_ssm_ssh_config.py`, which reads the EC2 instance IDs from Terraform outputs and writes `Host flip` / `Host flip-trust` blocks like the following into `~/.ssh/config`:
+
+```text
+# Managed by FLIP - SSH over SSM Session Manager
+Host flip
+    HostName i-0123456789abcdef0
+    User ubuntu
+    IdentitiesOnly yes
+    IdentityFile ~/.ssh/host-aws
+    StrictHostKeyChecking accept-new
+    ProxyCommand aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p' --region eu-west-2 --profile <your-profile>
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-flip-%r@%h:%p
+    ControlPersist 10m
+```
+
+**Connecting**
+
+```bash
+ssh flip        # Central Hub
+ssh flip-trust  # Trust EC2
+```
+
+Both aliases resolve through the SSM tunnel — no public IP or open port 22 is needed. If your AWS session has expired, re-run `aws sso login --profile $AWS_PROFILE` before connecting.
+
+**Troubleshooting SSM Access**
+
+| Problem | Diagnostics | Solution |
+|---------|-------------|----------|
+| `Unable to locate credentials` | `aws sts get-caller-identity` returns error | Run `aws sso login --profile $AWS_PROFILE` to refresh session |
+| `SessionManagerPlugin not found` | `command -v session-manager-plugin` returns nothing | Install plugin: `brew install session-manager-plugin` (macOS) or see prerequisites above |
+| `[ERROR] SessionManagerPlugin is not installed` | Session manager plugin is missing or outdated | Upgrade plugin: `brew upgrade session-manager-plugin` or download latest version |
+| `InvalidInstanceID.NotFound` | SSH attempts to connect but fails | Verify instance exists: `terraform output Ec2InstanceId` and `terraform output TrustEc2InstanceId` |
+| `AccessDeniedException` | `aws ssm start-session` returns access denied | Check EC2 instance IAM role has `ssm:StartSession` and `ec2messages:*` permissions (Terraform should have created this) |
+| `Connection timeout` (hanging) | SSM tunnel hangs without error | Check security group allows NLB ingress from NAT Gateway (port 8000-8005); verify instances are running: `aws ec2 describe-instances` |
+| `Unable to connect to SSM endpoint` | Connection fails immediately | Verify AWS_REGION matches deployment region: `echo $AWS_REGION` should match `eu-west-2` (or your region) |
+| `Bad ProxyCommand` in ~/.ssh/config | SSH config syntax error | Re-generate config: `make ssh-config` and verify it looks like the example above |
+
+**Testing Connectivity**
+
+```bash
+# Test SSM session directly (before trying SSH)
+aws ssm start-session --target $(terraform output -raw Ec2InstanceId)
+
+# Should open an interactive shell. Run `uname -a` to verify connectivity, then `exit`.
+
+# Then test SSH
+ssh flip  # Should connect via SSM tunnel
+```
 
 ---
 
@@ -438,10 +535,10 @@ Changes to template files are automatically picked up on next `terraform apply` 
 
 | Placeholder | Replaced By | Example |
 | --- | --- | --- |
-| `{username}` | Cognito username (email) | john.smith@example.com |
+| `{username}` | Cognito username (email) | <john.smith@example.com> |
 | `{####}` | 6-digit temporary password or verification code | 123456 |
 | `{flip_alb_subdomain}` | ALB domain from Terraform var | flip-app.example.com |
-| `{reset_link}` | Password reset link with token | https://flip.../reset?token=xyz |
+| `{reset_link}` | Password reset link with token | <https://flip.../reset?token=xyz> |
 
 **SES templates** use double-brace (Mustache) placeholders substituted at send time:
 

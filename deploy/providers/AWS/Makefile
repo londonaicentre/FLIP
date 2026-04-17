@@ -92,6 +92,15 @@ trigger-builds: ## Trigger all GitHub Actions "Build and Push" workflows for the
 	done
 	@echo "✅ Build workflows triggered!"
 
+.PHONY: check-ssm-ready
+check-ssm-ready: ## Verify SSM Session Manager prerequisites are installed
+	@echo "🔍 Checking SSM Session Manager prerequisites..."
+	@command -v aws >/dev/null 2>&1 || { echo "❌ AWS CLI not found. Install: brew install awscli or apt-get install awscli"; exit 1; }
+	@session-manager-plugin --version >/dev/null 2>&1 || { echo "❌ Session Manager plugin not found. Install: brew install session-manager-plugin (macOS) or see README.md"; exit 1; }
+	@ssh-add -l >/dev/null 2>&1 || echo "⚠️  SSH agent has no keys (this is OK, SSM uses AWS credentials instead)"
+	@[ -f ~/.ssh/host-aws ] || { echo "⚠️  SSH key ~/.ssh/host-aws not found (will be needed for Ansible)"; }
+	@echo "✅ SSM prerequisites verified!"
+
 prettier:
 	terraform fmt -recursive
 	npx prettier --write "**/*.{yml,yaml}"
@@ -135,11 +144,7 @@ force-unlock: ## Force unlock Terraform state - provide LOCK_ID=<id> as argument
 		echo "❌ LOCK_ID not provided. Usage: make force-unlock LOCK_ID=<lock-id>"; \
 		exit 1; \
 	fi
-	@bash scripts/manage-aws.sh force-unlock $(LOCK_ID)
-
-.PHONY: delete-flip-keypair
-delete-flip-keypair: ## Delete the flip-keypair from AWS (run before apply if it exists)
-	@bash scripts/manage-aws.sh delete-keypair flip-keypair
+	@bash scripts/force-unlock.sh $(LOCK_ID)
 
 .PHONY: plan
 plan: ## Plan Terraform changes (with environment file loaded)
@@ -180,11 +185,11 @@ forward-trust: ## SSM port-forward all Trust web UIs and API swagger docs (Ctrl+
 	@bash scripts/forward-trust-all.sh
 
 .PHONY: ssh-config
-ssh-config: ## Update local .ssh/config for flip contexts
+ssh-config: check-ssm-ready ## Update local .ssh/config for flip contexts (requires SSM plugin)
 	@echo "⚙️  Configure .ssh/config for flip context..."
 	@set -x AWS_PROFILE ${AWS_PROFILE}
 	@terraform output
-	@uv run ./update_ssh_config.py --aws-profile ${AWS_PROFILE} || true
+	@uv run ./update_ssm_ssh_config.py --aws-profile ${AWS_PROFILE} || true
 	@echo "✅ .ssh/config updated!"
 
 .PHONY: update-env
@@ -201,7 +206,7 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) -e fl_kit_date=$(FL_KIT_DATE) -e pgdata_archive=trust1_pgdata_20260106.tar.gz
 
 .PHONY: deploy-centralhub
-deploy-centralhub: ## Deploy FLIP containers to flip context with environment from Terraform
+deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with environment from Terraform
 	@echo "🔍 Checking central hub images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(CENTRALHUB_IMAGES); do \

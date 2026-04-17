@@ -4,6 +4,7 @@
     "scripts": {
         "dev": "vite --host 0.0.0.0 --port 443 --mode development",
         "build": "vue-tsc --noEmit && vite build",
+        "build:prod": "vite build",
         "serve": "vite preview",
         "test:unit": "vitest run --silent --coverage",
         "lint": "npx eslint ./src/**/*.vue ./src/**/*.ts",

@@ -196,8 +196,8 @@ def update_hostname_in_section(section: str, new_hostname: str) -> str:
     return new_section
 
 
-def verify_instance_is_running(instance_id_or_ip: str) -> bool:
-    """Verify if an EC2 instance is running using its instance ID or public IP.
+def add_ssh_host_key(hostname: str) -> bool:
+    """Add SSH host key to known_hosts.
 
     Args:
         instance_id_or_ip (str): EC2 instance ID (i-xxx) or public IP address
@@ -205,7 +205,19 @@ def verify_instance_is_running(instance_id_or_ip: str) -> bool:
     Returns:
         bool: True if the instance is running, False otherwise
     """
-    if not instance_id_or_ip:
+    try:
+        known_hosts = Path.home() / ".ssh" / "known_hosts"
+        result = subprocess.run(
+            ["ssh-keyscan", "-H", hostname],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        if result.stdout:
+            with open(known_hosts, "a") as f:
+                f.write(result.stdout)
+            return True
         return False
     if instance_id_or_ip.startswith("i-"):
         filter_name = "instance-id"
