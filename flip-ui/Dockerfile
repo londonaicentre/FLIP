@@ -38,5 +38,7 @@ FROM development AS production
 # Copy source files for production build
 COPY . .
 
+RUN npm run build:prod
+
 # TODO eventually the UI will be deployed in CloudFront so we won't need this section
-CMD ["npm", "run", "dev"]
+CMD ["npm", "run", "serve", "--", "--host", "0.0.0.0", "--port", "443"]
