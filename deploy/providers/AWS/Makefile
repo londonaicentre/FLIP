@@ -72,9 +72,20 @@ export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
+
+# ECS cluster name — must match var.ecs_cluster_name in variables.tf
+ECS_CLUSTER_NAME ?= flip-ecs-cluster
+
+# All four API services now run on ECS Fargate (Central Hub cluster).
+# flip-ui still runs on the Central Hub EC2 via Docker Compose.
+ECS_SERVICES = flip-api-service trust-api-service imaging-api-service data-access-api-service
+
 CENTRALHUB_IMAGES = \
 	$(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG) \
-	$(DOCKER_REGISTRY)flip-api:$(DOCKER_TAG)
+	$(DOCKER_REGISTRY)flip-api:$(DOCKER_TAG) \
+	$(DOCKER_REGISTRY)trust-api:$(DOCKER_TAG) \
+	$(DOCKER_REGISTRY)imaging-api:$(DOCKER_TAG) \
+	$(DOCKER_REGISTRY)data-access-api:$(DOCKER_TAG)
 
 TRUST_IMAGES = \
 	$(DOCKER_REGISTRY)trust-api:$(DOCKER_TAG) \
@@ -198,15 +209,15 @@ update-env: ## Update environment file with Terraform outputs
 	@uv run ./update_env.py $(MAIN_ENV_FILE)
 
 .PHONY: ansible-init
-ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed try again for 3 times)
-	@echo "☁️🔗 Initiate ansible and install docker on both EC2 instances"
+ansible-init: ## Provision Trust EC2 with Docker, AWS CLI, and FL participant kit services
+	@echo "☁️🔗 Initiate ansible and install docker on Trust EC2"
 	@test -n "$(FL_KIT_DATE)" || (echo "FL_KIT_DATE must be set in $(MAIN_ENV_FILE)"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
 	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) -e fl_kit_date=$(FL_KIT_DATE) -e pgdata_archive=trust1_pgdata_20260106.tar.gz
 
 .PHONY: deploy-centralhub
-deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with environment from Terraform
+deploy-centralhub: ## Deploy Central Hub API services to ECS and flip-ui to EC2 via SSM
 	@echo "🔍 Checking central hub images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(CENTRALHUB_IMAGES); do \
@@ -222,20 +233,35 @@ deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with env
 	else \
 	  echo "   ✅ All central hub images found."; \
 	fi
-	@echo "📋 Loading environment variables from Terraform outputs..."
-	@echo "👷 Create docker context if not exists, pointing to flip to ssh://flip"
-	@docker context create flip --docker "host=ssh://flip" || echo "   Context 'flip' already exists"
-	@# Switch to flip context
+	@echo "🚀 Forcing new ECS deployments for all Central Hub API services..."
+	@for svc in $(ECS_SERVICES); do \
+	  echo "   ↺ Redeploying $$svc ..."; \
+	  aws ecs update-service \
+	    --cluster $(ECS_CLUSTER_NAME) \
+	    --service $$svc \
+	    --force-new-deployment \
+	    --output text --query 'service.serviceName' || exit 1; \
+	done
+	@echo "🐳 Deploying flip-ui to Central Hub EC2 via SSM..."
+	@$(MAKE) deploy-centralhub-ui
+	@echo "✅ Central Hub deployment complete!"
+
+.PHONY: deploy-centralhub-ui
+deploy-centralhub-ui: ssh-config ## Deploy flip-ui container to Central Hub EC2 (runs alongside ECS services)
+	@echo "👷 Create docker context if not exists, pointing to flip via SSM"
+	@docker context create flip --docker "host=ssh://flip" 2>/dev/null || echo "   Context 'flip' already exists"
 	@echo "🔄 Switching to flip Docker context..."
 	@docker context use flip
-	@echo "🧹 Stopping old containers and removing unused images to free disk space..."
-	@docker stop $$(docker ps -aq) 2>/dev/null || true
-	@docker rm $$(docker ps -aq) 2>/dev/null || true
-	@docker image prune -af
-	@echo "🐳 Deploying containers..."
-	@$(MAKE) -C ../../../ up-centralhub-ec2 PROD=${PROD}
-	@echo "✅ Deployment complete!"
+	@echo "🧹 Removing old flip-ui container..."
+	@docker stop flip-ui 2>/dev/null || true
+	@docker rm flip-ui 2>/dev/null || true
+	@echo "🐳 Starting flip-ui..."
+	@docker pull $(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG)
+	@docker run -d --name flip-ui --restart unless-stopped \
+	  -p $(UI_PORT):$(UI_PORT) \
+	  $(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG)
 	@docker context use default
+	@echo "✅ flip-ui deployed!"
 
 # Default SSH user for on-premises trust hosts (override with LOCAL_TRUST_SSH_USER=<user>)
 LOCAL_TRUST_SSH_USER ?= ubuntu
@@ -381,7 +407,7 @@ check:
 
 
 .PHONY: destroy
-destroy: ## Destroy ephemeral infrastructure (EC2, RDS, VPC) - preserves Cognito, Secrets, S3
+destroy: ## Destroy ephemeral infrastructure (ECS, EC2, RDS, VPC) - preserves Cognito, Secrets, S3
 	@echo ""
 	@echo "⚠️  SELECTIVE DESTRUCTION - PRESERVING:"
 	@echo "   ✓ Cognito user pool and identities"
@@ -393,7 +419,8 @@ ifeq ($(PROD),true)
 endif
 	@echo ""
 	@echo "🗑️  DESTROYING:"
-	@echo "   • EC2 instances (flip, trust)"
+	@echo "   • ECS cluster, task definitions, and services (Central Hub API services)"
+	@echo "   • EC2 instance (Trust)"
 	@echo "   • RDS database (PostgreSQL)"
 	@echo "   • Security groups"
 ifneq ($(PROD),true)
@@ -425,14 +452,14 @@ generate-internal-service-key: ## Generate a new internal service key (fl-server
 	@$(MAKE) -C ../../../flip-api generate-internal-service-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))
 
 .PHONY: full-deploy
-full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trust + Central Hub
+full-deploy: ## Full AWS deployment: provision infrastructure, deploy Central Hub (ECS) + Trust (EC2)
 	## Step order:
 	## 1. login + init + import: auth, Terraform init, import any pre-existing resources
 	## 2. generate-keys + generate-internal-service-key: generate all API keys
-	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, secrets)
-	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
-	## 5. ssh-config + ansible-init: configure SSH aliases and provision EC2s with Docker
-	## 6. deploy-centralhub + deploy-trust + status: deploy containers and verify
+	## 3. plan+apply: provision all AWS infrastructure (ECS, RDS, VPC, secrets, Trust EC2)
+	## 4. update-env: refresh .env with Terraform outputs (DB endpoint, Cognito IDs, etc.)
+	## 5. ssh-config + ansible-init: configure SSH and provision Trust EC2 with Docker + FL kit
+	## 6. deploy-centralhub (ECS force-redeploy + flip-ui) + deploy-trust + status: deploy and verify
 full-deploy: github-login aws-login init import-persistent generate-keys generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub deploy-trust status
 
 .PHONY: full-deploy-stag
@@ -440,10 +467,10 @@ full-deploy-stag: ## Full staging deployment with on-prem local trust (requires 
 	## Step order:
 	## 1. login + init + import: auth, Terraform init, import pre-existing persistent resources
 	## 2. generate-keys + generate-internal-service-key: generate all API keys
-	## 3. plan+apply (PROD=stag): provision all AWS infrastructure (EC2, RDS, VPC, ALB, secrets)
-	## 4. update-env: refresh .env.stag with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
-	## 5. ssh-config + ansible-init: configure SSH aliases, provision EC2s with Docker + FL kit
-	## 6. deploy-centralhub + deploy-trust: deploy Central Hub and cloud Trust containers
+	## 3. plan+apply (PROD=stag): provision all AWS infrastructure (ECS, RDS, VPC, ALB, Trust EC2, secrets)
+	## 4. update-env: refresh .env.stag with Terraform outputs (DB endpoint, Cognito IDs, etc.)
+	## 5. ssh-config + ansible-init: configure SSH, provision Trust EC2 with Docker + FL kit
+	## 6. deploy-centralhub (ECS + flip-ui) + deploy-trust: deploy all services
 	## 7. add-local-trust LOCAL_TRUST_IP=<ip>: provision local trust host,
 	##    deploy local $(LOCAL_TRUST_NAME) FL kit, and update AWS security groups
 	## 8. status: verify all services healthy

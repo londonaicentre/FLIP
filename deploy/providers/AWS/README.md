@@ -82,9 +82,9 @@ This command executes the following steps in order:
 4. **`import-all`**: Import existing AWS resources to prevent replacement
 5. **`plan`**: Generate and review Terraform execution plan
 6. **`apply`**: Apply infrastructure changes
-7. **`ssh-config`**: Update `~/.ssh/config` with EC2 instance IPs
-8. **`ansible-init`**: Configure EC2 instances with Docker and CloudWatch
-9. **`deploy-centralhub`**: Deploy Central Hub services via Docker Compose
+7. **`ssh-config`**: Update `~/.ssh/config` with Trust EC2 instance IP
+8. **`ansible-init`**: Configure Trust EC2 with Docker, AWS CLI, and FL participant kit services
+9. **`deploy-centralhub`**: Force-redeploy ECS API services and deploy flip-ui to Central Hub EC2
 10. **`deploy-trust`**: Deploy Trust services via Docker Compose
 11. **`status`**: Run comprehensive health checks
 
@@ -151,8 +151,9 @@ make destroy
 
 **What gets destroyed:**
 
+- ECS cluster, task definitions, and services (flip-api, trust-api, imaging-api, data-access-api)
 - Trust EC2 instance
-- Central Hub EC2 instance
+- Central Hub EC2 instance (flip-ui, FL services)
 - Application Load Balancer
 - RDS database (with skip-final-snapshot)
 - VPC, subnets, security groups, NAT gateway
@@ -277,13 +278,16 @@ Review the output for failed checks and follow the specific troubleshooting step
 
 The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybrid setup (Central Hub on AWS + Trust on-premises). Trusts poll the Central Hub for tasks — all communication is outbound from the trust.
 
-1. **Central Hub EC2**: Hosts the main application services
-   - flip-ui (Frontend)
+1. **Central Hub ECS Cluster** (Fargate): Hosts the four core API services
    - flip-api (Backend API)
+   - trust-api (Trust gateway)
+   - imaging-api (DICOM image retrieval)
+   - data-access-api (OMOP database queries)
+
+   **Central Hub EC2** (alongside ECS): Hosts services not yet migrated to ECS
+   - flip-ui (Frontend)
    - fl-api-net-1 (Federated Learning API for Network 1)
-   - fl-api-net-2 (Federated Learning API for Network 2)
    - fl-server-net-1 (Federated Learning Server for Network 1)
-   - fl-server-net-2 (Federated Learning Server for Network 2)
 
 2. **Trust EC2** (cloud model): Hosts trust-related services (automatically provisioned)
    - trust-api (polls hub for tasks)
@@ -322,13 +326,19 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
     │   ALB    │ (HTTPS, ACM cert)
     └────┬────┘
          │
-    ┌────▼──────────────────────┐
-    │  Central Hub EC2          │
-    │  - flip-ui                │
-    │  - flip-api               │
-    │  - fl-api                 │
-    │  - fl-server              │
-    └──────▲───────────▲────────┘
+    ┌────▼──────────────────────────────────────┐
+    │  Central Hub (AWS)                         │
+    │                                            │
+    │  ECS Fargate (private subnets):            │
+    │    - flip-api                              │
+    │    - trust-api                             │
+    │    - imaging-api                           │
+    │    - data-access-api                       │
+    │                                            │
+    │  EC2 t3.medium (private subnet):           │
+    │    - flip-ui                               │
+    │    - fl-api + fl-server                    │
+    └──────▲───────────▲────────────────────────┘
            │           │
      polls │           │ polls
     (HTTPS)│           │(HTTPS)
@@ -351,7 +361,8 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
 ### Central Hub Infrastructure
 
 - **VPC**: Custom VPC with public/private subnets
-- **Central Hub EC2**: Single t3.medium instance in a **private subnet**, running Docker containers (UI, API, FL services)
+- **ECS Fargate Cluster**: Runs the four core API services (flip-api, trust-api, imaging-api, data-access-api) in private subnets with no EC2 management overhead. Logs go to CloudWatch via the `awslogs` driver.
+- **Central Hub EC2**: Single t3.medium instance in a **private subnet**, running flip-ui and FL services (fl-server, fl-api) via Docker Compose
 - **Trust EC2**: Separate t3.xlarge instance in a **private subnet**, running Trust services via Docker Compose
   - Deployed using custom Terraform module (`modules/trust_ec2`)
   - Automatic Docker and Docker Compose installation via user_data
@@ -359,7 +370,7 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
   - No inbound ports open — access via SSM (`ssh flip-trust`) and SSM port forwarding for XNAT/Orthanc debugging (`make forward-trust`)
 - **ALB**: Application Load Balancer for traffic routing
 - **RDS**: PostgreSQL 15 managed database (EOL: October 2027)
-- **CloudWatch**: Logging and monitoring for both EC2 instances
+- **CloudWatch**: Logging for ECS tasks (`/ecs/*` log groups) and Trust EC2 (`/aws/ec2/flip-trust`)
 - **Secrets Manager**: Secure storage for API secrets and database credentials
 - **S3 Backend**: Remote state storage with environment-specific buckets
 

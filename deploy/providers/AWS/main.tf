@@ -158,12 +158,7 @@ module "flip_api_secret" {
   recovery_window_in_days = 30
 
   secret_string = jsonencode({
-    aes_key = var.AES_KEY_BASE64
-    trust_endpoints = {
-      "Trust_1" = "https://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}",
-      "Trust_2" = "https://${module.trust_ec2.public_ip}:${var.TRUST_API_PORT}"
-    }
-    trust_ca_cert             = try(file("${path.module}/trust-ca.crt"), "")
+    aes_key                   = var.AES_KEY_BASE64
     trust_api_key_hashes      = var.TRUST_API_KEY_HASHES
     internal_service_key_hash = var.INTERNAL_SERVICE_KEY_HASH
 
@@ -215,12 +210,6 @@ resource "aws_iam_role_policy" "ec2_secret" {
       ]
     }]
   })
-}
-
-# CloudWatch Log Group
-resource "aws_cloudwatch_log_group" "flip_log_group" {
-  name              = "/aws/ec2/flip"
-  retention_in_days = 7
 }
 
 # Key Pair for SSH access
