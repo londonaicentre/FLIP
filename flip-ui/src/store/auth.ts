@@ -14,7 +14,6 @@
 import {
     confirmResetPassword,
     confirmSignIn,
-    fetchAuthSession,
     fetchUserAttributes,
     getCurrentUser,
     resetPassword,
@@ -26,7 +25,7 @@ import { defineStore } from "pinia";
 
 import { IChangePassword } from "@/interfaces/auth/interfaces";
 import { routeChange } from "@/router";
-import { getUserPermissions, revokeToken } from "@/services/user-service";
+import { getUserPermissions } from "@/services/user-service";
 
 /**
  * Available User Permissions
@@ -148,14 +147,7 @@ export const useAuthStore = defineStore("auth", {
 
         async signOut() {
             try {
-                const session = await fetchAuthSession();
-                const refreshToken = session.tokens?.refreshToken?.toString();
-
                 await signOut({ global: true });
-
-                if (refreshToken) {
-                    await revokeToken(refreshToken);
-                }
             } catch (error) {
                 console.error("Sign out error:", error);
             }

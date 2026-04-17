@@ -26,7 +26,11 @@ describe("AiHeader", () => {
         const title = "Test Title";
 
         const component = mount(AiHeader, {
-            props: { title },
+            props: {
+                title,
+                currentPage: "/",
+                isDark: false
+            },
             global: {
                 stubs: ["router-link"],
                 plugins: [createTestingPinia({

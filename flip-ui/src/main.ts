@@ -32,7 +32,7 @@ const app = createApp(App);
 const pinia = createPinia();
 app.use(pinia);
 
-Amplify.configure(authConfig);
+Amplify.configure(authConfig as Parameters<typeof Amplify.configure>[0]);
 
 if (process.env.VITE_LOCAL === "true") {
     console.info("Running locally, will use mocked API.");

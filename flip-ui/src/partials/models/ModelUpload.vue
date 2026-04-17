@@ -111,7 +111,7 @@ import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import { FileInfo, FileUploadStatus } from "@/interfaces/model/types";
 import { deleteModelFile, downloadModelFile, processScannedFile } from "@/services/file-service";
-import { JobTypes } from "@/services/model-service";
+import { JobType } from "@/services/model-service";
 import { createPreSignedUrl, uploadFile as uploadFileService } from "@/utils/file";
 import { formatBytes, getRandomId } from "@/utils/helpers";
 import { Snackbar } from "@/utils/snackbar";
@@ -126,7 +126,7 @@ interface IModelUploadProps {
     canUpload: boolean;
     modelId: string;
     requiredFiles: string[];
-    jobType: JobTypes;
+    jobType: JobType;
 }
 
 const props = defineProps<IModelUploadProps>();

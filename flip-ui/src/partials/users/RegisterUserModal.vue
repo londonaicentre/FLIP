@@ -63,7 +63,7 @@
                                             />
                                             <AiChipSelect
                                                 default-text="Please select a role"
-                                                :error-message="errors?.selectedRoles"
+                                                :error-message="errors?.selectedRoles ?? ''"
                                                 :options="mapRoleOptions()"
                                                 :selected-options="fields"
                                                 @push="push"
@@ -125,7 +125,7 @@ interface IRegisterUserModalProps {
 
 interface RegisterUserForm {
     email: string;
-    selectedRoles: string[];
+    selectedRoles: IOption[];
 }
 
 const props = withDefaults(
@@ -147,17 +147,17 @@ const schema = object().shape({
 });
 
 const errorStore = useErrorStore();
-const currentlySelected = ref();
+const currentlySelected = ref<IOption>();
 const isSubmitting = ref(false);
 
 const { errors, resetForm, validate, validateField } = useForm<RegisterUserForm>({ validationSchema: schema });
-const { push, remove, fields } = useFieldArray("selectedRoles");
+const { push, remove, fields } = useFieldArray<IOption>("selectedRoles");
 const email = useField("email");
 useField("selectedRoles");
 
 watch(currentlySelected, async (current) => {
     if (current) {
-        if (!fields.value.some((field) => (field.value as IRole).id === current.id)) {
+        if (!fields.value.some((field) => (field.value as IOption).id === current.id)) {
             push(current);
         }
         await validateField("selectedRoles");
@@ -178,7 +178,7 @@ const submitAction = async () => {
     if (valid) {
         const user: IRegisterUserDto = {
             email: email.value.value as string,
-            roles: fields.value.map(item => (item.value as IRole).id)
+            roles: fields.value.map(item => (item.value as IOption).id)
         };
 
         try {

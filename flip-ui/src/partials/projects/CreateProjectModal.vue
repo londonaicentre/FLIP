@@ -190,7 +190,7 @@ const submitForm = async(v: unknown) => {
             return u.id;
         });
 
-        values.dicom_to_nifti = !!(values as Record<string, unknown>).dicom_to_nifti;
+        values.dicom_to_nifti = Boolean(values.dicom_to_nifti);
 
         const { id: projectId } = await createProject("/projects", values as IProjectCreate);
 

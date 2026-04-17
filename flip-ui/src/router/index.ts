@@ -95,14 +95,12 @@ export const routeChange = {
     },
     changePassword: (email: string): void => {
         router.push({
-            name: "ChangePassword",
             path: "/auth/change-password",
-            params: { email }
+            query: { email }
         });
     },
     accessRequest: (): void => {
         router.push({
-            name: "AccessRequest",
             path: "/auth/access-request"
         });
     },

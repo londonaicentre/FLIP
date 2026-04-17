@@ -13,7 +13,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { createTestingPinia } from "@pinia/testing";
-import { mount } from "@vue/test-utils";
+import { mount, VueWrapper } from "@vue/test-utils";
 import { reactive, ref } from "vue";
 
 import MainLayout from "../MainLayout.vue";
@@ -155,28 +155,28 @@ describe("MainLayout", () => {
     describe("userRole", () => {
         it("returns Admin when user has CanAccessAdminPanel permission", () => {
             const wrapper = mountMainLayout({ permissions: ["CanAccessAdminPanel"] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']");
+            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper<any>;
 
             expect(dropdown.props("role")).toBe("Admin");
         });
 
         it("returns Researcher when user has CanManageProjects but not CanAccessAdminPanel", () => {
             const wrapper = mountMainLayout({ permissions: ["CanManageProjects"] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']");
+            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper<any>;
 
             expect(dropdown.props("role")).toBe("Researcher");
         });
 
         it("returns Observer when user has no management permissions", () => {
             const wrapper = mountMainLayout({ permissions: [] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']");
+            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper<any>;
 
             expect(dropdown.props("role")).toBe("Observer");
         });
 
         it("prioritises Admin over Researcher when user has both permissions", () => {
             const wrapper = mountMainLayout({ permissions: ["CanAccessAdminPanel", "CanManageProjects"] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']");
+            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper<any>;
 
             expect(dropdown.props("role")).toBe("Admin");
         });
@@ -233,7 +233,7 @@ describe("MainLayout", () => {
     describe("signOut", () => {
         it("calls authStore.signOut when sign-out is emitted", async () => {
             const wrapper = mountMainLayout();
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']");
+            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper<any>;
 
             await dropdown.vm.$emit("sign-out");
             await wrapper.vm.$nextTick();

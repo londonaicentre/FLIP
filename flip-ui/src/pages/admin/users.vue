@@ -436,7 +436,10 @@ const refreshUsers = async () => {
     const newSelectedUser =
         userData.value?.data.find((user) => user.id === previous.id);
     if (newSelectedUser) {
-        setSelectedUser(newSelectedUser);
+        setSelectedUser({
+            ...newSelectedUser,
+            dirty: previous.dirty
+        });
     }
 };
 </script>

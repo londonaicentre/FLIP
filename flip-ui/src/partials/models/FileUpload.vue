@@ -58,12 +58,12 @@
 import { computed, ref } from "vue";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
-import { JobTypes } from "@/services/model-service";
+import { JobType } from "@/services/model-service";
 import { useAuthStore } from "@/store/auth";
 
 interface IFileUploadProps {
     requiredFiles: string[];
-    jobType: JobTypes;
+    jobType: JobType;
 }
 
 const props = defineProps<IFileUploadProps>();

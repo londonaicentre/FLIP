@@ -96,7 +96,7 @@ import { array, lazy, object, string } from "yup";
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import {
     IInitTraining, initialiseTraining,
-    JobTypes,
+    JobType,
     ModelStatus,
     ModelStatusEnum
 } from "@/services/model-service";
@@ -114,7 +114,7 @@ interface ITrainingProps {
     allFilesUploaded: boolean;
     requiredFiles: string[];
     uploadedFileNames: string[];
-    jobType: JobTypes;
+    jobType: JobType;
 }
 
 const props = defineProps<ITrainingProps>();

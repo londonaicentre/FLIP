@@ -133,8 +133,8 @@
                                                     Failed
                                                 </span>
                                                 <span class="font-bold text-gray-400" :data-test="`failed-imports-${project.trustId}`">
-                                                    {{ (project.importStatus?.queueFailed
-                                                        + project.importStatus?.failed) ?? 0 }}
+                                                    {{ (project.importStatus?.queueFailed ?? 0)
+                                                        + (project.importStatus?.failed ?? 0) }}
                                                 </span>
                                             </div>
                                         </div>

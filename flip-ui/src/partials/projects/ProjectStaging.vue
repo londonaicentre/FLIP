@@ -161,7 +161,7 @@ const stageProject = (v: unknown) => {
 
     const formValue = v as IFormValue;
 
-    if (formValue.trusts.length > 0 ?? false) {
+    if (formValue.trusts.length > 0) {
         emits("staged", formValue.trusts);
     }
 };
