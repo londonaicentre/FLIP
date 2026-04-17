@@ -12,6 +12,7 @@
 -->
 
 ---
+
 tags: [quickstart]
 dataset: [spleen]
 framework: [monai]
@@ -95,6 +96,7 @@ curl -X POST http://localhost:8000/submit_run/3d_spleen_segmentation_evaluation
 ```
 
 The FLIP API will:
+
 1. Load model checkpoints from `MODEL_CHECKPOINTS_DIR`
 2. Run evaluation across all connected supernodes
 3. Aggregate metrics using the `EvaluationStrategy`
@@ -139,11 +141,12 @@ The evaluation metrics specification is defined using a type-based approach in `
 ```python
 metrics_spec = {
     "mean_dice": float,  # Single aggregated Dice score
-    "raw_dice": list,    # List of per-slice Dice scores
+    "raw_dice": list,  # List of per-slice Dice scores
 }
 ```
 
 The `MetricsValidator` class in `strategy.py` enforces that:
+
 - All metrics match the specified types (float, int, or list)
 - Strings are NOT allowed as metric values
 - Each client returns metrics matching this specification for each model
