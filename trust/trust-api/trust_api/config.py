@@ -37,8 +37,16 @@ class Settings(BaseSettings):
     CENTRAL_HUB_API_URL: str
     DATA_ACCESS_API_URL: str
     IMAGING_API_URL: str
-    PRIVATE_API_KEY: str
-    PRIVATE_API_KEY_HEADER: str
+    TRUST_API_KEY: str
+    TRUST_API_KEY_HEADER: str
+    AES_KEY_BASE64: str  # Shared key for decrypting task payloads from the hub
+
+    # Polling configuration
+    TRUST_NAME: str  # Must match Trust.name in hub DB (e.g. "Trust_1")
+    POLL_INTERVAL_SECONDS: int = 5  # How often to poll the hub for tasks (seconds)
+
+    # Timeout for cohort query requests to data-access-api (seconds)
+    COHORT_QUERY_TIMEOUT_SECONDS: int = 300
 
 
 # Eager load once (for app use)

@@ -27,6 +27,12 @@
           - fl_kit_date is defined
           - fl_kit_date | length > 0
         fail_msg: "The fl_kit_date variable must be defined to proceed."
+    - name: ensure pgdata_archive variable is defined
+      assert:
+        that:
+          - pgdata_archive is defined
+          - pgdata_archive | length > 0
+        fail_msg: "The pgdata_archive variable must be defined to proceed (e.g. trust1_pgdata_20260106.tar.gz)."
     - name: use plugin to extract Terraform outputs
       community.general.terraform:
         state: present
@@ -34,23 +40,31 @@
       register: terraform_output
     - name: add Central Hub EC2 instance to Ansible inventory
       add_host:
-        name: "{{ terraform_output.outputs.Ec2PublicIp.value }}"
+        name: "{{ terraform_output.outputs.Ec2InstanceId.value }}"
         groups:
           - ec2
           - central_hub
         ansible_ssh_user: ubuntu
         ansible_ssh_private_key_file: "{{ terraform_output.outputs.Keypair.value }}"
-        ansible_ssh_common_args: "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        ansible_ssh_common_args: >-
+          -o IdentitiesOnly=yes
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
         ansible_ec2_instance_id: "{{ terraform_output.outputs.Ec2InstanceId.value }}"
     - name: add Trust EC2 instance to Ansible inventory
       add_host:
-        name: "{{ terraform_output.outputs.TrustEc2PublicIp.value }}"
+        name: "{{ terraform_output.outputs.TrustEc2InstanceId.value }}"
         groups:
           - ec2
           - trust_ec2
         ansible_ssh_user: ubuntu
         ansible_ssh_private_key_file: "{{ terraform_output.outputs.Keypair.value }}"
-        ansible_ssh_common_args: "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        ansible_ssh_common_args: >-
+          -o IdentitiesOnly=yes
+          -o StrictHostKeyChecking=no
+          -o UserKnownHostsFile=/dev/null
+          -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
         ansible_ec2_instance_id: "{{ terraform_output.outputs.TrustEc2InstanceId.value }}"
 
 - name: update packages
@@ -181,7 +195,7 @@
         - /opt/flip
         # Data directory for Trust 1 (where XNAT images will be downloaded for the FL client to use)
         # NOTE if this is not created here, it will be created later by Docker Compose but owned by root, and will cause permission issues
-        - /opt/flip/data/trust-1
+        - /opt/flip/data/images
         # XNAT bind-mount directories (Docker Swarm does not auto-create them)
         - /opt/flip/xnat
         - /opt/flip/xnat/xnat-data/tomcat_logs
@@ -189,6 +203,22 @@
         - /opt/flip/xnat/xnat-data/build
         - /opt/flip/xnat/xnat-data/cache
         - /opt/flip/xnat/xnat-db-data
+
+    - name: create Loki data directory
+      file:
+        path: /opt/flip/volumes/loki
+        state: directory
+        owner: "10001"
+        group: "10001"
+        mode: "0755"
+
+    - name: create Grafana data directory
+      file:
+        path: /opt/flip/volumes/grafana
+        state: directory
+        owner: "472"
+        group: "472"
+        mode: "0755"
 
 - name: download participant kit services to Trust EC2
   hosts: trust_ec2
@@ -344,14 +374,13 @@
         -a fetch-config -m ec2
         -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
 
-- name: download and restore trust1 OMOP PGDATA on Trust EC2
+- name: download and restore OMOP PGDATA on Trust EC2
   hosts: trust_ec2
   become: true
   vars:
     s3_bucket: "{{ flip_aicentre_bucket }}"
     s3_prefix: "omop"
-    base_dir: "/opt/flip/volumes"
-    trust1_key: "trust1_pgdata_20260106.tar.gz"
+    omop_dir: "/opt/flip/omop"
   tasks:
     - name: install tar
       apt:
@@ -360,37 +389,36 @@
         state: present
         update_cache: yes
 
-    - name: create trust1 directories
+    - name: create OMOP directories
       file:
         path: "{{ item }}"
         state: directory
         mode: "0755"
       loop:
-        - "{{ base_dir }}"
-        - "{{ base_dir }}/trust1"
-        - "{{ base_dir }}/trust1/db_data"
+        - "{{ omop_dir }}"
+        - "{{ omop_dir }}/db_data"
 
-    - name: download trust1 PGDATA archive from S3
+    - name: download OMOP PGDATA archive from S3
       command: >
         aws s3 cp
-        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ trust1_key }}
-        {{ base_dir }}/trust1/trust1_pgdata.tar.gz
+        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ pgdata_archive }}
+        {{ omop_dir }}/pgdata.tar.gz
       args:
-        creates: "{{ base_dir }}/trust1/trust1_pgdata.tar.gz"
+        creates: "{{ omop_dir }}/pgdata.tar.gz"
 
     - name: clear existing PGDATA directory
-      shell: rm -rf {{ base_dir }}/trust1/db_data/*
+      shell: rm -rf {{ omop_dir }}/db_data/*
       changed_when: false
 
-    - name: extract trust1 PGDATA
+    - name: extract OMOP PGDATA
       command: >
-        tar -xzf {{ base_dir }}/trust1/trust1_pgdata.tar.gz
-        -C {{ base_dir }}/trust1/db_data
+        tar -xzf {{ omop_dir }}/pgdata.tar.gz
+        -C {{ omop_dir }}/db_data
 
     - name: set Postgres ownership and permissions
       shell: |
-        chown -R 999:999 {{ base_dir }}/trust1/db_data
-        chmod 700 {{ base_dir }}/trust1/db_data
+        chown -R 999:999 {{ omop_dir }}/db_data
+        chmod 700 {{ omop_dir }}/db_data
       changed_when: false
 
 - name: restore trust1 Orthanc storage on Trust EC2

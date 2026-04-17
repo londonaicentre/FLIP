@@ -40,7 +40,7 @@ When creating issues, please use the appropriate issue template:
 
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London. It is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
-The project spans two repositories:
+The project spans three repositories:
 
 | Repository | Description |
 | --- | --- |
@@ -59,6 +59,7 @@ FLIP/
 └── trust/              # Services deployed in individual trust environments
     ├── data-access-api/    # Data access API
     ├── imaging-api/        # Imaging API
+    ├── observability/      # Observability stack (Grafana, Loki, Alloy)
     ├── omop-db/            # Mocked OMOP database
     ├── orthanc/            # Mocked PACS service (Orthanc)
     ├── trust-api/          # Trust API
@@ -128,8 +129,32 @@ To get started, copy the example file:
 cp .env.development.example .env.development
 ```
 
-Then update any placeholder values. Docker services receive these variables via the `env_file` directive in the
+Then generate per-trust API keys and the internal service key (the trust keys must be done before `make up`; the
+internal service key is also generated automatically by `make up`):
+
+```bash
+make generate-trust-api-keys
+make generate-internal-service-key
+```
+
+These commands write all API keys directly into `.env.development`: trust plaintext keys
+in `TRUST_API_KEYS` (JSON dict) with their hashes in `TRUST_API_KEY_HASHES`, and `INTERNAL_SERVICE_KEY`
+with `INTERNAL_SERVICE_KEY_HASH` for fl-server-to-hub authentication. No separate key files are used.
+
+Docker services receive these variables via the `env_file` directive in the
 compose file — avoid hardcoding values in Dockerfiles or compose files directly.
+
+**Authentication environment variables:**
+
+- `TRUST_API_KEY_HEADER` — HTTP header name for trust-to-hub authentication.
+- `TRUST_API_KEYS` — JSON dict mapping trust names to their plaintext API keys.
+- `TRUST_API_KEY_HASHES` — hub-side JSON dict mapping trust names to SHA-256 hashes of their API keys.
+- `INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for fl-server-to-hub authentication.
+- `INTERNAL_SERVICE_KEY` — internal service key used by the fl-server on the Central Hub.
+- `INTERNAL_SERVICE_KEY_HASH` — hub-side SHA-256 hash of the internal service key.
+
+FL clients (trust side) intentionally do **not** receive Central Hub API credentials. Only the fl-server (on the Central
+Hub) communicates with flip-api. FL clients relay metrics and exceptions to the fl-server, which forwards them.
 
 **FL-specific environment variables:**
 
@@ -180,22 +205,6 @@ make ci
 
 This runs all jobs defined in `.github/workflows/` locally.
 
-### Testing local Trust HTTPS deployment (secure mode only)
-
-For hybrid/on-premises Trust deployment testing, validate connectivity with certificate verification enabled:
-
-```bash
-make -C deploy/providers/AWS test-local-trust LOCAL_TRUST_IP=<public-ip>
-```
-
-Security requirements:
-
-- Do not bypass TLS certificate validation in commands, scripts, or documentation examples.
-- Do not use insecure transport checks (for example `curl -k`) in normal testing or validation flows.
-- If certificate verification fails, fix certificates/CA bundle and endpoint configuration instead of disabling verification.
-
-Risk note: bypassing certificate validation can hide man-in-the-middle attacks and endpoint misconfiguration, and can lead to approving unsafe deployments.
-
 ## The contribution process
 
 *Fork the repository before making changes* [Learn how to fork](https://help.github.com/en/github/getting-started-with-github/fork-a-repo). All contributions to the `develop` branch must be made via pull requests. This allows us to review your changes and ensure they meet our quality standards before merging them into the main codebase.
@@ -243,11 +252,13 @@ uv run ruff check . --fix
 uv run mypy .
 ```
 
-Each service has a `Makefile` with a `test` target that runs linting, type checking, and tests in sequence. For example, from a service directory:
+Most services have a `Makefile` with a `test` target that runs linting, type checking, and tests in sequence. For example, from a Python service directory:
 
 ```bash
 make test
 ```
+
+The `flip-ui` service uses `make unit_test` (Vitest) instead of `make test`.
 
 Documentation follows the [Google style guide](https://google.github.io/styleguide/pyguide.html) for Python docstrings.
 
@@ -275,11 +286,14 @@ make test
 
 This will run ruff, mypy, and pytest in sequence. The coverage report is generated in HTML format in the `htmlcov` directory.
 
-To run all tests across the main repository from the root:
+To run unit tests across all services in the main repository from the root:
 
 ```bash
-make tests
+make unit_test
 ```
+
+`make tests` is a narrower target that runs `flip-ui` unit tests followed by the full `flip-api` test suite (ruff,
+mypy, and pytest).
 
 For the `flip-fl-base` repository, unit tests can be run with:
 

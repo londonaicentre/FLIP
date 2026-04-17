@@ -57,8 +57,6 @@ After building, run with the `dev` tag:
 DOCKER_TAG=dev make up
 ```
 
-When running from the root Makefile, `DOCKER_TAG` is resolved automatically.
-
 `make up` will create the required data directories, deploy the XNAT stack via Docker Swarm, and automatically configure both XNAT instances (service account, admin password, SCP receiver, PACS registration, dcm2niix command).
 
 In development (when `PROD` is not set), `make up` also mounts the local `xnat/plugins` and `xnat/config` directories into the container for hot-reload. In production, these are baked into the Docker image.

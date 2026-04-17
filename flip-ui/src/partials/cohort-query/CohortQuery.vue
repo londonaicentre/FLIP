@@ -54,6 +54,10 @@
                         </div>
                     </div>
                 </div>
+                <div v-if="queryId && !project?.query" class="flex items-center gap-2 px-4 py-3 text-sm text-blue-700 dark:text-blue-300">
+                    <icon-heroicons-outline-clock class="w-5 h-5" />
+                    Awaiting trust results…
+                </div>
                 <div v-if="project?.query" class="relative p-4 pt-4 space-y-4 bg-gray-200 dark:bg-gray-600">
                     <Transition name="slidedown">
                         <div v-if="true" class="overflow-hidden border border-gray-300 rounded-lg shadow-lg dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
@@ -135,15 +139,15 @@ const runCohortQuery = async (v: unknown) => {
             projectId: route.params["projectId"].toString()
         });
 
-        if (response && response.trust.every(r => r.statusCode === 200)) {
+        if (response && response.trust.every(r => r.statusCode >= 200 && r.statusCode < 300)) {
             queryId.value = response.queryId;
 
             hasResults();
 
             Snackbar.show({
                 type: "success",
-                text: "Cohort Query assigned to project",
-                title: "Cohort Query Saved",
+                text: "Cohort query has been sent to trusts and queued for processing",
+                title: "Cohort Query Sent",
                 actionText: "View Project",
                 action: () => router.push({ path: `/project/${project.value?.id}` })
             });

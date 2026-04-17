@@ -256,6 +256,34 @@ def test_get_imaging_project_status_statuses_not_found(client: TestClient, app_f
     app_fixture.dependency_overrides.clear()
 
 
+def test_get_imaging_project_status_returns_empty_when_tasks_pending(client: TestClient, app_fixture: FastAPI):
+    """Should return 200 with empty list when imaging projects don't exist yet but tasks are pending."""
+    mock_db_session = MagicMock()
+    app_fixture.dependency_overrides[get_session] = lambda: mock_db_session
+    app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
+
+    with (
+        patch("flip_api.project_services.get_imaging_project_status.can_access_project", return_value=True),
+        patch(
+            "flip_api.project_services.get_imaging_project_status.get_project",
+            return_value=mock_project_response_obj,
+        ),
+        patch(
+            "flip_api.project_services.get_imaging_project_status.get_imaging_projects", return_value=None
+        ),
+        patch(
+            "flip_api.project_services.get_imaging_project_status.has_pending_imaging_tasks", return_value=True
+        ) as mock_has_pending,
+    ):
+        response = client.get(f"/api/projects/{str(MOCK_PROJECT_ID)}/image/status")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == []
+        mock_has_pending.assert_called_once_with(MOCK_PROJECT_ID, mock_db_session)
+
+    app_fixture.dependency_overrides.clear()
+
+
 def test_get_imaging_project_status_invalid_project_id_format(client: TestClient, app_fixture: FastAPI):
     app_fixture.dependency_overrides[verify_token] = lambda: MOCK_USER_ID
     project_id = "not-a-valid-uuid"

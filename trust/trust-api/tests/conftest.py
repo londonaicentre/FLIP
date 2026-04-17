@@ -19,8 +19,10 @@ _TEST_ENV_DEFAULTS = {
     "CENTRAL_HUB_API_URL": "http://localhost:8000",
     "DATA_ACCESS_API_URL": "http://localhost:8001",
     "IMAGING_API_URL": "http://localhost:8002",
-    "PRIVATE_API_KEY": "test-key",
-    "PRIVATE_API_KEY_HEADER": "Authorization",
+    "TRUST_API_KEY": "test-key",
+    "TRUST_API_KEY_HEADER": "Authorization",
+    "TRUST_NAME": "Test_Trust",
+    "AES_KEY_BASE64": "dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleTA9PQ==",
 }
 
 for key, value in _TEST_ENV_DEFAULTS.items():

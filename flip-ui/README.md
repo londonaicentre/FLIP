@@ -25,10 +25,10 @@ a portal to manage projects, monitor federated learning jobs, inspect cohort que
 The flip-ui is served as a containerised static web application. In the full local stack it starts automatically with:
 
 ```bash
-make central-hub   # starts flip-api, flip-db, and flip-ui
+make ui            # starts the UI only
 ```
 
-or as part of the full platform:
+or as part of the full platform (which also starts the UI):
 
 ```bash
 make up

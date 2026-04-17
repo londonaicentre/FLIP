@@ -38,7 +38,7 @@ up-test-omop-trust1:
 	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST1} \
 	OMOP_DB_PORT=${OMOP_DB_PORT_TRUST_1} \
 	TRUST_NETWORK_NAME=${network1} \
-	TRUST_NAME=trust1 \
+	TRUST_NAME=Trust_1 \
 	$(docker_command) up $(service_name) --pull always
 
 down-test-omop-trust1:
@@ -46,7 +46,7 @@ down-test-omop-trust1:
 	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST1} \
 	OMOP_DB_PORT=${OMOP_DB_PORT_TRUST_1} \
 	TRUST_NETWORK_NAME=${network1} \
-	TRUST_NAME=trust1 \
+	TRUST_NAME=Trust_1 \
 	$(docker_command) down --remove-orphans $(service_name) -v
 
 shell:
@@ -56,21 +56,3 @@ shell:
 # Needs AWS account credentials configured to run S3 commands
 update-omop-data:
 	CLEAN_AFTER_UPDATE=True AICENTRE_BUCKET_NAME=$(AICENTRE_BUCKET_NAME) ./update_omop_data.sh
-
-
-# ================ Legacy commands -- to be removed eventually -- use update-omop-data above ================
-# NOTE These hardcode a specific date for the omop data tarballs, and will need to be updated when new data is available
-
-# Sync data from S3 bucket (mainly used temporarily in production)
-# Needs AWS account credentials configured
-sync-data-from-s3:
-	aws s3 sync s3://$(AICENTRE_BUCKET_NAME)/omop/ ./volumes --exclude "*" --include "trust*_pgdata_20260122.tar.gz"
-
-extract-data: remove-data
-	mkdir -p ./volumes/trust1/db_data ./volumes/trust2/db_data
-	tar -xzf ./volumes/trust1_pgdata_20260122.tar.gz -C ./volumes/trust1/db_data
-	tar -xzf ./volumes/trust2_pgdata_20260122.tar.gz -C ./volumes/trust2/db_data
-	rm ./volumes/trust1_pgdata_20260122.tar.gz ./volumes/trust2_pgdata_20260122.tar.gz
-
-remove-data:
-	sudo rm -rf ./volumes/trust1/db_data ./volumes/trust2/db_data

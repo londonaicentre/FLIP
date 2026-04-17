@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlmodel import Session
 
-from flip_api.auth.access_manager import check_authorization_token
+from flip_api.auth.access_manager import authenticate_internal_service
 from flip_api.domain.schemas.private import TrainingMetrics
 from flip_api.main import app
 from flip_api.private_services.services.private_service import save_training_metrics
@@ -116,7 +116,7 @@ class TestSaveTrainingMetricsEndpoint:
         cls.model_id = uuid.uuid4()
         cls.url = f"/api/model/{cls.model_id}/metrics"
         cls.headers = {"Authorization": "Bearer test-token"}
-        app.dependency_overrides[check_authorization_token] = lambda: "test-token"
+        app.dependency_overrides[authenticate_internal_service] = lambda: None
 
     @classmethod
     def teardown_class(cls):
@@ -158,7 +158,7 @@ class TestSaveTrainingMetricsEndpoint:
         def mock_auth():
             raise HTTPException(status_code=401, detail="Invalid token")
 
-        app.dependency_overrides[check_authorization_token] = mock_auth
+        app.dependency_overrides[authenticate_internal_service] = mock_auth
 
         response = client.post(self.url, json=sample_metrics_payload_dict)
 
@@ -166,4 +166,4 @@ class TestSaveTrainingMetricsEndpoint:
         assert "invalid token" in response.json()["detail"].lower()
 
         # Restore good auth
-        app.dependency_overrides[check_authorization_token] = lambda: "test-token"
+        app.dependency_overrides[authenticate_internal_service] = lambda: None

@@ -10,107 +10,134 @@
 # limitations under the License.
 #
 
+import hashlib
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.testclient import TestClient
+from fastapi import HTTPException, status
 from sqlmodel import Session
 
 # Module to be tested
 from flip_api.auth.access_manager import (
-    API_KEY_HEADER_NAME,
+    _get_internal_service_key_hash,
+    _get_trust_api_key_hashes,
+    authenticate_internal_service,
+    authenticate_trust,
     can_modify_model,
     can_modify_project,
-    check_authorization_token,
+    verify_trust_identity,
 )
-from flip_api.config import Settings
-
-# Dummy FastAPI app for testing the dependency
-app_under_test = FastAPI()
-
-
-@app_under_test.get("/secure-resource")
-async def secure_resource_endpoint(token: str = Depends(check_authorization_token)):
-    return {"message": "Access granted", "token_used": token}
-
-
-client = TestClient(app_under_test)
 
 VALID_TEST_KEY = "test_secret_key_12345_valid"
+VALID_TEST_KEY_HASH = hashlib.sha256(VALID_TEST_KEY.encode()).hexdigest()
 WRONG_TEST_KEY = "wrong_secret_key_67890_invalid"
+TRUST_NAME = "Trust_1"
+
+INTERNAL_SERVICE_KEY = "internal_service_key_abc123"
+INTERNAL_SERVICE_KEY_HASH = hashlib.sha256(INTERNAL_SERVICE_KEY.encode()).hexdigest()
 
 PATCH_HAS_PERMISSIONS = "flip_api.auth.access_manager.has_permissions"
 PATCH_CAN_MODIFY_PROJECT = "flip_api.auth.access_manager.can_modify_project"
+PATCH_GET_SETTINGS = "flip_api.auth.access_manager.get_settings"
+
+
+PATCH_HASH_CACHE = "flip_api.auth.access_manager._trust_api_key_hashes_cache"
+PATCH_INTERNAL_KEY_HASH = "flip_api.auth.access_manager._get_internal_service_key_hash"
+PATCH_INTERNAL_KEY_HASH_CACHE = "flip_api.auth.access_manager._internal_service_key_hash_cache"
 
 
 @pytest.fixture
 def mocked_settings():
-    mock = Settings(
-        PRIVATE_API_KEY=VALID_TEST_KEY,
-    )
-    with patch("flip_api.auth.access_manager.get_settings", return_value=mock):
+    mock = MagicMock()
+    mock.TRUST_API_KEY_HASHES = {TRUST_NAME: VALID_TEST_KEY_HASH}
+    with patch(PATCH_GET_SETTINGS, return_value=mock), patch(PATCH_HASH_CACHE, None):
         yield mock
 
 
 @pytest.fixture
 def mocked_settings_empty():
-    mock = Settings(
-        PRIVATE_API_KEY="",  # Simulating the case where the key is not set
-    )
-    with patch("flip_api.auth.access_manager.get_settings", return_value=mock):
+    mock = MagicMock()
+    mock.TRUST_API_KEY_HASHES = {}
+    with patch(PATCH_GET_SETTINGS, return_value=mock), patch(PATCH_HASH_CACHE, None):
         yield mock
 
 
-class TestCheckAuthorizationToken:
-    def test_valid_api_key_provided(self, mocked_settings):
-        response = client.get("/secure-resource", headers={API_KEY_HEADER_NAME: VALID_TEST_KEY})
-        assert response.status_code == status.HTTP_200_OK
-        assert response.json() == {"message": "Access granted", "token_used": VALID_TEST_KEY}
+class TestAuthenticateTrust:
+    def test_valid_api_key_returns_trust_name(self, mocked_settings):
+        assert authenticate_trust(api_key=VALID_TEST_KEY) == TRUST_NAME
 
-    def test_invalid_api_key_provided(self, mocked_settings):
-        response = client.get("/secure-resource", headers={API_KEY_HEADER_NAME: WRONG_TEST_KEY})
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
-        assert response.json() == {"detail": "Invalid API Key."}
-        assert response.headers.get("WWW-Authenticate") == "ApiKey"
-
-    def test_missing_api_key_header(self):
-        response = client.get("/secure-resource")  # No API key header
-        assert response.status_code == status.HTTP_401_UNAUTHORIZED
-        assert response.json() == {"detail": "Not authenticated: API key is missing."}
-        assert response.headers.get("WWW-Authenticate") == "ApiKey"
-
-    def test_server_config_error_expected_key_not_set(self, mocked_settings_empty):
-        # Ensure the environment variable is not set for this test
-        response = client.get("/secure-resource", headers={API_KEY_HEADER_NAME: VALID_TEST_KEY})
-        assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert response.json() == {"detail": "Server configuration error: API key mechanism not set up."}
-
-    # Direct function call tests (less critical if endpoint tests are comprehensive, but good for unit testing)
-    def test_direct_call_valid_key(self, mocked_settings):
-        returned_token = check_authorization_token(api_key=VALID_TEST_KEY)
-        assert returned_token == VALID_TEST_KEY
-
-    def test_direct_call_invalid_key(self):
+    def test_invalid_api_key_returns_401(self, mocked_settings):
         with pytest.raises(HTTPException) as exc_info:
-            check_authorization_token(api_key=WRONG_TEST_KEY)
+            authenticate_trust(api_key=WRONG_TEST_KEY)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc_info.value.detail == "Invalid API Key."
 
-    def test_direct_call_missing_key_passed_as_none(self, mocked_settings):
-        # This simulates how FastAPI's Security(api_key_header_scheme) would pass None
-        # if the header is missing and auto_error=False.
+    def test_missing_api_key_returns_401(self, mocked_settings):
         with pytest.raises(HTTPException) as exc_info:
-            check_authorization_token(api_key=None)
+            authenticate_trust(api_key=None)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc_info.value.detail == "Not authenticated: API key is missing."
 
-    def test_direct_call_server_config_error_key_not_set(self, mocked_settings_empty):
+    def test_empty_api_key_returns_401(self, mocked_settings):
         with pytest.raises(HTTPException) as exc_info:
-            check_authorization_token(api_key=VALID_TEST_KEY)
-        assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert exc_info.value.detail == "Server configuration error: API key mechanism not set up."
+            authenticate_trust(api_key="")
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail == "Not authenticated: API key is missing."
+
+    def test_no_trust_keys_configured_returns_401(self, mocked_settings_empty):
+        with pytest.raises(HTTPException) as exc_info:
+            authenticate_trust(api_key=VALID_TEST_KEY)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_multiple_trusts_returns_correct_name(self):
+        second_key = "second_trust_key_xyz"
+        second_hash = hashlib.sha256(second_key.encode()).hexdigest()
+        mock = MagicMock()
+        mock.TRUST_API_KEY_HASHES = {TRUST_NAME: VALID_TEST_KEY_HASH, "Trust_2": second_hash}
+        with patch(PATCH_GET_SETTINGS, return_value=mock), patch(PATCH_HASH_CACHE, None):
+            assert authenticate_trust(api_key=VALID_TEST_KEY) == TRUST_NAME
+            assert authenticate_trust(api_key=second_key) == "Trust_2"
+
+
+class TestAuthenticateInternalService:
+    """Tests for the authenticate_internal_service dependency."""
+
+    def test_valid_key_succeeds(self):
+        """Valid internal service key should not raise an exception."""
+        with patch(PATCH_INTERNAL_KEY_HASH, return_value=INTERNAL_SERVICE_KEY_HASH):
+            result = authenticate_internal_service(api_key=INTERNAL_SERVICE_KEY)
+        assert result is None
+
+    def test_missing_key_returns_401(self):
+        """Missing (None) key should raise 401."""
+        with pytest.raises(HTTPException) as exc_info:
+            authenticate_internal_service(api_key=None)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail == "Not authenticated: internal service key is missing."
+
+    def test_empty_key_returns_401(self):
+        """Empty string key should raise 401."""
+        with pytest.raises(HTTPException) as exc_info:
+            authenticate_internal_service(api_key="")
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail == "Not authenticated: internal service key is missing."
+
+    def test_invalid_key_returns_401(self):
+        """Wrong key should raise 401."""
+        with patch(PATCH_INTERNAL_KEY_HASH, return_value=INTERNAL_SERVICE_KEY_HASH):
+            with pytest.raises(HTTPException) as exc_info:
+                authenticate_internal_service(api_key=WRONG_TEST_KEY)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail == "Invalid internal service key."
+
+    def test_unconfigured_hash_returns_401(self):
+        """Empty INTERNAL_SERVICE_KEY_HASH should raise 401."""
+        with patch(PATCH_INTERNAL_KEY_HASH, return_value=""):
+            with pytest.raises(HTTPException) as exc_info:
+                authenticate_internal_service(api_key=INTERNAL_SERVICE_KEY)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail == "Internal service auth not configured."
 
 
 class TestCanModifyProject:
@@ -252,3 +279,71 @@ class TestCanModifyModel:
             result = can_modify_model(user_id, model_id, db)
 
         assert result is False
+
+
+class TestVerifyTrustIdentity:
+    def test_matching_trust_names_succeeds(self):
+        """No exception when authenticated trust matches the URL trust name."""
+        verify_trust_identity("Trust_1", "Trust_1")
+
+    def test_mismatched_trust_names_raises_403(self):
+        """Should raise 403 when authenticated trust does not match the expected name."""
+        with pytest.raises(HTTPException) as exc_info:
+            verify_trust_identity("Trust_1", "Trust_2")
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert "Trust_2" in exc_info.value.detail
+        assert "Trust_1" in exc_info.value.detail
+
+
+class TestGetTrustApiKeyHashes:
+    def test_dev_returns_hashes_from_settings(self):
+        """In dev, should return hashes from TRUST_API_KEY_HASHES setting."""
+        expected = {"Trust_1": "abc123"}
+        mock = MagicMock()
+        mock.ENV = "development"
+        mock.TRUST_API_KEY_HASHES = expected
+        with patch(PATCH_GET_SETTINGS, return_value=mock), patch(PATCH_HASH_CACHE, None):
+            result = _get_trust_api_key_hashes()
+        assert result == expected
+
+    def test_production_retrieves_from_secrets_manager(self):
+        """In production, should load hashes from AWS Secrets Manager."""
+        mock = MagicMock()
+        mock.ENV = "production"
+        with (
+            patch(PATCH_GET_SETTINGS, return_value=mock),
+            patch(PATCH_HASH_CACHE, None),
+            patch("flip_api.auth.access_manager.get_secret", return_value='{"Trust_1": "hash1"}'),
+        ):
+            result = _get_trust_api_key_hashes()
+        assert result == {"Trust_1": "hash1"}
+
+
+class TestGetInternalServiceKeyHash:
+    def test_dev_returns_hash_from_settings(self):
+        """In dev, should return hash from INTERNAL_SERVICE_KEY_HASH setting."""
+        mock = MagicMock()
+        mock.ENV = "development"
+        mock.INTERNAL_SERVICE_KEY_HASH = INTERNAL_SERVICE_KEY_HASH
+        with patch(PATCH_GET_SETTINGS, return_value=mock), patch(PATCH_INTERNAL_KEY_HASH_CACHE, None):
+            result = _get_internal_service_key_hash()
+        assert result == INTERNAL_SERVICE_KEY_HASH
+
+    def test_production_retrieves_from_secrets_manager(self):
+        """In production, should load hash from AWS Secrets Manager."""
+        mock = MagicMock()
+        mock.ENV = "production"
+        with (
+            patch(PATCH_GET_SETTINGS, return_value=mock),
+            patch(PATCH_INTERNAL_KEY_HASH_CACHE, None),
+            patch("flip_api.auth.access_manager.get_secret", return_value="abc123hash"),
+        ):
+            result = _get_internal_service_key_hash()
+        assert result == "abc123hash"
+
+    def test_cached_value_is_returned(self):
+        """When cache is already populated, should return cached value without calling get_settings."""
+        with patch(PATCH_INTERNAL_KEY_HASH_CACHE, "cached_hash"), patch(PATCH_GET_SETTINGS) as mock_settings:
+            result = _get_internal_service_key_hash()
+        assert result == "cached_hash"
+        mock_settings.assert_not_called()

@@ -27,7 +27,7 @@ services:
       POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
       POSTGRES_DB: ${OMOP_POSTGRES_DB}
     volumes:
-      - /opt/flip/volumes/${TRUST_NAME}/db_data:/var/lib/postgresql/data
+      - ${OMOP_DATA_DIR:-/opt/flip/omop/db_data}:/var/lib/postgresql/data
 
   orthanc:
     image: ghcr.io/londonaicentre/orthanc:${DOCKER_TAG}
@@ -85,30 +85,23 @@ services:
       ENV: production
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
 
-  nginx-tls:
-    build:
-      context: ./nginx
-      dockerfile: Dockerfile
-    ports:
-      - "${TRUST_API_PORT}:8000"
-    volumes:
-      - /opt/flip/certs:/etc/nginx/certs:ro
-    depends_on:
-      - trust-api
-
   trust-api:
     image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}
-    # ports removed — nginx-tls owns TRUST_API_PORT and proxies to trust-api
-    # over the internal Docker network, preventing direct unauthenticated HTTP
-    # access from outside the container network.
+    # Port exposed on host for SSM port forwarding (swagger docs debugging).
+    # Security group blocks all inbound — only reachable via SSM tunnel.
+    ports:
+      - "${TRUST_API_PORT}:8000"
     environment:
       CENTRAL_HUB_API_URL: ${CENTRAL_HUB_API_URL}
       DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
       IMAGING_API_URL: ${IMAGING_API_URL}
       DEBUG_PORT: ${TRUST_DEBUG_PORT}
       DEBUG: ${DEBUG}
-      PRIVATE_API_KEY_HEADER: ${PRIVATE_API_KEY_HEADER}
-      PRIVATE_API_KEY: ${PRIVATE_API_KEY}
+      TRUST_API_KEY_HEADER: ${TRUST_API_KEY_HEADER}
+      TRUST_API_KEY: ${TRUST_API_KEY}
+      AES_KEY_BASE64: ${AES_KEY_BASE64}
+      TRUST_NAME: ${TRUST_NAME}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
       ENV: production
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
 
@@ -121,8 +114,8 @@ services:
     ports:
       - "${LOKI_PORT}:3100"
     volumes:
-      - /opt/flip/config/observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
-      - /opt/flip/volumes/loki:/loki
+      - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - ${LOKI_DATA_VOLUME:-/opt/flip/volumes/loki}:/loki
 
   alloy:
     image: grafana/alloy:v1.9.0
@@ -132,7 +125,7 @@ services:
       - --server.http.listen-addr=0.0.0.0:12345
       - /etc/alloy/config.alloy
     volumes:
-      - /opt/flip/config/observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     depends_on:
       - loki
@@ -145,8 +138,8 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
     volumes:
-      - /opt/flip/volumes/grafana:/var/lib/grafana
-      - /opt/flip/config/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${GRAFANA_DATA_VOLUME:-/opt/flip/volumes/grafana}:/var/lib/grafana
+      - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       - loki
 

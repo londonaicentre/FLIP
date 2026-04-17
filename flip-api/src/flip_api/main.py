@@ -14,8 +14,10 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 
 from flip_api.cohort_services import (
     get_cohort_query_results,
@@ -48,13 +50,13 @@ from flip_api.model_services import (
     retrieve_model_status_from_logs,
     retrieve_trusts_in_model,
     save_model,
-    update_model_status,
 )
 from flip_api.private_services import (
     add_log,
     invoke_model_status_update,
     receive_cohort_results,
     save_training_metrics,
+    trust_tasks,
 )
 from flip_api.project_services import (
     approve_project,
@@ -93,6 +95,7 @@ from flip_api.user_services import (
     set_user_roles,
     update_user,
 )
+from flip_api.utils.rate_limiter import limiter
 
 
 @asynccontextmanager
@@ -116,6 +119,15 @@ app = FastAPI(
     openapi_url=f"{API_PREFIX}/openapi.json",
     redoc_url=f"{API_PREFIX}/redoc",
 )
+
+# Rate limiter — keyed by trust_name path parameter (falls back to client IP)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Try again later."})
+
 
 # CORS middleware
 app.add_middleware(
@@ -157,12 +169,12 @@ ROUTERS: tuple[APIRouter, ...] = (
     retrieve_model_status_from_logs.router,
     retrieve_trusts_in_model.router,
     save_model.router,
-    update_model_status.router,
     # Private services
     add_log.router,
     invoke_model_status_update.router,
     receive_cohort_results.router,
     save_training_metrics.router,
+    trust_tasks.router,
     # Project services
     approve_project.router,
     create_project.router,

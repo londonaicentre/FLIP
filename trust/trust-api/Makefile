@@ -23,7 +23,9 @@ run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
 
 build:
-	$(docker_command) build $(service_name)
+	@export BASE_IMAGES_DOWNLOAD_DIR=/tmp/images; \
+	TRUST_NETWORK_NAME="deploy_trust-network-1" \
+	$(docker_command) -p trust1 build $(service_name) --no-cache
 up:
 #   For testing, set network to trust 1
 	TRUST_NETWORK_NAME="deploy_trust-network-1" \
@@ -45,6 +47,6 @@ local_lint:
 local_mypy:
 	$(mypy_command)
 local_test:
-	@export BASE_IMAGES_DOWNLOAD_DIR=/tmp/images; \
+	@export BASE_IMAGES_DOWNLOAD_DIR=/tmp/images TRUST_NAME=TestTrust; \
 	$(lint_command) && $(mypy_command) && $(test_coverage_html_command)
 unit_test: local_test

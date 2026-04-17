@@ -12,11 +12,11 @@
 # limitations under the License.
 #
 
-"""Update SSH config with EC2 Public IPs from Terraform.
+"""Update SSH config with EC2 connection details from Terraform.
 
-This script updates the ~/.ssh/config file with the current EC2 public IPs
-from Terraform outputs. It finds the "Host flip" and "Host flip-trust" sections
-and updates their HostName values.
+This script updates the ~/.ssh/config file with current EC2 connection details
+from Terraform outputs. Both "Host flip" (Central Hub) and "Host flip-trust"
+(Trust EC2) use SSM Session Manager (ProxyCommand) for SSH access.
 """
 
 import os
@@ -100,10 +100,10 @@ def get_terraform_output(output_name: str) -> str:
     """Get a specific output value from Terraform.
 
     Args:
-        output_name: Name of the Terraform output variable
+        output_name (str): Name of the Terraform output variable
 
     Returns:
-        The output value or None if not found
+        str: The output value (IP address or instance ID)
     """
     try:
         result = subprocess.run(
@@ -114,16 +114,17 @@ def get_terraform_output(output_name: str) -> str:
             timeout=10,
         )
         output = result.stdout.strip()
-        # Use regular expression to extract IP address only
+        # Extract IP address if present
         ip_match = re.search(r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b", output)
         if ip_match:
             return ip_match.group(0)
+        # Accept instance IDs (e.g., i-0abc1234def56789) and other non-IP values
         if output and output != "null":
             return output
-        print_status("FAIL", f"Could not retrieve required IP {output_name} from Terraform outputs")
+        print_status("FAIL", f"Could not retrieve {output_name} from Terraform outputs")
         exit(1)
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        print_status("FAIL", "Could not retrieve required IP Ec2PublicIp from Terraform outputs")
+        print_status("FAIL", f"Could not retrieve {output_name} from Terraform outputs")
         exit(1)
 
 
@@ -195,55 +196,21 @@ def update_hostname_in_section(section: str, new_hostname: str) -> str:
     return new_section
 
 
-def add_ssh_host_key(hostname: str) -> bool:
-    """Refresh SSH host key in known_hosts (remove stale entry, then add current key).
-
-    Called after every Terraform apply that may have replaced an EC2 instance.
-    Removing before scanning prevents host-key-changed errors when the same IP
-    is reused by a freshly provisioned instance.
+def verify_instance_is_running(instance_id_or_ip: str) -> bool:
+    """Verify if an EC2 instance is running using its instance ID or public IP.
 
     Args:
-        hostname: Hostname or IP address
+        instance_id_or_ip (str): EC2 instance ID (i-xxx) or public IP address
 
     Returns:
-        True if successful, False otherwise
+        bool: True if the instance is running, False otherwise
     """
-    try:
-        known_hosts = Path.home() / ".ssh" / "known_hosts"
-        # Remove any existing entries for this host so a re-provisioned instance
-        # (same IP, new host key) does not trigger a host-key-changed error.
-        subprocess.run(
-            ["ssh-keygen", "-R", hostname],
-            capture_output=True,
-            check=False,  # non-fatal if host was not in known_hosts
-        )
-        result = subprocess.run(
-            ["ssh-keyscan", "-H", hostname],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=10,
-        )
-        if result.stdout:
-            with open(known_hosts, "a") as f:
-                f.write(result.stdout)
-            return True
+    if not instance_id_or_ip:
         return False
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, IOError):
-        return False
-
-
-def verify_instance_is_running(hostname: str) -> bool:
-    """Verify if an EC2 instance is running using its public IP.
-
-    Args:
-        hostname: Public IP address of the EC2 instance
-
-    Returns:
-        True if the instance is running, False otherwise
-    """
-    if not hostname:
-        return False
+    if instance_id_or_ip.startswith("i-"):
+        filter_name = "instance-id"
+    else:
+        filter_name = "ip-address"
     try:
         result = subprocess.run(
             [
@@ -251,7 +218,7 @@ def verify_instance_is_running(hostname: str) -> bool:
                 "ec2",
                 "describe-instances",
                 "--filters",
-                f"Name=ip-address,Values={hostname}",
+                f"Name={filter_name},Values={instance_id_or_ip}",
                 "--query",
                 "Reservations[*].Instances[*].State.Name",
                 "--output",
@@ -264,28 +231,6 @@ def verify_instance_is_running(hostname: str) -> bool:
         )
         return "running" in result.stdout.strip().lower()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
-        return False
-
-
-def verify_if_ssh_can_connect(hostname: str) -> bool:
-    """Verify if SSH can connect to the given hostname.
-
-    Args:
-        hostname: Hostname or IP address
-
-    Returns:
-        True if SSH can connect, False otherwise
-    """
-    try:
-        result = subprocess.run(
-            ["ssh", f"ubuntu@{hostname}", "echo", "connected"],
-            capture_output=True,
-            text=True,
-            check=True,
-            timeout=5,
-        )
-        return "connected" in result.stdout.strip().lower()
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return False
 
 
@@ -319,11 +264,10 @@ def main(
     dry_run: bool,
     aws_profile: str,
 ) -> None:
-    """Update SSH config with EC2 Public IPs from Terraform outputs.
+    """Update SSH config with EC2 connection details from Terraform outputs.
 
-    This script updates the ~/.ssh/config file with current EC2 public IPs
-    from Terraform outputs. It finds "Host flip" and "Host flip-trust" sections
-    and updates their HostName values.
+    Updates "Host flip" and "Host flip-trust" entries in ~/.ssh/config with
+    SSM Session Manager ProxyCommand for SSH access.
     """
     # Set AWS_PROFILE environment variable
     os.environ["AWS_PROFILE"] = aws_profile
@@ -349,12 +293,22 @@ def main(
         print_status("FAIL", f"SSH config file not found at {ssh_config}")
         sys.exit(1)
 
-    EC2_INSTANCES: dict[str, str] = {
-        "flip": "Ec2PublicIp",
-        "flip-trust": "TrustEc2PublicIp",
+    # All hosts use SSM ProxyCommand for SSH access
+    SSM_HOSTS: dict[str, str] = {
+        "flip": "Ec2InstanceId",
+        "flip-trust": "TrustEc2InstanceId",
     }
-    for service_name, instance_ip_name in EC2_INSTANCES.items():
-        public_ip = get_terraform_output(instance_ip_name)
+    SSM_PROXY_COMMAND = (
+        "ProxyCommand aws ssm start-session --target %h "
+        "--document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
+    )
+
+    for service_name, tf_output_name in SSM_HOSTS.items():
+        try:
+            host_value = get_terraform_output(tf_output_name)
+        except SystemExit:
+            print_status("INFO", f"Skipping '{service_name}' — Terraform output '{tf_output_name}' not available (not deployed?)")
+            continue
 
         # Read SSH config
         try:
@@ -369,14 +323,14 @@ def main(
 
         if not re.search(rf"^Host {service_name}$", content, re.MULTILINE):
             print_status("WARN", f"'Host {service_name}' section not found in SSH config")
-            # Append section to the new_content
             click.echo(f"\nAdding a new section for '{service_name}':")
             new_section_content = (
                 f"\nHost {service_name}\n"
-                f"    HostName {public_ip}\n"
+                f"    HostName {host_value}\n"
                 "    User ubuntu\n"
                 "    IdentitiesOnly yes\n"
                 "    IdentityFile ~/.ssh/host-aws\n"
+                f"    {SSM_PROXY_COMMAND}\n"
             )
             new_content += new_section_content
             print_status("PASS", f"'{service_name}' section will be added to SSH config: {ssh_config}")
@@ -384,21 +338,26 @@ def main(
 
         flip_section = find_host_section(content, service_name, "host-aws")
         if flip_section:
-            start, end, current_ip = flip_section
-            if current_ip:
-                print_status("INFO", f"Current '{service_name}' HostName: {current_ip}")
-                if current_ip == public_ip:
+            start, end, current_hostname = flip_section
+            if current_hostname:
+                print_status("INFO", f"Current '{service_name}' HostName: {current_hostname}")
+                if current_hostname == host_value:
                     print_status("PASS", f"'{service_name}' SSH config is already up to date!")
                 else:
                     section_content = content[start:end]
-                    updated_section = update_hostname_in_section(section_content, public_ip)
+                    updated_section = update_hostname_in_section(section_content, host_value)
+                    # Ensure ProxyCommand is present
+                    if "ProxyCommand" not in updated_section:
+                        updated_section = updated_section.rstrip("\n") + f"\n    {SSM_PROXY_COMMAND}\n"
                     new_content = new_content[:start] + updated_section + new_content[end:]
-                    print_status("INFO", f"Updating '{service_name}' HostName from {current_ip} to {public_ip}")
+                    print_status("INFO", f"Updating '{service_name}' HostName from {current_hostname} to {host_value}")
                     changes_made = True
             else:
-                print_status("WARN", "HostName not found in 'Host flip' section, adding it")
+                print_status("WARN", f"HostName not found in 'Host {service_name}' section, adding it")
                 section_content = content[start:end]
-                updated_section = update_hostname_in_section(section_content, public_ip)
+                updated_section = update_hostname_in_section(section_content, host_value)
+                if "ProxyCommand" not in updated_section:
+                    updated_section = updated_section.rstrip("\n") + f"\n    {SSM_PROXY_COMMAND}\n"
                 new_content = new_content[:start] + updated_section + new_content[end:]
                 changes_made = True
         else:
@@ -429,28 +388,12 @@ def main(
                 except IOError as e:
                     print_status("FAIL", f"Could not write SSH config: {e}")
                     sys.exit(1)
-        add_ssh_host_key(public_ip)
-
-        # Wait until instances are running
-        # TODO: Review why this is not working as expected - currently it times out for the trust instance unnecessarily
-        # click.echo("Verifying instances are running...")
-        # first_try_attempt = datetime.now()
-        # click.echo(f"Waiting for instance with IP {service_name} at {public_ip} to be in 'running' state...")
-        # while not verify_instance_is_running(public_ip) or not verify_if_ssh_can_connect(public_ip):
-        #     click.echo(f"Waiting for instance with IP {service_name} at {public_ip} to be in 'running' state...")
-        #     sleep(10)
-        #     # Timeout after 10 minutes
-        #     if (datetime.now() - first_try_attempt).total_seconds() > 600:
-        #         print_status("FAIL", f"Timeout waiting for instance {service_name} {public_ip} to be running")
-        #         sys.exit(1)
-        # print_status("PASS", f"Instance with IP {public_ip} is running!")
-        # click.echo(f"Waiting for instance with IP {public_ip} to be in 'running' state...")
 
     # Summary
     click.echo()
     click.echo(f"{Colors.GREEN}✓ SSH config update complete!{Colors.NC}")
     click.echo(f"{Colors.BLUE}You can now connect with:{Colors.NC}")
-    for service_name in EC2_INSTANCES.keys():
+    for service_name in SSM_HOSTS:
         click.echo(f"  ssh {service_name}")
     click.echo()
 

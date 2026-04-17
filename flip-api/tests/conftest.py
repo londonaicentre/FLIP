@@ -40,6 +40,7 @@ register(db_fixtures.RolesFactory)
 register(db_fixtures.UserRoleFactory)
 register(db_fixtures.TrustFactory)
 register(db_fixtures.ProjectTrustIntersectFactory)
+register(db_fixtures.TrustTaskFactory)
 
 
 @pytest.fixture

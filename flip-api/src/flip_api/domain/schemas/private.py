@@ -10,10 +10,14 @@
 # limitations under the License.
 #
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, validator
+
+from flip_api.config import get_settings
+from flip_api.domain.schemas.status import TaskType
 
 
 class Results(BaseModel):
@@ -97,3 +101,19 @@ class FetchedAggregationData(BaseModel):
     trust_name: list[str]
     trust_id: list[str]
     data: list[str]  # List of JSON strings, each is a TrustSpecificData
+
+
+class TrustTaskResponse(BaseModel):
+    """Response model for a single trust task."""
+
+    id: UUID
+    task_type: TaskType
+    payload: str
+    created_at: datetime
+
+
+class TaskResultInput(BaseModel):
+    """Input model for submitting a task result."""
+
+    success: bool
+    result: str | None = Field(default=None, max_length=get_settings().MAX_TASK_RESULT_LENGTH)

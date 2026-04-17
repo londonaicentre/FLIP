@@ -15,6 +15,7 @@ SERVICE_UNAVAILABLE_MESSAGE = "The server is unable to process any requests at t
 # AWS SES email templates
 ACCESS_REQUEST_TEMPLATE_NAME = "flip-access-request"
 IMAGING_CREDENTIALS_TEMPLATE_NAME = "flip-xnat-credentials"
+IMAGING_PROJECT_ACCESS_TEMPLATE_NAME = "flip-xnat-added-to-project"
 
 # File containing job types and their required files
 JOB_TYPES_REQUIRED_FILES_FILE = "job_types_and_required_files.json"

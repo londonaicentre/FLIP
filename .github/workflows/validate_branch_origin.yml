@@ -1,0 +1,45 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Validate PR Source Branch
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited]
+    branches:
+      - main
+
+jobs:
+  validate-source-branch:
+    name: Ensure PR to main originates from develop
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check source branch
+        run: |
+          SOURCE_BRANCH="${{ github.head_ref }}"
+          TARGET_BRANCH="${{ github.base_ref }}"
+
+          echo "PR Details:"
+          echo "  Source branch: ${SOURCE_BRANCH}"
+          echo "  Target branch: ${TARGET_BRANCH}"
+
+          if [ "${SOURCE_BRANCH}" != "develop" ]; then
+            echo "❌ VALIDATION FAILED"
+            echo "PRs to 'main' must originate from 'develop' branch."
+            echo "Current source branch: ${SOURCE_BRANCH}"
+            exit 1
+          fi
+          echo "✅ VALIDATION PASSED: PR to main originates from develop"

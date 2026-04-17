@@ -63,7 +63,6 @@ services:
       - ../flip-api/entrypoint.sh:/app/entrypoint.sh
       - ../flip-api/tests/:/app/tests/
       - ../flip-api/.vscode:/app/.vscode
-      - ../trust/certs/:/etc/ssl/trust/:ro
       - ~/.aws/config:/home/${UNAME}/.aws/config:ro
       - ~/.aws/sso/cache:/home/${UNAME}/.aws/sso/cache:rw
     networks:
@@ -83,10 +82,11 @@ services:
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
-      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
-      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
+      - TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
+      - TRUST_API_KEY_HASHES=${TRUST_API_KEY_HASHES}
+      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+      - INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
       - AES_KEY_BASE64=${AES_KEY_BASE64}
-      - TRUST_CA_BUNDLE=/etc/ssl/trust/trust-ca.crt
       - AWS_SECRET_NAME=${AWS_SECRET_NAME}
       - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
       - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS}
@@ -98,7 +98,7 @@ services:
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
       - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
-      - TRUST_ENDPOINTS=${TRUST_ENDPOINTS}
+      - TRUST_NAMES=${TRUST_NAMES}
     restart: unless-stopped
     container_name: flip-api
 
@@ -144,6 +144,8 @@ networks:
       com.docker.network.bridge.name: "central-hub-network"
       com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
 
+  # Shared network for trust-to-hub communication (outbound from trust only).
+  # Trusts poll the hub for tasks and push results back — no inbound connections to trusts.
   central-hub-trust-apis-network:
     external: true
     name: central-hub-trust-apis-network

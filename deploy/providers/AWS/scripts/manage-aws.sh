@@ -1,5 +1,5 @@
 #!/bin/bash
-# Manage Elastic IPs and other state/lock operations
+# AWS state/lock management operations (keypair deletion, terraform state unlock)
 
 set -eo pipefail
 
@@ -8,31 +8,9 @@ source "$SCRIPT_DIR/utils.sh"
 
 check_aws_profile
 
-action="${1:?Action required: list-eips, release-unused-eips, delete-keypair, force-unlock}"
+action="${1:?Action required: delete-keypair, force-unlock}"
 
 case "$action" in
-    list-eips)
-        log_info "Elastic IPs in ${AWS_REGION}:"
-        aws_cmd ec2 describe-addresses --query 'Addresses[*].[PublicIp,AllocationId,AssociationId,NetworkInterfaceId]' --output table
-        ;;
-    
-    release-unused-eips)
-        log_info "Releasing unassociated Elastic IPs..."
-        UNASSOC_EIPS=$(aws_cmd ec2 describe-addresses --filters "Name=association-id,Values=none" --query 'Addresses[*].AllocationId' --output text)
-        
-        if [ -z "$UNASSOC_EIPS" ]; then
-            log_success "No unassociated EIPs found"
-        else
-            echo "$UNASSOC_EIPS" | tr ' ' '\n' | while read -r alloc_id; do
-                [ -z "$alloc_id" ] && continue
-                log_info "Releasing $alloc_id..."
-                aws_cmd ec2 release-address --allocation-id "$alloc_id" \
-                    && log_success "Released $alloc_id" \
-                    || log_warn "Failed to release $alloc_id"
-            done
-        fi
-        ;;
-    
     delete-keypair)
         keypair="${2:-flip-keypair}"
         log_info "Deleting key pair: $keypair"
@@ -56,7 +34,7 @@ case "$action" in
     
     *)
         log_error "Unknown action: $action"
-        echo "Usage: $(basename "$0") {list-eips|release-unused-eips|delete-keypair|force-unlock} [args]"
+        echo "Usage: $(basename "$0") {delete-keypair|force-unlock} [args]"
         exit 1
         ;;
 esac

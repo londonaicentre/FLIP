@@ -46,6 +46,7 @@ from flip_api.project_services.services.project_services import (
     get_approved_trusts_for_project,
     get_project,
     get_project_models_service,
+    get_project_query,
     get_reimport_queries_service,
     get_users_with_access,
     stage_project_service,
@@ -384,12 +385,63 @@ class TestUnstageProjectService:
             unstage_project_service(project_id, current_user_id, mock_db_session)
 
 
+class TestGetProjectQuery:
+    def test_returns_query_when_trusts_queried_is_zero(self):
+        """trusts_queried=0 should still return the query (not be treated as falsy)."""
+        query = IProjectQuery(id=uuid4(), name="Q", query="SELECT *", trusts_queried=0, total_cohort=0)
+        project = MagicMock(spec=IProjectResponse)
+        project.query = query
+
+        result = get_project_query(project)
+
+        assert result is query
+
+    def test_returns_query_when_trusts_queried_is_positive(self):
+        query = IProjectQuery(id=uuid4(), name="Q", query="SELECT *", trusts_queried=3, total_cohort=100)
+        project = MagicMock(spec=IProjectResponse)
+        project.query = query
+
+        result = get_project_query(project)
+
+        assert result is query
+
+    def test_returns_none_when_no_query(self):
+        project = MagicMock(spec=IProjectResponse)
+        project.query = None
+
+        result = get_project_query(project)
+
+        assert result is None
+
+    def test_returns_none_when_query_has_no_id(self):
+        query = MagicMock()
+        query.id = None
+        query.trusts_queried = 3
+        project = MagicMock(spec=IProjectResponse)
+        project.query = query
+
+        result = get_project_query(project)
+
+        assert result is None
+
+    def test_returns_none_when_trusts_queried_is_none(self):
+        query = MagicMock()
+        query.id = uuid4()
+        query.trusts_queried = None
+        project = MagicMock(spec=IProjectResponse)
+        project.query = query
+
+        result = get_project_query(project)
+
+        assert result is None
+
+
 class TestGetApprovedTrustsForProject:
     def test_get_approved_trusts_for_project_success(self, mock_db_session: MagicMock):
         project_id = uuid4()
         mock_results = [
-            MagicMock(id=uuid4(), name="Trust 1", endpoint="endpoint1"),
-            MagicMock(id=uuid4(), name="Trust 2", endpoint="endpoint2"),
+            MagicMock(id=uuid4(), name="Trust 1"),
+            MagicMock(id=uuid4(), name="Trust 2"),
         ]
 
         mock_db_session.execute.return_value.all.return_value = mock_results

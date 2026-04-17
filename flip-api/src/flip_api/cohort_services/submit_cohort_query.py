@@ -10,10 +10,9 @@
 # limitations under the License.
 #
 
+import json
 import re
 from uuid import UUID
-
-import httpx
 
 # SQL parser library - would need Python equivalent
 # For this example using sqlparse, but may need a more robust solution
@@ -24,15 +23,15 @@ from sqlmodel import Session, select
 from flip_api.auth.access_manager import can_modify_project
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import Trust
+from flip_api.db.models.main_models import Trust, TrustTask
 from flip_api.domain.schemas.cohort import (
     SubmitCohortQuery,
     SubmitCohortQueryBody,
     SubmitCohortQueryOutput,
     TrustDetails,
 )
+from flip_api.domain.schemas.status import TaskType
 from flip_api.utils.encryption import encrypt
-from flip_api.utils.http import trust_ssl_context
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/cohort", tags=["cohort_services"])
@@ -150,10 +149,10 @@ def submit_cohort_query(
         encrypted_project_id = encrypt(str(cohort_query.project_id))
         logger.debug("Checking if project_id is encrypted: %s", encrypted_project_id)
 
-        # Process each trust
+        # Queue a task for each trust (instead of direct HTTP calls)
         for trust in trusts:
             try:
-                request_body = SubmitCohortQueryBody(
+                task_payload = SubmitCohortQueryBody(
                     query_name=cohort_query.name,
                     query=cohort_query.query,
                     encrypted_project_id=encrypted_project_id,
@@ -161,49 +160,41 @@ def submit_cohort_query(
                     trust_id=str(trust.id),
                 )
 
-                # Make request to trust
-                # headers = dict(request.headers)
+                task = TrustTask(
+                    trust_id=trust.id,
+                    task_type=TaskType.COHORT_QUERY,
+                    payload=json.dumps(task_payload.model_dump(mode="json")),
+                )
+                db.add(task)
 
-                with httpx.Client(verify=trust_ssl_context()) as client:
-                    response = client.post(
-                        f"{trust.endpoint}/cohort",
-                        json=request_body.model_dump(mode="json"),
+                result.append(
+                    TrustDetails(
+                        name=trust.name,
+                        statusCode=202,
+                        message="Task queued",
                     )
-
-                if response.status_code == 200:
-                    result.append(
-                        TrustDetails(
-                            name=trust.name,
-                            statusCode=response.status_code,
-                        )
-                    )
-                else:
-                    result.append(
-                        TrustDetails(
-                            name=trust.name,
-                            statusCode=response.status_code,
-                            message=response.json().get("detail", "Unknown error"),
-                        )
-                    )
+                )
 
             except Exception as e:
                 logger.error(
-                    f"Unable to submit cohort query to trust {trust.name}: {str(e)}"
-                    f" - Trust endpoint: {trust.endpoint}, Request body: {request_body.model_dump(mode='json')}"
+                    f"Unable to queue cohort query task for trust {trust.name}: {str(e)}"
                 )
                 result.append(TrustDetails(name=trust.name, statusCode=500, message=str(e)))
 
             logger.info(f"Trust: {trust.name} processed")
 
+        db.commit()
+
         # Prepare response
         data_to_return = SubmitCohortQueryOutput(trust=result, query_id=cohort_query.query_id)  # type: ignore[call-arg]
 
-        logger.info("Successfully submitted cohort query to all trusts")
+        logger.info("Successfully queued cohort query tasks for all trusts")
 
         return data_to_return
 
     except HTTPException:
         raise
     except Exception as e:
+        db.rollback()
         logger.error(f"Error submitting cohort query: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

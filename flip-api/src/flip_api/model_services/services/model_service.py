@@ -65,11 +65,11 @@ def update_model_status(model_id: UUID, status: ModelStatus | None, session: Ses
 
     Args:
         model_id (UUID): The ID of the model
-        status (flip.domain.schemas.status.ModelStatus): The new status to be set
+        status (ModelStatus | None): The new status to be set
         session (Session): The database session
 
     Returns:
-        flip.domain.schemas.status.ModelStatus | None: The updated status of the model
+        ModelStatus | None: The updated status of the model, or None if the model does not exist.
     """
     logger.info(f"Attempting to set the model's status... ID: {model_id}, Status: {status}")
 
@@ -208,7 +208,7 @@ def get_model_status(model_id: UUID, session: Session) -> IDetailedModelStatus |
         session (Session): The database session.
 
     Returns:
-        dict | None: A dictionary containing the model's status and deleted status.
+        IDetailedModelStatus | None: The model's status and deleted flag, or None if the model does not exist.
     """
     logger.debug("Attempting to get the model's status...")
 

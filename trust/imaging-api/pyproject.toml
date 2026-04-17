@@ -21,7 +21,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "asyncpg>=0.30.0",
-    "cryptography>=46.0.5",
+    "cryptography>=46.0.7",
     "fastapi[standard]>=0.115.11",
     "greenlet>=3.1.1",
     "pandas>=2.2.3",
@@ -41,7 +41,7 @@ dependencies = [
 dev = [
     "debugpy>=1.8.15",
     "mypy>=1.15.0",
-    "pytest>=8.3.5",
+    "pytest>=9.0.3",
     "pytest-asyncio>=0.26.0",
     "pytest-cov>=6.0.0",
     "ruff>=0.11.4",
@@ -56,10 +56,6 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 [tool.coverage.report]
 exclude_lines = ["if __name__ == .__main__.:"]
 omit = ["*.venv/*", "*/tests/*", "*/__init__.py"]
-
-[tool.pytest.ini_options_debug]
-python_files = ["test_*.py", "*_test.py"]
-filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
 [tool.ruff]
 line-length = 120

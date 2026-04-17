@@ -20,11 +20,10 @@ from flip_api.domain.interfaces.trust import ITrust
 from flip_api.trusts_services.services.trust import get_trusts
 
 
-def create_mock_trust(id=None, name="Test Trust", endpoint="https://test.endpoint"):
+def create_mock_trust(id=None, name="Test Trust"):
     return Trust(
         id=id or uuid4(),
         name=name,
-        endpoint=endpoint,
     )
 
 

@@ -35,16 +35,14 @@ module "trust_ec2" {
   source = "./modules/trust_ec2"
 
   name_prefix  = "trust"
-  instance_type = "t3.small"
+  instance_type = "t3.xlarge"
   key_name     = var.flip_keypair
-  subnet_id    = element(module.flip_vpc.public_subnets, 0)
-  security_group_ids = [module.alb_security_group.security_group.id]
-
-  create_elastic_ip = true
+  subnet_id    = element(module.flip_vpc.private_subnets, 0)
+  security_group_ids = [module.trust_security_group.security_group.id]
 }
 ```
 
-After applying, the module outputs `instance_id` and `public_ip` so you can connect to the host.
+The module places the EC2 in a private subnet with no public IP. The module outputs `instance_id` — connect via SSM (`aws ssm start-session --target <instance-id>`). XNAT and Orthanc are accessed via SSM port forwarding.
 
 Security and IAM
 
@@ -52,4 +50,4 @@ Security and IAM
 
 Troubleshooting
 
-- If the stack doesn't start, SSH into the instance and inspect `/home/ubuntu/compose_trust.development.yml`, `/home/ubuntu/.env.development` and the command `docker compose -f compose_trust.development.yml up -d`.
+- If the stack doesn't start, connect via SSM (`ssh flip-trust`) and inspect `/home/ubuntu/compose_trust.development.yml`, `/home/ubuntu/.env.development` and the command `docker compose -f compose_trust.development.yml up -d`.

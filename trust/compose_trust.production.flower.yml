@@ -22,18 +22,17 @@ services:
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
     environment:
       - NET_ID=net-1
-      - SUPERNODE_NAME=Trust_${TRUST_NUMBER}
+      - SUPERNODE_NAME=${TRUST_NAME}
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
       - LOCAL_DEV=false
       - MIN_CLIENTS=${MIN_CLIENTS}
       - IMAGES_DIR=/app/data/images
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
-      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      # FL clients intentionally do not have access to Central Hub API credentials.
+      # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
       - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
       - IMAGING_API_URL=${IMAGING_API_URL}
-      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
-      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
     command:
       - --insecure
       - --superlink

@@ -53,6 +53,26 @@ class CentralHubProject(BaseModel):
     dicom_to_nifti: bool = True
 
 
+class DeleteImagingInput(BaseModel):
+    """Input for deleting an imaging project."""
+
+    imaging_project_id: str = Field(..., description="The XNAT project ID to delete")
+
+
+class GetImagingStatusInput(BaseModel):
+    """Input for retrieving imaging project status."""
+
+    imaging_project_id: str = Field(..., description="The XNAT project ID")
+    encoded_query: str = Field(..., description="Base64 URL-encoded query")
+
+
+class ReimportStudiesInput(BaseModel):
+    """Input for reimporting imaging studies."""
+
+    imaging_project_id: str = Field(..., description="The XNAT project ID")
+    encoded_query: str = Field(..., description="Base64 URL-encoded query")
+
+
 class UpdateProfileRequest(BaseModel):
     """Request body for updating a user's profile."""
 

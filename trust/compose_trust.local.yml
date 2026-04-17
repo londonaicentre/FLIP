@@ -1,0 +1,5 @@
+# Local trust override — uses Docker named volumes for observability data
+# instead of EC2 host bind mounts. No sudo or UID management needed.
+volumes:
+  trust-local-loki-data:
+  trust-local-grafana-data:
