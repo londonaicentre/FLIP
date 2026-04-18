@@ -214,10 +214,16 @@ resource "aws_cloudwatch_log_group" "flip_log_group" {
   retention_in_days = 7
 }
 
-# Key Pair for SSH access
+# Key Pair for SSH access (optional — only created when enable_ssh_key_pair = true)
 resource "aws_key_pair" "flip_keypair" {
+  count      = var.enable_ssh_key_pair ? 1 : 0
   key_name   = "flip-keypair"
   public_key = file(pathexpand("${var.flip_keypair}.pub"))
+}
+
+moved {
+  from = aws_key_pair.flip_keypair
+  to   = aws_key_pair.flip_keypair[0]
 }
 
 # EC2 Instance
@@ -235,7 +241,7 @@ resource "aws_instance" "ec2_instance" {
   ami                         = data.aws_ssm_parameter.ubuntu.value
   vpc_security_group_ids      = [module.ec2_security_group.security_group.id]
   iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
-  key_name                    = aws_key_pair.flip_keypair.key_name
+  key_name                    = var.enable_ssh_key_pair ? aws_key_pair.flip_keypair[0].key_name : null
   root_block_device {
     volume_size           = 30
     volume_type           = "gp3"
@@ -465,7 +471,8 @@ resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
 
 # Outputs
 output "Keypair" {
-  value = var.flip_keypair
+  description = "Name of the EC2 key pair (empty when enable_ssh_key_pair = false)"
+  value       = var.enable_ssh_key_pair ? aws_key_pair.flip_keypair[0].key_name : ""
 }
 
 output "Ec2InstanceId" {
@@ -566,7 +573,7 @@ module "trust_ec2" {
 
   name_prefix   = "trust"
   instance_type = "t3.xlarge"
-  key_name      = aws_key_pair.host_key.key_name
+  key_name      = var.enable_ssh_key_pair ? aws_key_pair.host_key[0].key_name : null
   subnet_id     = element(module.flip_vpc.private_subnets, 0)
 
   # use the trust SG, not the central EC2 SG
@@ -577,6 +584,65 @@ module "trust_ec2" {
 }
 
 resource "aws_key_pair" "host_key" {
+  count      = var.enable_ssh_key_pair ? 1 : 0
   key_name   = "host-aws"
   public_key = file(var.ec2_public_key_path)
+}
+
+moved {
+  from = aws_key_pair.host_key
+  to   = aws_key_pair.host_key[0]
+}
+
+############################
+# Ansible aws_ssm transfer bucket
+############################
+#
+# The community.aws.aws_ssm Ansible connection plugin stages file transfers through
+# an S3 bucket. Objects are short-lived (< 1 day). The EC2 instance role already has
+# AmazonS3FullAccess + AmazonSSMManagedInstanceCore, so no additional IAM wiring is
+# needed on the instance side.
+
+resource "aws_s3_bucket" "ansible_ssm_transfer" {
+  bucket_prefix = "flip-ansible-ssm-"
+  force_destroy = true
+
+  tags = {
+    Name    = "flip-ansible-ssm-transfer"
+    Purpose = "Ansible community.aws.aws_ssm file transfer staging"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "ansible_ssm_transfer" {
+  bucket                  = aws_s3_bucket.ansible_ssm_transfer.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "ansible_ssm_transfer" {
+  bucket = aws_s3_bucket.ansible_ssm_transfer.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "ansible_ssm_transfer" {
+  bucket = aws_s3_bucket.ansible_ssm_transfer.id
+  rule {
+    id     = "expire-old-transfers"
+    status = "Enabled"
+    filter {}
+    expiration {
+      days = 1
+    }
+  }
+}
+
+output "AnsibleSsmBucketName" {
+  description = "S3 bucket used by Ansible community.aws.aws_ssm connection plugin for file transfer"
+  value       = aws_s3_bucket.ansible_ssm_transfer.bucket
 }

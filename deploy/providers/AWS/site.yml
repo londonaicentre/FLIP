@@ -40,27 +40,30 @@
       register: terraform_output
     - name: add Central Hub EC2 instance to Ansible inventory
       add_host:
-        # Use the SSH alias so Ansible tunnels through SSM Session Manager
-        # The 'flip' Host entry in ~/.ssh/config provides ProxyCommand, IdentityFile,
-        # and StrictHostKeyChecking=accept-new — no additional ssh_common_args needed.
+        # Native SSM connection — no SSH key, no ProxyCommand, no open port 22.
+        # Auth uses the developer's AWS credentials; file transfer goes through the
+        # S3 bucket created in Terraform (AnsibleSsmBucketName output).
         name: flip
         groups:
           - ec2
           - central_hub
-        ansible_ssh_user: ubuntu
-        ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') + '/.ssh/host-aws' }}"
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+        ansible_connection: community.aws.aws_ssm
+        ansible_aws_ssm_instance_id: "{{ terraform_output.outputs.Ec2InstanceId.value }}"
+        ansible_aws_ssm_region: "{{ lookup('env', 'AWS_REGION') | default('eu-west-2', true) }}"
+        ansible_aws_ssm_bucket_name: "{{ terraform_output.outputs.AnsibleSsmBucketName.value }}"
+        ansible_python_interpreter: /usr/bin/python3
         ansible_ec2_instance_id: "{{ terraform_output.outputs.Ec2InstanceId.value }}"
     - name: add Trust EC2 instance to Ansible inventory
       add_host:
-        # Use the SSH alias so Ansible tunnels through SSM Session Manager
         name: flip-trust
         groups:
           - ec2
           - trust_ec2
-        ansible_ssh_user: ubuntu
-        ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') + '/.ssh/host-aws' }}"
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+        ansible_connection: community.aws.aws_ssm
+        ansible_aws_ssm_instance_id: "{{ terraform_output.outputs.TrustEc2InstanceId.value }}"
+        ansible_aws_ssm_region: "{{ lookup('env', 'AWS_REGION') | default('eu-west-2', true) }}"
+        ansible_aws_ssm_bucket_name: "{{ terraform_output.outputs.AnsibleSsmBucketName.value }}"
+        ansible_python_interpreter: /usr/bin/python3
         ansible_ec2_instance_id: "{{ terraform_output.outputs.TrustEc2InstanceId.value }}"
 
 - name: update packages

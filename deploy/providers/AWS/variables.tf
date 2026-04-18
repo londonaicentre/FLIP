@@ -50,12 +50,22 @@ variable "postgres_version" {
   default     = "17.9"
 }
 
+variable "enable_ssh_key_pair" {
+  description = "When true, create aws_key_pair resources and attach them to EC2 instances. REQUIRED for make deploy-centralhub / deploy-trust because they orchestrate the remote Docker daemon via Docker-over-SSH (docker context host=ssh://...). Set to false only if you use the stack exclusively via native SSM (aws ssm start-session) and Ansible-over-SSM — no `make deploy-*` targets."
+  type        = bool
+  default     = false
+}
+
 variable "flip_keypair" {
-  type = string
+  description = "Path to local private key (without .pub suffix). Required when enable_ssh_key_pair = true."
+  type        = string
+  default     = ""
 }
 
 variable "ec2_public_key_path" {
-  type = string
+  description = "Path to local public key used for the trust EC2 key pair. Required when enable_ssh_key_pair = true."
+  type        = string
+  default     = ""
 }
 
 variable "AES_KEY_BASE64" {

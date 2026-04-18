@@ -28,8 +28,10 @@ variable "instance_type" {
 }
 
 variable "key_name" {
-  type    = string
-  default = "~/.ssh/id_rsa"
+  description = "AWS EC2 key pair name to attach to the trust instance. Set to null only if you never run `make deploy-trust` (which uses Docker-over-SSH and therefore needs the key pair)."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "subnet_id" {

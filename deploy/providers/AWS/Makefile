@@ -98,8 +98,7 @@ check-ssm-ready: ## Verify SSM Session Manager prerequisites are installed
 	@echo "🔍 Checking SSM Session Manager prerequisites..."
 	@command -v aws >/dev/null 2>&1 || { echo "❌ AWS CLI not found. Install: brew install awscli or apt-get install awscli"; exit 1; }
 	@session-manager-plugin --version >/dev/null 2>&1 || { echo "❌ Session Manager plugin not found. Install: brew install session-manager-plugin (macOS) or see README.md"; exit 1; }
-	@ssh-add -l >/dev/null 2>&1 || echo "⚠️  SSH agent has no keys (this is OK, SSM uses AWS credentials instead)"
-	@[ -f ~/.ssh/host-aws ] || { echo "⚠️  SSH key ~/.ssh/host-aws not found (will be needed for Ansible)"; }
+	@aws sts get-caller-identity --profile $${AWS_PROFILE} >/dev/null 2>&1 || { echo "❌ AWS credentials not valid for profile $${AWS_PROFILE}. Run: aws sso login --profile $${AWS_PROFILE}"; exit 1; }
 	@echo "✅ SSM prerequisites verified!"
 
 prettier:
@@ -204,6 +203,15 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
 	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) -e fl_kit_date=$(FL_KIT_DATE) -e pgdata_archive=trust1_pgdata_20260106.tar.gz
+
+.PHONY: check-deploy-centralhub
+check-deploy-centralhub: ## Dry-run Ansible against Central Hub (verifies community.aws.aws_ssm connection without mutations)
+	@test -n "$(FL_KIT_DATE)" || (echo "FL_KIT_DATE must be set in $(MAIN_ENV_FILE)"; exit 1)
+	@uv run ansible-playbook site.yml -C \
+		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
+		-e fl_kit_date=$(FL_KIT_DATE) \
+		-e pgdata_archive=trust1_pgdata_20260106.tar.gz \
+		-l 'localhost,flip'
 
 .PHONY: deploy-centralhub
 deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with environment from Terraform
