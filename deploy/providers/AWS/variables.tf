@@ -51,7 +51,7 @@ variable "postgres_version" {
 }
 
 variable "enable_ssh_key_pair" {
-  description = "When true, create aws_key_pair resources and attach them to EC2 instances. REQUIRED for make deploy-centralhub / deploy-trust because they orchestrate the remote Docker daemon via Docker-over-SSH (docker context host=ssh://...). Set to false only if you use the stack exclusively via native SSM (aws ssm start-session) and Ansible-over-SSM — no `make deploy-*` targets."
+  description = "When true, create aws_key_pair resources and attach them to EC2 instances. Only needed for the legacy SSH-over-SSM path (scp, docker-over-SSH, git-over-SSH). All primary workflows (interactive shell, Ansible, make deploy-*, make logs) now go through SSM with IAM credentials — no key pair required."
   type        = bool
   default     = false
 }
