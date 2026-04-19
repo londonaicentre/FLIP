@@ -8,13 +8,15 @@ This application is compatible with the new MI-CDM. The input dataframe to the `
 
 Example:
 
-If `LESIONS` is `{"0": "Effusion", "1": "Edema", "-1": "Lungs in normal arrangement"}`, the dataframe input to the training and validation scripts should contain a column for each of these values. 
+If `LESIONS` is `{"0": "Effusion", "1": "Edema", "-1": "Lungs in normal arrangement"}`, the dataframe input to the training and validation scripts should contain a column for each of these values.
 Note that key '-1' is reserved for "Normality". A positive value of this columns implies that every other will be set to 0. This tag does not count as part of the classification.
 
-THe `config.json` file must also have a `value_to_numerical` argument mapping values 0 and 1 to how these values are represented in the dataframe (example: 1->`Yes`, 0->`No`). 
-
+THe `config.json` file must also have a `value_to_numerical` argument mapping values 0 and 1 to how these values are represented in the dataframe (example: 1->`Yes`, 0->`No`).
 
 The images have to  DICOM (although this can be easily modified by changing the resource type and the package used to load images from `pydicom` to `nibabel`). We consider that the images are 2D, grayscale.
+
+Bear in mind that **class imabalance** can lead to NaN metrics because of lack of representation for some classes.
+Even though NaNs are handled gracefully, ensure that you use N=300 approximately per site. 
 
 ## The network
 
