@@ -111,6 +111,14 @@ class FLIP_TRAINER(Executor):
         self.validation_dataset = Dataset(self.val_dict, transform=self._val_transforms)
         self.validation_dataloader = DataLoader(self.validation_dataset, batch_size=self._batch_size, shuffle=False)
 
+        self.logger.info(
+            f"DataLoader created: training batches={len(self.training_dataloader)}, "
+            f"validation batches={len(self.validation_dataloader)}"
+        )
+
+        # Log overall class distribution in datasets
+        self.log_dataset_class_distribution()
+
         # Define optimizer
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self._lr_start)
         gamma_lr = (self._lr_end / self._lr_start) ** (1 / self._epochs)
@@ -159,21 +167,21 @@ class FLIP_TRAINER(Executor):
                     ],
                 )
             except Exception as err:
-                print(f"Could not get image data folder path for {accession_id}: {err}")
+                self.logger.error(f"Could not get image data folder path for {accession_id}: {err}")
                 continue
 
             all_images = list(accession_folder_path.rglob("*.dcm"))
             this_accession_matches = 0
-            print(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
+            self.logger.info(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
 
             for img in all_images:
                 try:
                     _ = pydicom.dcmread(str(img))
                 except Exception as e:
-                    print(f"Problem loading header of base image {str(img)}.")
-                    print(f"{e=}")
-                    print(f"{type(e)=}")
-                    print(f"{e.args=}")
+                    self.logger.error(f"Problem loading header of base image {str(img)}.")
+                    self.logger.error(f"{e=}")
+                    self.logger.error(f"{type(e)=}")
+                    self.logger.error(f"{e.args=}")
                     continue
 
                 # defines keys for image and segmentation
@@ -182,9 +190,9 @@ class FLIP_TRAINER(Executor):
                 datalist.append(item_)
                 this_accession_matches += 1
 
-            print(f"Added {this_accession_matches} image / label pairs for {accession_id}.")
+            self.logger.info(f"Added {this_accession_matches} image / label pairs for {accession_id}.")
 
-        print(f"Found {len(datalist)} files in total.")
+        self.logger.info(f"Found {len(datalist)} files in total.")
 
         # split into the training and testing data
         train_datalist, val_datalist, test_datalist = np.split(
@@ -195,12 +203,40 @@ class FLIP_TRAINER(Executor):
             ],
         )
 
-        print(
+        self.logger.info(
             f"Found {len(train_datalist)} files for training, {len(val_datalist)} files for validation and "
             f"{len(test_datalist)} files for testing."
         )
 
         return train_datalist, val_datalist
+
+    def log_dataset_class_distribution(self):
+        """Log the overall class distribution in training and validation datasets."""
+        self.logger.info("\n" + "=" * 80)
+        self.logger.info("OVERALL CLASS DISTRIBUTION IN DATASETS")
+        self.logger.info("=" * 80)
+
+        for dataset_name, datalist in [("TRAINING", self.train_dict), ("VALIDATION", self.val_dict)]:
+            self.logger.info(f"\n{dataset_name} Dataset ({len(datalist)} samples):")
+            for lesion in self._lesions.items:
+                lesion_name = lesion.lesion
+                all_labels = [item[lesion_name] for item in datalist]
+                num_positive = sum(1 for label in all_labels if label == 1)
+                num_negative = sum(1 for label in all_labels if label == 0)
+                num_masked = sum(1 for label in all_labels if label == -1)
+
+                if num_positive + num_negative > 0:
+                    positive_ratio = num_positive / (num_positive + num_negative) * 100
+                else:
+                    positive_ratio = 0.0
+
+                self.logger.info(
+                    f"  {lesion_name:20s}: {num_positive:4d} positive, {num_negative:4d} negative, "
+                    f"{num_masked:4d} masked/unknown"
+                )
+                self.logger.info(f"                        Positive ratio: {positive_ratio:.2f}% (excluding masked)")
+
+        self.logger.info("=" * 80 + "\n")
 
     def local_train(self, fl_ctx: FLContext, weights, abort_signal, global_round):
         # Set the model weights
@@ -208,7 +244,9 @@ class FLIP_TRAINER(Executor):
 
         # Basic training
         self.model.train()
-        print(f"Starting local train on device {self.device}")
+        self.logger.info(f"Starting local train on device {self.device}")
+        self.logger.info("Note: Batches with insufficient class representation will produce NaN metrics.")
+        self.logger.info("      These NaN values will be ignored when computing epoch averages using np.nanmean().\n")
         training_metrics = {"loss": {"train": [], "val": []}, "f1-score": {}, "precision": {}, "recall": {}}
         for lesion_name in self._lesions.get_lesion_list():
             training_metrics["f1-score"][lesion_name] = {"train": [], "val": []}
@@ -231,6 +269,25 @@ class FLIP_TRAINER(Executor):
 
                 images = batch["image"].to(self.device)
                 labels = get_lesion_label(batch, self._lesions).to(self.device)
+
+                # Log class distribution for this batch
+                labels_np = labels.detach().cpu().numpy()
+                batch_info = (
+                    f"Epoch {epoch + 1}, Train Batch {i + 1}/{len(self.training_dataloader)}, "
+                    f"Batch size: {labels.shape[0]} - "
+                )
+                for lesion_idx, lesion in enumerate(self._lesions.items):
+                    lesion_labels = labels_np[:, lesion_idx]
+                    # Filter out -1 (unknown/masked) values
+                    valid_labels = lesion_labels[lesion_labels != -1]
+                    if len(valid_labels) > 0:
+                        num_positive = np.sum(valid_labels == 1)
+                        num_negative = np.sum(valid_labels == 0)
+                        batch_info += f"{lesion.lesion}: {num_positive} pos / {num_negative} neg; "
+                    else:
+                        batch_info += f"{lesion.lesion}: all masked; "
+                self.logger.info(batch_info)
+
                 self.optimizer.zero_grad()
                 output = self.model(images)
                 loss = get_bce_loss(output, labels)
@@ -256,6 +313,25 @@ class FLIP_TRAINER(Executor):
 
                     images = batch["image"].to(self.device)
                     labels = get_lesion_label(batch, self._lesions).to(self.device)
+
+                    # Log class distribution for this validation batch
+                    labels_np = labels.detach().cpu().numpy()
+                    batch_info = (
+                        f"Epoch {epoch + 1}, Val Batch {i + 1}/{len(self.validation_dataloader)}, "
+                        f"Batch size: {labels.shape[0]} - "
+                    )
+                    for lesion_idx, lesion in enumerate(self._lesions.items):
+                        lesion_labels = labels_np[:, lesion_idx]
+                        # Filter out -1 (unknown/masked) values
+                        valid_labels = lesion_labels[lesion_labels != -1]
+                        if len(valid_labels) > 0:
+                            num_positive = np.sum(valid_labels == 1)
+                            num_negative = np.sum(valid_labels == 0)
+                            batch_info += f"{lesion.lesion}: {num_positive} pos / {num_negative} neg; "
+                        else:
+                            batch_info += f"{lesion.lesion}: all masked; "
+                    self.logger.info(batch_info)
+
                     output = self.model(images)
                     loss = get_bce_loss(output, labels).item()
                     training_metrics_["loss"]["val"].append(loss)
@@ -275,9 +351,9 @@ class FLIP_TRAINER(Executor):
 
             for metric, metric_dump in training_metrics_.items():
                 if metric == "loss":
-                    training_metrics["loss"]["train"].append(np.mean(metric_dump["train"]))
+                    training_metrics["loss"]["train"].append(np.nanmean(metric_dump["train"]))
                     if epoch % self.validate_every == 0:
-                        training_metrics["loss"]["val"].append(np.mean(metric_dump["val"]))
+                        training_metrics["loss"]["val"].append(np.nanmean(metric_dump["val"]))
                     else:
                         if len(training_metrics_["loss"]["val"]) == 0:
                             training_metrics["loss"]["val"].append(0)
@@ -286,11 +362,11 @@ class FLIP_TRAINER(Executor):
                 else:
                     for lesion_name in self._lesions.get_lesion_list():
                         training_metrics[metric][lesion_name]["train"].append(
-                            np.mean(metric_dump[lesion_name]["train"])
+                            np.nanmean(metric_dump[lesion_name]["train"])
                         )
                         if epoch % self.validate_every == 0:
                             training_metrics[metric][lesion_name]["val"].append(
-                                np.mean(metric_dump[lesion_name]["val"])
+                                np.nanmean(metric_dump[lesion_name]["val"])
                             )
                         else:
                             if len(training_metrics[metric][lesion_name]["val"]) == 0:
@@ -311,42 +387,112 @@ class FLIP_TRAINER(Executor):
                     for lesion_name, lesion_values in metric_values.items():
                         lvt = lesion_values["train"][-1]
                         lvv = lesion_values["val"][-1]
-                        message += f"{metric}-{lesion_name}: train={lvt:.4f}, val={lvv:.4f};\t"
+                        # Format with 'N/A' if NaN, otherwise show the value
+                        lvt_str = "N/A" if np.isnan(lvt) else f"{lvt:.4f}"
+                        lvv_str = "N/A" if np.isnan(lvv) else f"{lvv:.4f}"
+                        message += f"{metric}-{lesion_name}: train={lvt_str}, val={lvv_str};\t"
 
             message += "\n"
-            print(message)
+            self.logger.info(message)
             self.log_info(fl_ctx, message)
 
+            # Log summary of NaN occurrences for this epoch
+            nan_summary = f"Epoch {epoch + 1} NaN Summary:\n"
+            has_nan = False
+            for metric in ["f1-score", "precision", "recall"]:
+                for lesion_name in self._lesions.get_lesion_list():
+                    train_values = training_metrics_[metric][lesion_name]["train"]
+                    train_nans = sum(1 for x in train_values if np.isnan(x))
+                    train_valid = len([x for x in train_values if not np.isnan(x)])
+
+                    if epoch % self.validate_every == 0:
+                        val_values = training_metrics_[metric][lesion_name]["val"]
+                        val_nans = sum(1 for x in val_values if np.isnan(x))
+                        val_valid = len([x for x in val_values if not np.isnan(x)])
+                    else:
+                        val_nans = 0
+                        val_valid = 0
+
+                    if train_nans > 0 or val_nans > 0:
+                        has_nan = True
+                        train_total = len(train_values)
+                        val_total = len(val_values) if epoch % self.validate_every == 0 else 0
+
+                        train_avg = training_metrics[metric][lesion_name]["train"][-1]
+                        val_avg = training_metrics[metric][lesion_name]["val"][-1]
+
+                        # Format with 'N/A (all batches NaN)' if NaN, otherwise show the value
+                        train_avg_str = "N/A (all batches NaN)" if np.isnan(train_avg) else f"{train_avg:.4f}"
+                        val_avg_str = "N/A (all batches NaN)" if np.isnan(val_avg) else f"{val_avg:.4f}"
+
+                        nan_summary += (
+                            f"  {lesion_name} {metric}: {train_nans}/{train_total} train batches had NaN "
+                            f"({train_valid} valid), {val_nans}/{val_total} val batches had NaN ({val_valid} valid)\n"
+                            f"    -> Averaged from valid batches: train={train_avg_str}, val={val_avg_str}\n"
+                        )
+
+            if has_nan:
+                self.logger.info(nan_summary)
+                self.log_info(fl_ctx, nan_summary)
             # Send metrics over to FLIP
             round = global_round * (self._epochs) + epoch + 1
+
+            # Send loss metrics - convert NaN to 0.0
+            train_loss = training_metrics["loss"]["train"][-1]
+            val_loss = training_metrics["loss"]["val"][-1]
+
+            if np.isnan(train_loss):
+                self.logger.warning("TRAIN_LOSS is NaN (no valid batches) - sending 0.0")
+                train_loss = 0.0
+
+            if np.isnan(val_loss):
+                self.logger.warning("VAL_LOSS is NaN (no valid batches) - sending 0.0")
+                val_loss = 0.0
+
             send_metrics_value(
                 label="TRAIN_LOSS",
                 round=round,
-                value=training_metrics["loss"]["train"][-1],
+                value=train_loss,
                 fl_ctx=fl_ctx,
                 flip=self.flip,
             )
             send_metrics_value(
                 label="VAL_LOSS",
                 round=round,
-                value=training_metrics["loss"]["val"][-1],
+                value=val_loss,
                 fl_ctx=fl_ctx,
                 flip=self.flip,
             )
 
             for metric in ["f1-score", "precision", "recall"]:
                 for lesion_name in self._lesions.get_lesion_list():
+                    train_value = training_metrics[metric][lesion_name]["train"][-1]
+                    val_value = training_metrics[metric][lesion_name]["val"][-1]
+
+                    # Convert NaN to 0.0 before sending
+                    if np.isnan(train_value):
+                        self.logger.warning(
+                            f"TRAIN-{metric.upper()} for {lesion_name} is NaN (no valid batches) - sending 0.0"
+                        )
+                        train_value = 0.0
+
+                    if np.isnan(val_value):
+                        self.logger.warning(
+                            f"VAL-{metric.upper()} for {lesion_name} is NaN (no valid batches) - sending 0.0"
+                        )
+                        val_value = 0.0
+
                     send_metrics_value(
                         label=f"{'train'.upper()}-{metric.upper()}",
                         round=round,
-                        value=training_metrics[metric][lesion_name]["train"][-1],
+                        value=train_value,
                         fl_ctx=fl_ctx,
                         flip=self.flip,
                     )
                     send_metrics_value(
                         label=f"{'val'.upper()}-{metric.upper()}",
                         round=round,
-                        value=training_metrics[metric][lesion_name]["val"][-1],
+                        value=val_value,
                         fl_ctx=fl_ctx,
                         flip=self.flip,
                     )
