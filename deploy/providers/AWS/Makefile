@@ -164,6 +164,10 @@ import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prev
 	@bash scripts/import-resources.sh
 
 
+.PHONY: import-vpc
+import-vpc: ## Import existing VPC infrastructure (subnets, IGW, NAT, routes) into Terraform state
+	@bash scripts/import-vpc.sh
+
 .PHONY: force-unlock
 force-unlock: ## Force unlock Terraform state - provide LOCK_ID=<id> as argument
 	@if [ -z "$(LOCK_ID)" ]; then \
