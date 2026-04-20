@@ -79,6 +79,10 @@ export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
+export TF_VAR_db_password=${DB_PASSWORD}
+export TF_VAR_PRIVATE_API_KEY=${PRIVATE_API_KEY}
+# export TF_VAR_github_username=${GITHUB_USERNAME}
+# export TF_VAR_github_pat=${GITHUB_PAT}
 
 # ECS cluster name — must match var.ecs_cluster_name in variables.tf
 ECS_CLUSTER_NAME ?= flip-ecs-cluster
@@ -502,4 +506,3 @@ full-deploy-stag-hybrid: ## Full staging hybrid deployment including local trust
 	echo "✅ Hybrid staging deployment complete." && \
 	echo "➡️  Final manual step: start the local trust stack on the trust host:" && \
 	echo "   cd ../../../trust && env PROD=stag make up-local-trust"
-
