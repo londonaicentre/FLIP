@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-terraform {
-  backend "s3" {
-    # bucket and region are supplied at init time via `-backend-config`
-    # (see Makefile's `init` target). Keeping them out of the file lets
-    # operators in different AWS regions reuse the same Terraform code.
-    key          = "flip/terraform.tfstate"
-    encrypt      = true
-    use_lockfile = true
-  }
+variable "sender_email" {
+  type        = string
+  description = "Email address that SES verifies as the FLIP sender identity."
+}
+
+variable "templates_dir" {
+  type        = string
+  description = "Path to the directory containing the flip-* .html/.txt template pairs."
+}
+
+variable "template_name_prefix" {
+  type        = string
+  description = "Optional prefix for SES template names. Set on environments that share an AWS account with prod so the dev templates do not collide with the prod ones. Leave empty for the prod environment to preserve existing template names."
+  default     = ""
 }

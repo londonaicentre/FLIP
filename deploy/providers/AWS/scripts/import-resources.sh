@@ -63,36 +63,37 @@ if [ -n "$SECRET_ARN" ]; then
     fi
 fi
 
-# 4. Cognito
+# 4. Cognito (now lives under module.cognito.* — addresses match the modules/cognito layout)
 echo ""
 log_info "4️⃣  Cognito..."
 POOL_ID=$(aws_cmd cognito-idp list-user-pools --max-results 20 --query 'UserPools[?Name==`flip-user-pool`].Id' --output text 2>/dev/null || echo "")
 if [ -n "$POOL_ID" ]; then
-    terraform import aws_cognito_user_pool.flip_user_pool "$POOL_ID" 2>/dev/null || log_success "User pool"
-    
+    terraform import 'module.cognito.aws_cognito_user_pool.flip_user_pool' "$POOL_ID" 2>/dev/null || log_success "User pool"
+
     DOMAIN=$(aws_cmd cognito-idp describe-user-pool --user-pool-id "$POOL_ID" --query 'UserPool.Domain' --output text 2>/dev/null || echo "")
     if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "None" ]; then
-        terraform import aws_cognito_user_pool_domain.main "$DOMAIN" 2>/dev/null || log_success "Domain"
-        terraform import random_string.cognito_domain "$DOMAIN" 2>/dev/null || log_success "Random string"
+        terraform import 'module.cognito.aws_cognito_user_pool_domain.main' "$DOMAIN" 2>/dev/null || log_success "Domain"
+        terraform import 'module.cognito.random_string.cognito_domain' "$DOMAIN" 2>/dev/null || log_success "Random string"
     fi
-    
+
     CLIENT_ID=$(aws_cmd cognito-idp list-user-pool-clients --user-pool-id "$POOL_ID" --query 'UserPoolClients[0].ClientId' --output text 2>/dev/null || echo "")
     if [ -n "$CLIENT_ID" ]; then
-        terraform import aws_cognito_user_pool_client.client "$POOL_ID/$CLIENT_ID" 2>/dev/null || log_success "Client"
+        terraform import 'module.cognito.aws_cognito_user_pool_client.client' "$POOL_ID/$CLIENT_ID" 2>/dev/null || log_success "Client"
     fi
-    
-    terraform import aws_cognito_user.admin_user "$POOL_ID/aicentreflip@gmail.com" 2>/dev/null || log_success "Admin user"
-    terraform import aws_cognito_user.researcher_user "$POOL_ID/rafaelagd@gmail.com" 2>/dev/null || log_success "Researcher user"
+
+    terraform import 'module.cognito.aws_cognito_user.admin_user' "$POOL_ID/aicentreflip@gmail.com" 2>/dev/null || log_success "Admin user"
+    # researcher_user is wrapped in count = var.researcher_email == "" ? 0 : 1 inside the module.
+    terraform import 'module.cognito.aws_cognito_user.researcher_user[0]' "$POOL_ID/rafaelagd@gmail.com" 2>/dev/null || log_success "Researcher user"
 fi
 
-# 5. SES Email Identity
+# 5. SES Email Identity (now lives under module.ses.*)
 echo ""
 log_info "5️⃣  SES Email Identity..."
 EXISTING_SES_EMAIL=$(aws_cmd ses list-identities --query 'Identities[0]' --output text 2>/dev/null || echo "")
 if [ -n "$EXISTING_SES_EMAIL" ] && [ "$EXISTING_SES_EMAIL" != "None" ]; then
     if [ "$EXISTING_SES_EMAIL" = "${SES_VERIFIED_EMAIL}" ]; then
         log_success "Existing SES identity matches configuration: $EXISTING_SES_EMAIL"
-        terraform import aws_ses_email_identity.flip_sender "$EXISTING_SES_EMAIL" 2>/dev/null || log_success "SES Email Identity (already imported)"
+        terraform import 'module.ses.aws_ses_email_identity.flip_sender' "$EXISTING_SES_EMAIL" 2>/dev/null || log_success "SES Email Identity (already imported)"
     else
         log_warn "Existing SES identity ($EXISTING_SES_EMAIL) does NOT match configuration (${SES_VERIFIED_EMAIL})"
         log_info "Terraform will destroy and recreate with correct email"
@@ -142,5 +143,5 @@ else
 fi
 
 echo ""
-log_info "Note: Terraform state bucket (${FLIP_TFSTATE_BUCKET_NAME}) is managed externally via create_backend.sh"
+log_info "Note: Terraform state bucket (${FLIP_TFSTATE_BUCKET_NAME}) is managed externally via scripts/create-backend.sh"
 log_success "Persistent resources imported!"

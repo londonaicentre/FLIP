@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-terraform {
-  backend "s3" {
-    # bucket and region are supplied at init time via `-backend-config`
-    # (see Makefile's `init` target). Keeping them out of the file lets
-    # operators in different AWS regions reuse the same Terraform code.
-    key          = "flip/terraform.tfstate"
-    encrypt      = true
-    use_lockfile = true
+output "sender_identity_arn" {
+  description = "ARN of the verified SES sender identity."
+  value       = aws_ses_email_identity.flip_sender.arn
+}
+
+output "template_names" {
+  description = "Map of logical name -> rendered SES template name, useful for callers that need to invoke the templates."
+  value = {
+    access_request        = aws_ses_template.flip_access_request.name
+    xnat_credentials      = aws_ses_template.flip_xnat_credentials.name
+    xnat_added_to_project = aws_ses_template.flip_xnat_added_to_project.name
   }
 }

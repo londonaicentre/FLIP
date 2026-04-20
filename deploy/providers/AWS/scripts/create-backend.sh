@@ -12,19 +12,26 @@
 # limitations under the License.
 #
 
-set -e
+set -euo pipefail
 
-# Configuration
-REGION="eu-west-2"
+REGION="${TFSTATE_REGION:-${AWS_REGION:-eu-west-2}}"
+BUCKET_NAME="${TFSTATE_BUCKET_NAME:-}"
+STATE_KEY="${TFSTATE_KEY:-terraform.tfstate}"
+
+if [ -z "$BUCKET_NAME" ]; then
+    echo "❌ TFSTATE_BUCKET_NAME must be set." >&2
+    exit 1
+fi
+
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-BUCKET_NAME="${FLIP_TFSTATE_BUCKET_NAME}"
 
-echo "🚀 Bootstrapping Terraform Backend resources..."
-echo "   Region: ${REGION}"
-echo "   Bucket: ${BUCKET_NAME}"
-echo "   Table:  ${DYNAMODB_TABLE}"
+echo "🚀 Bootstrapping Terraform backend resources..."
+echo "   Account: ${ACCOUNT_ID}"
+echo "   Region:  ${REGION}"
+echo "   Bucket:  ${BUCKET_NAME}"
+echo "   Key:     ${STATE_KEY}"
 
-# 1. Create S3 Bucket
+# 1. Create S3 Bucket if it doesn't exist, and configure it for Terraform state storage.
 if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
     echo "✅ S3 bucket '$BUCKET_NAME' already exists."
 else
@@ -47,14 +54,12 @@ else
     echo "✅ S3 bucket created."
 fi
 
-# 2. Push empty state file to S3 if not exists
-STATE_FILE="terraform.tfstate"
-if aws s3api head-object --bucket "$BUCKET_NAME" --key "$STATE_FILE" 2>/dev/null; then
-    echo "✅ State file '$STATE_FILE' already exists in S3."
+# 2. Check if the state object already exists. If not, it will be created automatically by Terraform on first write.
+if aws s3api head-object --bucket "$BUCKET_NAME" --key "$STATE_KEY" 2>/dev/null; then
+    echo "✅ State object '$STATE_KEY' already exists in S3."
 else
-    echo "📤 Uploading empty state file to S3..."
-    echo "{}" | aws s3api put-object --bucket "$BUCKET_NAME" --key "$STATE_FILE"
-    echo "✅ State file uploaded."
+    echo "ℹ️  State object '$STATE_KEY' does not exist yet."
+    echo "   Terraform will create it automatically on the first state write."
 fi
 
 echo "🎉 Backend infrastructure is ready!"

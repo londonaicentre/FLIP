@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Dev state lives at its own S3 object key so it cannot collide with
+# prod/stag state. The bucket itself is supplied at `init` time via
+# `-backend-config`; see dev/Makefile and dev/README.md.
+
 terraform {
   backend "s3" {
     # bucket and region are supplied at init time via `-backend-config`
     # (see Makefile's `init` target). Keeping them out of the file lets
     # operators in different AWS regions reuse the same Terraform code.
-    key          = "flip/terraform.tfstate"
+    key          = "flip/dev/terraform.tfstate"
     encrypt      = true
     use_lockfile = true
   }

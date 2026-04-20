@@ -564,12 +564,12 @@ output "DbSecretArn" {
 
 output "CognitoUserPoolId" {
   description = "Cognito User Pool ID"
-  value       = aws_cognito_user_pool.flip_user_pool.id
+  value       = module.cognito.user_pool_id
 }
 
 output "CognitoAppClientId" {
   description = "Cognito App Client ID"
-  value       = aws_cognito_user_pool_client.client.id
+  value       = module.cognito.app_client_id
 }
 
 output "FlServerEndpoint" {
@@ -621,29 +621,36 @@ output "EcsFlipApiTargetGroupArn" {
 # SES Email Templates
 ############################
 
-resource "aws_ses_email_identity" "flip_sender" {
-  email = var.SES_VERIFIED_EMAIL
+module "ses" {
+  source = "./modules/ses"
+
+  sender_email  = var.SES_VERIFIED_EMAIL
+  templates_dir = "${path.module}/templates/ses"
+  # template_name_prefix left empty so prod keeps its existing SES template
+  # names (flip-access-request etc.) and this refactor is a pure state-mv.
 }
 
-resource "aws_ses_template" "flip_access_request" {
-  name    = "flip-access-request"
-  subject = "Access Request from {{name}} on FLIP"
-  html    = file("${path.module}/templates/ses/flip-access-request.html")
-  text    = file("${path.module}/templates/ses/flip-access-request.txt")
+# State migration: SES resources used to live at the root of this stack and now
+# live inside module.ses. See the matching `moved` block in services.tf for the
+# rationale. Safe to remove once every live state file has been migrated.
+moved {
+  from = aws_ses_email_identity.flip_sender
+  to   = module.ses.aws_ses_email_identity.flip_sender
 }
 
-resource "aws_ses_template" "flip_xnat_credentials" {
-  name    = "flip-xnat-credentials"
-  subject = "Your XNAT credentials for {{trust_name}}"
-  html    = file("${path.module}/templates/ses/flip-xnat-credentials.html")
-  text    = file("${path.module}/templates/ses/flip-xnat-credentials.txt")
+moved {
+  from = aws_ses_template.flip_access_request
+  to   = module.ses.aws_ses_template.flip_access_request
 }
 
-resource "aws_ses_template" "flip_xnat_added_to_project" {
-  name    = "flip-xnat-added-to-project"
-  subject = "You have been added to a project at {{trust_name}}"
-  html    = file("${path.module}/templates/ses/flip-xnat-added-to-project.html")
-  text    = file("${path.module}/templates/ses/flip-xnat-added-to-project.txt")
+moved {
+  from = aws_ses_template.flip_xnat_credentials
+  to   = module.ses.aws_ses_template.flip_xnat_credentials
+}
+
+moved {
+  from = aws_ses_template.flip_xnat_added_to_project
+  to   = module.ses.aws_ses_template.flip_xnat_added_to_project
 }
 
 

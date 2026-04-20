@@ -326,10 +326,10 @@ translate/
 
 flip-api/tests/debug_prelaunch_task_projects.json
 
-deploy/providers/AWS/.terraform.lock.hcl
 flip-fl-api/transfer/*/*
 
 *.tfplan
+*.terraform.lock.hcl
 
 # Environment files with sensitive credentials
 .env.development

@@ -96,25 +96,28 @@ For debugging or selective deployment, run individual steps:
 # 1. Login to AWS
 make aws-login
 
-# 2. Initialize Terraform (creates/configures S3 backend)
+# 2. Bootstrap the Terraform backend bucket once, if needed
+make create-backend
+
+# 3. Initialize Terraform (uses the configured S3 backend)
 make init
 
-# 3. Import existing resources (prevents replacement errors)
-make import-all
+# 4. Import existing resources (prevents replacement errors)
+make import-persistent
 
-# 4. Plan changes
+# 5. Plan changes
 make plan
 
-# 5. Apply infrastructure
+# 6. Apply infrastructure
 make apply
 
-# 6. Configure SSH access
+# 7. Configure SSH access
 make ssh-config
 
-# 7. Setup EC2 instances with Ansible
+# 8. Setup EC2 instances with Ansible
 make ansible-init
 
-# 8. Deploy services
+# 9. Deploy services
 make deploy-centralhub
 make deploy-trust
 
@@ -140,6 +143,68 @@ The `PROD` variable determines which environment files are loaded:
 
 - `PROD=stag` → Uses `.env.stag`, `flip-api/.env.stag`
 - `PROD=true` → Uses `.env.production`, `flip-api/.env.production`
+
+#### AWS profile aliases
+
+The Makefile guards refuse to apply unless `AWS_PROFILE` matches the expected profile for the chosen environment. Defaults are the short logical names `prod`, `stag`, and `dev` — add these aliases to `~/.aws/config` so commands like `AWS_PROFILE=stag make plan` work without thinking about account numbers:
+
+```ini
+[profile prod]
+sso_session = FLIP
+sso_account_id = <prod-sso-account-id>
+sso_role_name = <sso-role-name>
+region = <aws-region>
+output = json
+
+[profile stag]
+sso_session = FLIP
+sso_account_id = <stag-sso-account-id>
+sso_role_name = <sso-role-name>
+region = <aws-region>
+output = json
+
+[profile dev]
+sso_session = FLIP
+sso_account_id = <dev-sso-account-id>
+sso_role_name = <sso-role-name>
+region = <aws-region>
+output = json
+```
+
+Replace each `<…>` with the matching value from the FLIP AWS account directory (kept out of the public repo).
+
+If your local profile names differ, override the defaults via `PROD_AWS_PROFILE`, `STAG_AWS_PROFILE`, or `DEV_AWS_PROFILE` (in your env file or on the make command line).
+
+**Dev account (Cognito + SES only):**
+
+The dev AWS account runs only the services that cannot reasonably run locally (Cognito for auth, SES for email). A separate, minimal Terraform root lives in [`dev/`](./dev/README.md) and calls the same `modules/cognito` and `modules/ses` as this stack, so a change to either service lands in both environments from one place. The dev stack reuses `.env.development` — the same env file the local Docker Compose dev stack consumes — so there is no extra file to maintain.
+
+The dev stack has its own Makefile; drive it from the `dev/` directory:
+
+```bash
+cd deploy/providers/AWS/dev
+make create-backend  # one-time, if the backend bucket needs bootstrapping
+make init            # one-time, or after backend config changes
+make plan
+make apply
+```
+
+See [`dev/README.md`](./dev/README.md) for the one-time `terraform import` workflow that pulls the manually-created dev Cognito pool into state.
+
+### Terraform module layout
+
+```
+deploy/providers/AWS/
+├── main.tf / services.tf       # prod + stag stack root
+├── modules/
+│   ├── cognito/                # shared: pool, domain, client, seed users
+│   ├── ses/                    # shared: sender identity, transactional templates
+│   ├── secgroup/               # shared: security-group wrapper
+│   └── trust_ec2/              # prod/stag only
+└── dev/                        # dev-account root (calls cognito + ses modules)
+```
+
+The Cognito and SES resources used to live at the root of the prod/stag stack. `services.tf` and `main.tf` ship `moved` blocks that re-anchor the old root addresses onto the new `module.cognito.*` / `module.ses.*` paths, so any state still on the old layout self-heals on the next plan — no manual `terraform state mv` needed. `scripts/import-resources.sh` already targets the module addresses, so a fresh import lands in the right place too.
 
 ### Destroy Infrastructure
 
@@ -613,7 +678,7 @@ Before testing emails:
 
 1. **Verify SES Email** in AWS Console (SES → Configuration → Identities)
 2. **Sandbox Mode** (default): can only send to verified email addresses. Request production access in SES console.
-3. **Check Send Quota**: `aws ses get-account-sending-enabled --region eu-west-2`
+3. **Check Send Quota**: `aws ses get-account-sending-enabled --region <aws-region>`
 
 ### Troubleshooting Email Issues
 

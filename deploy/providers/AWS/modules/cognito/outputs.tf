@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-terraform {
-  backend "s3" {
-    # bucket and region are supplied at init time via `-backend-config`
-    # (see Makefile's `init` target). Keeping them out of the file lets
-    # operators in different AWS regions reuse the same Terraform code.
-    key          = "flip/terraform.tfstate"
-    encrypt      = true
-    use_lockfile = true
-  }
+output "user_pool_id" {
+  description = "Cognito User Pool ID"
+  value       = aws_cognito_user_pool.flip_user_pool.id
+}
+
+output "app_client_id" {
+  description = "Cognito App Client ID"
+  value       = aws_cognito_user_pool_client.client.id
+}
+
+output "domain" {
+  description = "Cognito hosted-UI subdomain (the random 8-char prefix, not the full URL)"
+  value       = aws_cognito_user_pool_domain.main.domain
 }
