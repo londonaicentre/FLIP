@@ -102,9 +102,7 @@ def _replace_or_append_host_block(content: str, alias: str, new_block: str) -> s
     # (?:^# Managed by FLIP.*\n)? - optional comment line
     # ^Host\s+{alias}\n - Host line
     # (?:^[ \t][^\n]*\n)* - indented config lines
-    host_regex = re.compile(
-        rf"(?m)(?:^# Managed by FLIP[^\n]*\n)?^Host\s+{re.escape(alias)}\n(?:^[ \t][^\n]*\n)*"
-    )
+    host_regex = re.compile(rf"(?m)(?:^# Managed by FLIP[^\n]*\n)?^Host\s+{re.escape(alias)}\n(?:^[ \t][^\n]*\n)*")
     if host_regex.search(content):
         return host_regex.sub(new_block, content, count=1)
     suffix = "" if content.endswith("\n") else "\n"
@@ -127,10 +125,17 @@ def _replace_or_append_host_block(content: str, alias: str, new_block: str) -> s
     help="Directory containing Terraform state/outputs.",
 )
 @click.option("--dry-run", is_flag=True, help="Print proposed changes without writing files.")
-@click.option("--aws-profile", default="default", show_default=True, help="AWS profile to use.")
-def main(ssh_config: Path, terraform_dir: Path, dry_run: bool, aws_profile: str) -> None:
+@click.option(
+    "--aws-profile",
+    default=None,
+    type=str,
+    help="AWS profile to use. Defaults to current AWS_PROFILE env var when set.",
+)
+def main(ssh_config: Path, terraform_dir: Path, dry_run: bool, aws_profile: str | None) -> None:
     """Update ~/.ssh/config for SSH-over-SSM access to FLIP EC2 instances."""
-    os.environ["AWS_PROFILE"] = aws_profile
+    resolved_profile = aws_profile or os.environ.get("AWS_PROFILE")
+    if aws_profile:
+        os.environ["AWS_PROFILE"] = aws_profile
     region = os.environ.get("AWS_REGION", "eu-west-2")
 
     original_cwd = Path.cwd()
@@ -145,7 +150,7 @@ def main(ssh_config: Path, terraform_dir: Path, dry_run: bool, aws_profile: str)
         updated_content = current_content
         for host in HOST_CONFIGS:
             instance_id = _terraform_output(host.instance_output)
-            new_block = _build_host_block(host.alias, instance_id, region, aws_profile)
+            new_block = _build_host_block(host.alias, instance_id, region, resolved_profile)
             updated_content = _replace_or_append_host_block(updated_content, host.alias, new_block)
 
         if updated_content == current_content:

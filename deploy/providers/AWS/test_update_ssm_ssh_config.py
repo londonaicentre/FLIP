@@ -240,5 +240,3 @@ class TestIntegration:
         assert "old-trust-ip" not in result
         assert "Host flip" in result
         assert "Host flip-trust" in result
-        assert "Host flip-trust" in result
-        assert "Host flip-trust" in result
