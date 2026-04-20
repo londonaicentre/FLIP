@@ -71,7 +71,7 @@ resource "aws_ssm_parameter" "db_secret_arn" {
 resource "aws_ssm_parameter" "cognito_user_pool_id" {
   name  = "/flip/cognito/user_pool_id"
   type  = "String"
-  value = aws_cognito_user_pool.flip_user_pool.id
+  value = module.cognito.user_pool_id
 
   description = "Cognito User Pool ID for FLIP authentication"
 }
@@ -79,7 +79,7 @@ resource "aws_ssm_parameter" "cognito_user_pool_id" {
 resource "aws_ssm_parameter" "cognito_app_client_id" {
   name  = "/flip/cognito/app_client_id"
   type  = "String"
-  value = aws_cognito_user_pool_client.client.id
+  value = module.cognito.app_client_id
 
   description = "Cognito App Client ID for FLIP"
 }
