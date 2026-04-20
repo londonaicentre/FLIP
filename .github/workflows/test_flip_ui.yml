@@ -45,10 +45,16 @@ jobs:
         with:
           node-version: "22" # Specify the Node.js version you need
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+        run: npm install --legacy-peer-deps --no-save
+
+      - name: Check npm and node versions
+        run: npm --version && node --version
+
+      - name: Verify Vite installation
+        run: npx vite --version
 
       - name: Run tests with npm
-        run: npm run test:unit
+        run: npm run test:unit 2>&1
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
