@@ -17,6 +17,7 @@ from typing import Iterable
 
 from flip import FLIP
 from flip.constants.flip_constants import ModelStatus
+from flip.flower.metrics import handle_client_exception, handle_client_metrics
 from flwr.app import ArrayRecord, Message, MetricRecord
 from flwr.common import ConfigRecord
 from flwr.serverapp import Grid
@@ -64,8 +65,14 @@ class FedAvgWithClientMetrics(FedAvg):
         replies: Iterable[Message],
     ) -> ArrayRecord | None:
         """Aggregate training results while capturing per-client metrics."""
+        replies = list(replies)
+
         # Store per-client training metrics before aggregation
         for msg in replies:
+            # Forward to the Central Hub via fl-server (fl-clients have no hub credentials).
+            handle_client_metrics(msg, server_round, self.model_id, self.flip)
+            handle_client_exception(msg, self.model_id, self.flip)
+
             if not msg.has_error() and msg.content.get("metrics"):
                 client_metrics = dict(msg.content["metrics"])
 
@@ -90,8 +97,13 @@ class FedAvgWithClientMetrics(FedAvg):
         replies: Iterable[Message],
     ) -> MetricRecord | None:
         """Aggregate evaluation metrics while capturing per-client results."""
+        replies = list(replies)
+
         # Store per-client metrics before aggregation
         for msg in replies:
+            handle_client_metrics(msg, server_round, self.model_id, self.flip)
+            handle_client_exception(msg, self.model_id, self.flip)
+
             if not msg.has_error() and msg.content.get("metrics"):
                 client_metrics = dict(msg.content["metrics"])
 

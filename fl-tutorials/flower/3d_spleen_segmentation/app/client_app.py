@@ -11,13 +11,19 @@
 # limitations under the License.
 #
 
-"""quickstart-monai: A Flower / MONAI training-only app."""
+"""quickstart-monai: A Flower / MONAI training-only app.
+
+Metrics flow through the reply Message's MetricRecord. The fl-server forwards
+them to the Central Hub on this client's behalf — clients must not hold the
+hub credential. Per-epoch granularity is preserved via the
+``<label>.round_<N>`` key convention understood by
+``flip.flower.metrics.handle_client_metrics``.
+"""
 
 import os
 from logging import INFO
 
 import torch
-from flip.constants.flip_constants import ModelStatus
 from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, RecordDict
 from flwr.clientapp import ClientApp
 from flwr.common import log
@@ -45,9 +51,6 @@ def train(msg: Message, context: Context) -> Message:
     # test_split = float(run_config.get("test-split", 0.2))
     batch_size = int(run_config.get("batch-size", 2))
 
-    # FLIP variables
-    model_id = run_config.get("flip-model-id", "monai-flower-tutorial-model")
-
     # NOTE this needs to match the name of the trust in the central hub database
     client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
 
@@ -69,7 +72,9 @@ def train(msg: Message, context: Context) -> Message:
     # Get data
     if val_split + test_split >= 1.0:
         log(INFO, "Invalid split configuration: val_split + test_split must be < 1.0")
-        flip_utils.flip.update_status(model_id, ModelStatus.ERROR)
+        # fl-server sees the raised error and forwards it to the Central Hub
+        # via handle_client_exception; it is also responsible for transitioning
+        # the model status to ERROR.
         raise ValueError("Invalid split configuration: val_split + test_split must be < 1.0")
 
     train_datalist, val_datalist = flip_utils.get_image_and_label_list(
@@ -91,6 +96,7 @@ def train(msg: Message, context: Context) -> Message:
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Perform training
+    per_epoch_metrics: dict[str, float] = {}
     losses: dict[str, list[float]] = {"train": [], "val": []}
     dice: dict[str, list[float]] = {"val": []}
     for epoch in range(local_epochs):
@@ -103,7 +109,6 @@ def train(msg: Message, context: Context) -> Message:
             device=device,
         )
         round = global_round * (local_epochs) + epoch + 1
-        flip_utils.flip.send_metrics(client_name, model_id, label="TRAIN_LOSS", value=train_loss, round=round)
 
         val_dice, val_loss = validate_func(
             model=model,
@@ -111,8 +116,12 @@ def train(msg: Message, context: Context) -> Message:
             device=device,
             loss_fn=loss_fn,
         )
-        flip_utils.flip.send_metrics(client_name, model_id, label="VAL_LOSS", value=val_loss, round=round)
-        flip_utils.flip.send_metrics(client_name, model_id, label="VAL_DICE", value=val_dice, round=round)
+
+        # Tag each epoch's data point with its own round number so the fl-server
+        # forwards one Hub point per epoch (see handle_client_metrics).
+        per_epoch_metrics[f"train_loss.round_{round}"] = float(train_loss)
+        per_epoch_metrics[f"val_loss.round_{round}"] = float(val_loss)
+        per_epoch_metrics[f"val_dice.round_{round}"] = float(val_dice)
 
         losses["train"].append(train_loss)
         losses["val"].append(val_loss)
@@ -133,6 +142,7 @@ def train(msg: Message, context: Context) -> Message:
         "val_dice": avg_val_dice,
         "num-examples": len(train_loader.dataset),
         "num-iterations": len(train_loader) * local_epochs,
+        **per_epoch_metrics,
     }
     metric_record = MetricRecord(metrics)
     content = RecordDict({"arrays": model_record, "metrics": metric_record, "config": site_config})
@@ -155,8 +165,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     val_split = float(run_config.get("val-split", 0.2))
     test_split = float(run_config.get("test-split", 0.2))
 
-    # FLIP variables
-    model_id = run_config.get("flip-model-id", "monai-flower-tutorial-model")
+    # NOTE this needs to match the name of the trust in the central hub database
     client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
 
     # Setup device
@@ -208,13 +217,13 @@ def evaluate(msg: Message, context: Context) -> Message:
         test_dice,
     )
 
-    # Optionally send metrics to FLIP
-    flip_utils.flip.send_metrics(client_name, model_id, label="TEST_LOSS", value=test_loss, round=0)
-    flip_utils.flip.send_metrics(client_name, model_id, label="TEST_DICE", value=test_dice, round=0)
-
+    # Preserve the previous "send at round=0" convention using the
+    # label.round_N suffix understood by handle_client_metrics server-side.
     metrics = {
         "test_loss": test_loss,
         "test_dice": test_dice,
+        "test_loss.round_0": float(test_loss),
+        "test_dice.round_0": float(test_dice),
         "num-examples": len(test_loader.dataset),
     }
 
