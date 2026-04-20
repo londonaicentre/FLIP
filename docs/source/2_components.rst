@@ -3,7 +3,9 @@ FLIP Components
 ################
 
 .. toctree::
-   :glob:
    :maxdepth: 2
 
-   ./*/component*
+   components/component-fl-nodes
+   components/component-omop-database
+   components/component-user-roles
+   components/component-xnat

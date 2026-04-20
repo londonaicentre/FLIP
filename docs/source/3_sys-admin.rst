@@ -5,7 +5,9 @@ System administration
 ######################
 
 .. toctree::
-   :glob:
    :maxdepth: 2
 
-   ./*/admin*
+   sys-admin/admin-project-and-user-management
+   sys-admin/admin-platform-support
+   sys-admin/admin-tre-deployment
+   sys-admin/admin-logging

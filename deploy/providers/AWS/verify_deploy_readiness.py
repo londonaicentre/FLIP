@@ -98,7 +98,7 @@ def check_makefile_dependency(target: str, dependency: str, description: str) ->
             print(f"   ✅ Make dependency correct: {description}")
             return True
         else:
-            print(f"   ⚠️  Make dependency missing: {description}")
+            print(f"   ❌ Make dependency missing: {description}")
             return False
 
 
@@ -146,9 +146,10 @@ def main() -> int:
     if check_command_available("session-manager-plugin", "1.2.319.0"):
         print("   ✅ Session Manager plugin installed (version >= 1.2.319.0)")
     else:
-        print("   ⚠️  Session Manager plugin not found or outdated")
+        print("   ❌ Session Manager plugin not found or outdated")
         print("      Install: brew install session-manager-plugin (macOS)")
         print("      Or: see deploy/providers/AWS/README.md#prerequisites")
+        all_passed = False
     print()
 
     # Check Python files
@@ -200,6 +201,11 @@ def main() -> int:
         "deploy-centralhub",
         "ssh-config",
         "deploy-centralhub depends on ssh-config",
+    )
+    all_passed &= check_makefile_dependency(
+        "deploy-trust",
+        "ssh-config",
+        "deploy-trust depends on ssh-config",
     )
     all_passed &= check_makefile_dependency(
         "full-deploy",
