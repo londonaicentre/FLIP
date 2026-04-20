@@ -28,8 +28,10 @@ variable "instance_type" {
 }
 
 variable "key_name" {
-  type    = string
-  default = "~/.ssh/id_rsa"
+  description = "AWS EC2 key pair name to attach to the trust instance. Set to null for the default SSM-only path; only needed for the legacy SSH-over-SSM workflow."
+  type        = string
+  default     = null
+  nullable    = true
 }
 
 variable "subnet_id" {

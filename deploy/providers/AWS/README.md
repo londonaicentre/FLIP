@@ -31,7 +31,7 @@ In both models, trusts poll the Central Hub for tasks over HTTPS — all communi
 3. **Python 3.12+**
 4. **UV environment manager** installed via [uv installation guide](https://docs.astral.sh/uv/guides/install-python/)
 5. **GitHub CLI** installed via [GitHub CLI installation guide](https://cli.github.com/)
-6. **SSH key pair** created at `~/.ssh/host-aws` (see [deploy README](../../README.md))
+6. **(Optional) SSH key pair** at `~/.ssh/host-aws` — only needed if you opt into the legacy SSH-over-SSM path (`TF_VAR_enable_ssh_key_pair=true`). All primary workflows (interactive shell, Ansible, `make deploy-*`, `make logs`) go through AWS SSM using just IAM credentials — no SSH key required.
 7. **Environment files** configured: (see [deploy README](../../README.md))
    - `.env.stag` (staging) or `.env.production` (production) in project root
    - Service-specific `.env` files (see Environment Configuration section)
@@ -393,7 +393,7 @@ Trust services can run on AWS EC2 or on-premises. Both models use the same Docke
 
 ### Remote Access via SSM Session Manager
 
-EC2 instances are accessed through AWS Systems Manager Session Manager — port 22 is **not** open in any security group. SSH traffic is tunnelled through the SSM agent running on each instance, so no bastion host or inbound firewall rule is needed.
+EC2 instances are accessed through AWS Systems Manager Session Manager — port 22 is **not** open in any security group. Access is IAM-gated and audited via CloudTrail; no shared SSH keys are required.
 
 **Prerequisites**
 
@@ -427,17 +427,22 @@ EC2 instances are accessed through AWS Systems Manager Session Manager — port 
   session-manager-plugin --version  # Should output version >= 1.2.319.0
   ```
 
-- SSH key at `~/.ssh/host-aws` (configured in Step 3 of [Pre-configurations README](../README.md#step-3-get-ssh-key-configured))
+- Your IAM identity needs `ssm:StartSession`, `ssm:TerminateSession`, and `ssm:SendCommand` on the target instance. `FlipDeveloperAccess-*` SSO profiles already include this.
 
-**Updating `~/.ssh/config`**
+#### Default workflows (no SSH key required)
 
-After `terraform apply`, run:
+All primary operator workflows authenticate through AWS SSM using your AWS credentials:
 
-```bash
-make ssh-config
-```
+- **Interactive shell** — `make shell` (Central Hub) or `make shell HOST=trust`. Equivalent to `aws ssm start-session --target <instance-id>`. CloudTrail-audited.
+- **Container logs** — `make logs CONTAINER=flip-api` streams `docker logs -f` via an SSM session. `make logs CONTAINER=xnat-web HOST=trust TAIL=500` for the trust side.
+- **Deploys** — `make deploy-centralhub` and `make deploy-trust` now run Ansible with the `community.aws.aws_ssm` connection plugin. Ansible syncs compose files + `.env.production` to `/opt/flip/` on the EC2 and runs `docker compose up -d --pull always` there. No Docker-over-SSH, no `~/.ssh/host-aws`.
+- **Docker daemon logs** — containers forward stdout/stderr to CloudWatch Logs (`/aws/ec2/flip` log group) via the `awslogs` Docker log driver that Ansible installs in `/etc/docker/daemon.json`. Stream from anywhere: `aws logs tail /aws/ec2/flip --follow --filter-pattern "<service>"`.
 
-This calls `update_ssm_ssh_config.py`, which reads the EC2 instance IDs from Terraform outputs and writes `Host flip` / `Host flip-trust` blocks like the following into `~/.ssh/config`:
+A developer with AWS SSO access to the account can do all of the above without anyone distributing a private key.
+
+#### Optional: SSH over SSM (legacy)
+
+`TF_VAR_enable_ssh_key_pair=true` is retained for operators who still want SSH-level access (`scp`, `docker context use flip`, `git` over SSH). When enabled, `make ssh-config` writes `Host flip` / `Host flip-trust` blocks into `~/.ssh/config` that tunnel SSH through SSM:
 
 ```text
 # Managed by FLIP - SSH over SSM Session Manager
@@ -453,14 +458,7 @@ Host flip
     ControlPersist 10m
 ```
 
-**Connecting**
-
-```bash
-ssh flip        # Central Hub
-ssh flip-trust  # Trust EC2
-```
-
-Both aliases resolve through the SSM tunnel — no public IP or open port 22 is needed. If your AWS session has expired, re-run `aws sso login --profile $AWS_PROFILE` before connecting.
+Distribute the matching `~/.ssh/host-aws` private key out-of-band to each developer who needs this path. Default is `enable_ssh_key_pair=false` — most workflows do not need it.
 
 **Troubleshooting SSM Access**
 
@@ -474,18 +472,7 @@ Both aliases resolve through the SSM tunnel — no public IP or open port 22 is 
 | `Connection timeout` (hanging) | SSM tunnel hangs without error | Check security group allows NLB ingress from NAT Gateway (port 8000-8005); verify instances are running: `aws ec2 describe-instances` |
 | `Unable to connect to SSM endpoint` | Connection fails immediately | Verify AWS_REGION matches deployment region: `echo $AWS_REGION` should match `eu-west-2` (or your region) |
 | `Bad ProxyCommand` in ~/.ssh/config | SSH config syntax error | Re-generate config: `make ssh-config` and verify it looks like the example above |
-
-**Testing Connectivity**
-
-```bash
-# Test SSM session directly (before trying SSH)
-aws ssm start-session --target $(terraform output -raw Ec2InstanceId)
-
-# Should open an interactive shell. Run `uname -a` to verify connectivity, then `exit`.
-
-# Then test SSH
-ssh flip  # Should connect via SSM tunnel
-```
+| Ansible `Connection failure: aws_ssm bucket not set` | Terraform output missing | Run `terraform apply` to create the `flip-ansible-ssm-*` bucket, then retry `make deploy-centralhub` |
 
 ---
 

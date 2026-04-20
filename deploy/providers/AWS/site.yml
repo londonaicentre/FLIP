@@ -14,6 +14,9 @@
 - name: create EC2 Ansible inventory hosts on-the-fly
   hosts: localhost
   gather_facts: false
+  # This play builds the dynamic inventory from Terraform outputs. It must run
+  # regardless of which --tags are passed, otherwise later plays have no hosts.
+  tags: always
   tasks:
     - name: ensure flip_aicentre_bucket variable is defined
       assert:
@@ -40,27 +43,30 @@
       register: terraform_output
     - name: add Central Hub EC2 instance to Ansible inventory
       add_host:
-        # Use the SSH alias so Ansible tunnels through SSM Session Manager
-        # The 'flip' Host entry in ~/.ssh/config provides ProxyCommand, IdentityFile,
-        # and StrictHostKeyChecking=accept-new — no additional ssh_common_args needed.
+        # Native SSM connection — no SSH key, no ProxyCommand, no open port 22.
+        # Auth uses the developer's AWS credentials; file transfer goes through the
+        # S3 bucket created in Terraform (AnsibleSsmBucketName output).
         name: flip
         groups:
           - ec2
           - central_hub
-        ansible_ssh_user: ubuntu
-        ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') + '/.ssh/host-aws' }}"
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+        ansible_connection: community.aws.aws_ssm
+        ansible_aws_ssm_instance_id: "{{ terraform_output.outputs.Ec2InstanceId.value }}"
+        ansible_aws_ssm_region: "{{ lookup('env', 'AWS_REGION') | default('eu-west-2', true) }}"
+        ansible_aws_ssm_bucket_name: "{{ terraform_output.outputs.AnsibleSsmBucketName.value }}"
+        ansible_python_interpreter: /usr/bin/python3
         ansible_ec2_instance_id: "{{ terraform_output.outputs.Ec2InstanceId.value }}"
     - name: add Trust EC2 instance to Ansible inventory
       add_host:
-        # Use the SSH alias so Ansible tunnels through SSM Session Manager
         name: flip-trust
         groups:
           - ec2
           - trust_ec2
-        ansible_ssh_user: ubuntu
-        ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') + '/.ssh/host-aws' }}"
-        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+        ansible_connection: community.aws.aws_ssm
+        ansible_aws_ssm_instance_id: "{{ terraform_output.outputs.TrustEc2InstanceId.value }}"
+        ansible_aws_ssm_region: "{{ lookup('env', 'AWS_REGION') | default('eu-west-2', true) }}"
+        ansible_aws_ssm_bucket_name: "{{ terraform_output.outputs.AnsibleSsmBucketName.value }}"
+        ansible_python_interpreter: /usr/bin/python3
         ansible_ec2_instance_id: "{{ terraform_output.outputs.TrustEc2InstanceId.value }}"
 
 - name: update packages
@@ -467,3 +473,220 @@
         path: "{{ data_dir }}"
         mode: "0755"
         recurse: true
+
+###############################################################################
+# Container-orchestration plays (replacement for Docker-over-SSH contexts)
+#
+# These plays run `docker compose up` ON the target EC2 via the aws_ssm
+# connection. They remove the need for `docker context create flip
+# --docker "host=ssh://flip"` which is what tied the deploy flow to SSH.
+#
+# Run selectively via tags:
+#   ansible-playbook site.yml --tags deploy_centralhub
+#   ansible-playbook site.yml --tags deploy_trust
+# The inventory-building play runs regardless (tags: always).
+###############################################################################
+
+- name: add ssm-user to docker group so SSM sessions can run docker commands
+  hosts: ec2
+  become: true
+  tags:
+    - docker_group
+    - always
+  tasks:
+    - name: check if ssm-user account exists
+      command: id ssm-user
+      register: ssm_user_check
+      changed_when: false
+      failed_when: false
+
+    - name: add ssm-user to docker group
+      user:
+        name: ssm-user
+        groups: docker
+        append: true
+      when: ssm_user_check.rc == 0
+
+- name: configure Docker daemon to ship container logs to CloudWatch
+  hosts: ec2
+  become: true
+  tags:
+    - cloudwatch_logs
+  vars:
+    enable_cloudwatch_log_driver: true
+    cloudwatch_log_group: /aws/ec2/flip
+    cloudwatch_region: "{{ lookup('env', 'AWS_REGION') | default('eu-west-2', true) }}"
+  tasks:
+    - name: write /etc/docker/daemon.json with awslogs driver
+      copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: "{{ daemon_config | to_nice_json }}"
+      vars:
+        daemon_config: >-
+          {{
+            {
+              'log-driver': 'awslogs',
+              'log-opts': {
+                'awslogs-region': cloudwatch_region,
+                'awslogs-group': cloudwatch_log_group,
+                'awslogs-create-group': 'true',
+                'tag': '{{ "{{" }}.Name{{ "}}" }}'
+              }
+            }
+            if enable_cloudwatch_log_driver
+            else {}
+          }}
+      register: daemon_json_write
+      when: enable_cloudwatch_log_driver
+
+    - name: restart Docker to pick up new log driver (affects new containers only)
+      service:
+        name: docker
+        state: restarted
+      when: daemon_json_write is changed
+
+- name: deploy Central Hub services via Ansible-over-SSM
+  hosts: central_hub
+  become: true
+  tags: deploy_centralhub
+  vars:
+    flip_repo_deploy_dir: "{{ playbook_dir }}/../../../deploy"
+    flip_env_file: "{{ playbook_dir }}/../../../.env.production"
+    fl_backend: "{{ lookup('env', 'FL_BACKEND') | default('flower', true) }}"
+    docker_tag: "{{ lookup('env', 'DOCKER_TAG') | default('latest', true) }}"
+    docker_fl_tag: "{{ lookup('env', 'DOCKER_FL_TAG') | default('latest', true) }}"
+  tasks:
+    - name: ensure /opt/flip/deploy exists
+      file:
+        path: /opt/flip/deploy
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: copy Central Hub compose files to EC2
+      copy:
+        src: "{{ item }}"
+        dest: /opt/flip/deploy/
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+      loop:
+        - "{{ flip_repo_deploy_dir }}/compose.production.yml"
+        - "{{ flip_repo_deploy_dir }}/compose.production.{{ fl_backend }}.yml"
+
+    - name: copy .env.production to EC2 (for docker compose interpolation)
+      copy:
+        src: "{{ flip_env_file }}"
+        dest: /opt/flip/.env.production
+        owner: ubuntu
+        group: ubuntu
+        mode: "0600"
+
+    - name: ensure central hub Docker networks exist
+      community.docker.docker_network:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - flip-central-hub-network
+        - flip-fl-network
+
+    - name: pull latest images and (re)start Central Hub services
+      shell: |
+        set -euo pipefail
+        cd /opt/flip
+        PROVIDER=AWS \
+        DOCKER_TAG={{ docker_tag }} \
+        DOCKER_FL_TAG={{ docker_fl_tag }} \
+        docker compose \
+          -f deploy/compose.production.yml \
+          -f deploy/compose.production.{{ fl_backend }}.yml \
+          --env-file .env.production \
+          up --remove-orphans -d --pull always
+      register: compose_result
+      changed_when: "'Started' in compose_result.stdout or 'Created' in compose_result.stdout or 'Recreated' in compose_result.stdout"
+
+    - name: show compose output
+      debug:
+        var: compose_result.stdout_lines
+
+- name: deploy Trust services via Ansible-over-SSM
+  hosts: trust_ec2
+  become: true
+  tags: deploy_trust
+  vars:
+    flip_repo_root: "{{ playbook_dir }}/../../.."
+    flip_env_file: "{{ playbook_dir }}/../../../.env.production"
+    fl_backend: "{{ lookup('env', 'FL_BACKEND') | default('flower', true) }}"
+    docker_tag: "{{ lookup('env', 'DOCKER_TAG') | default('latest', true) }}"
+    docker_fl_tag: "{{ lookup('env', 'DOCKER_FL_TAG') | default('latest', true) }}"
+    trust_name: "{{ lookup('env', 'TRUST_NAME') | default('Trust_1', true) }}"
+  tasks:
+    - name: ensure /opt/flip/deploy and /opt/flip/trust exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      loop:
+        - /opt/flip/deploy
+        - /opt/flip/trust
+        - /opt/flip/trust/xnat
+
+    - name: copy Trust compose files to EC2
+      copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: ubuntu
+        group: ubuntu
+        mode: "0644"
+      loop:
+        - { src: "{{ flip_repo_root }}/deploy/compose.production.yml", dest: /opt/flip/deploy/ }
+        - { src: "{{ flip_repo_root }}/deploy/compose.production.{{ fl_backend }}.yml", dest: /opt/flip/deploy/ }
+        - { src: "{{ flip_repo_root }}/trust/compose.production.yml", dest: /opt/flip/trust/ }
+        - { src: "{{ flip_repo_root }}/trust/xnat/compose.production.yml", dest: /opt/flip/trust/xnat/ }
+
+    - name: copy .env.production to EC2
+      copy:
+        src: "{{ flip_env_file }}"
+        dest: /opt/flip/.env.production
+        owner: ubuntu
+        group: ubuntu
+        mode: "0600"
+
+    - name: initialise Docker swarm (required by XNAT stack)
+      community.docker.docker_swarm:
+        state: present
+      register: swarm_init
+      failed_when:
+        - swarm_init.failed
+        - "'already part of a swarm' not in (swarm_init.msg | default(''))"
+
+    - name: ensure trust Docker networks exist
+      community.docker.docker_network:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - flip-trust-network
+        - flip-fl-network
+
+    - name: pull latest images and (re)start Trust services
+      shell: |
+        set -euo pipefail
+        cd /opt/flip/trust
+        PROVIDER=AWS \
+        DOCKER_TAG={{ docker_tag }} \
+        DOCKER_FL_TAG={{ docker_fl_tag }} \
+        TRUST_NAME={{ trust_name }} \
+        docker compose \
+          -f compose.production.yml \
+          --env-file /opt/flip/.env.production \
+          up --remove-orphans -d --pull always
+      register: trust_compose_result
+      changed_when: "'Started' in trust_compose_result.stdout or 'Created' in trust_compose_result.stdout or 'Recreated' in trust_compose_result.stdout"
+
+    - name: show compose output
+      debug:
+        var: trust_compose_result.stdout_lines

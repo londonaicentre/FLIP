@@ -13,5 +13,8 @@
 ---
 collections:
   - name: community.general
+  - name: amazon.aws
+  - name: community.aws
+  - name: community.docker
 roles:
   - name: geerlingguy.docker

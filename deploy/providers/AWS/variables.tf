@@ -50,12 +50,22 @@ variable "postgres_version" {
   default     = "17.9"
 }
 
+variable "enable_ssh_key_pair" {
+  description = "When true, create aws_key_pair resources and attach them to EC2 instances. Only needed for the legacy SSH-over-SSM path (scp, docker-over-SSH, git-over-SSH). All primary workflows (interactive shell, Ansible, make deploy-*, make logs) now go through SSM with IAM credentials — no key pair required."
+  type        = bool
+  default     = false
+}
+
 variable "flip_keypair" {
-  type = string
+  description = "Path to local private key (without .pub suffix). Required when enable_ssh_key_pair = true."
+  type        = string
+  default     = ""
 }
 
 variable "ec2_public_key_path" {
-  type = string
+  description = "Path to local public key used for the trust EC2 key pair. Required when enable_ssh_key_pair = true."
+  type        = string
+  default     = ""
 }
 
 variable "AES_KEY_BASE64" {

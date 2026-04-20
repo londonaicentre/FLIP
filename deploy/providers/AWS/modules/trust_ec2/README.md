@@ -36,7 +36,7 @@ module "trust_ec2" {
 
   name_prefix  = "trust"
   instance_type = "t3.xlarge"
-  key_name     = var.flip_keypair
+  key_name     = null  # set to aws_key_pair.*.key_name only when enable_ssh_key_pair = true
   subnet_id    = element(module.flip_vpc.private_subnets, 0)
   security_group_ids = [module.trust_security_group.security_group.id]
 }
