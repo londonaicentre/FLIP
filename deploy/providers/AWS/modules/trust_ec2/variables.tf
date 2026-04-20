@@ -28,7 +28,7 @@ variable "instance_type" {
 }
 
 variable "key_name" {
-  description = "AWS EC2 key pair name to attach to the trust instance. Set to null only if you never run `make deploy-trust` (which uses Docker-over-SSH and therefore needs the key pair)."
+  description = "AWS EC2 key pair name to attach to the trust instance. Set to null for the default SSM-only path; only needed for the legacy SSH-over-SSM workflow."
   type        = string
   default     = null
   nullable    = true

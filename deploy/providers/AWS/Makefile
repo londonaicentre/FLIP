@@ -204,17 +204,45 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@uv run ansible-galaxy install -r requirements.yml
 	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) -e fl_kit_date=$(FL_KIT_DATE) -e pgdata_archive=trust1_pgdata_20260106.tar.gz
 
+.PHONY: logs
+logs: check-ssm-ready ## Stream docker logs for a container on Central Hub via SSM. Usage: make logs CONTAINER=flip-api [HOST=centralhub|trust] [TAIL=200]
+	@target_output=Ec2InstanceId; \
+	if [ "$(HOST)" = "trust" ]; then target_output=TrustEc2InstanceId; fi; \
+	instance=$$(terraform output -raw $$target_output); \
+	if [ -z "$(CONTAINER)" ]; then echo "❌ CONTAINER is required. Usage: make logs CONTAINER=<name> [HOST=centralhub|trust] [TAIL=200]"; exit 1; fi; \
+	echo "📜 Streaming logs from $(CONTAINER) on $$instance (Ctrl+C to stop)..."; \
+	aws ssm start-session --target $$instance \
+		--document-name AWS-StartInteractiveCommand \
+		--parameters "command=[\"docker logs -f --tail=$${TAIL:-200} $(CONTAINER)\"]"
+
+.PHONY: shell
+shell: check-ssm-ready ## Open an interactive SSM shell on Central Hub (or HOST=trust)
+	@target_output=Ec2InstanceId; \
+	if [ "$(HOST)" = "trust" ]; then target_output=TrustEc2InstanceId; fi; \
+	instance=$$(terraform output -raw $$target_output); \
+	echo "🐚 Opening SSM shell on $$instance (exit to close)..."; \
+	aws ssm start-session --target $$instance
+
 .PHONY: check-deploy-centralhub
-check-deploy-centralhub: ## Dry-run Ansible against Central Hub (verifies community.aws.aws_ssm connection without mutations)
+check-deploy-centralhub: ## Dry-run Ansible deploy_centralhub play (verifies community.aws.aws_ssm connection + sync without mutations)
 	@test -n "$(FL_KIT_DATE)" || (echo "FL_KIT_DATE must be set in $(MAIN_ENV_FILE)"; exit 1)
-	@uv run ansible-playbook site.yml -C \
+	@DOCKER_TAG=$(DOCKER_TAG) DOCKER_FL_TAG=$(DOCKER_FL_TAG) FL_BACKEND=$(FL_BACKEND) \
+		uv run ansible-playbook site.yml --tags deploy_centralhub -C \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
-		-e pgdata_archive=trust1_pgdata_20260106.tar.gz \
-		-l 'localhost,flip'
+		-e pgdata_archive=trust1_pgdata_20260106.tar.gz
+
+.PHONY: check-deploy-trust
+check-deploy-trust: ## Dry-run Ansible deploy_trust play (verifies community.aws.aws_ssm connection + sync without mutations)
+	@test -n "$(FL_KIT_DATE)" || (echo "FL_KIT_DATE must be set in $(MAIN_ENV_FILE)"; exit 1)
+	@DOCKER_TAG=$(DOCKER_TAG) DOCKER_FL_TAG=$(DOCKER_FL_TAG) FL_BACKEND=$(FL_BACKEND) TRUST_NAME=Trust_1 \
+		uv run ansible-playbook site.yml --tags deploy_trust -C \
+		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
+		-e fl_kit_date=$(FL_KIT_DATE) \
+		-e pgdata_archive=trust1_pgdata_20260106.tar.gz
 
 .PHONY: deploy-centralhub
-deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with environment from Terraform
+deploy-centralhub: check-ssm-ready ## Deploy FLIP Central Hub services via Ansible-over-SSM (no SSH key required)
 	@echo "🔍 Checking central hub images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(CENTRALHUB_IMAGES); do \
@@ -230,20 +258,14 @@ deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with env
 	else \
 	  echo "   ✅ All central hub images found."; \
 	fi
-	@echo "📋 Loading environment variables from Terraform outputs..."
-	@echo "👷 Create docker context if not exists, pointing to flip to ssh://flip"
-	@docker context create flip --docker "host=ssh://flip" || echo "   Context 'flip' already exists"
-	@# Switch to flip context
-	@echo "🔄 Switching to flip Docker context..."
-	@docker context use flip
-	@echo "🧹 Stopping old containers and removing unused images to free disk space..."
-	@docker stop $$(docker ps -aq) 2>/dev/null || true
-	@docker rm $$(docker ps -aq) 2>/dev/null || true
-	@docker image prune -af
-	@echo "🐳 Deploying containers..."
-	@$(MAKE) -C ../../../ up-centralhub-ec2 PROD=${PROD}
-	@echo "✅ Deployment complete!"
-	@docker context use default
+	@echo "📋 Running Ansible deploy-centralhub play via aws_ssm connection..."
+	@uv run ansible-galaxy install -r requirements.yml >/dev/null
+	@DOCKER_TAG=$(DOCKER_TAG) DOCKER_FL_TAG=$(DOCKER_FL_TAG) FL_BACKEND=$(FL_BACKEND) \
+		uv run ansible-playbook site.yml --tags deploy_centralhub \
+		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
+		-e fl_kit_date=$(FL_KIT_DATE) \
+		-e pgdata_archive=trust1_pgdata_20260106.tar.gz
+	@echo "✅ Central Hub deployment complete!"
 
 # Default SSH user for on-premises trust hosts (override with LOCAL_TRUST_SSH_USER=<user>)
 LOCAL_TRUST_SSH_USER ?= ubuntu
@@ -251,7 +273,7 @@ LOCAL_TRUST_SSH_USER ?= ubuntu
 LOCAL_TRUST_NAME ?= Trust_2
 
 .PHONY: deploy-trust
-deploy-trust: ssh-config update-env ## Deploy trust relationships after central hub is deployed
+deploy-trust: check-ssm-ready update-env ## Deploy FLIP Trust services via Ansible-over-SSM (no SSH key required)
 	@echo "🔍 Checking trust images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(TRUST_IMAGES); do \
@@ -267,20 +289,13 @@ deploy-trust: ssh-config update-env ## Deploy trust relationships after central 
 	else \
 	  echo "   ✅ All trust images found."; \
 	fi
-	@echo "👷 Create docker context if not exists, pointing to flip-trust to ssh://flip-trust"
-	@docker context create flip-trust --docker "host=ssh://flip-trust" || echo "   Context 'flip-trust' already exists"
-	@echo "🔄 Switching to flip-trust Docker context..."
-	@docker context use flip-trust
-	@echo "🐳 Deploying containers to Trust EC2 ..."
-	docker swarm init || echo "   Swarm already initialized"
-	@echo "🔧 Creating Docker networks on Trust EC2..."
-	$(MAKE) -C ../../../ create-networks
-	@echo "🧹 Stopping old containers and removing unused images to free disk space..."
-	@docker stop $$(docker ps -aq) 2>/dev/null || true
-	@docker rm $$(docker ps -aq) 2>/dev/null || true
-	@docker image prune -af
-	@echo "🚀 Deploying Trust services..."
-	$(MAKE) -C ../../../ up-trust-ec2 PROD=${PROD}
+	@echo "📋 Running Ansible deploy-trust play via aws_ssm connection..."
+	@uv run ansible-galaxy install -r requirements.yml >/dev/null
+	@DOCKER_TAG=$(DOCKER_TAG) DOCKER_FL_TAG=$(DOCKER_FL_TAG) FL_BACKEND=$(FL_BACKEND) TRUST_NAME=Trust_1 \
+		uv run ansible-playbook site.yml --tags deploy_trust \
+		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
+		-e fl_kit_date=$(FL_KIT_DATE) \
+		-e pgdata_archive=trust1_pgdata_20260106.tar.gz
 	@echo "✅ Trust deployment complete!"
 
 .PHONY: add-local-trust

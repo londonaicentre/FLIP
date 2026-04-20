@@ -31,7 +31,7 @@ In both models, trusts poll the Central Hub for tasks over HTTPS — all communi
 3. **Python 3.12+**
 4. **UV environment manager** installed via [uv installation guide](https://docs.astral.sh/uv/guides/install-python/)
 5. **GitHub CLI** installed via [GitHub CLI installation guide](https://cli.github.com/)
-6. **SSH key pair** at `~/.ssh/host-aws` — **required for `make deploy-centralhub` / `make deploy-trust`** (they use Docker-over-SSH). Can be skipped only if you never run the deploy targets and stay on native SSM / Ansible (see [What works today without an EC2 key pair](#what-works-today-without-an-ec2-key-pair) and [Optional: SSH over SSM](#optional-ssh-over-ssm-required-for-make-deploy-)).
+6. **(Optional) SSH key pair** at `~/.ssh/host-aws` — only needed if you opt into the legacy SSH-over-SSM path (`TF_VAR_enable_ssh_key_pair=true`). All primary workflows (interactive shell, Ansible, `make deploy-*`, `make logs`) go through AWS SSM using just IAM credentials — no SSH key required.
 7. **Environment files** configured: (see [deploy README](../../README.md))
    - `.env.stag` (staging) or `.env.production` (production) in project root
    - Service-specific `.env` files (see Environment Configuration section)
@@ -429,24 +429,20 @@ EC2 instances are accessed through AWS Systems Manager Session Manager — port 
 
 - Your IAM identity needs `ssm:StartSession`, `ssm:TerminateSession`, and `ssm:SendCommand` on the target instance. `FlipDeveloperAccess-*` SSO profiles already include this.
 
-#### Deploy workflows: `enable_ssh_key_pair` is required
+#### Default workflows (no SSH key required)
 
-`make deploy-centralhub` and `make deploy-trust` orchestrate the remote Docker daemon via a Docker-over-SSH context (`docker context create flip --docker "host=ssh://flip"`). Docker-over-SSH authenticates at the SSH layer, so the EC2 key pair and the matching `~/.ssh/host-aws` private key are still required for the full deploy flow. For these workflows set `TF_VAR_enable_ssh_key_pair=true` (the default for existing stag/prod env files).
+All primary operator workflows authenticate through AWS SSM using your AWS credentials:
 
-Migrating `make deploy-*` off Docker-over-SSH (e.g. to an Ansible-driven `docker compose up` run on the instance via the aws_ssm connection) is planned as a follow-up — it would eliminate the last hard dependency on the key pair.
+- **Interactive shell** — `make shell` (Central Hub) or `make shell HOST=trust`. Equivalent to `aws ssm start-session --target <instance-id>`. CloudTrail-audited.
+- **Container logs** — `make logs CONTAINER=flip-api` streams `docker logs -f` via an SSM session. `make logs CONTAINER=xnat-web HOST=trust TAIL=500` for the trust side.
+- **Deploys** — `make deploy-centralhub` and `make deploy-trust` now run Ansible with the `community.aws.aws_ssm` connection plugin. Ansible syncs compose files + `.env.production` to `/opt/flip/` on the EC2 and runs `docker compose up -d --pull always` there. No Docker-over-SSH, no `~/.ssh/host-aws`.
+- **Docker daemon logs** — containers forward stdout/stderr to CloudWatch Logs (`/aws/ec2/flip` log group) via the `awslogs` Docker log driver that Ansible installs in `/etc/docker/daemon.json`. Stream from anywhere: `aws logs tail /aws/ec2/flip --follow --filter-pattern "<service>"`.
 
-#### What works today without an EC2 key pair
+A developer with AWS SSO access to the account can do all of the above without anyone distributing a private key.
 
-Setting `TF_VAR_enable_ssh_key_pair=false` is fine if your workflow is limited to:
+#### Optional: SSH over SSM (legacy)
 
-- **Interactive shell** via `aws ssm start-session --target <instance-id>` — no SSH key needed; IAM-gated, CloudTrail-audited.
-- **Ansible-driven tasks** (`make ansible-init`, `make check-deploy-centralhub`, ad-hoc `ansible-playbook` runs) — `site.yml` uses the `community.aws.aws_ssm` connection plugin, authenticated by your AWS credentials, with file transfer staged through the `AnsibleSsmBucketName` S3 bucket.
-
-Both paths bypass SSH entirely, so a developer with AWS SSO access can use them without anyone distributing a private key.
-
-#### Optional: SSH over SSM (required for `make deploy-*`)
-
-When `TF_VAR_enable_ssh_key_pair=true`, `make ssh-config` writes `Host flip` / `Host flip-trust` blocks into `~/.ssh/config` that tunnel SSH through SSM:
+`TF_VAR_enable_ssh_key_pair=true` is retained for operators who still want SSH-level access (`scp`, `docker context use flip`, `git` over SSH). When enabled, `make ssh-config` writes `Host flip` / `Host flip-trust` blocks into `~/.ssh/config` that tunnel SSH through SSM:
 
 ```text
 # Managed by FLIP - SSH over SSM Session Manager
@@ -462,7 +458,7 @@ Host flip
     ControlPersist 10m
 ```
 
-This path is required for Docker-over-SSH (`make deploy-centralhub`, `make deploy-trust`) and for ergonomic `ssh`/`scp`/`git-over-ssh`. The matching `~/.ssh/host-aws` private key must be distributed out-of-band to every developer who runs the deploy targets.
+Distribute the matching `~/.ssh/host-aws` private key out-of-band to each developer who needs this path. Default is `enable_ssh_key_pair=false` — most workflows do not need it.
 
 **Troubleshooting SSM Access**
 
