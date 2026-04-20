@@ -20,7 +20,7 @@ RUN apk add --no-cache python3 make g++ xdg-utils
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY package*.json .npmrc ./
 
 # Install dependencies
 RUN npm install

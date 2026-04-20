@@ -45,7 +45,7 @@ jobs:
         with:
           node-version: "22" # Specify the Node.js version you need
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm install
 
       - name: Run tests with npm
         run: npm run test:unit
