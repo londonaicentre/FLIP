@@ -81,14 +81,21 @@ flip/
 ├── core/         # FLIPBase, FLIPStandardProd/Dev implementations, FLIP() factory
 ├── constants/    # FlipConstants (pydantic-settings), enums, PTConstants
 ├── utils/        # General utilities: Utils, model weight helpers
-└── nvflare/      # NVFLARE-specific logic and components
-    ├── executors/    # RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
-    ├── controllers/  # Workflow controllers (ScatterAndGather, CrossSiteModelEval, …)
-    └── components/   # Event handlers, persistors, privacy filters, locators, …
+├── nvflare/      # NVFLARE-specific logic and components
+│   ├── executors/    # RUN_TRAINER, RUN_VALIDATOR, RUN_EVALUATOR wrappers
+│   ├── controllers/  # Workflow controllers (ScatterAndGather, CrossSiteModelEval, …)
+│   └── components/   # Event handlers, persistors, privacy filters, locators, …
+└── flower/       # Flower-specific server-side helpers
+    └── metrics.py    # handle_client_metrics / handle_client_exception
 ```
 
 The `FLIP()` factory selects `FLIPStandardDev` (local CSV/filesystem) or `FLIPStandardProd` (FLIP platform APIs) based
 on the `LOCAL_DEV` environment variable.
+
+The `flip.flower` sub-package is intended **only for fl-server code**. Its helpers forward per-client metrics and
+crashed-reply exceptions — extracted from Flower reply Messages in `Strategy.aggregate_train` /
+`aggregate_evaluate` — to the Central Hub. fl-client containers must never import it and must never hold the
+`INTERNAL_SERVICE_KEY` credential. For the NVFLARE equivalent, see `flip.nvflare.metrics`.
 
 ### User Application Requirements
 
