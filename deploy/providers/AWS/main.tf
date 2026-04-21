@@ -497,13 +497,25 @@ resource "aws_security_group" "ecs_tasks" {
     cidr_blocks = [var.vpc_cidr]
   }
 
-  # Allow all outbound (to reach RDS, S3, Secrets Manager, SSM, Cognito endpoints)
+  # HTTPS to 0.0.0.0/0 covers all AWS service APIs (S3, Secrets Manager, SSM,
+  # Cognito, SES, CloudWatch Logs, ECR) via the NAT gateway, as well as GHCR
+  # image pulls. Restricting to port 443 prevents a compromised container from
+  # opening arbitrary TCP connections to the internet on other ports.
   egress {
-    description = "All outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    description = "HTTPS to AWS services and external endpoints via NAT"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # PostgreSQL to RDS within the VPC only — no internet path needed.
+  egress {
+    description = "PostgreSQL to RDS"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
   }
 
   tags = {
