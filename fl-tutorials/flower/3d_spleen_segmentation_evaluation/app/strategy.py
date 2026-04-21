@@ -17,6 +17,8 @@ from collections.abc import Iterable
 from logging import INFO
 from typing import Any, Dict, List, Tuple, Type
 
+from flip import FLIP
+from flip.flower.metrics import handle_client_exception, handle_client_metrics
 from flwr.common import MetricRecord, log
 from flwr.common.message import Message
 from flwr.serverapp.strategy import FedAvg
@@ -105,12 +107,24 @@ class EvaluationStrategy(FedAvg):
     Args:
         metrics_spec: Dictionary mapping metric names to their expected types.
         model_names: List of model names to evaluate.
+        flip: FLIP instance used by the fl-server to forward metrics to the Central Hub.
+        model_id: FLIP model ID (UUID) for the current run.
     """
 
-    def __init__(self, metrics_spec: Dict[str, Type], model_names: List[str], *args, **kwargs):
+    def __init__(
+        self,
+        metrics_spec: Dict[str, Type],
+        model_names: List[str],
+        flip: FLIP,
+        model_id: str,
+        *args,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
         self.metrics_spec = metrics_spec
         self.model_names = model_names
+        self.flip = flip
+        self.model_id = model_id
         self.validator = MetricsValidator(metrics_spec=metrics_spec, model_names=model_names)
         self.all_results: Dict[str, Dict[str, List]] = {}
         # Store per-client results: {model_name: {client_id: {metric_name: value}}}
@@ -122,6 +136,13 @@ class EvaluationStrategy(FedAvg):
         replies: Iterable[Message],
     ) -> MetricRecord | None:
         """Aggregate evaluation results from all clients."""
+
+        replies = list(replies)
+
+        # fl-clients never reach the Central Hub directly — forward everything server-side.
+        for msg in replies:
+            handle_client_metrics(msg, server_round, self.model_id, self.flip)
+            handle_client_exception(msg, self.model_id, self.flip)
 
         # Use parent class helper to filter valid replies
         valid_replies, error_replies = self._check_and_log_replies(replies, is_train=False, validate=False)

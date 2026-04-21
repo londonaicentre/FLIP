@@ -15,7 +15,7 @@
 
 import os
 from logging import INFO
-from typing import Dict, List
+from typing import Dict
 
 import torch
 from flwr.app import ArrayRecord, Context, Message, MetricRecord, RecordDict
@@ -79,20 +79,13 @@ def evaluate(msg: Message, context: Context) -> Message:
     """Evaluate all models on local test data."""
     # Configure evaluation parameters
     run_config = context.run_config
-    local_rounds = int(run_config.get("local-rounds", 2))
-    test_split = float(run_config.get("test-split", 0.25))
 
-    # FLIP variables
-    model_id = run_config.get("flip-model-id", "monai-flower-tutorial-model")
     models_config: Dict = parse_models_config(run_config)
     if not models_config:
         raise ValueError("No models specified. Set 'models' in pyproject.toml under [tool.flwr.app.config].")
 
     # NOTE this needs to match the name of the trust in the central hub database
     client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
-
-    # global_round from server is 1-based
-    global_round = int(msg.content["config"]["server-round"])
 
     # Configure FLIP
     flip_utils = FLIP_BASE()
@@ -106,8 +99,9 @@ def evaluate(msg: Message, context: Context) -> Message:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log(INFO, "Evaluating on device: %s", device)
 
-    # Get test data (shared across all models)
-    test_datalist = flip_utils.get_test_data_list(_test_split=test_split)
+    # Evaluation-only: score every matched image/label pair in this client's
+    # cohort, not a held-out fraction.
+    test_datalist = flip_utils.get_test_data_list()
     dataset_test = Dataset(test_datalist, transform=get_val_transforms())
     test_loader = DataLoader(dataset_test, batch_size=1, shuffle=False)
 
@@ -123,26 +117,16 @@ def evaluate(msg: Message, context: Context) -> Message:
         model = unpack_model(arrays, model_name, model)
         model.to(device)
 
-        all_dice_scores: List[float] = []
-        for round_idx in range(local_rounds):
-            log(INFO, f"  Round {round_idx + 1}/{local_rounds}")
-            dice_scores = evaluate_func(
-                model=model,
-                test_loader=test_loader,
-                device=device,
-            )
-            all_dice_scores.extend(dice_scores)
+        # evaluate_func sweeps the whole test_loader once and returns one dice
+        # score per subject; with deterministic eval transforms and model.eval(),
+        # repeating the sweep would produce identical numbers.
+        dice_scores = evaluate_func(
+            model=model,
+            test_loader=test_loader,
+            device=device,
+        )
 
-            mean_dice = sum(dice_scores) / len(dice_scores) if dice_scores else 0.0
-            flip_utils.flip.send_metrics(
-                client_name,
-                model_id,
-                label=f"TEST_DICE_{model_name}",
-                value=mean_dice,
-                round=global_round * local_rounds + round_idx,
-            )
-
-        overall_mean_dice = sum(all_dice_scores) / len(all_dice_scores) if all_dice_scores else 0.0
+        overall_mean_dice = sum(dice_scores) / len(dice_scores) if dice_scores else 0.0
         evaluation_results[model_name] = {
             "mean_dice": float(overall_mean_dice),
         }

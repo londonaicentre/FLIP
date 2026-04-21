@@ -183,6 +183,8 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     strategy = EvaluationStrategy(
         metrics_spec=metrics_spec,
         model_names=list(models_config.keys()),
+        flip=flip,
+        model_id=model_id,
         fraction_train=0.0,  # No training
         fraction_evaluate=1.0,  # All clients evaluate
     )

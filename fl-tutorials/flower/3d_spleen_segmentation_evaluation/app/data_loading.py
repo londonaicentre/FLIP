@@ -17,7 +17,6 @@ from logging import INFO
 from pathlib import Path
 
 import nibabel as nib
-import numpy as np
 from flip import FLIP
 from flip.constants import ResourceType
 from flwr.common import log
@@ -32,14 +31,12 @@ class FLIP_BASE:
         # --- Core FLIP object ---
         self.flip = FLIP()
 
-    def get_test_data_list(self, _test_split=None):
-        """Returns a list of dicts for test data, each dict containing the path to an image and its corresponding label.
-        
-        Args:
-            _test_split: Optional split ratio. If provided, only returns the test portion of the data.
-                        If None, returns all data as test data.
-        """
+    def get_test_data_list(self):
+        """Return a list of {"image": path, "label": path} dicts for every matched pair in the cohort.
 
+        This is an evaluation-only tutorial, so every sample in the client's
+        cohort is scored — no train/test holdout is applied.
+        """
         datalist = []
         # loop over each accession id in the train set
         for accession_id in self.dataframe["accession_id"]:
@@ -109,13 +106,5 @@ class FLIP_BASE:
 
             log(INFO, f"Added {this_accession_matches} matched image + segmentation pairs for {accession_id}.")
 
-        log(INFO, f"Found {len(datalist)} files in total.")
-
-        # If test_split is specified, split the data and return only the test portion
-        # Otherwise, return all data as test data
-        if _test_split is not None and 0 < _test_split < 1:
-            split_idx = int((1 - _test_split) * len(datalist))
-            _, test_datalist = np.split(datalist, [split_idx])
-            return test_datalist
-        else:
-            return datalist
+        log(INFO, f"Found {len(datalist)} files in total — evaluating all of them.")
+        return datalist

@@ -53,9 +53,7 @@ clientapp = "app.client_app:app"
 # Custom config values accessible via `context.run_config`
 [tool.flwr.app.config]
 num-server-rounds = 1 # Evaluation only needs 1 round
-local-rounds = 2      # Number of evaluation rounds per client
 learning-rate = 1e-4
-test-split = 0.25
 batch-size = 2
 # Model configuration
 spatial-dims = 3
