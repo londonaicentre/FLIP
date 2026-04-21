@@ -11,15 +11,9 @@ check_aws_profile
 
 log_info "Importing persistent resources..."
 
-# 1. EC2 Key Pairs
+# 1. FLIP S3 Bucket
 echo ""
-log_info "1️⃣  EC2 Key Pairs..."
-terraform import aws_key_pair.flip_keypair flip-keypair 2>/dev/null || log_success "flip-keypair (already imported)"
-terraform import aws_key_pair.host_key host-aws 2>/dev/null || log_success "host-key (already imported)"
-
-# 2. FLIP S3 Bucket
-echo ""
-log_info "2️⃣  FLIP S3 Bucket..."
+log_info "1️⃣  FLIP S3 Bucket..."
 BUCKET_NAME="${FLIP_BUCKET_NAME}"
 if [ -n "$BUCKET_NAME" ]; then
     if aws_cmd s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
@@ -36,9 +30,9 @@ else
     log_warn "FLIP_BUCKET_NAME not set in environment"
 fi
 
-# 3. AI Centre S3 Bucket
+# 2. AI Centre S3 Bucket
 echo ""
-log_info "3️⃣  AI Centre S3 Bucket..."
+log_info "2️⃣  AI Centre S3 Bucket..."
 if [ -n "$AICENTRE_BUCKET_NAME" ]; then
     if aws_cmd s3api head-bucket --bucket "$AICENTRE_BUCKET_NAME" 2>/dev/null; then
         log_success "Found bucket: $AICENTRE_BUCKET_NAME"
@@ -51,9 +45,9 @@ else
     log_warn "AICENTRE_BUCKET_NAME not set in environment"
 fi
 
-# 4. Secrets Manager
+# 3. Secrets Manager
 echo ""
-log_info "4️⃣  Secrets Manager..."
+log_info "3️⃣  Secrets Manager..."
 SECRET_ARN=$(aws_cmd secretsmanager list-secrets --include-planned-deletion --query 'SecretList[?Name==`FLIP_API`].ARN' --output text 2>/dev/null || echo "")
 if [ -n "$SECRET_ARN" ]; then
     DELETION_DATE=$(aws_cmd secretsmanager describe-secret --secret-id FLIP_API --query 'DeletedDate' --output text 2>/dev/null || echo "")
@@ -69,36 +63,37 @@ if [ -n "$SECRET_ARN" ]; then
     fi
 fi
 
-# 5. Cognito
+# 4. Cognito (now lives under module.cognito.* — addresses match the modules/cognito layout)
 echo ""
-log_info "5️⃣  Cognito..."
+log_info "4️⃣  Cognito..."
 POOL_ID=$(aws_cmd cognito-idp list-user-pools --max-results 20 --query 'UserPools[?Name==`flip-user-pool`].Id' --output text 2>/dev/null || echo "")
 if [ -n "$POOL_ID" ]; then
-    terraform import aws_cognito_user_pool.flip_user_pool "$POOL_ID" 2>/dev/null || log_success "User pool"
-    
+    terraform import 'module.cognito.aws_cognito_user_pool.flip_user_pool' "$POOL_ID" 2>/dev/null || log_success "User pool"
+
     DOMAIN=$(aws_cmd cognito-idp describe-user-pool --user-pool-id "$POOL_ID" --query 'UserPool.Domain' --output text 2>/dev/null || echo "")
     if [ -n "$DOMAIN" ] && [ "$DOMAIN" != "None" ]; then
-        terraform import aws_cognito_user_pool_domain.main "$DOMAIN" 2>/dev/null || log_success "Domain"
-        terraform import random_string.cognito_domain "$DOMAIN" 2>/dev/null || log_success "Random string"
+        terraform import 'module.cognito.aws_cognito_user_pool_domain.main' "$DOMAIN" 2>/dev/null || log_success "Domain"
+        terraform import 'module.cognito.random_string.cognito_domain' "$DOMAIN" 2>/dev/null || log_success "Random string"
     fi
-    
+
     CLIENT_ID=$(aws_cmd cognito-idp list-user-pool-clients --user-pool-id "$POOL_ID" --query 'UserPoolClients[0].ClientId' --output text 2>/dev/null || echo "")
     if [ -n "$CLIENT_ID" ]; then
-        terraform import aws_cognito_user_pool_client.client "$POOL_ID/$CLIENT_ID" 2>/dev/null || log_success "Client"
+        terraform import 'module.cognito.aws_cognito_user_pool_client.client' "$POOL_ID/$CLIENT_ID" 2>/dev/null || log_success "Client"
     fi
-    
-    terraform import aws_cognito_user.admin_user "$POOL_ID/aicentreflip@gmail.com" 2>/dev/null || log_success "Admin user"
-    terraform import aws_cognito_user.researcher_user "$POOL_ID/rafaelagd@gmail.com" 2>/dev/null || log_success "Researcher user"
+
+    terraform import 'module.cognito.aws_cognito_user.admin_user' "$POOL_ID/aicentreflip@gmail.com" 2>/dev/null || log_success "Admin user"
+    # researcher_user is wrapped in count = var.researcher_email == "" ? 0 : 1 inside the module.
+    terraform import 'module.cognito.aws_cognito_user.researcher_user[0]' "$POOL_ID/rafaelagd@gmail.com" 2>/dev/null || log_success "Researcher user"
 fi
 
-# 6. SES Email Identity
+# 5. SES Email Identity (now lives under module.ses.*)
 echo ""
-log_info "6️⃣  SES Email Identity..."
+log_info "5️⃣  SES Email Identity..."
 EXISTING_SES_EMAIL=$(aws_cmd ses list-identities --query 'Identities[0]' --output text 2>/dev/null || echo "")
 if [ -n "$EXISTING_SES_EMAIL" ] && [ "$EXISTING_SES_EMAIL" != "None" ]; then
     if [ "$EXISTING_SES_EMAIL" = "${SES_VERIFIED_EMAIL}" ]; then
         log_success "Existing SES identity matches configuration: $EXISTING_SES_EMAIL"
-        terraform import aws_ses_email_identity.flip_sender "$EXISTING_SES_EMAIL" 2>/dev/null || log_success "SES Email Identity (already imported)"
+        terraform import 'module.ses.aws_ses_email_identity.flip_sender' "$EXISTING_SES_EMAIL" 2>/dev/null || log_success "SES Email Identity (already imported)"
     else
         log_warn "Existing SES identity ($EXISTING_SES_EMAIL) does NOT match configuration (${SES_VERIFIED_EMAIL})"
         log_info "Terraform will destroy and recreate with correct email"
@@ -107,9 +102,9 @@ else
     log_info "No existing SES identity found - Terraform will create ${SES_VERIFIED_EMAIL}"
 fi
 
-# 7. ACM Certificate
+# 6. ACM Certificate
 echo ""
-log_info "7️⃣  ACM Certificate..."
+log_info "6️⃣  ACM Certificate..."
 CERT_ARN=$(aws_cmd acm list-certificates --query "CertificateSummaryList[?DomainName=='${ALB_SUBDOMAIN}'].CertificateArn" --output text 2>/dev/null || echo "")
 if [ -n "$CERT_ARN" ]; then
     terraform import aws_acm_certificate.flip "$CERT_ARN" 2>/dev/null || log_success "ACM certificate"
@@ -125,9 +120,9 @@ if [ -n "$CERT_ARN" ]; then
     fi
 fi
 
-# 8. Route53 NLB Record
+# 7. Route53 NLB Record
 echo ""
-log_info "8️⃣  Route53 NLB Record..."
+log_info "7️⃣  Route53 NLB Record..."
 if [ -n "$NLB_SUBDOMAIN" ]; then
     HOSTED_ZONE_ID=$(aws_cmd route53 list-hosted-zones --query "HostedZones[?Name=='${ALB_SUBDOMAIN}.'].Id" --output text 2>/dev/null | cut -d'/' -f3 || echo "")
     if [ -n "$HOSTED_ZONE_ID" ]; then
@@ -148,5 +143,5 @@ else
 fi
 
 echo ""
-log_info "Note: Terraform state bucket (${FLIP_TFSTATE_BUCKET_NAME}) is managed externally via create_backend.sh"
+log_info "Note: Terraform state bucket (${FLIP_TFSTATE_BUCKET_NAME}) is managed externally via scripts/create-backend.sh"
 log_success "Persistent resources imported!"

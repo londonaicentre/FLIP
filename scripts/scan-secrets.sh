@@ -13,24 +13,19 @@
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
 # Get the repository root directory (go up one level from scripts/)
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}   FLIP Monorepo Secret Scanning${NC}"
-echo -e "${BLUE}========================================${NC}"
+source "$(dirname "${BASH_SOURCE[0]}")/utils.sh"
+
+log_info "========================================"
+log_info "   FLIP Monorepo Secret Scanning"
+log_info "========================================"
 echo ""
 
 # Check if truffleHog is installed
 if ! command -v trufflehog &> /dev/null; then
-    echo -e "${YELLOW}TruffleHog is not installed.${NC}"
+    log_warn "TruffleHog is not installed."
     echo ""
     echo "Installation options:"
     echo ""
@@ -43,10 +38,10 @@ if ! command -v trufflehog &> /dev/null; then
     echo "3. Download binary from:"
     echo "   https://github.com/trufflesecurity/trufflehog/releases"
     echo ""
-    
+
     # Check if Docker is available
     if command -v docker &> /dev/null; then
-        echo -e "${YELLOW}Docker is available. Would you like to run the scan using Docker? (y/n)${NC}"
+        log_warn "Docker is available. Would you like to run the scan using Docker? (y/n)"
         read -r response
         if [[ "$response" =~ ^[Yy]$ ]]; then
             USE_DOCKER=true
@@ -54,15 +49,15 @@ if ! command -v trufflehog &> /dev/null; then
             exit 1
         fi
     else
-        echo -e "${RED}Please install TruffleHog to continue.${NC}"
+        log_error "Please install TruffleHog to continue."
         exit 1
     fi
 fi
 
 cd "$REPO_ROOT"
 
-echo -e "${BLUE}Repository:${NC} $REPO_ROOT"
-echo -e "${BLUE}Scanning mode:${NC} Git history (entire monorepo)"
+log_info "Repository: $REPO_ROOT"
+log_info "Scanning mode: Git history (entire monorepo)"
 echo ""
 
 # Create output directory for reports
@@ -71,14 +66,14 @@ mkdir -p "$REPORT_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 REPORT_FILE="$REPORT_DIR/trufflehog-scan-$TIMESTAMP.json"
 
-echo -e "${YELLOW}Starting TruffleHog scan...${NC}"
-echo -e "${YELLOW}This may take several minutes for a monorepo.${NC}"
+log_warn "Starting TruffleHog scan..."
+log_warn "This may take several minutes for a monorepo."
 echo ""
 
 # Run TruffleHog scan
 if [ "$USE_DOCKER" = true ]; then
     # Run with Docker
-    echo -e "${BLUE}Running TruffleHog via Docker...${NC}"
+    log_info "Running TruffleHog via Docker..."
     docker run --rm -v "$REPO_ROOT:/repo" \
         trufflesecurity/trufflehog:latest \
         git file:///repo \
@@ -87,7 +82,7 @@ if [ "$USE_DOCKER" = true ]; then
         > "$REPORT_FILE" 2>&1 || true
 else
     # Run with installed binary
-    echo -e "${BLUE}Running TruffleHog...${NC}"
+    log_info "Running TruffleHog..."
     trufflehog git "file://$REPO_ROOT" \
         --json \
         --no-update \
@@ -96,39 +91,39 @@ fi
 
 # Check results
 if [ ! -s "$REPORT_FILE" ]; then
-    echo -e "${GREEN}✓ Scan complete: No secrets detected!${NC}"
+    log_success "Scan complete: No secrets detected!"
     echo ""
     rm -f "$REPORT_FILE"
     exit 0
 else
     # Count findings
     FINDING_COUNT=$(grep -c "Raw" "$REPORT_FILE" 2>/dev/null || echo "0")
-    
+
     if [ "$FINDING_COUNT" -eq 0 ]; then
-        echo -e "${GREEN}✓ Scan complete: No secrets detected!${NC}"
+        log_success "Scan complete: No secrets detected!"
         echo ""
         rm -f "$REPORT_FILE"
         exit 0
     else
-        echo -e "${RED}✗ WARNING: $FINDING_COUNT potential secret(s) detected!${NC}"
+        log_error "WARNING: $FINDING_COUNT potential secret(s) detected!"
         echo ""
-        echo -e "${YELLOW}Report saved to:${NC} $REPORT_FILE"
+        log_warn "Report saved to: $REPORT_FILE"
         echo ""
-        echo -e "${YELLOW}Review the findings:${NC}"
+        log_warn "Review the findings:"
         echo "  cat $REPORT_FILE | jq '.'"
         echo ""
-        echo -e "${YELLOW}To see just the detected secrets:${NC}"
+        log_warn "To see just the detected secrets:"
         echo "  cat $REPORT_FILE | jq -r '.Raw' | sort -u"
         echo ""
-        
+
         # Show summary if jq is available
         if command -v jq &> /dev/null; then
-            echo -e "${YELLOW}Summary of findings:${NC}"
+            log_warn "Summary of findings:"
             cat "$REPORT_FILE" | jq -r 'select(.Raw != null) | "\(.DetectorName): \(.Raw[0:50])..."' | head -20
             echo ""
         fi
-        
-        echo -e "${RED}Please review these findings before committing.${NC}"
+
+        log_error "Please review these findings before committing."
         exit 1
     fi
 fi

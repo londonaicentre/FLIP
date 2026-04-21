@@ -53,8 +53,8 @@ and `flip-fl-base-flower <https://github.com/londonaicentre/flip-fl-base-flower/
 
 Examples of how the same job type (standard -> federated averaging) can run different user-uploaded applications are:
 
-- <https://github.com/londonaicentre/flip-fl-base/tree/main/tutorials/image_classification/xray_classification>`_
-- <https://github.com/londonaicentre/flip-fl-base/tree/main/tutorials/image_segmentation/3d_spleen_segmentation>`_
+- `xray_classification <https://github.com/londonaicentre/flip-fl-base/tree/main/tutorials/image_classification/xray_classification>`_
+- `3d_spleen_segmentation <https://github.com/londonaicentre/flip-fl-base/tree/main/tutorials/image_segmentation/3d_spleen_segmentation>`_
 
 Both cases perform a supervised federated averaging training, but the data, architecture and training configuration are different.
 

@@ -26,7 +26,12 @@ from flip_api.utils.logger import logger
 
 
 def main() -> None:
-    """Main seeding function."""
+    """Main seeding function.
+
+    Raises:
+        Exception: Any error encountered during seeding is re-raised after rolling back the
+            session.
+    """
     logger.debug("Creating database tables...")
     SQLModel.metadata.create_all(engine)
     logger.debug("About to seed the database...")

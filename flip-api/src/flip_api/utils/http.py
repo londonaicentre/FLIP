@@ -10,8 +10,16 @@
 # limitations under the License.
 #
 
-import os
-import ssl
+"""HTTP utilities for internal service-to-service calls on the central hub.
+
+Used exclusively by the FL service to communicate with FL Net API endpoints
+(e.g. flip-fl-api-net-1:8000). These are plain HTTP calls between co-located
+Docker services — no TLS required.
+
+NOT used for hub↔trust communication, which is handled via the task polling
+system (trusts poll the hub; see private_services/trust_tasks.py).
+"""
+
 from typing import Any
 
 import httpx
@@ -19,34 +27,23 @@ import httpx
 from flip_api.utils.logger import logger
 
 
-def trust_ssl_context() -> ssl.SSLContext | bool:
-    """Return an SSLContext that trusts the Trust CA, or True for default verification.
-
-    Reads `TRUST_CA_BUNDLE` environment variable which should point to a PEM file.
-    If not set, returns True to use the system CA bundle.
-
-    If `TRUST_CA_BUNDLE` is set but the file is missing or unreadable, logs a
-    warning and falls back to True (system CAs) so that local development and
-    test environments where the cert file has not been deployed are not broken.
-    """
-    ca_bundle = os.getenv("TRUST_CA_BUNDLE")
-    if ca_bundle:
-        try:
-            ctx = ssl.create_default_context(cafile=ca_bundle)
-            return ctx
-        except (OSError, ssl.SSLError) as exc:
-            logger.warning(
-                "Failed to load TRUST_CA_BUNDLE '%s': %s — falling back to system CAs",
-                ca_bundle,
-                repr(exc),
-            )
-    return True
-
-
 def http_get(url: str, request_id: str | None = None) -> Any:
-    """Perform an HTTP GET request to the specified URL with optional request ID for tracing."""
+    """Perform an HTTP GET request to the specified URL with optional request ID for tracing.
+
+    Args:
+        url (str): The URL to GET.
+        request_id (str | None): Optional value for the ``x-request-id`` header used for
+            distributed tracing.
+
+    Returns:
+        Any: Parsed JSON body when the response is JSON; otherwise the raw response text.
+
+    Raises:
+        httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
+        httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
+    """
     headers = {"x-request-id": request_id} if request_id else {}
-    with httpx.Client(verify=trust_ssl_context()) as client:
+    with httpx.Client() as client:
         try:
             response = client.get(url, headers=headers)
             response.raise_for_status()
@@ -62,13 +59,29 @@ def http_get(url: str, request_id: str | None = None) -> Any:
 def http_post(
     url: str, request_id: str | None = None, data: dict | None = None, timeout: float | None = None
 ) -> Any:
-    """Perform an HTTP POST request to the specified URL with optional request ID for tracing."""
+    """Perform an HTTP POST request to the specified URL with optional request ID for tracing.
+
+    Args:
+        url (str): The URL to POST to.
+        request_id (str | None): Optional value for the ``x-request-id`` header used for
+            distributed tracing.
+        data (dict | None): JSON-serialisable body to send.
+        timeout (float | None): Optional request timeout in seconds. When None, httpx defaults
+            are used.
+
+    Returns:
+        Any: Parsed JSON body when the response is JSON; otherwise the raw response text.
+
+    Raises:
+        httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
+        httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
+    """
     headers = (
         {"Content-Type": "application/json", "x-request-id": request_id}
         if request_id
         else {"Content-Type": "application/json"}
     )
-    with httpx.Client(verify=trust_ssl_context()) as client:
+    with httpx.Client() as client:
         try:
             if timeout is None:
                 response = client.post(url, headers=headers, json=data)
@@ -86,9 +99,22 @@ def http_post(
 
 
 def http_delete(url: str, request_id: str | None = None) -> Any:
-    """Perform an HTTP DELETE request to the specified URL with optional request ID for tracing."""
+    """Perform an HTTP DELETE request to the specified URL with optional request ID for tracing.
+
+    Args:
+        url (str): The URL to DELETE.
+        request_id (str | None): Optional value for the ``x-request-id`` header used for
+            distributed tracing.
+
+    Returns:
+        Any: Parsed JSON body when the response is JSON; otherwise the raw response text.
+
+    Raises:
+        httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
+        httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
+    """
     headers = {"x-request-id": request_id} if request_id else {}
-    with httpx.Client(verify=trust_ssl_context()) as client:
+    with httpx.Client() as client:
         try:
             response = client.delete(url, headers=headers)
             response.raise_for_status()

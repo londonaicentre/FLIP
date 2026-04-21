@@ -27,8 +27,7 @@ client = TestClient(app)
 user_id = "user-1"
 model_id = "model-1"
 trust_id = "trust-1"
-trust_endpoint = "trust-a.ac.uk/flip"
-fl_client_endpoint = "trust-a.ac.uk/flip:1111"
+fl_client_endpoint = "trust-a.ac.uk:1111"
 update_trust_status_data = UpdateTrustStatusSchema(fl_client_endpoint=fl_client_endpoint)
 trust_status = "INITIALISED"
 
@@ -58,7 +57,6 @@ def mock_can_access_model():
 def test_update_status_success(mock_mode, mock_request, mock_get_session):
     # Mock the db session
     mock_get_session.commit.return_value = None
-    mock_get_session.execute.return_value.scalars.return_value.first.return_value = MagicMock(endpoint=trust_endpoint)
 
     response = update_trust_status(
         request=mock_request,
@@ -75,7 +73,6 @@ def test_update_status_success(mock_mode, mock_request, mock_get_session):
 def test_update_status_without_user_id(mock_request, mock_get_session):
     # Mock the db session
     mock_get_session.commit.return_value = None
-    mock_get_session.execute.return_value.scalars.return_value.first.return_value = MagicMock(endpoint=trust_endpoint)
 
     # Simulate a request without user ID
     mock_request.state.user.sub = None
@@ -162,26 +159,6 @@ def test_update_status_unauthorized(mock_mode, mock_request, mock_can_access_mod
     # Assert
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
     assert f"User with ID: {user_id} is denied access to this model" in exc_info.value.detail
-
-
-@patch("flip_api.trusts_services.update_trust_status.is_deployment_mode_enabled", return_value=False)
-def test_endpoint_does_not_exist_for_trust(mock_mode, mock_request, mock_get_session):
-    # Mock DB session
-    mock_get_session.execute.return_value.scalars.return_value.first.return_value = None
-
-    with pytest.raises(HTTPException) as exc_info:
-        update_trust_status(
-            request=mock_request,
-            model_id=model_id,
-            trust_id=trust_id,
-            trust_status=trust_status,
-            data=update_trust_status_data,
-            db=mock_get_session,
-        )
-
-    # Assert
-    assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
-    assert "Endpoint does not exist for trust" in exc_info.value.detail
 
 
 @patch("flip_api.trusts_services.update_trust_status.is_deployment_mode_enabled", return_value=False)

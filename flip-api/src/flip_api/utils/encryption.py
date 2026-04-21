@@ -20,25 +20,45 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from flip_api.config import get_settings
 from flip_api.utils.get_secrets import get_secret
 
+_aes_key_cache: bytes | None = None
 
-# --- Step 1: Get AES key ---
+
 def get_aes_key() -> bytes:
-    """Retrieve the AES key and return it as bytes."""
-    # In production, get the AES key from secrets manager. In dev, use the environment variable directly.
+    """Retrieve the AES key and return it as bytes.
+
+    In production, fetches from AWS Secrets Manager. In dev, uses the environment variable directly.
+    Cached after first call — the key does not change during the lifetime of a process.
+
+    Returns:
+        bytes: The decoded AES key.
+    """
+    global _aes_key_cache  # noqa: PLW0603
+    if _aes_key_cache is not None:
+        return _aes_key_cache
+
     stt = get_settings()
     aes_key_b64 = get_secret("aes_key") if stt.ENV == "production" else stt.AES_KEY_BASE64
-    return base64.b64decode(aes_key_b64)  # Return as bytes
+    _aes_key_cache = base64.b64decode(aes_key_b64)
+    return _aes_key_cache
 
 
-# --- Step 2: AES-CBC encryption ---
 def encrypt(plaintext: str, key: bytes | None = None) -> str:
-    """Encrypt plaintext using AES-CBC with PKCS7 padding. Returns Base64-encoded ciphertext."""
+    """Encrypt plaintext using AES-CBC with PKCS7 padding. Returns Base64-encoded ciphertext.
+
+    Args:
+        plaintext (str): The plaintext string to encrypt.
+        key (bytes | None): The AES key to use. If None, the shared AES key is retrieved via
+            :func:`get_aes_key`.
+
+    Returns:
+        str: Base64-encoded ciphertext, with the random IV prepended to the ciphertext bytes
+        before encoding.
+    """
     if key is None:
         key = get_aes_key()
 
     iv = os.urandom(16)
 
-    # Pad plaintext to 128-bit (16-byte) blocks
     padder = padding.PKCS7(128).padder()
     padded_data = padder.update(plaintext.encode()) + padder.finalize()
 
@@ -46,14 +66,21 @@ def encrypt(plaintext: str, key: bytes | None = None) -> str:
     encryptor = cipher.encryptor()
     ciphertext = encryptor.update(padded_data) + encryptor.finalize()
 
-    # Combine IV and ciphertext, then encode for storage/transmission
-    encrypted_payload = iv + ciphertext
-    return base64.b64encode(encrypted_payload).decode()
+    return base64.b64encode(iv + ciphertext).decode()
 
 
-# --- Step 3: AES-CBC decryption ---
 def decrypt(encoded_payload: str, key: bytes | None = None) -> str:
-    """Decrypt Base64-encoded ciphertext using AES-CBC with PKCS7 padding. Returns the original plaintext."""
+    """Decrypt Base64-encoded ciphertext using AES-CBC with PKCS7 padding. Returns the original plaintext.
+
+    Args:
+        encoded_payload (str): Base64-encoded payload where the first 16 bytes are the IV and the
+            remaining bytes are the ciphertext.
+        key (bytes | None): The AES key to use. If None, the shared AES key is retrieved via
+            :func:`get_aes_key`.
+
+    Returns:
+        str: The decrypted plaintext.
+    """
     if key is None:
         key = get_aes_key()
 
@@ -65,7 +92,6 @@ def decrypt(encoded_payload: str, key: bytes | None = None) -> str:
     decryptor = cipher.decryptor()
     padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
 
-    # Unpad to recover original plaintext
     unpadder = padding.PKCS7(128).unpadder()
     plaintext = unpadder.update(padded_plaintext) + unpadder.finalize()
     return plaintext.decode()

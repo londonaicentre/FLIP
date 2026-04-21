@@ -22,7 +22,13 @@ from flip_api.utils.logger import logger
 
 
 def ensure_user_and_role(email: str, role_ref: RoleRef, session: Session) -> None:
-    """Fetch or create a Cognito + DB user and assign a role."""
+    """Fetch or create a Cognito + DB user and assign a role.
+
+    Args:
+        email (str): The user's email, used to look up the corresponding Cognito user.
+        role_ref (RoleRef): The role to assign to the user if they don't already have it.
+        session (Session): The SQLModel session used for DB reads and writes.
+    """
     user_pool_id = get_settings().AWS_COGNITO_USER_POOL_ID
 
     # 1️⃣ Try to get the user from Cognito
@@ -54,9 +60,13 @@ def ensure_user_and_role(email: str, role_ref: RoleRef, session: Session) -> Non
 def seed_main_users(session: Session) -> None:
     """
     Seed the admin and researcher users into the database.
+
     - Get the user from Cognito by email.
     - If the user does not exist in DB, create them with the correct Cognito sub.
     - Assign appropriate roles.
+
+    Args:
+        session (Session): The SQLModel session used for DB reads and writes.
     """
     logger.debug("Seeding main users...")
 

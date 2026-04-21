@@ -288,48 +288,6 @@ def check_endpoint_rejects_insecure(url: str, name: str) -> bool:
         return True
 
 
-def check_https_with_cacert(url: str, name: str, cacert_path: str, expected_status: int = 200) -> bool:
-    """Check HTTPS endpoint using curl with a custom CA certificate.
-
-    Uses `curl --cacert` to verify endpoints that present a self-signed certificate.
-    """
-    from pathlib import Path
-
-    print_status("INFO", f"Checking {name} (HTTPS w/ CA) at {url} using {cacert_path}...")
-
-    if not Path(cacert_path).exists():
-        print_status("WARN", f"CA file {cacert_path} not found — skipping HTTPS CA verification")
-        return False
-
-    # Use curl to perform verification and return only the HTTP status code
-    success, output = run_command(
-        [
-            "curl",
-            "-sS",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            "--cacert",
-            cacert_path,
-            url,
-        ],
-        timeout=15,
-    )
-
-    if not success:
-        print_status("FAIL", f"{name} HTTPS check failed: {output}")
-        return False
-
-    status = output.strip()
-    if status == str(expected_status):
-        print_status("PASS", f"{name} is responding over HTTPS (HTTP {status})")
-        return True
-    else:
-        print_status("FAIL", f"{name} returned HTTP {status} over HTTPS (expected {expected_status})")
-        return False
-
-
 def load_env_file(env_file: Path) -> dict:
     """Load environment variables from a file.
 
@@ -685,16 +643,9 @@ def main(
         # Check Trust endpoints if they exist
         print_section("Trust Service Endpoint Checks")
 
-        # Trust API is exposed via nginx-tls (HTTPS only) — verify security enforcement
-        print_status("INFO", "Verifying Trust API enforces HTTPS...")
-        check_https_loopback_insecure(f"https://localhost:{TRUST_API_PORT}/health", "Trust API Health (HTTPS)")
-        check_https_loopback_insecure(f"https://localhost:{TRUST_API_PORT}/docs", "Trust API Docs (HTTPS)")
-
-        # SECURITY CHECK: Verify HTTP requests are REJECTED
-        check_endpoint_rejects_insecure(
-            f"http://localhost:{TRUST_API_PORT}/health", "Trust API Health (HTTP rejection)"
-        )
-        check_endpoint_rejects_insecure(f"http://localhost:{TRUST_API_PORT}/docs", "Trust API Docs (HTTP rejection)")
+        # Trust API is exposed directly (no nginx-tls proxy — all communication is outbound polling)
+        check_http_endpoint(f"http://localhost:{TRUST_API_PORT}/health", "Trust API Health", 200)
+        check_http_endpoint(f"http://localhost:{TRUST_API_PORT}/docs", "Trust API Docs", 200)
 
         # Imaging and Data Access APIs are plain HTTP internal services
         check_http_endpoint(f"http://localhost:{IMAGING_API_PORT}/health", "Imaging API Health", 200)
@@ -702,17 +653,6 @@ def main(
 
         check_http_endpoint(f"http://localhost:{DATA_ACCESS_API_PORT}/health", "Data Access API Health", 200)
         check_http_endpoint(f"http://localhost:{DATA_ACCESS_API_PORT}/docs", "Data Access API Docs", 200)
-
-        # If a Trust CA is present, verify Trust API HTTPS with proper certificate validation
-        # (Imaging and Data Access are plain HTTP — not verified over HTTPS)
-        cacert = Path("trust/certs/trust-ca.crt")
-        if cacert.exists():
-            check_https_with_cacert(
-                f"https://localhost:{TRUST_API_PORT}/health", "Trust API Health (HTTPS+CA)", str(cacert), 200
-            )
-            check_https_with_cacert(
-                f"https://localhost:{TRUST_API_PORT}/docs", "Trust API Docs (HTTPS+CA)", str(cacert), 200
-            )
 
         # Check XNAT endpoints
         print_section("XNAT Service Endpoint Checks")

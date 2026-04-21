@@ -33,14 +33,11 @@ COPY pyproject.toml uv.lock ./
 RUN chown -R ${UNAME}:${UNAME} /app
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
-# Pre-create trust cert directory with correct ownership so the non-root user
-# can write the CA cert fetched from Secrets Manager at runtime.
-RUN mkdir -p /etc/ssl/trust && chown ${UNAME}:${UNAME} /etc/ssl/trust
 WORKDIR /app
 USER ${UNAME}
 
 # Sync dependencies using uv
-RUN uv sync
+RUN uv sync --frozen
 
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"

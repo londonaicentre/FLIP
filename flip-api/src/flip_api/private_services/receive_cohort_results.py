@@ -16,7 +16,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, col, select
 
-from flip_api.auth.access_manager import check_authorization_token
+from flip_api.auth.access_manager import authenticate_trust
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import QueryResult, QueryStats, Trust
 from flip_api.domain.schemas.private import (
@@ -221,6 +221,10 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
         db.commit()
         logger.info(f"Successfully aggregated and saved stats for query_id: {query_id}")
 
+    except HTTPException:
+        db.rollback()
+        raise
+
     except Exception as e:
         db.rollback()
         error_message = f"Error during aggregation for query_id {query_id}: {e}"
@@ -229,10 +233,6 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=error_message,
         )
-
-    except HTTPException:
-        db.rollback()
-        raise
 
 
 # [#114] ✅
@@ -245,7 +245,7 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
 def receive_cohort_results_endpoint(
     cohort_results: OmopCohortResults,
     db: Session = Depends(get_session),
-    token: str = Depends(check_authorization_token),
+    authenticated_trust: str = Depends(authenticate_trust),
 ) -> dict[str, str]:
     """
     Receives cohort query results from a single trust, saves them,
@@ -254,7 +254,7 @@ def receive_cohort_results_endpoint(
     Args:
         cohort_results (OmopCohortResults): The cohort results sent by the trust.
         db (Session): Database session.
-        token (str): Authorization token (validated by dependency).
+        authenticated_trust (str): Authenticated trust name (validated by dependency).
 
     Returns:
         dict[str, str]: A message indicating successful processing of cohort results.
@@ -262,7 +262,16 @@ def receive_cohort_results_endpoint(
     Raises:
         HTTPException: If there is an error during processing, saving individual results, or aggregating results.
     """
-    del token  # Token is validated by the dependency
+    # Verify the authenticated trust owns this result
+    trust = db.exec(select(Trust).where(Trust.name == authenticated_trust)).first()
+    if not trust or trust.id != cohort_results.trust_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Trust '{authenticated_trust}' is not authorised to submit results "
+                f"for trust_id {cohort_results.trust_id}"
+            ),
+        )
     logger.info(f"Received cohort results for query_id: {cohort_results.query_id}, trust_id: {cohort_results.trust_id}")
 
     try:

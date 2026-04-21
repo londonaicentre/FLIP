@@ -51,7 +51,7 @@ class TestAddLogEndpoint:
         model_id = "endpoint_model_1"
         session = mock_db_session
 
-        response = add_log_endpoint(model_id, sample_training_log, session, token="fake_token")
+        response = add_log_endpoint(model_id, sample_training_log, session)
 
         mock_add_log.assert_called_once_with(model_id=model_id, log=sample_training_log.log, session=session)
         assert response == {"detail": "Created"}
@@ -69,7 +69,7 @@ class TestAddLogEndpoint:
         session = mock_db_session
 
         with pytest.raises(HTTPException) as exc_info:
-            add_log_endpoint(model_id, sample_training_log, session, token="fake_token")
+            add_log_endpoint(model_id, sample_training_log, session)
 
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail == "Conflict in logging"
@@ -93,7 +93,7 @@ class TestAddLogEndpoint:
         session = mock_db_session
 
         with pytest.raises(HTTPException) as exc_info:
-            add_log_endpoint(model_id, sample_training_log, session, token="fake_token")
+            add_log_endpoint(model_id, sample_training_log, session)
 
         assert exc_info.value.status_code == 500
         assert exc_info.value.detail == "An internal server error occurred while adding the log."
@@ -112,7 +112,7 @@ class TestAddLogEndpoint:
         # Mock the trust validation to return False
         with patch("flip_api.private_services.add_log.validate_trusts", return_value=False):
             with pytest.raises(HTTPException) as exc_info:
-                add_log_endpoint(model_id, sample_training_log, session, token="fake_token")
+                add_log_endpoint(model_id, sample_training_log, session)
 
             assert exc_info.value.status_code == 400
             assert (

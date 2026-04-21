@@ -44,8 +44,12 @@ npm install
 npm run dev
 ```
 
-This compiles the application and starts a local dev server with hot-reload. The UI will proxy API requests to the
-flip-api backend. Configure the backend URL via `.env.development`:
+This compiles the application and starts a local dev server with hot-reload. A `predev` npm hook runs
+[`scripts/generate-window-js.sh`](scripts/generate-window-js.sh) first, which writes `public/js/window.js` from the
+`VITE_*` environment variables currently in scope (docker-compose populates these from `.env.development`).
+`public/js/window.js` is gitignored; `public/js/window.js.example` documents the expected shape.
+
+Configure the backend URL via `.env.development`:
 
 ```dotenv
 VITE_AWS_USER_POOL_ID="<A_VALID_COGNITO_USER_POOL>"
@@ -60,10 +64,12 @@ a running backend).
 ### Build for production
 
 ```bash
-npm run build
+npm run build        # full type-check + vite build (strict)
+npm run build:deploy # vite build only — used by make deploy-ui for CloudFront S3 sync
 ```
 
-The compiled output is written to `dist/`.
+The compiled output is written to `dist/`. `npm run build:deploy` skips `vue-tsc --noEmit` so it can ship while
+existing type debt is worked through; `npm run build` remains the strict path for anyone cleaning that up.
 
 ## Running tests
 

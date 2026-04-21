@@ -30,9 +30,17 @@ permissions:
 jobs:
   terraform-validate:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both Terraform roots share the modules under deploy/providers/AWS/modules;
+        # validating each root exercises the module code from the caller's side.
+        root:
+          - ./deploy/providers/AWS
+          - ./deploy/providers/AWS/dev
     defaults:
       run:
-        working-directory: ./deploy/providers/AWS
+        working-directory: ${{ matrix.root }}
 
     steps:
       - name: Checkout code

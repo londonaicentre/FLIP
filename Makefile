@@ -12,7 +12,7 @@
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access up-local-trust-stag
+		check-aws-access up-local-trust generate-trust-api-keys generate-internal-service-key
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -31,43 +31,18 @@ $(info Using MAIN_ENV_FILE: $(MAIN_ENV_FILE))
 # replace environment variables by the values from the .env files
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
-# Export all variables except DOCKER_TAG (which we'll set dynamically below)
-# export $(shell sed 's/=.*//' $(MAIN_ENV_FILE) | grep -v '^DOCKER_TAG$$')
-# NOTE The above no longer works as CICD tags are not based on PR numbers anymore since github actions are run manually.
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
-# Override DOCKER_TAG with PR number if available (uses GitHub CLI)
-# Falls back to "stag" if no PR is found or gh CLI is not available
-# Using 'override' to ensure this takes precedence over the value from .env files
-ifeq ($(PROD),true)
-override DOCKER_TAG := prod
-else ifeq ($(PROD),stag)
-# Use branch number tag if on a feature branch (e.g. 157 for 157-feature-...), otherwise fall back to "stag"
-override DOCKER_TAG := $(shell git rev-parse --abbrev-ref HEAD | grep -oE '^[0-9]+' || echo "stag")
-else
-override DOCKER_TAG := $(shell gh pr view --json number -q '"pr-" + (.number | tostring)' 2>/dev/null || echo "stag")
-endif
-export DOCKER_TAG
-# NOTE The above no longer works as CICD tags are not based on PR numbers anymore since github actions are run manually.
-# override DOCKER_TAG := $(shell gh pr view --json number -q '"pr-" + (.number | tostring)' 2>/dev/null || echo "stag")
-# export DOCKER_TAG
-
-# ---- FL backend selection (flower | nvflare) ----
-FL_BACKEND ?= flower
-VALID_FL_BACKENDS := flower nvflare
-
-ifeq (,$(filter $(FL_BACKEND),$(VALID_FL_BACKENDS)))
-$(error Invalid FL_BACKEND '$(FL_BACKEND)'. Must be one of: $(VALID_FL_BACKENDS))
-endif
+include deploy/fl_backend.mk
 
 COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
-# Override FL_PROVISIONED_DIR to use absolute path resolved relative to this Makefile
-# This allows the repo to work on any machine without hardcoding paths
-override FL_PROVISIONED_DIR := $(shell realpath $(dir $(lastword $(MAKEFILE_LIST)))/../flip-fl-base/workspace)
-export FL_PROVISIONED_DIR
+# Resolve FL_PROVISIONED_DIR (from .env) to an absolute path relative to this Makefile
+# Docker requires absolute paths for volume mounts; the .env value may be relative
+MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
+override FL_PROVISIONED_DIR := $(abspath $(MAKEFILE_DIR)/$(FL_PROVISIONED_DIR))
 
 # Service configuration
 define SERVICE_CONFIG
@@ -110,7 +85,7 @@ build:
 
 # Run all services
 # Uses --pull always to ensure the latest FL images are used
-up: check-aws-access create-networks
+up: check-aws-access generate-internal-service-key create-networks
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -122,7 +97,7 @@ up: check-aws-access create-networks
 	@echo "✅ All services started successfully!"
 
 # Minimal $(MAKE) up
-up-no-trust: create-networks
+up-no-trust: generate-internal-service-key create-networks
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
@@ -135,7 +110,7 @@ up-trusts: create-networks
 	@echo "✅ Trust services started successfully!"
 
 # Uses --pull always to ensure the latest FL images and 'stag'/'prod' version are used
-up-centralhub-ec2: create-networks
+up-centralhub-ec2: create-networks-centralhub
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting central hub API services..."
@@ -154,13 +129,17 @@ up-trust-ec2: create-networks
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-1 PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
-up-local-trust-stag: create-networks
+LOCAL_TRUST_NAME ?= Trust_2
+
+up-local-trust: create-networks
 	docker context use default
-	@echo "🚢 Starting local on-prem Trust services for staging..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-local-trust-stag PROD=stag
+	@echo "🚢 Starting local on-prem Trust services (PROD=$(PROD), TRUST_NAME=$(LOCAL_TRUST_NAME))..."
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-local-trust PROD=$(PROD) LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME)
+	@echo "🚢 Starting XNAT services..."
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-local PROD=$(PROD)
 	@echo "✅ Local Trust services started successfully!"
 
-central-hub: create-networks
+central-hub: create-networks-centralhub
 	$(MAKE) -C flip-api up
 
 # Stop all containers
@@ -188,13 +167,22 @@ restart-no-trust:
 ci:
 	act --env-file .env.development
 ui:
+ifeq ($(strip $(PROD)),)
 	@echo "🚀 Starting UI..."
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
+else
+	@echo "ℹ️  flip-ui is served from S3 + CloudFront when PROD=$(PROD); no container to start."
+	@echo "    Run \`make -C deploy/providers/AWS deploy-ui PROD=$(PROD)\` to publish the bundle."
+endif
 ui-off:
+ifeq ($(strip $(PROD)),)
 	@echo "🛑 Stopping UI..."
 	$(DOCKER_COMMAND) down --remove-orphans flip-ui
+else
+	@echo "ℹ️  No flip-ui container runs when PROD=$(PROD) (S3 + CloudFront)."
+endif
 tests:
-	cd flip-ui && $(MAKE) tests && \
+	cd flip-ui && $(MAKE) unit_test && \
 	cd ../flip-api && $(MAKE) test
 
 debug-all:
@@ -207,8 +195,10 @@ debug-off-all:
 	DEBUG=false $(DEBUG_OVERRIDE_COMPOSE_COMMAND) up --remove-orphans -d
 	$(MAKE) -C trust debug-off
 
-create-networks:
+create-networks-centralhub:
 	@{ docker network inspect central-hub-network >/dev/null 2>&1 || docker network create --driver bridge central-hub-network || true; }
+
+create-networks: create-networks-centralhub
 	$(MAKE) -C trust create-networks
 
 remove-networks:
@@ -269,6 +259,12 @@ unit_test:
 	$(MAKE) -C trust/data-access-api unit_test
 	$(MAKE) -C trust/imaging-api unit_test
 	$(MAKE) -C trust/trust-api unit_test 
+
+generate-trust-api-keys:
+	$(MAKE) -C flip-api generate-trust-api-keys $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE))
+
+generate-internal-service-key:
+	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
 
 check-aws-access:
 	@echo "🔎 Checking AWS CLI access..."

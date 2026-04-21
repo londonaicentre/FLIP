@@ -16,11 +16,14 @@ on:
         branches:
             - main
 
+permissions:
+  contents: read
+
 jobs:
     release:
         name: Tag and Create GitHub Release
         runs-on: ubuntu-latest
-        permissions:
+        permissions: # override top-level read-only default to allow tag/release creation
             contents: write
 
         steps:

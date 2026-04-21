@@ -27,6 +27,13 @@ HEADERS = {
 def success(status_code=status.HTTP_200_OK, data=None):
     """
     Construct a successful API response with default CORS headers.
+
+    Args:
+        status_code (int): HTTP status code for the response. Defaults to 200 OK.
+        data (dict | None): Response body payload. Defaults to an empty dict when None.
+
+    Returns:
+        dict: Response envelope with ``statusCode``, ``headers``, and JSON-encoded ``body``.
     """
     if data is None:
         data = {}
@@ -39,6 +46,15 @@ def success(status_code=status.HTTP_200_OK, data=None):
 def error(status_code, error):
     """
     Construct an error response with logging and error message.
+
+    Args:
+        status_code (int): HTTP status code for the response.
+        error (Exception | Any): The error to log. If it has a ``message`` attribute, that is returned
+            to the client; otherwise a generic message is used.
+
+    Returns:
+        dict: Response envelope with ``statusCode``, ``headers``, and JSON-encoded ``body``
+        containing the error message.
     """
     logging.error(str(error))
 
@@ -54,6 +70,15 @@ def error(status_code, error):
 def unhandled_error(status_code, error):
     """
     Construct an unhandled error response with logging and generic error message.
+
+    Args:
+        status_code (int): HTTP status code for the response.
+        error (Exception | Any): The error to log. Logged at error level when it exposes a
+            ``message`` attribute.
+
+    Returns:
+        dict: Response envelope with ``statusCode``, ``headers``, and JSON-encoded ``body``
+        containing a generic error message.
     """
     logging.debug("UNHANDLED ERROR")
 
@@ -68,6 +93,13 @@ def unhandled_error(status_code, error):
 def api_response(status_code, body=None):
     """
     Construct a generic API response with default CORS headers.
+
+    Args:
+        status_code (int): HTTP status code for the response.
+        body (dict | None): Response body payload. Defaults to an empty dict when None.
+
+    Returns:
+        dict: Response envelope with ``statusCode``, ``headers``, and JSON-encoded ``body``.
     """
     if body is None:
         body = {}

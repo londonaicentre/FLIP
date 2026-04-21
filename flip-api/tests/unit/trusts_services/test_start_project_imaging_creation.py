@@ -10,15 +10,12 @@
 # limitations under the License.
 #
 
-import logging
 import uuid
 from unittest import mock
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import MagicMock
 
 import pytest
-from botocore.exceptions import ClientError
 from fastapi import HTTPException
-from httpx import RequestError
 
 from flip_api.domain.interfaces.project import IProjectQuery, IProjectResponse
 from flip_api.domain.interfaces.trust import ITrust
@@ -30,7 +27,7 @@ from flip_api.trusts_services.start_project_imaging_creation import start_projec
 # =============================================================================================
 project_id = uuid.uuid4()
 trust_id = uuid.uuid4()
-trust_example = ITrust(id=trust_id, name="Example Trust", endpoint="http://example.com")
+trust_example = ITrust(id=trust_id, name="Example Trust")
 
 # User data
 user_id = uuid.uuid4()
@@ -111,48 +108,6 @@ def mock_get_cognito_users():
         yield mock_get_cognito_users
 
 
-@pytest.fixture
-def mock_trust_response():
-    mock_response = Mock()
-    mock_response.status_code = 200
-    mock_response.raise_for_status = Mock()
-    mock_response.json = Mock(
-        return_value={
-            "ID": str(uuid.uuid4()),  # simulate valid ID
-            "name": "Test Imaging Project",
-            "created_users": [
-                {"email": user_email, "username": user_name, "encrypted_password": user_encrypted_password}
-            ],
-        }
-    )
-    return mock_response
-
-
-@pytest.fixture
-def mock_trust_client(mock_trust_response):
-    mock_client = AsyncMock()
-    mock_client.post.return_value = mock_trust_response
-
-    mock_async_client = AsyncMock()
-    mock_async_client.__aenter__.return_value = mock_client
-    mock_async_client.__aexit__.return_value = None
-
-    return mock_async_client
-
-
-@pytest.fixture
-def mock_boto3_ses_client():
-    with mock.patch("flip_api.trusts_services.start_project_imaging_creation.boto3.client") as mock_ses:
-        yield mock_ses
-
-
-@pytest.fixture
-def mock_decrypt():
-    with mock.patch("flip_api.trusts_services.start_project_imaging_creation.decrypt") as mock_decrypt:
-        mock_decrypt.return_value = "decrypted_password"
-        yield mock_decrypt
-
-
 # Test case for permission failure
 @pytest.mark.asyncio
 async def test_permission_failure(mock_request, mock_get_session, mock_has_permissions):
@@ -194,39 +149,7 @@ async def test_project_not_found(mock_request, mock_get_session, mock_has_permis
     )
 
 
-# Test when imaging project returned from trust does not have 'ID', should raise an error
-@pytest.mark.asyncio
-async def test_project_missing_id(
-    mock_request,
-    mock_get_session,
-    mock_has_permissions,
-    mock_get_project,
-    mock_get_user_pool_id,
-    mock_get_users_with_access,
-    mock_get_cognito_users,
-    mock_trust_response,
-    mock_trust_client,
-):
-    # Mock invalid response from trust (missing imaging_project_id)
-    trust_response = mock_trust_response.json.return_value
-    del trust_response["ID"]
-    mock_trust_response.json.return_value = trust_response
-
-    with patch("httpx.AsyncClient", return_value=mock_trust_client):
-        with pytest.raises(HTTPException) as exc_info:
-            await start_project_imaging_creation(
-                request=mock_request,
-                project_id=project_id,
-                trust=trust_example,
-                db=mock_get_session,
-                user_id=user_id,
-            )
-
-    assert exc_info.value.status_code == 500
-    assert "Invalid response format from trust Example Trust: 'ID'" in exc_info.value.detail
-
-
-# Test case for successful imaging project creation
+# Test case for successful imaging project creation (now queues a task)
 @pytest.mark.asyncio
 async def test_successful_imaging_creation(
     mock_request,
@@ -236,18 +159,36 @@ async def test_successful_imaging_creation(
     mock_get_user_pool_id,
     mock_get_users_with_access,
     mock_get_cognito_users,
-    mock_trust_response,
-    mock_trust_client,
-    mock_boto3_ses_client,
-    mock_decrypt,
 ):
-    # Mock SES client send_templated_email call
-    mock_ses = mock_boto3_ses_client.return_value
-    mock_ses.send_templated_email.return_value = {"MessageId": "12345"}
+    response = await start_project_imaging_creation(
+        request=mock_request,
+        project_id=project_id,
+        trust=trust_example,
+        db=mock_get_session,
+        user_id=user_id,
+    )
 
-    # Patch the constructor so `async with httpx.AsyncClient(...) as client:` returns our mock_client
-    with patch("httpx.AsyncClient", return_value=mock_trust_client):
-        response = await start_project_imaging_creation(
+    assert response["success"] == "Imaging project creation task queued successfully"
+    # Verify task was added and committed
+    mock_get_session.add.assert_called_once()
+    mock_get_session.commit.assert_called_once()
+
+
+# Test case for DB error during task creation
+@pytest.mark.asyncio
+async def test_db_error_during_task_creation(
+    mock_request,
+    mock_get_session,
+    mock_has_permissions,
+    mock_get_project,
+    mock_get_user_pool_id,
+    mock_get_users_with_access,
+    mock_get_cognito_users,
+):
+    mock_get_session.add.side_effect = Exception("DB write failed")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await start_project_imaging_creation(
             request=mock_request,
             project_id=project_id,
             trust=trust_example,
@@ -255,148 +196,12 @@ async def test_successful_imaging_creation(
             user_id=user_id,
         )
 
-    assert response["success"] == "Imaging project creation started successfully"
-
-
-# Test case for trust service failure (e.g., network error)
-@pytest.mark.asyncio
-async def test_trust_service_failure(
-    mock_request,
-    mock_get_session,
-    mock_has_permissions,
-    mock_get_project,
-    mock_get_user_pool_id,
-    mock_get_users_with_access,
-    mock_get_cognito_users,
-):
-    async def mock_post(*args, **kwargs):
-        raise RequestError("Network error")
-
-    # Patch httpx.AsyncClient to use a client where post raises RequestError
-    with patch("httpx.AsyncClient") as mock_client:
-        mock_client_instance = mock_client.return_value.__aenter__.return_value
-        mock_client_instance.post.side_effect = mock_post
-
-        with pytest.raises(HTTPException) as exc_info:
-            await start_project_imaging_creation(
-                request=mock_request,
-                project_id=project_id,
-                trust=trust_example,
-                db=mock_get_session,
-            )
-
     assert exc_info.value.status_code == 500
-    assert "Failed to communicate with trust" in exc_info.value.detail
+    mock_get_session.rollback.assert_called_once()
+    assert "Internal server error" in exc_info.value.detail
 
 
-# Test case for missing SES email config
-@pytest.mark.asyncio
-async def test_missing_ses_email_config(
-    mock_request,
-    mock_get_session,
-    mock_has_permissions,
-    mock_get_project,
-    mock_get_user_pool_id,
-    mock_get_users_with_access,
-    mock_get_cognito_users,
-    mock_trust_response,
-    mock_trust_client,
-    mock_boto3_ses_client,
-    mock_decrypt,
-    caplog,
-):
-    # Force SES send_templated_email to raise an error
-    mock_boto3_ses_client.return_value.send_email.side_effect = Exception("SES email config missing")
-
-    with patch("httpx.AsyncClient", return_value=mock_trust_client):
-        with caplog.at_level(logging.ERROR):
-            await start_project_imaging_creation(
-                request=mock_request,
-                project_id=project_id,
-                trust=trust_example,
-                db=mock_get_session,
-            )
-
-    # Assert the log message is present
-    assert any(
-        f"Failed to send imaging credentials to {user_email}. Error: SES email config missing" in message
-        for message in caplog.messages
-    )
-
-
-# Test case for SES email client error
-@pytest.mark.asyncio
-async def test_ses_email_client_error(
-    mock_request,
-    mock_get_session,
-    mock_has_permissions,
-    mock_get_project,
-    mock_get_user_pool_id,
-    mock_get_users_with_access,
-    mock_get_cognito_users,
-    mock_trust_response,
-    mock_trust_client,
-    mock_boto3_ses_client,
-    mock_decrypt,
-    caplog,
-):
-    # Mock the ClientError in response from SES
-    error_response = {"Error": {"Code": "MessageRejected", "Message": "Email address is not verified."}}
-    operation_name = "SendEmail"
-    mock_boto3_ses_client.return_value.send_email.side_effect = ClientError(error_response, operation_name)
-
-    with patch("httpx.AsyncClient", return_value=mock_trust_client):
-        with caplog.at_level(logging.ERROR):
-            await start_project_imaging_creation(
-                request=mock_request,
-                project_id=project_id,
-                trust=trust_example,
-                db=mock_get_session,
-            )
-
-    assert any(
-        "Failed to send imaging credentials" in message and "Email address is not verified." in message
-        for message in caplog.messages
-    )
-
-
-# Test case for insert status error
-@pytest.mark.asyncio
-async def test_insert_status_error(
-    mock_request,
-    mock_get_session,
-    mock_has_permissions,
-    mock_get_project,
-    mock_get_user_pool_id,
-    mock_get_users_with_access,
-    mock_get_cognito_users,
-    mock_trust_response,
-    mock_trust_client,
-    mock_boto3_ses_client,
-):
-    # Mock SES client send_templated_email call
-    mock_ses = mock_boto3_ses_client.return_value
-    mock_ses.send_templated_email.return_value = {"MessageId": "12345"}
-
-    # Patch the constructor so `async with httpx.AsyncClient(...) as client:` returns our mock_client
-    with patch("httpx.AsyncClient", return_value=mock_trust_client):
-        with patch(
-            "flip_api.trusts_services.start_project_imaging_creation.insert_status",
-            side_effect=Exception("Insert error"),
-        ):
-            with pytest.raises(HTTPException) as exc_info:
-                await start_project_imaging_creation(
-                    request=mock_request,
-                    project_id=project_id,
-                    trust=trust_example,
-                    db=mock_get_session,
-                )
-
-    assert exc_info.value.status_code == 500
-    assert "An error occurred while starting project imaging creation" in exc_info.value.detail
-
-
-# Test case for dicom_to_nifti=False being forwarded to trust
+# Test case for dicom_to_nifti=False being included in the queued task payload
 @pytest.mark.asyncio
 async def test_dicom_to_nifti_false_forwarded_to_trust(
     mock_request,
@@ -406,29 +211,22 @@ async def test_dicom_to_nifti_false_forwarded_to_trust(
     mock_get_user_pool_id,
     mock_get_users_with_access,
     mock_get_cognito_users,
-    mock_trust_response,
-    mock_trust_client,
-    mock_boto3_ses_client,
-    mock_decrypt,
 ):
+    import json
+
     # Override fixture to set dicom_to_nifti=False
     mock_get_project.return_value.dicom_to_nifti = False
 
-    mock_ses = mock_boto3_ses_client.return_value
-    mock_ses.send_templated_email.return_value = {"MessageId": "12345"}
+    await start_project_imaging_creation(
+        request=mock_request,
+        project_id=project_id,
+        trust=trust_example,
+        db=mock_get_session,
+        user_id=user_id,
+    )
 
-    with patch("httpx.AsyncClient", return_value=mock_trust_client):
-        await start_project_imaging_creation(
-            request=mock_request,
-            project_id=project_id,
-            trust=trust_example,
-            db=mock_get_session,
-            user_id=user_id,
-        )
-
-    # Verify the POST body includes dicom_to_nifti=False
-    post_call = mock_trust_client.__aenter__.return_value.post
-    call_kwargs = post_call.call_args
-
-    body = call_kwargs.kwargs.get("json", {})
-    assert body["dicom_to_nifti"] is False
+    # Verify the task payload includes dicom_to_nifti=False
+    mock_get_session.add.assert_called_once()
+    task = mock_get_session.add.call_args[0][0]
+    payload = json.loads(task.payload)
+    assert payload["dicom_to_nifti"] is False

@@ -33,6 +33,9 @@ def get_xnat_users(headers: dict[str, str]) -> list[User]:
 
     Returns:
         list[imaging_api.routers.schemas.User]: List of XNAT users.
+
+    Raises:
+        Exception: If XNAT returns a non-200 response.
     """
     response = requests.get(f"{XNAT_URL}/xapi/users/profiles", headers=headers)
     users = [User(**user) for user in response.json()]
@@ -57,6 +60,9 @@ def to_create_imaging_user(user: CentralHubUser, headers: dict[str, str]) -> Cre
 
     Returns:
         imaging_api.routers.schemas.CreateUser: XNAT user creation request object.
+
+    Raises:
+        Exception: If fetching existing XNAT users fails.
     """
     # Extract username from email (part before @)
     base_username = user.email.split("@")[0]
@@ -100,6 +106,11 @@ def get_user_profile_by(key: str, value: str, headers: dict[str, str]) -> User:
 
     Returns:
         imaging_api.routers.schemas.User: The user profile.
+
+    Raises:
+        AssertionError: If ``key`` is not ``"username"`` or ``"email"``.
+        NotFoundError: If no XNAT user matches ``value`` for the given ``key``.
+        Exception: If fetching XNAT users fails.
     """
     assert key in [
         "username",
@@ -173,6 +184,10 @@ def create_user(user: CreateUser, headers: dict[str, str]) -> User:
 
     Returns:
         imaging_api.routers.schemas.User: The created user profile.
+
+    Raises:
+        AlreadyExistsError: If a user with the same username already exists on XNAT (HTTP 409).
+        Exception: If XNAT returns any other non-201 response.
     """
     logger.info(f"Creating user '{user.username}' on XNAT")
 

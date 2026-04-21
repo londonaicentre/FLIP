@@ -23,6 +23,7 @@ from flip_api.project_services.services.image_service import (
     base64_url_encode,
     get_imaging_project_statuses,
     get_imaging_projects,
+    has_pending_imaging_tasks,
 )
 from flip_api.project_services.services.project_services import get_project
 from flip_api.utils.logger import logger
@@ -65,7 +66,7 @@ async def get_imaging_project_status(
         user_id (UUID): The ID of the user.
 
     Returns:
-        ImagingProject: The status of the imaging project.
+        list[IImagingStatus]: A list of imaging project statuses associated with the project (one status per trust).
 
     Raises:
         HTTPException: If the user does not have permission to access the project, if the project is not found, or if
@@ -97,6 +98,8 @@ async def get_imaging_project_status(
         )
     imaging_projects = get_imaging_projects(project_id, session)
     if not imaging_projects:
+        if has_pending_imaging_tasks(project_id, session):
+            return []  # Tasks still being processed by trusts
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="The imaging project was not found.",

@@ -59,6 +59,10 @@ def remove_job(job_id: UUID, session: Session):
 
     Returns:
         None
+
+    Raises:
+        NotFoundError: If no ``FLJob`` exists with the given ID.
+        DatabaseError: If the update fails at the DB layer.
     """
     logger.info(f"Reverting job pickup: {job_id}")
     try:
@@ -90,6 +94,9 @@ def remove_job_from_queue(model_id: UUID, session: Session):
 
     Returns:
         None
+
+    Raises:
+        DatabaseError: If the update fails at the DB layer.
     """
     logger.info(f"Setting job status for model ({model_id}) to {JobStatus.DELETED}")
     try:
@@ -123,6 +130,10 @@ def revert_scheduler_pickup(scheduler_id: UUID, session: Session):
 
     Returns:
         None
+
+    Raises:
+        NotFoundError: If no ``FLScheduler`` exists with the given ID.
+        DatabaseError: If the update fails at the DB layer.
     """
     logger.info("Reverting scheduler pickup")
     try:
@@ -154,6 +165,10 @@ def get_net_by_model_id(model_id: UUID, session: Session) -> INetDetails:
 
     Returns:
         INetDetails: Details of the net.
+
+    Raises:
+        NotFoundError: If no net is associated with the given ``model_id``.
+        DatabaseError: If the query fails at the DB layer.
     """
     logger.info("Getting the net endpoint via its model ID...")
     try:
@@ -188,6 +203,9 @@ def get_net_by_name(name: str, session: Session) -> INetDetails | None:
 
     Returns:
         INetDetails | None: Details of the net or None if not found
+
+    Raises:
+        DatabaseError: If the query fails at the DB layer.
     """
     logger.info(f"Getting {name} info from db...")
 
@@ -218,6 +236,10 @@ def get_nets(session: Session) -> list[INetDetails]:
 
     Returns:
         list[INetDetails]: A list of all nets.
+
+    Raises:
+        NotFoundError: If no nets are registered in the database.
+        DatabaseError: If the query fails at the DB layer.
     """
     logger.info("Getting net info from db...")
     try:
@@ -245,6 +267,9 @@ def check_for_available_net(session: Session) -> ISchedulerResponse | None:
 
     Returns:
         ISchedulerResponse | None: The scheduler response if an available net is found, otherwise None.
+
+    Raises:
+        DatabaseError: If the update fails at the DB layer.
     """
     logger.info("Checking for any available nets...")
 
@@ -283,6 +308,11 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
 
     Returns:
         IJobResponse | None: The job response if a queued job is found, otherwise None.
+
+    Raises:
+        NotFoundError: If the scheduler referenced by ``scheduler_id`` cannot be found.
+        DatabaseError: If the query or update fails at the DB layer.
+        Exception: If the job references invalid trusts.
     """
     logger.info("Checking for any queued jobs...")
 
@@ -342,6 +372,11 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
 
     Returns:
         None
+
+    Raises:
+        Exception: If the FL backend is unsupported, the net endpoint cannot be resolved, client
+            availability validation fails, or training fails to start. On failure the job is
+            removed, the model is marked as errored, and the original exception is re-raised.
     """
     try:
         logger.debug("Attempting to prepare and start training...")
@@ -407,6 +442,10 @@ def get_required_training_details(model_id: UUID, session: Session) -> IRequired
 
     Returns:
         IRequiredTrainingInformation: The required training information.
+
+    Raises:
+        NotFoundError: If the model or its associated cohort query cannot be found.
+        DatabaseError: If the query fails at the DB layer.
     """
     logger.info(f"Getting required details for training for model: {model_id}")
 
@@ -446,6 +485,9 @@ def update_fl_scheduler(model_id: UUID, session: Session):
 
     Returns:
         None
+
+    Raises:
+        DatabaseError: If the update fails at the DB layer.
     """
     try:
         logger.debug(f"Attempting to update the FL job to {JobStatus.COMPLETED} for model: {model_id}")

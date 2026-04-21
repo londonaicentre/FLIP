@@ -80,12 +80,12 @@ else
 fi
 
 echo "🗑️ Removing existing db_data dirs..."
-sudo rm -rf "${VOLUMES_DIR}/trust1/db_data" "${VOLUMES_DIR}/trust2/db_data"
-mkdir -p "${VOLUMES_DIR}/trust1/db_data" "${VOLUMES_DIR}/trust2/db_data"
+sudo rm -rf "${VOLUMES_DIR}/Trust_1/db_data" "${VOLUMES_DIR}/Trust_2/db_data"
+mkdir -p "${VOLUMES_DIR}/Trust_1/db_data" "${VOLUMES_DIR}/Trust_2/db_data"
 
 echo "📁 Extracting .tar.gz files (will replace existing db_data dirs)..."
-tar -xzf "${LOCAL_TRUST1_ARCHIVE}" -C "${VOLUMES_DIR}/trust1/db_data"
-tar -xzf "${LOCAL_TRUST2_ARCHIVE}" -C "${VOLUMES_DIR}/trust2/db_data"
+tar -xzf "${LOCAL_TRUST1_ARCHIVE}" -C "${VOLUMES_DIR}/Trust_1/db_data"
+tar -xzf "${LOCAL_TRUST2_ARCHIVE}" -C "${VOLUMES_DIR}/Trust_2/db_data"
 
 # Record the new local data version
 echo "${DATA_VERSION}" > "${LOCAL_DATA_VERSION_FILE}"

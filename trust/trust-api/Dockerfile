@@ -32,7 +32,7 @@ RUN chown -R ${UNAME}:${UNAME} /app
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 USER ${UNAME}
-RUN uv sync
+RUN uv sync --frozen
 
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"

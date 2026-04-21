@@ -16,7 +16,11 @@ from uuid import UUID
 
 import pytest
 from fastapi import HTTPException, status
+from fastapi.testclient import TestClient
 
+from flip_api.auth.access_manager import authenticate_trust
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import Trust
 from flip_api.domain.schemas.private import (
     AggregatedCohortStats,
     AggregatedFieldResult,
@@ -27,6 +31,7 @@ from flip_api.domain.schemas.private import (
     Results,
     TrustSpecificData,
 )
+from flip_api.main import app
 from flip_api.private_services.receive_cohort_results import (
     _aggregate_and_save_results,
     _save_individual_result,
@@ -199,3 +204,71 @@ class TestAggregateAndSaveResults:
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert "DB error on SELECT" in exc_info.value.detail
         mock_db_session.rollback.assert_called_once()
+
+
+class TestReceiveCohortResultsEndpointAuth:
+    """Endpoint-level tests for the trust ownership check in receive_cohort_results_endpoint."""
+
+    TRUST_NAME = "Trust_1"
+
+    @pytest.fixture(autouse=True)
+    def _setup_auth_override(self):
+        """Override authenticate_trust to return TRUST_NAME for every request."""
+        app.dependency_overrides[authenticate_trust] = lambda: self.TRUST_NAME
+        yield
+        app.dependency_overrides.pop(authenticate_trust, None)
+
+    @pytest.fixture
+    def client(self):
+        return TestClient(app)
+
+    def test_returns_403_when_trust_id_does_not_match_authenticated_trust(self, client):
+        """POST with a trust_id that belongs to a different trust should be rejected."""
+        authenticated_trust_id = uuid.uuid4()
+        other_trust_id = uuid.uuid4()
+
+        # Mock DB: trust lookup returns a Trust whose id != the body's trust_id
+        mock_trust = MagicMock(spec=Trust)
+        mock_trust.id = authenticated_trust_id
+
+        mock_db = MagicMock()
+        mock_db.exec.return_value.first.return_value = mock_trust
+
+        app.dependency_overrides[get_session] = lambda: mock_db
+
+        payload = {
+            "query_id": str(uuid.uuid4()),
+            "trust_id": str(other_trust_id),
+            "created": "2023-10-01T12:00:00Z",
+            "record_count": 5,
+            "data": [],
+        }
+
+        response = client.post("/api/cohort/results", json=payload)
+
+        assert response.status_code == 403
+        assert "not authorised" in response.json()["detail"]
+
+        app.dependency_overrides.pop(get_session, None)
+
+    def test_returns_403_when_trust_name_not_found_in_db(self, client):
+        """POST when the authenticated trust name has no matching row in the DB should be rejected."""
+        mock_db = MagicMock()
+        mock_db.exec.return_value.first.return_value = None  # Trust not found
+
+        app.dependency_overrides[get_session] = lambda: mock_db
+
+        payload = {
+            "query_id": str(uuid.uuid4()),
+            "trust_id": str(uuid.uuid4()),
+            "created": "2023-10-01T12:00:00Z",
+            "record_count": 0,
+            "data": [],
+        }
+
+        response = client.post("/api/cohort/results", json=payload)
+
+        assert response.status_code == 403
+        assert "not authorised" in response.json()["detail"]
+
+        app.dependency_overrides.pop(get_session, None)

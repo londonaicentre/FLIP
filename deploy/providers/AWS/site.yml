@@ -27,6 +27,12 @@
           - fl_kit_date is defined
           - fl_kit_date | length > 0
         fail_msg: "The fl_kit_date variable must be defined to proceed."
+    - name: ensure pgdata_archive variable is defined
+      assert:
+        that:
+          - pgdata_archive is defined
+          - pgdata_archive | length > 0
+        fail_msg: "The pgdata_archive variable must be defined to proceed (e.g. trust1_pgdata_20260106.tar.gz)."
     - name: use plugin to extract Terraform outputs
       community.general.terraform:
         state: present
@@ -34,23 +40,27 @@
       register: terraform_output
     - name: add Central Hub EC2 instance to Ansible inventory
       add_host:
-        name: "{{ terraform_output.outputs.Ec2PublicIp.value }}"
+        # Use the SSH alias so Ansible tunnels through SSM Session Manager
+        # The 'flip' Host entry in ~/.ssh/config provides ProxyCommand, IdentityFile,
+        # and StrictHostKeyChecking=accept-new — no additional ssh_common_args needed.
+        name: flip
         groups:
           - ec2
           - central_hub
         ansible_ssh_user: ubuntu
-        ansible_ssh_private_key_file: "{{ terraform_output.outputs.Keypair.value }}"
-        ansible_ssh_common_args: "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') + '/.ssh/host-aws' }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
         ansible_ec2_instance_id: "{{ terraform_output.outputs.Ec2InstanceId.value }}"
     - name: add Trust EC2 instance to Ansible inventory
       add_host:
-        name: "{{ terraform_output.outputs.TrustEc2PublicIp.value }}"
+        # Use the SSH alias so Ansible tunnels through SSM Session Manager
+        name: flip-trust
         groups:
           - ec2
           - trust_ec2
         ansible_ssh_user: ubuntu
-        ansible_ssh_private_key_file: "{{ terraform_output.outputs.Keypair.value }}"
-        ansible_ssh_common_args: "-o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        ansible_ssh_private_key_file: "{{ lookup('env', 'HOME') + '/.ssh/host-aws' }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
         ansible_ec2_instance_id: "{{ terraform_output.outputs.TrustEc2InstanceId.value }}"
 
 - name: update packages
@@ -135,7 +145,7 @@
         - /opt/flip
         - /opt/flip/data
 
-- name: download participant kit services to Central Hub
+- name: download NVFLARE participant kit to Central Hub
   hosts: central_hub
   become: true
   vars:
@@ -151,8 +161,9 @@
         owner: ubuntu
         group: ubuntu
         mode: "0755"
+      when: fl_backend == "nvflare"
 
-    - name: sync Central Hub services from S3
+    - name: sync NVFLARE participant kit from S3
       shell: |
         set -euo pipefail
         src="{{ item }}"
@@ -165,6 +176,36 @@
       loop: "{{ central_s3_sources }}"
       register: central_sync
       changed_when: "'download:' in central_sync.stdout or 'copy:' in central_sync.stdout"
+      when: fl_backend == "nvflare"
+
+- name: download Flower participant kit to Central Hub
+  hosts: central_hub
+  become: true
+  vars:
+    central_services_dir: "/opt/flip/services"
+    central_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flower-participant-kits/{{ fl_kit_date }}/net-1/"
+  tasks:
+    - name: ensure central services directory exists
+      file:
+        path: "{{ central_services_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      when: fl_backend == "flower"
+
+    - name: sync Flower net-1 certificates and keys from S3
+      shell: |
+        set -euo pipefail
+        mkdir -p "{{ central_services_dir }}/net-1"
+        aws s3 sync \
+          "{{ central_s3_source }}" \
+          "{{ central_services_dir }}/net-1/"
+      args:
+        executable: /bin/bash
+      register: cert_sync
+      changed_when: "'download:' in cert_sync.stdout or 'copy:' in cert_sync.stdout"
+      when: fl_backend == "flower"
 
 - name: create Trust EC2 application directories
   hosts: trust_ec2
@@ -181,7 +222,7 @@
         - /opt/flip
         # Data directory for Trust 1 (where XNAT images will be downloaded for the FL client to use)
         # NOTE if this is not created here, it will be created later by Docker Compose but owned by root, and will cause permission issues
-        - /opt/flip/data/trust-1
+        - /opt/flip/data/images
         # XNAT bind-mount directories (Docker Swarm does not auto-create them)
         - /opt/flip/xnat
         - /opt/flip/xnat/xnat-data/tomcat_logs
@@ -190,7 +231,23 @@
         - /opt/flip/xnat/xnat-data/cache
         - /opt/flip/xnat/xnat-db-data
 
-- name: download participant kit services to Trust EC2
+    - name: create Loki data directory
+      file:
+        path: /opt/flip/volumes/loki
+        state: directory
+        owner: "10001"
+        group: "10001"
+        mode: "0755"
+
+    - name: create Grafana data directory
+      file:
+        path: /opt/flip/volumes/grafana
+        state: directory
+        owner: "472"
+        group: "472"
+        mode: "0755"
+
+- name: download NVFLARE participant kit services to Trust EC2
   hosts: trust_ec2
   become: true
   vars:
@@ -204,19 +261,50 @@
         owner: ubuntu
         group: ubuntu
         mode: "0755"
+      when: fl_backend == "nvflare"
 
-    - name: sync Trust_1 service from S3
+    - name: sync NVFLARE Trust_1 participant kit from S3
       shell: |
         set -euo pipefail
-        src="{{ trust_s3_source }}"
-        name="$(basename "${src%/}")"
-        dest="{{ trust_services_dir }}/${name}"
+        dest="{{ trust_services_dir }}/Trust_1"
         mkdir -p "$dest"
-        aws s3 sync "$src" "$dest"
+        aws s3 sync \
+          "{{ trust_s3_source }}" \
+          "$dest"
       args:
         executable: /bin/bash
       register: trust_sync
       changed_when: "'download:' in trust_sync.stdout or 'copy:' in trust_sync.stdout"
+      when: fl_backend == "nvflare"
+
+- name: download Flower participant kit to Trust EC2
+  hosts: trust_ec2
+  become: true
+  vars:
+    trust_services_dir: "/opt/flip/services"
+    trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flower-participant-kits/{{ fl_kit_date }}/net-1/"
+  tasks:
+    - name: ensure trust services directory exists
+      file:
+        path: "{{ trust_services_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+      when: fl_backend == "flower"
+
+    - name: sync Flower net-1 certificates and keys from S3
+      shell: |
+        set -euo pipefail
+        mkdir -p "{{ trust_services_dir }}/net-1"
+        aws s3 sync \
+          "{{ trust_s3_source }}/" \
+          "{{ trust_services_dir }}/net-1/"
+      args:
+        executable: /bin/bash
+      register: trust_sync
+      changed_when: "'download:' in trust_sync.stdout or 'copy:' in trust_sync.stdout"
+      when: fl_backend == "flower"
 
 - name: deploy observability config files to Trust EC2
   hosts: trust_ec2
@@ -344,14 +432,13 @@
         -a fetch-config -m ec2
         -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
 
-- name: download and restore trust1 OMOP PGDATA on Trust EC2
+- name: download and restore OMOP PGDATA on Trust EC2
   hosts: trust_ec2
   become: true
   vars:
     s3_bucket: "{{ flip_aicentre_bucket }}"
     s3_prefix: "omop"
-    base_dir: "/opt/flip/volumes"
-    trust1_key: "trust1_pgdata_20260106.tar.gz"
+    omop_dir: "/opt/flip/omop"
   tasks:
     - name: install tar
       apt:
@@ -360,37 +447,36 @@
         state: present
         update_cache: yes
 
-    - name: create trust1 directories
+    - name: create OMOP directories
       file:
         path: "{{ item }}"
         state: directory
         mode: "0755"
       loop:
-        - "{{ base_dir }}"
-        - "{{ base_dir }}/trust1"
-        - "{{ base_dir }}/trust1/db_data"
+        - "{{ omop_dir }}"
+        - "{{ omop_dir }}/db_data"
 
-    - name: download trust1 PGDATA archive from S3
+    - name: download OMOP PGDATA archive from S3
       command: >
         aws s3 cp
-        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ trust1_key }}
-        {{ base_dir }}/trust1/trust1_pgdata.tar.gz
+        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ pgdata_archive }}
+        {{ omop_dir }}/pgdata.tar.gz
       args:
-        creates: "{{ base_dir }}/trust1/trust1_pgdata.tar.gz"
+        creates: "{{ omop_dir }}/pgdata.tar.gz"
 
     - name: clear existing PGDATA directory
-      shell: rm -rf {{ base_dir }}/trust1/db_data/*
+      shell: rm -rf {{ omop_dir }}/db_data/*
       changed_when: false
 
-    - name: extract trust1 PGDATA
+    - name: extract OMOP PGDATA
       command: >
-        tar -xzf {{ base_dir }}/trust1/trust1_pgdata.tar.gz
-        -C {{ base_dir }}/trust1/db_data
+        tar -xzf {{ omop_dir }}/pgdata.tar.gz
+        -C {{ omop_dir }}/db_data
 
     - name: set Postgres ownership and permissions
       shell: |
-        chown -R 999:999 {{ base_dir }}/trust1/db_data
-        chmod 700 {{ base_dir }}/trust1/db_data
+        chown -R 999:999 {{ omop_dir }}/db_data
+        chmod 700 {{ omop_dir }}/db_data
       changed_when: false
 
 - name: restore trust1 Orthanc storage on Trust EC2

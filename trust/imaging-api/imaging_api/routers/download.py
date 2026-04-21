@@ -82,6 +82,10 @@ async def download_images_by_accession_number(
         error_msg = f"Resource not found: {str(e)}"
         logger.error(error_msg)
         raise HTTPException(status_code=404, detail=error_msg)
+    except ValueError as e:
+        error_msg = f"Invalid download request: {str(e)}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=400, detail=error_msg)
     except Exception as e:
         error_msg = f"Failed to download and unzip images: {str(e)}"
         logger.error(error_msg)

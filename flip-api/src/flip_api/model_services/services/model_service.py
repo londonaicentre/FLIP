@@ -40,6 +40,9 @@ def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, sess
         model_details (IModelDetails): The new details for the model
         user_id (UUID): The ID of the user making the changes
         session (Session): The database session
+
+    Raises:
+        ValueError: If no model exists with the given ``model_id``.
     """
     logger.debug("Attempting to update model details...")
 
@@ -65,11 +68,11 @@ def update_model_status(model_id: UUID, status: ModelStatus | None, session: Ses
 
     Args:
         model_id (UUID): The ID of the model
-        status (flip.domain.schemas.status.ModelStatus): The new status to be set
+        status (ModelStatus | None): The new status to be set
         session (Session): The database session
 
     Returns:
-        flip.domain.schemas.status.ModelStatus | None: The updated status of the model
+        ModelStatus | None: The updated status of the model, or None if the model does not exist.
     """
     logger.info(f"Attempting to set the model's status... ID: {model_id}, Status: {status}")
 
@@ -107,6 +110,10 @@ def add_log(
 
     Returns:
         None
+
+    Raises:
+        Exception: Re-raises any error encountered when persisting the log entry, after rolling
+            back the session.
     """
     logger.info({"message": "Attempting to add a log line for model...", "modelId": model_id, "log": log})
 
@@ -169,6 +176,10 @@ def delete_models(project_id: UUID, user_id: str, session: Session, ensure_delet
 
     Returns:
         int: The number of models deleted.
+
+    Raises:
+        ValueError: If ``ensure_deletion`` is True and no non-deleted models exist for the given
+            project.
     """
     logger.debug("Attempting to delete models...")
 
@@ -208,7 +219,7 @@ def get_model_status(model_id: UUID, session: Session) -> IDetailedModelStatus |
         session (Session): The database session.
 
     Returns:
-        dict | None: A dictionary containing the model's status and deleted status.
+        IDetailedModelStatus | None: The model's status and deleted flag, or None if the model does not exist.
     """
     logger.debug("Attempting to get the model's status...")
 

@@ -21,6 +21,9 @@ on:
   pull_request:
     branches: [main, develop]
 
+permissions:
+  contents: read
+
 jobs:
   trust-api:
     runs-on: ubuntu-latest
@@ -47,7 +50,7 @@ jobs:
         run: | # pragma: allowlist secret
           cp ../../.env.development.example ../../.env.development
           # Override sensitive values with GitHub secrets
-          echo "PRIVATE_API_KEY=${{ secrets.PRIVATE_API_KEY || 'test-private-api-key-for-ci' }}" >> ../../.env.development
+          echo "TRUST_API_KEY=${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}" >> ../../.env.development
           echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=' }}" >> ../../.env.development  # pragma: allowlist secret
           echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
           echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development

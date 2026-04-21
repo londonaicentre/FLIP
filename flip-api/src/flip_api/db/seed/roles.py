@@ -35,7 +35,14 @@ CURRENT_ROLES = [
 
 
 def seed_roles(session: Session) -> list[str]:
-    """Seed roles into the database."""
+    """Seed roles into the database.
+
+    Args:
+        session (Session): The SQLModel session used for reads and inserts.
+
+    Returns:
+        list[str]: All role names present after seeding.
+    """
     for role_data in CURRENT_ROLES:
         # Check if role exists
         statement = select(Role).where(Role.name == role_data["name"])

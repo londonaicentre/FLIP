@@ -326,22 +326,17 @@ translate/
 
 flip-api/tests/debug_prelaunch_task_projects.json
 
-deploy/providers/AWS/.terraform.lock.hcl
 flip-fl-api/transfer/*/*
 
 *.tfplan
+*.terraform.lock.hcl
 
 # Environment files with sensitive credentials
-.env.development    
+.env.development
 .env.stag
 .env.production
 
-# Trust TLS certificates (generated locally, never committed)
-trust/certs/*.key
-trust/certs/*.crt
-trust/certs/*.srl
-# Trust CA cert copied to Terraform deploy dir for use with `file()` in main.tf
-deploy/providers/AWS/trust-ca.crt
+
 
 trust/terraform.tfstate
 
@@ -359,10 +354,6 @@ plans/
 scripts/remove-env-from-history.sh
 
 SECURITY_INCIDENT.md
-
-trust/certs/
-
-*.crt
 
 *.jar
 

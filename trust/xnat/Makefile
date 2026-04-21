@@ -11,9 +11,9 @@
 #
 
 .PHONY: build up deploy down clean xnat-shell xnat-war-download xnat-plugins-download \
-	xnat-reset xnat-configure-trust-1 xnat-configure-trust-2 \
-	create-network-trust-1 create-network-trust-2 up-xnat-1 up-xnat-2 \
-	down-xnat-1 down-xnat-2
+	xnat-reset xnat-configure xnat-configure-trust-1 xnat-configure-trust-2 xnat-configure-local \
+	create-network-trust-1 create-network-trust-2 up-xnat-1 up-xnat-2 up-xnat-local \
+	down-xnat-1 down-xnat-2 down-xnat-local
 
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
@@ -42,6 +42,7 @@ export DOCKER_TAG
 
 project1 = xnat1
 project2 = xnat2
+project_local = xnat-local
 network1 = deploy_trust-network-1
 network2 = deploy_trust-network-2
 
@@ -97,7 +98,7 @@ up-xnat-1: create-network-trust-1
 	PACS_UI_PORT=${PACS_UI_PORT_TRUST_1} \
 	ORTHANC_STORAGE=${ORTHANC_STORAGE_TRUST_1} \
 	DOCKER_NETWORK_NAME=${network1} \
-	docker stack deploy --with-registry-auth ${STACK_FILES} ${project1}
+	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} ${project1}
 	$(MAKE) xnat-configure-trust-1
 
 up-xnat-2: create-network-trust-2
@@ -106,7 +107,7 @@ up-xnat-2: create-network-trust-2
 	PACS_UI_PORT=${PACS_UI_PORT_TRUST_2} \
 	ORTHANC_STORAGE=${ORTHANC_STORAGE_TRUST_2} \
 	DOCKER_NETWORK_NAME=${network2} \
-	docker stack deploy --with-registry-auth ${STACK_FILES} ${project2}
+	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} ${project2}
 	$(MAKE) xnat-configure-trust-2
 
 # Get a shell in the running xnat container (for project1)
@@ -114,11 +115,23 @@ xnat-shell:
 	CONTAINER=$$(docker ps --filter "name=${project1}_xnat-web" -q); \
 	docker exec -it $$CONTAINER bash
 
+up-xnat-local: create-network-trust-1
+	XNAT_PATH=${XNAT_PATH} \
+	XNAT_PORT=${XNAT_PORT_LOCAL_TRUST} \
+	PACS_UI_PORT=${PACS_UI_PORT_LOCAL_TRUST} \
+	ORTHANC_STORAGE=orthanc-storage-local \
+	DOCKER_NETWORK_NAME=${network1} \
+	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} ${project_local}
+	$(MAKE) xnat-configure-local
+
 down-xnat-1:
 	docker stack rm ${project1}
 
 down-xnat-2:
 	docker stack rm ${project2}
+
+down-xnat-local:
+	docker stack rm ${project_local}
 
 down: down-xnat-1 down-xnat-2
 
@@ -180,21 +193,27 @@ xnat-reset:
 		mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/cache; \
 	fi
 
-# Configure XNAT instances with initial settings and run dcm2niix setup script
-# Finds the container ID by name and runs the configuration scripts inside it
+# Configure an XNAT instance with initial settings and run dcm2niix setup.
+# Usage: make xnat-configure XNAT_PROJECT=<stack-name>
+xnat-configure:
+	@[ -n "$(XNAT_PROJECT)" ] || (echo "❌ XNAT_PROJECT is required"; exit 1)
+	@echo "⏳ Waiting for $(XNAT_PROJECT)_xnat-web container to be ready..."
+	@elapsed=0; while [ "$$(docker ps --filter "name=$(XNAT_PROJECT)_xnat-web" -q)" = "" ]; do \
+		if [ $$elapsed -ge 120 ]; then echo "❌ ERROR: $(XNAT_PROJECT)_xnat-web container never started"; exit 1; fi; \
+		echo "  Waiting for container..."; sleep 5; elapsed=$$((elapsed + 5)); \
+	done
+	CONTAINER=$$(docker ps --filter "name=$(XNAT_PROJECT)_xnat-web" -q); \
+	docker exec $$CONTAINER bash -c 'cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"'; \
+	docker exec $$CONTAINER bash -c 'cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
+
 xnat-configure-trust-1:
-	@echo "⏳ Waiting for ${project1}_xnat-web container to be ready..."
-	@timeout 120 bash -c 'until [ "$$(docker ps --filter "name=${project1}_xnat-web" -q)" != "" ]; do echo "  Waiting for container..."; sleep 5; done' || { echo "❌ ERROR: ${project1}_xnat-web container never started"; exit 1; }
-	CONTAINER=$$(docker ps --filter "name=${project1}_xnat-web" -q); \
-	docker exec $$CONTAINER bash -c 'cd /data/xnat/config && LOG_FILE="configure-xnat-${project1}.log" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"'; \
-	docker exec $$CONTAINER bash -c 'cd /data/xnat/config && LOG_FILE="configure-dcm2niix-${project1}.log" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
+	$(MAKE) xnat-configure XNAT_PROJECT=${project1}
 
 xnat-configure-trust-2:
-	@echo "⏳ Waiting for ${project2}_xnat-web container to be ready..."
-	@timeout 120 bash -c 'until [ "$$(docker ps --filter "name=${project2}_xnat-web" -q)" != "" ]; do echo "  Waiting for container..."; sleep 5; done' || { echo "❌ ERROR: ${project2}_xnat-web container never started"; exit 1; }
-	CONTAINER=$$(docker ps --filter "name=${project2}_xnat-web" -q); \
-	docker exec $$CONTAINER bash -c 'cd /data/xnat/config && LOG_FILE="configure-xnat-${project2}.log" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"'; \
-	docker exec $$CONTAINER bash -c 'cd /data/xnat/config && LOG_FILE="configure-dcm2niix-${project2}.log" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
+	$(MAKE) xnat-configure XNAT_PROJECT=${project2}
+
+xnat-configure-local:
+	$(MAKE) xnat-configure XNAT_PROJECT=${project_local}
 
 create-network-trust-1:
 	@echo "🔧 Ensuring external Docker networks exist..."

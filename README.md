@@ -75,14 +75,14 @@ For example:
 | `make up` | Run all services using Docker Swarm for XNAT (⚠️ This will not build the images, use `make build` first if needed)|
 | `make up-no-trust` | Run all services except the trust services related services |
 | `make up-trusts` | Run the trust services related services (uses Docker Swarm for XNAT) |
-| `make central-hub` | Run the central API service, including the database and UI |
+| `make central-hub` | Run the central API service and the database (does not start the UI — use `make ui` for that) |
 | `make build` | Build all Docker images |
 | `make down` | Stop all services and remove the containers (including Swarm stacks) |
 | `make restart` | Stop and start all services |
 | `make restart-no-trust` | Stop and start all services except the trust services related services |
 | `make clean` | Remove all stopped containers, networks, and images |
 | `make ci` | Run the CI pipeline locally using `act` |
-| `make up-local-trust-stag` | Run a local (on-premises) trust in staging mode (HTTPS via nginx-tls) |
+| `make up-local-trust` | Run a local (on-premises) trust (set `PROD=true` or `PROD=stag` for environment) |
 | `make unit_test` | Run the tests for all services |
 
 You can add new commands to the Makefile to create smaller deployments for testing and development.
@@ -132,6 +132,23 @@ cd trust/xnat
 make up          # Start XNAT services
 make down        # Stop XNAT services
 make xnat-shell  # Get a shell in the XNAT container
+```
+
+### Trust API Key Setup
+
+Before starting the platform, generate per-trust API keys and the internal service key, and write them into `.env.development` using:
+
+```bash
+make generate-trust-api-keys
+make generate-internal-service-key
+```
+
+`generate-trust-api-keys` generates a unique key for each trust found in `.env.development`, and writes both `TRUST_API_KEYS` and `TRUST_API_KEY_HASHES` (JSON dicts) directly into the env file. `generate-internal-service-key` writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` for fl-server-to-hub authentication. `make up` invokes `generate-internal-service-key` automatically.
+
+To generate a key for a single trust (e.g. when adding a new trust):
+
+```bash
+make -C flip-api generate-trust-key TRUST_NAME=Trust_1
 ```
 
 ### Basic Usage
@@ -211,17 +228,15 @@ The repository is organised as follows:
 - `trust`: Contains the services that would be deployed in individual trust environments.
   - `data-access-api`: Contains the data access API service
   - `imaging-api`: Contains the imaging API service
-  - `nginx`: Contains the nginx/TLS reverse proxy configuration
   - `observability`: Contains the observability stack (Grafana, Loki, Alloy)
   - `omop-db`: Contains a mocked OMOP database
   - `orthanc`: Contains a mocked PACS service (uses [Orthanc](https://www.orthanc-server.com/))
   - `trust-api`: Contains the trust API service
-  - `nginx`: Contains the nginx TLS termination proxy for trust HTTPS endpoints
   - `xnat`: Contains a mocked [XNAT](https://www.xnat.org/) service
 
-### HTTPS / TLS
+### Trust Authentication
 
-Trust services are served over HTTPS via an nginx TLS termination proxy using self-signed CA certificates. The Central Hub verifies trust endpoints using a CA bundle containing all trust CAs. See [trust/README.md](trust/README.md) for certificate generation and setup, and [deploy/providers/local/README.md](deploy/providers/local/README.md) for hybrid on-premises deployment with HTTPS.
+Trusts authenticate to the Central Hub using per-trust API keys. All trust communication is outbound — trusts poll the hub over HTTPS at the canonical subdomain (e.g. `https://app.flip.aicentre.co.uk/api/...`), which is fronted by CloudFront and proxied to the ALB. See [CLAUDE.md](CLAUDE.md) for the full authentication model and [deploy/providers/local/README.md](deploy/providers/local/README.md) for on-premises trust deployment.
 
 ## Contributing
 

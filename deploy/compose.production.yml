@@ -16,20 +16,10 @@
 services:
   #################### CENTRAL HUB ####################
 
-  flip-ui:
-    image: ghcr.io/londonaicentre/flip-ui:${DOCKER_TAG}
-    ports:
-      - "${UI_PORT}:443"
-    environment:
-      - NODE_ENV=${NODE_ENV}
-      - VITE_LOCAL=${VITE_LOCAL}
-      - VITE_AWS_BASE_URL=${VITE_AWS_BASE_URL}
-      - VITE_AWS_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
-      - VITE_AWS_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
-      - VITE_AWS_REGION=${AWS_REGION}
-      - VITE_BLACKLISTED_MODEL_FILES=${VITE_BLACKLISTED_MODEL_FILES}
-    restart: unless-stopped
-    container_name: flip-ui
+  # flip-ui is NOT deployed as a container in stag/prod — it's served as a
+  # static bundle from S3 via CloudFront (see deploy/providers/AWS/cloudfront.tf
+  # and deploy/providers/AWS/Makefile's `deploy-ui` target). Dev still runs the
+  # Vite container (deploy/compose.development.yml).
 
   flip-api:
     image: ghcr.io/londonaicentre/flip-api:${DOCKER_TAG}
@@ -46,9 +36,9 @@ services:
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
-      - PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
-      - PRIVATE_API_KEY=${PRIVATE_API_KEY}
-      # - AES_KEY_BASE64=${AES_KEY_BASE64} # in production, AES key is retrieved from AWS Secrets Manager
+      - TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
+      - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+      # in production, TRUST_API_KEY_HASHES, INTERNAL_SERVICE_KEY_HASH, and AES_KEY_BASE64 are retrieved from AWS Secrets Manager at runtime
       - AWS_SECRET_NAME=${AWS_SECRET_NAME}
       - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
       - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS}
@@ -59,13 +49,6 @@ services:
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
-      # Path where the Trust CA cert is mounted from the host (written by deploy-centralhub);
-      # trust_ssl_context() reads this to verify Trust API HTTPS connections.
-      - TRUST_CA_BUNDLE=/etc/ssl/trust/trust-ca.crt
-      # - TRUST_ENDPOINTS=${TRUST_ENDPOINTS} # in production, trust endpoints are retrieved from AWS Secrets Manager
-    volumes:
-      # Trust CA cert is written to the host by the write-trust-ca Makefile target and
-      # mounted read-only into the container so trust_ssl_context() can verify HTTPS connections.
-      - /opt/flip/certs/trust-ca.crt:/etc/ssl/trust/trust-ca.crt:ro
+      - TRUST_NAMES=${TRUST_NAMES}
     restart: unless-stopped
     container_name: flip-api

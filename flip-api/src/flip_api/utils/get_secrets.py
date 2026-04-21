@@ -28,6 +28,11 @@ def get_secrets(secret_name: str = "", region_name: str = "") -> dict:
 
     Returns:
         dict: The retrieved secret as a dictionary.
+
+    Raises:
+        ClientError: If the AWS Secrets Manager API call fails.
+        ValueError: If the secret does not contain a ``SecretString``, is not valid JSON, or is
+            not a JSON object.
     """
     secret_name = get_settings().AWS_SECRET_NAME if not secret_name else secret_name
     region_name = get_settings().AWS_REGION if not region_name else region_name
@@ -78,6 +83,11 @@ def get_secret(secret_key: str, secret_name: str = "", region_name: str = "") ->
 
     Returns:
         str: The value of the requested secret.
+
+    Raises:
+        KeyError: If ``secret_key`` is not present in the retrieved secret.
+        ClientError: If the AWS Secrets Manager API call fails.
+        ValueError: If the secret payload is malformed (see :func:`get_secrets`).
     """
     secret_name = get_settings().AWS_SECRET_NAME if not secret_name else secret_name
     region_name = get_settings().AWS_REGION if not region_name else region_name

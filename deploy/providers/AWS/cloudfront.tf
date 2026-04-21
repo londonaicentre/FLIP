@@ -1,0 +1,688 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+############################################################
+# CloudFront hosting for the flip-ui SPA.
+#
+# Users continue to hit the canonical subdomain
+# (stag.flip.aicentre.co.uk / app.flip.aicentre.co.uk); that A-record
+# (aws_route53_record.alb in main.tf) aliases this CloudFront distribution.
+#
+# CloudFront serves the UI static bundle from S3 (default behavior)
+# and forwards /api/* to the ALB via api.<subdomain> — a backend-only
+# DNS name introduced solely so CloudFront can validate the origin's
+# TLS cert (AWS does not issue ACM certs for raw *.elb.amazonaws.com
+# hostnames). Trusts and users never see api.<subdomain>.
+############################################################
+
+# us-east-1 provider alias is required because CloudFront viewer
+# certificates must live in us-east-1 regardless of where the
+# distribution serves traffic.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+}
+
+############################
+# CloudFront viewer cert (us-east-1)
+############################
+
+resource "aws_acm_certificate" "flip_cloudfront" {
+  provider          = aws.us_east_1
+  domain_name       = var.flip_alb_subdomain
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = {
+    Name = "flip-cloudfront-certificate"
+  }
+}
+
+resource "aws_route53_record" "cloudfront_cert_validation" {
+  for_each = {
+    for dvo in tolist(aws_acm_certificate.flip_cloudfront.domain_validation_options) : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  }
+
+  allow_overwrite = true
+  name            = each.value.name
+  records         = [each.value.record]
+  ttl             = 60
+  type            = each.value.type
+  zone_id         = data.aws_route53_zone.subdomain.zone_id
+}
+
+resource "aws_acm_certificate_validation" "flip_cloudfront" {
+  provider                = aws.us_east_1
+  certificate_arn         = aws_acm_certificate.flip_cloudfront.arn
+  validation_record_fqdns = [for record in aws_route53_record.cloudfront_cert_validation : record.fqdn]
+}
+
+############################
+# ALB API-origin cert (eu-west-2)
+#
+# Attached to the existing ALB HTTPS:443 listener as an additional
+# SNI cert so CloudFront can reach the ALB over HTTPS using
+# api.<subdomain>.
+############################
+
+resource "aws_acm_certificate" "flip_api" {
+  domain_name       = "api.${var.flip_alb_subdomain}"
+  validation_method = "DNS"
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = {
+    Name = "flip-api-origin-certificate"
+  }
+}
+
+resource "aws_route53_record" "api_cert_validation" {
+  for_each = {
+    for dvo in tolist(aws_acm_certificate.flip_api.domain_validation_options) : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    }
+  }
+
+  allow_overwrite = true
+  name            = each.value.name
+  records         = [each.value.record]
+  ttl             = 60
+  type            = each.value.type
+  zone_id         = data.aws_route53_zone.subdomain.zone_id
+}
+
+resource "aws_acm_certificate_validation" "flip_api" {
+  certificate_arn         = aws_acm_certificate.flip_api.arn
+  validation_record_fqdns = [for record in aws_route53_record.api_cert_validation : record.fqdn]
+}
+
+resource "aws_lb_listener_certificate" "flip_api_sni" {
+  listener_arn    = module.alb.listeners["https-listener"].arn
+  certificate_arn = aws_acm_certificate_validation.flip_api.certificate_arn
+}
+
+############################
+# Route53 A-alias for the ALB API origin (backend-only DNS)
+############################
+
+resource "aws_route53_record" "alb_api_origin" {
+  zone_id = data.aws_route53_zone.subdomain.zone_id
+  name    = "api.${var.flip_alb_subdomain}"
+  type    = "A"
+
+  alias {
+    name                   = module.alb.dns_name
+    zone_id                = module.alb.zone_id
+    evaluate_target_health = true
+  }
+}
+
+############################
+# S3 bucket for CloudFront standard access logs
+#
+# Used to diagnose CF→ALB origin issues (e.g. the HTTPS-origin 502 that forced
+# the /api/* origin to temporarily fall back to HTTP:8080). The log record
+# includes x-edge-result-type and x-edge-detailed-result-type which identify
+# the exact cause of 5xx responses generated by CloudFront edges.
+############################
+
+data "aws_canonical_user_id" "current" {}
+
+resource "aws_s3_bucket" "cloudfront_logs" {
+  bucket = "flip-cf-logs-${var.flip_alb_subdomain}"
+
+  tags = {
+    Name = "flip-cloudfront-logs"
+  }
+}
+
+resource "aws_s3_bucket_ownership_controls" "cloudfront_logs" {
+  bucket = aws_s3_bucket.cloudfront_logs.id
+  rule {
+    object_ownership = "BucketOwnerPreferred"
+  }
+}
+
+resource "aws_s3_bucket_acl" "cloudfront_logs" {
+  depends_on = [aws_s3_bucket_ownership_controls.cloudfront_logs]
+  bucket     = aws_s3_bucket.cloudfront_logs.id
+
+  access_control_policy {
+    owner {
+      id = data.aws_canonical_user_id.current.id
+    }
+
+    grant {
+      grantee {
+        type = "CanonicalUser"
+        id   = data.aws_canonical_user_id.current.id
+      }
+      permission = "FULL_CONTROL"
+    }
+
+    # awslogsdelivery canonical ID — required for CloudFront standard log delivery.
+    # See https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/AccessLogs.html
+    grant {
+      grantee {
+        type = "CanonicalUser"
+        id   = "c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0"
+      }
+      permission = "FULL_CONTROL"
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "cloudfront_logs" {
+  bucket = aws_s3_bucket.cloudfront_logs.id
+
+  rule {
+    id     = "expire-cf-logs-after-30-days"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      days = 30
+    }
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "cloudfront_logs" {
+  bucket = aws_s3_bucket.cloudfront_logs.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+# CloudFront log delivery uses either canonical-user ACL grants (legacy —
+# what this bucket uses today) or an AWS service-principal bucket policy.
+# Neither is "public" under PAB semantics, so blocking public ACLs and
+# policies is safe regardless of which delivery mechanism is in use.
+resource "aws_s3_bucket_public_access_block" "cloudfront_logs" {
+  bucket                  = aws_s3_bucket.cloudfront_logs.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+############################
+# S3 bucket for UI assets
+############################
+
+resource "aws_s3_bucket" "flip_ui" {
+  bucket = var.FLIP_UI_BUCKET_NAME
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  tags = {
+    Name = "flip-ui"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "flip_ui" {
+  bucket                  = aws_s3_bucket.flip_ui.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "flip_ui" {
+  bucket = aws_s3_bucket.flip_ui.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
+resource "aws_s3_bucket_versioning" "flip_ui" {
+  bucket = aws_s3_bucket.flip_ui.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+############################
+# CloudFront: OAC, distribution, bucket policy
+############################
+
+resource "aws_cloudfront_origin_access_control" "flip_ui" {
+  name                              = "flip-ui-${var.flip_alb_subdomain}"
+  description                       = "OAC for the flip-ui S3 bucket"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# SPA deep-link rewriter. Attached to the default (S3) cache behavior
+# only, so /api/* responses keep their real ALB status codes.
+# IMPORTANT: do not add distribution-level custom_error_response blocks
+# for 403/404 — they are inherited by /api/* and would mask real error
+# codes as 200 index.html (the bug this function exists to avoid).
+resource "aws_cloudfront_function" "spa_rewrite" {
+  # CloudFront Function names are [A-Za-z0-9-_]{1,64}; strip any other
+  # character the subdomain might ever contain.
+  name    = "flip-ui-spa-rewrite-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
+  runtime = "cloudfront-js-2.0"
+  comment = "Rewrite SPA deep links (non-asset) to /index.html"
+  publish = true
+  code    = <<-EOT
+    function handler(event) {
+      var uri = event.request.uri;
+      // Known asset extensions pass through so missing assets 404
+      // naturally. Using an allowlist (vs. "any path containing a dot")
+      // avoids misrouting dotted SPA segments like /v1.2/projects/42.
+      if (/\.(js|css|map|json|html|txt|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|eot)$/i.test(uri)) {
+        return event.request;
+      }
+      event.request.uri = '/index.html';
+      return event.request;
+    }
+  EOT
+}
+
+# Managed CloudFront policies (stable AWS-wide IDs; no region dependency).
+# See https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-cache-policies.html
+locals {
+  cloudfront_policy_caching_optimized = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+  cloudfront_policy_caching_disabled  = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
+}
+
+# Custom origin-request policy for /api/*. The managed AllViewer policy
+# forwards everything (all headers, cookies, query strings); this narrows
+# to the minimum the API actually needs.
+#
+# Forwarded explicitly:
+# - Content-Type: for JSON/multipart requests.
+# - Origin: for CORS preflight.
+#
+# NOT in the whitelist (because CloudFront forwards it automatically and
+# the CreateOriginRequestPolicy API rejects it as a reserved parameter):
+# - Authorization: always forwarded to custom origins. Carries both
+#   Cognito access tokens (user → API) and trust API keys
+#   (TRUST_API_KEY_HEADER=Authorization).
+#
+# Deliberately excluded:
+# - X-Internal-Service-Key: fl-server → flip-api traffic is
+#   docker-network-internal on the Central Hub and never crosses
+#   CloudFront.
+#
+# Cookies are dropped (API is JWT/stateless). Query strings pass through
+# untouched because endpoints use them for filters/pagination and there's
+# no central allowlist to vet against.
+resource "aws_cloudfront_origin_request_policy" "flip_api" {
+  name    = "flip-api-origin-request-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
+  comment = "Least-privilege origin-request policy for /api/* on ${var.flip_alb_subdomain}"
+
+  headers_config {
+    header_behavior = "whitelist"
+    headers {
+      items = ["Content-Type", "Origin"]
+    }
+  }
+
+  cookies_config {
+    cookie_behavior = "none"
+  }
+
+  query_strings_config {
+    query_string_behavior = "all"
+  }
+}
+
+############################
+# WAFv2 Web ACL (CloudFront-scoped, us-east-1)
+############################
+
+# CloudFront-scoped WAFs must live in us-east-1 regardless of where the
+# distribution serves traffic, same constraint as the viewer cert.
+#
+# Every rule starts in count (shadow) mode so we observe what each rule
+# would block before accidentally paging ourselves. The sampled-request
+# console (and the CloudWatch log group below) show which requests each
+# rule matches; once a rule has been in count mode across a release cycle
+# with no false positives, flip its `override_action` (for managed groups)
+# or `action` (for the custom rate-limit) to `block` / `none` + `block`.
+resource "aws_wafv2_web_acl" "flip_ui_cloudfront" {
+  provider = aws.us_east_1
+  name     = "flip-ui-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
+  scope    = "CLOUDFRONT"
+
+  default_action {
+    allow {}
+  }
+
+  rule {
+    name     = "AWSManagedRulesCommonRuleSet"
+    priority = 10
+
+    override_action {
+      count {}
+    }
+
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesCommonRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "flipUiCommonRuleSet"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  rule {
+    name     = "AWSManagedRulesKnownBadInputsRuleSet"
+    priority = 20
+
+    override_action {
+      count {}
+    }
+
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesKnownBadInputsRuleSet"
+        vendor_name = "AWS"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "flipUiKnownBadInputs"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  rule {
+    name     = "AWSManagedRulesAmazonIpReputationList"
+    priority = 30
+
+    override_action {
+      count {}
+    }
+
+    statement {
+      managed_rule_group_statement {
+        name        = "AWSManagedRulesAmazonIpReputationList"
+        vendor_name = "AWS"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "flipUiIpReputation"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  rule {
+    name     = "RateLimitPerIp"
+    priority = 100
+
+    # Starts in count mode; flip to `block {}` once sampled traffic confirms
+    # no legitimate client (including trust pollers) trips the threshold.
+    action {
+      count {}
+    }
+
+    statement {
+      rate_based_statement {
+        limit              = 2000
+        aggregate_key_type = "IP"
+      }
+    }
+
+    visibility_config {
+      cloudwatch_metrics_enabled = true
+      metric_name                = "flipUiRateLimit"
+      sampled_requests_enabled   = true
+    }
+  }
+
+  visibility_config {
+    cloudwatch_metrics_enabled = true
+    metric_name                = "flipUiWebAcl"
+    sampled_requests_enabled   = true
+  }
+
+  tags = {
+    Name = "flip-ui-waf-${var.flip_alb_subdomain}"
+  }
+}
+
+# WAF logging destination. Name MUST start with `aws-waf-logs-` per AWS —
+# otherwise PutLoggingConfiguration rejects it.
+resource "aws_cloudwatch_log_group" "flip_ui_waf" {
+  provider          = aws.us_east_1
+  name              = "aws-waf-logs-flip-ui-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
+  retention_in_days = 30
+}
+
+resource "aws_wafv2_web_acl_logging_configuration" "flip_ui_cloudfront" {
+  provider                = aws.us_east_1
+  resource_arn            = aws_wafv2_web_acl.flip_ui_cloudfront.arn
+  log_destination_configs = [aws_cloudwatch_log_group.flip_ui_waf.arn]
+}
+
+############################
+# Response headers policy (static / SPA behavior only)
+############################
+
+# Attached to the default (S3) cache behavior only. Do NOT attach to /api/*
+# — per the viewer-request-function caveat above, distribution-level or
+# api-behavior-level headers can leak into API responses and break API
+# consumers that do not expect them.
+#
+# HSTS omits `preload` deliberately: joining the HSTS preload list is a
+# one-way door across every subdomain of the apex and belongs in its own
+# coordinated PR, not here.
+#
+# CSP ships in report-only initially so legitimate violations surface in
+# browser console + `Content-Security-Policy-Report-Only` response headers
+# without blocking traffic. After one release cycle with no real-user
+# violations, move the policy body from `content_security_policy_report_only`
+# to `content_security_policy` (enforcing).
+resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
+  name    = "flip-ui-spa-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
+  comment = "Security response headers for the flip-ui SPA at ${var.flip_alb_subdomain}"
+
+  security_headers_config {
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      preload                    = false
+      override                   = true
+    }
+
+    content_type_options {
+      override = true
+    }
+
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+
+    frame_options {
+      frame_option = "DENY"
+      override     = true
+    }
+    # `security_headers_config.content_security_policy` is enforce-only; we
+    # ship CSP as `Content-Security-Policy-Report-Only` below in
+    # custom_headers_config until a release cycle confirms no false
+    # positives, then move the body here and delete the custom header.
+  }
+
+  custom_headers_config {
+    items {
+      header = "Content-Security-Policy-Report-Only"
+      value = join(" ", [
+        "default-src 'self';",
+        "connect-src 'self' https://cognito-idp.*.amazonaws.com https://cognito-identity.*.amazonaws.com;",
+        "img-src 'self' data:;",
+        "style-src 'self' 'unsafe-inline';",
+        "script-src 'self';",
+        "object-src 'none';",
+        "frame-ancestors 'none';",
+      ])
+      override = true
+    }
+  }
+}
+
+resource "aws_cloudfront_distribution" "flip_ui" {
+  enabled             = true
+  is_ipv6_enabled     = true
+  http_version        = "http2"
+  default_root_object = "index.html"
+  price_class         = "PriceClass_100"
+  aliases             = [var.flip_alb_subdomain]
+  comment             = "flip-ui at ${var.flip_alb_subdomain}"
+  web_acl_id          = aws_wafv2_web_acl.flip_ui_cloudfront.arn
+
+  origin {
+    domain_name              = aws_s3_bucket.flip_ui.bucket_regional_domain_name
+    origin_id                = "s3-flip-ui"
+    origin_access_control_id = aws_cloudfront_origin_access_control.flip_ui.id
+  }
+
+  origin {
+    domain_name = aws_route53_record.alb_api_origin.fqdn
+    origin_id   = "alb-api-origin"
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "https-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  default_cache_behavior {
+    target_origin_id           = "s3-flip-ui"
+    viewer_protocol_policy     = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD"]
+    cached_methods             = ["GET", "HEAD"]
+    compress                   = true
+    cache_policy_id            = local.cloudfront_policy_caching_optimized
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.flip_ui_spa.id
+
+    # Attached to the S3 default behavior only — /api/* has its own
+    # cache behavior and never invokes this function.
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.spa_rewrite.arn
+    }
+  }
+
+  ordered_cache_behavior {
+    path_pattern             = "/api/*"
+    target_origin_id         = "alb-api-origin"
+    viewer_protocol_policy   = "https-only"
+    allowed_methods          = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods           = ["GET", "HEAD"]
+    compress                 = true
+    cache_policy_id          = local.cloudfront_policy_caching_disabled
+    origin_request_policy_id = aws_cloudfront_origin_request_policy.flip_api.id
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  logging_config {
+    bucket          = aws_s3_bucket.cloudfront_logs.bucket_domain_name
+    include_cookies = false
+    prefix          = "standard-logs/"
+  }
+
+  viewer_certificate {
+    acm_certificate_arn      = aws_acm_certificate_validation.flip_cloudfront.certificate_arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
+  }
+
+  tags = {
+    Name = "flip-ui-${var.flip_alb_subdomain}"
+  }
+}
+
+resource "aws_s3_bucket_policy" "flip_ui" {
+  bucket = aws_s3_bucket.flip_ui.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AllowCloudFrontOAC"
+      Effect    = "Allow"
+      Principal = { Service = "cloudfront.amazonaws.com" }
+      Action    = "s3:GetObject"
+      Resource  = "${aws_s3_bucket.flip_ui.arn}/*"
+      Condition = {
+        StringEquals = {
+          "AWS:SourceArn" = aws_cloudfront_distribution.flip_ui.arn
+        }
+      }
+    }]
+  })
+}
+
+############################
+# Outputs
+############################
+
+output "CloudfrontDistributionId" {
+  description = "CloudFront distribution ID for flip-ui (used by make deploy-ui for cache invalidation)"
+  value       = aws_cloudfront_distribution.flip_ui.id
+}
+
+output "CloudfrontDistributionDomain" {
+  description = "CloudFront distribution CloudFront-assigned domain (*.cloudfront.net). Use for pre-cutover smoke tests."
+  value       = aws_cloudfront_distribution.flip_ui.domain_name
+}
+
+output "FlipUiBucketName" {
+  description = "S3 bucket holding the UI static assets"
+  value       = aws_s3_bucket.flip_ui.bucket
+}
+
+output "AlbApiOriginFqdn" {
+  description = "Backend-only DNS name used by CloudFront to reach the ALB API listener over HTTPS"
+  value       = aws_route53_record.alb_api_origin.fqdn
+}

@@ -97,7 +97,7 @@ def create_project(
     Creates a new project and assigns user access.
 
     Args:
-        payload (IProjectDetails): The project details including name, description, and user IDs.
+        payload (ProjectDetails): The project details including name, description, and user IDs.
         current_user_id (UUID): The ID of the user creating the project.
         session (Session): The SQLModel session to use for database operations.
 
@@ -147,7 +147,7 @@ def create_project(
         )
 
 
-def delete_project(project_id: UUID, current_user_id: UUID, session: Session):
+def delete_project(project_id: UUID, current_user_id: UUID, session: Session) -> None:
     """
     Marks a project as deleted and handles related cleanup.
     This is a soft delete, meaning the project is marked as deleted but not removed from the database.
@@ -298,7 +298,7 @@ def get_project_query(project_from_db: IProjectResponse) -> IProjectQuery | None
     if query:
         logger.debug(query)
 
-        if query.id and query.trusts_queried:
+        if query.id and query.trusts_queried is not None:
             return query
 
         logger.warning("Unable to parse query. Assuming there isn't one.")
@@ -319,7 +319,7 @@ def get_approved_trusts_for_project(project_id: UUID, session: Session) -> list[
         list[Trust]: A list of Trust objects that are approved for the specified project.
     """
     stmt = (
-        select(Trust.id, Trust.name, Trust.endpoint)
+        select(Trust.id, Trust.name)
         .join(ProjectTrustIntersect, col(ProjectTrustIntersect.trust_id) == Trust.id)
         .where(col(ProjectTrustIntersect.project_id) == project_id)
         .where(ProjectTrustIntersect.approved)
@@ -330,7 +330,7 @@ def get_approved_trusts_for_project(project_id: UUID, session: Session) -> list[
         # Consider if returning empty list is more Pythonic for "not found" scenarios.
         logger.warn(f"No approved trusts found for project {project_id}, or project has no approved trusts.")
         # raise ValueError(f"No approved trusts found for project {project_id}") # If error is desired
-    return [Trust(id=r.id, name=r.name, endpoint=r.endpoint) for r in results]
+    return [Trust(id=r.id, name=r.name) for r in results]
 
 
 def get_trusts_approval_status_for_project(project_id: UUID, session: Session) -> list[IApprovedTrust]:
@@ -694,7 +694,6 @@ def get_reimport_queries_service(max_reimport_count: int, session: Session) -> l
                 xnat_project_id=xps.xnat_project_id,
                 last_reimport=xps.last_reimport,
                 trust_id=t.id,
-                trust_endpoint=t.endpoint,
                 trust_name=t.name,
             )
             for (q, xps, t) in rows

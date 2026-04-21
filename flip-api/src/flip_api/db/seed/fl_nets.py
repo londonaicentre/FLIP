@@ -20,7 +20,15 @@ from flip_api.utils.logger import logger
 
 
 def seed_fl_nets(session: Session) -> list[FLNets]:
-    """Seed FL nets into the database."""
+    """Seed FL nets into the database.
+
+    Args:
+        session (Session): The SQLModel session used to read existing FL nets and insert missing
+            ones from ``NET_ENDPOINTS``.
+
+    Returns:
+        list[FLNets]: All FL net rows present after seeding.
+    """
     nets = get_settings().NET_ENDPOINTS
 
     fl_nets = session.exec(select(FLNets)).all()

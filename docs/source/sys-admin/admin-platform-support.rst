@@ -80,9 +80,13 @@ FLIP jobs are distributed by the central hub FL scheduler to an available net.
 Security
 *********
 
-All traffic between the Central Hub and the Secure Enclaves is secured over HTTPS using TLS with self-signed CA certificates. Each Trust runs an nginx TLS termination proxy that serves the Trust API over HTTPS. The Central Hub verifies Trust endpoints using a CA bundle containing the certificates of all connected Trusts.
+Trusts authenticate to the Central Hub using per-trust API keys. Each trust is identified by its ``TRUST_NAME`` and a secret ``TRUST_API_KEY`` — the hub verifies the SHA-256 hash of the key against its stored ``TRUST_API_KEY_HASHES``. Trust communication payloads are encrypted with a shared ``AES_KEY_BASE64``.
 
-Certificate generation, distribution, and verification are handled automatically during provisioning. See the `Trust README <../../../trust/README.md>`_ and `Local Deployment Guide <../../../deploy/providers/local/README.md>`_ for details on the certificate model.
+All trust communication is **outbound** — trusts poll the Central Hub for tasks over HTTPS (via the ALB). The hub never makes inbound connections to trusts. FL clients connect outbound to the FL server via the NLB. No inbound firewall rules or port forwarding are required on trust hosts.
+
+Both the Central Hub and Trust EC2 instances run in private subnets with no open inbound ports. Operator access is via AWS Systems Manager Session Manager (SSH-over-SSM). XNAT, Orthanc, and the Trust API swagger docs are accessible via SSM port forwarding only (``make forward-trust``).
+
+See the `Local Deployment Guide <../../../deploy/providers/local/README.md>`_ for details on trust provisioning and authentication setup.
 
 .. figure:: ../assets/support/flip_architecture-flip_network_architecture.png
    :align: center

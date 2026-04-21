@@ -62,6 +62,21 @@ def test_upload_data_not_found(client):
     assert "Resource not found" in response.json()["detail"]
 
 
+def test_upload_data_invalid_request(client):
+    with (
+        patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),
+        patch(
+            "imaging_api.routers.upload.upload_data_to_xnat",
+            new_callable=AsyncMock,
+            side_effect=ValueError("Path traversal detected in net ID: ../escape"),
+        ),
+    ):
+        response = client.put("/upload/images/net1", json=_REQUEST_BODY)
+
+    assert response.status_code == 400
+    assert "Invalid upload request" in response.json()["detail"]
+
+
 def test_upload_data_server_error(client):
     with (
         patch("imaging_api.routers.upload.decrypt", return_value="decrypted-project-id"),

@@ -14,8 +14,10 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 
 from flip_api.cohort_services import (
     get_cohort_query_results,
@@ -48,13 +50,13 @@ from flip_api.model_services import (
     retrieve_model_status_from_logs,
     retrieve_trusts_in_model,
     save_model,
-    update_model_status,
 )
 from flip_api.private_services import (
     add_log,
     invoke_model_status_update,
     receive_cohort_results,
     save_training_metrics,
+    trust_tasks,
 )
 from flip_api.project_services import (
     approve_project,
@@ -93,11 +95,16 @@ from flip_api.user_services import (
     set_user_roles,
     update_user,
 )
+from flip_api.utils.rate_limiter import limiter
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Start scheduler."""
+    """Start scheduler.
+
+    Args:
+        app (FastAPI): The FastAPI application instance being started.
+    """
     start_scheduler()
     print("Starting up the app...")
     yield
@@ -116,6 +123,15 @@ app = FastAPI(
     openapi_url=f"{API_PREFIX}/openapi.json",
     redoc_url=f"{API_PREFIX}/redoc",
 )
+
+# Rate limiter — keyed by trust_name path parameter (falls back to client IP)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded. Try again later."})
+
 
 # CORS middleware
 app.add_middleware(
@@ -157,12 +173,12 @@ ROUTERS: tuple[APIRouter, ...] = (
     retrieve_model_status_from_logs.router,
     retrieve_trusts_in_model.router,
     save_model.router,
-    update_model_status.router,
     # Private services
     add_log.router,
     invoke_model_status_update.router,
     receive_cohort_results.router,
     save_training_metrics.router,
+    trust_tasks.router,
     # Project services
     approve_project.router,
     create_project.router,
@@ -201,7 +217,11 @@ ROUTERS: tuple[APIRouter, ...] = (
 
 
 def include_api_routers(fastapi_app: FastAPI) -> None:
-    """Mount all API routes under the shared /api namespace."""
+    """Mount all API routes under the shared /api namespace.
+
+    Args:
+        fastapi_app (FastAPI): The FastAPI application to attach the routers to.
+    """
     for router in ROUTERS:
         fastapi_app.include_router(router, prefix=API_PREFIX)
 
@@ -212,13 +232,21 @@ include_api_routers(app)
 # Root endpoint
 @app.get(API_PREFIX, response_model=dict[str, str])
 def root():
-    """Root endpoint to verify the API is running."""
+    """Root endpoint to verify the API is running.
+
+    Returns:
+        dict[str, str]: A welcome message.
+    """
     return {"message": "Welcome to flip"}
 
 
 @app.get(f"{API_PREFIX}/health", response_model=dict[str, str])
 def health_check():
-    """Health check endpoint to verify the API is running"""
+    """Health check endpoint to verify the API is running.
+
+    Returns:
+        dict[str, str]: ``{"status": "ok", "message": "flip is running"}``.
+    """
     return {"status": "ok", "message": "flip is running"}
 
 

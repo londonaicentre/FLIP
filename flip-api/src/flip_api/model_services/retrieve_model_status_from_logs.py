@@ -74,8 +74,6 @@ def retrieve_model_status_from_logs(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Elasticsearch URL not found.")
 
     try:
-        # Use system CA bundle for Elasticsearch (not Trust CA bundle)
-        # The Trust CA bundle is only for Trust service endpoints
         response = httpx.post(f"{elastic_url}/centralhub-eks/_search", json=query_body, verify=True)
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:

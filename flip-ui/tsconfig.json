@@ -16,7 +16,7 @@
             "node",
             "vite/client",
             "vitest/globals",
-            "vite-plugin-vue-layouts/client"
+            "vite-plugin-vue-layouts-next/client"
         ],
         "paths": {
             "@/*": [

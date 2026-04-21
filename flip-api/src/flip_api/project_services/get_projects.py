@@ -43,6 +43,16 @@ def get_projects_paginated_orm(
 ) -> IPagedResponse[IProject]:
     """
     Fetches paginated project data from the database using SQLModel ORM.
+
+    Args:
+        session (Session): The SQLModel session used for the database queries.
+        user_id (UUID | None): The requesting user's ID. When provided, results are restricted to
+            projects the user owns or has explicit access to.
+        paging_details (PagingInfo): Page size, offset, and optional search string.
+        filter_details (FilterInfo): Additional filter criteria (e.g. owner ID).
+
+    Returns:
+        IPagedResponse[IProject]: Paginated list of projects and total row count.
     """
     # Extract paging and filter details
     page_size = paging_details.page_size

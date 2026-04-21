@@ -50,6 +50,21 @@ def test_download_images_not_found(client):
     assert "Resource not found" in response.json()["detail"]
 
 
+def test_download_images_invalid_request(client):
+    with (
+        patch("imaging_api.routers.download.decrypt", return_value="decrypted-project-id"),
+        patch(
+            "imaging_api.routers.download.download_and_unzip_images",
+            new_callable=AsyncMock,
+            side_effect=ValueError("Attempted path traversal in ZIP entry: ../evil.txt"),
+        ),
+    ):
+        response = client.post("/download/images/net1", json=_REQUEST_BODY)
+
+    assert response.status_code == 400
+    assert "Invalid download request" in response.json()["detail"]
+
+
 def test_download_images_decrypt_failure(client):
     with patch("imaging_api.routers.download.decrypt", side_effect=Exception("bad key")):
         response = client.post("/download/images/net1", json=_REQUEST_BODY)

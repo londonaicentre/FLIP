@@ -18,7 +18,6 @@
 /// <reference types="vite-plugin-pages/client" />
 /// <reference types="vite-plugin-layouts/client" />
 /// <reference types="vite-svg-loader" />
-/// <reference types="aws-sdk" />
 
 interface Window {
     Cypress: Cypress;

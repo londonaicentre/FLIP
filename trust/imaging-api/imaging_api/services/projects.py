@@ -47,6 +47,10 @@ def get_project_from_central_hub_project_id(central_hub_project_id: str, headers
 
     Returns:
         Project: XNAT project object
+
+    Raises:
+        NotFoundError: If no XNAT project has a matching ``secondary_ID``.
+        Exception: If the upstream ``get_all_projects`` call fails.
     """
     try:
         projects = get_all_projects(headers)
@@ -70,6 +74,10 @@ def get_project(project_id: str, headers: dict[str, str]) -> Project:
 
     Returns:
         Project: XNAT project object
+
+    Raises:
+        NotFoundError: If no XNAT project matches ``project_id``.
+        Exception: If the upstream ``get_all_projects`` call fails.
     """
     try:
         projects = get_all_projects(headers)
@@ -92,6 +100,9 @@ def get_all_projects(headers: dict[str, str]) -> list[Project]:
 
     Returns:
         list[Project]: List of XNAT project objects
+
+    Raises:
+        Exception: If the HTTP request to XNAT fails, or if XNAT returns a non-200 response.
     """
     try:
         response = requests.get(f"{XNAT_URL}/data/projects", headers=headers)
@@ -444,6 +455,10 @@ async def delete_project(project_id: str, headers: dict[str, str]) -> Project:
 
     Returns:
         Project: XNAT project object
+
+    Raises:
+        NotFoundError: If the project does not exist on XNAT.
+        Exception: If XNAT returns a non-200 response for the delete call.
     """
     # Check if project exists
     project = get_project(project_id, headers)

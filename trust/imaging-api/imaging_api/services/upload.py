@@ -62,14 +62,22 @@ async def upload_data_to_xnat(
 
     Raises:
         FileNotFoundError: If any of the files to be uploaded are not found.
+        ValueError: If the net ID or any file path attempts path traversal outside the upload directory.
     """
     # Get base directory from configuration
     upload_directory = os.path.join(BASE_IMAGES_DOWNLOAD_DIR, net_id, "upload")
+    base_images_download_dir_abs = os.path.realpath(BASE_IMAGES_DOWNLOAD_DIR)
+    upload_directory_abs = os.path.realpath(upload_directory)
 
-    # Verify and build full file paths
+    if not upload_directory_abs.startswith(base_images_download_dir_abs + os.sep):
+        raise ValueError(f"Path traversal detected in net ID: {net_id}")
+
+    # Verify and build full file paths, rejecting any path traversal attempts
     full_file_paths: list[str] = []
     for file_relative_path in files_relative_paths_to_upload:
-        full_path = os.path.join(upload_directory, file_relative_path)
+        full_path = os.path.realpath(os.path.join(upload_directory_abs, file_relative_path))
+        if not full_path.startswith(upload_directory_abs + os.sep):
+            raise ValueError(f"Path traversal detected in file path: {file_relative_path}")
         full_file_paths.append(full_path)
 
     # Check files exist

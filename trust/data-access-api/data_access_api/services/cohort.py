@@ -117,6 +117,12 @@ def get_records(query: str) -> pd.DataFrame:
 def get_counts(df: pd.DataFrame) -> dict:
     """
     Returns counts of non-null values for each column in the DataFrame.
+
+    Args:
+        df (pd.DataFrame): The cohort DataFrame.
+
+    Returns:
+        dict: ``{"name": "Counts", "results": [{"value": <column>, "count": <int>}, ...]}``.
     """
     return {
         "name": "Counts",
@@ -127,6 +133,12 @@ def get_counts(df: pd.DataFrame) -> dict:
 def get_null_counts(df: pd.DataFrame) -> dict:
     """
     Returns counts of null values for each column in the DataFrame.
+
+    Args:
+        df (pd.DataFrame): The cohort DataFrame.
+
+    Returns:
+        dict: ``{"name": "Nulls", "results": [{"value": <column>, "count": <int>}, ...]}``.
     """
     return {
         "name": "Nulls",
@@ -137,7 +149,15 @@ def get_null_counts(df: pd.DataFrame) -> dict:
 def get_sex_distribution(df: pd.DataFrame) -> dict:
     """
     Returns the distribution of sexes in the DataFrame.
+
     Assumes the DataFrame has accesion_id, query the table to get the sex distribution.
+
+    Args:
+        df (pd.DataFrame): The cohort DataFrame. Must include a ``person_id`` column; otherwise an
+            empty result set is returned.
+
+    Returns:
+        dict: ``{"name": "Sex Distribution", "results": [{"value": <sex>, "count": <int>}, ...]}``.
     """
     if "person_id" not in df.columns:
         return {"name": "Sex Distribution", "results": []}
@@ -164,7 +184,16 @@ def get_sex_distribution(df: pd.DataFrame) -> dict:
 def get_age_distribution(df: pd.DataFrame) -> dict:
     """
     Returns the distribution of ages in the DataFrame.
+
     Assumes the DataFrame has accesion_id, query the table to get the age distribution.
+
+    Args:
+        df (pd.DataFrame): The cohort DataFrame. Must include a ``person_id`` column; otherwise an
+            empty result set is returned.
+
+    Returns:
+        dict: ``{"name": "Age Distribution", "results": [{"value": "<decade>", "count": <int>},
+        ...]}`` where each value is a ten-year age bucket.
     """
     if "person_id" not in df.columns:
         return {"name": "Age Distribution", "results": []}
@@ -193,7 +222,18 @@ def get_age_distribution(df: pd.DataFrame) -> dict:
 def verify_cardinality(df: pd.DataFrame, threshold: float = 0.05) -> bool:
     """
     Verifies that the number of unique values in each column of the DataFrame is not smaller than the threshold.
+
     This is to prevent leaking information about individuals in the cohort.
+
+    Args:
+        df (pd.DataFrame): The cohort DataFrame to check.
+        threshold (float): Minimum acceptable proportion of unique values per column. Defaults to
+            ``0.05``.
+
+    Returns:
+        bool: ``True`` if every column has enough unique values (either above
+        ``COHORT_QUERY_THRESHOLD`` in absolute terms, or above ``threshold`` in relative terms).
+        ``False`` if any column falls below both thresholds.
     """
     for col in df.columns:
         unique_count = df[col].nunique()
