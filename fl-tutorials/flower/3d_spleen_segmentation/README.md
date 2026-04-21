@@ -39,38 +39,75 @@ This example of Flower uses a small MONAI UNet based on FLIP's implementation an
 └── README.md
 ```
 
-### Flower Config
+## Running this tutorial
 
-If running locally (without Docker), ensure this SuperLink config is set in your `$HOME/.flwr/config.toml`:
+> **Run this tutorial with the Docker Compose stack, not `flwr run` / the
+> Simulation Engine.** The compose stack is the supported path; the
+> simulation path is documented below only so you understand why we avoid it.
 
-```toml
-[superlink]
-default = "local-simulation"
+### Recommended: Docker Compose
 
-[superlink.local-simulation]
-options.num-supernodes = 2
-federation = "@user/default"
-```
-
-### Install dependencies and project
-
-Install the dependencies defined in `pyproject.toml` as well as the `monai` package.
+From the repository root:
 
 ```bash
-pip install -e .
+make build                # build the fl-base / superlink / supernode images
+make up                   # start fl-api, superlink, supernode-1, supernode-2
 ```
 
-## Run with the Simulation Engine
-
-Assuming the `./data` is at the top level directory of this repository, and that  from the `3d_spleen_segmentation` directory, use `flwr run` to run a local simulation:
+Then submit the run against the `fl-api` control plane:
 
 ```bash
-DEV_DATAFRAME="../../data/spleen/sample_get_dataframe_response.csv"  DEV_IMAGES_DIR="../../data/spleen/accession-resources" WORKING_DIR="../../data/" flwr run .
+curl -X POST http://localhost:8000/submit_run/3d_spleen_segmentation
 ```
+
+The compose file (`deploy/compose.yml`) wires everything correctly:
+
+- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`, `MODEL_CHECKPOINTS_DIR`
+  are resolved from `.env.flwr.development` (read by Docker Compose as the
+  `${VAR}` substitutions in each service's `volumes:` block) and bind-mounted
+  into the SuperNode and SuperLink containers — one source of truth for paths.
+- Inside the containers the mounts always land at stable locations
+  (`/images`, `/dataframe_file`, `/app/runs`, `/app/model_checkpoints`), and
+  the `environment:` blocks point the app at those paths, so relative paths in
+  tutorial code resolve consistently regardless of your host layout.
+- The SuperLink's `--insecure` mode and health server are set by `command:`,
+  not by your shell — nothing to re-export between runs.
+
+### Not recommended: Flower Simulation Engine (`flwr run`)
+
+We deliberately do **not** document a `flwr run` invocation for this tutorial.
+Running it via the Simulation Engine is technically possible but brittle, for
+reasons specific to this project:
+
+1. **Long-lived `flower-superlink` caches its environment.** `flwr run`
+   submits jobs to an already-running `flower-superlink` daemon. Ray worker
+   subprocesses inherit the superlink's env, *not* the env you exported on the
+   `flwr run` command line — so changing `DEV_DATAFRAME=…` between runs has
+   no effect until you `pkill -f flower-superlink`.
+2. **ClientApp CWD is not your project directory.** `flwr run` installs a
+   snapshot of the app under `~/.flwr/apps/<publisher>.<name>.<version>.<hash>/`
+   and runs ClientApp subprocesses from there, so relative paths like
+   `../../data/...` resolve to `~/.flwr/data/...` and fail.
+3. **FLIP's `DevSettings` singleton is pinned at import time.**
+   `flip/constants/pt_constants.py` reads `FlipConstants.LOCAL_DEV` at
+   class-body time, which forces pydantic-settings to materialise the
+   singleton before any run starts. Once pinned, later `os.environ[...]`
+   writes don't propagate, so mid-run path overrides are a dead end.
+
+Under Docker Compose none of these bite: each container starts fresh, env
+vars are applied from `env_file`/`environment:` at container start, and CWDs
+are fixed by `working_dir:`.
+
+If you still want to experiment with `flwr run` locally you will have to
+(a) `pkill -f flower-superlink` before every run with new env, (b) use
+absolute paths (`$(git rev-parse --show-toplevel)/data/...`), and (c) accept
+that some FLIP-side behaviour driven by the import-time singleton will still
+reflect whatever env the superlink was born with. Don't do it for real work —
+use the compose stack above.
 
 ## Data Location
 
 By default, the app reads from:
 
-- `data/spleen/sample_get_dataframe_response.csv`
-- `data/spleen/accession-resources`
+- `data/sample_get_dataframe_response.csv`
+- `data/accession-resources`

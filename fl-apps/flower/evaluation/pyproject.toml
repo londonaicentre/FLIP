@@ -21,9 +21,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "spleen-segmentation"
+name = "Evaluation app"
 version = "1.0.0"
-description = "Tutorial for medical image segmentation of spleen images using MONAI and Flower."
+description = "Evaluation app"
 license = "Apache-2.0"
 # Dependencies for your Flower App
 dependencies = [
@@ -35,12 +35,6 @@ dependencies = [
     "pandas>=3.0.0",
     "pydicom>=3.0.1",
     "torch>=2.10.0",
-]
-
-[dependency-groups]
-dev = [
-    "mypy>=1.19.1",
-    "ruff>=0.15.7",
 ]
 
 [tool.hatch.build.targets.wheel]
