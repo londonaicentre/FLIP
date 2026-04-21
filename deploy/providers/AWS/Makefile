@@ -50,51 +50,42 @@ endif
 endif
 
 ## SETTING VARIABLES FOR TERRAFORM
+# Network
 export TF_VAR_max_azs=2
 export TF_VAR_vpc_cidr=10.0.0.0/16
 export TF_VAR_public_subnets=["10.0.1.0/24", "10.0.2.0/24"]
 export TF_VAR_private_subnets=["10.0.101.0/24", "10.0.102.0/24"]
+export TF_VAR_AWS_REGION=${AWS_REGION}
+export TF_VAR_VPC_NAME=${VPC_NAME}
+# EC2 / SSH
 export TF_VAR_flip_keypair=~/.ssh/host-aws
 export TF_VAR_ec2_public_key_path=$(HOME)/.ssh/host-aws.pub
+# Cognito
 export TF_VAR_flip_user_pool_name=flip-user-pool
 export TF_VAR_flip_cognito_client=flip-cognito-client
-export TF_VAR_FLIP_BUCKET_NAME=${FLIP_BUCKET_NAME}
-export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
 export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
+# Database
 export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
+export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
+export TF_VAR_db_password=${DB_PASSWORD}
+# S3
+export TF_VAR_FLIP_BUCKET_NAME=${FLIP_BUCKET_NAME}
+export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
+export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
+# Auth / secrets
+export TF_VAR_PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
 export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
 export TF_VAR_TRUST_API_KEY_HASHES=${TRUST_API_KEY_HASHES}
 export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
-export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
-export TF_VAR_DB_PORT=${DB_PORT}
-export TF_VAR_UI_PORT=${UI_PORT}
-export TF_VAR_API_PORT=${API_PORT}
-export TF_VAR_FL_API_PORT=${FL_API_PORT}
-export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
-export TF_VAR_XNAT_PORT=${XNAT_PORT_TRUST_1}
-export TF_VAR_PACS_UI_PORT=${PACS_UI_PORT_TRUST_1}
-export TF_VAR_AWS_REGION=${AWS_REGION}
-export TF_VAR_VPC_NAME=${VPC_NAME}
-export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
+export TF_VAR_PRIVATE_API_KEY=${PRIVATE_API_KEY}
+# SES / email
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
+# DNS subdomains (env-specific, override the variables.tf defaults)
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
-export TF_VAR_db_password=${DB_PASSWORD}
-export TF_VAR_PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
-export TF_VAR_PRIVATE_API_KEY=${PRIVATE_API_KEY}
-export TF_VAR_central_hub_api_url=${CENTRAL_HUB_API_URL}
-export TF_VAR_data_access_api_url=${DATA_ACCESS_API_URL}
-export TF_VAR_imaging_api_url=${IMAGING_API_URL}
-export TF_VAR_xnat_url=${XNAT_URL}
-export TF_VAR_xnat_service_user=${XNAT_SERVICE_USER}
-export TF_VAR_xnat_service_password=${XNAT_SERVICE_PASSWORD}
-export TF_VAR_pacs_id=${PACS_ID}
-export TF_VAR_xnat_database_url=${XNAT_DATABASE_URL}
-export TF_VAR_omop_db_service_name=${OMOP_DB_SERVICE_NAME}
-export TF_VAR_data_access_postgres_user=${DATA_ACCESS_POSTGRES_USER}
-export TF_VAR_data_access_postgres_password=${DATA_ACCESS_POSTGRES_PASSWORD}
-export TF_VAR_omop_postgres_db=${OMOP_POSTGRES_DB}
+# Misc
+export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 # export TF_VAR_github_username=${GITHUB_USERNAME}
 # export TF_VAR_github_pat=${GITHUB_PAT}
 
@@ -105,7 +96,6 @@ ECS_CLUSTER_NAME ?= flip-ecs-cluster
 # flip-ui still runs on the Central Hub EC2 via Docker Compose.
 ECS_SERVICES = flip-api-service trust-api-service imaging-api-service data-access-api-service
 
-export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
 CENTRALHUB_IMAGES = \
 	$(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG) \
 	$(DOCKER_REGISTRY)flip-api:$(DOCKER_TAG) \
