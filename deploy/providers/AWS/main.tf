@@ -137,6 +137,10 @@ module "flip_db" {
   backup_retention_period    = 7
   skip_final_snapshot        = true
   family                     = "postgres${split(".", var.postgres_version)[0]}"
+  # Encryption at rest using the AWS-managed RDS KMS key.
+  # Enabling this on an existing unencrypted instance requires a snapshot-restore
+  # cycle — do not defer this to production.
+  storage_encrypted = true
 }
 
 ############################
