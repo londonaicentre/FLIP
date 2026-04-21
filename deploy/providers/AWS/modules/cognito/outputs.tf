@@ -26,3 +26,8 @@ output "domain" {
   description = "Cognito hosted-UI subdomain (the random 8-char prefix, not the full URL)"
   value       = aws_cognito_user_pool_domain.main.domain
 }
+
+output "user_pool_arn" {
+  description = "Cognito User Pool ARN"
+  value       = aws_cognito_user_pool.flip_user_pool.arn
+}
