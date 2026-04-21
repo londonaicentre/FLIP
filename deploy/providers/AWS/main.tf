@@ -164,7 +164,9 @@ module "flip_api_secret" {
 
     # Referenced by ECS task definitions via valueFrom with JSON key syntax.
     db_password = var.db_password
-    github_pat  = var.github_pat
+    # github_pat intentionally excluded: it lives only in ecsGithubCredentials
+    # (services.tf), which is accessed exclusively by the ECS execution role
+    # for image pulls — never by running containers.
   })
 }
 
