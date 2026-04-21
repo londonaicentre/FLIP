@@ -25,9 +25,29 @@ resource "aws_ecs_task_definition" "flip_api" {
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_role.arn
 
+  # Ephemeral volume for /tmp; required when readonlyRootFilesystem is enabled.
+  volume {
+    name = "tmp"
+  }
+
   container_definitions = jsonencode([{
     name  = "flip-api"
     image = "ghcr.io/londonaicentre/flip-api:${var.docker_image_tag}"
+
+    # Prevent writes to the container root filesystem; limit blast radius of a
+    # container breakout. /tmp is mounted from ephemeral task storage above.
+    readonlyRootFilesystem = true
+
+    # Enable PID 1 init process for correct SIGTERM propagation and zombie reaping.
+    linuxParameters = {
+      initProcessEnabled = true
+    }
+
+    mountPoints = [{
+      sourceVolume  = "tmp"
+      containerPath = "/tmp"
+      readOnly      = false
+    }]
 
     portMappings = [{
       containerPort = 8000
@@ -139,9 +159,25 @@ resource "aws_ecs_task_definition" "trust_api" {
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_role.arn
 
+  volume {
+    name = "tmp"
+  }
+
   container_definitions = jsonencode([{
     name  = "trust-api"
     image = "ghcr.io/londonaicentre/trust-api:${var.docker_image_tag}"
+
+    readonlyRootFilesystem = true
+
+    linuxParameters = {
+      initProcessEnabled = true
+    }
+
+    mountPoints = [{
+      sourceVolume  = "tmp"
+      containerPath = "/tmp"
+      readOnly      = false
+    }]
 
     portMappings = [{
       containerPort = 8000
@@ -220,12 +256,41 @@ resource "aws_ecs_task_definition" "imaging_api" {
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_role.arn
 
+  volume {
+    name = "tmp"
+  }
+
+  # imaging-api downloads DICOM files from XNAT to BASE_IMAGES_DOWNLOAD_DIR
+  # before uploading to S3; this directory must be writable.
+  volume {
+    name = "images-data"
+  }
+
   container_definitions = jsonencode([{
     name  = "imaging-api"
     image = "ghcr.io/londonaicentre/imaging-api:${var.docker_image_tag}"
 
     # Override the default CMD to use uvicorn directly (production-safe entrypoint)
     command = ["uv", "run", "python", "-m", "uvicorn", "imaging_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+    readonlyRootFilesystem = true
+
+    linuxParameters = {
+      initProcessEnabled = true
+    }
+
+    mountPoints = [
+      {
+        sourceVolume  = "tmp"
+        containerPath = "/tmp"
+        readOnly      = false
+      },
+      {
+        sourceVolume  = "images-data"
+        containerPath = "/app/data/images"
+        readOnly      = false
+      }
+    ]
 
     portMappings = [{
       containerPort = 8000
@@ -311,9 +376,25 @@ resource "aws_ecs_task_definition" "data_access_api" {
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_role.arn
 
+  volume {
+    name = "tmp"
+  }
+
   container_definitions = jsonencode([{
     name  = "data-access-api"
     image = "ghcr.io/londonaicentre/data-access-api:${var.docker_image_tag}"
+
+    readonlyRootFilesystem = true
+
+    linuxParameters = {
+      initProcessEnabled = true
+    }
+
+    mountPoints = [{
+      sourceVolume  = "tmp"
+      containerPath = "/tmp"
+      readOnly      = false
+    }]
 
     portMappings = [{
       containerPort = 8000
