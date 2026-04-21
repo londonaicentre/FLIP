@@ -97,4 +97,3 @@ the description above:
   whereas the rest of the files are in the flip package. You can check what a fully bundled app looks like by consulting
   the `src` folder in the `flip-fl-base` repository.
 - we will be soon moving to a fully Pythonic version of NVFLARE apps, more up-to-date and easy to use.
-
