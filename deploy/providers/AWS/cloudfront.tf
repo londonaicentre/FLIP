@@ -187,7 +187,7 @@ resource "aws_s3_bucket_acl" "cloudfront_logs" {
     grant {
       grantee {
         type = "CanonicalUser"
-        id   = "c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0"
+        id   = "c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0" # pragma: allowlist secret
       }
       permission = "FULL_CONTROL"
     }
@@ -431,8 +431,13 @@ resource "aws_wafv2_web_acl" "flip_ui_cloudfront" {
     name     = "AWSManagedRulesAmazonIpReputationList"
     priority = 30
 
+    # IP reputation list is safe to block immediately — it only fires on known
+    # malicious sources (botnets, Tor exit nodes, scanners) with negligible
+    # false-positive risk. Unlike the Common and KnownBadInputs rule groups,
+    # it does not pattern-match request content, so no legitimate user traffic
+    # should be affected.
     override_action {
-      count {}
+      none {}
     }
 
     statement {
