@@ -558,6 +558,90 @@ def main(
     else:
         print_status("WARN", "Secrets Manager secret not found")
 
+    # ECS service health
+    print_section("ECS Services")
+
+    ecs_cluster = get_terraform_output("EcsClusterName")
+    ecs_services = [
+        get_terraform_output("EcsFlipApiServiceName"),
+        get_terraform_output("EcsTrustApiServiceName"),
+        get_terraform_output("EcsImagingApiServiceName"),
+        get_terraform_output("EcsDataAccessApiServiceName"),
+    ]
+    ecs_services = [s for s in ecs_services if s]
+
+    if ecs_cluster and ecs_services:
+        success, svc_json = run_aws_command([
+            "ecs", "describe-services",
+            "--cluster", ecs_cluster,
+            "--services", *ecs_services,
+            "--query", "services[*].{name:serviceName,desired:desiredCount,running:runningCount,status:status}",
+            "--output", "json",
+        ])
+        if success:
+            try:
+                for svc in json.loads(svc_json):
+                    name, desired, running = svc["name"], svc["desired"], svc["running"]
+                    if running >= desired and desired > 0:
+                        print_status("PASS", f"ECS {name}: {running}/{desired} tasks running")
+                    elif running == 0:
+                        print_status("FAIL", f"ECS {name}: {running}/{desired} tasks running (no healthy tasks)")
+                    else:
+                        print_status("WARN", f"ECS {name}: {running}/{desired} tasks running")
+            except (json.JSONDecodeError, KeyError) as e:
+                print_status("WARN", f"Could not parse ECS service data: {e}")
+        else:
+            print_status("WARN", "Could not retrieve ECS service status")
+    else:
+        print_status("INFO", "ECS cluster/services not found in Terraform outputs")
+
+    # CloudFront / UI bucket
+    print_section("CloudFront & UI Bucket")
+
+    cf_distribution_id = get_terraform_output("CloudfrontDistributionId")
+    cf_domain = get_terraform_output("CloudfrontDistributionDomain")
+    ui_bucket = get_terraform_output("FlipUiBucketName")
+
+    if cf_distribution_id:
+        success, cf_json = run_aws_command([
+            "cloudfront", "get-distribution",
+            "--id", cf_distribution_id,
+            "--query", "Distribution.{Status:Status,Enabled:DistributionConfig.Enabled}",
+            "--output", "json",
+        ])
+        if success:
+            try:
+                cf_data = json.loads(cf_json)
+                cf_status = cf_data.get("Status", "UNKNOWN")
+                cf_enabled = cf_data.get("Enabled", False)
+                if cf_status == "Deployed" and cf_enabled:
+                    print_status("PASS", f"CloudFront distribution {cf_distribution_id} is Deployed and enabled")
+                else:
+                    print_status("WARN", f"CloudFront distribution status: {cf_status}, enabled: {cf_enabled}")
+            except (json.JSONDecodeError, KeyError) as e:
+                print_status("WARN", f"Could not parse CloudFront data: {e}")
+        else:
+            print_status("WARN", "Could not retrieve CloudFront distribution status")
+    else:
+        print_status("INFO", "CloudFront distribution ID not in Terraform outputs")
+
+    if ui_bucket:
+        success, obj_count = run_aws_command([
+            "s3api", "list-objects-v2",
+            "--bucket", ui_bucket,
+            "--query", "length(Contents)",
+            "--output", "text",
+        ])
+        if success and obj_count.strip().isdigit() and int(obj_count.strip()) > 0:
+            print_status("PASS", f"UI S3 bucket '{ui_bucket}' has {obj_count.strip()} objects (UI deployed)")
+        elif success:
+            print_status("WARN", f"UI S3 bucket '{ui_bucket}' is empty — run 'make deploy-ui' to deploy the frontend")
+        else:
+            print_status("WARN", f"Could not list UI S3 bucket '{ui_bucket}'")
+
+    if cf_domain:
+        print_status("INFO", f"CloudFront domain: {cf_domain}")
+
     # HTTPS/Certificate checks
     print_section("HTTPS & Certificate Status")
 
@@ -708,8 +792,8 @@ def main(
         API_PORT = os.getenv("API_PORT", "")
         FL_API_PORT = os.getenv("FL_API_PORT", "")
 
-        # Check UI via HTTPS domain alias
-        check_http_endpoint(f"https://{alb_subdomain}", "FLIP UI", 200)
+        # Check UI via CloudFront — accept 200 (deployed) or 403 (bucket empty, CloudFront up)
+        check_http_endpoint(f"https://{alb_subdomain}", "FLIP UI (CloudFront)", [200, 403])
 
         # Check API health endpoint via ALB
         check_http_endpoint(f"https://{alb_subdomain}/api/health", "FLIP API Health (ALB)", 200)
@@ -756,9 +840,6 @@ def main(
                 print_status("PASS", f"FL API Net-{net_num} docs endpoint is accessible (via docker exec)")
             else:
                 print_status("FAIL", f"FL API Net-{net_num} docs endpoint not accessible (via docker exec): {output}")
-
-        # Check Central Hub API is reachable inside Central Hub EC2 via SSH
-        check_endpoint_over_ssh("flip", f"http://localhost:{API_PORT}/api/health", 200)
 
         # Check FL-api-net endpoints over ssh and inside flip-api running container.
         # Use urllib.request (stdlib) for consistency — works even if httpx is absent.
@@ -866,12 +947,9 @@ def main(
             if not success or not containers:
                 print_status("FAIL", "Could not retrieve Docker container status")
             else:
-                # Check each expected container
-                expected_containers = [
-                    "flip-api",
-                    "flip-ui",
-                ]
-                # Add only configured FL server and API containers
+                # Only FL server and API containers remain on EC2.
+                # flip-api is on ECS Fargate; flip-ui is on S3/CloudFront.
+                expected_containers = []
                 for net_num in configured_net_numbers:
                     expected_containers.append(f"fl-server-net-{net_num}")
                     expected_containers.append(f"flip-fl-api-net-{net_num}")
@@ -1088,74 +1166,61 @@ def main(
     # CloudWatch Logs check
     print_section("CloudWatch Logs")
 
-    print_status("INFO", "Checking Central Hub CloudWatch log groups...")
+    # ECS services log to /ecs/<service-name>
+    ecs_log_groups = ["/ecs/flip-api", "/ecs/trust-api", "/ecs/imaging-api", "/ecs/data-access-api"]
+    print_status("INFO", "Checking ECS CloudWatch log groups...")
+    for log_group in ecs_log_groups:
+        success, output = run_aws_command(["logs", "describe-log-groups", "--log-group-name-prefix", log_group])
+        if success and log_group in output:
+            print_status("PASS", f"ECS log group '{log_group}' exists")
+        else:
+            print_status("WARN", f"ECS log group '{log_group}' not found (tasks may not have started yet)")
+
+    # Central Hub EC2 still runs FL server/API — check its log group
+    print_status("INFO", "Checking Central Hub EC2 CloudWatch log groups...")
     log_group = "/aws/ec2/flip"
     success, output = run_aws_command(["logs", "describe-log-groups", "--log-group-name-prefix", log_group])
     if success and log_group in output:
         print_status("PASS", f"CloudWatch log group '{log_group}' exists")
-
-        # Check for recent log streams
         success, streams_output = run_aws_command([
-            "logs",
-            "describe-log-streams",
-            "--log-group-name",
-            log_group,
-            "--order-by",
-            "LastEventTime",
-            "--descending",
-            "--max-items",
-            "1",
+            "logs", "describe-log-streams",
+            "--log-group-name", log_group,
+            "--order-by", "LastEventTime",
+            "--descending", "--max-items", "1",
         ])
         if success:
             try:
-                streams_data = json.loads(streams_output)
-                if streams_data.get("logStreams"):
-                    print_status("PASS", "Recent Central Hub log streams found")
+                if json.loads(streams_output).get("logStreams"):
+                    print_status("PASS", "Recent Central Hub EC2 log streams found")
                 else:
-                    print_status(
-                        "WARN",
-                        "No recent Central Hub log streams (instance may not be sending logs yet)",
-                    )
+                    print_status("WARN", "No recent Central Hub EC2 log streams")
             except json.JSONDecodeError:
                 print_status("WARN", "Could not parse log streams data")
     else:
-        print_status("WARN", "Central Hub CloudWatch log group not found")
+        print_status("WARN", "Central Hub EC2 CloudWatch log group not found")
 
     # Check Trust EC2 CloudWatch logs if it exists
     if trust_id:
         print_status("INFO", "Checking Trust EC2 CloudWatch log groups...")
         trust_log_group = "/aws/ec2/flipst"
         success, output = run_aws_command([
-            "logs",
-            "describe-log-groups",
-            "--log-group-name-prefix",
-            trust_log_group,
+            "logs", "describe-log-groups",
+            "--log-group-name-prefix", trust_log_group,
         ])
         if success and trust_log_group in output:
             print_status("PASS", f"CloudWatch log group '{trust_log_group}' exists")
-
-            # Check for recent log streams
             success, trust_streams_output = run_aws_command([
-                "logs",
-                "describe-log-streams",
-                "--log-group-name",
-                trust_log_group,
-                "--order-by",
-                "LastEventTime",
-                "--descending",
-                "--max-items",
-                "1",
+                "logs", "describe-log-streams",
+                "--log-group-name", trust_log_group,
+                "--order-by", "LastEventTime",
+                "--descending", "--max-items", "1",
             ])
             if success:
                 try:
-                    trust_streams_data = json.loads(trust_streams_output)
-                    if trust_streams_data.get("logStreams"):
+                    if json.loads(trust_streams_output).get("logStreams"):
                         print_status("PASS", "Recent Trust EC2 log streams found")
                     else:
-                        print_status(
-                            "WARN",
-                            ("No recent Trust EC2 log streams (instance may not be sending logs yet)"),
-                        )
+                        print_status("WARN", "No recent Trust EC2 log streams")
                 except json.JSONDecodeError:
                     print_status("WARN", "Could not parse Trust log streams data")
         else:
