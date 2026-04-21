@@ -26,7 +26,7 @@ resource "aws_ecs_service" "flip_api" {
 
   network_configuration {
     subnets          = module.flip_vpc.private_subnets
-    security_groups  = [aws_security_group.ecs_tasks.id]
+    security_groups  = [aws_security_group.ecs_flip_api.id]
     assign_public_ip = false
   }
 
@@ -72,7 +72,7 @@ resource "aws_ecs_service" "trust_api" {
 
   network_configuration {
     subnets          = module.flip_vpc.private_subnets
-    security_groups  = [aws_security_group.ecs_tasks.id]
+    security_groups  = [aws_security_group.ecs_trust_api.id]
     assign_public_ip = false
   }
 
@@ -103,7 +103,7 @@ resource "aws_ecs_service" "imaging_api" {
 
   network_configuration {
     subnets          = module.flip_vpc.private_subnets
-    security_groups  = [aws_security_group.ecs_tasks.id]
+    security_groups  = [aws_security_group.ecs_imaging_api.id]
     assign_public_ip = false
   }
 
@@ -134,7 +134,7 @@ resource "aws_ecs_service" "data_access_api" {
 
   network_configuration {
     subnets          = module.flip_vpc.private_subnets
-    security_groups  = [aws_security_group.ecs_tasks.id]
+    security_groups  = [aws_security_group.ecs_data_access_api.id]
     assign_public_ip = false
   }
 

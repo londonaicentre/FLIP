@@ -467,18 +467,26 @@ resource "aws_lb_listener_rule" "api_routing" {
 }
 
 ############################
-# ECS Tasks Security Group
-# Attached to all Fargate tasks running in private subnets.
-# Ingress is allowed only from the ALB security group on the API container port
-# and from within the VPC CIDR for internal service-to-service calls.
+# ECS Task Security Groups
+#
+# One security group per service, so ingress is restricted to the exact
+# upstream caller for each service. This limits lateral movement: a
+# compromised imaging-api or data-access-api container cannot receive
+# connections from the internet (or even from ALB), because only trust-api
+# is permitted to reach those services on port 8000.
+#
+# Call graph:
+#   Internet → CloudFront → ALB → flip-api (port 8000)
+#   flip-api → trust-api (port 8000, VPC-internal)
+#   trust-api → imaging-api (port 8000, VPC-internal)
+#   trust-api → data-access-api (port 8000, VPC-internal)
 ############################
 
-resource "aws_security_group" "ecs_tasks" {
-  name        = "ecs-tasks-sg"
+resource "aws_security_group" "ecs_flip_api" {
+  name        = "ecs-flip-api-sg"
   vpc_id      = module.flip_vpc.vpc_id
-  description = "Security group for all FLIP ECS Fargate tasks"
+  description = "flip-api ECS tasks: ingress from ALB on port 8000"
 
-  # Allow ALB → flip-api on container port 8000
   ingress {
     description     = "flip-api from ALB"
     from_port       = 8000
@@ -487,20 +495,6 @@ resource "aws_security_group" "ecs_tasks" {
     security_groups = [module.alb_security_group.security_group.id]
   }
 
-  # Allow internal VPC traffic so ECS tasks can call each other
-  # (e.g. trust-api → imaging-api, trust-api → data-access-api)
-  ingress {
-    description = "Internal VPC service-to-service"
-    from_port   = 8000
-    to_port     = 8000
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
-  }
-
-  # HTTPS to 0.0.0.0/0 covers all AWS service APIs (S3, Secrets Manager, SSM,
-  # Cognito, SES, CloudWatch Logs, ECR) via the NAT gateway, as well as GHCR
-  # image pulls. Restricting to port 443 prevents a compromised container from
-  # opening arbitrary TCP connections to the internet on other ports.
   egress {
     description = "HTTPS to AWS services and external endpoints via NAT"
     from_port   = 443
@@ -509,7 +503,6 @@ resource "aws_security_group" "ecs_tasks" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # PostgreSQL to RDS within the VPC only — no internet path needed.
   egress {
     description = "PostgreSQL to RDS"
     from_port   = 5432
@@ -519,7 +512,96 @@ resource "aws_security_group" "ecs_tasks" {
   }
 
   tags = {
-    Name = "ecs-tasks-sg"
+    Name = "ecs-flip-api-sg"
+  }
+}
+
+resource "aws_security_group" "ecs_trust_api" {
+  name        = "ecs-trust-api-sg"
+  vpc_id      = module.flip_vpc.vpc_id
+  description = "trust-api ECS tasks: ingress from flip-api on port 8000"
+
+  ingress {
+    description     = "trust-api from flip-api"
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_flip_api.id]
+  }
+
+  egress {
+    description = "HTTPS to AWS services and external endpoints via NAT"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "ecs-trust-api-sg"
+  }
+}
+
+resource "aws_security_group" "ecs_imaging_api" {
+  name        = "ecs-imaging-api-sg"
+  vpc_id      = module.flip_vpc.vpc_id
+  description = "imaging-api ECS tasks: ingress from trust-api on port 8000"
+
+  ingress {
+    description     = "imaging-api from trust-api"
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_trust_api.id]
+  }
+
+  # imaging-api downloads DICOM files from XNAT (external to VPC) over HTTPS,
+  # and also calls AWS services (Secrets Manager, CloudWatch Logs, ECR).
+  egress {
+    description = "HTTPS to AWS services and XNAT via NAT"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "ecs-imaging-api-sg"
+  }
+}
+
+resource "aws_security_group" "ecs_data_access_api" {
+  name        = "ecs-data-access-api-sg"
+  vpc_id      = module.flip_vpc.vpc_id
+  description = "data-access-api ECS tasks: ingress from trust-api on port 8000"
+
+  ingress {
+    description     = "data-access-api from trust-api"
+    from_port       = 8000
+    to_port         = 8000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_trust_api.id]
+  }
+
+  egress {
+    description = "HTTPS to AWS services via NAT"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # data-access-api queries the OMOP PostgreSQL database within the VPC.
+  egress {
+    description = "PostgreSQL to OMOP database"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  tags = {
+    Name = "ecs-data-access-api-sg"
   }
 }
 
@@ -557,11 +639,35 @@ resource "aws_security_group" "vpc_endpoints" {
   description = "Allow HTTPS from ECS tasks and EC2 instances to VPC interface endpoints"
 
   ingress {
-    description     = "HTTPS from ECS tasks"
+    description     = "HTTPS from flip-api tasks"
     from_port       = 443
     to_port         = 443
     protocol        = "tcp"
-    security_groups = [aws_security_group.ecs_tasks.id]
+    security_groups = [aws_security_group.ecs_flip_api.id]
+  }
+
+  ingress {
+    description     = "HTTPS from trust-api tasks"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_trust_api.id]
+  }
+
+  ingress {
+    description     = "HTTPS from imaging-api tasks"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_imaging_api.id]
+  }
+
+  ingress {
+    description     = "HTTPS from data-access-api tasks"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_data_access_api.id]
   }
 
   ingress {
@@ -642,15 +748,16 @@ resource "aws_vpc_endpoint" "ecr_dkr" {
   }
 }
 
-# Allow ECS tasks to reach the FLIP RDS instance (PostgreSQL)
+# Only flip-api reads and writes the FLIP database; the other ECS services
+# use either an external OMOP database (data-access-api) or no DB at all.
 resource "aws_security_group_rule" "rds_ingress_from_ecs" {
   type                     = "ingress"
   from_port                = 5432
   to_port                  = 5432
   protocol                 = "tcp"
-  source_security_group_id = aws_security_group.ecs_tasks.id
+  source_security_group_id = aws_security_group.ecs_flip_api.id
   security_group_id        = module.rds_security_group.security_group.id
-  description              = "PostgreSQL from ECS tasks"
+  description              = "PostgreSQL from flip-api ECS tasks"
 }
 
 ############################
