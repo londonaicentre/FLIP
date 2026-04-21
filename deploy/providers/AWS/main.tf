@@ -523,6 +523,125 @@ resource "aws_security_group" "ecs_tasks" {
   }
 }
 
+############################
+# VPC Endpoints
+#
+# Keep AWS service API traffic on the AWS backbone rather than routing
+# it through the NAT gateway. This:
+#  - Eliminates internet exposure for Secrets Manager, SSM, ECR, and
+#    CloudWatch Logs traffic from ECS tasks
+#  - Reduces NAT data-processing costs for ECR image pulls (which can be
+#    hundreds of MB per deployment)
+#  - Enables future tightening of ECS task egress rules
+#
+# S3 gateway endpoint: free, route-table based, no per-hour cost.
+# Interface endpoints: ~$0.01/hr each (~$7/month per endpoint in eu-west-2).
+############################
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = module.flip_vpc.vpc_id
+  service_name      = "com.amazonaws.${var.AWS_REGION}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = module.flip_vpc.private_route_table_ids
+
+  tags = {
+    Name = "flip-s3-endpoint"
+  }
+}
+
+# Security group shared by all interface endpoints.
+# Allows HTTPS from the ECS tasks SG and from the VPC CIDR (EC2 instances).
+resource "aws_security_group" "vpc_endpoints" {
+  name        = "vpc-endpoints-sg"
+  vpc_id      = module.flip_vpc.vpc_id
+  description = "Allow HTTPS from ECS tasks and EC2 instances to VPC interface endpoints"
+
+  ingress {
+    description     = "HTTPS from ECS tasks"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_tasks.id]
+  }
+
+  ingress {
+    description = "HTTPS from EC2 instances in the VPC"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  tags = {
+    Name = "vpc-endpoints-sg"
+  }
+}
+
+resource "aws_vpc_endpoint" "secretsmanager" {
+  vpc_id              = module.flip_vpc.vpc_id
+  service_name        = "com.amazonaws.${var.AWS_REGION}.secretsmanager"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = module.flip_vpc.private_subnets
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "flip-secretsmanager-endpoint"
+  }
+}
+
+resource "aws_vpc_endpoint" "ssm" {
+  vpc_id              = module.flip_vpc.vpc_id
+  service_name        = "com.amazonaws.${var.AWS_REGION}.ssm"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = module.flip_vpc.private_subnets
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "flip-ssm-endpoint"
+  }
+}
+
+resource "aws_vpc_endpoint" "logs" {
+  vpc_id              = module.flip_vpc.vpc_id
+  service_name        = "com.amazonaws.${var.AWS_REGION}.logs"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = module.flip_vpc.private_subnets
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "flip-cloudwatch-logs-endpoint"
+  }
+}
+
+resource "aws_vpc_endpoint" "ecr_api" {
+  vpc_id              = module.flip_vpc.vpc_id
+  service_name        = "com.amazonaws.${var.AWS_REGION}.ecr.api"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = module.flip_vpc.private_subnets
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "flip-ecr-api-endpoint"
+  }
+}
+
+resource "aws_vpc_endpoint" "ecr_dkr" {
+  vpc_id              = module.flip_vpc.vpc_id
+  service_name        = "com.amazonaws.${var.AWS_REGION}.ecr.dkr"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = module.flip_vpc.private_subnets
+  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "flip-ecr-dkr-endpoint"
+  }
+}
+
 # Allow ECS tasks to reach the FLIP RDS instance (PostgreSQL)
 resource "aws_security_group_rule" "rds_ingress_from_ecs" {
   type                     = "ingress"
