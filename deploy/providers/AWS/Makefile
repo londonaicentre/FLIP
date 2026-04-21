@@ -86,6 +86,8 @@ export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 # Misc
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
+export TF_VAR_docker_image_tag=${DOCKER_TAG}
+export TF_VAR_fl_backend=${FL_BACKEND}
 # export TF_VAR_github_username=${GITHUB_USERNAME}
 # export TF_VAR_github_pat=${GITHUB_PAT}
 
