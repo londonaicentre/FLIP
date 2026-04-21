@@ -39,11 +39,8 @@ resource "aws_ecs_service" "flip_api" {
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
 
-  # Wait for ALB target group and listener rule to exist before creating the service
-  depends_on = [
-    aws_lb_listener_rule.ecs_flip_api_https,
-    aws_lb_listener_rule.ecs_flip_api_api_port
-  ]
+  # Wait for the ALB listener rule to exist before creating the service
+  depends_on = [aws_lb_listener_rule.ecs_flip_api_https]
 
   lifecycle {
     # Allow ECS to adjust desired_count independently (e.g. via auto-scaling)
@@ -181,14 +178,11 @@ resource "aws_lb_target_group" "ecs_flip_api" {
 }
 
 ############################
-# ALB Listener Rules for ECS flip-api
+# ALB Listener Rule for ECS flip-api
 #
-# Two rules route traffic to ECS:
-#   1. HTTPS (443) /api and /api/* paths — priority 50 (overrides EC2 rule at 98)
-#   2. API port (8080) catch-all       — priority 10 (only rule on this listener)
-#
-# The existing EC2 target groups remain for rollback: revert by removing or
-# lowering the priority of these rules and restoring the EC2 rules.
+# Routes /api and /api/* on the HTTPS (443) listener to the ECS target group
+# at priority 50, overriding the EC2 routing rule at priority 98. The EC2
+# target group remains registered for rollback — revert by deleting this rule.
 ############################
 
 resource "aws_lb_listener_rule" "ecs_flip_api_https" {
@@ -203,22 +197,6 @@ resource "aws_lb_listener_rule" "ecs_flip_api_https" {
   condition {
     path_pattern {
       values = ["/api", "/api/*"]
-    }
-  }
-}
-
-resource "aws_lb_listener_rule" "ecs_flip_api_api_port" {
-  listener_arn = module.alb.listeners["api-listener"].arn
-  priority     = 10
-
-  action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.ecs_flip_api.arn
-  }
-
-  condition {
-    path_pattern {
-      values = ["/*"]
     }
   }
 }
