@@ -75,7 +75,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     log(INFO, f"{'=' * 60}")
 
     # Get output directory from constants
-    working_dir = os.getenv("WORKING_DIR", "/app")
+    working_dir = os.getenv("WORKING_DIR", "/app/runs")
     output_dir = Path(f"{working_dir}/{model_id}/training_outputs")
     output_dir.mkdir(parents=True, exist_ok=True)
 
