@@ -24,6 +24,12 @@ terraform {
 
 provider "aws" {
   region = var.AWS_REGION
+
+  # Assume a role that has the necessary permissions for Terraform
+  # The SSO role lacks ssm:DescribeParameters, so we assume this role
+  assume_role {
+    role_arn = "arn:aws:iam::080369786334:role/TerraformExecutionRole"
+  }
 }
 
 ############################

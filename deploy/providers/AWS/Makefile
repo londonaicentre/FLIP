@@ -24,6 +24,7 @@ export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
 LOCK ?= true
+TF_REFRESH ?= true
 PRESERVE_VPC ?= true
 
 # Export PROD so child processes (e.g. check_status.py) can determine the environment
@@ -80,7 +81,20 @@ export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_db_password=${DB_PASSWORD}
+export TF_VAR_PRIVATE_API_KEY_HEADER=${PRIVATE_API_KEY_HEADER}
 export TF_VAR_PRIVATE_API_KEY=${PRIVATE_API_KEY}
+export TF_VAR_central_hub_api_url=${CENTRAL_HUB_API_URL}
+export TF_VAR_data_access_api_url=${DATA_ACCESS_API_URL}
+export TF_VAR_imaging_api_url=${IMAGING_API_URL}
+export TF_VAR_xnat_url=${XNAT_URL}
+export TF_VAR_xnat_service_user=${XNAT_SERVICE_USER}
+export TF_VAR_xnat_service_password=${XNAT_SERVICE_PASSWORD}
+export TF_VAR_pacs_id=${PACS_ID}
+export TF_VAR_xnat_database_url=${XNAT_DATABASE_URL}
+export TF_VAR_omop_db_service_name=${OMOP_DB_SERVICE_NAME}
+export TF_VAR_data_access_postgres_user=${DATA_ACCESS_POSTGRES_USER}
+export TF_VAR_data_access_postgres_password=${DATA_ACCESS_POSTGRES_PASSWORD}
+export TF_VAR_omop_postgres_db=${OMOP_POSTGRES_DB}
 # export TF_VAR_github_username=${GITHUB_USERNAME}
 # export TF_VAR_github_pat=${GITHUB_PAT}
 
@@ -180,7 +194,7 @@ force-unlock: ## Force unlock Terraform state - provide LOCK_ID=<id> as argument
 .PHONY: plan
 plan: ## Plan Terraform changes (with environment file loaded)
 	@echo "📋 Planning Terraform changes..."
-	@terraform plan -out=plan.tfplan -lock=${LOCK}
+	@terraform plan -out=plan.tfplan -lock=${LOCK} -refresh=${TF_REFRESH}
 
 .PHONY: plan-cert
 plan-cert: ## Plan only the ACM certificate (step 1 of 2 for HTTPS)
