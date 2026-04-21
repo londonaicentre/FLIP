@@ -47,7 +47,6 @@ class FLIP_EVALUATOR(Executor):
         working_dir = Path(__file__).parent.resolve()
         with open(str(working_dir / "config.json")) as file:
             self.config = json.load(file)
-            self._test_split = self.config["TEST_SPLIT"]
             self.num_classes = self.config["num_classes"]
 
         # Setup the model
@@ -138,14 +137,11 @@ class FLIP_EVALUATOR(Executor):
 
             print(f"Added {this_accession_matches} matched image + segmentation pairs for {accession_id}.")
 
-        print(f"Found {len(datalist)} files in total.")
+        # Evaluation-only: score every matched image/label pair in this
+        # client's cohort, not a held-out fraction.
+        print(f"Found {len(datalist)} files in total — evaluating all of them.")
 
-        # split into the training and testing data
-        _, test_datalist = np.split(datalist, [int((1 - self._test_split) * len(datalist))])
-
-        print(f"Found {len(test_datalist)} files in testing.")
-
-        return test_datalist
+        return datalist
 
     def _get_json_results_from_numpy(self, metric_results):
         output_results = {}
