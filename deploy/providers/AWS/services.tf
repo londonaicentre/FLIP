@@ -43,6 +43,16 @@ resource "aws_s3_bucket" "flip_bucket" {
   }
 }
 
+resource "aws_s3_bucket_server_side_encryption_configuration" "flip_bucket" {
+  bucket = aws_s3_bucket.flip_bucket.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
+  }
+}
+
 resource "aws_s3_bucket_cors_configuration" "flip_bucket_cors" {
   bucket = aws_s3_bucket.flip_bucket.id
 
@@ -92,6 +102,16 @@ resource "aws_s3_bucket" "aicentre_bucket" {
   bucket = var.AICENTRE_BUCKET_NAME
   lifecycle {
     prevent_destroy = true
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "aicentre_bucket" {
+  bucket = aws_s3_bucket.aicentre_bucket.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm = "AES256"
+    }
   }
 }
 
