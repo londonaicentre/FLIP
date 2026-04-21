@@ -28,7 +28,7 @@ This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only 
 - **Multi-model support**: Evaluate multiple models in a single run
 - **Type-safe metrics**: Metrics validation ensures proper data types (no strings allowed)
 - **FLIP integration**: Uploads results to S3 and updates job status
-- **WORKING_DIR environment variable**: Configurable output directory (default: `/app`)
+- **WORKING_DIR environment variable**: Configurable output directory (default: `/app/runs`)
 
 ## Set up the project
 
@@ -50,19 +50,6 @@ This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only 
 └── README.md
 ```
 
-### Flower Config
-
-If running locally (without Docker), ensure this SuperLink config is set in your `$HOME/.flwr/config.toml`:
-
-```toml
-[superlink]
-default = "local-simulation"
-
-[superlink.local-simulation]
-options.num-supernodes = 2
-federation = "@user/default"
-```
-
 ### Install dependencies and project
 
 Install the dependencies defined in `pyproject.toml` as well as the `monai` package.
@@ -71,25 +58,22 @@ Install the dependencies defined in `pyproject.toml` as well as the `monai` pack
 pip install -e .
 ```
 
-## Run with the Simulation Engine
+## Running this tutorial
 
-### Local Development
+> **Run this tutorial with the Docker Compose stack, not `flwr run` / the
+> Simulation Engine.** The compose stack is the supported path; the
+> simulation path is documented below only so you understand why we avoid it.
 
-For local testing without FLIP integration:
+### Recommended: Docker Compose
+
+From the repository root:
 
 ```bash
-cd tutorials/3d_spleen_segmentation_evaluation
-LOCAL_DEV="true" \
-MODEL_CHECKPOINTS_DIR="../../data/model_checkpoints" \
-DEV_DATAFRAME="../../data/sample_get_dataframe_response.csv" \
-DEV_IMAGES_DIR="../../data/accession-resources" \
-WORKING_DIR="/tmp/evaluation_outputs" \
-flwr run .
+make build                # build the fl-base / superlink / supernode images
+make up                   # start fl-api, superlink, supernode-1, supernode-2
 ```
 
-### Production (with FLIP)
-
-When running in a container with FLIP integration:
+Submit the evaluation run against the `fl-api` control plane:
 
 ```bash
 curl -X POST http://localhost:8000/submit_run/3d_spleen_segmentation_evaluation
@@ -97,19 +81,54 @@ curl -X POST http://localhost:8000/submit_run/3d_spleen_segmentation_evaluation
 
 The FLIP API will:
 
-1. Load model checkpoints from `MODEL_CHECKPOINTS_DIR`
-2. Run evaluation across all connected supernodes
+1. Load model checkpoints from the `model-checkpoints` directory
+2. Run evaluation across all connected SuperNodes
 3. Aggregate metrics using the `EvaluationStrategy`
 4. Save results to `WORKING_DIR/{model_id}/evaluation_outputs/`
 5. Upload results to S3 (unless `LOCAL_DEV="true"`)
 6. Update job status via FLIP API
 
+The compose file (`deploy/compose.yml`) wires everything correctly:
+
+- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`, `MODEL_CHECKPOINTS_DIR`
+  are resolved from `.env.flwr.development` via `${VAR}` substitutions in each
+  service's `volumes:` block and bind-mounted into the containers.
+- Inside the containers the mounts land at stable locations
+  (`/images`, `/dataframe_file`, `/app/runs`, `/app/model_checkpoints`), and
+  the `environment:` blocks point the app at those paths, so paths in the
+  app resolve consistently regardless of your host layout.
+
+### Not recommended: Flower Simulation Engine (`flwr run`)
+
+We deliberately do **not** document a `flwr run` invocation for this tutorial.
+Running it via the Simulation Engine is technically possible but brittle, for
+reasons specific to this project:
+
+1. **Long-lived `flower-superlink` caches its environment.** `flwr run`
+   submits jobs to an already-running `flower-superlink` daemon. Ray worker
+   subprocesses inherit the superlink's env, *not* the env you exported on
+   the `flwr run` command line — so changing `DEV_DATAFRAME=…` between runs
+   has no effect until you `pkill -f flower-superlink`.
+2. **ClientApp CWD is not your project directory.** `flwr run` installs a
+   snapshot of the app under `~/.flwr/apps/<publisher>.<name>.<version>.<hash>/`
+   and runs ClientApp subprocesses from there, so relative paths like
+   `../../data/...` resolve to `~/.flwr/data/...` and fail.
+3. **FLIP's `DevSettings` singleton is pinned at import time.**
+   `flip/constants/pt_constants.py` reads `FlipConstants.LOCAL_DEV` at
+   class-body time, which forces pydantic-settings to materialise the
+   singleton before any run starts. Once pinned, later `os.environ[...]`
+   writes don't propagate, so mid-run path overrides are a dead end.
+
+Under Docker Compose none of these bite: each container starts fresh, env
+vars are applied from `env_file`/`environment:` at container start, and CWDs
+are fixed by `working_dir:`. Use the compose stack above.
+
 ## Data Location
 
 By default, the app reads from:
 
-- `data/spleen/sample_get_dataframe_response.csv`
-- `data/spleen/accession-resources`
+- `data/sample_get_dataframe_response.csv`
+- `data/accession-resources`
 
 ## Architecture
 
@@ -153,8 +172,8 @@ The `MetricsValidator` class in `strategy.py` enforces that:
 
 ### Environment Variables
 
-- `MODEL_CHECKPOINTS_DIR`: Directory containing pre-trained model `.pt` files (default: `/app/model_checkpoints`)
-- `WORKING_DIR`: Output directory for evaluation results (default: `/app`)
+- `MODEL_CHECKPOINTS_DIR`: Directory containing pre-trained model `.pt` files (mounted at `/app/model_checkpoints` on the SuperLink)
+- `WORKING_DIR`: Output directory for evaluation results (default: `/app/runs`)
 - `LOCAL_DEV`: Set to `"true"` to skip S3 uploads during local development
 - `DEV_DATAFRAME`: Path to CSV file with test data metadata
 - `DEV_IMAGES_DIR`: Path to directory containing NIfTI images

@@ -21,7 +21,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "3d-spleen-segmentation-flower"
+name = "spleen-segmentation"
 version = "1.0.0"
 description = "Tutorial for medical image segmentation of spleen images using MONAI and Flower."
 license = "Apache-2.0"

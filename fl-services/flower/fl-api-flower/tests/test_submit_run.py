@@ -18,7 +18,7 @@ from fl_api import app as app_module
 
 def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
     (src_root / "numpy").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,monai")
+    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation")
     mock_flwr_run(
         stdout=(
             "{"
@@ -40,7 +40,7 @@ def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
 
 @pytest.mark.parametrize("app_folder", ["invalid", "numpy"])
 def test_submit_run_input_validation(client, src_root, monkeypatch, app_folder):
-    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,monai")
+    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation")
 
     response = client.post(f"/submit_run/{app_folder}")
 
@@ -49,7 +49,7 @@ def test_submit_run_input_validation(client, src_root, monkeypatch, app_folder):
 
 def test_submit_run_conflict_when_submission_in_progress(client, src_root, monkeypatch):
     (src_root / "numpy").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,monai")
+    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation")
     app_module._submission_in_progress = True
 
     response = client.post("/submit_run/numpy")
@@ -76,7 +76,7 @@ def test_submit_run_execution_failures(
     stderr,
 ):
     (src_root / "numpy").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,monai")
+    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation")
 
     if exception is not None:
         mock_flwr_run(exception=exception)
