@@ -46,20 +46,20 @@ resource "aws_ecs_cluster_capacity_providers" "flip" {
 
 resource "aws_cloudwatch_log_group" "ecs_flip_api" {
   name              = "/ecs/flip-api"
-  retention_in_days = 7
+  retention_in_days = 90
 }
 
 resource "aws_cloudwatch_log_group" "ecs_trust_api" {
   name              = "/ecs/trust-api"
-  retention_in_days = 7
+  retention_in_days = 90
 }
 
 resource "aws_cloudwatch_log_group" "ecs_imaging_api" {
   name              = "/ecs/imaging-api"
-  retention_in_days = 7
+  retention_in_days = 90
 }
 
 resource "aws_cloudwatch_log_group" "ecs_data_access_api" {
   name              = "/ecs/data-access-api"
-  retention_in_days = 7
+  retention_in_days = 90
 }
