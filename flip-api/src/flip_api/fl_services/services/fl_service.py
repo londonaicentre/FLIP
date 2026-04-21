@@ -87,7 +87,7 @@ def get_fl_backend_job_id_by_model_id(model_id: UUID, session: Session) -> str:
     return fl_backend_job_id
 
 
-def add_fl_backend_job_id(fl_job_id: UUID, fl_backend_job_id: str, session: Session):
+def add_fl_backend_job_id(fl_job_id: UUID, fl_backend_job_id: str, session: Session) -> None:
     """
     Add the FL backend job ID to the FLJob entry in the database
 
@@ -108,7 +108,7 @@ def add_fl_backend_job_id(fl_job_id: UUID, fl_backend_job_id: str, session: Sess
     session.commit()
 
 
-def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session):
+def submit_job(fl_job_id: UUID, endpoint: str, model_id: UUID, session: Session) -> None:
     """
     Submits a job to the FL API that is going to kick off training
 
@@ -278,7 +278,7 @@ def start_training(
     endpoint: str,
     bundle_urls: list[str],
     session: Session,
-):
+) -> None:
     """
     Start the training process for a given model by uploading the application and submitting the job.
     It first checks if the clients are available, then it bundles the application files,

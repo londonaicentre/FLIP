@@ -62,9 +62,17 @@ async def download_and_unzip_images(
         imaging_api.utils.exceptions.NotFoundError: If the project with the given ID is not found, if no experiments are
         found for the given accession ID, if no data is found at the download URL, or if the ZIP file is not found after
         download.
+        ValueError: If the net ID attempts path traversal outside the base images directory.
         Exception: If there is an error during any of the requests to XNAT, during the download process, or during the
         unzipping process.
     """
+    # Validate net_id doesn't escape base images directory
+    download_dir = os.path.join(BASE_IMAGES_DOWNLOAD_DIR, net_id)
+    base_images_download_dir_abs = os.path.realpath(BASE_IMAGES_DOWNLOAD_DIR)
+    download_dir_abs = os.path.realpath(download_dir)
+    if not download_dir_abs.startswith(base_images_download_dir_abs + os.sep):
+        raise ValueError(f"Path traversal detected in net ID: {net_id}")
+
     # Get project ID from central hub project ID
     try:
         project = get_project_from_central_hub_project_id(central_hub_project_id, headers)
@@ -100,9 +108,8 @@ async def download_and_unzip_images(
     )
     logger.info(f"Download URL: {download_url}")
 
-    # Define download and extraction paths
-    download_dir = os.path.join(BASE_IMAGES_DOWNLOAD_DIR, net_id)
-    zip_file_path = os.path.join(download_dir, f"{accession_id}-scans-{resource_type}.zip")
+    # Define download and extraction paths (net_id already validated above)
+    zip_file_path = os.path.join(download_dir_abs, f"{accession_id}-scans-{resource_type}.zip")
 
     # Download the ZIP file
     try:
@@ -116,7 +123,7 @@ async def download_and_unzip_images(
     logger.info(f"Downloaded file: {downloaded_file}")
 
     # Unzip file and rename the folder
-    extracted_folder = unzip_file(downloaded_file, download_dir, accession_id)
+    extracted_folder = unzip_file(downloaded_file, download_dir_abs, accession_id)
     logger.debug(f"Extracted folder: {extracted_folder}")
 
     # List contents of the extracted folder recursively
@@ -205,16 +212,29 @@ def unzip_file(zip_path: str, extract_dir: str, new_name: str):
 
     Returns:
         str: Path to the renamed directory.
+
+    Raises:
+        FileNotFoundError: If the ZIP file does not exist.
+        ValueError: If the ZIP file contains path traversal entries (zip slip).
     """
     if not os.path.exists(zip_path):
         raise FileNotFoundError(f"ZIP file not found: {zip_path}")
 
+    extract_dir_abs = os.path.realpath(extract_dir)
+
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        zip_ref.extractall(extract_dir)
+        members = zip_ref.namelist()
+
+        for member in members:
+            member_path = os.path.realpath(os.path.join(extract_dir_abs, member))
+            if not member_path.startswith(extract_dir_abs + os.sep):
+                raise ValueError(f"Attempted path traversal in ZIP entry: {member}")
+
+        zip_ref.extractall(extract_dir_abs)
 
     # Rename the extracted directory
-    extracted_dir = os.path.join(extract_dir, Path(zip_path).stem)
-    renamed_dir = os.path.join(extract_dir, new_name)
+    extracted_dir = os.path.join(extract_dir_abs, Path(zip_path).stem)
+    renamed_dir = os.path.join(extract_dir_abs, new_name)
 
     if os.path.exists(extracted_dir):
         os.rename(extracted_dir, renamed_dir)

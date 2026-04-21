@@ -9,7 +9,7 @@ import { defineConfig, loadEnv } from "vite";
 import Pages from "vite-plugin-pages";
 import progress from "vite-plugin-progress";
 import Inspector from "vite-plugin-vue-inspector";
-import Layouts from "vite-plugin-vue-layouts";
+import Layouts from "vite-plugin-vue-layouts-next";
 import svgLoader from "vite-svg-loader";
 
 // https://vitejs.dev/config/
@@ -79,12 +79,12 @@ export default defineConfig(({ mode }) => {
         build: {
             sourcemap: false,
             chunkSizeWarningLimit: 1024,
-            rollupOptions: {
+            rolldownOptions: {
                 output: {
-                    manualChunks: {
-                        "app": ["vue-router", "vue"],
-                        "aws": ["aws-amplify"],
-                        "misc": ["axios", "echarts", "vee-validate"]
+                    manualChunks: (id) => {
+                        if (id.includes("/node_modules/vue/") || id.includes("/node_modules/vue-router/")) return "app";
+                        if (id.includes("/node_modules/aws-amplify/")) return "aws";
+                        if (id.includes("/node_modules/axios/") || id.includes("/node_modules/echarts/") || id.includes("/node_modules/vee-validate/")) return "misc";
                     }
                 }
             }

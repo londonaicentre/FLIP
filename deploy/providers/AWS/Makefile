@@ -91,6 +91,7 @@ ECS_CLUSTER_NAME ?= flip-ecs-cluster
 # flip-ui still runs on the Central Hub EC2 via Docker Compose.
 ECS_SERVICES = flip-api-service trust-api-service imaging-api-service data-access-api-service
 
+export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
 CENTRALHUB_IMAGES = \
 	$(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG) \
 	$(DOCKER_REGISTRY)flip-api:$(DOCKER_TAG) \
@@ -198,6 +199,20 @@ destroy-cert: ## Destroy only the ACM certificate (use with caution - will break
 	@terraform destroy -target=aws_acm_certificate.flip -target=aws_acm_certificate_validation.flip -target=aws_route53_record.cert_validation
 	@echo "✅ Certificate destroyed! Now run 'make plan' and 'make apply' to remove DNS validation."
 
+.PHONY: plan-cloudfront-certs
+plan-cloudfront-certs: ## Plan the CloudFront viewer cert (us-east-1) and ALB API-origin cert
+	@echo "📋 Planning CloudFront + API-origin certificates..."
+	@terraform plan \
+		-target=aws_acm_certificate.flip_cloudfront \
+		-target=aws_acm_certificate.flip_api \
+		-out=plan-cloudfront-certs.tfplan
+
+.PHONY: apply-cloudfront-certs
+apply-cloudfront-certs: ## Apply the CloudFront viewer cert (us-east-1) and ALB API-origin cert
+	@echo "🔒 Applying CloudFront + API-origin certificates (Step 1/2 for CloudFront)..."
+	@terraform apply -target=aws_acm_certificate.flip_cloudfront -target=aws_acm_certificate.flip_api -auto-approve
+	@echo "✅ Certificates created. Run 'make plan' and 'make apply' to deploy DNS validation + CloudFront."
+
 .PHONY: refresh
 refresh: ## Refresh Terraform state to sync with actual AWS resources
 	@echo "🔄 Refreshing Terraform state..."
@@ -280,6 +295,33 @@ deploy-centralhub-ui: ssh-config ## Deploy flip-ui container to Central Hub EC2 
 	  $(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG)
 	@docker context use default
 	@echo "✅ flip-ui deployed!"
+
+.PHONY: deploy-ui
+deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalidate CloudFront
+	@echo "🖼️  Building flip-ui from working tree..."
+	@# Uses build:deploy (vite build only). The type-checked `npm run build` fails
+	@# on pre-existing TypeScript errors in the repo — tracked separately.
+	@cd ../../../flip-ui && npm ci && npm run build:deploy
+	@echo "🔧 Generating window.js from $(MAIN_ENV_FILE)..."
+	@cd ../../../flip-ui && sh scripts/generate-window-js.sh > dist/js/window.js
+	@echo "📦 Syncing static assets to s3://$(FLIP_UI_BUCKET_NAME)/ ..."
+	@# Hashed bundles are content-addressed and safe to cache forever.
+	@AWS_PROFILE=$(AWS_PROFILE) aws s3 sync ../../../flip-ui/dist/ s3://$(FLIP_UI_BUCKET_NAME)/ \
+		--delete \
+		--cache-control "public, max-age=31536000, immutable" \
+		--exclude "index.html" --exclude "js/window.js"
+	@# index.html and window.js must never be cached long — they reference the hashed bundles.
+	@AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/index.html s3://$(FLIP_UI_BUCKET_NAME)/index.html \
+		--cache-control "no-cache, no-store, must-revalidate" \
+		--content-type "text/html; charset=utf-8"
+	@AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$(FLIP_UI_BUCKET_NAME)/js/window.js \
+		--cache-control "no-cache, no-store, must-revalidate" \
+		--content-type "application/javascript; charset=utf-8"
+	@echo "🧹 Invalidating CloudFront..."
+	@AWS_PROFILE=$(AWS_PROFILE) aws cloudfront create-invalidation \
+		--distribution-id $$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw CloudfrontDistributionId) \
+		--paths "/*" >/dev/null
+	@echo "✅ deploy-ui complete."
 
 # Default SSH user for on-premises trust hosts (override with LOCAL_TRUST_SSH_USER=<user>)
 LOCAL_TRUST_SSH_USER ?= ubuntu

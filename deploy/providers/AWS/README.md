@@ -88,6 +88,12 @@ This command executes the following steps in order:
 10. **`deploy-trust`**: Deploy Trust services via Docker Compose
 11. **`status`**: Run comprehensive health checks
 
+### flip-ui on S3 + CloudFront
+
+The UI is served from S3 behind CloudFront at the canonical user-facing subdomain (`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront also forwards `/api/*` to the ALB, using a backend-only `api.<subdomain>` DNS name that only CloudFront uses — trusts and users never see it. CloudFront is the only supported UI-hosting path; there is no legacy EC2 UI container or ALB UI target group to fall back to.
+
+**Subsequent UI deploys**: just `make deploy-ui PROD=stag|true` — builds the UI from the working tree, regenerates `window.js`, syncs to S3, invalidates CloudFront. No Terraform involved.
+
 ### Manual Step-by-Step Deployment
 
 For debugging or selective deployment, run individual steps:
@@ -343,18 +349,17 @@ Review the output for failed checks and follow the specific troubleshooting step
 
 The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybrid setup (Central Hub on AWS + Trust on-premises). Trusts poll the Central Hub for tasks — all communication is outbound from the trust.
 
+1. **flip-ui (Frontend)**: Served as static assets from an S3 bucket behind CloudFront at the canonical subdomain. See the [flip-ui on S3 + CloudFront](#flip-ui-on-s3--cloudfront) section.
+
 1. **Central Hub ECS Cluster** (Fargate): Hosts the four core API services
    - flip-api (Backend API)
    - trust-api (Trust gateway)
    - imaging-api (DICOM image retrieval)
    - data-access-api (OMOP database queries)
-
-   **Central Hub EC2** (alongside ECS): Hosts services not yet migrated to ECS
-   - flip-ui (Frontend)
    - fl-api-net-1 (Federated Learning API for Network 1)
    - fl-server-net-1 (Federated Learning Server for Network 1)
 
-2. **Trust EC2** (cloud model): Hosts trust-related services (automatically provisioned)
+3. **Trust EC2** (cloud model): Hosts trust-related services (automatically provisioned)
    - trust-api (polls hub for tasks)
    - imaging-api
    - data-access-api
@@ -364,15 +369,16 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
    - Orthanc (DICOM server)
    - OMOP database
 
-3. **On-Premises Trust** (hybrid model, optional): Same trust services running on a local host
+4. **On-Premises Trust** (hybrid model, optional): Same trust services running on a local host
    - Provisioned via [`deploy/providers/local/`](../local/README.md)
    - Polls the Central Hub over the internet via HTTPS (outbound only)
 
 | Application Component |
 | ---------------------- |
-| **Central Hub Services** |
-| FLIP API ✅ |
+| **Central Hub (S3 + CloudFront)** |
 | FLIP UI ✅ |
+| **Central Hub (EC2)** |
+| FLIP API ✅ |
 | FL API ✅ |
 | FL Server ✅ |
 | **Trust Services** |
@@ -387,6 +393,10 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
 │    Internet      │
 └────────┬────────┘
          │
+    ┌────▼────────────────┐
+    │    CloudFront         │ (UI from S3; /api/* → ALB)
+    └────┬────────────────┘
+         │   /api/*
     ┌────▼────┐
     │   ALB    │ (HTTPS, ACM cert)
     └────┬────┘

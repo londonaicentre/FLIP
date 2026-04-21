@@ -103,7 +103,7 @@ services:
     container_name: flip-api
 
   flip-db:
-    image: postgres:13
+    image: postgres:17
     ports:
       - ${DB_PORT}:${DB_PORT}
     environment:

@@ -56,12 +56,8 @@ module "ec2_security_group" {
   name        = "ec2-security-group"
   vpc_id      = module.flip_vpc.vpc_id
   description = "Security group for FLIP Central Hub EC2 instance"
+  # UI is served from CloudFront/S3 — nothing on EC2 listens on var.UI_PORT (443).
   ingress_rules = [
-    {
-      port                     = var.UI_PORT
-      description              = "FLIP UI from ALB"
-      source_security_group_id = module.alb_security_group.security_group.id
-    },
     {
       port                     = var.API_PORT
       description              = "FLIP API from ALB"
@@ -241,7 +237,33 @@ resource "aws_instance" "ec2_instance" {
   }
 }
 
+# AWS-managed prefix list containing CloudFront origin-facing egress IPs.
+# Used to restrict ALB ingress to CloudFront only, so the ALB cannot be
+# reached directly from the internet — a WAF attached to the distribution
+# cannot be bypassed if CloudFront is the only path to the ALB.
+data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
 # Application Load Balancer
+#
+# Only HTTPS (443) ingress is configured. The security group denies everything
+# else from the internet by default:
+# - Port 80 (ALB_HTTP_PORT): CloudFront already redirects viewer HTTP to HTTPS
+#   at the edge (default_cache_behavior.viewer_protocol_policy=redirect-to-https)
+#   and never dials the origin over HTTP (origin_protocol_policy=https-only).
+#   The http-redirect listener still exists as a belt-and-braces fallback but
+#   is intentionally unreachable externally.
+# - API_PORT / FL_API_PORT: no external consumer. flip-api is reached via
+#   CloudFront → ALB /api/* rule on HTTPS:443; the FL API is docker-network-only
+#   (see check_status.py — health checks `docker exec` into the container, and
+#   NET_ENDPOINTS uses the internal docker hostname).
+#
+# The 443 rule references the AWS-managed `com.amazonaws.global.cloudfront.origin-facing`
+# prefix list. AWS counts an SG rule referencing a managed prefix list against
+# the per-SG rule quota using the list's `MaxEntries`, not its current size —
+# so a single reference consumes the majority of the default 60-rule quota.
+# That's why we can only afford one prefix-list-backed ingress rule here.
 module "alb_security_group" {
   source      = "./modules/secgroup"
   name        = "alb-security-group"
@@ -249,20 +271,9 @@ module "alb_security_group" {
   description = "Security group for FLIP ALB"
   ingress_rules = [
     {
-      port        = var.ALB_HTTPS_PORT
-      description = "HTTPS traffic"
-    },
-    {
-      port        = var.API_PORT
-      description = "API traffic"
-    },
-    {
-      port        = var.FL_API_PORT
-      description = "FL API traffic"
-    },
-    {
-      port        = var.ALB_HTTP_PORT
-      description = "HTTP traffic (redirect to HTTPS)"
+      port            = var.ALB_HTTPS_PORT
+      description     = "HTTPS traffic from CloudFront"
+      prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id]
     }
   ]
 }
@@ -276,12 +287,20 @@ module "alb" {
   enable_deletion_protection = false
 
   listeners = {
+    # HTTPS default action: return 404. CloudFront is the canonical front door
+    # for user traffic; anything reaching the ALB default action (e.g. direct
+    # ALB DNS probes) gets rejected here. The /api/* listener rule below
+    # forwards API requests to the API target group for both CloudFront's
+    # /api/* behaviour and any direct trust access.
     "https-listener" = {
       port            = var.ALB_HTTPS_PORT
       protocol        = "HTTPS"
       certificate_arn = aws_acm_certificate.flip.arn
-      forward = {
-        target_group_key = "ec2-instance-ui"
+      ssl_policy      = "ELBSecurityPolicy-TLS13-1-3-2021-06"
+      fixed_response = {
+        content_type = "text/plain"
+        message_body = "Not Found"
+        status_code  = "404"
       }
     },
     "http-redirect" = {
@@ -309,12 +328,8 @@ module "alb" {
     }
   }
 
+  # UI is served from S3 + CloudFront; no ec2-instance-ui target group.
   target_groups = {
-    ec2-instance-ui = {
-      port      = var.UI_PORT
-      protocol  = "HTTP"
-      target_id = aws_instance.ec2_instance.id
-    },
     ec2-instance-api = {
       port      = var.API_PORT
       protocol  = "HTTP"
@@ -406,10 +421,13 @@ resource "aws_route53_record" "alb" {
   name    = var.flip_alb_subdomain
   type    = "A"
 
+  # Canonical user-facing URL — aliased to the CloudFront distribution.
+  # (Resource is still named "alb" for TF-state backwards compatibility; a
+  # rename would recreate the record. The alias target is now CloudFront.)
   alias {
-    name                   = module.alb.dns_name
-    zone_id                = module.alb.zone_id
-    evaluate_target_health = true
+    name                   = aws_cloudfront_distribution.flip_ui.domain_name
+    zone_id                = aws_cloudfront_distribution.flip_ui.hosted_zone_id
+    evaluate_target_health = false
   }
 }
 

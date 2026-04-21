@@ -173,11 +173,20 @@ restart-no-trust:
 ci:
 	act --env-file .env.development
 ui:
+ifeq ($(strip $(PROD)),)
 	@echo "🚀 Starting UI..."
 	$(DOCKER_COMMAND) up --remove-orphans -d flip-ui
+else
+	@echo "ℹ️  flip-ui is served from S3 + CloudFront when PROD=$(PROD); no container to start."
+	@echo "    Run \`make -C deploy/providers/AWS deploy-ui PROD=$(PROD)\` to publish the bundle."
+endif
 ui-off:
+ifeq ($(strip $(PROD)),)
 	@echo "🛑 Stopping UI..."
 	$(DOCKER_COMMAND) down --remove-orphans flip-ui
+else
+	@echo "ℹ️  No flip-ui container runs when PROD=$(PROD) (S3 + CloudFront)."
+endif
 tests:
 	cd flip-ui && $(MAKE) unit_test && \
 	cd ../flip-api && $(MAKE) test

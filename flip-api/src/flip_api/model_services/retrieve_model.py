@@ -71,7 +71,7 @@ def retrieve_model(
     model_id: UUID = Path(..., title="Model ID"),
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> IModelResponse:
     """
     Retrieve a model by its ID. Returns the model details, including its status, associated files, and query.
 

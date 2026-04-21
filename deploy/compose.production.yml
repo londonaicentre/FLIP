@@ -16,20 +16,10 @@
 services:
   #################### CENTRAL HUB ####################
 
-  flip-ui:
-    image: ghcr.io/londonaicentre/flip-ui:${DOCKER_TAG}
-    ports:
-      - "${UI_PORT}:443"
-    environment:
-      - NODE_ENV=${NODE_ENV}
-      - VITE_LOCAL=${VITE_LOCAL}
-      - VITE_AWS_BASE_URL=${VITE_AWS_BASE_URL}
-      - VITE_AWS_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
-      - VITE_AWS_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
-      - VITE_AWS_REGION=${AWS_REGION}
-      - VITE_BLACKLISTED_MODEL_FILES=${VITE_BLACKLISTED_MODEL_FILES}
-    restart: unless-stopped
-    container_name: flip-ui
+  # flip-ui is NOT deployed as a container in stag/prod — it's served as a
+  # static bundle from S3 via CloudFront (see deploy/providers/AWS/cloudfront.tf
+  # and deploy/providers/AWS/Makefile's `deploy-ui` target). Dev still runs the
+  # Vite container (deploy/compose.development.yml).
 
   flip-api:
     image: ghcr.io/londonaicentre/flip-api:${DOCKER_TAG}

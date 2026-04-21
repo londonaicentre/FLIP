@@ -14,6 +14,10 @@
 node_modules
 /dist
 
+# Generated at dev-start / deploy-time by scripts/generate-window-js.sh —
+# never hand-edited. See public/js/window.js.example for the shape.
+/public/js/window.js
+
 
 # local env files
 .env.local

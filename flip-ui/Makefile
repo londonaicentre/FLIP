@@ -32,3 +32,5 @@ unit_test:
 	$(docker_command) run --rm --remove-orphans --name flip-ui-test flip-ui npm run test:unit:update
 shell:
 	$(docker_command) run --rm --remove-orphans --name flip-ui-shell flip-ui sh
+npm-install:
+	$(docker_command) run --rm --remove-orphans --name flip-ui-npm-install flip-ui npm install

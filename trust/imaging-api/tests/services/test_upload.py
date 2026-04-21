@@ -221,6 +221,22 @@ class TestUploadDataToXnat:
                     )
 
     @pytest.mark.asyncio
+    async def test_net_id_path_traversal_is_rejected(self, headers):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch("imaging_api.services.upload.BASE_IMAGES_DOWNLOAD_DIR", tmp_dir):
+                with pytest.raises(ValueError, match="Path traversal detected in net ID"):
+                    await upload_data_to_xnat(
+                        central_hub_project_id="hub-proj-1",
+                        accession_id="ACC123",
+                        net_id="../escape",
+                        scan_id="SCAN1",
+                        resource_id="NIFTI",
+                        files_relative_paths_to_upload=["scan.nii"],
+                        exist_ok=False,
+                        headers=headers,
+                    )
+
+    @pytest.mark.asyncio
     @patch("imaging_api.services.upload.upload_file_to_xnat")
     @patch("imaging_api.services.upload.create_xnat_resource")
     @patch("imaging_api.services.upload.create_xnat_scan")

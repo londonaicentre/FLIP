@@ -80,6 +80,11 @@ variable "AICENTRE_BUCKET_NAME" {
   type = string
 }
 
+variable "FLIP_UI_BUCKET_NAME" {
+  description = "S3 bucket name for flip-ui static assets served by CloudFront. Must be globally unique."
+  type        = string
+}
+
 variable "flip_user_pool_name" {
   description = "Cognito User Pool name for FLIP"
   type        = string

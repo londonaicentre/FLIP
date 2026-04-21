@@ -11,7 +11,7 @@
 #
 
 
-def to_pascal_case(snake_str):
+def to_pascal_case(snake_str: str) -> str:
     """
     Convert a snake_case string to PascalCase.
     This is needed for the UI to understand the permissions format.

@@ -17,7 +17,7 @@
 
 FLIP uses AWS RDS PostgreSQL with the following version support policy:
 
-- **Current Version**: PostgreSQL 15 (EOL: October 2027) ✓
+- **Current Version**: PostgreSQL 17 (EOL: November 2029) ✓
 - **Minimum Version**: PostgreSQL 15
 - **Deprecated**: PostgreSQL 13 (EOL: November 2025) ❌ EXPIRED
 
@@ -26,9 +26,10 @@ FLIP uses AWS RDS PostgreSQL with the following version support policy:
 | Version | EOL | Status |
 | ------- | --- | ------ |
 | PostgreSQL 13 | November 2025 | ❌ EXPIRED — do not use |
-| PostgreSQL 14 | October 2026 | ⚠️ Deprecating soon |
-| PostgreSQL 15 | October 2027 | ✓ Current |
-| PostgreSQL 16 | October 2028 | Available for next upgrade |
+| PostgreSQL 14 | October 2026 | ❌ EXPIRED — do not use |
+| PostgreSQL 15 | October 2027 | ⚠️ Deprecating soon |
+| PostgreSQL 16 | October 2028 | ✓ Supported |
+| PostgreSQL 17 | November 2029 | ✓ Current (Terraform default) |
 
 **Upgrade Policy**: Plan PostgreSQL major version upgrades with a 6-month lead time before EOL. AWS charges premium rates for EOL versions. To change the version, update the `postgres_version` variable in `deploy/providers/AWS/variables.tf`.
 

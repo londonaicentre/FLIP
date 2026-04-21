@@ -25,10 +25,14 @@ variable "description" {
 }
 
 variable "ingress_rules" {
+  # Exactly one source selector per rule: `source_security_group_id` OR
+  # `prefix_list_ids` OR neither (falls back to 0.0.0.0/0). Setting both is
+  # invalid AWS config — AWS rejects it, but this module does not validate it.
   type = list(object({
     port                     = number
     description              = string
     source_security_group_id = optional(string)
+    prefix_list_ids          = optional(list(string))
   }))
 }
 

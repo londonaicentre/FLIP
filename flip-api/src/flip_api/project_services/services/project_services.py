@@ -97,7 +97,7 @@ def create_project(
     Creates a new project and assigns user access.
 
     Args:
-        payload (IProjectDetails): The project details including name, description, and user IDs.
+        payload (ProjectDetails): The project details including name, description, and user IDs.
         current_user_id (UUID): The ID of the user creating the project.
         session (Session): The SQLModel session to use for database operations.
 
@@ -147,7 +147,7 @@ def create_project(
         )
 
 
-def delete_project(project_id: UUID, current_user_id: UUID, session: Session):
+def delete_project(project_id: UUID, current_user_id: UUID, session: Session) -> None:
     """
     Marks a project as deleted and handles related cleanup.
     This is a soft delete, meaning the project is marked as deleted but not removed from the database.

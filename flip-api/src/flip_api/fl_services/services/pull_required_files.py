@@ -23,7 +23,7 @@ REQUIRED_JOB_TYPES_FILE = Path(__file__).parent.parent.parent / "assets" / JOB_T
 
 
 # TODO Review: This is disruptive for development if the file on the s3 bucket is not in sync with the current codebase.
-def pull_required_files_json_to_assets():
+def pull_required_files_json_to_assets() -> None:
     """
     Pulls required_files.json from S3 and saves it to the local assets folder.
     """

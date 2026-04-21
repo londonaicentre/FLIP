@@ -65,5 +65,7 @@ async def upload_data(net_id: str, request_data: UploadDataRequest, headers: XNA
         return uploaded_files
     except NotFoundError as e:
         raise HTTPException(status_code=404, detail=f"Resource not found: {str(e)}")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid upload request: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to upload files: {str(e)}")

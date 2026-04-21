@@ -120,6 +120,10 @@ module "cognito" {
   researcher_email   = var.flip_cognito_researcher_email
   seed_user_password = var.ADMIN_USER_PASSWORD
   templates_dir      = "${path.module}/templates/cognito"
+  # The UI uses USER_PASSWORD_AUTH (not OAuth redirect), so callback_urls are
+  # hygiene only — keep the canonical subdomain + localhost for dev.
+  callback_urls = ["https://${var.flip_alb_subdomain}", "https://localhost:443"]
+  logout_urls   = ["https://${var.flip_alb_subdomain}", "https://localhost:443"]
 }
 
 # State migration: Cognito resources used to live at the root of this stack and

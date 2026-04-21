@@ -30,11 +30,15 @@ resource "aws_security_group" "security_group" {
 }
 
 resource "aws_security_group_rule" "ingress" {
-  for_each                 = { for rule in var.ingress_rules : rule.port => rule }
-  security_group_id        = aws_security_group.security_group.id
-  type                     = "ingress"
-  cidr_blocks              = each.value.source_security_group_id == null ? ["0.0.0.0/0"] : null
-  source_security_group_id = each.value.source_security_group_id != null ? each.value.source_security_group_id : null
+  for_each          = { for rule in var.ingress_rules : rule.port => rule }
+  security_group_id = aws_security_group.security_group.id
+  type              = "ingress"
+  # Precedence: explicit security group source > explicit prefix list source >
+  # open to the world. Only one of cidr_blocks / source_security_group_id /
+  # prefix_list_ids is set per rule — AWS rejects multi-source rules.
+  cidr_blocks              = each.value.source_security_group_id == null && each.value.prefix_list_ids == null ? ["0.0.0.0/0"] : null
+  source_security_group_id = each.value.source_security_group_id
+  prefix_list_ids          = each.value.prefix_list_ids
   protocol                 = "tcp"
   from_port                = each.value.port
   to_port                  = each.value.port
