@@ -27,7 +27,7 @@ RUN sed -i 's/.*flwr\[simulation\].*//' pyproject.toml \
   && python -m pip install -U --no-cache-dir .
 
 # Copy register-supernode-keys.sh
-COPY --chown=app:app register-supernode-keys.sh /scripts/register-supernode-keys.sh
+COPY --chown=app:app fl_services/register-supernode-keys.sh /scripts/register-supernode-keys.sh
 
 FROM base AS development
 
