@@ -60,3 +60,13 @@ variable "templates_dir" {
   type        = string
   description = "Path to the directory containing invite.html, password_reset_code.html and password_reset_link.html. Callers typically pass $${path.module}/templates/cognito."
 }
+
+variable "ses_sender_identity_arn" {
+  type        = string
+  description = "ARN of the verified SES identity that Cognito will send account emails from. Typically module.ses.sender_identity_arn."
+}
+
+variable "ses_sender_email" {
+  type        = string
+  description = "Bare email address embedded in the from_email_address header (\"FLIP <email>\"). Must match the SES identity referenced by ses_sender_identity_arn."
+}

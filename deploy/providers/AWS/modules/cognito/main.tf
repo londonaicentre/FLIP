@@ -55,6 +55,16 @@ resource "aws_cognito_user_pool" "flip_user_pool" {
     email_message_by_link = file("${var.templates_dir}/password_reset_link.html")
   }
 
+  # Route account emails (invite, password reset) through our verified SES
+  # identity instead of Cognito's shared COGNITO_DEFAULT sender. The default
+  # path is hard-capped at 50 sends/day and uses no-reply@verificationemail.com,
+  # which Gmail and most enterprise mail filters classify as spam.
+  email_configuration {
+    email_sending_account = "DEVELOPER"
+    source_arn            = var.ses_sender_identity_arn
+    from_email_address    = "FLIP <${var.ses_sender_email}>"
+  }
+
   deletion_protection = "ACTIVE"
   lifecycle {
     prevent_destroy = true

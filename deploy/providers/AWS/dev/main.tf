@@ -49,6 +49,10 @@ module "cognito" {
   templates_dir      = "${path.module}/../templates/cognito"
   callback_urls      = var.cognito_callback_urls
   logout_urls        = var.cognito_logout_urls
+  # Route Cognito account emails through our verified SES identity. The dev
+  # account's SES identity must be verified out-of-band before apply.
+  ses_sender_identity_arn = module.ses.sender_identity_arn
+  ses_sender_email        = var.SES_VERIFIED_EMAIL
 }
 
 module "ses" {

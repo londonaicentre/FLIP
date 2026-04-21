@@ -104,6 +104,9 @@ module "cognito" {
   # hygiene only — keep the canonical subdomain + localhost for dev.
   callback_urls = ["https://${var.flip_alb_subdomain}", "https://localhost:443"]
   logout_urls   = ["https://${var.flip_alb_subdomain}", "https://localhost:443"]
+  # Route Cognito account emails through our verified SES identity.
+  ses_sender_identity_arn = module.ses.sender_identity_arn
+  ses_sender_email        = var.SES_VERIFIED_EMAIL
 }
 
 # State migration: Cognito resources used to live at the root of this stack and
