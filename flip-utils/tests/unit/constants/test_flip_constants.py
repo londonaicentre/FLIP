@@ -75,7 +75,7 @@ class TestProdSettings:
         """Return a dictionary of valid prod environment variables."""
         return {
             "LOCAL_DEV": "false",
-            "CENTRAL_HUB_API_URL": "https://central-hub.example.com",
+            "FLIP_API_INTERNAL_URL": "https://central-hub.example.com",
             "DATA_ACCESS_API_URL": "https://data-access.example.com",
             "IMAGING_API_URL": "https://imaging.example.com",
             "IMAGES_DIR": "/data/images",
@@ -88,21 +88,21 @@ class TestProdSettings:
         with patch.dict(os.environ, self.get_valid_prod_env(), clear=True):
             settings = ProdSettings()
             assert settings.LOCAL_DEV is False
-            assert str(settings.CENTRAL_HUB_API_URL) == "https://central-hub.example.com/"
+            assert str(settings.FLIP_API_INTERNAL_URL) == "https://central-hub.example.com/"
             assert settings.NET_ID == "net-1"
 
-    def test_prod_settings_uses_default_central_hub_url(self):
-        """ProdSettings should use default for CENTRAL_HUB_API_URL if not provided."""
+    def test_prod_settings_uses_default_flip_api_internal_url(self):
+        """ProdSettings should use default for FLIP_API_INTERNAL_URL if not provided."""
         env = self.get_valid_prod_env()
-        del env["CENTRAL_HUB_API_URL"]
+        del env["FLIP_API_INTERNAL_URL"]
         with patch.dict(os.environ, env, clear=True):
             settings = ProdSettings()
-            assert str(settings.CENTRAL_HUB_API_URL) == "http://localhost:8000/"
+            assert str(settings.FLIP_API_INTERNAL_URL) == "http://localhost:8000/"
 
     def test_prod_settings_validates_http_urls(self):
         """ProdSettings should validate HTTP URLs."""
         env = self.get_valid_prod_env()
-        env["CENTRAL_HUB_API_URL"] = "not-a-valid-url"
+        env["FLIP_API_INTERNAL_URL"] = "not-a-valid-url"
         with patch.dict(os.environ, env, clear=True):
             with pytest.raises(ValidationError):
                 ProdSettings()
