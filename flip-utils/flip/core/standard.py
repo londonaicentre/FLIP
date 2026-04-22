@@ -236,7 +236,7 @@ class FLIPStandardProd(FLIPBase):
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, cant update model status")
 
-        endpoint = f"{FlipConstants.CENTRAL_HUB_API_URL}/model/{model_id}/status/{new_model_status.value}"
+        endpoint = f"{FlipConstants.FLIP_API_INTERNAL_URL}/model/{model_id}/status/{new_model_status.value}"
 
         self.logger.info(f"Attempting to update model status to [{new_model_status}]")
         try:
@@ -280,7 +280,7 @@ class FLIPStandardProd(FLIPBase):
             "result": value,
         }
 
-        endpoint = f"{FlipConstants.CENTRAL_HUB_API_URL}/model/{model_id}/metrics"
+        endpoint = f"{FlipConstants.FLIP_API_INTERNAL_URL}/model/{model_id}/metrics"
 
         self.logger.info(f"Attempting to send metrics raised by {client_name}...")
 
@@ -328,7 +328,7 @@ class FLIPStandardProd(FLIPBase):
             "log": formatted_exception,
         }
 
-        endpoint = f"{FlipConstants.CENTRAL_HUB_API_URL}/model/{model_id}/logs"
+        endpoint = f"{FlipConstants.FLIP_API_INTERNAL_URL}/model/{model_id}/logs"
 
         self.logger.info(f"Attempting to send the exception raised by {client_name} to the Central Hub...")
 
