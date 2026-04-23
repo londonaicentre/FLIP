@@ -25,29 +25,13 @@ resource "aws_ecs_task_definition" "flip_api" {
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_role.arn
 
-  # Ephemeral volume for /tmp; required when readonlyRootFilesystem is enabled.
-  volume {
-    name = "tmp"
-  }
-
   container_definitions = jsonencode([{
     name  = "flip-api"
     image = "ghcr.io/londonaicentre/flip-api:${var.docker_image_tag}"
 
-    # Prevent writes to the container root filesystem; limit blast radius of a
-    # container breakout. /tmp is mounted from ephemeral task storage above.
-    readonlyRootFilesystem = true
-
-    # Enable PID 1 init process for correct SIGTERM propagation and zombie reaping.
     linuxParameters = {
       initProcessEnabled = true
     }
-
-    mountPoints = [{
-      sourceVolume  = "tmp"
-      containerPath = "/tmp"
-      readOnly      = false
-    }]
 
     portMappings = [{
       containerPort = 8000
@@ -66,7 +50,11 @@ resource "aws_ecs_task_definition" "flip_api" {
       # flip-api reads the AWS_SECRET_NAME at startup to fetch AES key, trust endpoints, and CA cert
       { name = "AWS_SECRET_NAME", value = "FLIP_API" },
       { name = "TRUST_CA_BUNDLE", value = "/etc/ssl/trust/trust-ca.crt" },
-      { name = "FL_BACKEND", value = var.fl_backend }
+      { name = "FL_BACKEND", value = var.fl_backend },
+      { name = "TRUST_API_KEY_HEADER", value = "Authorization" },
+      { name = "INTERNAL_SERVICE_KEY_HEADER", value = "X-Internal-Service-Key" },
+      { name = "NET_ENDPOINTS", value = var.net_endpoints },
+      { name = "TRUST_NAMES", value = var.trust_names },
     ]
 
     # Parameter Store references – resolved by ECS agent before the container starts
@@ -159,25 +147,13 @@ resource "aws_ecs_task_definition" "trust_api" {
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_role.arn
 
-  volume {
-    name = "tmp"
-  }
-
   container_definitions = jsonencode([{
     name  = "trust-api"
     image = "ghcr.io/londonaicentre/trust-api:${var.docker_image_tag}"
 
-    readonlyRootFilesystem = true
-
     linuxParameters = {
       initProcessEnabled = true
     }
-
-    mountPoints = [{
-      sourceVolume  = "tmp"
-      containerPath = "/tmp"
-      readOnly      = false
-    }]
 
     portMappings = [{
       containerPort = 8000
@@ -187,7 +163,12 @@ resource "aws_ecs_task_definition" "trust_api" {
 
     environment = [
       { name = "ENV", value = "production" },
-      { name = "FL_BACKEND", value = var.fl_backend }
+      { name = "FL_BACKEND", value = var.fl_backend },
+      { name = "UV_NO_CACHE", value = "1" },
+      { name = "TRUST_API_KEY_HEADER", value = "Authorization" },
+      { name = "TRUST_NAME", value = var.trust_name },
+      { name = "TRUST_API_KEY_HASHES", value = var.trust_api_key_hashes },
+      { name = "INTERNAL_SERVICE_KEY_HASH", value = var.internal_service_key_hash },
     ]
 
     secrets = [
@@ -215,6 +196,10 @@ resource "aws_ecs_task_definition" "trust_api" {
       {
         name      = "AES_KEY_BASE64"
         valueFrom = "${module.flip_api_secret.secret_arn}:aes_key::"
+      },
+      {
+        name      = "TRUST_API_KEY"
+        valueFrom = "${module.flip_api_secret.secret_arn}:trust_api_key::"
       }
     ]
 
@@ -256,10 +241,6 @@ resource "aws_ecs_task_definition" "imaging_api" {
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_role.arn
 
-  volume {
-    name = "tmp"
-  }
-
   # imaging-api downloads DICOM files from XNAT to BASE_IMAGES_DOWNLOAD_DIR
   # before uploading to S3; this directory must be writable.
   volume {
@@ -273,18 +254,11 @@ resource "aws_ecs_task_definition" "imaging_api" {
     # Override the default CMD to use uvicorn directly (production-safe entrypoint)
     command = ["uv", "run", "python", "-m", "uvicorn", "imaging_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-    readonlyRootFilesystem = true
-
     linuxParameters = {
       initProcessEnabled = true
     }
 
     mountPoints = [
-      {
-        sourceVolume  = "tmp"
-        containerPath = "/tmp"
-        readOnly      = false
-      },
       {
         sourceVolume  = "images-data"
         containerPath = "/app/data/images"
@@ -300,7 +274,8 @@ resource "aws_ecs_task_definition" "imaging_api" {
 
     environment = [
       { name = "ENV", value = "production" },
-      { name = "BASE_IMAGES_DOWNLOAD_DIR", value = "/app/data/images" }
+      { name = "BASE_IMAGES_DOWNLOAD_DIR", value = "/app/data/images" },
+      { name = "UV_NO_CACHE", value = "1" }
     ]
 
     secrets = [
@@ -376,25 +351,13 @@ resource "aws_ecs_task_definition" "data_access_api" {
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_role.arn
 
-  volume {
-    name = "tmp"
-  }
-
   container_definitions = jsonencode([{
     name  = "data-access-api"
     image = "ghcr.io/londonaicentre/data-access-api:${var.docker_image_tag}"
 
-    readonlyRootFilesystem = true
-
     linuxParameters = {
       initProcessEnabled = true
     }
-
-    mountPoints = [{
-      sourceVolume  = "tmp"
-      containerPath = "/tmp"
-      readOnly      = false
-    }]
 
     portMappings = [{
       containerPort = 8000
