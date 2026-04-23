@@ -25,12 +25,13 @@ PREREQUISITES:
 WHAT IT CHECKS:
   ✓ AWS Resources (EC2 instances, RDS, S3, Secrets Manager)
   ✓ Network Connectivity (SSH via SSM, HTTP) for both Central Hub & Trust EC2
-  ✓ Application Endpoints (UI, API, FL API on Central Hub)
-  ✓ Trust Endpoints (Trust API, Imaging API, Data Access API on Trust EC2)
-  ✓ Docker Containers (Central Hub & Trust EC2)
-  ✓ Trust Services (FL clients, OMOP database, Trust APIs)
+  ✓ Application Endpoints (UI, API)
+  ✓ ECS Services (flip-api, trust-api, imaging-api, data-access-api, fl-api, fl-server)
+  ✓ Trust Endpoints (XNAT, Orthanc, Grafana on Trust EC2)
+  ✓ Docker Containers (Trust EC2; Central Hub FL services migrated to ECS)
+  ✓ Trust Services (FL clients, OMOP database)
   ✓ System Resources (disk, memory) on both EC2 instances
-  ✓ CloudWatch Logs for both Central Hub & Trust EC2
+  ✓ CloudWatch Logs (ECS services + EC2 instances)
 
 EXIT CODES:
   0 - All checks passed (warnings are acceptable)
@@ -570,6 +571,16 @@ def main(
     ]
     ecs_services = [s for s in ecs_services if s]
 
+    # Add FL API and FL Server services (keyed by network, output as JSON maps)
+    for output_name in ("EcsFlApiServiceNames", "EcsFlServerServiceNames"):
+        raw = get_terraform_output(output_name)
+        if raw:
+            try:
+                services_map = json.loads(raw)
+                ecs_services.extend(services_map.values())
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
     if ecs_cluster and ecs_services:
         success, svc_json = run_aws_command([
             "ecs", "describe-services",
@@ -787,11 +798,6 @@ def main(
     if not skip_endpoints:
         print_section("Application Endpoint Checks")
 
-        # Central Hub EC2 ports
-        UI_PORT = os.getenv("UI_PORT", "")
-        API_PORT = os.getenv("API_PORT", "")
-        FL_API_PORT = os.getenv("FL_API_PORT", "")
-
         # Check UI via CloudFront — accept 200 (deployed) or 403 (bucket empty, CloudFront up)
         check_http_endpoint(f"https://{alb_subdomain}", "FLIP UI (CloudFront)", [200, 403])
 
@@ -801,94 +807,16 @@ def main(
         # Check API docs endpoint via ALB
         check_http_endpoint(f"https://{alb_subdomain}/api/docs", "FLIP API Docs (ALB)", 200)
 
-        # Check Docker availability on Central Hub for FL API container checks.
-        # The FL services (fl-server, fl-api) run in Docker containers on the
-        # Central Hub EC2. If Docker is not available there (e.g. services were
-        # migrated to ECS), skip these checks gracefully.
-        fl_api_docker_available = False
-        fl_api_ssh_success, _ = run_ssh_command("", "flip", "docker info >/dev/null 2>&1", timeout=10)
-        if fl_api_ssh_success:
-            fl_api_docker_available = True
-
-        if not fl_api_docker_available:
-            print_status(
-                "WARN",
-                "Docker not available on Central Hub EC2 — "
-                "skipping FL API container endpoint checks (fl-server, fl-api)",
-            )
-        else:
-            # Check FL API health and docs endpoints via docker exec using urllib.request
-            # (curl is not present in the NVFlare-based FL API containers; iptables also blocks
-            # loopback→bridge traffic from the EC2 host, so we exec directly into
-            # the container instead of curling from the host; urllib.request is stdlib
-            # so it is always available regardless of installed packages)
-            for net_num in configured_net_numbers:
-                container = f"flip-fl-api-net-{net_num}"
-                command = (
-                    f"docker exec {container} python -c "
-                    '"import urllib.request; '
-                    "r=urllib.request.urlopen('http://localhost:8000/health', timeout=5); "
-                    'print(r.status)"'
-                )
-
-                success, output = run_ssh_command(
-                    ssh_key="",
-                    host="flip",
-                    command=(command),
-                )
-                if success and output.strip() == "200":
-                    print_status("PASS", f"FL API Net-{net_num} health endpoint is accessible (via docker exec)")
-                else:
-                    print_status("FAIL", f"FL API Net-{net_num} health endpoint not accessible (via docker exec): {output}")
-                    print(command)
-
-            for net_num in configured_net_numbers:
-                container = f"flip-fl-api-net-{net_num}"
-                success, output = run_ssh_command(
-                    ssh_key="",
-                    host="flip",
-                    command=(
-                        f"docker exec {container} python -c "
-                        f"\"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/docs', timeout=5); print(r.status)\""
-                    ),
-                )
-                if success and output.strip() == "200":
-                    print_status("PASS", f"FL API Net-{net_num} docs endpoint is accessible (via docker exec)")
-                else:
-                    print_status("FAIL", f"FL API Net-{net_num} docs endpoint not accessible (via docker exec): {output}")
-
-            # Check FL-api-net endpoints over ssh and inside flip-api running container.
-            # Use urllib.request (stdlib) for consistency — works even if httpx is absent.
-            for nets in configured_net_numbers:
-                success, message = run_ssh_command(
-                    ssh_key="",
-                    host="flip",
-                    command=(
-                        f"docker exec flip-api python -c "
-                        f"\"import urllib.request; r=urllib.request.urlopen('http://fl-api-net-{nets}:8000/check_client_status', timeout=5); import sys; sys.stdout.write(r.read().decode())\""
-                    ),
-                )
-                if not success or not message:
-                    print_status("WARN", f"FL API Net {nets} check_client_status not reachable from flip-api container")
-                    continue
-                # Extract JSON part from the message (list of client info)
-                start = message.find("[")
-                json_part = message[start:]
-                try:
-                    client_info = json.loads(json_part)
-                except json.JSONDecodeError:
-                    print_status(
-                        "FAIL",
-                        f"FL API Net {nets} clients returned invalid JSON from flip-api container:\n{message}",
-                    )
-                    continue
-                if success and client_info != []:
-                    print_status("PASS", f"FL API Net {nets} clients are reachable from flip-api container")
-                else:
-                    print_status(
-                        "FAIL",
-                        f"FL API Net {nets} clients are not reachable from flip-api container:\n{message}",
-                    )
+        # FL API and FL Server are now on ECS Fargate — their endpoint health is
+        # checked via ECS task status in the ECS Services section above.
+        # Application-level health checks (e.g., /health, /docs) require reaching
+        # the service discovery DNS (fl-api-net-<n>.flip.local:8000) from within
+        # the VPC, which is not possible from this external script.
+        print_status(
+            "INFO",
+            "FL API endpoints are on ECS (service discovery only, no ALB). "
+            "Health is monitored via ECS task status and CloudWatch logs.",
+        )
 
         # Trust EC2 endpoint checks
         if trust_id:
@@ -982,10 +910,8 @@ def main(
 
             if not docker_available_success:
                 print_status(
-                    "WARN",
-                    "Docker is not running on Central Hub EC2. "
-                    "FL services (fl-server, fl-api) are not deployed on this host — "
-                    "they may need to be deployed separately or migrated to ECS.",
+                    "INFO",
+                    "Docker is not running on Central Hub EC2 (FL services migrated to ECS Fargate).",
                 )
             else:
                 success, containers = run_ssh_command(
@@ -997,23 +923,12 @@ def main(
                 if not success or not containers:
                     print_status("FAIL", "Could not retrieve Docker container status")
                 else:
-                    # Only FL server and API containers remain on EC2.
-                    # flip-api is on ECS Fargate; flip-ui is on S3/CloudFront.
-                    expected_containers = []
-                    for net_num in configured_net_numbers:
-                        expected_containers.append(f"fl-server-net-{net_num}")
-                        expected_containers.append(f"flip-fl-api-net-{net_num}")
-
-                    for container in expected_containers:
-                        container_found = False
-                        for line in containers.split("\n"):
-                            if line.startswith(f"{container}:") and "Up" in line:
-                                status = line.split(":", 1)[1] if ":" in line else ""
-                                print_status("PASS", f"Container '{container}' is running ({status})")
-                                container_found = True
-                                break
-                        if not container_found:
-                            print_status("FAIL", f"Container '{container}' is not running")
+                    # FL services (fl-server, fl-api) are on ECS Fargate, not on EC2.
+                    # Only infrastructure containers (if any) remain on this host.
+                    running_count = len([l for l in containers.split("\n") if "Up" in l])
+                    total_count = len(containers.split("\n"))
+                    print_status("INFO", f"Central Hub Docker containers: {running_count}/{total_count} running")
+                    print_status("INFO", "FL services (fl-api, fl-server) are on ECS — checked in ECS Services section above")
 
                     # Check for any exited containers
                     success, exited = run_ssh_command(
@@ -1221,7 +1136,16 @@ def main(
     print_section("CloudWatch Logs")
 
     # ECS services log to /ecs/<service-name>
-    ecs_log_groups = ["/ecs/flip-api", "/ecs/trust-api", "/ecs/imaging-api", "/ecs/data-access-api"]
+    ecs_log_groups = [
+        "/ecs/flip-api",
+        "/ecs/trust-api",
+        "/ecs/imaging-api",
+        "/ecs/data-access-api",
+    ]
+    # Add FL ECS log groups (one per network)
+    for net_name in configured_net_numbers:
+        ecs_log_groups.append(f"/ecs/fl-api-net-{net_name}")
+        ecs_log_groups.append(f"/ecs/fl-server-net-{net_name}")
     print_status("INFO", "Checking ECS CloudWatch log groups...")
     for log_group in ecs_log_groups:
         success, output = run_aws_command(["logs", "describe-log-groups", "--log-group-name-prefix", log_group])
@@ -1230,7 +1154,8 @@ def main(
         else:
             print_status("WARN", f"ECS log group '{log_group}' not found (tasks may not have started yet)")
 
-    # Central Hub EC2 still runs FL server/API — check its log group
+    # Central Hub EC2 no longer runs FL services (migrated to ECS Fargate).
+    # Check its CloudWatch log group for any remaining infrastructure containers.
     print_status("INFO", "Checking Central Hub EC2 CloudWatch log groups...")
     log_group = "/aws/ec2/flip"
     success, output = run_aws_command(["logs", "describe-log-groups", "--log-group-name-prefix", log_group])
