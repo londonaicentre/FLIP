@@ -210,10 +210,16 @@ variable "docker_image_tag" {
   default     = "latest"
 }
 
+variable "fl_image_tag" {
+  description = "Docker image tag for FL services (fl-api, fl-server). Defaults to docker_image_tag if not set."
+  type        = string
+  default     = ""
+}
+
 variable "fl_backend" {
   description = "Federated learning backend to use. One of 'flower' or 'nvflare'."
   type        = string
-  default     = "flower"
+  default     = "nvflare"
 }
 
 variable "ecs_desired_count" {
@@ -232,6 +238,36 @@ variable "ecs_flip_api_memory" {
   description = "Memory (MiB) for the flip-api ECS task"
   type        = number
   default     = 2048
+}
+
+variable "ecs_fl_api_cpu" {
+  description = "CPU units for the fl-api ECS task (1024 = 1 vCPU)"
+  type        = number
+  default     = 1024
+}
+
+variable "ecs_fl_api_memory" {
+  description = "Memory (MiB) for the fl-api ECS task"
+  type        = number
+  default     = 2048
+}
+
+variable "ecs_fl_server_cpu" {
+  description = "CPU units for the fl-server ECS task (1024 = 1 vCPU)"
+  type        = number
+  default     = 1024
+}
+
+variable "ecs_fl_server_memory" {
+  description = "Memory (MiB) for the fl-server ECS task"
+  type        = number
+  default     = 2048
+}
+
+variable "efs_provisioned_throughput" {
+  description = "Provisioned throughput in MiB/s for the FL EFS filesystem (only used when efs_throughput_mode = 'provisioned')"
+  type        = number
+  default     = 10
 }
 
 variable "ecs_trust_api_cpu" {
@@ -383,9 +419,22 @@ variable "omop_postgres_db" {
 }
 
 variable "net_endpoints" {
-  description = "JSON string of network endpoints for FL backend (e.g., {\"net-1\":\"http://flip-fl-api-net-1:8000\"})"
+  description = "JSON string of network endpoints for FL backend (e.g., {\"net-1\":\"http://fl-api-net-1.flip.local:8000\"})"
   type        = string
-  default     = "{\"net-1\":\"http://flip-fl-api-net-1:8000\"}"
+  default     = "{\"net-1\":\"http://fl-api-net-1.flip.local:8000\"}"
+}
+
+variable "internal_service_key_header" {
+  description = "HTTP header name for the FLIP internal service key (fl-server to flip-api auth)"
+  type        = string
+  default     = "X-Internal-Service-Key"
+}
+
+variable "internal_service_key" {
+  description = "Plaintext internal service key for fl-server-to-hub authentication. Stored in FLIP_API Secrets Manager secret under key 'internal_service_key'."
+  type        = string
+  sensitive   = true
+  default     = ""
 }
 
 variable "trust_names" {

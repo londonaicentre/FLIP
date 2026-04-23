@@ -63,3 +63,26 @@ resource "aws_cloudwatch_log_group" "ecs_data_access_api" {
   name              = "/ecs/data-access-api"
   retention_in_days = 90
 }
+
+############################
+# FL Service Log Groups (per network)
+############################
+
+locals {
+  fl_networks      = jsondecode(var.net_endpoints)
+  fl_network_names = [for k, _ in local.fl_networks : k]
+}
+
+resource "aws_cloudwatch_log_group" "ecs_fl_api" {
+  for_each = local.fl_networks
+
+  name              = "/ecs/fl-api-${each.key}"
+  retention_in_days = 90
+}
+
+resource "aws_cloudwatch_log_group" "ecs_fl_server" {
+  for_each = local.fl_networks
+
+  name              = "/ecs/fl-server-${each.key}"
+  retention_in_days = 90
+}

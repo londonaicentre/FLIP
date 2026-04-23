@@ -68,11 +68,6 @@ module "ec2_security_group" {
       port                     = var.API_PORT
       description              = "FLIP API from ALB"
       source_security_group_id = module.alb_security_group.security_group.id
-    },
-    {
-      port                     = var.FL_API_PORT
-      description              = "FLIP FL API from ALB"
-      source_security_group_id = module.alb_security_group.security_group.id
     }
   ]
 }
@@ -88,17 +83,6 @@ module "trust_security_group" {
   description = "Security group for FLIP Trust EC2 instance (no inbound - access via SSM Session Manager and SSM port forwarding)"
 
   ingress_rules = []
-}
-
-# Only allow FL server traffic that arrives through the NLB, not direct client or VPC access.
-resource "aws_security_group_rule" "fl_server_ingress_from_nlb" {
-  type                     = "ingress"
-  from_port                = var.FL_SERVER_PORT
-  to_port                  = var.FL_SERVER_PORT
-  protocol                 = "tcp"
-  source_security_group_id = module.fl_server_nlb.security_group_id
-  security_group_id        = module.ec2_security_group.security_group.id
-  description              = "FL Server from NLB security group"
 }
 
 # RDS
@@ -167,6 +151,7 @@ module "flip_api_secret" {
     aes_key                   = var.AES_KEY_BASE64
     trust_api_key_hashes      = var.TRUST_API_KEY_HASHES
     internal_service_key_hash = var.INTERNAL_SERVICE_KEY_HASH
+    internal_service_key      = var.internal_service_key
 
     # Referenced by ECS task definitions via valueFrom with JSON key syntax.
     db_password = var.db_password
@@ -266,10 +251,10 @@ data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
 #   and never dials the origin over HTTP (origin_protocol_policy=https-only).
 #   The http-redirect listener still exists as a belt-and-braces fallback but
 #   is intentionally unreachable externally.
-# - API_PORT / FL_API_PORT: no external consumer. flip-api is reached via
-#   CloudFront → ALB /api/* rule on HTTPS:443; the FL API is docker-network-only
-#   (see check_status.py — health checks `docker exec` into the container, and
-#   NET_ENDPOINTS uses the internal docker hostname).
+# - API_PORT: flip-api is reached via CloudFront → ALB /api/* rule on HTTPS:443.
+# - FL_API_PORT: no longer exposed via ALB — FL API is ECS service-discovery only
+#   (fl-api-<network>.flip.local:8000, resolved by flip-api at runtime via
+#   NET_ENDPOINTS).
 #
 # The 443 rule references the AWS-managed `com.amazonaws.global.cloudfront.origin-facing`
 # prefix list. AWS counts an SG rule referencing a managed prefix list against
@@ -330,13 +315,6 @@ module "alb" {
       forward = {
         target_group_key = "ec2-instance-api"
       }
-    },
-    "fl-api-listener" = {
-      port     = var.FL_API_PORT
-      protocol = "HTTP"
-      forward = {
-        target_group_key = "ec2-instance-fl-api"
-      }
     }
   }
 
@@ -355,11 +333,6 @@ module "alb" {
         matcher  = "200"
       }
     },
-    ec2-instance-fl-api = {
-      port      = var.FL_API_PORT
-      protocol  = "HTTP"
-      target_id = aws_instance.ec2_instance.id
-    }
   }
 }
 
@@ -400,17 +373,19 @@ module "fl_server_nlb" {
       port     = var.FL_SERVER_PORT
       protocol = "TCP"
       forward = {
-        target_group_key = "ec2-instance-fl-server-tcp"
+        target_group_key = "ecs-fl-server-tcp"
       }
     }
   }
 
+  # IP target type so ECS Fargate tasks register dynamically via the
+  # load_balancer block in ecs_fl.tf — no static target_id needed.
   target_groups = {
-    ec2-instance-fl-server-tcp = {
-      port        = var.FL_SERVER_PORT
-      protocol    = "TCP"
-      target_type = "instance"
-      target_id   = aws_instance.ec2_instance.id
+    ecs-fl-server-tcp = {
+      port               = var.FL_SERVER_PORT
+      protocol           = "TCP"
+      target_type        = "ip"
+      create_attachment  = false
 
       health_check = {
         enabled             = true
@@ -677,6 +652,22 @@ resource "aws_security_group" "vpc_endpoints" {
   }
 
   ingress {
+    description     = "HTTPS from fl-api tasks"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_fl_api.id]
+  }
+
+  ingress {
+    description     = "HTTPS from fl-server tasks"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs_fl_server.id]
+  }
+
+  ingress {
     description = "HTTPS from EC2 instances in the VPC"
     from_port   = 443
     to_port     = 443
@@ -764,6 +755,16 @@ resource "aws_security_group_rule" "rds_ingress_from_ecs" {
   source_security_group_id = aws_security_group.ecs_flip_api.id
   security_group_id        = module.rds_security_group.security_group.id
   description              = "PostgreSQL from flip-api ECS tasks"
+}
+
+resource "aws_security_group_rule" "rds_ingress_from_ecs_fl_api" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.ecs_fl_api.id
+  security_group_id        = module.rds_security_group.security_group.id
+  description              = "PostgreSQL from fl-api ECS tasks"
 }
 
 ############################
@@ -878,6 +879,26 @@ output "EcsImagingApiServiceName" {
 output "EcsDataAccessApiServiceName" {
   description = "ECS service name for data-access-api"
   value       = aws_ecs_service.data_access_api.name
+}
+
+output "EcsFlApiServiceNames" {
+  description = "ECS service names for fl-api, keyed by network"
+  value       = { for k, svc in aws_ecs_service.fl_api : k => svc.name }
+}
+
+output "EcsFlServerServiceNames" {
+  description = "ECS service names for fl-server, keyed by network"
+  value       = { for k, svc in aws_ecs_service.fl_server : k => svc.name }
+}
+
+output "EcsFlServerTargetGroupArn" {
+  description = "ARN of the NLB target group for fl-server ECS tasks"
+  value       = module.fl_server_nlb.target_groups["ecs-fl-server-tcp"].arn
+}
+
+output "EfsFileSystemId" {
+  description = "EFS file system ID for FL data"
+  value       = aws_efs_file_system.fl_data.id
 }
 
 output "EcsFlipApiTargetGroupArn" {

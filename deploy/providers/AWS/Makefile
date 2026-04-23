@@ -83,6 +83,18 @@ export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
 export TF_VAR_TRUST_API_KEY_HASHES=${TRUST_API_KEY_HASHES}
 export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
 export TF_VAR_PRIVATE_API_KEY=${PRIVATE_API_KEY}
+# FL ECS / EFS
+export TF_VAR_fl_image_tag=${FL_IMAGE_TAG}
+# Note: number-typed TF variables cannot be set via environment variables
+# in Terraform v1.14+. These variables have defaults in variables.tf.
+# Override by editing variables.tf directly if needed.
+# export TF_VAR_ecs_fl_api_cpu=${FL_API_CPU:-1024}
+# export TF_VAR_ecs_fl_api_memory=${FL_API_MEMORY:-2048}
+# export TF_VAR_ecs_fl_server_cpu=${FL_SERVER_CPU:-1024}
+# export TF_VAR_ecs_fl_server_memory=${FL_SERVER_MEMORY:-2048}
+# export TF_VAR_efs_volume_size=${EFS_VOLUME_SIZE:-100}
+# export TF_VAR_efs_provisioned_throughput=${EFS_THROUGHPUT:-10}
+export TF_VAR_internal_service_key=${INTERNAL_SERVICE_KEY}
 # SES / email
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 # DNS subdomains (env-specific, override the variables.tf defaults)
@@ -98,16 +110,22 @@ export TF_VAR_fl_backend=${FL_BACKEND}
 # ECS cluster name — must match var.ecs_cluster_name in variables.tf
 ECS_CLUSTER_NAME ?= flip-ecs-cluster
 
-# All four API services run on ECS Fargate (Central Hub cluster).
+# Core API services on ECS Fargate (Central Hub cluster).
+# FL services are per-network (see fl-api-net-1-service, fl-server-net-1-service, etc.).
+# Add additional network services here when they are configured in net_endpoints.
 # flip-ui is hosted from S3 + CloudFront (see deploy-ui target).
-ECS_SERVICES = flip-api-service trust-api-service imaging-api-service data-access-api-service
+ECS_SERVICES = flip-api-service trust-api-service imaging-api-service data-access-api-service \
+	fl-api-net-1-service \
+	fl-server-net-1-service
 
 CENTRALHUB_IMAGES = \
 	$(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG) \
 	$(DOCKER_REGISTRY)flip-api:$(DOCKER_TAG) \
 	$(DOCKER_REGISTRY)trust-api:$(DOCKER_TAG) \
 	$(DOCKER_REGISTRY)imaging-api:$(DOCKER_TAG) \
-	$(DOCKER_REGISTRY)data-access-api:$(DOCKER_TAG)
+	$(DOCKER_REGISTRY)data-access-api:$(DOCKER_TAG) \
+	$(DOCKER_REGISTRY)flare-fl-api:$(FL_IMAGE_TAG) \
+	$(DOCKER_REGISTRY)flare-fl-server:$(FL_IMAGE_TAG)
 
 TRUST_IMAGES = \
 	$(DOCKER_REGISTRY)trust-api:$(DOCKER_TAG) \

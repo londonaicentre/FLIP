@@ -141,6 +141,14 @@ resource "aws_ssm_parameter" "private_api_key" {
   description = "Shared secret for service-to-service authentication between Central Hub and Trust"
 }
 
+resource "aws_ssm_parameter" "internal_service_key_header" {
+  name  = "/flip/api/internal_service_key_header"
+  type  = "String"
+  value = var.internal_service_key_header
+
+  description = "HTTP header name used for the FLIP internal service key (fl-server to flip-api auth)"
+}
+
 # --- Trust service URLs (used by flip-api and trust-api) ---
 # These are internal VPC URLs resolved once ECS service discovery or the
 # Trust EC2 IP is known. Values are placeholder-defaults; update via
