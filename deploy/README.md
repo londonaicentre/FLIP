@@ -197,7 +197,7 @@ FL clients relay metrics and exceptions to the fl-server, which forwards them to
 
 ## ECS Container Orchestration
 
-FLIP Central Hub services (`flip-api`, `trust-api`, `imaging-api`, `data-access-api`) run on AWS ECS Fargate. ECS replaces the previous Ansible/systemd-managed service deployment with declarative task definitions, rolling updates, CloudWatch-native logging, and automatic task health recovery.
+FLIP Central Hub API (`flip-api`) runs on AWS ECS Fargate. Trust services (`trust-api`, `imaging-api`, `data-access-api`) continue to run via Docker Compose on EC2 (on-premises or cloud) and are provisioned by Ansible — not Terraform. ECS replaces the previous Ansible/systemd-managed service deployment with declarative task definitions, rolling updates, CloudWatch-native logging, and automatic task health recovery.
 
 ### Architecture
 
@@ -206,10 +206,7 @@ Internet → ALB (HTTPS :443 / HTTP :8080)
                 │
                 ▼
         ECS Fargate Tasks (private subnets)
-          ├── flip-api    (port 8000, ALB-integrated)
-          ├── trust-api   (port 8000, internal)
-          ├── imaging-api (port 8000, internal)
-          └── data-access-api (port 8000, internal)
+          └── flip-api    (port 8000, ALB-integrated)
                 │
                 ▼
         RDS PostgreSQL (private subnets)
@@ -223,8 +220,8 @@ Tasks run in private subnets and reach the internet via the NAT gateway (for AWS
 |------|---------|
 | `providers/AWS/ecs.tf` | ECS cluster (Fargate), CloudWatch log groups |
 | `providers/AWS/iam.tf` | `ecsTaskExecutionRole` (image pull, secrets, logs) and `ecsTaskRole` (runtime AWS access) |
-| `providers/AWS/ecs_tasks.tf` | Task definitions for all 4 services |
-| `providers/AWS/ecs_services.tf` | ECS services + ALB target group and listener rules for `flip-api` |
+| `providers/AWS/ecs_tasks.tf` | Task definitions for `flip-api` |
+| `providers/AWS/ecs_services.tf` | ECS service + ALB target group and listener rules for `flip-api` |
 | `providers/AWS/parameter_store.tf` | SSM Parameter Store entries (`/flip/*`) for non-sensitive config |
 
 ### Required variables for ECS deployment
@@ -268,7 +265,7 @@ make apply
 # Monitor service health after deployment
 aws ecs describe-services \
   --cluster flip-ecs-cluster \
-  --services flip-api-service trust-api-service imaging-api-service data-access-api-service \
+  --services flip-api-service \
   --query 'services[*].{name:serviceName,running:runningCount,desired:desiredCount,status:status}'
 ```
 
@@ -277,9 +274,6 @@ aws ecs describe-services \
 ```bash
 # Re-deploy all services with the current task definition (picks up new image tag)
 aws ecs update-service --cluster flip-ecs-cluster --service flip-api-service --force-new-deployment
-aws ecs update-service --cluster flip-ecs-cluster --service trust-api-service --force-new-deployment
-aws ecs update-service --cluster flip-ecs-cluster --service imaging-api-service --force-new-deployment
-aws ecs update-service --cluster flip-ecs-cluster --service data-access-api-service --force-new-deployment
 ```
 
 To deploy a specific image tag, update `docker_image_tag` in your env file and run `make apply`.
