@@ -94,8 +94,8 @@ export TF_VAR_fl_backend=${FL_BACKEND}
 # ECS cluster name — must match var.ecs_cluster_name in variables.tf
 ECS_CLUSTER_NAME ?= flip-ecs-cluster
 
-# All four API services now run on ECS Fargate (Central Hub cluster).
-# flip-ui still runs on the Central Hub EC2 via Docker Compose.
+# All four API services run on ECS Fargate (Central Hub cluster).
+# flip-ui is hosted from S3 + CloudFront (see deploy-ui target).
 ECS_SERVICES = flip-api-service trust-api-service imaging-api-service data-access-api-service
 
 CENTRALHUB_IMAGES = \
@@ -256,7 +256,7 @@ ansible-init: ## Provision Trust EC2 with Docker, AWS CLI, and FL participant ki
 	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) -e fl_kit_date=$(FL_KIT_DATE) -e pgdata_archive=trust1_pgdata_20260106.tar.gz
 
 .PHONY: deploy-centralhub
-deploy-centralhub: ## Deploy Central Hub API services to ECS and flip-ui to EC2 via SSM
+deploy-centralhub: ## Deploy Central Hub API services to ECS and deploy flip-ui to S3 + CloudFront
 	@echo "🔍 Checking central hub images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(CENTRALHUB_IMAGES); do \
@@ -281,53 +281,48 @@ deploy-centralhub: ## Deploy Central Hub API services to ECS and flip-ui to EC2 
 	    --force-new-deployment \
 	    --output text --query 'service.serviceName' || exit 1; \
 	done
-	@echo "🐳 Deploying flip-ui to Central Hub EC2 via SSM..."
-	@$(MAKE) deploy-centralhub-ui
+	@echo "🖼️  Deploying flip-ui to S3 + CloudFront..."
+	@$(MAKE) deploy-ui
 	@echo "✅ Central Hub deployment complete!"
 
 .PHONY: deploy-centralhub-ui
-deploy-centralhub-ui: ssh-config ## Deploy flip-ui container to Central Hub EC2 (runs alongside ECS services)
-	@echo "👷 Create docker context if not exists, pointing to flip via SSM"
-	@docker context create flip --docker "host=ssh://flip" 2>/dev/null || echo "   Context 'flip' already exists"
-	@echo "🔄 Switching to flip Docker context..."
-	@docker context use flip
-	@echo "🧹 Removing old flip-ui container..."
-	@docker stop flip-ui 2>/dev/null || true
-	@docker rm flip-ui 2>/dev/null || true
-	@echo "🐳 Starting flip-ui..."
-	@docker pull $(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG)
-	@docker run -d --name flip-ui --restart unless-stopped \
-	  -p $(UI_PORT):$(UI_PORT) \
-	  $(DOCKER_REGISTRY)flip-ui:$(DOCKER_TAG)
-	@docker context use default
-	@echo "✅ flip-ui deployed!"
+deploy-centralhub-ui: ## Legacy alias; flip-ui is now deployed via CloudFront/S3
+	@echo "ℹ️  deploy-centralhub-ui is deprecated; using deploy-ui (S3 + CloudFront)."
+	@$(MAKE) deploy-ui
 
 .PHONY: deploy-ui
 deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalidate CloudFront
 	@echo "🖼️  Building flip-ui from working tree..."
-	@# Uses build:deploy (vite build only). The type-checked `npm run build` fails
-	@# on pre-existing TypeScript errors in the repo — tracked separately.
-	@cd ../../../flip-ui && npm ci && npm run build:deploy
+	@# Run Vite directly to avoid npm prebuild hooks writing into public/ during deploy.
+	@# The deploy path generates window.js into dist/js/window.js in the next step.
+	@cd ../../../flip-ui && npm ci && npx vite build
 	@echo "🔧 Generating window.js from $(MAIN_ENV_FILE)..."
 	@cd ../../../flip-ui && sh scripts/generate-window-js.sh > dist/js/window.js
-	@echo "📦 Syncing static assets to s3://$(FLIP_UI_BUCKET_NAME)/ ..."
-	@# Hashed bundles are content-addressed and safe to cache forever.
-	@AWS_PROFILE=$(AWS_PROFILE) aws s3 sync ../../../flip-ui/dist/ s3://$(FLIP_UI_BUCKET_NAME)/ \
+	@ui_bucket="$(FLIP_UI_BUCKET_NAME)"; \
+	if [ -z "$$ui_bucket" ]; then \
+		ui_bucket=$$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw FlipUiBucketName 2>/dev/null || true); \
+	fi; \
+	if [ -z "$$ui_bucket" ]; then \
+		echo "❌ FLIP_UI_BUCKET_NAME is empty and Terraform output FlipUiBucketName is unavailable."; \
+		echo "   Run 'make update-env' or set FLIP_UI_BUCKET_NAME in $(MAIN_ENV_FILE)."; \
+		exit 1; \
+	fi; \
+	echo "📦 Syncing static assets to s3://$$ui_bucket/ ..."; \
+	AWS_PROFILE=$(AWS_PROFILE) aws s3 sync ../../../flip-ui/dist/ s3://$$ui_bucket/ \
 		--delete \
 		--cache-control "public, max-age=31536000, immutable" \
-		--exclude "index.html" --exclude "js/window.js"
-	@# index.html and window.js must never be cached long — they reference the hashed bundles.
-	@AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/index.html s3://$(FLIP_UI_BUCKET_NAME)/index.html \
+		--exclude "index.html" --exclude "js/window.js"; \
+	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/index.html s3://$$ui_bucket/index.html \
 		--cache-control "no-cache, no-store, must-revalidate" \
-		--content-type "text/html; charset=utf-8"
-	@AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$(FLIP_UI_BUCKET_NAME)/js/window.js \
+		--content-type "text/html; charset=utf-8"; \
+	AWS_PROFILE=$(AWS_PROFILE) aws s3 cp ../../../flip-ui/dist/js/window.js s3://$$ui_bucket/js/window.js \
 		--cache-control "no-cache, no-store, must-revalidate" \
-		--content-type "application/javascript; charset=utf-8"
-	@echo "🧹 Invalidating CloudFront..."
-	@AWS_PROFILE=$(AWS_PROFILE) aws cloudfront create-invalidation \
+		--content-type "application/javascript; charset=utf-8"; \
+	echo "🧹 Invalidating CloudFront..."; \
+	AWS_PROFILE=$(AWS_PROFILE) aws cloudfront create-invalidation \
 		--distribution-id $$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw CloudfrontDistributionId) \
-		--paths "/*" >/dev/null
-	@echo "✅ deploy-ui complete."
+		--paths "/*" >/dev/null; \
+	echo "✅ deploy-ui complete."
 
 # Default SSH user for on-premises trust hosts (override with LOCAL_TRUST_SSH_USER=<user>)
 LOCAL_TRUST_SSH_USER ?= ubuntu
@@ -513,14 +508,14 @@ generate-internal-service-key: ## Generate a new internal service key (fl-server
 	@$(MAKE) -C ../../../flip-api generate-internal-service-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))
 
 .PHONY: full-deploy
-full-deploy: ## Full AWS deployment: provision infrastructure, deploy Central Hub (ECS) + Trust (EC2)
+full-deploy: ## Full AWS deployment: provision infrastructure, deploy Central Hub (ECS+CloudFront UI) + Trust (EC2)
 	## Step order:
 	## 1. login + init + import: auth, Terraform init, import any pre-existing resources
 	## 2. generate-keys + generate-internal-service-key: generate all API keys
 	## 3. plan+apply: provision all AWS infrastructure (ECS, RDS, VPC, secrets, Trust EC2)
 	## 4. update-env: refresh .env with Terraform outputs (DB endpoint, Cognito IDs, etc.)
 	## 5. ssh-config + ansible-init: configure SSH and provision Trust EC2 with Docker + FL kit
-	## 6. deploy-centralhub (ECS force-redeploy + flip-ui) + deploy-trust + status: deploy and verify
+	## 6. deploy-centralhub (ECS force-redeploy + CloudFront UI) + deploy-trust + status: deploy and verify
 full-deploy: github-login aws-login init import-persistent generate-keys generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub deploy-trust status
 
 .PHONY: full-deploy-stag
@@ -531,7 +526,7 @@ full-deploy-stag: ## Full staging deployment with on-prem local trust (requires 
 	## 3. plan+apply (PROD=stag): provision all AWS infrastructure (ECS, RDS, VPC, ALB, Trust EC2, secrets)
 	## 4. update-env: refresh .env.stag with Terraform outputs (DB endpoint, Cognito IDs, etc.)
 	## 5. ssh-config + ansible-init: configure SSH, provision Trust EC2 with Docker + FL kit
-	## 6. deploy-centralhub (ECS + flip-ui) + deploy-trust: deploy all services
+	## 6. deploy-centralhub (ECS + CloudFront UI) + deploy-trust: deploy all services
 	## 7. add-local-trust LOCAL_TRUST_IP=<ip>: provision local trust host,
 	##    deploy local $(LOCAL_TRUST_NAME) FL kit, and update AWS security groups
 	## 8. status: verify all services healthy
