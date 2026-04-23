@@ -278,7 +278,7 @@ variable "terraform_execution_role_arn" {
 variable "cloudfront_log_delivery_canonical_user_id" {
   description = "Canonical user ID for CloudFront log delivery to S3 (varies by region). See https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/AccessLogs.html"
   type        = string
-    default     = "c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0" # pragma: allowlist secret
+  default     = "c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0" # pragma: allowlist secret
 }
 
 ############################
