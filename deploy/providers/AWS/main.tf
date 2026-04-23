@@ -28,7 +28,7 @@ provider "aws" {
   # Assume a role that has the necessary permissions for Terraform
   # The SSO role lacks ssm:DescribeParameters, so we assume this role
   assume_role {
-    role_arn = "arn:aws:iam::080369786334:role/TerraformExecutionRole"
+    role_arn = var.terraform_execution_role_arn
   }
 }
 
@@ -382,10 +382,10 @@ module "fl_server_nlb" {
   # load_balancer block in ecs_fl.tf — no static target_id needed.
   target_groups = {
     ecs-fl-server-tcp = {
-      port               = var.FL_SERVER_PORT
-      protocol           = "TCP"
-      target_type        = "ip"
-      create_attachment  = false
+      port              = var.FL_SERVER_PORT
+      protocol          = "TCP"
+      target_type       = "ip"
+      create_attachment = false
 
       health_check = {
         enabled             = true
@@ -451,16 +451,10 @@ resource "aws_lb_listener_rule" "api_routing" {
 # ECS Task Security Groups
 #
 # One security group per service, so ingress is restricted to the exact
-# upstream caller for each service. This limits lateral movement: a
-# compromised imaging-api or data-access-api container cannot receive
-# connections from the internet (or even from ALB), because only trust-api
-# is permitted to reach those services on port 8000.
+# upstream caller for each service.
 #
 # Call graph:
 #   Internet → CloudFront → ALB → flip-api (port 8000)
-#   flip-api → trust-api (port 8000, VPC-internal)
-#   trust-api → imaging-api (port 8000, VPC-internal)
-#   trust-api → data-access-api (port 8000, VPC-internal)
 ############################
 
 resource "aws_security_group" "ecs_flip_api" {
@@ -497,94 +491,8 @@ resource "aws_security_group" "ecs_flip_api" {
   }
 }
 
-resource "aws_security_group" "ecs_trust_api" {
-  name        = "ecs-trust-api-sg"
-  vpc_id      = module.flip_vpc.vpc_id
-  description = "trust-api ECS tasks: ingress from flip-api on port 8000"
-
-  ingress {
-    description     = "trust-api from flip-api"
-    from_port       = 8000
-    to_port         = 8000
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ecs_flip_api.id]
-  }
-
-  egress {
-    description = "HTTPS to AWS services and external endpoints via NAT"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "ecs-trust-api-sg"
-  }
-}
-
-resource "aws_security_group" "ecs_imaging_api" {
-  name        = "ecs-imaging-api-sg"
-  vpc_id      = module.flip_vpc.vpc_id
-  description = "imaging-api ECS tasks: ingress from trust-api on port 8000"
-
-  ingress {
-    description     = "imaging-api from trust-api"
-    from_port       = 8000
-    to_port         = 8000
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ecs_trust_api.id]
-  }
-
-  # imaging-api downloads DICOM files from XNAT (external to VPC) over HTTPS,
-  # and also calls AWS services (Secrets Manager, CloudWatch Logs, ECR).
-  egress {
-    description = "HTTPS to AWS services and XNAT via NAT"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "ecs-imaging-api-sg"
-  }
-}
-
-resource "aws_security_group" "ecs_data_access_api" {
-  name        = "ecs-data-access-api-sg"
-  vpc_id      = module.flip_vpc.vpc_id
-  description = "data-access-api ECS tasks: ingress from trust-api on port 8000"
-
-  ingress {
-    description     = "data-access-api from trust-api"
-    from_port       = 8000
-    to_port         = 8000
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ecs_trust_api.id]
-  }
-
-  egress {
-    description = "HTTPS to AWS services via NAT"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  # data-access-api queries the OMOP PostgreSQL database within the VPC.
-  egress {
-    description = "PostgreSQL to OMOP database"
-    from_port   = 5432
-    to_port     = 5432
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
-  }
-
-  tags = {
-    Name = "ecs-data-access-api-sg"
-  }
-}
+# Trust services (trust-api, imaging-api, data-access-api) run on EC2
+# and do not have ECS security groups in this Terraform module.
 
 ############################
 # VPC Endpoints
@@ -625,30 +533,6 @@ resource "aws_security_group" "vpc_endpoints" {
     to_port         = 443
     protocol        = "tcp"
     security_groups = [aws_security_group.ecs_flip_api.id]
-  }
-
-  ingress {
-    description     = "HTTPS from trust-api tasks"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ecs_trust_api.id]
-  }
-
-  ingress {
-    description     = "HTTPS from imaging-api tasks"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ecs_imaging_api.id]
-  }
-
-  ingress {
-    description     = "HTTPS from data-access-api tasks"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.ecs_data_access_api.id]
   }
 
   ingress {
@@ -864,21 +748,6 @@ output "EcsClusterArn" {
 output "EcsFlipApiServiceName" {
   description = "ECS service name for flip-api"
   value       = aws_ecs_service.flip_api.name
-}
-
-output "EcsTrustApiServiceName" {
-  description = "ECS service name for trust-api"
-  value       = aws_ecs_service.trust_api.name
-}
-
-output "EcsImagingApiServiceName" {
-  description = "ECS service name for imaging-api"
-  value       = aws_ecs_service.imaging_api.name
-}
-
-output "EcsDataAccessApiServiceName" {
-  description = "ECS service name for data-access-api"
-  value       = aws_ecs_service.data_access_api.name
 }
 
 output "EcsFlApiServiceNames" {

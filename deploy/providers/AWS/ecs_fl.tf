@@ -317,8 +317,8 @@ resource "aws_ecs_task_definition" "fl_api" {
 
   container_definitions = jsonencode([
     {
-      name  = "fl-api-${each.key}"
-      image = "ghcr.io/londonaicentre/flare-fl-api:${local.fl_image_tag}"
+      name      = "fl-api-${each.key}"
+      image     = "ghcr.io/londonaicentre/flare-fl-api:${local.fl_image_tag}"
       essential = true
 
       linuxParameters = {
@@ -342,23 +342,23 @@ resource "aws_ecs_task_definition" "fl_api" {
       ]
 
       environment = [
-        { name = "FL_BACKEND",           value = var.fl_backend },
-        { name = "FL_ADMIN_DIRECTORY",   value = "/app/admin" },
+        { name = "FL_BACKEND", value = var.fl_backend },
+        { name = "FL_ADMIN_DIRECTORY", value = "/app/admin" },
         { name = "INTERNAL_SERVICE_KEY_HEADER", value = "X-Internal-Service-Key" },
       ]
 
       secrets = [
-        { name = "DB_HOST",        valueFrom = aws_ssm_parameter.db_host.arn },
-        { name = "DB_PORT",        valueFrom = aws_ssm_parameter.db_port.arn },
-        { name = "POSTGRES_USER",  valueFrom = aws_ssm_parameter.db_user.arn },
-        { name = "POSTGRES_DB",    valueFrom = aws_ssm_parameter.db_name.arn },
+        { name = "DB_HOST", valueFrom = aws_ssm_parameter.db_host.arn },
+        { name = "DB_PORT", valueFrom = aws_ssm_parameter.db_port.arn },
+        { name = "POSTGRES_USER", valueFrom = aws_ssm_parameter.db_user.arn },
+        { name = "POSTGRES_DB", valueFrom = aws_ssm_parameter.db_name.arn },
         { name = "POSTGRES_PASSWORD", valueFrom = "${module.flip_api_secret.secret_arn}:db_password::" },
         { name = "PRIVATE_API_KEY_HEADER", valueFrom = aws_ssm_parameter.private_api_key_header.arn },
         { name = "PRIVATE_API_KEY", valueFrom = aws_ssm_parameter.private_api_key.arn },
         { name = "CENTRAL_HUB_API_URL", valueFrom = aws_ssm_parameter.central_hub_api_url.arn },
-        { name = "AES_KEY_BASE64",  valueFrom = "${module.flip_api_secret.secret_arn}:aes_key::" },
-        { name = "TRUST_API_KEY_HASHES",  valueFrom = "${module.flip_api_secret.secret_arn}:trust_api_key_hashes::" },
-        { name = "INTERNAL_SERVICE_KEY",  valueFrom = "${module.flip_api_secret.secret_arn}:internal_service_key::" },
+        { name = "AES_KEY_BASE64", valueFrom = "${module.flip_api_secret.secret_arn}:aes_key::" },
+        { name = "TRUST_API_KEY_HASHES", valueFrom = "${module.flip_api_secret.secret_arn}:trust_api_key_hashes::" },
+        { name = "INTERNAL_SERVICE_KEY", valueFrom = "${module.flip_api_secret.secret_arn}:internal_service_key::" },
       ]
 
       logConfiguration = {
@@ -442,8 +442,8 @@ resource "aws_ecs_task_definition" "fl_server" {
 
   container_definitions = jsonencode([
     {
-      name  = "fl-server-${each.key}"
-      image = "ghcr.io/londonaicentre/flare-fl-server:${local.fl_image_tag}"
+      name      = "fl-server-${each.key}"
+      image     = "ghcr.io/londonaicentre/flare-fl-server:${local.fl_image_tag}"
       essential = true
 
       linuxParameters = {
@@ -477,27 +477,27 @@ resource "aws_ecs_task_definition" "fl_server" {
       ]
 
       environment = [
-        { name = "FL_BACKEND",           value = var.fl_backend },
-        { name = "FL_SERVER_PORT",       value = tostring(var.FL_SERVER_PORT) },
-        { name = "FILE_STORE_PATH",      value = "/app/data" },
-        { name = "ADMIN_DIRECTORY",      value = "/app/admin" },
-        { name = "STARTUP_FILE_DIR",     value = "/app/startup" },
-        { name = "IMAGES_DIR",           value = "/app/data/images" },
+        { name = "FL_BACKEND", value = var.fl_backend },
+        { name = "FL_SERVER_PORT", value = tostring(var.FL_SERVER_PORT) },
+        { name = "FILE_STORE_PATH", value = "/app/data" },
+        { name = "ADMIN_DIRECTORY", value = "/app/admin" },
+        { name = "STARTUP_FILE_DIR", value = "/app/startup" },
+        { name = "IMAGES_DIR", value = "/app/data/images" },
         { name = "INTERNAL_SERVICE_KEY_HEADER", value = "X-Internal-Service-Key" },
       ]
 
       secrets = [
-        { name = "DB_HOST",        valueFrom = aws_ssm_parameter.db_host.arn },
-        { name = "DB_PORT",        valueFrom = aws_ssm_parameter.db_port.arn },
-        { name = "POSTGRES_USER",  valueFrom = aws_ssm_parameter.db_user.arn },
-        { name = "POSTGRES_DB",    valueFrom = aws_ssm_parameter.db_name.arn },
+        { name = "DB_HOST", valueFrom = aws_ssm_parameter.db_host.arn },
+        { name = "DB_PORT", valueFrom = aws_ssm_parameter.db_port.arn },
+        { name = "POSTGRES_USER", valueFrom = aws_ssm_parameter.db_user.arn },
+        { name = "POSTGRES_DB", valueFrom = aws_ssm_parameter.db_name.arn },
         { name = "POSTGRES_PASSWORD", valueFrom = "${module.flip_api_secret.secret_arn}:db_password::" },
         { name = "PRIVATE_API_KEY_HEADER", valueFrom = aws_ssm_parameter.private_api_key_header.arn },
         { name = "PRIVATE_API_KEY", valueFrom = aws_ssm_parameter.private_api_key.arn },
         { name = "CENTRAL_HUB_API_URL", valueFrom = aws_ssm_parameter.central_hub_api_url.arn },
-        { name = "AES_KEY_BASE64",  valueFrom = "${module.flip_api_secret.secret_arn}:aes_key::" },
-        { name = "TRUST_API_KEY_HASHES",  valueFrom = "${module.flip_api_secret.secret_arn}:trust_api_key_hashes::" },
-        { name = "INTERNAL_SERVICE_KEY",  valueFrom = "${module.flip_api_secret.secret_arn}:internal_service_key::" },
+        { name = "AES_KEY_BASE64", valueFrom = "${module.flip_api_secret.secret_arn}:aes_key::" },
+        { name = "TRUST_API_KEY_HASHES", valueFrom = "${module.flip_api_secret.secret_arn}:trust_api_key_hashes::" },
+        { name = "INTERNAL_SERVICE_KEY", valueFrom = "${module.flip_api_secret.secret_arn}:internal_service_key::" },
       ]
 
       logConfiguration = {
@@ -549,8 +549,8 @@ resource "aws_ecs_service" "fl_api" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets         = module.flip_vpc.private_subnets
-    security_groups = [aws_security_group.ecs_fl_api.id]
+    subnets          = module.flip_vpc.private_subnets
+    security_groups  = [aws_security_group.ecs_fl_api.id]
     assign_public_ip = false
   }
 
@@ -580,8 +580,8 @@ resource "aws_ecs_service" "fl_server" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets         = module.flip_vpc.private_subnets
-    security_groups = [aws_security_group.ecs_fl_server.id]
+    subnets          = module.flip_vpc.private_subnets
+    security_groups  = [aws_security_group.ecs_fl_server.id]
     assign_public_ip = false
   }
 

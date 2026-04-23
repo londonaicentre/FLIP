@@ -157,12 +157,7 @@ resource "aws_iam_role_policy" "ecs_task_role_scoped" {
           "logs:PutLogEvents"
         ]
         Resource = concat(
-          [
-            "${aws_cloudwatch_log_group.ecs_flip_api.arn}:*",
-            "${aws_cloudwatch_log_group.ecs_trust_api.arn}:*",
-            "${aws_cloudwatch_log_group.ecs_imaging_api.arn}:*",
-            "${aws_cloudwatch_log_group.ecs_data_access_api.arn}:*",
-          ],
+          ["${aws_cloudwatch_log_group.ecs_flip_api.arn}:*"],
           [for lg in aws_cloudwatch_log_group.ecs_fl_api : "${lg.arn}:*"],
           [for lg in aws_cloudwatch_log_group.ecs_fl_server : "${lg.arn}:*"]
         )

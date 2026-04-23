@@ -53,99 +53,10 @@ resource "aws_ecs_service" "flip_api" {
 }
 
 ############################
-# trust-api ECS Service
-# Internal service; the Central Hub reaches it via ECS service discovery or
-# the private IP assigned by awsvpc. No ALB integration for now — trust-api
-# runs alongside nginx-tls (TLS termination) in the Trust EC2 environment
-# and will be ALB-integrated in a follow-up migration phase.
+# Trust services are not deployed on ECS.
+# trust-api, imaging-api, and data-access-api run via Docker Compose on
+# EC2 (or on-premises) and are provisioned by Ansible — not Terraform.
 ############################
-
-resource "aws_ecs_service" "trust_api" {
-  name            = "trust-api-service"
-  cluster         = aws_ecs_cluster.flip.id
-  task_definition = aws_ecs_task_definition.trust_api.arn
-  desired_count   = var.ecs_desired_count
-  launch_type     = "FARGATE"
-
-  network_configuration {
-    subnets          = module.flip_vpc.private_subnets
-    security_groups  = [aws_security_group.ecs_trust_api.id]
-    assign_public_ip = false
-  }
-
-  deployment_minimum_healthy_percent = 100
-  deployment_maximum_percent         = 200
-
-  lifecycle {
-    ignore_changes = [desired_count]
-  }
-
-  tags = {
-    Service = "trust-api"
-  }
-}
-
-############################
-# imaging-api ECS Service
-# Internal service; called by trust-api within the VPC.
-# No direct ALB or public endpoint.
-############################
-
-resource "aws_ecs_service" "imaging_api" {
-  name            = "imaging-api-service"
-  cluster         = aws_ecs_cluster.flip.id
-  task_definition = aws_ecs_task_definition.imaging_api.arn
-  desired_count   = var.ecs_desired_count
-  launch_type     = "FARGATE"
-
-  network_configuration {
-    subnets          = module.flip_vpc.private_subnets
-    security_groups  = [aws_security_group.ecs_imaging_api.id]
-    assign_public_ip = false
-  }
-
-  deployment_minimum_healthy_percent = 100
-  deployment_maximum_percent         = 200
-
-  lifecycle {
-    ignore_changes = [desired_count]
-  }
-
-  tags = {
-    Service = "imaging-api"
-  }
-}
-
-############################
-# data-access-api ECS Service
-# Internal service; called by trust-api within the VPC.
-# No direct ALB or public endpoint.
-############################
-
-resource "aws_ecs_service" "data_access_api" {
-  name            = "data-access-api-service"
-  cluster         = aws_ecs_cluster.flip.id
-  task_definition = aws_ecs_task_definition.data_access_api.arn
-  desired_count   = var.ecs_desired_count
-  launch_type     = "FARGATE"
-
-  network_configuration {
-    subnets          = module.flip_vpc.private_subnets
-    security_groups  = [aws_security_group.ecs_data_access_api.id]
-    assign_public_ip = false
-  }
-
-  deployment_minimum_healthy_percent = 100
-  deployment_maximum_percent         = 200
-
-  lifecycle {
-    ignore_changes = [desired_count]
-  }
-
-  tags = {
-    Service = "data-access-api"
-  }
-}
 
 ############################
 # ALB Target Group for ECS flip-api

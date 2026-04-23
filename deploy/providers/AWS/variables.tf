@@ -270,40 +270,15 @@ variable "efs_provisioned_throughput" {
   default     = 10
 }
 
-variable "ecs_trust_api_cpu" {
-  description = "CPU units for the trust-api ECS task"
-  type        = number
-  default     = 2048
+variable "terraform_execution_role_arn" {
+  description = "ARN of the IAM role Terraform assumes for provisioning AWS resources"
+  type        = string
 }
 
-variable "ecs_trust_api_memory" {
-  description = "Memory (MiB) for the trust-api ECS task"
-  type        = number
-  default     = 8192
-}
-
-variable "ecs_imaging_api_cpu" {
-  description = "CPU units for the imaging-api ECS task"
-  type        = number
-  default     = 2048
-}
-
-variable "ecs_imaging_api_memory" {
-  description = "Memory (MiB) for the imaging-api ECS task"
-  type        = number
-  default     = 8192
-}
-
-variable "ecs_data_access_api_cpu" {
-  description = "CPU units for the data-access-api ECS task"
-  type        = number
-  default     = 2048
-}
-
-variable "ecs_data_access_api_memory" {
-  description = "Memory (MiB) for the data-access-api ECS task"
-  type        = number
-  default     = 8192
+variable "cloudfront_log_delivery_canonical_user_id" {
+  description = "Canonical user ID for CloudFront log delivery to S3 (varies by region). See https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/AccessLogs.html"
+  type        = string
+    default     = "c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0" # pragma: allowlist secret
 }
 
 ############################

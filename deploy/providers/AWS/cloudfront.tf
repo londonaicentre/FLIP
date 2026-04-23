@@ -187,7 +187,7 @@ resource "aws_s3_bucket_acl" "cloudfront_logs" {
     grant {
       grantee {
         type = "CanonicalUser"
-        id   = "c4c1ede66af53448b93c283ce9448c4ba468c9432aa01d700d3878632f77d2d0" # pragma: allowlist secret
+        id   = var.cloudfront_log_delivery_canonical_user_id # pragma: allowlist secret
       }
       permission = "FULL_CONTROL"
     }
