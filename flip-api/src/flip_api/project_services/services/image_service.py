@@ -61,7 +61,15 @@ def has_pending_imaging_tasks(project_id: UUID, db: Session) -> bool:
 
 
 def to_utc_aware(dt: datetime | None) -> datetime:
-    """Convert a datetime to a timezone-aware UTC datetime. If the input is None, returns the minimum datetime."""
+    """Convert a datetime to a timezone-aware UTC datetime. If the input is None, returns the minimum datetime.
+
+    Args:
+        dt (datetime | None): The datetime to normalise. Naive datetimes are assumed to be in UTC.
+
+    Returns:
+        datetime: A timezone-aware UTC datetime. Returns ``datetime.min`` with UTC tzinfo when
+        ``dt`` is None.
+    """
     if dt is None:
         return datetime.min.replace(tzinfo=timezone.utc)
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
@@ -69,7 +77,14 @@ def to_utc_aware(dt: datetime | None) -> datetime:
 
 # Helper for Base64 URL encoding
 def base64_url_encode(data: str) -> str:
-    """Encode a string using Base64 URL encoding without padding."""
+    """Encode a string using Base64 URL encoding without padding.
+
+    Args:
+        data (str): The string to encode.
+
+    Returns:
+        str: The Base64 URL-encoded string with trailing ``=`` padding stripped.
+    """
     return base64.urlsafe_b64encode(data.encode("utf-8")).decode("utf-8").rstrip("=")
 
 

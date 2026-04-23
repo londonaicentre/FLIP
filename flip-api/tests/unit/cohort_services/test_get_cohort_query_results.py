@@ -57,14 +57,23 @@ MOCK_STATS = {
 }
 
 
+def _configure_db_mock(mock_db: MagicMock, *, query_exists: bool, stats_json: str | None) -> None:
+    """Wire up two sequential db.exec().first() results: Queries lookup then QueryStats lookup."""
+    exec_results = [
+        MagicMock(first=MagicMock(return_value=TEST_QUERY_ID if query_exists else None)),
+        MagicMock(first=MagicMock(return_value=stats_json)),
+    ]
+    mock_db.exec.side_effect = exec_results
+
+
 @patch("flip_api.cohort_services.get_cohort_query_results.can_access_cohort_query", return_value=True)
 def test_get_cohort_results_success(mock_access):
     mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = json.dumps(MOCK_STATS)
+    _configure_db_mock(mock_db, query_exists=True, stats_json=json.dumps(MOCK_STATS))
 
     result = get_cohort_query_results(query_id=TEST_QUERY_ID, db=mock_db, user_id=TEST_USER_ID)
 
-    # Check the response type
+    # 200 path returns the parsed model directly (FastAPI wraps it in a 200 response)
     assert result.record_count == 100
     assert len(result.trusts_results) == 2
 
@@ -90,15 +99,32 @@ def test_get_cohort_results_success(mock_access):
 
 
 @patch("flip_api.cohort_services.get_cohort_query_results.can_access_cohort_query", return_value=True)
-def test_get_cohort_results_not_found(mock_access):
+def test_get_cohort_results_pending_returns_202(mock_access):
+    """Query exists in the Queries table but no QueryStats row yet — results still being gathered."""
+    from fastapi.responses import JSONResponse
+
     mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = None
+    _configure_db_mock(mock_db, query_exists=True, stats_json=None)
+
+    response = get_cohort_query_results(query_id=TEST_QUERY_ID, db=mock_db, user_id=TEST_USER_ID)
+
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 202
+    body = json.loads(response.body)
+    assert body["status"] == "pending"
+
+
+@patch("flip_api.cohort_services.get_cohort_query_results.can_access_cohort_query", return_value=True)
+def test_get_cohort_results_unknown_query_returns_404(mock_access):
+    """No Queries row at all — truly unknown query_id, return 404."""
+    mock_db = MagicMock()
+    _configure_db_mock(mock_db, query_exists=False, stats_json=None)
 
     with pytest.raises(HTTPException) as exc_info:
         get_cohort_query_results(query_id=TEST_QUERY_ID, db=mock_db, user_id=TEST_USER_ID)
 
     assert exc_info.value.status_code == 404
-    assert "No results returned from the database" in str(exc_info.value.detail)
+    assert "Cohort query not found" in str(exc_info.value.detail)
 
 
 @patch("flip_api.cohort_services.get_cohort_query_results.can_access_cohort_query", return_value=False)

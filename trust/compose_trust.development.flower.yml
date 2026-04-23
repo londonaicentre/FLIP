@@ -20,6 +20,9 @@ services:
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # Provisioned Flower secrets (certificates, keys)
+      - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
+      - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
     environment:
       - NET_ID=net-1
       - SUPERNODE_NAME=${TRUST_NAME}
@@ -34,11 +37,14 @@ services:
       - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
       - IMAGING_API_URL=${IMAGING_API_URL}
     command:
-      - --insecure
+      - --root-certificates
+      - /certs/ca.crt
       - --superlink
       - fl-server-net-1:9092
-      - --health-server-address
-      - 0.0.0.0:9098
+      - --auth-supernode-private-key
+      - /keys/supernode_credentials_${TRUST_NUMBER}
+      - --clientappio-api-address
+      - ${SUPERNODE_1_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9094}
     networks:
       - default
       - deploy_shared-net-1
@@ -50,6 +56,9 @@ services:
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # Provisioned Flower secrets (certificates, keys)
+      - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
+      - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro
     environment:
       - NET_ID=net-2
       - SUPERNODE_NAME=${TRUST_NAME}
@@ -64,11 +73,14 @@ services:
       - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
       - IMAGING_API_URL=${IMAGING_API_URL}
     command:
-      - --insecure
+      - --root-certificates
+      - /certs/ca.crt
       - --superlink
       - fl-server-net-2:9092
-      - --health-server-address
-      - 0.0.0.0:9098
+      - --auth-supernode-private-key
+      - /keys/supernode_credentials_${TRUST_NUMBER}
+      - --clientappio-api-address
+      - ${SUPERNODE_2_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9095}
     networks:
       - default
       - deploy_shared-net-2

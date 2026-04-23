@@ -124,7 +124,7 @@ make add-local-trust LOCAL_TRUST_IP=<public-ip>
 
 ## Communication Model
 
-Trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound from the trust**. The hub never makes inbound requests to trusts. This simplifies networking: no inbound firewall rules or NAT port-forwarding are needed for the trust API port.
+Trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound from the trust**. The hub never makes inbound requests to trusts. This simplifies networking: no inbound firewall rules or NAT port-forwarding are needed for the trust API or FL ports.
 
 ## Trust Authentication
 

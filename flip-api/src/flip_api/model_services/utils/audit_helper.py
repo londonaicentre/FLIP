@@ -57,6 +57,9 @@ def audit_model_actions(actions: list[IModelAuditAction], session: Session) -> l
 
     Returns:
         list[ModelsAudit]: List of created ModelsAudit entries.
+
+    Raises:
+        RuntimeError: If ``actions`` is non-empty but no audit rows ended up being created.
     """
     logger.debug("Attempting to audit multiple actions...")
 

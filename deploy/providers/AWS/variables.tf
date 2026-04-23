@@ -152,6 +152,7 @@ variable "FL_SERVER_PORT" {
   default     = 8002
 }
 
+
 variable "flip_alb_subdomain" {
   description = "Subdomain for the FLIP ALB"
   type        = string
@@ -182,7 +183,7 @@ variable "PACS_UI_PORT" {
 }
 
 variable "local_trust_public_ip" {
-  description = "Public IP of an on-premises Trust host. When non-empty, an AWS security group rule is created to allow FL communication from this IP to the Central Hub NLB."
+  description = "Public IP of an on-premises Trust host. When non-empty, AWS security group rules are created to allow consolidated FL communication on port 8002 from this IP to the Central Hub."
   type        = string
   default     = ""
 }

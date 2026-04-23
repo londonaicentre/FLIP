@@ -68,10 +68,19 @@ export interface IResults {
 /**
  * Get Cohort Query Results
  * @param {string} url - The URL of the OMOP API endpoint.
- * @returns The data returned from the OMOP API.
+ * @returns The data returned from the OMOP API, or `null` while the hub is still waiting
+ *          for trusts to post their results (HTTP 202).
  */
-export async function getOMOPResults(url: string): Promise<IResults> {
-    const response = await _http.get<IResults>(url);
+export async function getOMOPResults(url: string): Promise<IResults | null> {
+    const response = await _http.get<IResults>(url, {
+        // Accept 202 (pending) as a non-error response so SWRV keeps polling
+        // on its refresh interval instead of logging an axios error in the console.
+        validateStatus: (status) => (status >= 200 && status < 300) || status === 202,
+    });
+
+    if (response.status === 202) {
+        return null;
+    }
 
     return response.data;
 }

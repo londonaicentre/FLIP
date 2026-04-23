@@ -20,6 +20,9 @@ services:
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # Provisioned Flower secrets (certificates, keys)
+      - /opt/flip/services/net-1/certificates:/certs:ro
+      - /opt/flip/services/net-1/keys:/keys:ro
     environment:
       - NET_ID=net-1
       - SUPERNODE_NAME=${TRUST_NAME}
@@ -34,11 +37,14 @@ services:
       - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
       - IMAGING_API_URL=${IMAGING_API_URL}
     command:
-      - --insecure
+      - --root-certificates
+      - /certs/ca.crt
       - --superlink
-      - fl-server-net-1:9092
-      - --health-server-address
-      - 0.0.0.0:9098
+      - ${NLB_SUBDOMAIN}:${FL_SERVER_PORT}
+      - --auth-supernode-private-key
+      - /keys/supernode_credentials_1
+      - --clientappio-api-address
+      - ${SUPERNODE_1_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9094}
     shm_size: '8gb'
     # gpus: all
 

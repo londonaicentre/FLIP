@@ -22,7 +22,14 @@ from data_access_api.config import get_settings
 
 # --- Step 1: Load AES key from environment file ---
 def get_aes_key() -> bytes:
-    """Retrieve the AES key from the environment file and return it as bytes."""
+    """Retrieve the AES key from the environment file and return it as bytes.
+
+    Returns:
+        bytes: The decoded AES key (16, 24, or 32 bytes).
+
+    Raises:
+        ValueError: If the AES key is missing from configuration or has an invalid length.
+    """
     key_b64 = get_settings().AES_KEY_BASE64
     if not key_b64:
         raise ValueError("AES key not found in environment file")
@@ -35,7 +42,17 @@ def get_aes_key() -> bytes:
 
 # --- Step 2: AES-CBC encryption ---
 def encrypt(plaintext: str, key: bytes | None = None) -> str:
-    """Encrypt plaintext using AES-CBC with PKCS7 padding. Returns Base64-encoded ciphertext."""
+    """Encrypt plaintext using AES-CBC with PKCS7 padding. Returns Base64-encoded ciphertext.
+
+    Args:
+        plaintext (str): The plaintext string to encrypt.
+        key (bytes | None): The AES key to use. If None, the shared AES key is retrieved via
+            :func:`get_aes_key`.
+
+    Returns:
+        str: Base64-encoded ciphertext with the random 16-byte IV prepended to the ciphertext
+        bytes before encoding.
+    """
     if key is None:
         key = get_aes_key()
 
@@ -56,7 +73,17 @@ def encrypt(plaintext: str, key: bytes | None = None) -> str:
 
 # --- Step 3: AES-CBC decryption ---
 def decrypt(encoded_payload: str, key: bytes | None = None) -> str:
-    """Decrypt Base64-encoded ciphertext using AES-CBC with PKCS7 padding. Returns the original plaintext."""
+    """Decrypt Base64-encoded ciphertext using AES-CBC with PKCS7 padding. Returns the original plaintext.
+
+    Args:
+        encoded_payload (str): Base64-encoded payload where the first 16 bytes are the IV and the
+            remaining bytes are the ciphertext.
+        key (bytes | None): The AES key to use. If None, the shared AES key is retrieved via
+            :func:`get_aes_key`.
+
+    Returns:
+        str: The decrypted plaintext.
+    """
     if key is None:
         key = get_aes_key()
 

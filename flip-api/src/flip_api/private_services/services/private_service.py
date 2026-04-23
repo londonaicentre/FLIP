@@ -22,6 +22,14 @@ from flip_api.utils.logger import logger
 def save_training_metrics(model_id: UUID, training_metrics: TrainingMetrics, db: Session) -> None:
     """
     Saves the provided training metrics to the database.
+
+    Args:
+        model_id (UUID): The ID of the model these metrics belong to.
+        training_metrics (TrainingMetrics): The metrics payload reported by a trust.
+        db (Session): The SQLModel session used for the insert.
+
+    Raises:
+        Exception: Re-raises any database error after rolling back the session.
     """
     logger.info(f"Attempting to save training metrics for model_id: {model_id}, trust: {training_metrics.trust}")
 

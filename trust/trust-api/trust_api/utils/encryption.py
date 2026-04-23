@@ -27,6 +27,9 @@ def get_aes_key() -> bytes:
     """Retrieve the AES key from the environment and return it as bytes.
 
     Cached after first call — the key does not change during the lifetime of a process.
+
+    Returns:
+        bytes: The decoded AES key.
     """
     global _aes_key_cache  # noqa: PLW0603
     if _aes_key_cache is not None:
@@ -37,7 +40,17 @@ def get_aes_key() -> bytes:
 
 
 def decrypt(encoded_payload: str, key: bytes | None = None) -> str:
-    """Decrypt Base64-encoded ciphertext using AES-CBC with PKCS7 padding."""
+    """Decrypt Base64-encoded ciphertext using AES-CBC with PKCS7 padding.
+
+    Args:
+        encoded_payload (str): Base64-encoded payload where the first 16 bytes are the IV and the
+            remaining bytes are the ciphertext.
+        key (bytes | None): The AES key to use. If None, the shared AES key is retrieved via
+            :func:`get_aes_key`.
+
+    Returns:
+        str: The decrypted plaintext.
+    """
     if key is None:
         key = get_aes_key()
 

@@ -17,8 +17,9 @@ services:
 
   # --- Application services ---
 
+  # Image built from https://github.com/londonaicentre/flip-omop-db
   omop-db:
-    image: ghcr.io/londonaicentre/omop-db:stag
+    image: ghcr.io/londonaicentre/omop-db:latest
     restart: always
     ports:
       - "${OMOP_DB_PORT}:5432"
@@ -36,7 +37,7 @@ services:
       # - "${PACS_DICOM_PORT}:4242"
       - "${PACS_UI_PORT}:8042"
     volumes:
-      - /opt/flip/orthanc/${ORTHANC_STORAGE}:/var/lib/orthanc/db
+      - ${ORTHANC_STORAGE_DIR:-/opt/flip/orthanc/${ORTHANC_STORAGE}}:/var/lib/orthanc/db
     environment:
       ORTHANC__REGISTERED_USERS: |
           {"${ORTHANC_USERNAME}": "${ORTHANC_PASSWORD}"}

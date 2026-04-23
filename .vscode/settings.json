@@ -4,6 +4,7 @@
         "editor.defaultFormatter": "vscode.json-language-features"
     },
     "cSpell.autoFormatConfigFile": true,
+    "cSpell.language": "en-GB",
     "cSpell.words": [
         "dcm2niix",
         "DICOM",
@@ -12,6 +13,8 @@
         "NVFLARE",
         "OMOP",
         "ORTHANC",
+        "superlink",
+        "supernode",
         "XNAT"
     ],
     "editor.codeActionsOnSave": {

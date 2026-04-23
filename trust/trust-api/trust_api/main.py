@@ -24,7 +24,11 @@ from trust_api.utils.logger import logger
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Start the task poller background service."""
+    """Start the task poller background service.
+
+    Args:
+        app (FastAPI): The FastAPI application instance being started.
+    """
     poller_task = asyncio.create_task(run_poller())
     logger.info("Trust API started with task poller")
     yield

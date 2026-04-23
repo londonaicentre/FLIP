@@ -33,7 +33,14 @@ XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 
 
 def base64_url_decode(data: str) -> str:
-    """Decode a Base64 URL-encoded string, adding padding if necessary."""
+    """Decode a Base64 URL-encoded string, adding padding if necessary.
+
+    Args:
+        data (str): The Base64 URL-encoded string to decode. Padding is added if missing.
+
+    Returns:
+        str: The decoded UTF-8 string.
+    """
     # Add padding if necessary
     padding = "=" * (-len(data) % 4)
     return base64.urlsafe_b64decode(data + padding).decode("utf-8")

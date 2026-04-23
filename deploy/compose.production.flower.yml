@@ -19,21 +19,31 @@ services:
   fl-api-net-1:
     container_name: flip-fl-api-net-1
     image: ${DOCKER_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    volumes:
+      - /opt/flip/services/net-1/certificates:/certs:ro
     environment:
+      # Use the internal hostnames and ports for the server since the API is within the same Docker network
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
-      - SUPERNODE_HEALTH_ADDRESSES=Trust_1=trust1-fl-client-net-1-1:9098,Trust_2=trust2-fl-client-net-1-1:9098
+      - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
+      - FLOWER_SRC_ROOT=/app
     ports:
       - "${FL_API_PORT}:8000"
     depends_on:
       - fl-server-net-1
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/openapi.json', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   fl-server-net-1:
     container_name: fl-server-net-1
     image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
-    ports:
-      - "${FL_SERVER_PORT}:8002"
+    volumes:
+      - /opt/flip/services/net-1/certificates:/certs:ro
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false
@@ -44,5 +54,35 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
+    command:
+      - --ssl-ca-certfile
+      - /certs/ca.crt
+      - --ssl-certfile
+      - /certs/server.pem
+      - --ssl-keyfile
+      - /certs/server.key
+      - --enable-supernode-auth
+      - --health-server-address
+      - 0.0.0.0:9097
+    ports:
+      - "${FL_SERVER_PORT}:9092"
     restart: unless-stopped
     init: true
+
+  # One-shot service to register SuperNode public keys with the SuperLink
+  register-supernode-keys-net-1:
+    container_name: register-supernode-keys-net-1
+    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    environment:
+      - SUPERLINK_ADDRESS=fl-server-net-1:9093
+      - FL_API_ADDRESS=http://flip-fl-api-net-1:8000
+      - TRUST_NAMES=${TRUST_NAMES}
+    volumes:
+      - /opt/flip/services/net-1/certificates:/certs:ro
+      - /opt/flip/services/net-1/keys:/keys:ro
+    entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
+    depends_on:
+      fl-server-net-1:
+        condition: service_started
+      fl-api-net-1:
+        condition: service_healthy

@@ -14,12 +14,13 @@ import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 
 from flip_api.auth.access_manager import can_access_cohort_query
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import QueryStats
+from flip_api.db.models.main_models import Queries, QueryStats
 from flip_api.domain.schemas.cohort import OmopCohortResultsResponse
 from flip_api.utils.logger import logger
 
@@ -31,15 +32,31 @@ router = APIRouter(prefix="/cohort", tags=["cohort_services"])
     "/{query_id}",
     response_model=OmopCohortResultsResponse,
     summary="Get cohort query results",
-    description="Retrieve the results of a previously executed cohort query.",
+    description=(
+        "Retrieve the aggregated results of a cohort query. Returns 202 while the query is "
+        "still pending trust responses, 200 once results are available, and 404 only when the "
+        "query id is unknown."
+    ),
+    responses={
+        202: {"description": "Query exists but no results have been posted by trusts yet."},
+        404: {"description": "No cohort query exists with the supplied id."},
+    },
 )
 def get_cohort_query_results(
     query_id: UUID = Path(..., description="Unique identifier of the cohort query"),
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-) -> OmopCohortResultsResponse:
+) -> OmopCohortResultsResponse | JSONResponse:
     """
-    Retrieve the results of a previously executed cohort query.
+    Retrieve the aggregated results of a cohort query.
+
+    Cohort queries are async: the hub queues tasks for all trusts, each trust runs the query
+    against its OMOP database and posts results back. Until the first trust responds, the
+    query exists but has no stats. This endpoint distinguishes three states:
+
+    * **200** — stats are populated, return them.
+    * **202** — query is known but still pending trust responses.
+    * **404** — query id is unknown (or access-layer denies it).
 
     Args:
         query_id (UUID): Unique identifier of the cohort query.
@@ -47,13 +64,9 @@ def get_cohort_query_results(
         user_id (UUID): ID of the user making the request, obtained from authentication.
 
     Returns:
-        OmopCohortResultsResponse: The results of the cohort query
-
-    Raises:
-        HTTPException: If the user does not have access to the cohort query or if there are errors retrieving results.
+        OmopCohortResultsResponse | JSONResponse: Results (200) or a pending marker (202).
     """
     try:
-        # Check access permissions
         logger.info(f"Checking access for user: {user_id} to cohort query: {query_id}")
 
         if not can_access_cohort_query(user_id, query_id, db):
@@ -62,33 +75,31 @@ def get_cohort_query_results(
                 status_code=403, detail=f"User with ID: {user_id} is denied access to this cohort query"
             )
 
-        # Validation is handled by FastAPI's path parameter validation
-        # No need for explicit validation as in the original
+        # Step 1: does the query exist at all? Needed so we can distinguish "unknown id"
+        # (404) from "known but pending" (202). Without this, a freshly-submitted query
+        # spuriously returns 404 during the window between POST /step/cohort and the first
+        # trust's POST /cohort/results — which surfaces as a noisy error in the browser
+        # console while the UI polls.
+        query_exists = db.exec(select(Queries.id).where(Queries.id == query_id)).first()
+        if not query_exists:
+            logger.info(f"Cohort query not found for id: {query_id}")
+            raise HTTPException(status_code=404, detail=f"Cohort query not found for id: {query_id}")
 
-        logger.debug("Gathering aggregated cohort results...")
-
-        # Execute database query
-        # Note we only expect one entry for a given query_id, so we can use first()
+        # Step 2: results lookup. A single QueryStats row is expected per query.
         db_query_stats = db.exec(select(QueryStats.stats).where(QueryStats.query_id == query_id)).first()
 
-        logger.debug(f"query_id used: {query_id}")
-        logger.debug(f"Database response: {db_query_stats}")
-
         if not db_query_stats:
-            logger.error(f"No results found for query ID: {query_id}")
-            raise HTTPException(status_code=404, detail="No results returned from the database")
+            logger.debug(f"Cohort query {query_id} is still pending trust responses")
+            return JSONResponse(
+                status_code=202,
+                content={"status": "pending", "detail": "Results not yet available — trust responses pending"},
+            )
 
-        # Parse the results using model_validate instead of parse_obj
         query_stats = OmopCohortResultsResponse.model_validate(json.loads(db_query_stats))
-
         logger.info("Results have been successfully obtained")
-        logger.debug(f"Query results: {query_stats}")
-
-        # Return parsed results - FastAPI will handle JSON serialization
         return query_stats
 
     except HTTPException:
-        # Re-raise HTTP exceptions so they maintain their status codes
         raise
     except Exception as e:
         logger.error(f"Error retrieving cohort query results: {str(e)}")

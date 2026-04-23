@@ -36,7 +36,11 @@ POLL_INTERVAL_SECONDS = get_settings().POLL_INTERVAL_SECONDS
 
 
 def _auth_headers() -> dict[str, str]:
-    """Return authentication headers for hub API calls."""
+    """Return authentication headers for hub API calls.
+
+    Returns:
+        dict[str, str]: Single-entry mapping of the trust API key header to the configured key.
+    """
     return {TRUST_API_KEY_HEADER: TRUST_API_KEY}
 
 

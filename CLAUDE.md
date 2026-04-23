@@ -226,6 +226,7 @@ When in doubt, update the docs. Outdated documentation is worse than no document
 ### Key Environment Variables
 
 - `FL_BACKEND` — `flower` (default) or `nvflare`
+- `DOCKER_FL_API_NAME` / `DOCKER_FL_SERVER_NAME` / `DOCKER_FL_CLIENT_NAME` — derived from `FL_BACKEND` by `deploy/fl_backend.mk`; do not set in `.env*`
 - `PROD` — `true` (production), `stag` (staging), unset (development)
 - `AES_KEY_BASE64` — encryption key for trust communication
 - `TRUST_API_KEYS` — JSON dict of per-trust plaintext API keys for trust-to-hub auth

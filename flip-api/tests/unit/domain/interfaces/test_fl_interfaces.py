@@ -24,6 +24,30 @@ class TestIClientStatusSchema:
 
         assert client_status.online is False
 
+    def test_online_true_when_status_connected(self):
+        client_status = IClientStatus(
+            name="client1",
+            status=ClientStatus.CONNECTED.value,
+        )
+
+        assert client_status.online is True
+
+    def test_online_false_when_status_disconnected(self):
+        client_status = IClientStatus(
+            name="client1",
+            status=ClientStatus.DISCONNECTED.value,
+        )
+
+        assert client_status.online is False
+
+    def test_online_true_when_status_disconnected_lowercase(self):
+        client_status = IClientStatus(
+            name="client1",
+            status="disconnected",
+        )
+
+        assert client_status.online is True
+
     def test_online_reacts_to_status_change(self):
         client_status = IClientStatus(
             name="client1",

@@ -14,7 +14,14 @@
 def to_pascal_case(snake_str: str) -> str:
     """
     Convert a snake_case string to PascalCase.
+
     This is needed for the UI to understand the permissions format.
     Example: CAN_ACCESS_ADMIN_PANEL -> CanAccessAdminPanel
+
+    Args:
+        snake_str (str): The snake_case (or UPPER_SNAKE_CASE) string to convert.
+
+    Returns:
+        str: The input string converted to PascalCase.
     """
     return "".join(word.capitalize() for word in snake_str.lower().split("_"))

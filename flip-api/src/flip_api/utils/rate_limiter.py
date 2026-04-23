@@ -17,7 +17,15 @@ from slowapi import Limiter
 
 
 def _trust_name_key(request: Request) -> str:
-    """Extract trust_name from path params for per-trust rate limiting."""
+    """Extract trust_name from path params for per-trust rate limiting.
+
+    Args:
+        request (Request): The incoming FastAPI request.
+
+    Returns:
+        str: The ``trust_name`` path parameter when present; otherwise the client's host; otherwise
+        the literal ``"unknown"``.
+    """
     return request.path_params.get("trust_name", request.client.host if request.client else "unknown")
 
 

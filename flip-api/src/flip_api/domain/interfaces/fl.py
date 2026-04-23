@@ -120,7 +120,11 @@ class IClientStatus(BaseModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def online(self) -> bool:
-        return self.status != ClientStatus.NO_REPLY.value
+        offline_statuses = {
+            ClientStatus.NO_REPLY.value,
+            ClientStatus.DISCONNECTED.value,
+        }
+        return self.status not in offline_statuses
 
 
 class INetStatus(BaseModel):
@@ -167,13 +171,26 @@ class JobRequiredFiles(BaseModel):
 
     @classmethod
     def get_required_files(cls, job_type: JobTypes) -> list[str]:
-        """Returns the list of required files for a specific job type (always reloads from disk)."""
+        """Returns the list of required files for a specific job type (always reloads from disk).
+
+        Args:
+            job_type (JobTypes): The job type to look up.
+
+        Returns:
+            list[str]: Required file names for ``job_type``, or an empty list if the job type is
+            not present in the on-disk configuration.
+        """
         config = _load_job_types_config()
         return config.get(job_type.value, [])
 
     @classmethod
     def get_all_job_types_with_files(cls) -> dict[str, list[str]]:
-        """Returns all job types with their required files (always reloads from disk)."""
+        """Returns all job types with their required files (always reloads from disk).
+
+        Returns:
+            dict[str, list[str]]: A copy of the on-disk mapping of job type names to their
+            required files.
+        """
         return _load_job_types_config().copy()
 
     @classmethod

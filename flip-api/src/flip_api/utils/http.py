@@ -28,7 +28,20 @@ from flip_api.utils.logger import logger
 
 
 def http_get(url: str, request_id: str | None = None) -> Any:
-    """Perform an HTTP GET request to the specified URL with optional request ID for tracing."""
+    """Perform an HTTP GET request to the specified URL with optional request ID for tracing.
+
+    Args:
+        url (str): The URL to GET.
+        request_id (str | None): Optional value for the ``x-request-id`` header used for
+            distributed tracing.
+
+    Returns:
+        Any: Parsed JSON body when the response is JSON; otherwise the raw response text.
+
+    Raises:
+        httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
+        httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
+    """
     headers = {"x-request-id": request_id} if request_id else {}
     with httpx.Client() as client:
         try:
@@ -46,7 +59,23 @@ def http_get(url: str, request_id: str | None = None) -> Any:
 def http_post(
     url: str, request_id: str | None = None, data: dict | None = None, timeout: float | None = None
 ) -> Any:
-    """Perform an HTTP POST request to the specified URL with optional request ID for tracing."""
+    """Perform an HTTP POST request to the specified URL with optional request ID for tracing.
+
+    Args:
+        url (str): The URL to POST to.
+        request_id (str | None): Optional value for the ``x-request-id`` header used for
+            distributed tracing.
+        data (dict | None): JSON-serialisable body to send.
+        timeout (float | None): Optional request timeout in seconds. When None, httpx defaults
+            are used.
+
+    Returns:
+        Any: Parsed JSON body when the response is JSON; otherwise the raw response text.
+
+    Raises:
+        httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
+        httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
+    """
     headers = (
         {"Content-Type": "application/json", "x-request-id": request_id}
         if request_id
@@ -70,7 +99,20 @@ def http_post(
 
 
 def http_delete(url: str, request_id: str | None = None) -> Any:
-    """Perform an HTTP DELETE request to the specified URL with optional request ID for tracing."""
+    """Perform an HTTP DELETE request to the specified URL with optional request ID for tracing.
+
+    Args:
+        url (str): The URL to DELETE.
+        request_id (str | None): Optional value for the ``x-request-id`` header used for
+            distributed tracing.
+
+    Returns:
+        Any: Parsed JSON body when the response is JSON; otherwise the raw response text.
+
+    Raises:
+        httpx.RequestError: If the request cannot be sent (connection, timeout, etc.).
+        httpx.HTTPStatusError: If the response status is 4xx/5xx (via ``raise_for_status``).
+    """
     headers = {"x-request-id": request_id} if request_id else {}
     with httpx.Client() as client:
         try:

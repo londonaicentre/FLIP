@@ -71,6 +71,21 @@ def get_pending_tasks(
     Returns pending tasks for the specified trust and marks them as in_progress.
 
     This endpoint is polled by trusts to pick up work dispatched by the central hub.
+
+    Args:
+        request (Request): The FastAPI request, used by the rate limiter.
+        trust_name (str): The trust polling for tasks, taken from the URL path.
+        db (Session): Database session, provided by dependency injection.
+        authenticated_trust (str): The trust name resolved from the API key, provided by
+            dependency injection.
+
+    Returns:
+        list[TrustTaskResponse]: Pending tasks (up to ``PENDING_TASKS_LIMIT``), now marked
+        ``IN_PROGRESS``, with payloads encrypted for transport.
+
+    Raises:
+        HTTPException: 403 if the authenticated trust doesn't match ``trust_name``, 404 if the
+            trust is not registered, 500 on any other error.
     """
     verify_trust_identity(trust_name, authenticated_trust)
     logger.debug(f"Trust '{trust_name}' polling for pending tasks")
@@ -143,6 +158,23 @@ def submit_task_result(
 
     The trust_name path parameter is verified against the authenticated trust identity
     to prevent one trust from submitting results for another trust's tasks.
+
+    Args:
+        request (Request): The FastAPI request, used by the rate limiter.
+        trust_name (str): The trust submitting the result, taken from the URL path.
+        task_id (UUID): The ID of the task whose result is being submitted.
+        task_result (TaskResultInput): The task outcome reported by the trust.
+        db (Session): Database session, provided by dependency injection.
+        authenticated_trust (str): The trust name resolved from the API key, provided by
+            dependency injection.
+
+    Returns:
+        dict[str, str]: ``{"message": "Task <id> result recorded"}`` on success.
+
+    Raises:
+        HTTPException: 403 if the authenticated trust doesn't match ``trust_name`` or the task
+            belongs to a different trust; 404 if the trust or task is not found; 409 if the task
+            is not currently ``IN_PROGRESS``; 500 on any other error.
     """
     verify_trust_identity(trust_name, authenticated_trust)
     logger.info(f"Received result for task {task_id} from trust '{trust_name}'")
@@ -221,7 +253,22 @@ def trust_heartbeat(
 ) -> dict[str, str]:
     """
     Receives a heartbeat from a trust, updating its last_heartbeat timestamp.
+
     This replaces the hub-initiated health check with a trust-initiated heartbeat.
+
+    Args:
+        request (Request): The FastAPI request, used by the rate limiter.
+        trust_name (str): The trust sending the heartbeat, taken from the URL path.
+        db (Session): Database session, provided by dependency injection.
+        authenticated_trust (str): The trust name resolved from the API key, provided by
+            dependency injection.
+
+    Returns:
+        dict[str, str]: ``{"message": "Heartbeat recorded"}`` on success.
+
+    Raises:
+        HTTPException: 403 if the authenticated trust doesn't match ``trust_name``, 404 if the
+            trust is not registered, 500 on any other error.
     """
     verify_trust_identity(trust_name, authenticated_trust)
     logger.debug(f"Heartbeat received from trust '{trust_name}'")

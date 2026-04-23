@@ -22,7 +22,6 @@ services:
         UI_PORT: ${UI_PORT}
       context: ../flip-ui
       dockerfile: Dockerfile
-      target: development
     ports:
       - "${UI_PORT}:443"
     volumes:

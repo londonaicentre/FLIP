@@ -16,7 +16,11 @@ from flip_api.db.models.main_models import SiteConfig
 
 
 def seed_config(session: Session) -> None:
-    """Seed site configuration."""
+    """Seed site configuration.
+
+    Args:
+        session (Session): The SQLModel session used for reads and inserts.
+    """
     deployment_mode = {"key": "DeploymentMode", "value": False}
 
     # Check if config exists

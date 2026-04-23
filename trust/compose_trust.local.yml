@@ -1,5 +1,25 @@
 # Local trust override — uses Docker named volumes for observability data
 # instead of EC2 host bind mounts. No sudo or UID management needed.
+#
+# Also drops the host-port bindings for imaging-api, data-access-api, and
+# trust-api inherited from compose_trust.production.yml. The local-trust stack
+# does not need external access to these services (trust-api polls the Central
+# Hub outbound; imaging-api and data-access-api are only called by trust-api /
+# fl-client within the trust Docker network). Removing the host bindings lets
+# `up-local-trust` coexist on the same laptop as `make up` (dev trust1 binds
+# 8001/8010/8020 via compose_trust-1_override.yml) without port collisions.
+#
+# The `!override` YAML tag (Compose v2.24+) replaces the merged `ports` list
+# rather than appending to it — a plain `ports: []` redefinition would still
+# inherit the bindings from the production compose.
+services:
+  imaging-api:
+    ports: !override []
+  data-access-api:
+    ports: !override []
+  trust-api:
+    ports: !override []
+
 volumes:
   trust-local-loki-data:
   trust-local-grafana-data:

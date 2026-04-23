@@ -18,7 +18,14 @@ from flip_api.db.models.user_models import Permission, PermissionRef
 
 
 def seed_permissions(session: Session) -> list[str]:
-    """Seed permissions into the database."""
+    """Seed permissions into the database.
+
+    Args:
+        session (Session): The SQLModel session used for reads and inserts.
+
+    Returns:
+        list[str]: All permission names present after seeding.
+    """
     for perm_data in PermissionRef:
         # Check if permission exists
         statement = select(Permission).where(Permission.permission_name == perm_data.name)

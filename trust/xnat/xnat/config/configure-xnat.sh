@@ -31,6 +31,24 @@ until $(curl --output /dev/null --silent --head --fail $XNAT_URL/app/template/Lo
   sleep 1
 done
 echo "XNAT is up!"
+
+# Idempotency short-circuit: if XNAT is already initialized AND the initial
+# admin password no longer authenticates, this instance was fully configured
+# by a prior run. Re-running the rest of the script would silently 401 on the
+# initial-password curls and then produce duplicate-key errors for the service
+# account, PACS registration, and PACS availability intervals — so skip it.
+init_pw_status=$(curl -s -o /dev/null -w '%{http_code}' \
+  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_INITIAL_PASSWORD}" \
+  "$XNAT_URL/xapi/siteConfig/initialized")
+if [[ "${init_pw_status}" != "200" ]]; then
+  initialized=$(curl -s -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
+    "$XNAT_URL/xapi/siteConfig/initialized")
+  if [[ "${initialized}" == "true" ]]; then
+    echo "XNAT already configured (initialized=true, initial password no longer works) — skipping."
+    exit 0
+  fi
+fi
+
 echo "Configuring XNAT instance..."
 sleep 10 # Additional wait to ensure XNAT is fully up before proceeding
 

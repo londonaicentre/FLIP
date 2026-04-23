@@ -31,13 +31,28 @@ RETRIEVE_MODEL_QUERY_FILE = f"{os.path.dirname(os.path.abspath(__file__))}/retri
 
 
 def load_sql(file_path: str) -> str:
-    """Load an SQL query from a file."""
+    """Load an SQL query from a file.
+
+    Args:
+        file_path (str): Absolute or relative path to the ``.sql`` file.
+
+    Returns:
+        str: The file contents.
+    """
     with open(file_path, "r") as f:
         return f.read()
 
 
 def parse_query_from_result(query: Any) -> IQuery:
-    """Parse a query from the SQL result into an IQuery object."""
+    """Parse a query from the SQL result into an IQuery object.
+
+    Args:
+        query (Any): Mapping-like row from the raw SQL result with ``id``, ``name``, and ``query``
+            keys.
+
+    Returns:
+        IQuery: The parsed query domain object.
+    """
     # TODO review whether to add 'results' field to IQuery
     # It seems to make assumptions that the query returns 'Gender' and 'Age' columns, which may not always be true.
     return IQuery(
@@ -48,7 +63,17 @@ def parse_query_from_result(query: Any) -> IQuery:
 
 
 def parse_files_from_result(files: Any, model_id: UUID) -> list[UploadedFiles]:
-    """Parse files from the SQL result into a list of UploadedFiles objects."""
+    """Parse files from the SQL result into a list of UploadedFiles objects.
+
+    Args:
+        files (Any): Iterable of mapping-like rows with ``id``, ``name``, ``status``, ``size``,
+            ``type``, and ``tag`` keys.
+        model_id (UUID): The model ID that each parsed file should be attributed to.
+
+    Returns:
+        list[UploadedFiles]: Parsed uploaded-file records. Rows with an unknown ``status`` are
+        mapped to :attr:`FileUploadStatus.ERROR`.
+    """
     parsed_files = [
         UploadedFiles(
             id=f["id"],

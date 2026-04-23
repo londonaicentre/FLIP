@@ -17,13 +17,16 @@ permissions:
 
 on:
   pull_request:
+    # Note: Do NOT add a `branches` filter here (e.g. `branches: [main]`).
+    # A branches filter would prevent the workflow from re-running when the
+    # PR target is changed away from main, leaving the old failure stuck.
+    # Instead, the target branch check is done at runtime in the step below.
     types: [opened, reopened, synchronize, edited]
-    branches:
-      - main
 
 jobs:
   validate-source-branch:
     name: Ensure PR to main originates from develop
+    if: github.base_ref == 'main'
     runs-on: ubuntu-latest
 
     steps:
@@ -34,7 +37,7 @@ jobs:
         run: |
           echo "PR Details:"
           echo "  Source branch: ${SOURCE_BRANCH}"
-          echo "  Target branch: ${TARGET_BRANCH}"
+          echo "  Target branch: main"
 
           if [ "${SOURCE_BRANCH}" != "develop" ]; then
             echo "❌ VALIDATION FAILED"

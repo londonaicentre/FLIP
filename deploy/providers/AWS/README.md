@@ -79,14 +79,15 @@ This command executes the following steps in order:
 1. **`github-login`**: Authenticate with GitHub CLI
 2. **`aws-login`**: Authenticate with AWS SSO
 3. **`init`**: Initialize Terraform with environment-specific S3 backend
-4. **`import-all`**: Import existing AWS resources to prevent replacement
-5. **`plan`**: Generate and review Terraform execution plan
+4. **`import-persistent`**: Import existing persistent AWS resources to prevent replacement
+5. **`plan`**: Generate and review the initial Terraform execution plan
 6. **`apply`**: Apply infrastructure changes
-7. **`ssh-config`**: Update `~/.ssh/config` with Trust EC2 instance IP
-8. **`ansible-init`**: Configure Trust EC2 with Docker, AWS CLI, and FL participant kit services
-9. **`deploy-centralhub`**: Force-redeploy ECS API services and deploy flip-ui to Central Hub EC2
-10. **`deploy-trust`**: Deploy Trust services via Docker Compose
-11. **`status`**: Run comprehensive health checks
+7. **`update-env`**: Refresh the root environment file with Terraform outputs
+8. **`ssh-config`**: Update `~/.ssh/config` with Trust EC2 instance IP
+9. **`ansible-init`**: Configure Trust EC2 with Docker, AWS CLI, and FL participant kit services
+10. **`deploy-centralhub`**: Deploy Central Hub API services to ECS and deploy flip-ui to S3 + CloudFront
+11. **`deploy-trust`**: Deploy Trust services via Docker Compose
+12. **`status`**: Run comprehensive health checks
 
 ### flip-ui on S3 + CloudFront
 
@@ -99,7 +100,12 @@ The UI is served from S3 behind CloudFront at the canonical user-facing subdomai
 For debugging or selective deployment, run individual steps:
 
 ```bash
-# 1. Login to AWS
+# 0. Choose the environment for this shell.
+# If you omit PROD, the AWS provider Makefile defaults to staging.
+export PROD=stag    # or: export PROD=true
+
+# 1. Login to GitHub and AWS
+make github-login
 make aws-login
 
 # 2. Bootstrap the Terraform backend bucket once, if needed
@@ -108,7 +114,7 @@ make create-backend
 # 3. Initialize Terraform (uses the configured S3 backend)
 make init
 
-# 4. Import existing resources (prevents replacement errors)
+# 4. Import existing persistent resources (prevents replacement errors)
 make import-persistent
 
 # 5. Plan changes
@@ -147,8 +153,10 @@ make full-deploy PROD=true
 
 The `PROD` variable determines which environment files are loaded:
 
-- `PROD=stag` → Uses `.env.stag`, `flip-api/.env.stag`
-- `PROD=true` → Uses `.env.production`, `flip-api/.env.production`
+- `PROD=stag` → Uses the root `.env.stag`
+- `PROD=true` → Uses the root `.env.production`
+
+If `PROD` is omitted when running the AWS provider Makefile, it defaults to staging.
 
 #### AWS profile aliases
 
@@ -303,6 +311,12 @@ cd deploy/providers/AWS
 make full-deploy-stag-hybrid LOCAL_TRUST_IP=<public-ip> [LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key]
 ```
 
+This wrapper target runs the full AWS deployment, provisions the local trust, and redeploys the Central Hub so the new secret values are loaded.
+You still need to:
+
+1. Start the trust stack on the host: `cd trust && env PROD=stag make up-local-trust-stag`
+2. Verify the trust can poll the hub (check trust-api logs for successful task polling)
+
 Or run provisioning directly:
 
 ```bash
@@ -364,7 +378,6 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
    - imaging-api
    - data-access-api
    - fl-client-net-1 (FL Client for Network 1)
-   - fl-client-net-2 (FL Client for Network 2)
    - XNAT (medical imaging platform)
    - Orthanc (DICOM server)
    - OMOP database
@@ -471,10 +484,11 @@ Trust services can run on AWS EC2 or on-premises. Both models use the same Docke
 | ------ | --------- | --------- | --------- |
 | **22** | SSH | 🔴 **CLOSED** | Not exposed — remote access is via SSM Session Manager tunnel (see below) |
 | **80** | HTTP | 🟢 **OPEN** | ALB traffic |
+| **443** | HTTPS | 🟢 **OPEN** | ALB HTTPS entrypoint |
 | **3000** | FLIP UI | 🟢 **OPEN** | Frontend application |
-| **8000** | FLIP API | 🟢 **OPEN** | Backend API |
-| **8001** | FL API | 🟢 **OPEN** | Federated learning API |
-| **8002** | FL Server | 🟡 **CONDITIONAL** | gRPC (open to trust IPs only) |
+| **8080** | FLIP API | 🟢 **OPEN** | Backend API |
+| **8000** | FL API | 🟢 **OPEN** | Federated learning API |
+| **8002** | FL Server/Admin | 🟡 **CONDITIONAL** | Consolidated FL server/admin traffic (open to trust IPs only) |
 | | | | Trust API: no inbound port needed (trusts poll the hub outbound) |
 
 ### Remote Access via SSM Session Manager

@@ -17,6 +17,7 @@ services:
 
   # --- Application services ---
 
+  # Image built from https://github.com/londonaicentre/flip-omop-db
   omop-db:
     image: ghcr.io/londonaicentre/omop-db:latest
     restart: always

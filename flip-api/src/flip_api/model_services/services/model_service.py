@@ -40,6 +40,9 @@ def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, sess
         model_details (IModelDetails): The new details for the model
         user_id (UUID): The ID of the user making the changes
         session (Session): The database session
+
+    Raises:
+        ValueError: If no model exists with the given ``model_id``.
     """
     logger.debug("Attempting to update model details...")
 
@@ -107,6 +110,10 @@ def add_log(
 
     Returns:
         None
+
+    Raises:
+        Exception: Re-raises any error encountered when persisting the log entry, after rolling
+            back the session.
     """
     logger.info({"message": "Attempting to add a log line for model...", "modelId": model_id, "log": log})
 
@@ -169,6 +176,10 @@ def delete_models(project_id: UUID, user_id: str, session: Session, ensure_delet
 
     Returns:
         int: The number of models deleted.
+
+    Raises:
+        ValueError: If ``ensure_deletion`` is True and no non-deleted models exist for the given
+            project.
     """
     logger.debug("Attempting to delete models...")
 

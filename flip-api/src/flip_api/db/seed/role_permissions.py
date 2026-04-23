@@ -21,7 +21,11 @@ from flip_api.utils.logger import logger
 
 
 def seed_role_permissions(session: Session) -> None:
-    """Seed role permissions intersections."""
+    """Seed role permissions intersections.
+
+    Args:
+        session (Session): The SQLModel session used for reads and inserts.
+    """
     # Delete existing role permissions
     delete(RolePermission)
     session.commit()

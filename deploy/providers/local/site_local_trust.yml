@@ -36,7 +36,6 @@
         name:
           - openssl
           - curl
-          - python3-cryptography  # required by community.crypto
         state: present
         update_cache: yes
 
@@ -58,12 +57,14 @@
       loop:
         - "{{ flip_dir }}"
         - "{{ flip_dir }}/data/images"
-        # XNAT bind-mount directories (Docker Swarm does not auto-create them)
+        # XNAT bind-mount directories (Docker Swarm does not auto-create them).
+        # Keep this list in sync with deploy/providers/AWS/site.yml.
         - "{{ flip_dir }}/xnat"
         - "{{ flip_dir }}/xnat/xnat-data/tomcat_logs"
         - "{{ flip_dir }}/xnat/xnat-data/archive"
         - "{{ flip_dir }}/xnat/xnat-data/build"
         - "{{ flip_dir }}/xnat/xnat-data/cache"
+        - "{{ flip_dir }}/xnat/xnat-db-data"
 
     - name: Create FL client kit directories
       file:

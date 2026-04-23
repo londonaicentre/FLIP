@@ -515,11 +515,15 @@ def test_get_sex_distribution_with_person_id(mock_get_records):
     }
 
     assert result == expected
-    # Verify the SQL query was called with correct person IDs
+    # Verify the SQL query was called with a parameterized IN clause and the correct unique person IDs
     mock_get_records.assert_called_once()
-    call_args = mock_get_records.call_args[1]["query"]
-    assert "1, 2, 3" in call_args  # Unique person IDs
-    assert "omop.person" in call_args
+    call_kwargs = mock_get_records.call_args[1]
+    query_sql = str(call_kwargs["query"])
+    assert "person_ids" in query_sql
+    assert "omop.person" in query_sql
+    assert call_kwargs["params"] == {"person_ids": [1, 2, 3]}
+    # Ensure raw interpolation of IDs into the SQL text is not used
+    assert "1, 2, 3" not in query_sql
 
 
 # Tests for get_age_distribution
@@ -571,12 +575,16 @@ def test_get_age_distribution_with_person_id(mock_get_records):
     }
 
     assert result == expected
-    # Verify the SQL query was called
+    # Verify the SQL query was called with a parameterized IN clause and the correct unique person IDs
     mock_get_records.assert_called_once()
-    call_args = mock_get_records.call_args[1]["query"]
-    assert "1, 2, 3" in call_args
-    assert "omop.person" in call_args
-    assert "birth_datetime" in call_args
+    call_kwargs = mock_get_records.call_args[1]
+    query_sql = str(call_kwargs["query"])
+    assert "person_ids" in query_sql
+    assert "omop.person" in query_sql
+    assert "birth_datetime" in query_sql
+    assert call_kwargs["params"] == {"person_ids": [1, 2, 3]}
+    # Ensure raw interpolation of IDs into the SQL text is not used
+    assert "1, 2, 3" not in query_sql
 
 
 # Tests for verify_cardinality
@@ -858,9 +866,10 @@ def test_get_statistics_with_person_id_column(mock_read_sql):
 
     # Configure mocks to return different data based on query
     def read_sql_side_effect(query, *args, **kwargs):
-        if "birth_datetime" in query:
+        query_str = str(query)
+        if "birth_datetime" in query_str:
             return mock_age_data
-        elif "gender_source_value" in query:
+        elif "gender_source_value" in query_str:
             return mock_sex_data
         else:
             # Main query
@@ -936,9 +945,10 @@ def test_get_statistics_with_person_id_and_low_count_categories(mock_read_sql):
     })
 
     def read_sql_side_effect(query, *args, **kwargs):
-        if "birth_datetime" in query:
+        query_str = str(query)
+        if "birth_datetime" in query_str:
             return mock_age_data
-        elif "gender_source_value" in query:
+        elif "gender_source_value" in query_str:
             return mock_sex_data
         else:
             return mock_df

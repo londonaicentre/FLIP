@@ -42,8 +42,13 @@ class ClientDeployResponse(str, Enum):
 class ClientStatus(str, Enum):
     """Status of the client."""
 
+    # TODO we might want to reconcile these with the FL API responses
+    # FLARE FL API returns
     NO_REPLY = "no_reply"
     NO_JOBS = "no_jobs"
+    # Flower FL API returns
+    CONNECTED = "CONNECTED"
+    DISCONNECTED = "DISCONNECTED"
 
 
 class JobStatus(Enum):

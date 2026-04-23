@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 up-local-trust down-local-trust create-networks remove-networks recreate-networks tests
+.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 up-local-trust down-local-trust create-networks create-networks-local-trust remove-networks recreate-networks tests
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=../.env.production
@@ -29,24 +29,22 @@ include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
-# ---- FL backend selection (flower | nvflare) ----
-FL_BACKEND ?= flower
-VALID_FL_BACKENDS := flower nvflare
-
-ifeq (,$(filter $(FL_BACKEND),$(VALID_FL_BACKENDS)))
-$(error Invalid FL_BACKEND '$(FL_BACKEND)'. Must be one of: $(VALID_FL_BACKENDS))
-endif
+include ../deploy/fl_backend.mk
 
 COMMON_COMPOSE_FILE := compose_trust.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := compose_trust.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
-# Override FL_PROVISIONED_DIR to use absolute path resolved relative to the parent Makefile
-# This allows the repo to work on any machine without hardcoding paths
-override FL_PROVISIONED_DIR := $(shell realpath ../../flip-fl-base/workspace)
-export FL_PROVISIONED_DIR
+# Resolve FL_PROVISIONED_DIR (from .env) to an absolute path relative to the repo root.
+# Docker requires absolute paths for volume mounts; the .env value may be relative.
+# Skip if already absolute (the parent Makefile resolves it before invoking sub-make).
+MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
+ifeq ($(patsubst /%,,$(FL_PROVISIONED_DIR)),$(FL_PROVISIONED_DIR))
+override FL_PROVISIONED_DIR := $(abspath $(MAKEFILE_DIR)/../$(FL_PROVISIONED_DIR))
+endif
 
 network1 = deploy_trust-network-1
 network2 = deploy_trust-network-2
+network_local = deploy_trust-network-local
 trust1 = trust1
 trust2 = trust2
 trust_local = trust-local
@@ -82,6 +80,7 @@ TRUST_1_VARS = \
 	LOKI_PORT=${LOKI_PORT_TRUST_1} \
 	TRUST_NETWORK_NAME=${network1} \
 	TRUST_NAME=Trust_1 \
+	TRUST_NUMBER=1 \
 	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),Trust_1)
 TRUST_2_VARS = \
 	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST2} \
@@ -98,7 +97,32 @@ TRUST_2_VARS = \
 	LOKI_PORT=${LOKI_PORT_TRUST_2} \
 	TRUST_NETWORK_NAME=${network2} \
 	TRUST_NAME=Trust_2 \
+	TRUST_NUMBER=2 \
 	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),Trust_2)
+
+# Host ports, bind paths, and the trust network are hardcoded here (not env
+# vars) so the local-trust stack can coexist with dev trust1/trust2 on one
+# laptop without colliding, and so stag/prod hosts (AWS trust EC2 or on-prem
+# via `make add-local-trust`) don't need any _LOCAL_TRUST entries in their
+# env files or AWS Secrets Manager. Port numbers / dir names are arbitrary —
+# picked to be non-overlapping with the _TRUST_1/_TRUST_2 allocations.
+LOCAL_TRUST_VARS = \
+	BASE_IMAGES_DOWNLOAD_DIR=./data/local/$(LOCAL_TRUST_NAME) \
+	OMOP_DB_PORT=5438 \
+	PACS_UI_PORT=8046 \
+	ORTHANC_STORAGE=$(ORTHANC_STORAGE_TRUST_$(subst Trust_,,$(LOCAL_TRUST_NAME))) \
+	XNAT_PORT=8108 \
+	GRAFANA_PORT=3002 \
+	LOKI_PORT=3102 \
+	TRUST_NETWORK_NAME=${network_local} \
+	TRUST_NAME=$(LOCAL_TRUST_NAME) \
+	TRUST_NUMBER=$(subst Trust_,,$(LOCAL_TRUST_NAME)) \
+	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),$(LOCAL_TRUST_NAME)) \
+	OMOP_DATA_DIR=./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data \
+	ORTHANC_STORAGE_DIR=./orthanc/orthanc-storage-2 \
+	OBSERVABILITY_CONFIG_DIR=./observability \
+	LOKI_DATA_VOLUME=trust-local-loki-data \
+	GRAFANA_DATA_VOLUME=trust-local-grafana-data
 
 build:
 	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust1} build --no-cache
@@ -132,37 +156,28 @@ down-trust-1-ec2:
 	@echo "🛑 Stopping Trust 1 services..."
 	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust1} down --remove-orphans
 
-# LOCAL_TRUST_NAME controls which NVFlare participant kit the FL client mounts.
-# Local (on-prem) trusts use Trust_2 kit; EC2 trusts use Trust_1 kit (default).
-# LOCAL_TRUST_NAME is defined in deploy/providers/AWS/Makefile
-# Local trust reuses existing dev dirs to avoid duplicating data:
-#   OMOP_DATA_DIR: points at dev OMOP data (default: /opt/flip/omop/db_data on EC2)
-#   OBSERVABILITY_CONFIG_DIR: points at repo config files (default: /opt/flip/config/observability on EC2)
-#   LOKI/GRAFANA_DATA_VOLUME: uses Docker named volumes (default: bind mounts on EC2)
-up-local-trust:
+# LOCAL_TRUST_NAME controls which FL participant kit the FL client mounts.
+# Local (on-prem) trusts default to the Trust_2 kit; EC2 trusts use Trust_1.
+# LOCAL_TRUST_NAME is defined in deploy/providers/AWS/Makefile and threaded
+# through the root Makefile.
+#
+# Both recipes below use $(LOCAL_TRUST_VARS) so they stay in sync — see the
+# block near the top of this file for why each env-var has a _LOCAL_TRUST
+# variant (dev-laptop coexistence with `make up`) and why unset values fall
+# back to the Trust_1 defaults (single-host stag/prod deploys).
+up-local-trust: create-networks-core create-networks-local-trust
 	## Starts local trust compose stack with TRUST_NAME=$(LOCAL_TRUST_NAME).
 	## Uses project name 'trust-local' to avoid collisions with dev trust1/trust2.
 	@echo "🚢 Starting local Trust services (TRUST_NAME=$(LOCAL_TRUST_NAME))..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST1}
-	$(TRUST_1_VARS) TRUST_NAME=$(LOCAL_TRUST_NAME) TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),$(LOCAL_TRUST_NAME)) \
-		XNAT_PORT=${XNAT_PORT_LOCAL_TRUST} \
-		PACS_UI_PORT=${PACS_UI_PORT_LOCAL_TRUST} \
-		OMOP_DATA_DIR=./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data \
-		OBSERVABILITY_CONFIG_DIR=./observability \
-		LOKI_DATA_VOLUME=trust-local-loki-data \
-		GRAFANA_DATA_VOLUME=trust-local-grafana-data \
-		DEBUG=$(DEBUG) \
+	mkdir -p ./data/local/$(LOCAL_TRUST_NAME)
+	$(LOCAL_TRUST_VARS) DEBUG=$(DEBUG) \
 		$(DOCKER_COMPOSE_CMD) -f compose_trust.local.yml -p $(trust_local) up -d --pull always
 
 down-local-trust:
 	@echo "🛑 Stopping local Trust services..."
-	$(TRUST_1_VARS) TRUST_NAME=$(LOCAL_TRUST_NAME) \
-		OMOP_DATA_DIR=./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data \
-		OBSERVABILITY_CONFIG_DIR=./observability \
-		LOKI_DATA_VOLUME=trust-local-loki-data \
-		GRAFANA_DATA_VOLUME=trust-local-grafana-data \
+	$(LOCAL_TRUST_VARS) \
 		$(DOCKER_COMPOSE_CMD) -f compose_trust.local.yml -p $(trust_local) down --remove-orphans
 
 # Uses --pull always to ensure the latest FL images and omop-db image are used
@@ -204,6 +219,13 @@ create-networks-trust-1:
 create-networks-trust-2:
 	@{ docker network inspect deploy_trust-network-2 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-2; }
 
+# Dedicated network for the local trust stack so it doesn't attach to
+# deploy_trust-network-1 when dev trust1 is also running. Not wired into the
+# top-level `create-networks` target because `make up` (dev) doesn't need it;
+# `up-local-trust` requires it explicitly.
+create-networks-local-trust:
+	@{ docker network inspect $(network_local) >/dev/null 2>&1 || docker network create --driver overlay --attachable $(network_local); }
+
 create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2
 
 remove-networks:
@@ -211,6 +233,7 @@ remove-networks:
 	@docker network rm central-hub-trust-apis-network 2>/dev/null || true
 	@docker network rm deploy_trust-network-1 2>/dev/null || true
 	@docker network rm deploy_trust-network-2 2>/dev/null || true
+	@docker network rm $(network_local) 2>/dev/null || true
 	@docker network rm deploy_shared-net-1 2>/dev/null || true
 	@docker network rm deploy_shared-net-2 2>/dev/null || true
 	@echo "✅ Trust networks removed!"

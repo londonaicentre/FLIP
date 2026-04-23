@@ -230,7 +230,8 @@ def validate_client_availability(clients: list[str], endpoint: str) -> None:
     """
     Validate the availability of clients by checking their status.
     It sends a GET request to the FL API service to check the status of the clients.
-    If any client is unavailable, it raises a ValueError.
+    For NVFLARE, raises ValueError if any client is unavailable.
+    For Flower, logs a warning instead — Flower's SuperLink handles client selection at runtime.
 
     Args:
         clients (list[str]): A list of client names to check the availability of.
@@ -240,10 +241,15 @@ def validate_client_availability(clients: list[str], endpoint: str) -> None:
         None
 
     Raises:
-        ValueError: If any client is unavailable.
+        ValueError: If any client is unavailable (NVFLARE backend only).
     """
+    is_flower = get_settings().FL_BACKEND == "flower"
+
     client_statuses = check_client_status(endpoint)
     if not client_statuses:
+        if is_flower:
+            logger.warning(f"No client status response from FL API at {endpoint} — Flower will handle client selection")
+            return
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
         raise ValueError("Unable to fetch client statuses to validate client availability")
 
@@ -252,6 +258,9 @@ def validate_client_availability(clients: list[str], endpoint: str) -> None:
     unavailable = [client for client in clients if not is_client_available(client, client_statuses)]
 
     if unavailable:
+        if is_flower:
+            logger.warning(f"Clients unavailable: {', '.join(unavailable)} — Flower will handle client selection")
+            return
         raise ValueError(f"Clients unavailable: {', '.join(unavailable)}")
 
 
@@ -675,6 +684,18 @@ def verify_bundle_paths(
 ) -> None:
     """
     Verifies that all expected destination keys exist after bundling.
+
+    Args:
+        s3 (S3Client): S3 client used to list destination objects.
+        base_files (list[str]): Keys of the base application files in the source bucket.
+        model_files (list[str]): Keys of the user-uploaded model files in the source bucket.
+        app_folders (set[str]): Application subfolder names that model files get mirrored into.
+        base_bucket_s3_path (str): Root S3 path of the base application bucket.
+        model_bucket_s3_path (str): Root S3 path of the user model bucket.
+        dest_bucket_s3_path (str): Root S3 path of the destination bundle bucket.
+
+    Raises:
+        RuntimeError: If any expected destination key is missing from the bundle bucket.
     """
 
     # Relative paths of model files
@@ -758,6 +779,10 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
 
     Returns:
         IJobMetaData: The current job data if found.
+
+    Raises:
+        ValueError: If the FL server response is not a list, no running job matches
+            ``fl_backend_job_id``, or more than one running job shares the same ID.
     """
     url = f"{net_endpoint}/list_jobs"
     current_job_data = http_get(url)
@@ -802,6 +827,10 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         request (Request): The FastAPI request object
         model_id (UUID): The ID of the model to abort
         session (Session): SQLModel session object
+
+    Raises:
+        ValueError: If the FL server is not running, or if the job currently running on the
+            server does not correspond to ``model_id``, or if ``target`` is invalid.
     """
     logger.debug(f"Checking if model {model_id} is currently running...")
 

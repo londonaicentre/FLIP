@@ -40,6 +40,10 @@ async def get_dataframe(encrypted_project_id: str, query: str) -> pd.DataFrame:
 
     Returns:
         pd.DataFrame: The DataFrame containing the results of the query.
+
+    Raises:
+        RuntimeError: If the HTTP call to the Data Access API fails (network error or non-2xx
+            response).
     """
     dataframe_request = DataframeRequest(encrypted_project_id=encrypted_project_id, query=query)
 

@@ -12,7 +12,8 @@
 
 .PHONY: build up deploy down clean xnat-shell xnat-war-download xnat-plugins-download \
 	xnat-reset xnat-configure xnat-configure-trust-1 xnat-configure-trust-2 xnat-configure-local \
-	create-network-trust-1 create-network-trust-2 up-xnat-1 up-xnat-2 up-xnat-local \
+	create-network-trust-1 create-network-trust-2 create-network-trust-local \
+	up-xnat-1 up-xnat-2 up-xnat-local \
 	down-xnat-1 down-xnat-2 down-xnat-local
 
 # if tag PROD=true is passed, set PROD=true
@@ -45,6 +46,7 @@ project2 = xnat2
 project_local = xnat-local
 network1 = deploy_trust-network-1
 network2 = deploy_trust-network-2
+network_local = deploy_trust-network-local
 
 # Path to the dev XNAT folder on the Docker host (bind mounts resolve there, not locally).
 export XNAT_PATH=$(realpath .)
@@ -115,12 +117,12 @@ xnat-shell:
 	CONTAINER=$$(docker ps --filter "name=${project1}_xnat-web" -q); \
 	docker exec -it $$CONTAINER bash
 
-up-xnat-local: create-network-trust-1
+up-xnat-local: create-network-trust-local
 	XNAT_PATH=${XNAT_PATH} \
-	XNAT_PORT=${XNAT_PORT_LOCAL_TRUST} \
-	PACS_UI_PORT=${PACS_UI_PORT_LOCAL_TRUST} \
-	ORTHANC_STORAGE=orthanc-storage-local \
-	DOCKER_NETWORK_NAME=${network1} \
+	XNAT_PORT=8108 \
+	PACS_UI_PORT=8046 \
+	ORTHANC_STORAGE=$(ORTHANC_STORAGE_TRUST_$(subst Trust_,,$(LOCAL_TRUST_NAME))) \
+	DOCKER_NETWORK_NAME=${network_local} \
 	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} ${project_local}
 	$(MAKE) xnat-configure-local
 
@@ -224,3 +226,8 @@ create-network-trust-2:
 	@echo "🔧 Ensuring external Docker networks exist..."
 	@docker network inspect ${network2} >/dev/null 2>&1 || \
 		docker network create --driver overlay --attachable ${network2}
+
+create-network-trust-local:
+	@echo "🔧 Ensuring external Docker networks exist..."
+	@docker network inspect ${network_local} >/dev/null 2>&1 || \
+		docker network create --driver overlay --attachable ${network_local}

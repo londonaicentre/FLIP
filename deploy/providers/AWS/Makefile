@@ -30,6 +30,10 @@ PRESERVE_VPC ?= true
 # Export PROD so child processes (e.g. check_status.py) can determine the environment
 export PROD
 
+# Resolve FL_KIT_DATE from the backend-specific kit date: FLARE_KIT_DATE or FLOWER_KIT_DATE
+FL_KIT_DATE := $(if $(filter nvflare,$(FL_BACKEND)),$(FLARE_KIT_DATE),$(FLOWER_KIT_DATE))
+$(if $(FL_KIT_DATE),,$(error 🧠 $(if $(filter nvflare,$(FL_BACKEND)),FLARE_KIT_DATE,FLOWER_KIT_DATE) must be set in the environment file for FL_BACKEND=$(FL_BACKEND)))
+
 # Logical AWS profile names. Defaults match the short-alias pattern recommended
 # in deploy/providers/AWS/README.md (operators add `[profile prod]` / `[profile stag]`
 # blocks to their ~/.aws/config that point at the FLIP SSO accounts). Override via
@@ -253,7 +257,11 @@ ansible-init: ## Provision Trust EC2 with Docker, AWS CLI, and FL participant ki
 	@test -n "$(FL_KIT_DATE)" || (echo "FL_KIT_DATE must be set in $(MAIN_ENV_FILE)"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
-	@uv run ansible-playbook site.yml -e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) -e fl_kit_date=$(FL_KIT_DATE) -e pgdata_archive=trust1_pgdata_20260106.tar.gz
+	@uv run ansible-playbook site.yml \
+		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
+		-e fl_backend=$(FL_BACKEND) \
+		-e fl_kit_date=$(FL_KIT_DATE) \
+		-e pgdata_archive=trust1_pgdata_20260106.tar.gz
 
 .PHONY: deploy-centralhub
 deploy-centralhub: ## Deploy Central Hub API services to ECS and deploy flip-ui to S3 + CloudFront
@@ -406,6 +414,7 @@ add-local-trust: ## Provision an on-prem Trust host and register it with the Cen
 		exit $$PLAY_RC; \
 	fi
 	@echo "📦 Downloading $(LOCAL_TRUST_NAME) FL participant kit from S3..."
+ifeq ($(FL_BACKEND),nvflare)
 	@LOCAL_TRUST_KIT_DIR=/tmp/$(LOCAL_TRUST_NAME)_kit && \
 	  rm -rf $$LOCAL_TRUST_KIT_DIR && mkdir -p $$LOCAL_TRUST_KIT_DIR && \
 	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
@@ -413,20 +422,40 @@ add-local-trust: ## Provision an on-prem Trust host and register it with the Cen
 	    $$LOCAL_TRUST_KIT_DIR && \
 	  if [ -n "$(LOCAL_TRUST_SSH_KEY)" ]; then \
 	    ssh -i $(LOCAL_TRUST_SSH_KEY) $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP) \
-	      "mkdir -p /opt/flip/services/Trust_$(LOCAL_TRUST_NAME)/startup /opt/flip/services/$(LOCAL_TRUST_NAME)/local /opt/flip/services/$(LOCAL_TRUST_NAME)/transfer" && \
+	      "mkdir -p /opt/flip/services/$(LOCAL_TRUST_NAME)/startup /opt/flip/services/$(LOCAL_TRUST_NAME)/local /opt/flip/services/$(LOCAL_TRUST_NAME)/transfer" && \
 	    rsync -av --delete -e "ssh -i $(LOCAL_TRUST_SSH_KEY)" \
 	      $$LOCAL_TRUST_KIT_DIR/startup/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/$(LOCAL_TRUST_NAME)/startup/ && \
 	    rsync -av --delete -e "ssh -i $(LOCAL_TRUST_SSH_KEY)" \
-	      $$LOCAL_TRUST_KIT_DIR/local/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/$(LOCAL_TRUST_NAME)/local/; \
+	      $$LOCAL_TRUST_KIT_DIR/local/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/$(LOCAL_TRUST_NAME)/local/ && \
+	    rm -rf $$LOCAL_TRUST_KIT_DIR; \
 	  else \
 	    echo ""; \
-	    echo "  # 3. Deploy the $(LOCAL_TRUST_NAME) FL participant kit (kit staged at $$LOCAL_TRUST_KIT_DIR):"; \
+	    echo "  # 3. Deploy the $(LOCAL_TRUST_NAME) NVFLARE participant kit (kit staged at $$LOCAL_TRUST_KIT_DIR):"; \
 	    echo "  sudo mkdir -p /opt/flip/services/$(LOCAL_TRUST_NAME)/startup /opt/flip/services/$(LOCAL_TRUST_NAME)/local /opt/flip/services/$(LOCAL_TRUST_NAME)/transfer"; \
 	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/startup/ /opt/flip/services/$(LOCAL_TRUST_NAME)/startup/"; \
 	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/local/ /opt/flip/services/$(LOCAL_TRUST_NAME)/local/"; \
 	  fi && \
-	  rm -rf $$LOCAL_TRUST_KIT_DIR && \
-	  echo "✅ $(LOCAL_TRUST_NAME) FL kit deployed"
+	  echo "✅ $(LOCAL_TRUST_NAME) NVFLARE kit deployed"
+else
+	@LOCAL_TRUST_KIT_DIR=/tmp/$(LOCAL_TRUST_NAME)_kit && \
+	  rm -rf $$LOCAL_TRUST_KIT_DIR && mkdir -p $$LOCAL_TRUST_KIT_DIR/net-1 && \
+	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+	    s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FL_KIT_DATE)/net-1/ \
+	    $$LOCAL_TRUST_KIT_DIR/net-1/ && \
+	  if [ -n "$(LOCAL_TRUST_SSH_KEY)" ]; then \
+	    ssh -i $(LOCAL_TRUST_SSH_KEY) $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP) \
+	      "mkdir -p /opt/flip/services/net-1" && \
+	    rsync -av --delete -e "ssh -i $(LOCAL_TRUST_SSH_KEY)" \
+	      $$LOCAL_TRUST_KIT_DIR/net-1/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/net-1/ && \
+	    rm -rf $$LOCAL_TRUST_KIT_DIR; \
+	  else \
+	    echo ""; \
+	    echo "  # 3. Deploy the Flower participant kit (kit staged at $$LOCAL_TRUST_KIT_DIR):"; \
+	    echo "  sudo mkdir -p /opt/flip/services/net-1"; \
+	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/net-1/ /opt/flip/services/net-1/"; \
+	  fi && \
+	  echo "✅ $(LOCAL_TRUST_NAME) Flower kit deployed"
+endif
 	@echo "🔐 Updating AWS security group rules..."
 	@TF_VAR_local_trust_public_ip=$(LOCAL_TRUST_IP) terraform plan \
 		-target=aws_security_group_rule.local_trust_fl_server_nlb \

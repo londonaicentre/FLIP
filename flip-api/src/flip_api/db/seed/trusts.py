@@ -20,7 +20,15 @@ from flip_api.utils.logger import logger
 
 
 def seed_trusts(session: Session) -> list[dict[str, str]]:
-    """Seed trusts into the database."""
+    """Seed trusts into the database.
+
+    Args:
+        session (Session): The SQLModel session used for reads and inserts.
+
+    Returns:
+        list[dict[str, str]]: List of ``{"name": <trust_name>}`` dicts for every trust present
+        after seeding.
+    """
 
     # Get settings
     stt = get_settings()

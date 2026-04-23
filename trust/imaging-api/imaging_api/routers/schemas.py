@@ -224,7 +224,16 @@ class ImportStudyRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def deduplicate_and_parse_studies(cls, data):
-        """Deduplicates and parses studies before validation."""
+        """Deduplicates and parses studies before validation.
+
+        Args:
+            data (dict): The raw input payload being validated. ``data["studies"]`` may contain
+                ``dict`` entries or already-parsed ``ImportStudy`` instances.
+
+        Returns:
+            dict: The same payload with ``studies`` replaced by a de-duplicated list of
+            ``ImportStudy`` instances keyed by ``study_instance_uid``.
+        """
         # Make sure studies exist in raw input
         studies = data.get("studies", [])
         if studies:

@@ -28,6 +28,9 @@ def get_aes_key() -> bytes:
 
     In production, fetches from AWS Secrets Manager. In dev, uses the environment variable directly.
     Cached after first call — the key does not change during the lifetime of a process.
+
+    Returns:
+        bytes: The decoded AES key.
     """
     global _aes_key_cache  # noqa: PLW0603
     if _aes_key_cache is not None:
@@ -40,7 +43,17 @@ def get_aes_key() -> bytes:
 
 
 def encrypt(plaintext: str, key: bytes | None = None) -> str:
-    """Encrypt plaintext using AES-CBC with PKCS7 padding. Returns Base64-encoded ciphertext."""
+    """Encrypt plaintext using AES-CBC with PKCS7 padding. Returns Base64-encoded ciphertext.
+
+    Args:
+        plaintext (str): The plaintext string to encrypt.
+        key (bytes | None): The AES key to use. If None, the shared AES key is retrieved via
+            :func:`get_aes_key`.
+
+    Returns:
+        str: Base64-encoded ciphertext, with the random IV prepended to the ciphertext bytes
+        before encoding.
+    """
     if key is None:
         key = get_aes_key()
 
@@ -57,7 +70,17 @@ def encrypt(plaintext: str, key: bytes | None = None) -> str:
 
 
 def decrypt(encoded_payload: str, key: bytes | None = None) -> str:
-    """Decrypt Base64-encoded ciphertext using AES-CBC with PKCS7 padding. Returns the original plaintext."""
+    """Decrypt Base64-encoded ciphertext using AES-CBC with PKCS7 padding. Returns the original plaintext.
+
+    Args:
+        encoded_payload (str): Base64-encoded payload where the first 16 bytes are the IV and the
+            remaining bytes are the ciphertext.
+        key (bytes | None): The AES key to use. If None, the shared AES key is retrieved via
+            :func:`get_aes_key`.
+
+    Returns:
+        str: The decrypted plaintext.
+    """
     if key is None:
         key = get_aes_key()
 

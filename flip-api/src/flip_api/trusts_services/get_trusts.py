@@ -32,6 +32,13 @@ def get_trusts(
     """
     Retrieve all trusts with their ID and name.
 
+    Args:
+        db (Session): Database session, provided by dependency injection.
+        user_id (UUID): ID of the authenticated user making the request.
+
+    Returns:
+        list[IBasicTrust]: Every trust in the database, reduced to its ID and name.
+
     Raises:
         HTTPException: If an error occurs while fetching trusts from the database.
     """

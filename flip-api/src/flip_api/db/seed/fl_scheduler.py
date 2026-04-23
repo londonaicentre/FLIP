@@ -20,7 +20,15 @@ from flip_api.utils.logger import logger
 
 
 def seed_fl_scheduler(session: Session, nets: list[FLNets]) -> list[FLScheduler]:
-    """Seed FL scheduler entries."""
+    """Seed FL scheduler entries.
+
+    Args:
+        session (Session): The SQLModel session used for reads and inserts.
+        nets (list[FLNets]): FL nets to create scheduler entries for if they don't already exist.
+
+    Returns:
+        list[FLScheduler]: All FL scheduler rows present after seeding.
+    """
     logger.debug("Seeding Federated Learning Scheduler")
     for net in nets:
         # Check if scheduler entry exists

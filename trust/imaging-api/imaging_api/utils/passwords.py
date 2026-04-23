@@ -20,6 +20,10 @@ def generate_complex_password(length: int = 15) -> str:
 
     Args:
         length (int): Length of the password to generate. Default is 15.
+
+    Returns:
+        str: A complex password of the requested length containing at least one lowercase letter,
+        one uppercase letter, one digit, and one special character.
     """
     # Define character sets
     lowercase = string.ascii_lowercase

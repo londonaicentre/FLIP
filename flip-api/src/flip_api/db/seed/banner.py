@@ -16,7 +16,11 @@ from flip_api.db.models.main_models import SiteBanner
 
 
 def seed_banner(session: Session) -> None:
-    """Seed site banner."""
+    """Seed site banner.
+
+    Args:
+        session (Session): The SQLModel session used to read and insert the seed row.
+    """
     existing_banner = session.get(SiteBanner, 1)
 
     if not existing_banner:
