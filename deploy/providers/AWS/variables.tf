@@ -380,3 +380,33 @@ variable "omop_postgres_db" {
   type        = string
   default     = ""
 }
+
+variable "net_endpoints" {
+  description = "JSON string of network endpoints for FL backend (e.g., {\"net-1\":\"http://flip-fl-api-net-1:8000\"})"
+  type        = string
+  default     = "{\"net-1\":\"http://flip-fl-api-net-1:8000\"}"
+}
+
+variable "trust_names" {
+  description = "JSON array of trust names (e.g., [\"Trust_1\", \"Trust_2\"])"
+  type        = string
+  default     = "[\"Trust_1\"]"
+}
+
+variable "trust_name" {
+  description = "Name of this trust (for trust services)"
+  type        = string
+  default     = "Trust_1"
+}
+
+variable "trust_api_key_hashes" {
+  description = "JSON string mapping trust names to SHA-256 hashes of their API keys"
+  type        = string
+  default     = "{\"Trust_1\": \"\"}"
+}
+
+variable "internal_service_key_hash" {
+  description = "SHA-256 hash of the internal service key used for fl-server-to-hub auth"
+  type        = string
+  default     = ""
+}
