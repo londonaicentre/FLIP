@@ -149,6 +149,14 @@ resource "aws_ssm_parameter" "internal_service_key_header" {
   description = "HTTP header name used for the FLIP internal service key (fl-server to flip-api auth)"
 }
 
+resource "aws_ssm_parameter" "flip_api_internal_url" {
+  name  = "/flip/api/flip_api_internal_url"
+  type  = "String"
+  value = "http://flip-api.flip.local:8000/api"
+
+  description = "Internal VPC URL of flip-api for fl-server-to-flip-api auth. Must preserve X-Internal-Service-Key header — never route through CloudFront."
+}
+
 # --- Trust service URLs (used by flip-api and trust-api) ---
 # These are internal VPC URLs resolved once ECS service discovery or the
 # Trust EC2 IP is known. Values are placeholder-defaults; update via

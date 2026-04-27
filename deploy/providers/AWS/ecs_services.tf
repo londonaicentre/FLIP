@@ -30,6 +30,10 @@ resource "aws_ecs_service" "flip_api" {
     assign_public_ip = false
   }
 
+  service_registries {
+    registry_arn = aws_service_discovery_service.flip_api.arn
+  }
+
   load_balancer {
     target_group_arn = aws_lb_target_group.ecs_flip_api.arn
     container_name   = "flip-api"
@@ -39,8 +43,11 @@ resource "aws_ecs_service" "flip_api" {
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
 
-  # Wait for the ALB listener rule to exist before creating the service
-  depends_on = [aws_lb_listener_rule.ecs_flip_api_https]
+  # Wait for the ALB listener rule and service discovery to exist before creating the service
+  depends_on = [
+    aws_lb_listener_rule.ecs_flip_api_https,
+    aws_service_discovery_service.flip_api
+  ]
 
   lifecycle {
     # Allow ECS to adjust desired_count independently (e.g. via auto-scaling)

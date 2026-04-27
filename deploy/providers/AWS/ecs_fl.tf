@@ -192,6 +192,25 @@ resource "aws_service_discovery_service" "fl_server" {
 
 }
 
+# flip-api service discovery — registered so fl-server can resolve
+# http://flip-api.flip.local:8000/api as FLIP_API_INTERNAL_URL without
+# routing through the ALB or CloudFront (which would strip the internal
+# service key header).
+resource "aws_service_discovery_service" "flip_api" {
+  name = "flip-api"
+
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.flip.id
+
+    dns_records {
+      ttl  = 10
+      type = "A"
+    }
+
+    routing_policy = "MULTIVALUE"
+  }
+}
+
 ############################
 # FL Service Security Groups
 #
@@ -498,6 +517,7 @@ resource "aws_ecs_task_definition" "fl_server" {
         { name = "AES_KEY_BASE64", valueFrom = "${module.flip_api_secret.secret_arn}:aes_key::" },
         { name = "TRUST_API_KEY_HASHES", valueFrom = "${module.flip_api_secret.secret_arn}:trust_api_key_hashes::" },
         { name = "INTERNAL_SERVICE_KEY", valueFrom = "${module.flip_api_secret.secret_arn}:internal_service_key::" },
+        { name = "FLIP_API_INTERNAL_URL", valueFrom = aws_ssm_parameter.flip_api_internal_url.arn },
       ]
 
       logConfiguration = {

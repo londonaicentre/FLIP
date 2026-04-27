@@ -56,20 +56,16 @@ module "flip_vpc" {
 ############################
 
 # Central Hub Security Group for EC2 instance
+# No ingress rules — EC2 no longer runs flip-api/fl-server.
+# Access is exclusively via SSM Session Manager (outbound-only from the instance).
 
 module "ec2_security_group" {
   source      = "./modules/secgroup"
   name        = "ec2-security-group"
   vpc_id      = module.flip_vpc.vpc_id
-  description = "Security group for FLIP Central Hub EC2 instance"
-  # UI is served from CloudFront/S3 — nothing on EC2 listens on var.UI_PORT (443).
-  ingress_rules = [
-    {
-      port                     = var.API_PORT
-      description              = "FLIP API from ALB"
-      source_security_group_id = module.alb_security_group.security_group.id
-    }
-  ]
+  description = "Security group for FLIP Central Hub EC2 instance (SSM-only access; no inbound ports)"
+
+  ingress_rules = []
 }
 
 # Trust Security Group for Trust EC2 instance
@@ -92,13 +88,9 @@ module "rds_security_group" {
   name        = "rds-security-group"
   vpc_id      = module.flip_vpc.vpc_id
   description = "Security group for FLIP RDS instance"
-  ingress_rules = [
-    {
-      port                     = 5432
-      description              = "PostgreSQL from EC2"
-      source_security_group_id = module.ec2_security_group.security_group.id
-    }
-  ]
+  # ECS task ingress rules are added separately below (aws_security_group_rule
+  # resources) so they can reference ECS security groups directly.
+  ingress_rules      = []
   block_all_outbound = true
 }
 
@@ -286,9 +278,8 @@ module "alb" {
   listeners = {
     # HTTPS default action: return 404. CloudFront is the canonical front door
     # for user traffic; anything reaching the ALB default action (e.g. direct
-    # ALB DNS probes) gets rejected here. The /api/* listener rule below
-    # forwards API requests to the API target group for both CloudFront's
-    # /api/* behaviour and any direct trust access.
+    # ALB DNS probes) gets rejected here. The /api/* listener rule forwards API
+    # requests to the ECS flip-api target group for CloudFront's /api/* behaviour.
     "https-listener" = {
       port            = var.ALB_HTTPS_PORT
       protocol        = "HTTPS"
@@ -308,32 +299,13 @@ module "alb" {
         protocol    = "HTTPS"
         status_code = "HTTP_301"
       }
-    },
-    "api-listener" = {
-      port     = var.API_PORT
-      protocol = "HTTP"
-      forward = {
-        target_group_key = "ec2-instance-api"
-      }
     }
   }
 
-  # UI is served from S3 + CloudFront; no ec2-instance-ui target group.
-  target_groups = {
-    ec2-instance-api = {
-      port      = var.API_PORT
-      protocol  = "HTTP"
-      target_id = aws_instance.ec2_instance.id
-
-      health_check = {
-        enabled  = true
-        protocol = "HTTP"
-        path     = "/api/health"
-        port     = "traffic-port"
-        matcher  = "200"
-      }
-    },
-  }
+  # UI is served from S3 + CloudFront; there is no EC2 target group.
+  # flip-api runs on ECS Fargate, registered via the load_balancer block
+  # in ecs_services.tf — no target_groups are needed here.
+  target_groups = {}
 }
 
 # Network Load Balancer for FL server TCP/TLS pass-through
@@ -427,23 +399,6 @@ resource "aws_route53_record" "fl_server_nlb" {
     name                   = module.fl_server_nlb.dns_name
     zone_id                = module.fl_server_nlb.zone_id
     evaluate_target_health = true
-  }
-}
-
-# Listener rule for path-based routing to the API namespace
-resource "aws_lb_listener_rule" "api_routing" {
-  listener_arn = module.alb.listeners["https-listener"].arn
-  priority     = 98
-
-  action {
-    type             = "forward"
-    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
-  }
-
-  condition {
-    path_pattern {
-      values = ["/api", "/api/*"]
-    }
   }
 }
 

@@ -95,6 +95,8 @@ export TF_VAR_fl_image_tag=${FL_IMAGE_TAG}
 # export TF_VAR_efs_volume_size=${EFS_VOLUME_SIZE:-100}
 # export TF_VAR_efs_provisioned_throughput=${EFS_THROUGHPUT:-10}
 export TF_VAR_internal_service_key=${INTERNAL_SERVICE_KEY}
+export TF_VAR_net_endpoints=${NET_ENDPOINTS}
+export TF_VAR_trust_names=${TRUST_NAMES}
 # SES / email
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 # DNS subdomains (env-specific, override the variables.tf defaults)
@@ -299,6 +301,24 @@ deploy-centralhub: ## Deploy Central Hub API services to ECS and deploy flip-ui 
 	  sleep 120; \
 	else \
 	  echo "   ✅ All central hub images found."; \
+	fi
+	@echo "🔌 Stopping any remaining Docker Compose services on Central Hub EC2 (migrated to ECS)..."
+	@INSTANCE_ID=$$(AWS_PROFILE=$(AWS_PROFILE) terraform output -raw Ec2InstanceId 2>/dev/null || true); \
+	if [ -n "$$INSTANCE_ID" ]; then \
+	  CMD_ID=$$(aws ssm send-command \
+	    --instance-ids "$$INSTANCE_ID" \
+	    --document-name "AWS-RunShellScript" \
+	    --parameters 'commands=["docker stop $$(docker ps -q) 2>/dev/null || true", "docker system prune -af 2>/dev/null || true"]' \
+	    --cloud-watch-output-config '{"CloudWatchOutputEnabled":false}' \
+	    --output text --query 'Command.CommandId' \
+	    --profile $(AWS_PROFILE) 2>/dev/null) && \
+	  if [ -n "$$CMD_ID" ]; then \
+	    echo "   ↻ Waiting for cleanup to complete (CommandId: $$CMD_ID)..."; \
+	    aws ssm wait command-executed --command-id "$$CMD_ID" --instance-id "$$INSTANCE_ID" --profile $(AWS_PROFILE) 2>/dev/null || true; \
+	    echo "   ✅ Old Docker services stopped on Central Hub EC2."; \
+	  fi; \
+	else \
+	  echo "   ⚠️  No central hub EC2 instance found (already removed)."; \
 	fi
 	@echo "🚀 Forcing new ECS deployments for all Central Hub API services..."
 	@for svc in $(ECS_SERVICES); do \
