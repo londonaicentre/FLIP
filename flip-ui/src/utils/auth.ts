@@ -116,9 +116,9 @@ const devMode = process.env.NODE_ENV === "development";
 export const authConfig = {
     Auth: {
         Cognito: {
-            region: process.env.VITE_AWS_REGION || 'eu-west-2',
-            userPoolId: process.env.VITE_AWS_USER_POOL_ID,
-            userPoolClientId: process.env.VITE_AWS_CLIENT_ID,
+            region: devMode ? (process.env.VITE_AWS_REGION || 'eu-west-2') : (window.AWS_REGION || 'eu-west-2'),
+            userPoolId: devMode ? process.env.VITE_AWS_USER_POOL_ID : window.AWS_USER_POOL_ID,
+            userPoolClientId: devMode ? process.env.VITE_AWS_CLIENT_ID : window.AWS_CLIENT_ID,
             clientSecret: process.env.VITE_AWS_CLIENT_SECRET,
             authenticationFlowType: 'USER_PASSWORD_AUTH',
             loginWith: {}

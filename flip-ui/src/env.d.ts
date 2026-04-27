@@ -25,6 +25,7 @@ interface Window {
     AWS_BASE_URL: string;
     AWS_USER_POOL_ID: string;
     AWS_CLIENT_ID: string;
+    AWS_REGION: string;
     BLACKLISTED_MODEL_FILES: string;
     RELEASE_VERSION: string;
     MAX_REIMPORT_COUNT: number;
