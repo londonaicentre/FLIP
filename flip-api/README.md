@@ -89,4 +89,4 @@ See [`.env.development.example`](../.env.development.example) for the full list 
 ## Further Reading
 
 - [Full FLIP Documentation](https://londonaicentreflip.readthedocs.io/en/latest/)
-- [Contributing & Development Guide](CONTRIBUTING.md)
+- [Contributing & Development Guide](../CONTRIBUTING.md)

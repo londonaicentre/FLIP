@@ -18,7 +18,7 @@ from imaging_api.routers.schemas import DownloadImagesRequestData, DownloadImage
 from imaging_api.services.download import download_and_unzip_images
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.encryption import decrypt
-from imaging_api.utils.exceptions import NotFoundError
+from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
 from imaging_api.utils.logger import logger
 
 router = APIRouter(prefix="/download", tags=["Download"])
@@ -82,6 +82,14 @@ async def download_images_by_accession_number(
         error_msg = f"Resource not found: {str(e)}"
         logger.error(error_msg)
         raise HTTPException(status_code=404, detail=error_msg)
+    except LocalStorageError as e:
+        # Trust-host misconfiguration (bind mount missing, perms wrong, disk
+        # full, etc.). This is NOT a 404 — the remote data may exist fine —
+        # so do not return it as "resource not found", which was the bug this
+        # branch addresses.
+        error_msg = f"Trust-side storage error: {e.detail}"
+        logger.error(error_msg)
+        raise HTTPException(status_code=e.status_code, detail=error_msg)
     except ValueError as e:
         error_msg = f"Invalid download request: {str(e)}"
         logger.error(error_msg)

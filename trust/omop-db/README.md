@@ -35,4 +35,4 @@ This should not run any initialization scripts as the data volume already contai
 ## Further Reading
 
 - [Trust deployment overview](../README.md)
-- [Contributing & Development Guide](CONTRIBUTING.md)
+- [Contributing & Development Guide](../../CONTRIBUTING.md)

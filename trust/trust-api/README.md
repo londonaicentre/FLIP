@@ -81,4 +81,4 @@ one replica.
 
 - [Full FLIP Documentation](https://londonaicentreflip.readthedocs.io/en/latest/)
 - [Trust deployment overview](../README.md)
-- [Contributing & Development Guide](CONTRIBUTING.md)
+- [Contributing & Development Guide](../../CONTRIBUTING.md)

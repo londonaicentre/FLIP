@@ -184,6 +184,13 @@ The fl-server on the Central Hub authenticates to flip-api using `INTERNAL_SERVI
 FL clients (trust side) **do not** have Central Hub API credentials. Only the fl-server communicates with flip-api.
 FL clients relay metrics and exceptions to the fl-server, which forwards them to the Central Hub.
 
+The fl-server must reach flip-api via `FLIP_API_INTERNAL_URL` — a Docker-network URL such as
+`http://flip-api:8000/api`. It must **not** go through the public `CENTRAL_HUB_API_URL` because the
+CloudFront distribution in front of flip-api whitelists only `Authorization`, `Content-Type`, and
+`Origin` and strips `X-Internal-Service-Key` at the edge, which would break this handshake. The
+public `CENTRAL_HUB_API_URL` is reserved for flip-ui and trust-side (trust-api) consumers that live
+outside the hub's Docker network.
+
 | Variable | Where used | Purpose |
 |---|---|---|
 | `TRUST_API_KEY_HEADER` | flip-api, trust-api | Header name for trust auth |
@@ -192,6 +199,8 @@ FL clients relay metrics and exceptions to the fl-server, which forwards them to
 | `INTERNAL_SERVICE_KEY_HEADER` | flip-api, fl-server | Header name for internal service auth |
 | `INTERNAL_SERVICE_KEY` | fl-server | Internal service plaintext key |
 | `INTERNAL_SERVICE_KEY_HASH` | flip-api | SHA-256 hash of internal service key |
+| `CENTRAL_HUB_API_URL` | flip-ui, trust-api | Public base URL of flip-api (in prod: CloudFront URL) |
+| `FLIP_API_INTERNAL_URL` | fl-server | Docker-network URL of flip-api on the Central Hub (e.g. `http://flip-api:8000/api`) |
 
 ---
 

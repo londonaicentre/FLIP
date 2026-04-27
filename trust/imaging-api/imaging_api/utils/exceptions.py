@@ -33,3 +33,18 @@ class InternalServerError(Exception):
         self.status_code = status_code
         self.detail = detail
         super().__init__(f"{status_code}: {detail}")
+
+
+class LocalStorageError(Exception):
+    """Exception raised when writing to the imaging-api local filesystem fails.
+
+    Distinct from NotFoundError so callers can tell "the remote resource
+    doesn't exist" apart from "our own disk/mount is misconfigured". The
+    former is a user/cohort issue; the latter is an operator/deployment
+    issue and should surface as 500, not 404.
+    """
+
+    def __init__(self, detail: str = "Local storage error", status_code: int = 500):
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(f"{status_code}: {detail}")

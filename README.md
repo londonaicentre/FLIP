@@ -76,6 +76,8 @@ For example:
 | `make up-no-trust` | Run all services except the trust services related services |
 | `make up-trusts` | Run the trust services related services (uses Docker Swarm for XNAT) |
 | `make central-hub` | Run the central API service and the database (does not start the UI — use `make ui` for that) |
+| `make ui` | Start the flip-ui container only (no-op when `PROD=stag`/`PROD=true`, since the UI is served from S3 + CloudFront) |
+| `make ui-off` | Stop the flip-ui container |
 | `make build` | Build all Docker images |
 | `make down` | Stop all services and remove the containers (including Swarm stacks) |
 | `make restart` | Stop and start all services |
@@ -83,7 +85,12 @@ For example:
 | `make clean` | Remove all stopped containers, networks, and images |
 | `make ci` | Run the CI pipeline locally using `act` |
 | `make up-local-trust` | Run a local (on-premises) trust (set `PROD=true` or `PROD=stag` for environment) |
-| `make unit_test` | Run the tests for all services |
+| `make unit_test` | Run unit tests across all services |
+| `make tests` | Run flip-ui unit tests and the full flip-api test suite (lint + mypy + pytest) |
+| `make debug SERVICE=<name>` | Restart one service in debug mode (waits for a debugger on port 5678). Services: `flip-api`, `fl-api-net-1`, `trust-api`, `imaging-api`, `data-access-api` |
+| `make debug-off SERVICE=<name>` | Take a single service back out of debug mode |
+| `make debug-all` | Restart every API service in debug mode |
+| `make debug-off-all` | Take every API service back out of debug mode |
 
 You can add new commands to the Makefile to create smaller deployments for testing and development.
 
