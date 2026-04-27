@@ -202,6 +202,22 @@ outside the hub's Docker network.
 | `CENTRAL_HUB_API_URL` | flip-ui, trust-api | Public base URL of flip-api (in prod: CloudFront URL) |
 | `FLIP_API_INTERNAL_URL` | fl-server | Docker-network URL of flip-api on the Central Hub (e.g. `http://flip-api:8000/api`) |
 
+#### Note on `FLIP_API_INTERNAL_URL` with ECS
+
+`FLIP_API_INTERNAL_URL` names the intent ("flip-api's internal URL on the Central Hub"), not the
+mechanism. On ECS, point it at whichever in-VPC, header-preserving endpoint flip-api exposes:
+
+| ECS layout | `FLIP_API_INTERNAL_URL` |
+|---|---|
+| Sidecar (both containers in one task, awsvpc) | `http://localhost:8000/api` |
+| Separate services + ECS Service Connect | `http://flip-api:8000/api` |
+| Separate services + Cloud Map private DNS | `http://flip-api.<namespace>.local:8000/api` |
+| Separate services + internal ALB | `http://<internal-alb-dns>/api` |
+
+What it must not be: the public CloudFront URL. CloudFront strips `X-Internal-Service-Key`
+regardless of whether flip-api runs on EC2 or ECS. Internal ALBs preserve all request headers by
+default, so that option works; CloudFront doesn't.
+
 ---
 
 ## ECS Container Orchestration
