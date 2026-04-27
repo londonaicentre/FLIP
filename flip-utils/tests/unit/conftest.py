@@ -41,7 +41,7 @@ def pytest_sessionstart(session):
     os.environ.setdefault("DEV_IMAGES_DIR", "/data/local_dev/dev_images")
 
     # Set production environment variables for testing prod mode (fallback)
-    os.environ.setdefault("CENTRAL_HUB_API_URL", "https://hub.example.com")
+    os.environ.setdefault("FLIP_API_INTERNAL_URL", "https://hub.example.com")
     os.environ.setdefault("DATA_ACCESS_API_URL", "https://data.example.com")
     os.environ.setdefault("IMAGING_API_URL", "https://imaging.example.com")
     os.environ.setdefault("IMAGES_DIR", "/images")

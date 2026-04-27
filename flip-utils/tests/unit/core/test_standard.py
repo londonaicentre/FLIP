@@ -281,7 +281,7 @@ class TestFLIPStandardProdUpdateStatus:
             patch("flip.core.standard.FlipConstants") as mock_constants,
             patch("flip.core.standard.requests.put", return_value=mock_response) as mock_put,
         ):
-            mock_constants.CENTRAL_HUB_API_URL = "https://hub.example.com"
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
             mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
             mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
 
@@ -321,7 +321,7 @@ class TestFLIPStandardProdSendHandledException:
             patch("flip.core.standard.FlipConstants") as mock_constants,
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
-            mock_constants.CENTRAL_HUB_API_URL = "https://hub.example.com"
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
             mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
             mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
 
@@ -337,6 +337,52 @@ class TestFLIPStandardProdSendHandledException:
         """send_handled_exception should reject invalid model IDs."""
         with pytest.raises(ValueError, match="Invalid model ID"):
             flip_prod.send_handled_exception("Error message", "client-1", "model-123")
+
+
+class TestFLIPStandardProdSendMetrics:
+    """Test FLIPStandardProd send_metrics method."""
+
+    @pytest.fixture
+    def flip_prod(self):
+        """Create a FLIPStandardProd instance."""
+        return FLIPStandardProd()
+
+    def test_send_metrics_posts_to_flip_api_internal_url(self, flip_prod):
+        """send_metrics should POST to the internal flip-api URL with auth header + payload."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = "OK"
+
+        model_id = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
+        ):
+            mock_constants.FLIP_API_INTERNAL_URL = "https://hub.example.com"
+            mock_constants.INTERNAL_SERVICE_KEY_HEADER = "x-internal-service-key"
+            mock_constants.INTERNAL_SERVICE_KEY = "test-internal-key"
+
+            flip_prod.send_metrics(
+                client_name="client-1",
+                model_id=model_id,
+                label="LOSS_FUNCTION",
+                value=0.42,
+                round=3,
+            )
+
+            mock_post.assert_called_once()
+            url = mock_post.call_args[0][0]
+            assert url == f"https://hub.example.com/model/{model_id}/metrics"
+            assert mock_post.call_args.kwargs["json"] == {
+                "trust": "client-1",
+                "globalRound": 3,
+                "label": "LOSS_FUNCTION",
+                "result": 0.42,
+            }
+            assert mock_post.call_args.kwargs["headers"] == {
+                "x-internal-service-key": "test-internal-key",
+            }
 
 
 class TestFLIPStandardProdUploadResultsToS3:
