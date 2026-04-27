@@ -150,4 +150,4 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 - [XNAT setup](../xnat/README.md)
 - [Orthanc setup](../orthanc/README.md)
 - [Trust deployment overview](../README.md)
-- [Contributing & Development Guide](CONTRIBUTING.md)
+- [Contributing & Development Guide](../../CONTRIBUTING.md)

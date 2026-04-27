@@ -22,7 +22,7 @@ from imaging_api.services.projects import (
     get_project_from_central_hub_project_id,
     get_subject_id_from_experiment_response,
 )
-from imaging_api.utils.exceptions import NotFoundError
+from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
 from imaging_api.utils.logger import logger
 
 # Get download directory
@@ -73,6 +73,17 @@ async def download_and_unzip_images(
     if not download_dir_abs.startswith(base_images_download_dir_abs + os.sep):
         raise ValueError(f"Path traversal detected in net ID: {net_id}")
 
+    # Ensure the per-net download directory exists before we try to write into it.
+    # A missing net_id subdir is a deployment/misconfiguration issue (the bind
+    # mount was never provisioned for this net), not a "remote resource not
+    # found" — surface it as LocalStorageError so the router returns 500.
+    try:
+        os.makedirs(download_dir_abs, exist_ok=True)
+    except OSError as e:
+        raise LocalStorageError(
+            f"Cannot create image download directory {download_dir_abs!r} on the trust host: {e}"
+        ) from e
+
     # Get project ID from central hub project ID
     try:
         project = get_project_from_central_hub_project_id(central_hub_project_id, headers)
@@ -108,18 +119,33 @@ async def download_and_unzip_images(
     )
     logger.info(f"Download URL: {download_url}")
 
-    # Define download and extraction paths (net_id already validated above)
+    # Define download and extraction paths. net_id was validated above; we
+    # still have to guard the final zip path because accession_id and
+    # resource_type are user-controlled and could smuggle `..` segments that
+    # would escape download_dir_abs into a sibling net's directory or out of
+    # BASE_IMAGES_DOWNLOAD_DIR entirely.
     zip_file_path = os.path.join(download_dir_abs, f"{accession_id}-scans-{resource_type}.zip")
+    zip_file_path_abs = os.path.realpath(zip_file_path)
+    if not zip_file_path_abs.startswith(download_dir_abs + os.sep):
+        raise ValueError(
+            f"Path traversal detected in accession_id or resource_type: "
+            f"accession_id={accession_id!r} resource_type={resource_type!r}"
+        )
+    zip_file_path = zip_file_path_abs
 
     # Download the ZIP file
     try:
         downloaded_file = download_file(download_url, zip_file_path, headers)
     except NotFoundError as e:
-        raise NotFoundError(f"File not found at {download_url}: {str(e)}")
-    except FileNotFoundError as e:
-        raise NotFoundError(f"File not found at {download_url}: {str(e)}")
+        # XNAT genuinely has no data at this URL — the cohort entry is orphaned.
+        raise NotFoundError(f"No DICOM data in XNAT at {download_url}: {e.detail}")
+    except LocalStorageError:
+        # Let local-write failures bubble through with their original (accurate)
+        # message and status; do not re-wrap them as "not found" — that's what
+        # masked the real cause in the prior incident.
+        raise
     except Exception as e:
-        raise Exception(f"Failed to download file: {str(e)}")
+        raise Exception(f"Failed to download file from {download_url}: {str(e)}")
     logger.info(f"Downloaded file: {downloaded_file}")
 
     # Unzip file and rename the folder
@@ -180,8 +206,10 @@ def download_file(url: str, destination_path: str, headers: dict[str, str]):
         str: Path to the downloaded file.
 
     Raises:
-        imaging_api.utils.exceptions.NotFoundError: If no data is found at the given URL.
-        Exception: If there is an error during the download request.
+        imaging_api.utils.exceptions.NotFoundError: If XNAT has no data at the given URL (remote 404).
+        imaging_api.utils.exceptions.LocalStorageError: If the local filesystem cannot accept the
+            downloaded file (missing/unwritable destination directory, disk full, etc.).
+        Exception: If there is an upstream/transport error during the download request.
     """
     response = requests.get(url, headers=headers, stream=True)
 
@@ -191,12 +219,28 @@ def download_file(url: str, destination_path: str, headers: dict[str, str]):
     if response.status_code != 200:
         raise Exception(f"Error: Failed to download file: {response.status_code} - {response.text}")
 
-    # Ensure the directory exists
-    os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+    # Ensure the parent directory exists. `download_and_unzip_images` also
+    # pre-creates the net_id dir, but we keep this as a defense-in-depth so
+    # callers of `download_file` directly (tests, future code paths) still
+    # work without surprise.
+    parent_dir = os.path.dirname(destination_path)
+    try:
+        os.makedirs(parent_dir, exist_ok=True)
+    except OSError as e:
+        raise LocalStorageError(
+            f"Cannot create parent directory {parent_dir!r} for downloaded file: {e}"
+        ) from e
 
-    with open(destination_path, "wb") as file:
-        for chunk in response.iter_content(chunk_size=1024):
-            file.write(chunk)
+    try:
+        with open(destination_path, "wb") as file:
+            for chunk in response.iter_content(chunk_size=1024):
+                file.write(chunk)
+    except OSError as e:
+        # Permission denied, disk full, bind mount stale, etc. These are all
+        # trust-host problems — not "the remote URL is missing".
+        raise LocalStorageError(
+            f"Failed to write downloaded file to {destination_path!r}: {e}"
+        ) from e
 
     return destination_path
 

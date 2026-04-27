@@ -41,12 +41,14 @@ This is the **local provider** counterpart to the [AWS provider](../AWS/README.m
 
 Each local Trust host runs:
 
-| Service | Port | Protocol |
+| Service | Container port | Protocol |
 | --- | --- | --- |
 | trust-api | 8000 | HTTP (polls hub outbound) |
 | imaging-api | 8000 | HTTP (internal) |
 | data-access-api | 8000 | HTTP (internal) |
 | fl-client | — | TCP (connects outbound to FL server via NLB) |
+
+The `up-local-trust` stack does **not** publish these container ports to the host (see `trust/compose_trust.local.yml`) — services communicate over the internal Docker network only, which lets the local-trust stack coexist on a developer laptop with `make up` (whose dev `trust1` instance binds host ports `8001`/`8010`/`8020` via `compose_trust-1_override.yml`). When the same images run on a cloud Trust EC2 (production compose), the container ports are mapped to host ports `IMAGING_API_PORT` (8001), `DATA_ACCESS_API_PORT` (8010), and `TRUST_API_PORT` (8020) — see `.env.development.example`.
 
 ## Prerequisites
 

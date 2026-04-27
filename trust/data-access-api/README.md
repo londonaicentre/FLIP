@@ -66,4 +66,4 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 
 - [OMOP Database setup](../omop-db/README.md)
 - [Trust deployment overview](../README.md)
-- [Contributing & Development Guide](CONTRIBUTING.md)
+- [Contributing & Development Guide](../../CONTRIBUTING.md)

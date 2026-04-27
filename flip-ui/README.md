@@ -83,7 +83,7 @@ Client ID are required for a production deployment.
 ## Further Reading
 
 - [Full FLIP Documentation](https://londonaicentreflip.readthedocs.io/en/latest/)
-- [Contributing & Development Guide](CONTRIBUTING.md)
+- [Contributing & Development Guide](../CONTRIBUTING.md)
 - [flip-api (backend)](../flip-api/README.md)
 
 ## License

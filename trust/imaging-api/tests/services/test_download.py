@@ -25,7 +25,7 @@ from imaging_api.services.download import (
     format_download_url,
     unzip_file,
 )
-from imaging_api.utils.exceptions import NotFoundError
+from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
 
 XNAT_URL = get_settings().XNAT_URL
 
@@ -214,9 +214,11 @@ class TestDownloadAndUnzipImages:
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
     async def test_download_not_found(self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, headers):
         mock_get_project.return_value = MagicMock(ID="PROJ1")
-        mock_download.side_effect = NotFoundError("File not found")
+        mock_download.side_effect = NotFoundError("No data found at: http://xnat/...")
 
-        with pytest.raises(NotFoundError, match="File not found at"):
+        # XNAT 404 must surface as NotFoundError with a message that makes it
+        # clear the remote URL is empty — not confused with a local-fs error.
+        with pytest.raises(NotFoundError, match="No DICOM data in XNAT"):
             await download_and_unzip_images("hub-proj-1", "ACC1", "net1", "scan", "NIFTI", headers)
 
     @pytest.mark.asyncio
@@ -224,13 +226,16 @@ class TestDownloadAndUnzipImages:
     @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
     @patch("imaging_api.services.download.get_experiment", return_value={})
     @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
-    async def test_download_file_not_found_error(
+    async def test_local_storage_error_propagates_unwrapped(
         self, mock_get_project, mock_get_exp, mock_get_subj, mock_download, headers
     ):
+        """A local-fs failure inside download_file must NOT be reported as 'not
+        found at {xnat_url}' — that misled us into chasing XNAT when the real
+        cause was a missing trust-side bind mount."""
         mock_get_project.return_value = MagicMock(ID="PROJ1")
-        mock_download.side_effect = FileNotFoundError("No such file")
+        mock_download.side_effect = LocalStorageError("disk full on trust host")
 
-        with pytest.raises(NotFoundError, match="File not found at"):
+        with pytest.raises(LocalStorageError, match="disk full on trust host"):
             await download_and_unzip_images("hub-proj-1", "ACC1", "net1", "scan", "NIFTI", headers)
 
     @pytest.mark.asyncio
@@ -238,3 +243,103 @@ class TestDownloadAndUnzipImages:
         with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", "/tmp/base"):
             with pytest.raises(ValueError, match="Path traversal detected in net ID"):
                 await download_and_unzip_images("hub-proj-1", "ACC1", "../escape", "scan", "NIFTI", headers)
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
+    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    async def test_accession_id_path_traversal_is_rejected(
+        self, mock_get_project, mock_get_exp, mock_get_subj, headers, tmp_path
+    ):
+        """accession_id is user-controlled; a value like '../../etc/passwd' must
+        never be allowed to escape the net download directory via the zip path."""
+        mock_get_project.return_value = MagicMock(ID="PROJ1")
+        net_dir = tmp_path / "net1"
+        net_dir.mkdir()
+        with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", str(tmp_path)):
+            with pytest.raises(ValueError, match="Path traversal detected in accession_id"):
+                await download_and_unzip_images(
+                    "hub-proj-1", "../../etc/passwd", "net1", "scan", "NIFTI", headers
+                )
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.download_file")
+    @patch("imaging_api.services.download.get_subject_id_from_experiment_response", return_value="SUBJ1")
+    @patch("imaging_api.services.download.get_experiment", return_value={})
+    @patch("imaging_api.services.download.get_project_from_central_hub_project_id")
+    @patch("imaging_api.services.download.unzip_file")
+    async def test_net_id_directory_is_created_on_demand(
+        self, mock_unzip, mock_get_project, mock_get_exp, mock_get_subj, mock_download, headers
+    ):
+        """First-use of a net_id in a trust without the subdir pre-provisioned
+        must work — imaging-api creates it rather than 404-ing."""
+        mock_get_project.return_value = MagicMock(ID="PROJ1")
+        with tempfile.TemporaryDirectory() as tmp:
+            expected_net_dir = os.path.join(tmp, "net-never-seen-before")
+            mock_download.return_value = os.path.join(expected_net_dir, "ACC1-scans-NIFTI.zip")
+            mock_unzip.return_value = os.path.join(expected_net_dir, "ACC1")
+
+            with patch("imaging_api.services.download.BASE_IMAGES_DOWNLOAD_DIR", tmp):
+                await download_and_unzip_images(
+                    "hub-proj-1", "ACC1", "net-never-seen-before", "scan", "NIFTI", headers
+                )
+
+            assert os.path.isdir(expected_net_dir), (
+                f"download_and_unzip_images should have created {expected_net_dir}"
+            )
+
+    @pytest.mark.asyncio
+    @patch("imaging_api.services.download.os.makedirs", side_effect=PermissionError("read-only fs"))
+    async def test_net_dir_creation_failure_raises_local_storage_error(self, mock_makedirs, headers):
+        """If the trust host can't create the net_id subdir at all (read-only
+        FS, perms on the bind-mount root, etc.), surface it as
+        LocalStorageError with a pointer to the offending path — not as a 404
+        with an XNAT URL."""
+        with pytest.raises(LocalStorageError, match="Cannot create image download directory"):
+            await download_and_unzip_images(
+                "hub-proj-1", "ACC1", "some-net", "scan", "NIFTI", headers
+            )
+
+
+class TestDownloadFileLocalWriteFailure:
+    """download_file must distinguish XNAT-side 404 from local-fs write failures."""
+
+    def _fake_200_response(self) -> MagicMock:
+        response = MagicMock()
+        response.status_code = 200
+        response.iter_content = MagicMock(return_value=[b"payload"])
+        return response
+
+    @patch("imaging_api.services.download.requests.get")
+    def test_unwritable_parent_raises_local_storage_error(self, mock_get, tmp_path):
+        mock_get.return_value = self._fake_200_response()
+        # Read-only parent dir => open() raises PermissionError (OSError subclass).
+        parent = tmp_path / "readonly"
+        parent.mkdir()
+        parent.chmod(0o500)
+        try:
+            destination = parent / "out.zip"
+            with pytest.raises(LocalStorageError, match="Failed to write downloaded file"):
+                download_file("http://xnat/fake", str(destination), {})
+        finally:
+            parent.chmod(0o700)  # restore so tmp_path cleanup succeeds
+
+    @patch("imaging_api.services.download.os.makedirs", side_effect=PermissionError("mount stale"))
+    @patch("imaging_api.services.download.requests.get")
+    def test_makedirs_failure_raises_local_storage_error(self, mock_get, mock_makedirs):
+        """If the parent dir can't be created in `download_file` itself (e.g.
+        defense-in-depth path when the caller didn't pre-create it), the error
+        is reported as LocalStorageError, not as an XNAT miss."""
+        mock_get.return_value = self._fake_200_response()
+
+        with pytest.raises(LocalStorageError, match="Cannot create parent directory"):
+            download_file("http://xnat/fake", "/nonexistent/parent/out.zip", {})
+
+    @patch("imaging_api.services.download.requests.get")
+    def test_xnat_404_still_raises_not_found_error(self, mock_get):
+        response = MagicMock()
+        response.status_code = 404
+        mock_get.return_value = response
+
+        with pytest.raises(NotFoundError, match="No data found at"):
+            download_file("http://xnat/missing", "/tmp/irrelevant.zip", {})

@@ -85,10 +85,13 @@ def main():
     # TODO Set variable ports in Terraform and output them if they differ from defaults
     updates = {
         "DB_HOST": db_endpoint,
-        # NOTE: CENTRAL_HUB_API_URL is intentionally NOT updated here.
-        # In staging/production it should be the ALB Route53 domain (e.g. https://stag.flip.aicentre.co.uk),
-        # not the raw EC2 IP. SSL is terminated at the ALB using the ACM certificate.
-        # Set this value manually in the env file.
+        # NOTE: CENTRAL_HUB_API_URL and FLIP_API_INTERNAL_URL are intentionally NOT updated here.
+        # CENTRAL_HUB_API_URL is the public CloudFront URL consumed by flip-ui and trust-api;
+        # in staging/production it should be the canonical Route53 domain (e.g. https://stag.flip.aicentre.co.uk/api).
+        # FLIP_API_INTERNAL_URL is the Docker-network URL consumed only by fl-server on the hub
+        # (e.g. http://flip-api:8000/api) — it must not cross CloudFront because that strips
+        # X-Internal-Service-Key at the edge.
+        # Set both values manually in the env file.
         "POSTGRES_SECRET_ARN": db_secret_arn,
         "AWS_COGNITO_USER_POOL_ID": cognito_user_pool_id,
         "AWS_COGNITO_APP_CLIENT_ID": cognito_app_client_id,

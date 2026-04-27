@@ -10,7 +10,10 @@
 # limitations under the License.
 #
 
+import atexit
 import os
+import shutil
+import tempfile
 
 # Set dummy environment variables required by Settings() before any app code
 # is imported.  These are only used in tests; real values come from Docker
@@ -24,8 +27,17 @@ _TEST_ENV_DEFAULTS = {
     "DATA_ACCESS_API_URL": "http://localhost:8001",
     "AES_KEY_BASE64": "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA=",  # 32-byte key, base64
     "XNAT_PORT": "8080",
-    "BASE_IMAGES_DOWNLOAD_DIR": "/tmp/flip-test-images",
 }
 
 for key, value in _TEST_ENV_DEFAULTS.items():
     os.environ.setdefault(key, value)
+
+# BASE_IMAGES_DOWNLOAD_DIR must point at a writable directory: download_and_unzip_images
+# now calls os.makedirs() on it before any mocks can intercept. The service Makefile
+# injects /tmp/images for `local_test`, which on hosts where an earlier docker-as-root
+# run created /tmp/images is root-owned and refuses writes from the test process. Force
+# a fresh per-session tempdir so make-driven and bare-pytest runs both work regardless
+# of host state.
+_test_images_dir = tempfile.mkdtemp(prefix="flip-test-images-")
+atexit.register(shutil.rmtree, _test_images_dir, ignore_errors=True)
+os.environ["BASE_IMAGES_DOWNLOAD_DIR"] = _test_images_dir
