@@ -100,6 +100,8 @@ export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 # DNS subdomains (env-specific, override the variables.tf defaults)
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
+# Provider
+export TF_VAR_terraform_execution_role_arn=${TERRAFORM_EXECUTION_ROLE_ARN}
 # Misc
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
@@ -114,7 +116,7 @@ ECS_CLUSTER_NAME ?= flip-ecs-cluster
 # FL services are per-network (see fl-api-net-1-service, fl-server-net-1-service, etc.).
 # Add additional network services here when they are configured in net_endpoints.
 # flip-ui is hosted from S3 + CloudFront (see deploy-ui target).
-ECS_SERVICES = flip-api-service trust-api-service imaging-api-service data-access-api-service \
+ECS_SERVICES = flip-api-service \
 	fl-api-net-1-service \
 	fl-server-net-1-service
 
