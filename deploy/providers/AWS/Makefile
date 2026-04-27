@@ -311,11 +311,13 @@ deploy-centralhub: ## Deploy Central Hub API services to ECS and deploy flip-ui 
 	    --parameters 'commands=["docker stop $$(docker ps -q) 2>/dev/null || true", "docker system prune -af 2>/dev/null || true"]' \
 	    --cloud-watch-output-config '{"CloudWatchOutputEnabled":false}' \
 	    --output text --query 'Command.CommandId' \
-	    --profile $(AWS_PROFILE) 2>/dev/null) && \
+	    --profile $(AWS_PROFILE) 2>/dev/null || true); \
 	  if [ -n "$$CMD_ID" ]; then \
 	    echo "   ↻ Waiting for cleanup to complete (CommandId: $$CMD_ID)..."; \
 	    aws ssm wait command-executed --command-id "$$CMD_ID" --instance-id "$$INSTANCE_ID" --profile $(AWS_PROFILE) 2>/dev/null || true; \
 	    echo "   ✅ Old Docker services stopped on Central Hub EC2."; \
+	  else \
+	    echo "   ⚠️  Could not send SSM command (EC2 may be freshly created — skipping)."; \
 	  fi; \
 	else \
 	  echo "   ⚠️  No central hub EC2 instance found (already removed)."; \
