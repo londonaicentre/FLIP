@@ -258,6 +258,30 @@ resource "aws_security_group" "ecs_fl_api" {
     protocol    = "tcp"
     cidr_blocks = [var.vpc_cidr]
   }
+
+  # fl-api needs to reach fl-server's NVFLARE Admin (8003) and gRPC (8002)
+  # ports to drive the FLARE session. Defined as standalone rules to avoid
+  # a circular dependency with the fl-server SG.
+}
+
+resource "aws_security_group_rule" "ecs_fl_api_egress_to_fl_server_admin" {
+  type                     = "egress"
+  description              = "FLARE Admin to fl-server"
+  from_port                = 8003
+  to_port                  = 8003
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.ecs_fl_api.id
+  source_security_group_id = aws_security_group.ecs_fl_server.id
+}
+
+resource "aws_security_group_rule" "ecs_fl_api_egress_to_fl_server_grpc" {
+  type                     = "egress"
+  description              = "FLARE gRPC to fl-server"
+  from_port                = var.FL_SERVER_PORT
+  to_port                  = var.FL_SERVER_PORT
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.ecs_fl_api.id
+  source_security_group_id = aws_security_group.ecs_fl_server.id
 }
 
 resource "aws_security_group" "ecs_fl_server" {
@@ -300,6 +324,26 @@ resource "aws_security_group" "ecs_fl_server" {
     protocol    = "tcp"
     cidr_blocks = [var.vpc_cidr]
   }
+}
+
+resource "aws_security_group_rule" "ecs_fl_server_ingress_from_fl_api_admin" {
+  type                     = "ingress"
+  description              = "FLARE Admin from fl-api"
+  from_port                = 8003
+  to_port                  = 8003
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.ecs_fl_server.id
+  source_security_group_id = aws_security_group.ecs_fl_api.id
+}
+
+resource "aws_security_group_rule" "ecs_fl_server_ingress_from_fl_api_grpc" {
+  type                     = "ingress"
+  description              = "FLARE gRPC from fl-api"
+  from_port                = var.FL_SERVER_PORT
+  to_port                  = var.FL_SERVER_PORT
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.ecs_fl_server.id
+  source_security_group_id = aws_security_group.ecs_fl_api.id
 }
 
 ############################
