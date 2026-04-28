@@ -584,7 +584,9 @@ resource "aws_ecs_task_definition" "fl_server" {
       }
 
       healthCheck = {
-        command     = ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8002/health', timeout=5)\" || exit 1"]
+        # NVFLARE FL Server speaks gRPC on FL_SERVER_PORT, not HTTP. Use a
+        # plain TCP-connect probe so the check matches the protocol.
+        command     = ["CMD-SHELL", "python -c \"import socket; socket.create_connection(('localhost', ${var.FL_SERVER_PORT}), timeout=3).close()\" || exit 1"]
         interval    = 30
         timeout     = 5
         retries     = 3
