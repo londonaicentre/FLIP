@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+import os
+
 SERVICE_UNAVAILABLE_MESSAGE = "The server is unable to process any requests at the moment, please try again later."
 
 # AWS SES email templates
@@ -21,6 +23,7 @@ IMAGING_PROJECT_ACCESS_TEMPLATE_NAME = "flip-xnat-added-to-project"
 JOB_TYPES_REQUIRED_FILES_FILE = "job_types_and_required_files.json"
 
 # Testing constants
-BASE_URL = "http://localhost:8080/api"
-ADMIN_EMAIL = "aicentreflip@gmail.com"
-RESEARCHER_EMAIL = "rafaelagd@gmail.com"
+# Override via CENTRAL_HUB_API_URL env var (set by .env.stag / .env.production)
+BASE_URL = os.getenv("CENTRAL_HUB_API_URL", "http://localhost:8080/api")
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "aicentreflip@gmail.com")
+RESEARCHER_EMAIL = os.getenv("RESEARCHER_EMAIL", "rafaelagd@gmail.com")
