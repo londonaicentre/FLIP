@@ -114,6 +114,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 API_PREFIX = "/api"
 
 # Initialize the FastAPI app
+# redirect_slashes=False prevents 307 redirects when a request path has a
+# trailing slash that doesn't match the registered route. Behind CloudFront
+# + ALB the redirect scheme and host would be wrong (ALB terminates HTTPS,
+# CloudFront sets Host to the origin domain), so the redirect points clients
+# at an unreachable HTTP URL on api.<subdomain>:80 instead of the correct
+# HTTPS CloudFront URL.
 app = FastAPI(
     title="FLIP CentralHub API",
     description="Main API for FLIP CentralHub, providing communication between the frontend and backend services.",
@@ -122,6 +128,7 @@ app = FastAPI(
     docs_url=f"{API_PREFIX}/docs",
     openapi_url=f"{API_PREFIX}/openapi.json",
     redoc_url=f"{API_PREFIX}/redoc",
+    redirect_slashes=False,
 )
 
 # Rate limiter — keyed by trust_name path parameter (falls back to client IP)

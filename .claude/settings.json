@@ -1,0 +1,42 @@
+{
+  "effortLevel": "medium",
+  "permissions": {
+    "allow": [
+      "Bash(make:*)",
+      "Bash(make -C:*)",
+      "Bash(uv:*)",
+      "Bash(git:*)",
+      "Bash(git -C:*)",
+      "Bash(gh:*)",
+      "Bash(aws:*)",
+      "Bash(AWS_PROFILE=* aws:*)",
+      "Bash(python3:*)",
+      "Bash(docker:*)",
+      "Bash(terraform:*)",
+      "Bash(ansible:*)",
+      "Bash(curl:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)",
+      "Bash(echo:*)",
+      "Bash(chmod:*)",
+      "Bash(ssh:*)",
+      "Bash(openssl:*)",
+      "Bash(xargs:*)",
+      "Bash(pre-commit:*)",
+      "Bash(trufflehog:*)",
+      "Bash(detect-secrets:*)",
+      "Bash(session-manager-plugin:*)",
+      "Bash(env:*)",
+      "Bash(which:*)",
+      "Bash(command:*)",
+      "Bash(sh *)",
+      "Bash(bash *)",
+      "Bash(./scripts/*)",
+      "Bash(./deploy/*)",
+      "Bash(ANSIBLE_BECOME_PASS=*)",
+      "Bash(TF_VAR_*=*)",
+      "Bash(set -x:*)"
+    ]
+  }
+}
