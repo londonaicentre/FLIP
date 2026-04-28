@@ -44,6 +44,13 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
+class NodeRegistrationRequest(BaseModel):
+    """Request body for SuperNode self-registration with the FL API."""
+
+    name: str
+    node_id: str
+
+
 class UploadAppRequest(BaseModel):
     """Defines the body of the request to upload an application to the server."""
 

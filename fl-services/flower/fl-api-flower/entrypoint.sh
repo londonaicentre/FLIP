@@ -15,10 +15,22 @@
 set -euo pipefail
 
 mkdir -p /home/app/.flwr
+
+# Configure the superlink connection for the Flower API. 
+# If SUPERLINK_ROOT_CERTIFICATES is set, use it to configure a secure connection. 
+# Otherwise, configure an insecure connection.
+if [ -n "${SUPERLINK_ROOT_CERTIFICATES:-}" ]; then
+cat >/home/app/.flwr/config.toml <<EOF
+[superlink.local]
+address = "${SUPERLINK_ADDRESS:-superlink:9093}"
+root-certificates = "${SUPERLINK_ROOT_CERTIFICATES}"
+EOF
+else
 cat >/home/app/.flwr/config.toml <<EOF
 [superlink.local]
 address = "${SUPERLINK_ADDRESS:-superlink:9093}"
 insecure = true
 EOF
+fi
 
 exec uv run python -m uvicorn fl_api.app:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fl_api

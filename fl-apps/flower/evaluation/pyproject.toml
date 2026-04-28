@@ -21,9 +21,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "quickstart-monai"
+name = "Evaluation app"
 version = "1.0.0"
-description = "MONAI and Flower example based on spleen segmentation"
+description = "Evaluation app"
 license = "Apache-2.0"
 # Dependencies for your Flower App
 dependencies = [
