@@ -319,28 +319,25 @@ locals {
   cloudfront_policy_caching_disabled  = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
 }
 
-# Custom origin-request policy for /api/*. The managed AllViewer policy
-# forwards everything (all headers, cookies, query strings); this narrows
-# to the minimum the API actually needs.
+# Custom origin-request policy for /api/*. Uses a whitelist to forward only
+# the headers flip-api actually needs — anything the browser or the client
+# sends that isn't on this list is dropped at the CloudFront edge.
 #
 # Forwarded explicitly:
-# - Content-Type: for JSON/multipart requests.
-# - Origin: for CORS preflight.
-#
-# NOT in the whitelist (because CloudFront forwards it automatically and
-# the CreateOriginRequestPolicy API rejects it as a reserved parameter):
-# - Authorization: always forwarded to custom origins. Carries both
-#   Cognito access tokens (user → API) and trust API keys
-#   (TRUST_API_KEY_HEADER=Authorization).
+# - Authorization: the Cognito JWT bearer token (user → API) and trust API
+#   keys (TRUST_API_KEY_HEADER=Authorization). AWS documentation says this
+#   header is always forwarded to custom origins, but in practice CloudFront
+#   drops it unless it appears in the whitelist — without it every /api/*
+#   request arrives at the ALB unauthenticated and the backend returns 401.
+# - Content-Type: for JSON/multipart request bodies.
+# - Origin: for CORS preflight handling.
 #
 # Deliberately excluded:
-# - X-Internal-Service-Key: fl-server → flip-api traffic is
-#   docker-network-internal on the Central Hub and never crosses
-#   CloudFront.
+# - X-Internal-Service-Key: fl-server → flip-api traffic is internal to
+#   the ECS cluster (service discovery DNS, never crosses CloudFront).
 #
 # Cookies are dropped (API is JWT/stateless). Query strings pass through
-# untouched because endpoints use them for filters/pagination and there's
-# no central allowlist to vet against.
+# because endpoints use them for filters/pagination.
 resource "aws_cloudfront_origin_request_policy" "flip_api" {
   name    = "flip-api-origin-request-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   comment = "Least-privilege origin-request policy for /api/* on ${var.flip_alb_subdomain}"
@@ -348,7 +345,7 @@ resource "aws_cloudfront_origin_request_policy" "flip_api" {
   headers_config {
     header_behavior = "whitelist"
     headers {
-      items = ["Content-Type", "Origin"]
+      items = ["Authorization", "Content-Type", "Origin"]
     }
   }
 
@@ -557,7 +554,12 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
       header = "Content-Security-Policy-Report-Only"
       value = join(" ", [
         "default-src 'self';",
-        "connect-src 'self' https://cognito-idp.*.amazonaws.com https://cognito-identity.*.amazonaws.com;",
+        # CSP source expressions only allow wildcards in the leftmost
+        # position (`*.amazonaws.com` OK, `cognito-idp.*.amazonaws.com`
+        # is not — the browser silently drops invalid entries). Pin to
+        # the deployed region so we keep the allowlist tight; update if
+        # the pool is moved to a different region.
+        "connect-src 'self' https://cognito-idp.eu-west-2.amazonaws.com https://cognito-identity.eu-west-2.amazonaws.com;",
         "img-src 'self' data:;",
         "style-src 'self' 'unsafe-inline';",
         "script-src 'self';",

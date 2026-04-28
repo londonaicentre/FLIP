@@ -111,17 +111,16 @@ export const isUserUnconfirmedCheck = async (
 
 export const apiGateway = "CentralHubAPIGateway";
 
-const devMode = process.env.NODE_ENV === "development";
-
+// Read Cognito config at runtime from window.* (populated by
+// public/js/window.js — loaded synchronously before main.ts).
+// The generator reads from AWS_COGNITO_USER_POOL_ID / AWS_COGNITO_APP_CLIENT_ID
+// / AWS_REGION, matching the rest of the stack.
 export const authConfig = {
     Auth: {
         Cognito: {
-            region: devMode ? (process.env.VITE_AWS_REGION || 'eu-west-2') : (window.AWS_REGION || 'eu-west-2'),
-            userPoolId: devMode ? process.env.VITE_AWS_USER_POOL_ID : window.AWS_USER_POOL_ID,
-            userPoolClientId: devMode ? process.env.VITE_AWS_CLIENT_ID : window.AWS_CLIENT_ID,
-            clientSecret: process.env.VITE_AWS_CLIENT_SECRET,
-            authenticationFlowType: 'USER_PASSWORD_AUTH',
-            loginWith: {}
+            region: window.AWS_REGION || 'eu-west-2',
+            userPoolId: window.AWS_USER_POOL_ID,
+            userPoolClientId: window.AWS_CLIENT_ID
         }
     }
 };
