@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from enum import Enum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -88,11 +89,24 @@ class OMOPResult(BaseModel):
     results: list[OMOPTrustResults]
 
 
+class CohortQueryFailureReason(str, Enum):
+    """Categorised reason for a per-trust cohort query failure.
+
+    Used by the UI to render a tailored message — e.g. "the cohort was too small to be returned"
+    is a recoverable user error (broaden the search), whereas ``OTHER`` covers infrastructure
+    failures the user can't act on directly.
+    """
+
+    INSUFFICIENT_COHORT = "insufficient_cohort"
+    OTHER = "other"
+
+
 class CohortQueryTrustFailure(BaseModel):
     """Failure reported by an individual trust when processing a cohort query."""
 
     trust_name: str = Field(..., alias="trustName")
     message: str
+    reason: CohortQueryFailureReason = CohortQueryFailureReason.OTHER
 
     model_config = ConfigDict(
         populate_by_name=True,

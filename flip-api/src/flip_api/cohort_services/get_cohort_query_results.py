@@ -11,6 +11,7 @@
 #
 
 import json
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path
@@ -21,7 +22,11 @@ from flip_api.auth.access_manager import can_access_cohort_query
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Queries, QueryStats, Trust, TrustTask
-from flip_api.domain.schemas.cohort import CohortQueryTrustFailure, OmopCohortResultsResponse
+from flip_api.domain.schemas.cohort import (
+    CohortQueryFailureReason,
+    CohortQueryTrustFailure,
+    OmopCohortResultsResponse,
+)
 from flip_api.domain.schemas.status import TaskStatus, TaskType
 from flip_api.utils.logger import logger
 
@@ -30,29 +35,54 @@ router = APIRouter(prefix="/cohort", tags=["cohort_services"])
 
 _GENERIC_TRUST_FAILURE_MESSAGE = "Trust failed to process the query."
 
+# Matches the data-access-api's exact phrasing for the cohort-size guard, regardless of whether
+# it has been wrapped in additional layers (an ``HTTPException`` repr, a FastAPI ``{"detail":...}``
+# envelope, or the trust handler's ``{"error":...}`` envelope) by the time it reaches the hub.
+# Source: trust/data-access-api/data_access_api/routers/cohort.py
+_INSUFFICIENT_COHORT_PATTERN = re.compile(
+    r"Query returned too few records:\s*(\d+)\s*\(minimum required:\s*(\d+)\)",
+    re.IGNORECASE,
+)
 
-def _extract_error_message(result: str | None) -> str:
-    """Pull a human-readable error message out of a TrustTask.result payload.
 
-    Trust handlers serialise failures as ``{"error": "<str>"}`` and the stale-task recovery job
-    uses the same shape, so the common case is a JSON object with an ``error`` field. Fall back
-    to the raw string (or a generic message) so we never surface ``None`` to the UI.
+def _classify_trust_failure(result: str | None) -> tuple[str, CohortQueryFailureReason]:
+    """Pull a human-readable error message and a categorised reason out of ``TrustTask.result``.
+
+    Trust handlers serialise failures as ``{"error": "<str>"}`` (and the stale-task recovery job
+    uses the same shape). The ``<str>`` itself can be doubly wrapped — for cohort-size failures
+    it's typically ``'400: {"detail":"Query returned too few records: 0 (minimum required: 5)"}'``
+    because ``trust_api.utils.http.make_request`` packs the upstream FastAPI error body into an
+    ``HTTPException``, then the trust handler stringifies that. Rather than peel each layer, we
+    just regex-search for the canonical phrase, which is distinctive enough to be unambiguous.
 
     Args:
         result (str | None): The ``TrustTask.result`` column value.
 
     Returns:
-        str: A best-effort error message suitable for display.
+        tuple[str, CohortQueryFailureReason]: A best-effort message suitable for display and a
+        category the UI can branch on.
     """
     if not result:
-        return _GENERIC_TRUST_FAILURE_MESSAGE
+        return _GENERIC_TRUST_FAILURE_MESSAGE, CohortQueryFailureReason.OTHER
+
+    raw_message: str = result
     try:
         parsed = json.loads(result)
+        if isinstance(parsed, dict) and parsed.get("error"):
+            raw_message = str(parsed["error"])
     except (TypeError, ValueError):
-        return result
-    if isinstance(parsed, dict) and parsed.get("error"):
-        return str(parsed["error"])
-    return result
+        pass
+
+    match = _INSUFFICIENT_COHORT_PATTERN.search(raw_message)
+    if match:
+        actual, minimum = match.group(1), match.group(2)
+        friendly = (
+            f"Cohort below minimum size threshold ({actual} record(s) "
+            f"matched, {minimum} required)."
+        )
+        return friendly, CohortQueryFailureReason.INSUFFICIENT_COHORT
+
+    return raw_message, CohortQueryFailureReason.OTHER
 
 
 def _collect_trust_task_outcomes(
@@ -87,12 +117,14 @@ def _collect_trust_task_outcomes(
         if task.status in (TaskStatus.PENDING, TaskStatus.IN_PROGRESS):
             has_pending = True
         elif task.status == TaskStatus.FAILED:
+            message, reason = _classify_trust_failure(task.result)
             # Build via ``model_validate`` rather than kwargs because the field declares an alias
             # (``trustName``) and mypy keys the call signature off the alias.
             failures.append(
                 CohortQueryTrustFailure.model_validate({
                     "trust_name": trust_name,
-                    "message": _extract_error_message(task.result),
+                    "message": message,
+                    "reason": reason,
                 })
             )
     return failures, has_pending

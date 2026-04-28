@@ -35,7 +35,9 @@
                     class="p-4 mb-4 text-sm border border-yellow-200 rounded-md bg-yellow-50 text-yellow-800"
                 >
                     <p class="font-semibold">
-                        {{ results.failures.length }} trust(s) didn't return results:
+                        {{ allFailuresAreInsufficientCohort
+                            ? `${results.failures.length} trust(s) had a cohort below the minimum size threshold:`
+                            : `${results.failures.length} trust(s) didn't return results:` }}
                     </p>
                     <ul class="mt-2 space-y-1 list-disc list-inside">
                         <li v-for="failure in results.failures" :key="failure.trustName">
@@ -59,15 +61,20 @@
             <div v-else-if="results.failures && results.failures.length">
                 <div class="py-4">
                     <h1
-                        data-test="all-failed-message"
+                        :data-test="allFailuresAreInsufficientCohort ? 'cohort-too-small-message' : 'all-failed-message'"
                         class="mt-2 text-xl font-extrabold tracking-tight text-gray-700 sm:text-4xl"
                     >
-                        Cohort query failed at every trust
+                        {{ allFailuresAreInsufficientCohort
+                            ? "Cohort too small to return results"
+                            : "Cohort query failed at every trust" }}
                     </h1>
-                    <p class="mt-2 text-lg text-gray-500">
-                        No trust returned results for this query. The most common cause is that
-                        each trust's matching cohort was below the minimum size threshold, but
-                        each trust reported its own reason below.
+                    <p v-if="allFailuresAreInsufficientCohort" class="mt-2 text-lg text-gray-500">
+                        Every trust's matching cohort was below the minimum size threshold.
+                        Please broaden your query and try again.
+                    </p>
+                    <p v-else class="mt-2 text-lg text-gray-500">
+                        No trust returned results for this query. Each trust reported its own
+                        reason below.
                     </p>
                     <ul
                         data-test="trust-failures"
@@ -104,7 +111,7 @@
 <script lang="ts" setup>
 import { whenever } from "@vueuse/core";
 import useSWRV from "swrv";
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 
 import AiCard from "@/components/AiCard/AiCard.vue";
 import AiChart from "@/components/AiChart/AiCohortChart.vue";
@@ -116,6 +123,14 @@ const projectStore = useProjectStore();
 
 const results = ref<ICohortQueryResults | null>(null);
 const getResults = ref("true");
+
+// True iff every reported failure was the cohort-size guard. We branch on this to swap copy:
+// a "cohort too small" outcome is a recoverable user error ("broaden your query") whereas other
+// reasons are infra failures the user can't act on directly.
+const allFailuresAreInsufficientCohort = computed(() => {
+    const failures = results.value?.failures ?? [];
+    return failures.length > 0 && failures.every((f) => f.reason === "insufficient_cohort");
+});
 
 const { data } = useSWRV(
     () =>

@@ -66,11 +66,18 @@ export interface IResults {
 }
 
 /**
+ * Categorised reason for a per-trust cohort query failure. Mirrors the
+ * `CohortQueryFailureReason` enum on flip-api so the UI can branch on it.
+ */
+export type CohortQueryFailureReason = "insufficient_cohort" | "other";
+
+/**
  * Failure reported by a single trust when processing a cohort query.
  */
 export interface ICohortTrustFailure {
     trustName: string;
     message: string;
+    reason: CohortQueryFailureReason;
 }
 
 /**
