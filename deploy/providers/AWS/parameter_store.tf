@@ -91,7 +91,31 @@ resource "aws_ssm_parameter" "s3_flip_bucket" {
   type  = "String"
   value = "s3://${var.FLIP_BUCKET_NAME}"
 
-  description = "S3 bucket for FLIP model files, FL data, and app artefacts"
+  description = "S3 bucket root for FLIP artefacts"
+}
+
+resource "aws_ssm_parameter" "s3_model_files_uploaded" {
+  name  = "/flip/s3/model_files_uploaded"
+  type  = "String"
+  value = "s3://${var.FLIP_BUCKET_NAME}/model_files/uploaded"
+
+  description = "S3 path for uploaded and scanned model files (subdirectory: model_files/uploaded)"
+}
+
+resource "aws_ssm_parameter" "s3_app_destination_bucket" {
+  name  = "/flip/s3/app_destination_bucket"
+  type  = "String"
+  value = "s3://${var.FLIP_BUCKET_NAME}/app_destination_bucket"
+
+  description = "S3 path for bundled FL application destination (subdirectory: app_destination_bucket)"
+}
+
+resource "aws_ssm_parameter" "s3_uploaded_federated_data" {
+  name  = "/flip/s3/uploaded_federated_data"
+  type  = "String"
+  value = "s3://${var.FLIP_BUCKET_NAME}/uploaded_federated_data"
+
+  description = "S3 path for uploaded federated data (subdirectory: uploaded_federated_data)"
 }
 
 resource "aws_ssm_parameter" "s3_aicentre_bucket" {

@@ -81,15 +81,15 @@ resource "aws_ecs_task_definition" "flip_api" {
       },
       {
         name      = "UPLOADED_MODEL_FILES_BUCKET"
-        valueFrom = aws_ssm_parameter.s3_flip_bucket.arn
+        valueFrom = aws_ssm_parameter.s3_model_files_uploaded.arn
       },
       {
         name      = "SCANNED_MODEL_FILES_BUCKET"
-        valueFrom = aws_ssm_parameter.s3_flip_bucket.arn
+        valueFrom = aws_ssm_parameter.s3_model_files_uploaded.arn
       },
       {
         name      = "UPLOADED_FEDERATED_DATA_BUCKET"
-        valueFrom = aws_ssm_parameter.s3_flip_bucket.arn
+        valueFrom = aws_ssm_parameter.s3_uploaded_federated_data.arn
       },
       {
         name      = "FL_APP_BASE_BUCKET"
@@ -97,7 +97,7 @@ resource "aws_ecs_task_definition" "flip_api" {
       },
       {
         name      = "FL_APP_DESTINATION_BUCKET"
-        valueFrom = aws_ssm_parameter.s3_flip_bucket.arn
+        valueFrom = aws_ssm_parameter.s3_app_destination_bucket.arn
       },
       {
         name      = "PRIVATE_API_KEY_HEADER"
