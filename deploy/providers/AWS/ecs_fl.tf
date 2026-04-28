@@ -260,8 +260,12 @@ resource "aws_security_group" "ecs_fl_api" {
   }
 
   # fl-api needs to reach fl-server's NVFLARE Admin (8003) and gRPC (8002)
-  # ports to drive the FLARE session. Defined as standalone rules to avoid
-  # a circular dependency with the fl-server SG.
+  # ports to drive the FLARE session. Defined as standalone rules below to
+  # avoid a circular dependency with the fl-server SG. ignore_changes keeps
+  # Terraform from trying to "reconcile" those rules out of the inline list.
+  lifecycle {
+    ignore_changes = [ingress, egress]
+  }
 }
 
 resource "aws_security_group_rule" "ecs_fl_api_egress_to_fl_server_admin" {
@@ -291,6 +295,12 @@ resource "aws_security_group" "ecs_fl_server" {
 
   tags = {
     Name = "ecs-fl-server-sg"
+  }
+
+  # Standalone aws_security_group_rule resources below add fl-api ingress;
+  # ignore_changes prevents Terraform from removing them as "drift".
+  lifecycle {
+    ignore_changes = [ingress, egress]
   }
 
   ingress {

@@ -49,6 +49,14 @@ module "flip_vpc" {
   enable_nat_gateway   = true
   single_nat_gateway   = true
   enable_dns_hostnames = true
+
+  # Custom DHCP options so awsvpc tasks get "flip.local" as a DNS search
+  # domain, allowing bare hostnames (e.g., "fl-server-net-1") to resolve via
+  # Cloud Map. NVFLARE workspace files reference the bare name; without this
+  # search domain the FLARE admin client times out at startup.
+  enable_dhcp_options              = true
+  dhcp_options_domain_name         = "flip.local"
+  dhcp_options_domain_name_servers = ["AmazonProvidedDNS"]
 }
 
 ############################
