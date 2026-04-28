@@ -35,7 +35,7 @@ def parse_models_config(run_config: Dict) -> Dict:
 
     Flower flattens ``[tool.flwr.app.config.models.foo]`` into keys like
     ``"models.foo.checkpoint"`` and ``"models.foo.path"`` in run_config.
-    This function reconstructs the expected nested structure::
+    This function reconstructs the expected nested structure:
 
         {
             "foo": {"checkpoint": "...", "path": "..."}
