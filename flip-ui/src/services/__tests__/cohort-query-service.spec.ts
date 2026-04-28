@@ -22,12 +22,32 @@ vi.mock("@/services/api", () => {
 
 describe("getOMOPResults", () => {
     test("returns parsed results on HTTP 200", async () => {
-        const payload = { name: "X", results: [] };
+        const payload = { recordCount: 0, trustsResults: [], failures: [] };
         vi.mocked(_http.get).mockResolvedValueOnce({ status: 200, data: payload });
 
         const result = await getOMOPResults("/cohort/abc");
 
         expect(result).toEqual(payload);
+    });
+
+    test("surfaces per-trust failures alongside results", async () => {
+        // Regression guard for the bug where a query that fails at every trust would leave the
+        // UI spinning forever. The hub now returns 200 with an empty trustsResults and a
+        // populated failures list, which the service must pass through unmodified.
+        const payload = {
+            recordCount: 0,
+            trustsResults: [],
+            failures: [
+                { trustName: "Trust A", message: "Query returned too few records" },
+                { trustName: "Trust B", message: "Connection refused" },
+            ],
+        };
+        vi.mocked(_http.get).mockResolvedValueOnce({ status: 200, data: payload });
+
+        const result = await getOMOPResults("/cohort/abc");
+
+        expect(result).toEqual(payload);
+        expect(result?.failures).toHaveLength(2);
     });
 
     test("returns null on HTTP 202 so SWRV keeps polling without logging an error", async () => {

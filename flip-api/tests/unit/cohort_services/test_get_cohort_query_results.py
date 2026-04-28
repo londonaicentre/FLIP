@@ -11,6 +11,7 @@
 #
 
 import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,6 +19,7 @@ from fastapi import HTTPException
 
 # Assuming the models are imported like this
 from flip_api.cohort_services.get_cohort_query_results import get_cohort_query_results
+from flip_api.domain.schemas.status import TaskStatus
 
 # Constants for testing
 TEST_QUERY_ID = "query-123"
@@ -57,11 +59,30 @@ MOCK_STATS = {
 }
 
 
-def _configure_db_mock(mock_db: MagicMock, *, query_exists: bool, stats_json: str | None) -> None:
-    """Wire up two sequential db.exec().first() results: Queries lookup then QueryStats lookup."""
+def _make_task(status: TaskStatus, result: str | None = None) -> SimpleNamespace:
+    """Lightweight stand-in for a TrustTask row, since the endpoint only reads ``status``/``result``."""
+    return SimpleNamespace(status=status, result=result)
+
+
+def _configure_db_mock(
+    mock_db: MagicMock,
+    *,
+    query_exists: bool,
+    stats_json: str | None,
+    trust_task_rows: list[tuple[SimpleNamespace, str]] | None = None,
+) -> None:
+    """Wire up the three sequential db.exec() calls made by ``get_cohort_query_results``.
+
+    The endpoint executes three queries in this order:
+        1. ``Queries`` lookup → ``.first()`` returns the query id (or ``None``).
+        2. ``QueryStats`` lookup → ``.first()`` returns the JSON stats (or ``None``).
+        3. ``TrustTask`` + ``Trust`` join → ``.all()`` returns ``(task, trust_name)`` tuples used
+           to compute pending state and per-trust failure messages.
+    """
     exec_results = [
         MagicMock(first=MagicMock(return_value=TEST_QUERY_ID if query_exists else None)),
         MagicMock(first=MagicMock(return_value=stats_json)),
+        MagicMock(all=MagicMock(return_value=trust_task_rows or [])),
     ]
     mock_db.exec.side_effect = exec_results
 
@@ -76,6 +97,7 @@ def test_get_cohort_results_success(mock_access):
     # 200 path returns the parsed model directly (FastAPI wraps it in a 200 response)
     assert result.record_count == 100
     assert len(result.trusts_results) == 2
+    assert result.failures == []
 
     # Check trust 1
     trust_a = result.trusts_results[0]
@@ -100,11 +122,19 @@ def test_get_cohort_results_success(mock_access):
 
 @patch("flip_api.cohort_services.get_cohort_query_results.can_access_cohort_query", return_value=True)
 def test_get_cohort_results_pending_returns_202(mock_access):
-    """Query exists in the Queries table but no QueryStats row yet — results still being gathered."""
+    """Query exists, no QueryStats yet, and at least one trust task is still in flight."""
     from fastapi.responses import JSONResponse
 
     mock_db = MagicMock()
-    _configure_db_mock(mock_db, query_exists=True, stats_json=None)
+    _configure_db_mock(
+        mock_db,
+        query_exists=True,
+        stats_json=None,
+        trust_task_rows=[
+            (_make_task(TaskStatus.PENDING), "Trust A"),
+            (_make_task(TaskStatus.IN_PROGRESS), "Trust B"),
+        ],
+    )
 
     response = get_cohort_query_results(query_id=TEST_QUERY_ID, db=mock_db, user_id=TEST_USER_ID)
 
@@ -112,6 +142,91 @@ def test_get_cohort_results_pending_returns_202(mock_access):
     assert response.status_code == 202
     body = json.loads(response.body)
     assert body["status"] == "pending"
+
+
+@patch("flip_api.cohort_services.get_cohort_query_results.can_access_cohort_query", return_value=True)
+def test_get_cohort_results_all_trusts_failed_returns_200_with_failures(mock_access):
+    """Every trust task is terminal (FAILED) and no QueryStats exists — surface failures so the
+    UI can stop spinning and tell the user what went wrong."""
+    mock_db = MagicMock()
+    _configure_db_mock(
+        mock_db,
+        query_exists=True,
+        stats_json=None,
+        trust_task_rows=[
+            (
+                _make_task(
+                    TaskStatus.FAILED,
+                    json.dumps({"error": "400: Query returned too few records: 0 (minimum required: 5)"}),
+                ),
+                "Trust A",
+            ),
+            (
+                _make_task(TaskStatus.FAILED, json.dumps({"error": "Connection refused"})),
+                "Trust B",
+            ),
+        ],
+    )
+
+    result = get_cohort_query_results(query_id=TEST_QUERY_ID, db=mock_db, user_id=TEST_USER_ID)
+
+    # The endpoint returns the pydantic model (FastAPI wraps it in a 200) so the UI can render it
+    # instead of polling forever.
+    assert result.record_count == 0
+    assert result.trusts_results == []
+    assert len(result.failures) == 2
+    failures_by_trust = {f.trust_name: f.message for f in result.failures}
+    assert "too few records" in failures_by_trust["Trust A"]
+    assert failures_by_trust["Trust B"] == "Connection refused"
+
+
+@patch("flip_api.cohort_services.get_cohort_query_results.can_access_cohort_query", return_value=True)
+def test_get_cohort_results_partial_failure_includes_failures_with_stats(mock_access):
+    """One trust succeeded (so QueryStats exists) and another failed; the failure should be
+    surfaced alongside the aggregated stats."""
+    mock_db = MagicMock()
+    _configure_db_mock(
+        mock_db,
+        query_exists=True,
+        stats_json=json.dumps(MOCK_STATS),
+        trust_task_rows=[
+            (_make_task(TaskStatus.COMPLETED), "Trust A"),
+            (
+                _make_task(TaskStatus.FAILED, json.dumps({"error": "Query returned too few records"})),
+                "Trust B",
+            ),
+        ],
+    )
+
+    result = get_cohort_query_results(query_id=TEST_QUERY_ID, db=mock_db, user_id=TEST_USER_ID)
+
+    assert result.record_count == 100
+    assert len(result.trusts_results) == 2
+    assert len(result.failures) == 1
+    assert result.failures[0].trust_name == "Trust B"
+    assert "too few records" in result.failures[0].message
+
+
+@patch("flip_api.cohort_services.get_cohort_query_results.can_access_cohort_query", return_value=True)
+def test_get_cohort_results_failure_with_non_json_result(mock_access):
+    """If a trust task's result column isn't JSON, fall back to the raw string."""
+    mock_db = MagicMock()
+    _configure_db_mock(
+        mock_db,
+        query_exists=True,
+        stats_json=None,
+        trust_task_rows=[
+            (_make_task(TaskStatus.FAILED, "boom — plain text error"), "Trust A"),
+            (_make_task(TaskStatus.FAILED, None), "Trust B"),
+        ],
+    )
+
+    result = get_cohort_query_results(query_id=TEST_QUERY_ID, db=mock_db, user_id=TEST_USER_ID)
+
+    failures_by_trust = {f.trust_name: f.message for f in result.failures}
+    assert failures_by_trust["Trust A"] == "boom — plain text error"
+    # ``None`` result falls back to the generic message rather than surfacing ``None`` to the UI.
+    assert "failed" in failures_by_trust["Trust B"].lower()
 
 
 @patch("flip_api.cohort_services.get_cohort_query_results.can_access_cohort_query", return_value=True)

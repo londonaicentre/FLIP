@@ -88,11 +88,23 @@ class OMOPResult(BaseModel):
     results: list[OMOPTrustResults]
 
 
+class CohortQueryTrustFailure(BaseModel):
+    """Failure reported by an individual trust when processing a cohort query."""
+
+    trust_name: str = Field(..., alias="trustName")
+    message: str
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+
 class OmopCohortResultsResponse(BaseModel):
     """Response model for OMOP cohort results."""
 
     record_count: int = Field(..., alias="recordCount")
     trusts_results: list[OMOPResult] = Field(..., alias="trustsResults")
+    failures: list[CohortQueryTrustFailure] = Field(default_factory=list)
 
     model_config = ConfigDict(
         populate_by_name=True,

@@ -29,6 +29,21 @@
                         </span>
                     </div>
                 </div>
+                <div
+                    v-if="results.failures && results.failures.length"
+                    data-test="partial-failures-warning"
+                    class="p-4 mb-4 text-sm border border-yellow-200 rounded-md bg-yellow-50 text-yellow-800"
+                >
+                    <p class="font-semibold">
+                        {{ results.failures.length }} trust(s) didn't return results:
+                    </p>
+                    <ul class="mt-2 space-y-1 list-disc list-inside">
+                        <li v-for="failure in results.failures" :key="failure.trustName">
+                            <span class="font-semibold">{{ failure.trustName }}:</span>
+                            {{ failure.message }}
+                        </li>
+                    </ul>
+                </div>
                 <div class="h-full gap-4 space-y-4 columns-1 2xl:columns-2">
                     <AiCard
                         v-for="chartResults in results.trustsResults"
@@ -39,6 +54,30 @@
                             <AiChart :data="chartResults" class="" />
                         </div>
                     </AiCard>
+                </div>
+            </div>
+            <div v-else-if="results.failures && results.failures.length">
+                <div class="py-4">
+                    <h1
+                        data-test="all-failed-message"
+                        class="mt-2 text-xl font-extrabold tracking-tight text-gray-700 sm:text-4xl"
+                    >
+                        Cohort query failed at every trust
+                    </h1>
+                    <p class="mt-2 text-lg text-gray-500">
+                        No trust returned results for this query. The most common cause is that
+                        each trust's matching cohort was below the minimum size threshold, but
+                        each trust reported its own reason below.
+                    </p>
+                    <ul
+                        data-test="trust-failures"
+                        class="mt-4 space-y-2 text-base text-gray-700"
+                    >
+                        <li v-for="failure in results.failures" :key="failure.trustName">
+                            <span class="font-semibold">{{ failure.trustName }}:</span>
+                            {{ failure.message }}
+                        </li>
+                    </ul>
                 </div>
             </div>
             <div v-else-if="!results.trustsResults.length">
@@ -70,12 +109,12 @@ import { ref, watch } from "vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import AiChart from "@/components/AiChart/AiCohortChart.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
-import { getOMOPResults } from "@/services/cohort-query-service";
+import { getOMOPResults, ICohortQueryResults } from "@/services/cohort-query-service";
 import { useProjectStore } from "@/store/project";
 
 const projectStore = useProjectStore();
 
-const results = ref();
+const results = ref<ICohortQueryResults | null>(null);
 const getResults = ref("true");
 
 const { data } = useSWRV(
@@ -96,7 +135,7 @@ const { data } = useSWRV(
     });
 
 whenever(data, () => {
-    results.value = data.value;
+    results.value = data.value ?? null;
     getResults.value = "";
 }, { immediate: true });
 
