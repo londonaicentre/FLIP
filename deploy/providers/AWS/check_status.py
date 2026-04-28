@@ -167,6 +167,34 @@ def get_terraform_output(output_name: str) -> str | None:
         return None
 
 
+def get_terraform_output_json(output_name: str) -> dict | list | None:
+    """Get a Terraform output as a parsed JSON object.
+
+    Uses ``-json`` flag, suitable for complex types (maps, lists).
+    Returns ``None`` if the output does not exist or on error.
+
+    Args:
+        output_name: Name of the Terraform output variable
+
+    Returns:
+        Parsed JSON output or None
+    """
+    try:
+        result = subprocess.run(
+            ["terraform", "output", "-json", output_name],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+        )
+        output = result.stdout.strip()
+        if output and output != "null":
+            return json.loads(output)
+        return None
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return None
+
+
 def run_aws_command(args: list[str]) -> tuple[bool, str]:
     """Run an AWS CLI command.
 
@@ -573,13 +601,9 @@ def main(
 
     # Add FL API and FL Server services (keyed by network, output as JSON maps)
     for output_name in ("EcsFlApiServiceNames", "EcsFlServerServiceNames"):
-        raw = get_terraform_output(output_name)
-        if raw:
-            try:
-                services_map = json.loads(raw)
-                ecs_services.extend(services_map.values())
-            except (json.JSONDecodeError, AttributeError):
-                pass
+        services_map = get_terraform_output_json(output_name)
+        if services_map and isinstance(services_map, dict):
+            ecs_services.extend(services_map.values())
 
     if ecs_cluster and ecs_services:
         success, svc_json = run_aws_command([
@@ -605,6 +629,103 @@ def main(
             print_status("WARN", "Could not retrieve ECS service status")
     else:
         print_status("INFO", "ECS cluster/services not found in Terraform outputs")
+
+    # ECS task container-level health
+    if ecs_cluster:
+        print_status("INFO", "Checking ECS container health...")
+        for svc_name in ecs_services:
+            success, task_arns_json = run_aws_command([
+                "ecs", "list-tasks",
+                "--cluster", ecs_cluster,
+                "--service-name", svc_name,
+                "--query", "taskArns",
+                "--output", "json",
+            ])
+            if not success or not task_arns_json:
+                continue
+            try:
+                task_arns = json.loads(task_arns_json)
+            except json.JSONDecodeError:
+                continue
+            if not task_arns:
+                continue
+            success, tasks_json = run_aws_command([
+                "ecs", "describe-tasks",
+                "--cluster", ecs_cluster,
+                "--tasks", *task_arns,
+                "--query", "tasks[*].containers[?healthStatus!=`UNKNOWN`].[name, healthStatus]",
+                "--output", "json",
+            ])
+            if not success:
+                print_status("WARN", f"Could not describe tasks for {svc_name}")
+                continue
+            try:
+                task_containers = json.loads(tasks_json)
+            except json.JSONDecodeError:
+                continue
+            for task_idx, containers in enumerate(task_containers):
+                for c in containers:
+                    if len(c) >= 2:
+                        cname, chealth = c[0], c[1]
+                        if chealth == "HEALTHY":
+                            pass  # already reported as running above
+                        else:
+                            print_status("FAIL", f"Container {cname} in {svc_name} is {chealth}")
+
+    # Load Balancer target group health
+    print_section("Load Balancer Target Group Health")
+
+    flip_api_tg_arn = get_terraform_output("EcsFlipApiTargetGroupArn")
+    if flip_api_tg_arn:
+        print_status("INFO", "Checking flip-api ALB target group health...")
+        success, tg_health_json = run_aws_command([
+            "elbv2", "describe-target-health",
+            "--target-group-arn", flip_api_tg_arn,
+            "--query", "TargetHealthDescriptions[*].{id:Target.Id,port:Target.Port,state:TargetHealth.State,reason:TargetHealth.Reason}",
+            "--output", "json",
+        ])
+        if success:
+            try:
+                targets = json.loads(tg_health_json)
+                if not targets:
+                    print_status("WARN", "No targets registered in flip-api ALB target group")
+                for t in targets:
+                    if t["state"] == "healthy":
+                        print_status("PASS", f"ALB target {t['id']}:{t['port']} is healthy")
+                    else:
+                        print_status("FAIL", f"ALB target {t['id']}:{t['port']} is {t['state']} (reason: {t.get('reason', 'N/A')})")
+            except json.JSONDecodeError:
+                print_status("WARN", "Could not parse ALB target health data")
+        else:
+            print_status("WARN", "Could not retrieve ALB target health (may not be deployed)")
+    else:
+        print_status("INFO", "No flip-api ALB target group ARN in Terraform outputs")
+
+    fl_server_tg_arn = get_terraform_output("EcsFlServerTargetGroupArn")
+    if fl_server_tg_arn:
+        print_status("INFO", "Checking fl-server NLB target group health...")
+        success, tg_health_json = run_aws_command([
+            "elbv2", "describe-target-health",
+            "--target-group-arn", fl_server_tg_arn,
+            "--query", "TargetHealthDescriptions[*].{id:Target.Id,port:Target.Port,state:TargetHealth.State,reason:TargetHealth.Reason}",
+            "--output", "json",
+        ])
+        if success:
+            try:
+                targets = json.loads(tg_health_json)
+                if not targets:
+                    print_status("WARN", "No targets registered in fl-server NLB target group")
+                for t in targets:
+                    if t["state"] == "healthy":
+                        print_status("PASS", f"NLB target {t['id']}:{t['port']} is healthy")
+                    else:
+                        print_status("FAIL", f"NLB target {t['id']}:{t['port']} is {t['state']} (reason: {t.get('reason', 'N/A')})")
+            except json.JSONDecodeError:
+                print_status("WARN", "Could not parse NLB target health data")
+        else:
+            print_status("WARN", "Could not retrieve NLB target health (may not be deployed)")
+    else:
+        print_status("INFO", "No fl-server NLB target group ARN in Terraform outputs")
 
     # CloudFront / UI bucket
     print_section("CloudFront & UI Bucket")
@@ -1204,6 +1325,28 @@ def main(
                     print_status("WARN", "Could not parse Trust log streams data")
         else:
             print_status("WARN", "Trust EC2 CloudWatch log group not found")
+
+    # CloudWatch Alarms
+    print_section("CloudWatch Alarms")
+    print_status("INFO", "Checking for alarms in ALARM state...")
+    success, alarms_json = run_aws_command([
+        "cloudwatch", "describe-alarms",
+        "--state-value", "ALARM",
+        "--query", "MetricAlarms[*].AlarmName",
+        "--output", "json",
+    ])
+    if success:
+        try:
+            alarms = json.loads(alarms_json)
+            if alarms:
+                for alarm in alarms:
+                    print_status("FAIL", f"CloudWatch alarm in ALARM state: {alarm}")
+            else:
+                print_status("PASS", "No CloudWatch alarms in ALARM state")
+        except json.JSONDecodeError:
+            print_status("WARN", "Could not parse CloudWatch alarm data")
+    else:
+        print_status("INFO", "Could not retrieve CloudWatch alarms (may not be deployed)")
 
     # Final summary
     print_section("Summary")

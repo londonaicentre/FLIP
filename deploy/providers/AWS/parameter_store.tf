@@ -89,7 +89,7 @@ resource "aws_ssm_parameter" "cognito_app_client_id" {
 resource "aws_ssm_parameter" "s3_flip_bucket" {
   name  = "/flip/s3/flip_bucket"
   type  = "String"
-  value = var.FLIP_BUCKET_NAME
+  value = "s3://${var.FLIP_BUCKET_NAME}"
 
   description = "S3 bucket for FLIP model files, FL data, and app artefacts"
 }
@@ -97,9 +97,9 @@ resource "aws_ssm_parameter" "s3_flip_bucket" {
 resource "aws_ssm_parameter" "s3_aicentre_bucket" {
   name  = "/flip/s3/aicentre_bucket"
   type  = "String"
-  value = var.AICENTRE_BUCKET_NAME
+  value = "s3://${var.FLIP_BUCKET_NAME}/base-application/${var.fl_backend}"
 
-  description = "AI Centre S3 bucket used as FL app base"
+  description = "Base FL application S3 path (bucket + subdirectory + FL backend)"
 }
 
 # --- Email (SES) ---

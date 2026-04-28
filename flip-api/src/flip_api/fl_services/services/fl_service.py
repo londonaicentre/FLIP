@@ -20,6 +20,7 @@ from sqlmodel import Session, select
 from flip_api.config import get_settings
 from flip_api.db.database import engine
 from flip_api.db.models.main_models import FLJob
+from flip_api.fl_services.services.pull_required_files import pull_required_files_json_to_assets
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
     IJobMetaData,
@@ -469,6 +470,10 @@ def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.sta
 
     logger.debug(f"App folders found: {sorted(app_folders)}")
 
+    # Refresh the required_files cache from the current S3 base application
+    # (the model may have been created when a different backend/S3 path was active)
+    pull_required_files_json_to_assets()
+
     # Validate required model files exist for the job type
     required_files = JobRequiredFiles.get_required_files(job_type)
     model_rel = {
@@ -635,6 +640,10 @@ def bundle_flower_application(model_id: UUID, job_type: JobTypes = JobTypes.stan
         dst_key = f"{dest_bucket_s3_path}/{rel}"
         logger.debug(f"Copying base {src_key} -> {dst_key}")
         s3.copy_object(src_key, dst_key)
+
+    # Refresh the required_files cache from the current S3 base application
+    # (the model may have been created when a different backend/S3 path was active)
+    pull_required_files_json_to_assets()
 
     # Validate required model files exist for the job type
     required_files = JobRequiredFiles.get_required_files(job_type)
