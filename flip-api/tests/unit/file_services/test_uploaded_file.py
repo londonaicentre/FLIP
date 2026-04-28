@@ -15,213 +15,244 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.exceptions import HTTPException
+from fastapi import HTTPException
 
-from flip_api.config import Settings
-from flip_api.db.models.main_models import UploadedFiles
-from flip_api.domain.schemas.file import BucketStatus, FileUploadStatus, ScannedFileInput
-from flip_api.file_services.uploaded_file import process_scanned_file
-
-
-@pytest.fixture
-def mock_s3_client():
-    """Mock S3Client for testing."""
-    with patch("flip_api.file_services.uploaded_file.S3Client") as mock_client:
-        s3_instance = MagicMock()
-        mock_client.return_value = s3_instance
-        # Mock head_object to return file metadata
-        s3_instance.head_object.return_value = {"ContentLength": 1024, "ContentType": "text/plain"}
-        yield s3_instance
+from flip_api.domain.schemas.status import FileUploadStatus
+from flip_api.file_services.uploaded_file import (
+    _GUARDDUTY_CLEAN_STATUS,
+    _GUARDDUTY_INFECTED_STATUS,
+    _handle_scan_result,
+    _parse_eventbridge_payload,
+    _parse_object_key,
+    _ScanOutcome,
+)
 
 
-@pytest.fixture
-def mocked_settings():
-    mock = Settings(
-        SCANNED_MODEL_FILES_BUCKET="test-secure-bucket",
-    )
-    with patch("flip_api.file_services.uploaded_file.get_settings", return_value=mock):
-        yield mock
-
-
-@pytest.fixture
-def clean_file_event():
-    """Create a sample SNS event for a clean file."""
-    model_id = str(uuid.uuid4())
-    file_name = "test.txt"
-    key = f"{model_id}/{file_name}"
-
-    message = {"bucket": "test-bucket", "key": key, "status": BucketStatus.CLEAN.value}
-
-    return ScannedFileInput(Records=[{"Sns": {"Message": json.dumps(message)}}])
-
-
-@pytest.fixture
-def infected_file_event():
-    """Create a sample SNS event for an infected file."""
-    model_id = str(uuid.uuid4())
-    file_name = "infected.txt"
-    key = f"{model_id}/{file_name}"
-
-    message = {"bucket": "test-bucket", "key": key, "status": BucketStatus.INFECTED.value}
-
-    return ScannedFileInput(Records=[{"Sns": {"Message": json.dumps(message)}}])
-
-
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_process_clean_file_success(mock_s3_client, mocked_settings, clean_file_event):
-    """Test successful processing of a clean file."""
-    # Mock the database session
-    mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = None  # File doesn't exist in DB yet
-
-    # Call the function
-    result = process_scanned_file(clean_file_event, mock_db)
-
-    # Verify result is the original message
-    message = json.loads(clean_file_event.Records[0]["Sns"]["Message"])
-    assert result == message
-
-    # Verify database operations
-    mock_db.add.assert_called_once()
-    mock_db.commit.assert_called_once()
-
-    # Verify S3 operations
-    key = message["key"]
-    mock_s3_client.head_object.assert_called()
-    mock_s3_client.copy_object.assert_called_once_with(message["bucket"], key, "test-secure-bucket", key)
-    mock_s3_client.delete_object.assert_called_once_with(message["bucket"], key)
-
-
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_process_existing_file_update(mock_s3_client, mocked_settings, clean_file_event):
-    """Test updating an existing file in the database."""
-    # Create existing file record
-    message = json.loads(clean_file_event.Records[0]["Sns"]["Message"])
-    key_parts = message["key"].split("/")
-    model_id = key_parts[0]
-    file_name = key_parts[1]
-
-    existing_file = UploadedFiles(
-        name=file_name, status=FileUploadStatus.SCANNING, size=0, type="unknown", model_id=model_id
+def _make_eventbridge_message(bucket: str, key: str, scan_status: str, threats: list[str] | None = None) -> str:
+    return json.dumps(
+        {
+            "version": "0",
+            "id": "evt-1",
+            "detail-type": "GuardDuty Malware Protection Object Scan Result",
+            "source": "aws.guardduty",
+            "detail": {
+                "schemaVersion": "1.0",
+                "scanStatus": "COMPLETED",
+                "resourceType": "S3_OBJECT",
+                "s3ObjectDetails": {"bucketName": bucket, "objectKey": key},
+                "scanResultDetails": {
+                    "scanResultStatus": scan_status,
+                    "threats": [{"name": t} for t in (threats or [])],
+                },
+            },
+        }
     )
 
-    # Mock the database session
-    mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = existing_file
 
-    # Call the function
-    process_scanned_file(clean_file_event, mock_db)
-
-    # Verify file was updated not added
-    mock_db.add.assert_not_called()
-    mock_db.commit.assert_called_once()
-
-    # Verify file attributes were updated
-    assert existing_file.status == FileUploadStatus.COMPLETED
-    assert existing_file.size == 1024
-    assert existing_file.type == "text/plain"
+@pytest.fixture
+def settings():
+    """Minimal fake settings object the handler reads at runtime."""
+    s = MagicMock()
+    s.SCANNED_MODEL_FILES_BUCKET = "s3://scanned-bucket"
+    s.ALLOWED_MODEL_FILE_EXTENSIONS = ["py", "json", "pt"]
+    s.MAX_MODEL_FILE_SIZE_BYTES = 1_000_000
+    return s
 
 
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_process_infected_file(mock_s3_client, mocked_settings, infected_file_event):
-    """Test handling of an infected file."""
-    # Mock the database session
-    mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = None
-
-    # Call the function and expect an HTTPException
-    with pytest.raises(HTTPException) as excinfo:
-        process_scanned_file(infected_file_event, mock_db)
-
-    # Verify the status code is 400 (Bad Request)
-    assert excinfo.value.status_code == 400
-
-    # Verify S3 delete was called to remove the infected file
-    message = json.loads(infected_file_event.Records[0]["Sns"]["Message"])
-    mock_s3_client.delete_object.assert_called_once_with(message["bucket"], message["key"])
-
-    # Verify file wasn't copied
-    mock_s3_client.copy_object.assert_not_called()
+@pytest.fixture
+def s3_mock():
+    with patch("flip_api.file_services.uploaded_file.S3Client") as cls:
+        instance = MagicMock()
+        instance.head_object.return_value = {"ContentLength": 100, "ContentType": "application/json"}
+        cls.return_value = instance
+        yield instance
 
 
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_s3_head_object_exception(mock_s3_client, mocked_settings, clean_file_event):
-    """Test handling an exception when retrieving file metadata."""
-    # Setup mock to raise an exception
-    mock_s3_client.head_object.side_effect = Exception("S3 head_object error")
-
-    # Mock the database session
-    mock_db = MagicMock()
-
-    # Call the function and expect an HTTPException
-    with pytest.raises(HTTPException) as excinfo:
-        process_scanned_file(clean_file_event, mock_db)
-
-    # Verify the status code is 500 (Internal Server Error)
-    assert excinfo.value.status_code == 500
-    assert "Unable to retrieve the file's details" in str(excinfo.value.detail)
+@pytest.fixture
+def settings_patch(settings):
+    with patch("flip_api.file_services.uploaded_file.get_settings", return_value=settings):
+        yield settings
 
 
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_s3_copy_exception(mock_s3_client, mocked_settings, clean_file_event):
-    """Test handling an exception when copying file to secure bucket."""
-    # Setup mock to raise an exception on copy_object
-    mock_s3_client.copy_object.side_effect = Exception("S3 copy error")
-
-    # Mock the database session
-    mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = None
-
-    # Call the function and expect an HTTPException
-    with pytest.raises(HTTPException) as excinfo:
-        process_scanned_file(clean_file_event, mock_db)
-
-    # Verify the status code is 500 (Internal Server Error)
-    assert excinfo.value.status_code == 500
-    assert "Unable to copy scanned file in secure bucket" in str(excinfo.value.detail)
+def test_parse_object_key_happy_path():
+    model_id = uuid.uuid4()
+    parsed_id, name = _parse_object_key(f"{model_id}/config.json")
+    assert parsed_id == model_id
+    assert name == "config.json"
 
 
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_invalid_model_id(mock_s3_client, mocked_settings):
-    """Test handling an invalid model ID in the file key."""
-    # Create event with empty model ID
-    message = {
-        "bucket": "test-bucket",
-        "key": "/test.txt",  # Missing model ID
-        "status": BucketStatus.CLEAN.value,
-    }
-
-    event = ScannedFileInput(Records=[{"Sns": {"Message": json.dumps(message)}}])
-
-    # Mock the database session
-    mock_db = MagicMock()
-
-    # Call the function and expect an HTTPException
-    with pytest.raises(HTTPException) as excinfo:
-        process_scanned_file(event, mock_db)
-
-    # Verify the status code is 400 (Bad Request)
-    assert excinfo.value.status_code == 400
-    assert "valid model ID" in str(excinfo.value.detail)
+@pytest.mark.parametrize("key", ["", "no-slash", "/leading", "trailing/", "not-a-uuid/foo.json"])
+def test_parse_object_key_invalid(key):
+    with pytest.raises(HTTPException) as exc:
+        _parse_object_key(key)
+    assert exc.value.status_code == 400
 
 
-@pytest.mark.skip("Bypassing virus scanning and AWS SNS after model file upload for the demo.")
-def test_s3_verify_exception(mock_s3_client, mocked_settings, clean_file_event):
-    """Test handling an exception when verifying file in secure bucket."""
-    # Setup mock to raise an exception on second head_object call
-    mock_s3_client.head_object.side_effect = [
-        {"ContentLength": 1024, "ContentType": "text/plain"},  # First call succeeds
-        Exception("S3 verification error"),  # Second call fails
-    ]
+def test_parse_eventbridge_payload_clean():
+    bucket = "staging"
+    key = f"{uuid.uuid4()}/file.json"
+    msg = _make_eventbridge_message(bucket, key, _GUARDDUTY_CLEAN_STATUS)
+    outcome = _parse_eventbridge_payload(msg)
+    assert outcome.bucket == bucket
+    assert outcome.key == key
+    assert outcome.is_clean is True
 
-    # Mock the database session
-    mock_db = MagicMock()
-    mock_db.exec.return_value.first.return_value = None
 
-    # Call the function and expect an HTTPException
-    with pytest.raises(HTTPException) as excinfo:
-        process_scanned_file(clean_file_event, mock_db)
+def test_parse_eventbridge_payload_threats():
+    msg = _make_eventbridge_message("b", f"{uuid.uuid4()}/x.json", _GUARDDUTY_INFECTED_STATUS, ["EICAR"])
+    outcome = _parse_eventbridge_payload(msg)
+    assert outcome.is_clean is False
+    assert outcome.threats == ["EICAR"]
 
-    # Verify the status code is 500 (Internal Server Error)
-    assert excinfo.value.status_code == 500
-    assert "Unable to access scanned file in secure bucket" in str(excinfo.value.detail)
+
+def test_parse_eventbridge_payload_malformed_json():
+    with pytest.raises(HTTPException) as exc:
+        _parse_eventbridge_payload("{not json")
+    assert exc.value.status_code == 400
+
+
+def test_parse_eventbridge_payload_missing_bucket():
+    msg = json.dumps({"detail": {"scanResultDetails": {"scanResultStatus": "NO_THREATS_FOUND"}}})
+    with pytest.raises(HTTPException) as exc:
+        _parse_eventbridge_payload(msg)
+    assert exc.value.status_code == 400
+
+
+def test_handle_scan_result_clean_promotes_and_marks_completed(settings_patch, s3_mock):
+    model_id = uuid.uuid4()
+    file_name = "config.json"
+    outcome = _ScanOutcome(
+        bucket="staging-bucket",
+        key=f"{model_id}/{file_name}",
+        is_clean=True,
+        threats=[],
+        raw_status=_GUARDDUTY_CLEAN_STATUS,
+    )
+    db = MagicMock()
+    db.exec.return_value.first.return_value = None
+
+    result = _handle_scan_result(outcome, db)
+
+    assert result == {"status": "promoted"}
+    s3_mock.copy_object.assert_called_once_with(
+        f"s3://staging-bucket/{model_id}/{file_name}",
+        f"s3://scanned-bucket/{model_id}/{file_name}",
+    )
+    s3_mock.delete_object.assert_called_once_with(f"s3://staging-bucket/{model_id}/{file_name}")
+    db.add.assert_called_once()
+    added = db.add.call_args.args[0]
+    assert added.status == FileUploadStatus.COMPLETED
+
+
+def test_handle_scan_result_infected_deletes_and_marks_infected(settings_patch, s3_mock):
+    model_id = uuid.uuid4()
+    file_name = "bad.pt"
+    outcome = _ScanOutcome(
+        bucket="staging-bucket",
+        key=f"{model_id}/{file_name}",
+        is_clean=False,
+        threats=["EICAR"],
+        raw_status=_GUARDDUTY_INFECTED_STATUS,
+    )
+    db = MagicMock()
+    db.exec.return_value.first.return_value = None
+
+    result = _handle_scan_result(outcome, db)
+
+    assert result["status"] == "rejected"
+    s3_mock.delete_object.assert_called_once()
+    s3_mock.copy_object.assert_not_called()
+    added = db.add.call_args.args[0]
+    assert added.status == FileUploadStatus.INFECTED
+
+
+def test_handle_scan_result_oversize_rejected(settings_patch, s3_mock):
+    s3_mock.head_object.return_value = {"ContentLength": 10_000_000, "ContentType": "application/json"}
+    model_id = uuid.uuid4()
+    outcome = _ScanOutcome(
+        bucket="staging-bucket",
+        key=f"{model_id}/config.json",
+        is_clean=True,
+        threats=[],
+        raw_status=_GUARDDUTY_CLEAN_STATUS,
+    )
+    db = MagicMock()
+    db.exec.return_value.first.return_value = None
+
+    result = _handle_scan_result(outcome, db)
+
+    assert result["status"] == "rejected"
+    s3_mock.copy_object.assert_not_called()
+    added = db.add.call_args.args[0]
+    assert added.status == FileUploadStatus.ERROR
+
+
+def test_handle_scan_result_disallowed_extension_rejected(settings_patch, s3_mock):
+    model_id = uuid.uuid4()
+    outcome = _ScanOutcome(
+        bucket="staging-bucket",
+        key=f"{model_id}/payload.exe",
+        is_clean=True,
+        threats=[],
+        raw_status=_GUARDDUTY_CLEAN_STATUS,
+    )
+    db = MagicMock()
+    db.exec.return_value.first.return_value = None
+
+    result = _handle_scan_result(outcome, db)
+
+    assert result["status"] == "rejected"
+    assert "extension" in result["detail"]
+    s3_mock.copy_object.assert_not_called()
+
+
+def test_handle_scan_result_pickle_unsafe_blocks_promotion(settings_patch, s3_mock):
+    model_id = uuid.uuid4()
+    outcome = _ScanOutcome(
+        bucket="staging-bucket",
+        key=f"{model_id}/model.pt",
+        is_clean=True,
+        threats=[],
+        raw_status=_GUARDDUTY_CLEAN_STATUS,
+    )
+    s3_mock.get_object.return_value = {"Body": MagicMock(read=lambda: b"bytes")}
+    db = MagicMock()
+    db.exec.return_value.first.return_value = None
+
+    from flip_api.utils.pickle_scanner import PickleScanResult
+
+    with patch(
+        "flip_api.file_services.uploaded_file.scan_pickle_bytes",
+        return_value=PickleScanResult(is_safe=False, threats=("os.system",)),
+    ):
+        result = _handle_scan_result(outcome, db)
+
+    assert result["status"] == "rejected"
+    s3_mock.copy_object.assert_not_called()
+    added = db.add.call_args.args[0]
+    assert added.status == FileUploadStatus.INFECTED
+
+
+def test_handle_scan_result_pickle_safe_promotes(settings_patch, s3_mock):
+    model_id = uuid.uuid4()
+    outcome = _ScanOutcome(
+        bucket="staging-bucket",
+        key=f"{model_id}/model.pt",
+        is_clean=True,
+        threats=[],
+        raw_status=_GUARDDUTY_CLEAN_STATUS,
+    )
+    s3_mock.get_object.return_value = {"Body": MagicMock(read=lambda: b"bytes")}
+    db = MagicMock()
+    db.exec.return_value.first.return_value = None
+
+    from flip_api.utils.pickle_scanner import PickleScanResult
+
+    with patch(
+        "flip_api.file_services.uploaded_file.scan_pickle_bytes",
+        return_value=PickleScanResult(is_safe=True, threats=()),
+    ):
+        result = _handle_scan_result(outcome, db)
+
+    assert result["status"] == "promoted"
+    s3_mock.copy_object.assert_called_once()

@@ -57,6 +57,37 @@ class UploadFileBody(BaseModel):
     """Model for file upload request body."""
 
     fileName: str = Field(..., description="Name of the file to upload")
+    fileSize: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Declared size of the file in bytes. Used for upfront validation against the configured "
+            "maximum; the size is re-checked server-side once the file lands in S3."
+        ),
+    )
+
+
+class SNSNotification(BaseModel):
+    """Subset of the AWS SNS HTTPS notification envelope this service consumes.
+
+    Captures only the fields needed for signature verification, subscription
+    confirmation, and message dispatch. Extra fields from the full SNS schema
+    (UnsubscribeURL, MessageAttributes, etc.) are ignored.
+    """
+
+    model_config = {"populate_by_name": True}
+
+    Type: str
+    MessageId: str
+    TopicArn: str | None = None
+    Subject: str | None = None
+    Message: str
+    Timestamp: str
+    SignatureVersion: str
+    Signature: str
+    SigningCertURL: str
+    Token: str | None = None
+    SubscribeURL: str | None = None
 
 
 class ModelFile(BaseModel):

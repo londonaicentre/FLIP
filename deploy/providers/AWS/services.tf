@@ -26,10 +26,15 @@ resource "aws_s3_bucket" "flip_bucket" {
 resource "aws_s3_bucket_cors_configuration" "flip_bucket_cors" {
   bucket = aws_s3_bucket.flip_bucket.id
 
+  # Tightened from "*" to the env-specific UI host. The legacy bucketAV stack
+  # restricted CORS the same way; "*" was a regression that allowed any origin
+  # holding a leaked presigned URL to PUT directly. Direct uploads now go to
+  # the staging bucket (see malware_scan.tf) — this rule only matters for the
+  # download/results paths that read from the scanned bucket.
   cors_rule {
     allowed_headers = ["*"]
-    allowed_methods = ["PUT"]
-    allowed_origins = ["*"]
+    allowed_methods = ["GET"]
+    allowed_origins = ["https://${var.flip_alb_subdomain}"]
     expose_headers  = []
   }
 }

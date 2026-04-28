@@ -51,6 +51,33 @@ class Settings(BaseSettings):
     FL_APP_DESTINATION_BUCKET: str
     PRE_SIGNED_URL: str | None = None
 
+    # Model file upload validation. Extensions are normalised to lowercase and
+    # compared without the leading dot. Files outside this list are rejected at
+    # presigned-URL generation time. The size cap is also enforced at upload
+    # time and re-checked server-side after S3 reports the upload via the
+    # malware-scan SNS notification.
+    ALLOWED_MODEL_FILE_EXTENSIONS: list[str] = [
+        "py",
+        "json",
+        "yaml",
+        "yml",
+        "txt",
+        "md",
+        "pt",
+        "pth",
+        "onnx",
+        "safetensors",
+        "pkl",
+    ]
+    MAX_MODEL_FILE_SIZE_BYTES: int = 1_073_741_824  # 1 GiB
+
+    # Malware-scan SNS notification settings. The HTTPS subscriber URL is
+    # the public CloudFront-fronted endpoint that AWS SNS posts scan
+    # results to; verifying the Message-Signature on every payload is
+    # required because the endpoint is not auth'd by Cognito.
+    SNS_VERIFY_SIGNATURE: bool = True
+    SNS_TOPIC_ARN: str | None = None
+
     # Reimport imaging project studies
     PROJECT_REIMPORT_RATE: int = 60  # How often to reimport studies for a given project (in minutes)
     MAX_REIMPORT_COUNT: int = 5

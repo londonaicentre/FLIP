@@ -92,6 +92,7 @@ class FileUploadStatus(Enum):
 
     SCANNING = "SCANNING"
     COMPLETED = "COMPLETED"
+    INFECTED = "INFECTED"
     ERROR = "ERROR"
 
 

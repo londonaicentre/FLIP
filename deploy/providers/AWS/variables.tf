@@ -76,6 +76,16 @@ variable "FLIP_BUCKET_NAME" {
   type = string
 }
 
+variable "FLIP_UPLOADED_BUCKET_NAME" {
+  description = <<-EOT
+    Globally-unique S3 bucket name for the *staging* model-file bucket. Files
+    are uploaded here, scanned by GuardDuty Malware Protection, then promoted
+    to FLIP_BUCKET_NAME if clean. Must be different from FLIP_BUCKET_NAME so
+    the IAM/role boundary between unscanned and scanned content is meaningful.
+  EOT
+  type        = string
+}
+
 variable "AICENTRE_BUCKET_NAME" {
   type = string
 }
