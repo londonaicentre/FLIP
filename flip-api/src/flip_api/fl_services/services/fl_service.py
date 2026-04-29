@@ -145,7 +145,7 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
     logger.debug(f"Checking server status at '{url}'")
     response = http_get(url)
     logger.debug(f"Server status response: {response}")
-    if not response:
+    if response is None:
         logger.error(f"No response from FL API for server at endpoint {endpoint}")
         return None
     server_status = IServerStatus.model_validate(response)
@@ -166,7 +166,7 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
     logger.debug(f"Checking client status at '{url}'")
     response = http_get(url)
     logger.debug(f"Client status response: {response}")
-    if not response:
+    if response is None:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
         return None
     client_statuses = [IClientStatus.model_validate(c) for c in response]
@@ -184,7 +184,7 @@ def fetch_server_status(endpoint: str) -> IServerStatus | None:
         IServerStatus | None: The server status if available, otherwise None.
     """
     server_status = check_server_status(endpoint)
-    if not server_status:
+    if server_status is None:
         logger.error(f"No response from FL API for server at endpoint {endpoint}")
         return None
     return server_status
@@ -201,7 +201,7 @@ def fetch_client_status(endpoint: str) -> list[IClientStatus] | None:
         list[IClientStatus] | None: A list of client statuses if available, otherwise None.
     """
     client_statuses = check_client_status(endpoint)
-    if not client_statuses:
+    if client_statuses is None:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
         return None
     return client_statuses
@@ -247,7 +247,7 @@ def validate_client_availability(clients: list[str], endpoint: str) -> None:
     is_flower = get_settings().FL_BACKEND == "flower"
 
     client_statuses = check_client_status(endpoint)
-    if not client_statuses:
+    if client_statuses is None:
         if is_flower:
             logger.warning(f"No client status response from FL API at {endpoint} — Flower will handle client selection")
             return

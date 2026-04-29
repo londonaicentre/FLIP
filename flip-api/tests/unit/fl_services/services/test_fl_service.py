@@ -182,11 +182,12 @@ def test_validate_client_availability_some_online(mock_get_status, mock_settings
 
 @patch("flip_api.fl_services.services.fl_service.get_settings")
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_empty_statuses(mock_get_status, mock_settings):
+def test_validate_client_availability_empty_statuses_nvflare(mock_get_status, mock_settings):
+    """NVFLARE backend: empty client list means no clients online — all unavailable."""
     mock_settings.return_value.FL_BACKEND = "nvflare"
     mock_get_status.return_value = []
 
-    with pytest.raises(ValueError, match="Unable to fetch client statuses"):
+    with pytest.raises(ValueError, match="Clients unavailable: trust-1"):
         fl_service.validate_client_availability(["trust-1"], "endpoint")
 
 
@@ -217,11 +218,11 @@ def test_validate_client_availability_flower_soft_on_unavailable(mock_get_status
 @patch("flip_api.fl_services.services.fl_service.get_settings")
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_validate_client_availability_nvflare_still_raises(mock_get_status, mock_settings):
-    """NVFLARE backend: empty client statuses still raises ValueError."""
+    """NVFLARE backend: empty client list means no clients online — all unavailable."""
     mock_settings.return_value.FL_BACKEND = "nvflare"
     mock_get_status.return_value = []
 
-    with pytest.raises(ValueError, match="Unable to fetch client statuses"):
+    with pytest.raises(ValueError, match="Clients unavailable: Trust_1"):
         fl_service.validate_client_availability(["Trust_1"], "endpoint")
 
 
