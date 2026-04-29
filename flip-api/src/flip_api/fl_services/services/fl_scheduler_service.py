@@ -49,6 +49,21 @@ from flip_api.utils.exceptions import DatabaseError, NotFoundError
 from flip_api.utils.logger import logger
 
 
+def _reset_scheduler(session: Session) -> None:
+    """Reset any BUSY schedulers back to AVAILABLE after a failure."""
+    try:
+        scheduler = session.exec(
+            select(FLScheduler).where(FLScheduler.status == NetStatus.BUSY)
+        ).first()
+        if scheduler:
+            scheduler.status = NetStatus.AVAILABLE
+            session.commit()
+            logger.info(f"Scheduler {scheduler.id} reset to AVAILABLE")
+    except SQLAlchemyError as e:
+        session.rollback()
+        logger.error(f"Failed to reset scheduler: {e}")
+
+
 def remove_job(job_id: UUID, session: Session):
     """
     Sets the job status to DELETED and clears the started timestamp.
@@ -425,6 +440,8 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
         error_message = str(e)
         logger.info(f"Error message: {error_message}")
         remove_job(fl_job_id, session)
+        # Reset the scheduler to AVAILABLE so subsequent jobs can be picked up
+        _reset_scheduler(session)
         add_log(model_id, error_message, session, False)
         update_model_status(model_id, ModelStatus.ERROR, session)
 
