@@ -1,18 +1,15 @@
-# CLAUDE.md
+# CLAUDE.md — FLIP
 
 ## Project Overview
 
-FLIP (Federated Learning Interoperability Platform) is an open-source platform for federated training and evaluation of
-medical imaging AI models across healthcare institutions while preserving data privacy. Developed by the London AI
-Centre with Guy's and St Thomas' NHS Foundation Trust and King's College London.
+FLIP (Federated Learning Interoperability Platform) — open-source platform for federated training and evaluation of
+medical imaging AI models across healthcare institutions while preserving data privacy.
 
 **License**: Apache 2.0 — all source files must include the copyright header.
 
 ## Repository Structure
 
-Three Mono-repo with these key services:
-
-```bash
+```
 FLIP/
 ├── flip-api/           # Central Hub API (Python/FastAPI)
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
@@ -31,10 +28,12 @@ FLIP/
 └── scripts/            # Utility scripts
 ```
 
+Service-specific details are in `flip-api/CLAUDE.md`, `trust/CLAUDE.md`, `trust/*/CLAUDE.md`, and `deploy/providers/AWS/CLAUDE.md`.
+
 ## Tech Stack
 
 | Layer | Technology |
-| ------- | ----------- |
+|-------|-----------|
 | Backend APIs | Python 3.12+, FastAPI, SQLAlchemy/SQLModel, Pydantic |
 | Frontend | Vue 3, TypeScript, Vite, TailwindCSS, Pinia |
 | Database | PostgreSQL (asyncpg) |
@@ -61,25 +60,25 @@ make down                  # Stop all services
 make restart               # Stop and restart all
 make build                 # Build all Docker images
 make ui                    # Start UI only
+make clean                 # Remove all stopped containers, networks, and images
+make ci                    # Run CI pipeline locally using act
+make central-hub           # Start flip-api + database (no UI)
+make debug SERVICE=<name>  # Restart service in debug mode (port 5678)
+make debug-off SERVICE=<name>
+make debug-all             # Debug all API services
+make debug-off-all         # Remove all debug modes
 ```
 
 ### Testing
 
 ```bash
-# From root — run all unit tests across all services
-make unit_test
-
-# From root — run flip-ui + flip-api tests
-make tests
-
-# From a service directory (e.g., flip-api/)
-make test                  # Lint + mypy + pytest (unit + integration)
+make unit_test             # All unit tests across all services (from root)
+make tests                 # flip-ui + flip-api tests (from root)
+# From a service directory (e.g., flip-api/):
+make test                  # ruff + mypy + pytest (unit + integration)
 make unit_test             # Unit tests only
 make integration_test      # Integration tests only
 make local_test            # Tests without Docker
-
-# Direct pytest invocation
-uv run pytest --tb=short --disable-warnings --cov=src/ --cov-report=term-missing
 ```
 
 ### Linting & Type Checking
@@ -87,13 +86,6 @@ uv run pytest --tb=short --disable-warnings --cov=src/ --cov-report=term-missing
 ```bash
 uv run ruff check . --fix  # Lint with auto-fix
 uv run mypy .              # Static type checking
-```
-
-### Documentation
-
-```bash
-cd docs && make clean          # Clean built docs
-cd docs && make docs           # Build Sphinx HTML documentation
 ```
 
 ### Debugging
@@ -111,122 +103,89 @@ make -C flip-api create_testing_projects   # Create test projects
 make -C flip-api delete_testing_projects   # Clean up test data
 ```
 
+### Docker Swarm Commands
+
+```bash
+docker swarm init                          # Initialize Swarm mode
+docker network rm deploy_trust-network-1   # Remove trust network
+docker network rm deploy_trust-network-2   # Remove trust network
+make create-networks                       # Create all networks
+docker compose -f deploy/compose.development.yml exec <service> <command>
+docker compose -f deploy/compose.development.yml run --rm <service>
+```
+
+### Trust API Key Setup
+
+```bash
+make generate-trust-api-keys          # Generate per-trust API keys
+make generate-internal-service-key    # Generate fl-server-to-hub key
+make -C flip-api generate-trust-key TRUST_NAME=Trust_1  # Single trust key
+```
+
 ## Workflow Requirements
 
 ### Always Use Make Commands
 
-When a `Makefile` target exists for the task at hand, **always use it** instead of running raw commands. Make targets encapsulate the correct flags, environment setup, and command sequences. Key rules:
-
-- Use `make test` (from a service directory) rather than invoking `uv run ruff`, `uv run mypy`, and `uv run pytest` separately — it runs all three in the correct order.
-- Use `make unit_test` (from root or service directory) for running unit tests.
-- Use `make build` instead of raw `docker compose build`.
-- Use `make up` / `make down` instead of raw `docker compose` commands.
-- Check each service's `Makefile` for available targets before writing manual commands.
+When a Makefile target exists, always use it instead of raw commands. Make targets encapsulate correct flags, environment setup, and command sequences:
+- `make test` instead of raw ruff + mypy + pytest
+- `make build` instead of raw docker compose build
+- `make up`/`make down` instead of raw docker compose
 
 ### Always Verify Changes
 
-After making any code changes, **always run verification before committing**:
+After code changes, run verification before committing:
+1. Identify affected services.
+2. Run service-level test: `make test` (or `make unit_test` if no Docker).
+3. For cross-service changes, run root-level: `make unit_test`.
+4. For frontend changes: `cd flip-ui && npm run lint && npm run test:unit`
+5. Fix all failures before committing.
 
-1. **Identify affected services** — determine which service(s) your changes touch.
-2. **Run the service-level test suite** — from the affected service directory:
+### Documentation Check
 
-   ```bash
-   make test        # Runs ruff + mypy + pytest (unit + integration)
-   ```
-
-   If only unit tests are needed (e.g., no Docker available):
-
-   ```bash
-   make unit_test   # Unit tests only
-   ```
-
-3. **For cross-service changes**, run the root-level test suite:
-
-   ```bash
-   make unit_test   # All services from root
-   ```
-
-4. **Fix all failures** before committing — do not commit code that fails linting, type checking, or tests.
-5. **For frontend changes** (`flip-ui/`), also run:
-
-   ```bash
-   cd flip-ui && npm run lint && npm run test:unit
-   ```
-
-### Check If Documentation Needs Updating
-
-After making changes, **always evaluate whether documentation needs to be updated**. Check the following:
+After changes, evaluate if docs need updating:
 
 | Change Type | Documentation to Review |
-| ------------- | ------------------------ |
-| New service or component | `README.md` (root), `CONTRIBUTING.md` (Adding a new service section), `docs/source/2_components.rst` |
-| New API endpoints | `docs/source/5_api_reference.rst`, service-level `README.md` |
-| Changed environment variables | `.env.development.example`, `CONTRIBUTING.md` (Environment variables section), `docs/source/3_sys-admin.rst` |
-| New dependencies or tooling | `CONTRIBUTING.md` (Prerequisites section), service `README.md` |
-| Changed Docker/deployment config | `deploy/README.md`, `docs/source/3_sys-admin.rst` |
-| New Make targets | `README.md` (root), this file (`CLAUDE.md`) |
-| Changed user-facing workflows | `docs/source/4_user-guides.rst` and files in `docs/source/user-guides/` |
-| New FL framework features | `docs/source/components/component-fl-nodes.rst` |
+|-------------|------------------------|
+| New service/component | `README.md`, `CONTRIBUTING.md`, `docs/source/2_components.rst` |
+| New API endpoints | `docs/source/5_api_reference.rst`, service `README.md` |
+| Changed env vars | `.env.development.example`, `CONTRIBUTING.md`, `docs/source/3_sys-admin.rst` |
+| New dependencies | `CONTRIBUTING.md`, service `README.md` |
+| Changed deployment config | `deploy/README.md`, `docs/source/3_sys-admin.rst` |
+| New Make targets | `README.md`, this file |
+| User-facing workflow changes | `docs/source/4_user-guides.rst` |
+| FL framework features | `docs/source/components/component-fl-nodes.rst` |
 | Trust service changes | `trust/README.md`, relevant `trust/*/README.md` |
-| New user roles or auth changes | `docs/source/components/component-user-roles.rst` |
-
-Documentation files in this repo:
-
-- **`README.md`** (root) — project overview, quickstart, prerequisites
-- **`CONTRIBUTING.md`** — development setup, coding style, PR process
-- **`docs/source/`** — Sphinx/ReadTheDocs documentation (`.rst` files)
-- **Service-level `README.md`** files — per-service setup and usage (in `flip-api/`, `flip-ui/`, `trust/*/`)
-- **`deploy/README.md`** — deployment instructions
-- **This file (`CLAUDE.md`)** — AI assistant reference
-
-When in doubt, update the docs. Outdated documentation is worse than no documentation.
+| Auth/role changes | `docs/source/components/component-user-roles.rst` |
 
 ## Code Style & Conventions
 
 ### Python
-
-- **Line length**: 120 characters
-- **Linter/Formatter**: Ruff (`select = ['I', 'F', 'E', 'W', 'PT']`)
-- **Type checker**: mypy (all code must have type hints)
-- **Docstrings**: Google style guide
-- **Naming**: snake_case for functions, variables, modules
-- **Imports**: Alphabetically sorted (enforced by ruff `I` rule)
-- **Source layout**: `src/[service_name]/` per service
-- **Test files**: `test_*.py` or `*_test.py` in `tests/unit/` and `tests/integration/`
-- **Test fixtures**: pytest fixtures in `conftest.py`, factory_boy for data generation
-- **Dependency injection**: FastAPI `Depends()`
-- **Async DB**: asyncpg with async context managers
+- Line length: 120. Linter: Ruff (`select = ['I', 'F', 'E', 'W', 'PT']`). Type checker: mypy.
+- Docstrings: Google style. Naming: snake_case. Imports: alphabetically sorted.
+- Source layout: `src/[service_name]/`. Tests: `tests/unit/`, `tests/integration/`.
+- Dependency injection: FastAPI `Depends()`. Async DB: asyncpg with async context managers.
 
 ### JavaScript/TypeScript (flip-ui)
-
-- **Line length**: 120 characters
-- **Linter**: ESLint with TypeScript + Vue plugins
-- **Components**: PascalCase names, organized in `src/partials/` (reusable) and `src/pages/`
-- **State management**: Pinia stores in `src/stores/`
-- **Styling**: TailwindCSS utility classes (dark mode via `dark:` prefix)
-- **Testing**: Vitest (unit), Cypress (e2e)
-- **Icons**: Heroicons (`@heroicons/vue`)
+- Line length: 120. Linter: ESLint + TypeScript + Vue plugins.
+- Components: PascalCase in `src/partials/` (reusable) and `src/pages/`.
+- State: Pinia stores in `src/stores/`. Icons: Heroicons.
 
 ### General
-
-- All files must include the Apache 2.0 copyright header
+- All files include Apache 2.0 copyright header.
 - Commits must be signed off (DCO): `git commit -s`
-- PRs target the `develop` branch
-- Branch naming: `[ticket_id]-[task_name]` (e.g., `19-ci-pipeline-setup`)
+- PRs target `develop`. Branch naming: `[ticket_id]-[task_name]`.
 
 ## Environment Setup
 
-1. Copy env template: `cp .env.development.example .env.development`
-2. Install Python deps per service: `cd <service-dir> && uv sync`
-3. Install UI deps: `cd flip-ui && npm install`
-4. Configure AWS: `aws configure sso` (required for `flip-api` and `make up`)
-5. Install AWS Session Manager plugin (for SSH-over-SSM access to AWS hosts)
-6. Docker networks: `make create-networks`
+1. `cp .env.development.example .env.development`
+2. Per service: `cd <service-dir> && uv sync`
+3. UI: `cd flip-ui && npm install`
+4. AWS: `aws configure sso` (required for flip-api and `make up`)
+5. Install AWS Session Manager plugin
+6. `make create-networks`
 
 ### Key Environment Variables
-
 - `FL_BACKEND` — `flower` (default) or `nvflare`
-- `DOCKER_FL_API_NAME` / `DOCKER_FL_SERVER_NAME` / `DOCKER_FL_CLIENT_NAME` — derived from `FL_BACKEND` by `deploy/fl_backend.mk`; do not set in `.env*`
 - `PROD` — `true` (production), `stag` (staging), unset (development)
 - `AES_KEY_BASE64` — encryption key for trust communication
 - `TRUST_API_KEYS` — JSON dict of per-trust plaintext API keys for trust-to-hub auth
@@ -237,288 +196,55 @@ When in doubt, update the docs. Outdated documentation is worse than no document
 - `CENTRAL_HUB_API_URL` — public base URL of flip-api (with `/api`); read by flip-ui and trust-api. In prod this is the CloudFront URL.
 - `FLIP_API_INTERNAL_URL` — Central-Hub-internal base URL of flip-api (with `/api`); read **only** by fl-server. Must resolve over the Docker network (e.g. `http://flip-api:8000/api`), never the CloudFront URL — CloudFront strips `X-Internal-Service-Key` at the edge.
 
+## Deployment Architecture
+
+- **Cloud-Only**: Central Hub (ECS Fargate) + Trust (EC2) on AWS
+- **Hybrid**: Central Hub on AWS + Trust on local/on-prem host
+- Trusts poll Central Hub over HTTPS (outbound only). No inbound ports on trust hosts.
+- SSH access via AWS SSM Session Manager only (no port 22 open).
+
 ## CI/CD
 
-GitHub Actions workflows in `.github/workflows/`:
-
-- **Test**: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`
-- **Build**: `docker_build_*.yml` for each service
-- **Infrastructure**: `validate_terraform.yml` (fmt + validate, no AWS creds needed)
-- **Security**: `secret-scanning.yml` (TruffleHog + detect-secrets)
-- **Docs**: `docs.yml` (Sphinx → ReadTheDocs)
-- **PR checks**: `pr_acceptance_criteria.yml`
-
-Run CI locally: `make ci` (uses [act](https://github.com/nektos/act))
+GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 ## Pre-commit Hooks
 
-Configured in `.pre-commit-config.yaml`:
-
-- TruffleHog (secret scanning)
-- detect-secrets (with `.secrets.baseline`)
-- Large file check (max 1000KB)
-- Merge conflict markers, YAML validation, private key detection
-- Environment variable validation
-
-Install: `pre-commit install`
-
-## Deployment & Infrastructure
-
-### Deployment Models
-
-FLIP supports two deployment models:
-
-1. **Cloud-Only**: Central Hub + Trust services both on AWS EC2
-2. **Hybrid/On-Premises**: Central Hub on AWS EC2 + Trust services on a local/on-premises host
-
-Trusts poll the Central Hub for tasks over HTTPS. Trust communication payloads are encrypted via `AES_KEY_BASE64`. **All trust communication is outbound** — trusts initiate all connections (task polling at `https://<subdomain>/api/...` via CloudFront → ALB; FL training via the NLB). The Central Hub never makes inbound connections to trusts.
-
-**SSH Access**: Both EC2 instances (Central Hub and Trust) are accessed via AWS SSM Session Manager (`ssh flip` / `ssh flip-trust`). No SSH port is open in any security group. The SSH config aliases are generated by `deploy/providers/AWS/update_ssm_ssh_config.py` with SSM ProxyCommand. Both EC2 instances are in **private subnets** with no public IPs — access is exclusively via SSM.
-
-**Debugging Trust services**: since the Trust EC2 has no inbound ports open, the web UIs and swagger docs are reachable only via SSM port forwarding. One command opens parallel forwards for all of them:
-
-```bash
-cd deploy/providers/AWS && make forward-trust
-```
-
-This prints the URLs to open in your browser:
-- XNAT: `http://localhost:8104`
-- Orthanc: `http://localhost:8042`
-- trust-api swagger: `http://localhost:8020/docs`
-- imaging-api swagger: `http://localhost:8001/docs`
-- data-access-api swagger: `http://localhost:8010/docs`
-- Grafana: `http://localhost:3000`
-
-Ctrl+C stops all forwards.
-
-**FL Service Authentication**: The fl-server (on the Central Hub) authenticates to flip-api using `INTERNAL_SERVICE_KEY` via the `INTERNAL_SERVICE_KEY_HEADER` header. This is separate from trust API keys. FL clients (on the trust side) do **not** have Central Hub API credentials — only the fl-server communicates with flip-api. FL clients relay metrics and exceptions to the fl-server, which forwards them to the Central Hub.
-
-**FL Traffic Direction**: FL clients on trusts connect **outbound** to the FL server on the Central Hub via the NLB. The FL server listens on port 8002; FL clients do not listen on any port. No inbound firewall rules are needed on trust hosts for FL traffic.
-
-**Trust Authentication Model**: Trusts authenticate to the Central Hub using per-trust API keys — any machine with the correct `TRUST_NAME`, `TRUST_API_KEY`, and `CENTRAL_HUB_API_URL` can act as a trust. The hub identifies trusts by API key hash lookup (not by IP address or hostname). Trust registration requires:
-
-1. **Hub-side**: Trust name in `TRUST_NAMES` env var (seeded into DB at startup), API key hash in `TRUST_API_KEY_HASHES`, and hub redeployed with updated secrets
-2. **Trust-side**: Matching `TRUST_NAME`, `TRUST_API_KEY`, `CENTRAL_HUB_API_URL`, and `AES_KEY_BASE64` in the trust's `.env` file
-
-Keys are generated via `make generate-trust-api-keys` (in `deploy/providers/AWS/`). The `full-deploy-stag` target handles key generation, secrets update, and hub redeployment automatically. When using `add-local-trust` standalone, keys must already be configured.
-
-### Docker Compose (Development vs Production)
-
-Compose files live in `deploy/` and are selected by the `PROD` environment variable and `FL_BACKEND`:
-
-| File | Purpose |
-| ------ | --------- |
-| `compose.development.yml` | Builds from source, volume-mounts code, exposes debug ports |
-| `compose.production.yml` | Pulls pre-built images from GHCR (`ghcr.io/londonaicentre/*`) |
-| `compose.{env}.flower.yml` | FL backend override for Flower |
-| `compose.{env}.nvflare.yml` | FL backend override for NVIDIA FLARE |
-| `compose.development.debug.override.yml` | Debug port mappings (port 5678) |
-
-**Development** builds images locally and mounts source for live editing. **Production** pulls tagged images from GHCR and uses AWS Secrets Manager for credentials instead of `.env` files.
-
-When modifying Docker Compose configuration, **always update both development and production compose files** to keep them consistent. Check that:
-
-- New services appear in both `compose.development.yml` and `compose.production.yml`
-- Environment variables, ports, and network configurations match across environments
-- New FL-backend-specific services appear in both `flower` and `nvflare` variants
-
-### AWS Infrastructure (Terraform/OpenTofu)
-
-Infrastructure-as-code lives in `deploy/providers/AWS/`. Key resources:
-
-| Resource | Purpose |
-| ---------- | --------- |
-| VPC + subnets | Network isolation (`10.0.0.0/16`, 2 AZs) |
-| EC2 instances | Central Hub (`t3.medium`, private subnet) + Trust (`t3.xlarge`, private subnet, optional) |
-| RDS PostgreSQL | Managed database (private subnets) |
-| ALB | HTTPS termination for UI and API (ACM certificate) |
-| NLB | gRPC traffic for FL servers |
-| S3 buckets | Model files, federated data, FL app storage |
-| Cognito | User pool (`flip-user-pool`) with email auth |
-| Secrets Manager | `FLIP_API` secret (AES key, DB password) |
-| SES | Email notifications |
-| Route53 | DNS records for ALB subdomain |
-
-**Terraform state** is stored remotely in S3 with encryption and DynamoDB locking.
-
-### Deployment Commands
-
-```bash
-# From deploy/providers/AWS/
-make full-deploy PROD=stag           # Full staging deployment
-make full-deploy PROD=true           # Full production deployment
-make full-deploy-stag-hybrid LOCAL_TRUST_IP=<ip>  # Hybrid with on-prem trust
-
-# Individual steps
-make init                            # Terraform init (S3 backend)
-make plan                            # Terraform plan
-make apply                           # Terraform apply
-make plan-cloudfront-certs           # Plan CloudFront viewer + ALB API-origin certs
-make apply-cloudfront-certs          # Apply those certs (required before CloudFront distribution)
-make deploy-centralhub               # Deploy Central Hub services to EC2 (via SSM)
-make deploy-ui                       # Build flip-ui from working tree, sync to S3, invalidate CloudFront
-make deploy-trust                    # Deploy Trust services to EC2 (via SSM)
-make ssh-config                      # Generate SSH config with SSM ProxyCommand
-make status                          # Health checks across all services
-
-# On-premises trust
-make add-local-trust LOCAL_TRUST_IP=<ip>       # Provision on-prem trust via Ansible
-```
-
-**UI hosting (CloudFront)**: The flip-ui is served from an S3 bucket behind CloudFront at the canonical subdomain (`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront forwards `/api/*` to the ALB via a backend-only `api.<subdomain>` DNS name; users and trusts keep using the canonical URL. Runtime config (Cognito IDs, API URL) is injected into a generated `window.js` at deploy time — no env-specific values are committed to the repo. CloudFront is the only supported UI-hosting path: the canonical A-record aliases CloudFront directly, the ALB has no `ec2-instance-ui` target group, and EC2 does not listen on port 443.
-
-### Trust Services Architecture
-
-Each Trust environment (cloud or on-prem) runs:
-
-| Service | Port | Purpose |
-| --------- | ------ | --------- |
-| trust-api | 8020 | Trust API gateway (polls hub for tasks) |
-| imaging-api | 8001 | DICOM image retrieval |
-| data-access-api | 8010 | OMOP database queries |
-| fl-client | — | Federated learning client (connects outbound to FL server via NLB) |
-| XNAT | 8104 | Neuroimaging platform |
-| Orthanc | 4242 | DICOM server |
-| omop-db | 5432 | Patient cohort database |
-
-On-premises trusts are provisioned via Ansible (`deploy/providers/local/`), which installs Docker and deploys the Trust Docker Compose stack. All trust communication is outbound — no inbound firewall rules are required for trust operation.
-
-### Dev/Prod Consistency Rules
-
-When making infrastructure or deployment changes, **always think through both environments end-to-end**:
-
-1. **Compose files** — update both `compose.development.yml` and `compose.production.yml`. They differ in *how* services run (build-from-source vs GHCR images, source volume mounts vs baked-in code), but the set of services, ports, networks, and functional volume mounts must stay in sync.
-2. **Volume mounts and host files** — development mounts files from the local repo. Production mounts files from the EC2 host filesystem. If you add a file bind mount in development, the same file must exist on the production EC2 instance — ensure it is provisioned by the Ansible playbook (`deploy/providers/AWS/site.yml`) or by a Makefile target, and add the corresponding mount in `compose.production.yml`.
-3. **FL backend variants** — update both `flower` and `nvflare` compose files if adding services or ports.
-4. **Environment variables** — add to `.env.development.example` and document in `deploy/README.md`. Production uses AWS Secrets Manager instead of `.env` files, so also update `deploy/providers/AWS/services.tf` (the `FLIP_API` secret) if the variable is needed at runtime.
-5. **Terraform variables** — update `variables.tf` with descriptions and defaults; keep `main.tf` and `services.tf` in sync.
-6. **Ansible provisioning** — if production EC2 instances need new directories, files, packages, or data, add tasks to `deploy/providers/AWS/site.yml` (cloud) and `deploy/providers/local/site_local_trust.yml` (on-prem). Key host paths: `/opt/flip/` (app root), `/opt/flip/data/` (FL data/images), `/opt/flip/services/` (FL participant kits), `/opt/flip/omop/` (OMOP database data), `/opt/flip/volumes/` (observability data — Loki, Grafana).
-7. **Trust changes** — update both cloud (`deploy/providers/AWS/`) and on-prem (`deploy/providers/local/`) Ansible playbooks so both deployment models stay consistent.
+TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict markers, YAML validation, private key detection, env var validation. Install: `pre-commit install`.
 
 ## Security Rules
 
-- Never commit secrets or credentials — pre-commit hooks enforce this
-- **SSH-over-SSM for AWS EC2 access** (mandatory):
-  - Do NOT expose port 22 in any security group
-  - Use AWS Systems Manager Session Manager for remote access
-  - Access via `ssh flip` / `ssh flip-trust` aliases (requires `.ssh/config` generated by `make ssh-config`)
-  - Requires: AWS CLI credentials (IAM role), Session Manager plugin installed locally
-  - Benefits: Centralized audit via CloudTrail, IAM-based access control, no persistent SSH keys, zero-inbound-port architecture
-  - See [Deployment Guide](deploy/providers/AWS/README.md#remote-access-via-ssm-session-manager)
-- Never bypass TLS certificate validation (`curl -k` is prohibited)
-- Use `AES_KEY_BASE64` for encrypted trust communication
-- AWS Cognito for hub authentication, per-trust API keys for trust-to-hub auth
-- Internal service key (`INTERNAL_SERVICE_KEY`) for fl-server-to-hub auth — separate from trust keys
-- FL clients (trust side) intentionally have no access to Central Hub API credentials
-- Do not hardcode environment values in Dockerfiles or compose files
+- Never commit secrets/credentials (pre-commit hooks enforce this).
+- SSH-over-SSM mandatory (no port 22 exposed).
+- Never bypass TLS (`curl -k` prohibited).
+- Use `AES_KEY_BASE64` for trust communication encryption.
+- AWS Cognito for hub auth, per-trust API keys for trust-to-hub auth.
+- Internal service key for fl-server-to-hub auth (separate from trust keys).
+- FL clients intentionally have no Central Hub credentials.
+- Do not hardcode env values in Dockerfiles or compose files.
 
-## Important: Rules for adding or modifying code
+## Code Modification Rules
 
-Follow these rules when adding new code or modifying existing code:
-
-1. Follow existing code style and conventions
-2. Add or update tests in `tests/` to cover new functionality
-3. Run formatters, linters, type checkers, and tests before committing (`make test` or `make unit_test`)
-4. Update documentation in `README.md` or `docs/` as needed
-5. Commit changes with clear messages referencing related issues or features, NEVER co-sign commits or PRs, all commits
-must be signed off by the human author alone (`git commit -s`), as they are the sole responsible for the content and
-quality of the code.
-6. Ensure that any new dependencies are added to the appropriate `pyproject.toml` or `package.json` files and documented
-in the service-level `README.md`.
-7. Use the SOLID principles for code organization and design, ensuring that new code is modular, reusable, and maintainable.
-8. Measure code coverage and aim for high coverage on new code paths, while also ensuring that critical paths are well-tested.
+1. Follow existing code style and conventions.
+2. Add/update tests covering new functionality.
+3. Run `make test` or `make unit_test` before committing.
+4. Update documentation as needed.
+5. Commit with clear messages. All commits signed off by human author alone (`git commit -s`).
+6. Add new deps to `pyproject.toml` or `package.json`, document in service README.
+7. Use SOLID principles. Aim for high test coverage on critical paths.
 
 ## Related Repositories
 
 | Repository | Purpose |
-| ----------- | --------- |
-| [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo (this repo) |
-| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | NVIDIA FLARE FL base library |
-| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower FL base library |
+|-----------|---------|
+| [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo |
+| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | NVIDIA FLARE base library |
+| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower base library |
 
-### flip-fl-base (NVIDIA FLARE)
+## Documentation Files
 
-Repository structure for the NVIDIA FLARE federated learning implementation:
-
-```bash
-flip-fl-base/
-├── flip/                       # Pip-installable Python package
-│   ├── constants/              # Platform constants and configuration
-│   ├── core/                   # Core platform logic and utilities
-│   ├── nvflare/                # NVFLARE-specific components and handlers
-│   └── utils/                  # General utility functions
-├── fl_services/                # Docker services for FL network
-│   ├── fl-api-base/            # FastAPI service for FL run control and status
-│   ├── fl-base/                # Base NVFLARE image with dependencies
-│   ├── fl-client/              # NVFLARE client container for participants
-│   └── fl-server/              # NVFLARE server container for coordinator
-├── deploy/                     # Docker Compose configurations
-│   ├── compose.yml             # Development/test compose stack
-│   ├── compose.test.yml        # Integration testing stack
-│   └── release.sh              # Release script
-├── tutorials/                  # Example FL applications
-│   ├── standard/               # Standard training examples
-│   ├── diffusion_model/        # Diffusion model training example
-│   ├── evaluation/             # Evaluation-focused examples
-│   └── fed_opt/                # Federated optimization examples
-├── tests/                      # Unit and integration tests
-├── docs/                       # Documentation and assets
-├── pyproject.toml              # Python project configuration (UV)
-├── Makefile                    # Build and test automation
-├── README.md                   # Project overview and quick start
-└── LICENSE.md                  # Apache 2.0 license
-```
-
-**Key features:**
-
-- NVFLARE-based federated learning framework
-- Reusable NVFLARE components and custom handlers
-- Docker services for serverless and traditional FL deployment
-- Tutorial applications demonstrating different learning paradigms
-- Integration with FLIP Central Hub via FL API
-
-### flip-fl-base-flower (Flower Framework)
-
-Repository structure for the Flower federated learning implementation:
-
-```bash
-flip-fl-base-flower/
-├── src/                        # Pip-installable Python package
-│   └── flwr_flip/              # Core Flower-FLIP integration utilities
-├── fl_services/                # Docker services for FL network
-│   ├── fl-base/                # Base Flower image with dependencies
-│   ├── fl-api-flower/          # FastAPI service for run control and status
-│   ├── superlink/              # Flower SuperLink (federation coordinator)
-│   └── supernode/              # Flower SuperNode (participant worker)
-├── deploy/
-│   └── compose.yml             # Docker Compose stack for local runtime
-├── tutorials/                  # Example Flower applications
-│   ├── numpy/                  # Minimal NumPy-based example
-│   └── monai/                  # MONAI-based medical imaging example
-├── docs/                       # Documentation and assets
-│   └── images/                 # Project logos and diagrams
-├── tests/                      # Unit and integration tests
-├── pyproject.toml              # Python project configuration (UV)
-├── Makefile                    # Build and test automation
-├── README.md                   # Project overview and quick start
-└── LICENSE.md                  # Apache 2.0 license
-```
-
-**Key features:**
-
-- Flower framework-based federated learning
-- SuperLink/SuperNode topology for scalable federated networks
-- Flower API service for orchestrating experiments
-- Tutorial applications with medical imaging focus (MONAI)
-- Integration with FLIP Central Hub via FL API
-
-### Structure Comparison
-
-| Aspect | flip-fl-base (NVFLARE) | flip-fl-base-flower (Flower) |
-| -------- | ------------------------ | ------------------------------ |
-| FL Framework | NVIDIA FLARE | Flower |
-| Main Package | `flip/` | `src/flwr_flip/` |
-| Services | `fl-api-base`, `fl-client`, `fl-server` | `fl-api-flower`, `superlink`, `supernode` |
-| Deployment | Traditional client-server | SuperLink/SuperNode topology |
-| Tutorial Focus | Multiple paradigms (standard, diffusion, optimization) | Medical imaging (NumPy, MONAI) |
-| Docker Compose | `compose.yml`, `compose.test.yml` | Single `deploy/compose.yml` |
+Key docs (read on demand):
+- Auth/deployment: `docs/source/3_sys-admin.rst`
+- Components: `docs/source/2_components.rst`
+- API reference: `docs/source/5_api_reference.rst`
+- User guides: `docs/source/4_user-guides.rst`
+- AWS deployment: `deploy/providers/AWS/README.md`

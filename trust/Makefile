@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 up-local-trust down-local-trust create-networks create-networks-local-trust remove-networks recreate-networks tests
+.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 up-local-trust down-local-trust create-networks create-networks-local-trust remove-networks recreate-networks tests update-omop-data update-orthanc-data
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=../.env.production
@@ -52,6 +52,7 @@ trust_local = trust-local
 get_json_value = $(shell python3 ../flip-api/src/flip_api/scripts/env_utils.py '$(1)' $(2))
 
 OMOP_DB_CMD=make -C ./omop-db
+ORTHANC_CMD=make -C ./orthanc
 DOCKER_COMPOSE_CMD=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f compose_trust.debug.override.yml
 
@@ -129,8 +130,8 @@ build:
 	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} build
 
 # Uses --pull always to ensure the latest FL images and omop-db image are used
-# ensure omop data is up to date before bringing up trust 1
-up-trust-1: update-omop-data
+# ensure omop and orthanc data are up to date before bringing up trust 1
+up-trust-1: update-omop-data update-orthanc-data
 	@echo "🚢 Starting Trust 1 services..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -181,8 +182,8 @@ down-local-trust:
 		$(DOCKER_COMPOSE_CMD) -f compose_trust.local.yml -p $(trust_local) down --remove-orphans
 
 # Uses --pull always to ensure the latest FL images and omop-db image are used
-# ensure omop data is up to date before bringing up trust 2
-up-trust-2: update-omop-data
+# ensure omop and orthanc data are up to date before bringing up trust 2
+up-trust-2: update-omop-data update-orthanc-data
 	@echo "🚢 Starting Trust 2 services..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -201,6 +202,9 @@ down: down-trust-1 down-trust-2
 
 update-omop-data:
 	$(OMOP_DB_CMD) update-omop-data
+
+update-orthanc-data:
+	$(ORTHANC_CMD) update-orthanc-data
 
 tests:
 	cd data-access-api && make test && \

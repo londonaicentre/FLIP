@@ -17,13 +17,12 @@
 
 Orthanc username and password are set by `ORTHANC_USERNAME` and `ORTHANC_PASSWORD` environment variables in the .env.development file at the root of this repository (see example in [.env.development.example](../../.env.development.example)).
 
-You'll need to populate Orthanc with DICOM files in order to test FLIP locally. You can use the mock data in <https://emckclac-my.sharepoint.com/:u:/g/personal/k2481169_kcl_ac_uk/ETiafC8VeqdIiQrChm208swBUABVQ_PYDomPRxLQcXvfkw?e=z1UaHp>.
+You'll need to populate Orthanc with DICOM files in order to test FLIP locally. We have prepared mock DICOM data for each of the 2 dev trusts (Trust_1 and Trust_2) as Orthanc storage volumes on S3. In order to set up the storage locally, these data volumes need to be downloaded/extracted. This is handled automatically when bringing up the trust containers via `make up`, `make up-trusts`, `make up-trust-1`, or `make up-trust-2`, and similarly they will be updated locally when they are updated on S3 (note for devs: this is controlled by `.data_version` file in this directory).
+
+```sh
+make update-orthanc-data
+```
 
 <!-- TODO add instructions to generate mock data using the MSD dataset. -->
 
-The Makefile has targets to download and extract the Orthanc data volumes from S3 (needs AWS credentials configured):
-
-```sh
-make sync-data-from-s3
-make extract-data
-```
+If you want to override the mock data, you can also drop your own DICOM files into the `orthanc-storage` and `orthanc-storage-2` directories — these are bind-mounted into the Orthanc containers as `/var/lib/orthanc/db`. Alternatively, the original mock dataset is also available at <https://emckclac-my.sharepoint.com/:u:/g/personal/k2481169_kcl_ac_uk/ETiafC8VeqdIiQrChm208swBUABVQ_PYDomPRxLQcXvfkw?e=z1UaHp>.
