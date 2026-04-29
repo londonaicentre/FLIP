@@ -34,12 +34,17 @@ def seed_fl_nets(session: Session) -> list[FLNets]:
     fl_nets = session.exec(select(FLNets)).all()
 
     for name, endpoint in nets.items():
-        if any(net.name == name for net in fl_nets):
-            logger.info(f"FL Net '{name}' already exists. Skipping.")
+        existing = next((net for net in fl_nets if net.name == name), None)
+        if existing:
+            if existing.endpoint != endpoint:
+                logger.info(f"FL Net '{name}' endpoint changed: {existing.endpoint} -> {endpoint}")
+                existing.endpoint = endpoint
+            else:
+                logger.info(f"FL Net '{name}' already exists and is up to date.")
             continue
         new_net = FLNets(name=name, endpoint=endpoint)
         session.add(new_net)
-        session.commit()
+    session.commit()
 
     # Return all nets
     fl_nets = session.exec(select(FLNets)).all()

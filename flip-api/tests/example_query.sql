@@ -63,25 +63,22 @@ dicom_attributes AS (
     FROM image_feature_measurement ifm
     GROUP BY ifm.image_occurrence_id
 )
-SELECT
-    -- person
+-- Use SELECT TOP 150 here for SQL Server
+SELECT TOP 150
     p.person_id,
-    p.person_source_value AS "Patient ID",
-    gender_concept.concept_name AS "Gender",
-	-- visit occurrence
-    v.visit_start_date AS "Visit date",
-    visit_type_concept.concept_name AS "Visit type",
-	-- procedure occurrence
-	pr.procedure_occurrence_id AS "Procedure ID",
-    pr.procedure_date AS "Procedure date",
-    procedure_concept.concept_name AS "Procedure",
-    -- image occurrence
+    p.person_source_value AS [Patient ID],
+    gender_concept.concept_name AS [Gender],
+    v.visit_start_date AS [Visit date],
+    visit_type_concept.concept_name AS [Visit type],
+	pr.procedure_occurrence_id AS [Procedure ID],
+    pr.procedure_date AS [Procedure date],
+    procedure_concept.concept_name AS [Procedure],
 	io.accession_id,
-    io.image_occurrence_date AS "Image date"	,
-    modality_concept.concept_name as "Modality",
-    io_anatomic_site_concept.concept_name as "Image occurrence anatomy",
-	da.slice_thickness_mm AS "Slice thickness (mm)",
-	da.manufacturer AS "Manufacturer"
+    io.image_occurrence_date AS [Image date],
+    modality_concept.concept_name as [Modality],
+    io_anatomic_site_concept.concept_name as [Image occurrence anatomy],
+	da.slice_thickness_mm AS [Slice thickness (mm)],
+	da.manufacturer AS [Manufacturer]
 FROM omop.person p
 LEFT JOIN omop.visit_occurrence v
   ON v.person_id = p.person_id
@@ -91,7 +88,6 @@ LEFT JOIN omop.image_occurrence io
   ON io.procedure_occurrence_id = pr.procedure_occurrence_id
 LEFT JOIN dicom_attributes da
   ON da.image_occurrence_id = io.image_occurrence_id
--- concepts
 LEFT JOIN gender_concept
   ON p.gender_concept_id = gender_concept.concept_id
 LEFT JOIN type_concept visit_type_concept
@@ -103,4 +99,6 @@ LEFT JOIN body_structure_concept io_anatomic_site_concept
 LEFT JOIN procedure_concept modality_concept
   ON io.modality_concept_id = modality_concept.concept_id
 WHERE
-    procedure_concept.concept_name = 'CT Spleen'
+    procedure_concept.concept_name != 'CT Spleen'
+-- Randomize using NEWID() for SQL Server
+ORDER BY NEWID();

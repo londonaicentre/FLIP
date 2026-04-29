@@ -1,48 +1,66 @@
-<!--
-    Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
-    Licensed under the Apache License, Version 2.0 (the "License");
-    you may not use this file except in compliance with the License.
-    You may obtain a copy of the License at
-        http://www.apache.org/licenses/LICENSE-2.0
-    Unless required by applicable law or agreed to in writing, software
-    distributed under the License is distributed on an "AS IS" BASIS,
-    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-    See the License for the specific language governing permissions and
-    limitations under the License.
--->
+# FLIP — GitHub Copilot Instructions
 
-# This file contains instructions for using GitHub Copilot
+## Project Summary
 
-# Project Context
+Federated Learning Interoperability Platform. Monorepo with FastAPI backend, Vue 3 frontend, PostgreSQL, AWS ECS/EC2 infra, and Terraform IaC.
 
-This project is the FLIP, a system designed to manage and analyze federated learning (FL) tasks and models. It includes features for managing projects, models, logs, and user interactions.
-The project is structured as a Monorepo with multiple components, including an API, frontend, and deployment scripts.
+## Build & Test
 
-The main folders are:
-- `flip-api`: Contains the backend API code for the Centralhub, which coordinates all the services and is the main point of contact with the database containing all user related data.
-- `flip-ui`: Contains the frontend code, including user interfaces, components, and styles. It's the only JavaScript/TypeScript code in the project.
-- `trust`: Contains the code for the trust service, which manages trust-related operations and APIs which manage the patient data.
-- `trust/trust-api`: Contains the trust API code, which handles calls from the centralhub to the trust service.
-- `trust/imaging-api`: Contains the imaging API code, which handles image-related operations and APIs. It is only called by the trust-api.
-- `trust/data-access-api`: Contains the data access API code, which handles data access operations and APIs. It is only called by the trust-api.
+### Python (all services: flip-api, trust-api, imaging-api, data-access-api)
+- Package manager: `uv` (not pip). Install deps: `cd <service> && uv sync`
+- Run tests: `cd <service> && make unit_test` (no Docker) or `make test` (full)
+- Lint: `uv run ruff check . --fix`
+- Type check: `uv run mypy .`
+- Ruff config: line-length 120, select I/F/E/W/PT rules
 
-All APIs are created using FastAPI, and the project uses the SQLModel library for database interactions. The project is designed to be modular, with each component handling specific functionalities related to federated learning and trust management.
+### Frontend (flip-ui)
+- `cd flip-ui && npm install`
+- `cd flip-ui && npm run test:unit` (Vitest)
+- `cd flip-ui && npm run lint` (ESLint)
 
-All Python code in managed using `UV` as package manager, therefore all folders contain a `pyproject.toml`, `src/<project_name>` folder structure, along with a `tests` folder for unit tests. The project uses `pytest` for testing and `uv run` for running the application.
+### Root
+- `make unit_test` — all services
+- `make tests` — flip-ui + flip-api
+- `make up` — start all services locally
 
-# Copilot Instructions
+### Pre-commit hooks
+Install: `pre-commit install`. Hooks: TruffleHog (secrets), detect-secrets, large files (>1MB), merge conflicts, YAML validation, private key detection.
 
-- Use Makefile to automate common tasks and commands. Every sub-repo has its own Makefile, so make sure to run the commands in the correct sub-repo.
-- Documentation follows the [Google style guide](https://google.github.io/styleguide/pyguide.html) for Python. The documentation generator is [Sphinx](https://www.sphinx-doc.org/en/master/).
-- Use the `src/<project_name>` folder structure for Python code, and place tests in the `tests` folder.
-- Use the `uv` package manager for managing dependencies and running the application.
-- Use the `pytest` framework for writing and running tests.
-- Use SQLModel for database interactions, and follow the project's database schema and models.
-- Use FastAPI for creating APIs, and follow the project's API structure and endpoints.
-- Use .vscode for development, and follow the project's .vscode settings for linting and formatting.
-- Use the `aws` CLI for AWS interactions, and follow the project's AWS configuration and profiles.
-- Use the docker compose and open tofu for managing project deployment and infrastructure.
-- Use github actions for CI/CD, and follow the project's GitHub Actions workflows.
-- Add environment variables to the `.env.development` file for local development.
-- Use AWS Secrets Manager for managing secrets, and follow the project's secrets management practices in production.
-- Follow the project's coding conventions and best practices for writing clean and maintainable code. They are defined in the `README.md` file and in the `pyproject.toml` file.
+## Architecture
+
+- **flip-api/** — Central Hub, FastAPI + SQLModel/SQLAlchemy + asyncpg. All user data. Key modules: `user_services/`, `project_services/`, `model_services/`, `fl_services/`, `cohort_services/`, `trusts_services/`, `private_services/`
+- **flip-ui/** — Vue 3 + TypeScript + TailwindCSS + Pinia. Components in `src/partials/` (reusable) and `src/pages/`, state in `src/stores/`
+- **trust/trust-api/** — Trust gateway, polls Central Hub outbound. No inbound ports.
+- **trust/imaging-api/** — DICOM retrieval from PACS (Orthanc/XNAT)
+- **trust/data-access-api/** — OMOP CDM SQL queries
+- **deploy/providers/AWS/** — Terraform/OpenTofu IaC, Ansible provisioning
+
+Pattern: FastAPI `Depends()` for DI, repository pattern in `domain/interfaces/`, asyncpg via async context managers, pytest + factory_boy for test data.
+
+## Code Conventions
+
+- Python: snake_case, Google-style docstrings, type hints required (mypy strict)
+- JS/TS: PascalCase components, camelCase variables/functions
+- All files need Apache 2.0 copyright header
+- Commits: conventional commits (`feat|fix|docs|refactor|test|chore|ci(scope): message`), must be signed-off (`git commit -s`)
+- Imports: alphabetically sorted (enforced by ruff I rule)
+- Source layout: `src/[service_name]/`, tests in `tests/unit/` and `tests/integration/`
+- Line length: 120
+
+## Key Environment Files
+
+- `.env.development` — local dev (copy from `.env.development.example`)
+- `.env.stag` — staging
+- `.env.production` — production
+- `AWS_PROFILE` — `stag` (staging), `prod` (production)
+- `FL_BACKEND` — `flower` or `nvflare`
+
+## Important Rules
+
+- Never hardcode secrets. Use env vars. In production: AWS Secrets Manager.
+- Never bypass TLS (`curl -k` prohibited). SSH-over-SSM only (no port 22 open).
+- All trust communication is outbound (trusts poll hub, hub never connects inbound).
+- Before committing: run `make unit_test` in the affected service. Fix all failures.
+- After code changes: check if docs need updating (refer to docs/CLAUDE.md for mapping).
+- DCO required: `git commit -s`. No co-author references.
+- When running bash commands, always pipe large output through `head -100`, `tail -50`, or `grep` to avoid flooding context. Append `| head -100` to commands like docker ps, aws ecs describe-*, aws logs tail, git diff, git log, pytest, or make output unless full output is specifically needed.

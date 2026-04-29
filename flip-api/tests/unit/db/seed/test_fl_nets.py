@@ -59,7 +59,7 @@ def test_seed_fl_nets_creates_new_nets_when_none_exist(mock_get_settings, mock_s
     mock_get_settings.assert_called_once()
     assert mock_session.exec.call_count == 2  # Once to check existing, once to return all
     assert mock_session.add.call_count == 2  # Two nets added
-    assert mock_session.commit.call_count == 2  # Two commits
+    assert mock_session.commit.call_count == 1  # Single commit at end
 
     # Verify the nets that were added
     add_calls = mock_session.add.call_args_list
@@ -73,8 +73,10 @@ def test_seed_fl_nets_creates_new_nets_when_none_exist(mock_get_settings, mock_s
 
 
 @patch("flip_api.db.seed.fl_nets.get_settings")
-def test_seed_fl_nets_skips_existing_nets(mock_get_settings, mock_session, sample_net_endpoints, mock_fl_net):
-    """Test that seed_fl_nets skips existing nets and only adds new ones."""
+def test_seed_fl_nets_skips_existing_nets_when_endpoint_unchanged(
+    mock_get_settings, mock_session, sample_net_endpoints, mock_fl_net,
+):
+    """Test that seed_fl_nets skips existing nets when endpoint is unchanged."""
     # Arrange
     sample_net_endpoints = {"existing_net": "http://existing.com", "new_net": "http://new.com"}
     mock_get_settings.return_value = _mock_settings(sample_net_endpoints)
@@ -87,6 +89,7 @@ def test_seed_fl_nets_skips_existing_nets(mock_get_settings, mock_session, sampl
     seed_fl_nets(mock_session)
 
     # Assert
+    assert mock_fl_net.endpoint == "http://existing.com"  # unchanged
     mock_session.add.assert_called_once()  # Only one new net added
     mock_session.commit.assert_called_once()
 
@@ -94,6 +97,26 @@ def test_seed_fl_nets_skips_existing_nets(mock_get_settings, mock_session, sampl
     added_net = mock_session.add.call_args[0][0]
     assert added_net.name == "new_net"
     assert added_net.endpoint == "http://new.com"
+
+
+@patch("flip_api.db.seed.fl_nets.get_settings")
+def test_seed_fl_nets_updates_endpoint_when_changed(mock_get_settings, mock_session, mock_fl_net):
+    """Test that seed_fl_nets updates an existing net when its endpoint has changed."""
+    # Arrange
+    new_endpoint = "http://updated.com"
+    mock_get_settings.return_value = _mock_settings({"existing_net": new_endpoint})
+
+    existing_nets = [mock_fl_net]
+    mock_session.exec.return_value.all.side_effect = [existing_nets, existing_nets]
+
+    # Act
+    result = seed_fl_nets(mock_session)
+
+    # Assert
+    assert mock_fl_net.endpoint == new_endpoint  # was updated in place
+    mock_session.add.assert_not_called()  # No new nets added
+    mock_session.commit.assert_called_once()
+    assert result == existing_nets
 
 
 @patch("flip_api.db.seed.fl_nets.get_settings")
@@ -129,5 +152,5 @@ def test_seed_fl_nets_with_empty_secrets(mock_get_settings, mock_session):
 
     # Assert
     mock_session.add.assert_not_called()
-    mock_session.commit.assert_not_called()
+    mock_session.commit.assert_called_once()  # harmless no-op commit
     assert result == []

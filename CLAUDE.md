@@ -202,6 +202,12 @@ TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict marker
 5. Commit with clear messages. All commits signed off by human author alone (`git commit -s`).
 6. Add new deps to `pyproject.toml` or `package.json`, document in service README.
 7. Use SOLID principles. Aim for high test coverage on critical paths.
+8. When running bash commands, always pipe large output through `head -100`, `tail -50`, or `grep` to avoid flooding context. Append `| head -100` to commands like docker ps, aws ecs describe-*, aws logs tail, git diff, git log, pytest, or make output unless full output is specifically needed.
+9. Token-saving rules:
+   - Use `/compact` when conversation history grows large — this compresses history without resetting context. Never use `/clear` mid-session (doesn't save tokens, just loses context).
+   - Batch related instructions into a single prompt instead of splitting across multiple turns — history duplication wastes tokens.
+   - Prefer targeted `grep`/`glob` searches over reading files one by one. Searching broadly reads 10-20 files into context. One precise grep finds the right file in 1-2 steps.
+   - Reserve extended/deep thinking for complex architectural decisions. Routine code edits don't need it.
 
 ## Related Repositories
 
