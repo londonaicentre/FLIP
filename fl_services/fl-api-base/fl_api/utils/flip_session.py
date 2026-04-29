@@ -12,7 +12,7 @@
 
 from typing import List, Optional, Union
 
-from nvflare.fuel.flare_api.api_spec import InternalError
+from nvflare.fuel.flare_api.api_spec import InternalError, SessionClosed
 from nvflare.fuel.flare_api.flare_api import Session
 
 from fl_api.utils.logger import logger
@@ -27,13 +27,25 @@ class FLIP_Session(Session):
         secure_mode: bool = False,
         debug: bool = False,
     ):
+        self._startup_path = startup_path
+        self._secure_mode = secure_mode
+        self._debug = debug
         super(FLIP_Session, self).__init__(username, startup_path, secure_mode, debug)
         self._error_buffer = None
 
+    def _reconnect(self) -> None:
+        """Re-initialise the underlying admin API and log in again after the session was closed."""
+        Session.__init__(self, self.username, self._startup_path, self._secure_mode, self._debug)
+        self.try_connect(timeout=5.0)
+
     def _do_command(self, cmd: str):
         """
-        Override the _do_command method to add error handling for session inactivity. If a session_inactive error is
-        caught, the method will attempt to reconnect and retry the command once.
+        Override the _do_command method to add error handling for session inactivity or closure.
+
+        On ``InternalError`` with "session_inactive", reconnects via ``try_connect`` and retries once.
+        On ``SessionClosed`` (e.g. idle timeout, fl-server restart, network blip), fully re-initialises
+        the admin session via ``_reconnect`` and retries once. Any exception on the retry is logged and
+        re-raised immediately — there is no further retry loop.
 
         Args:
             cmd (str): The command to be executed.
@@ -46,6 +58,14 @@ class FLIP_Session(Session):
                 self.try_connect(timeout=5.0)
                 return super()._do_command(cmd)
             raise e
+        except SessionClosed:
+            logger.warning("Session closed; attempting to reconnect and retry command.")
+            self._reconnect()
+            try:
+                return super()._do_command(cmd)
+            except Exception:
+                logger.error("Retry after reconnect failed for command: %s", cmd)
+                raise
 
     def check_server_status(self) -> ServerInfoModel:
         """
