@@ -452,6 +452,23 @@ resource "aws_security_group" "ecs_flip_api" {
   tags = {
     Name = "ecs-flip-api-sg"
   }
+
+  # Egress to ecs-fl-api-sg on 8000 is added as a standalone rule below to
+  # avoid a circular dependency between ecs_flip_api and ecs_fl_api SGs.
+  # ignore_changes prevents Terraform from removing it as "drift".
+  lifecycle {
+    ignore_changes = [egress]
+  }
+}
+
+resource "aws_security_group_rule" "ecs_flip_api_egress_to_fl_api" {
+  type                     = "egress"
+  description              = "flip-api to fl-api on 8000"
+  from_port                = 8000
+  to_port                  = 8000
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.ecs_flip_api.id
+  source_security_group_id = aws_security_group.ecs_fl_api.id
 }
 
 # Trust services (trust-api, imaging-api, data-access-api) run on EC2
