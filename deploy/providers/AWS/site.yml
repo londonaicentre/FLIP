@@ -37,6 +37,11 @@
       community.general.terraform:
         state: present
         project_path: "./"
+        force_init: true
+        backend_config:
+          bucket: "{{ lookup('env', 'FLIP_TFSTATE_BUCKET_NAME') }}"
+          region: "{{ lookup('env', 'AWS_REGION') | default('eu-west-2', true) }}"
+          key: "flip/terraform.tfstate"
       register: terraform_output
     - name: add Central Hub EC2 instance to Ansible inventory
       add_host:
