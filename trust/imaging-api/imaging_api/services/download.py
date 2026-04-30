@@ -267,10 +267,18 @@ def unzip_file(zip_path: str, extract_dir: str, new_name: str):
     extract_dir_abs = os.path.realpath(extract_dir)
 
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        for member in zip_ref.namelist():
+        members = zip_ref.namelist()
+
+        # First pass: validate all members for path traversal before extracting
+        # any of them. This avoids leaving partially extracted content on disk
+        # when a later member contains a traversal entry (zip slip).
+        for member in members:
             member_path = os.path.realpath(os.path.join(extract_dir_abs, member))
             if not member_path.startswith(extract_dir_abs + os.sep):
                 raise ValueError(f"Attempted path traversal in ZIP entry: {member}")
+
+        # Second pass: extract all members (only reached if all are valid)
+        for member in members:
             zip_ref.extract(member, extract_dir_abs)
 
     # Rename the extracted directory

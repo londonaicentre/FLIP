@@ -127,6 +127,37 @@ class TestUnzipFile:
 
             assert os.path.exists(zip_path)
 
+    def test_zip_slip_with_valid_entries_does_not_extract_partial_content(self):
+        """A ZIP with safe members followed by a traversal entry must not
+        extract any content — the validation pass runs before extraction."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            zip_path = os.path.join(tmp_dir, "mixed.zip")
+
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.writestr("safe.txt", "hello")
+                zf.writestr("../evil.txt", "bad")
+
+            with pytest.raises(ValueError, match="Attempted path traversal in ZIP entry"):
+                unzip_file(zip_path, tmp_dir, "ACC123")
+
+            # safe.txt must NOT have been extracted (validation runs first)
+            assert not os.path.exists(os.path.join(tmp_dir, "safe.txt"))
+            assert os.path.exists(zip_path)
+
+    def test_zip_slip_traversal_only_raises_on_final_entry(self):
+        """A ZIP where every entry is a traversal path must also be rejected."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            zip_path = os.path.join(tmp_dir, "all-bad.zip")
+
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.writestr("../../etc/passwd", "root:x:0:0:")
+                zf.writestr("../../tmp/evil.sh", "rm -rf /")
+
+            with pytest.raises(ValueError, match="Attempted path traversal in ZIP entry"):
+                unzip_file(zip_path, tmp_dir, "ACC123")
+
+            assert os.path.exists(zip_path)
+
 
 # ── download_and_unzip_images ──
 
