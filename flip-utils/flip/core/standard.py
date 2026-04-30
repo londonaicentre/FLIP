@@ -41,6 +41,20 @@ from flip.core.base import FLIPBase
 from flip.utils.utils import Utils
 
 
+def _trust_internal_headers() -> dict[str, str]:
+    """Return the auth header sent on every trust-internal call.
+
+    Used on outbound calls to imaging-api and data-access-api. The receiver
+    (in the FLIP repo) compares the value with a constant-time compare against
+    its own copy of the same per-trust key.
+
+    Returns:
+        dict[str, str]: Single-entry dict mapping the configured header name to
+        the trust-internal service key.
+    """
+    return {FlipConstants.TRUST_INTERNAL_SERVICE_KEY_HEADER: FlipConstants.TRUST_INTERNAL_SERVICE_KEY}
+
+
 class FLIPStandardProd(FLIPBase):
     """Production implementation of FLIP for standard job types.
 
@@ -93,6 +107,7 @@ class FLIPStandardProd(FLIPBase):
         response = requests.post(
             endpoint,
             json=payload,
+            headers=_trust_internal_headers(),
         )
 
         self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
@@ -153,6 +168,7 @@ class FLIPStandardProd(FLIPBase):
                     "assessor_type": assessor_type,
                     "resource_type": resource.value,
                 },
+                headers=_trust_internal_headers(),
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
 
@@ -216,6 +232,7 @@ class FLIPStandardProd(FLIPBase):
         response = requests.put(
             endpoint,
             json=payload,
+            headers=_trust_internal_headers(),
         )
 
         response.raise_for_status()
