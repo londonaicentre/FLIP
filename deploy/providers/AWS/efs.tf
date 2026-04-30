@@ -25,6 +25,8 @@
 ############################
 
 resource "aws_efs_file_system" "flip_fl" {
+  count = var.enable_efs ? 1 : 0
+
   creation_token = "flip-fl-efs"
   encrypted      = true
 
@@ -56,8 +58,8 @@ resource "aws_security_group" "efs_mount_target" {
 ############################
 
 resource "aws_efs_mount_target" "flip_fl" {
-  for_each        = toset(module.flip_vpc.private_subnets)
-  file_system_id  = aws_efs_file_system.flip_fl.id
+  for_each        = var.enable_efs ? toset(module.flip_vpc.private_subnets) : toset([])
+  file_system_id  = aws_efs_file_system.flip_fl[0].id
   subnet_id       = each.value
   security_groups = [aws_security_group.efs_mount_target.id]
 }
@@ -100,8 +102,8 @@ locals {
 }
 
 resource "aws_efs_access_point" "flip_fl" {
-  for_each       = local.efs_access_points
-  file_system_id = aws_efs_file_system.flip_fl.id
+  for_each       = var.enable_efs ? local.efs_access_points : {}
+  file_system_id = aws_efs_file_system.flip_fl[0].id
 
   posix_user {
     uid = 1001

@@ -90,6 +90,18 @@ variable "MIN_CLIENTS" {
   default     = 1
 }
 
+variable "enable_efs" {
+  description = "Enable EFS file system for FL task persistent storage. Gated to false until PR 2 adds ECS task definitions that mount EFS volumes — creating EFS without consumers is dead infra."
+  type        = bool
+  default     = false
+}
+
+variable "enable_service_discovery" {
+  description = "Enable Cloud Map Service Discovery namespace. Gated to false until PR 2 adds ECS services that register — creating the namespace without registrants is dead infra."
+  type        = bool
+  default     = false
+}
+
 variable "FLIP_BUCKET_NAME" {
   type = string
 }
