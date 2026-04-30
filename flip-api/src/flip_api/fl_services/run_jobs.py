@@ -18,6 +18,7 @@ from sqlmodel import Session
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import engine, get_session
 from flip_api.fl_services.services.fl_scheduler_service import (
+    _reset_scheduler,
     check_for_available_net,
     check_for_queued_jobs,
     prepare_and_start_training,
@@ -58,6 +59,9 @@ def run_jobs_core(db: Session) -> None:
         HTTPException: If there is an error while running jobs.
     """
     try:
+        # Auto-recover stale BUSY schedulers (e.g. orphaned from crashed training runs)
+        _reset_scheduler(db)
+
         # Step 1: Find an available net
         scheduler = check_for_available_net(db)
 

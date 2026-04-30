@@ -50,15 +50,16 @@ from flip_api.utils.logger import logger
 
 
 def _reset_scheduler(session: Session) -> None:
-    """Reset any BUSY schedulers back to AVAILABLE after a failure."""
+    """Reset all BUSY schedulers back to AVAILABLE after a failure."""
     try:
-        scheduler = session.exec(
+        schedulers = session.exec(
             select(FLScheduler).where(FLScheduler.status == NetStatus.BUSY)
-        ).first()
-        if scheduler:
+        ).all()
+        for scheduler in schedulers:
             scheduler.status = NetStatus.AVAILABLE
-            session.commit()
             logger.info(f"Scheduler {scheduler.id} reset to AVAILABLE")
+        if schedulers:
+            session.commit()
     except SQLAlchemyError as e:
         session.rollback()
         logger.error(f"Failed to reset scheduler: {e}")

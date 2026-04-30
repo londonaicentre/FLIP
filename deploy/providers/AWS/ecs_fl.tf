@@ -557,6 +557,10 @@ resource "aws_ecs_task_definition" "fl_server" {
         { name = "STARTUP_FILE_DIR", value = "/app/startup" },
         { name = "IMAGES_DIR", value = "/app/data/images" },
         { name = "INTERNAL_SERVICE_KEY_HEADER", value = "X-Internal-Service-Key" },
+        # When absent, _Common Pydantic model defaults LOCAL_DEV=True,
+        # which silences all flip-api callbacks (DevSettings no-ops).
+        # Set "false" so Pydantic parses it as False and ProdSettings is used.
+        { name = "LOCAL_DEV", value = "false" },
       ]
 
       secrets = [
