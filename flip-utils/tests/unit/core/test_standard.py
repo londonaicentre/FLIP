@@ -173,6 +173,8 @@ class TestFLIPStandardProdGetDataframe:
             patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
         ):
             mock_constants.DATA_ACCESS_API_URL = "https://data.example.com"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"
 
             df = flip_prod.get_dataframe(project_id="proj-1", query="SELECT * FROM table")
 
@@ -182,6 +184,10 @@ class TestFLIPStandardProdGetDataframe:
 
             # Check that endpoint contains the expected API URL
             assert "cohort/dataframe" in call_args[0][0]
+
+            # data-access-api requires the trust-internal service key on every /cohort
+            # route — fl-client must forward the header from its container env.
+            assert call_args.kwargs["headers"]["x-trust-internal-service-key"] == "test-trust-internal-key"
 
             # Verify result is DataFrame
             assert isinstance(df, pd.DataFrame)
@@ -210,6 +216,8 @@ class TestFLIPStandardProdGetByAccessionNumber:
         ):
             mock_constants.IMAGING_API_URL = "https://imaging.example.com"
             mock_constants.NET_ID = "net-1"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"
 
             result = flip_prod.get_by_accession_number(
                 project_id="proj-1", accession_id="ACC001", resource_type=ResourceType.DICOM
@@ -217,6 +225,10 @@ class TestFLIPStandardProdGetByAccessionNumber:
 
             # Verify API was called
             mock_post.assert_called_once()
+            # imaging-api requires the trust-internal service key on every router except
+            # /health — fl-client must forward the header from its container env.
+            call_kwargs = mock_post.call_args.kwargs
+            assert call_kwargs["headers"]["x-trust-internal-service-key"] == "test-trust-internal-key"
             assert isinstance(result, Path)
             assert str(result) == str(tmp_path / "data")
 
@@ -244,6 +256,8 @@ class TestFLIPStandardProdAddResource:
         ):
             mock_constants.IMAGING_API_URL = "https://imaging.example.com"
             mock_constants.NET_ID = "net-1"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"
 
             flip_prod.add_resource(
                 project_id="proj-1",
@@ -257,6 +271,9 @@ class TestFLIPStandardProdAddResource:
             mock_put.assert_called_once()
             call_args = mock_put.call_args
             assert "upload/images" in call_args[0][0]
+            # imaging-api requires the trust-internal service key on every router except
+            # /health — fl-client must forward the header from its container env.
+            assert call_args.kwargs["headers"]["x-trust-internal-service-key"] == "test-trust-internal-key"
 
 
 class TestFLIPStandardProdUpdateStatus:
