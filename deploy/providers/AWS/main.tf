@@ -471,6 +471,16 @@ resource "aws_security_group_rule" "ecs_flip_api_egress_to_fl_api" {
   source_security_group_id = aws_security_group.ecs_fl_api.id
 }
 
+resource "aws_security_group_rule" "ecs_flip_api_ingress_from_fl_server" {
+  type                     = "ingress"
+  description              = "fl-server to flip-api on 8000 (status/metrics callbacks)"
+  from_port                = 8000
+  to_port                  = 8000
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.ecs_flip_api.id
+  source_security_group_id = aws_security_group.ecs_fl_server.id
+}
+
 # Trust services (trust-api, imaging-api, data-access-api) run on EC2
 # and do not have ECS security groups in this Terraform module.
 

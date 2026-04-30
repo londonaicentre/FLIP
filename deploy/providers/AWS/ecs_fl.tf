@@ -356,6 +356,16 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_from_fl_api_grpc" {
   source_security_group_id = aws_security_group.ecs_fl_api.id
 }
 
+resource "aws_security_group_rule" "ecs_fl_server_egress_to_flip_api" {
+  type                     = "egress"
+  description              = "fl-server to flip-api on 8000 (status/metrics callbacks)"
+  from_port                = 8000
+  to_port                  = 8000
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.ecs_fl_server.id
+  source_security_group_id = aws_security_group.ecs_flip_api.id
+}
+
 ############################
 # FL ECS Task Definitions
 ############################
@@ -561,6 +571,7 @@ resource "aws_ecs_task_definition" "fl_server" {
         # which silences all flip-api callbacks (DevSettings no-ops).
         # Set "false" so Pydantic parses it as False and ProdSettings is used.
         { name = "LOCAL_DEV", value = "false" },
+        { name = "UPLOADED_FEDERATED_DATA_BUCKET", value = "s3://${var.FLIP_BUCKET_NAME}/uploaded_federated_data" },
       ]
 
       secrets = [
