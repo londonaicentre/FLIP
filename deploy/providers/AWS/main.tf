@@ -456,8 +456,8 @@ resource "aws_security_group" "ecs_flip_api" {
   # Egress to ecs-fl-api-sg on 8000 is added as a standalone rule below to
   # avoid a circular dependency between ecs_flip_api and ecs_fl_api SGs.
   # ignore_changes prevents Terraform from removing it as "drift".
-  lifecycle {
-    ignore_changes = [egress]
+   lifecycle {
+    ignore_changes = [ingress, egress]
   }
 }
 
