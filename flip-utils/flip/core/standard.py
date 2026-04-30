@@ -55,6 +55,22 @@ def _trust_internal_headers() -> dict[str, str]:
     return {FlipConstants.TRUST_INTERNAL_SERVICE_KEY_HEADER: FlipConstants.TRUST_INTERNAL_SERVICE_KEY}
 
 
+def _hub_internal_headers() -> dict[str, str]:
+    """Return the auth header sent on every hub-internal call.
+
+    Used by fl-server on the Central Hub for outbound calls to flip-api
+    (update_status, send_metrics, send_handled_exception). The receiver
+    (flip-api) compares the value with a constant-time compare against its
+    own copy. Distinct boundary from the trust-internal key — a leak in one
+    trust never affects this hub-side path and vice versa.
+
+    Returns:
+        dict[str, str]: Single-entry dict mapping the configured header name to
+        the hub internal-service key.
+    """
+    return {FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY}
+
+
 class FLIPStandardProd(FLIPBase):
     """Production implementation of FLIP for standard job types.
 
@@ -262,7 +278,7 @@ class FLIPStandardProd(FLIPBase):
             )
             response = requests.put(
                 endpoint,
-                headers={FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY},
+                headers=_hub_internal_headers(),
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -305,7 +321,7 @@ class FLIPStandardProd(FLIPBase):
             response = requests.post(
                 endpoint,
                 json=payload,
-                headers={FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY},
+                headers=_hub_internal_headers(),
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
@@ -353,7 +369,7 @@ class FLIPStandardProd(FLIPBase):
             response = requests.post(
                 endpoint,
                 json=payload,
-                headers={FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY},
+                headers=_hub_internal_headers(),
             )
             self.logger.info(f"Received response status code: {response.status_code}, response text: {response.text}")
             response.raise_for_status()
