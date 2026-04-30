@@ -33,6 +33,15 @@
           - pgdata_archive is defined
           - pgdata_archive | length > 0
         fail_msg: "The pgdata_archive variable must be defined to proceed (e.g. trust1_pgdata_20260106.tar.gz)."
+    - name: initialize Terraform backend for validation
+      command: >
+        terraform init
+        -backend-config="bucket={{ lookup('env', 'FLIP_TFSTATE_BUCKET_NAME') }}"
+        -backend-config="region={{ lookup('env', 'AWS_REGION') | default('eu-west-2', true) }}"
+        -reconfigure
+      args:
+        chdir: ./
+      changed_when: false
     - name: use plugin to extract Terraform outputs
       community.general.terraform:
         state: present
