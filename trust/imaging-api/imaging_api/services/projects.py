@@ -271,7 +271,11 @@ def get_command_info(container: str, headers: dict[str, str]) -> tuple[int, str]
         Exception: If the command cannot be fetched from XNAT.
     """
     container_name_formatted = urllib.parse.quote(container)
-    response = requests.get(f"{XNAT_URL}/xapi/commands?image={container_name_formatted}", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
+    response = requests.get(
+        f"{XNAT_URL}/xapi/commands?image={container_name_formatted}",
+        headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
+    )
     if response.status_code != 200:
         raise Exception(f"Error: XNAT command fetch failed: {response.status_code} - {response.text}")
 
@@ -470,7 +474,11 @@ async def delete_project(project_id: str, headers: dict[str, str]) -> Project:
     # Check if project exists
     project = get_project(project_id, headers)
 
-    response = requests.delete(f"{XNAT_URL}/data/projects/{project_id}?removeFiles=true", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
+    response = requests.delete(
+        f"{XNAT_URL}/data/projects/{project_id}?removeFiles=true",
+        headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
+    )
 
     # Check status code and log response
     if response.status_code != 200:
@@ -500,7 +508,11 @@ def get_subjects(project_id: str, headers: dict[str, str]) -> list[Subject]:
     """
     get_project(project_id, headers)
 
-    response = requests.get(f"{XNAT_URL}/data/projects/{project_id}/subjects", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
+    response = requests.get(
+        f"{XNAT_URL}/data/projects/{project_id}/subjects",
+        headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
+    )
     subjects = [Subject(**subject) for subject in response.json()["ResultSet"]["Result"]]
 
     if response.status_code == 200:
@@ -525,7 +537,11 @@ def get_experiments(project_id: str, headers: dict[str, str]) -> list[Experiment
     """
     get_project(project_id, headers)
 
-    response = requests.get(f"{XNAT_URL}/data/projects/{project_id}/experiments", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
+    response = requests.get(
+        f"{XNAT_URL}/data/projects/{project_id}/experiments",
+        headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
+    )
     experiments = [Experiment(**experiment) for experiment in response.json()["ResultSet"]["Result"]]
 
     if response.status_code == 200:
