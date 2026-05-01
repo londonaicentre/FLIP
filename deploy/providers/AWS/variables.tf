@@ -101,21 +101,21 @@ variable "MIN_CLIENTS" {
 }
 
 variable "enable_efs" {
-  description = "Enable EFS file system for FL task persistent storage. Gated to false until PR 2 adds ECS task definitions that mount EFS volumes — creating EFS without consumers is dead infra."
+  description = "Enable EFS file system for FL task persistent storage"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "enable_ecs_endpoints" {
-  description = "Enable VPC interface endpoints (SSM, Secrets, Logs, ECR) for ECS Fargate. Gated to false until PR 2 adds ECS services that consume them — existing EC2 traffic uses the NAT gateway. Unconditionally creating endpoints before PR 2 incurs ~$73/month idle cost."
+  description = "Enable VPC interface endpoints (SSM, Secrets, Logs, ECR) for ECS Fargate"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "enable_service_discovery" {
-  description = "Enable Cloud Map Service Discovery namespace. Gated to false until PR 2 adds ECS services that register — creating the namespace without registrants is dead infra."
+  description = "Enable Cloud Map Service Discovery namespace"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "FLIP_BUCKET_NAME" {

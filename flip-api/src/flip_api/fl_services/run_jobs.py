@@ -13,10 +13,12 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import engine, get_session
+from flip_api.db.models.main_models import FLJob, FLScheduler
+from flip_api.domain.schemas.status import NetStatus
 from flip_api.fl_services.services.fl_scheduler_service import (
     check_for_available_net,
     check_for_queued_jobs,
@@ -25,6 +27,26 @@ from flip_api.fl_services.services.fl_scheduler_service import (
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/fl", tags=["fl_services"])
+
+
+def _recover_stale_busy_schedulers(db: Session) -> int:
+    """Reset all FLScheduler rows stuck in BUSY to AVAILABLE.
+
+    BUSY schedulers with no associated job, or whose job has been deleted,
+    are unrecoverable unless cleaned up here. This prevents a single crash
+    from permanently starving a net of new training jobs.
+    """
+    stale = 0
+    rows = db.exec(select(FLScheduler).where(FLScheduler.status == NetStatus.BUSY)).all()
+    for s in rows:
+        if s.job_id is None or db.get(FLJob, s.job_id) is None:
+            s.status = NetStatus.AVAILABLE
+            s.job_id = None
+            stale += 1
+    if stale:
+        db.commit()
+        logger.info("Recovered %d stale BUSY scheduler(s)", stale)
+    return stale
 
 
 # [#114] ✅
@@ -44,20 +66,14 @@ def run_jobs(db: Session = Depends(get_session), user_id: UUID = Depends(verify_
 
 
 def run_jobs_core(db: Session) -> None:
-    """
-    Core logic to run FL jobs. This function is called by both the API endpoint and the scheduled task. It checks for
-    available nets, retrieves queued jobs, and starts training.
+    """Core logic to run FL jobs, with stale-BUSY scheduler recovery.
 
-    Args:
-        db (Session): Database session.
-
-    Returns:
-        None
-
-    Raises:
-        HTTPException: If there is an error while running jobs.
+    Resets any FLScheduler rows stuck in BUSY status (e.g. from a crashed
+    previous job run) before attempting to pick an available net.
     """
     try:
+        _recover_stale_busy_schedulers(db)
+
         # Step 1: Find an available net
         scheduler = check_for_available_net(db)
 
