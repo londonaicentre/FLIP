@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
+from requests import HTTPError
 
 from flip.constants import ModelStatus, ResourceType
 from flip.core.standard import FLIPStandardDev, FLIPStandardProd
@@ -193,6 +194,34 @@ class TestFLIPStandardProdGetDataframe:
             assert isinstance(df, pd.DataFrame)
             assert len(df) == 1
             assert df["accession_id"].iloc[0] == "ACC001"
+
+    def test_get_dataframe_forwards_empty_key_header(self, flip_prod):
+        """Header is always sent, even when TRUST_INTERNAL_SERVICE_KEY is the default empty string.
+
+        Mirrors the receiver-side fail-closed test in FLIP: if the env var is unset, the
+        sender still emits the header (empty), so the receiver rejects with 401 rather than
+        silently bypassing auth via a missing-header code path.
+        """
+        mock_response = Mock()
+        mock_response.status_code = 401
+        mock_response.text = "unauthorized"
+        mock_response.raise_for_status.side_effect = HTTPError("401")
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
+        ):
+            mock_constants.DATA_ACCESS_API_URL = "https://data.example.com"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY = ""
+
+            with pytest.raises(HTTPError):
+                flip_prod.get_dataframe(project_id="proj-1", query="SELECT * FROM table")
+
+            mock_post.assert_called_once()
+            headers = mock_post.call_args.kwargs["headers"]
+            assert "x-trust-internal-service-key" in headers
+            assert headers["x-trust-internal-service-key"] == ""
 
 
 class TestFLIPStandardProdGetByAccessionNumber:
