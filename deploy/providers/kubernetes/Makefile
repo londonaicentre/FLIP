@@ -78,3 +78,12 @@ template-all-backends: ## Render templates for all FL backend variants
 
 clean: ## Clean up rendered output
 	@rm -f $(CHART_DIR)/*.rendered.yaml
+
+register-trust: ## Register a K8s trust with the CENTRAL HUB (requires --hub-url)
+	@[ -n "$(TRUST_NAME)" ] || (echo "❌  TRUST_NAME is required. Usage: make register-trust TRUST_NAME=Trust_2 HUB_URL=https://stag.flip.aicentre.co.uk/api"; exit 1)
+	@[ -n "$(HUB_URL)" ] || (echo "❌  HUB_URL is required. Usage: make register-trust TRUST_NAME=Trust_2 HUB_URL=https://stag.flip.aicentre.co.uk/api"; exit 1)
+	@python3 $(CHART_DIR)/register_k8s_trust.py \
+		--trust-name $(TRUST_NAME) \
+		--hub-url $(HUB_URL) \
+		--env-file $(CHART_DIR)/../../.env.development \
+		--output-dir $(CHART_DIR)
