@@ -77,6 +77,19 @@ variable "TRUST_API_KEY_HASHES" {
   type        = string
 }
 
+variable "TRUST_NAMES" {
+  description = "JSON list of trust names that the hub accepts (e.g. '[\"Trust_1\", \"Trust_K8s\"]'). Controls seed data and outbound task dispatch allowlist."
+  type        = string
+  default     = "[\"Trust_1\"]"
+}
+
+variable "K8S_TRUST_IP" {
+  description = "Public IP of the Kubernetes-deployed trust host. When set, opens the NLB security group to allow FL client connectivity from this IP."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "INTERNAL_SERVICE_KEY_HASH" {
   description = "SHA-256 hash of the internal service key used for fl-server-to-hub auth"
   type        = string
