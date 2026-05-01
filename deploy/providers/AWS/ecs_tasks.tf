@@ -59,21 +59,15 @@ resource "aws_ecs_task_definition" "flip_api" {
         }
       ]
 
-      environment = [
-        for k, v in local.ecs_task_env.flip_api :
-        { name = k, value = v }
-      ]
+      environment = concat(
+        [for k, v in local.ecs_task_env.flip_api : { name = k, value = v }],
+        [
+          { name = "DB_HOST", value = module.flip_db.db_instance_address },
+          { name = "DB_PORT", value = "5432" },
+        ],
+      )
 
-      secrets = [
-        {
-          name      = "DB_HOST"
-          valueFrom = "${module.flip_db.db_instance_address}:5432"
-        },
-        {
-          name      = "DB_PORT"
-          valueFrom = "5432"
-        },
-      ]
+      secrets = []
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -137,7 +131,7 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          awslogs-group         = aws_cloudwatch_log_group.ecs_fl_api.name
+          awslogs-group         = aws_cloudwatch_log_group.ecs_fl_api_net_1.name
           awslogs-region        = var.AWS_REGION
           awslogs-stream-prefix = "fl-api-net-1"
         }
@@ -238,7 +232,7 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          awslogs-group         = aws_cloudwatch_log_group.ecs_fl_server.name
+          awslogs-group         = aws_cloudwatch_log_group.ecs_fl_server_net_1.name
           awslogs-region        = var.AWS_REGION
           awslogs-stream-prefix = "fl-server-net-1"
         }

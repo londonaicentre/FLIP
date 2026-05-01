@@ -69,7 +69,7 @@ resource "aws_security_group" "ecs_fl_api" {
 
 resource "aws_security_group_rule" "ecs_fl_api_ingress_vpc_http" {
   type              = "ingress"
-  description       = "HTTP from VPC (fl-server → fl-api)"
+  description       = "HTTP from VPC (fl-server to fl-api)"
   from_port         = local.api_container_port
   to_port           = local.api_container_port
   protocol          = "tcp"

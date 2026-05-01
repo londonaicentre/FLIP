@@ -36,7 +36,7 @@ resource "aws_ecs_service" "flip_api" {
   }
 
   service_registries {
-    registry_arn = aws_service_discovery_service.flip_api.arn
+    registry_arn = aws_service_discovery_service.flip_api[0].arn
   }
 
   health_check_grace_period_seconds = 120
@@ -66,7 +66,7 @@ resource "aws_ecs_service" "fl_api_net_1" {
   }
 
   service_registries {
-    registry_arn = aws_service_discovery_service.fl_api.arn
+    registry_arn = aws_service_discovery_service.fl_api[0].arn
   }
 
   deployment_minimum_healthy_percent = 100
@@ -96,7 +96,7 @@ resource "aws_ecs_service" "fl_server_net_1" {
   }
 
   service_registries {
-    registry_arn = aws_service_discovery_service.fl_server.arn
+    registry_arn = aws_service_discovery_service.fl_server[0].arn
   }
 
   deployment_minimum_healthy_percent = 100

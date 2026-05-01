@@ -114,7 +114,7 @@ resource "aws_ecs_task_definition" "efs_provision" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          awslogs-group         = aws_cloudwatch_log_group.ecs_fl_server.name
+          awslogs-group         = aws_cloudwatch_log_group.ecs_fl_server_net_1.name
           awslogs-region        = var.AWS_REGION
           awslogs-stream-prefix = "efs-provision"
         }
