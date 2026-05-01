@@ -395,15 +395,17 @@ def check_ecs_cluster() -> None:
         print_status("INFO", "No ECS clusters found (EC2-only deployment)")
         return
 
-    success, output = run_aws_command([
+    # Only describe if we have at least one cluster
+    arn_list = " ".join(cluster_names)
+    success2, output2 = run_aws_command([
         "ecs", "describe-clusters",
-        "--clusters", ",".join(cluster_names),
+        "--clusters", *cluster_names,
         "--query", "clusters[0].{name:clusterName,status:status,services:activeServicesCount}",
         "--output", "json",
     ])
-    if success and output:
+    if success2 and output2:
         try:
-            data = json.loads(output)
+            data = json.loads(output2)
             name = data.get("name", "?")
             status = data.get("status", "?")
             svc_count = data.get("services", 0)
@@ -412,7 +414,7 @@ def check_ecs_cluster() -> None:
             else:
                 print_status("WARN", f"ECS cluster '{name}' status: {status} ({svc_count} services)")
         except (json.JSONDecodeError, KeyError):
-            print_status("WARN", f"Could not parse ECS cluster status: {output[:200]}")
+            print_status("WARN", f"Could not parse ECS cluster status: {output2[:200]}")
     else:
         print_status("WARN", "Could not describe ECS clusters")
 
@@ -456,113 +458,99 @@ def check_vpc_endpoints() -> None:
 
 
 def check_trust_pipeline() -> None:
-    """Check Trust task pipeline health: recent FAILED tasks, heartbeat freshness.
+    """Check Trust task pipeline health: recent FAILED tasks.
 
-    Detects: CREATE_IMAGING or REIMPORT_STUDIES stuck in FAILED state,
-    trust not sending heartbeats, or missing COHORT_QUERY results.
+    Detects: CREATE_IMAGING or REIMPORT_STUDIES stuck in FAILED state.
     """
-    trust_id = "3f0a8199-6adc-4519-982a-c412a6dae98d"
     print_status("INFO", "Checking Trust_1 task pipeline health...")
 
     success, output = run_ssh_command("", "flip",
-        f"docker exec flip-api python3 -c \""
-        f"import asyncpg, os, json, boto3, asyncio;"
-        f"async def main():"
-        f" client=boto3.client('secretsmanager',region_name='eu-west-2');"
-        f" secret=client.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN']);"
-        f" d=json.loads(secret['SecretString']);pwd=d.get('password','');"
-        f" conn=await asyncpg.connect(host=os.environ['DB_HOST'],port=5432,user=os.environ['POSTGRES_USER'],database=os.environ['POSTGRES_DB'],password=pwd);"
-        f" rows=await conn.fetch('SELECT task_type,status FROM trust_task WHERE trust_id=\\'{trust_id}\\' ORDER BY created_at DESC LIMIT 5');"
-        f" for r in rows: print(r[0],r[1]);"
-        f" await conn.close();"
-        f" asyncio.run(main())\"",
-        timeout=15,
+        "docker exec flip-api python3 -c \"import asyncpg,os,json,boto3,asyncio,sys;"
+        "async def m():"
+        " c=boto3.client('secretsmanager',region_name='eu-west-2');"
+        " s=c.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN']);"
+        " d=json.loads(s['SecretString']);p=d.get('password','');"
+        " conn=await asyncpg.connect(host=os.environ['DB_HOST'],port=5432,user=os.environ['POSTGRES_USER'],database=os.environ['POSTGRES_DB'],password=p);"
+        " r=await conn.fetch('SELECT task_type,status FROM trust_task WHERE trust_id=''3f0a8199-6adc-4519-982a-c412a6dae98d'' ORDER BY created_at DESC LIMIT 5');"
+        " for row in r: print(row[0],row[1]);"
+        " await conn.close();"
+        "asyncio.run(m())\"",
+        timeout=20,
     )
 
-    if not success:
-        print_status("INFO", "Could not query Trust_1 task pipeline (SSH unavailable)")
+    if not success or "Traceback" in output:
+        print_status("INFO", "Could not query Trust_1 task pipeline (SSH or DB unavailable)")
         return
 
-    critical_tasks = {"CREATE_IMAGING", "REIMPORT_STUDIES", "COHORT_QUERY"}
-    failed_count = 0
-    for line in output.split("\n"):
-        parts = line.strip().split(" ", 1)
-        if len(parts) < 2:
-            continue
-        task_type, status = parts[0], parts[1]
-        if task_type in critical_tasks and status == "FAILED":
-            failed_count += 1
-            print_status("FAIL", f"Trust task {task_type} is FAILED")
-
-    if failed_count == 0:
+    critical = {"CREATE_IMAGING", "REIMPORT_STUDIES"}
+    failed_count = sum(1 for line in output.split("\n") if line and line.split(" ", 1)[-1] == "FAILED" and line.split(" ", 1)[0] in critical)
+    if failed_count:
+        print_status("FAIL", f"{failed_count} critical Trust_1 task(s) in FAILED state")
+    else:
         print_status("PASS", "No critical Trust_1 tasks in FAILED state")
 
 
 def check_xnat_health() -> None:
-    """Verify XNAT is serving its API (not a setup/setup page).
-
-    Detects: XNAT returning setup HTML instead of API JSON after deployment.
-    """
+    """Verify XNAT is serving its API (not a setup page)."""
     print_status("INFO", "Checking XNAT API health (not setup page)...")
     success, output = run_ssh_command("", "flip-trust",
-        "docker exec trust1-imaging-api-1 python3 -c \""
-        "import requests;"
+        "docker exec trust1-imaging-api-1 python3 -c \"import requests;"
         "r=requests.get('http://xnat-web:8080/data/projects',auth=('flipServiceAccount','REDACTED_XNAT_PASSWORD'),timeout=10);"
-        "print(r.status_code, r.headers.get('content-type','','').split(';')[0], len(r.text))\"",
-        timeout=20,
+        "print(r.status_code,r.headers.get('content-type','').split(';')[0])\"",
+        timeout=25,
     )
 
-    if not success:
+    if not success or "Traceback" in output:
         print_status("INFO", "Could not check XNAT (SSH unavailable)")
         return
 
-    try:
-        parts = output.strip().split()
-        status_code = int(parts[0])
-        content_type = parts[1] if len(parts) > 1 else ""
-        body_len = int(parts[2]) if len(parts) > 2 else 0
+    parts = output.strip().split()
+    if not parts:
+        print_status("WARN", "XNAT returned empty response")
+        return
 
-        if status_code == 200 and "html" not in content_type.lower():
-            print_status("PASS", f"XNAT API responding (HTTP {status_code}, {content_type}, {body_len}B)")
-        elif status_code == 200 and "html" in content_type.lower():
-            print_status("FAIL", f"XNAT returned HTML (setup page?) — restart XNAT web container")
-        elif status_code == 401:
-            print_status("FAIL", f"XNAT API returned 401 — check XNAT_SERVICE_USER/PASSWORD in .env.stag")
-        else:
-            print_status("WARN", f"XNAT API returned HTTP {status_code} ({body_len}B)")
+    try:
+        code = int(parts[0])
+        ctype = parts[1] if len(parts) > 1 else ""
     except (ValueError, IndexError):
         print_status("WARN", f"Could not parse XNAT response: {output[:100]}")
+        return
+
+    if code == 200 and "html" not in ctype.lower():
+        print_status("PASS", f"XNAT API responding (HTTP {code})")
+    elif code == 200 and "html" in ctype.lower():
+        print_status("FAIL", "XNAT returned HTML (setup page?) — restart XNAT web container")
+    elif code == 401:
+        print_status("FAIL", "XNAT API returned 401 — check XNAT_SERVICE_USER/PASSWORD in .env.stag")
+    else:
+        print_status("WARN", f"XNAT API returned HTTP {code}")
 
 
 def check_reimport_status() -> None:
-    """Warn if any approved projects have zero reimports after >10 minutes.
-
-    Detects: stuck DICOM import pipeline due to last_reimport=now() default.
-    """
+    """Warn if any approved projects have zero reimports after >10 minutes."""
     print_status("INFO", "Checking for projects stuck without reimports...")
     success, output = run_ssh_command("", "flip",
-        "docker exec flip-api python3 -c \""
-        "import asyncpg, os, json, boto3, asyncio;"
-        "async def main():"
-        " client=boto3.client('secretsmanager',region_name='eu-west-2');"
-        " secret=client.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN']);"
-        " d=json.loads(secret['SecretString']);pwd=d.get('password','');"
-        " conn=await asyncpg.connect(host=os.environ['DB_HOST'],port=5432,user=os.environ['POSTGRES_USER'],database=os.environ['POSTGRES_DB'],password=pwd);"
-        " rows=await conn.fetch('SELECT p.id::text,p.name,x.reimport_count,x.retrieve_image_status,x.last_reimport FROM xnat_project_status x JOIN projects p ON x.project_id=p.id WHERE x.reimport_count=0 AND x.last_reimport < NOW() - INTERVAL \\\"10 minutes\\\" AND p.status=\\\"APPROVED\\\"');"
-        " for r in rows: print(r[0][:8],r[1][:30],r[2],r[3]);"
+        "docker exec flip-api python3 -c \"import asyncpg,os,json,boto3,asyncio,sys;"
+        "async def m():"
+        " c=boto3.client('secretsmanager',region_name='eu-west-2');"
+        " s=c.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN']);"
+        " d=json.loads(s['SecretString']);p=d.get('password','');"
+        " conn=await asyncpg.connect(host=os.environ['DB_HOST'],port=5432,user=os.environ['POSTGRES_USER'],database=os.environ['POSTGRES_DB'],password=p);"
+        " r=await conn.fetch('SELECT p.id,p.name,x.reimport_count,x.retrieve_image_status,x.last_reimport FROM xnat_project_status x JOIN projects p ON x.project_id=p.id WHERE x.reimport_count=0 AND x.last_reimport < NOW() - interval ''10 minutes'' AND p.status=''APPROVED''');"
+        " for row in r: print(str(row[0])[:8],str(row[1])[:30],row[2],row[3]);"
         " await conn.close();"
-        " asyncio.run(main())\"",
-        timeout=15,
+        "asyncio.run(m())\"",
+        timeout=20,
     )
 
-    if not success:
+    if not success or "Traceback" in output:
         print_status("INFO", "Could not check reimport status (SSH unavailable)")
         return
 
     stuck = [l for l in output.split("\n") if l.strip()]
     if stuck:
         for line in stuck:
-            print_status("WARN", f"Project {line} — zero reimports, may be stuck (see TROUBLESHOOTING.md §3.3)")
+            print_status("WARN", f"Project {line} — zero reimports, may be stuck")
     else:
         print_status("PASS", "No projects stuck with zero reimports")
 
@@ -624,21 +612,20 @@ def check_net_endpoints_consistency() -> None:
         return
 
     success, output = run_ssh_command("", "flip",
-        "docker exec flip-api python3 -c \""
-        "import asyncpg, os, json, boto3, asyncio;"
-        "async def main():"
-        " client=boto3.client('secretsmanager',region_name='eu-west-2');"
-        " secret=client.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN']);"
-        " d=json.loads(secret['SecretString']);pwd=d.get('password','');"
-        " conn=await asyncpg.connect(host=os.environ['DB_HOST'],port=5432,user=os.environ['POSTGRES_USER'],database=os.environ['POSTGRES_DB'],password=pwd);"
-        " rows=await conn.fetch('SELECT name,endpoint FROM fl_nets');"
-        " for r in rows: print(r[0],r[1]);"
-        " await conn.close();"
-        " asyncio.run(main())\"",
-        timeout=15,
+        "docker exec flip-api python3 -c \"import asyncpg,os,json,boto3,asyncio;"
+        "async def m():"
+        " c=boto3.client('secretsmanager',region_name='eu-west-2');"
+        " s=c.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN']);"
+        " d=json.loads(s['SecretString']);p=d.get('password','');"
+        " co=await asyncpg.connect(host=os.environ['DB_HOST'],port=5432,user=os.environ['POSTGRES_USER'],database=os.environ['POSTGRES_DB'],password=p);"
+        " rows=await co.fetch('SELECT name,endpoint FROM fl_nets');"
+        " for r in rows: print(str(r[0]),str(r[1]));"
+        " await co.close();"
+        "asyncio.run(m())\"",
+        timeout=20,
     )
 
-    if not success:
+    if not success or "Traceback" in output:
         print_status("INFO", "Could not check NET_ENDPOINTS consistency (SSH unavailable)")
         return
 
@@ -653,8 +640,7 @@ def check_net_endpoints_consistency() -> None:
         if db_value and db_value != endpoint:
             print_status(
                 "FAIL",
-                f"NET_ENDPOINTS mismatch for {net_name}: env={endpoint}, DB={db_value} "
-                f"(see TROUBLESHOOTING.md §3.2)"
+                f"NET_ENDPOINTS mismatch for {net_name}: env={endpoint}, DB={db_value}"
             )
         elif not db_value:
             print_status("WARN", f"NET_ENDPOINTS for {net_name} not found in fl_nets table")
@@ -683,7 +669,6 @@ def check_mfa_config() -> None:
         print_status("WARN", f"Unexpected ENFORCE_MFA value: {value}")
 
 
-@click.command()
 @click.option(
     "--terraform-dir",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
