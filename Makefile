@@ -12,7 +12,8 @@
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access up-local-trust generate-trust-api-keys generate-internal-service-key integration_test
+		check-aws-access up-local-trust generate-trust-api-keys generate-internal-service-key integration_test \
+		deploy-trust-k8s undeploy-trust-k8s
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -270,6 +271,15 @@ generate-trust-api-keys:
 
 generate-internal-service-key:
 	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
+
+# ---------------------------------------------------------------------------
+# Kubernetes Helm chart targets
+# ---------------------------------------------------------------------------
+deploy-trust-k8s: ## Deploy trust services to Kubernetes via Helm
+	$(MAKE) -C deploy/providers/kubernetes deploy
+
+undeploy-trust-k8s: ## Remove trust services from Kubernetes
+	$(MAKE) -C deploy/providers/kubernetes undeploy
 
 check-aws-access:
 	@echo "🔎 Checking AWS CLI access..."
