@@ -13,6 +13,7 @@ Common failures encountered during staging/production deployment and how to diag
 **Root cause**: The S3 Terraform state (`flip/terraform.tfstate`) contains resources from a previous branch or failed deployment that don't exist in the current code. Terraform tries to destroy the old resources and create the new ones with different names.
 
 **Fix**:
+
 ```bash
 # List stale resources
 terraform state list | grep -iE "ecs|efs|service_disc"
@@ -32,6 +33,7 @@ make full-deploy PROD=stag
 ### 1.2 IAM permission denied for EFS or Service Discovery
 
 **Symptom**:
+
 ```
 Error: AccessDeniedException: elasticfilesystem:TagResource
 Error: AccessDeniedException: servicediscovery:CreatePrivateDnsNamespace
@@ -40,6 +42,7 @@ Error: AccessDeniedException: servicediscovery:CreatePrivateDnsNamespace
 **Root cause**: The `FlipDeveloperAccess` SSO permission set lacks `elasticfilesystem:*` and `servicediscovery:*` actions.
 
 **Fix**: Add these permissions to the IAM inline policy in the `aicentre-iac` repository at `iam_flip_developer_inline_policy.tf`:
+
 ```hcl
 statement {
   sid    = "EFSFullAccess"
@@ -54,6 +57,7 @@ statement {
   resources = ["*"]
 }
 ```
+
 Merge the PR and re-sign in to AWS SSO.
 
 ---
@@ -65,6 +69,7 @@ Merge the PR and re-sign in to AWS SSO.
 **Root cause**: Resources were created by a previous deployment (or a different Terraform state) and are orphaned in AWS.
 
 **Fix**: Import the resource into Terraform state:
+
 ```bash
 # CloudWatch log groups
 terraform import aws_cloudwatch_log_group.ecs_flip_api /ecs/flip-api
@@ -79,6 +84,7 @@ terraform import aws_route53_record.fl_server_nlb Z0477233CC4IIHRHLWJS_fl.stag.f
 aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=<vpc-id>" "Name=service-name,Values=com.amazonaws.eu-west-2.s3"
 terraform import aws_vpc_endpoint.s3 <vpc-endpoint-id>
 ```
+
 If the existing resource has a mismatched attribute (e.g., different public key for the key pair), delete it in AWS first, then re-apply.
 
 ---
@@ -90,6 +96,7 @@ If the existing resource has a mismatched attribute (e.g., different public key 
 **Root cause**: The `community.general.terraform` Ansible module always runs `terraform validate` before `terraform init`, and the S3 backend in `backend.tf` has no `bucket` or `region` (they are passed at init time via `-backend-config`).
 
 **Fix**: The `site.yml` playbook has been updated to use raw `terraform init` + `terraform output -json` instead of the module. If you encounter this on other branches:
+
 ```yaml
 - name: initialize Terraform backend
   command: >
@@ -116,9 +123,11 @@ If the existing resource has a mismatched attribute (e.g., different public key 
 **Symptom**: All `aws` commands return `Unable to locate credentials` or `AccessDenied`.
 
 **Fix**:
+
 ```bash
 aws sso login --profile FlipDeveloperAccess-080369786334 --use-device-code
 ```
+
 Use `--use-device-code` for headless/SSH environments.
 
 ---
@@ -128,6 +137,7 @@ Use `--use-device-code` for headless/SSH environments.
 ### 2.1 Docker volume mount parse failure (`empty section between colons`)
 
 **Symptom**: `make deploy-trust` fails with:
+
 ```
 invalid spec: :/var/lib/orthanc/db: empty section between colons
 ```
@@ -135,6 +145,7 @@ invalid spec: :/var/lib/orthanc/db: empty section between colons
 **Root cause**: The `ORTHANC_STORAGE_DIR_TRUST_1` environment variable is missing from the `.env.stag` file, resulting in an empty host path for the Orthanc Docker volume mount.
 
 **Fix**: Add to `.env.stag`:
+
 ```
 ORTHANC_STORAGE_DIR_TRUST_1=/opt/flip/orthanc/orthanc-storage
 ```
@@ -148,6 +159,7 @@ ORTHANC_STORAGE_DIR_TRUST_1=/opt/flip/orthanc/orthanc-storage
 **Root cause**: The `DOCKER_TAG` in `.env.stag` refers to a branch whose images haven't been built. GitHub Actions only auto-publish to GHCR on merges to `develop` and `main`. Branch images require manual `workflow_dispatch`.
 
 **Fix**:
+
 ```bash
 # Option A: Use a tag that has images
 sed -i 's/^DOCKER_TAG=.*/DOCKER_TAG=develop/' .env.stag
@@ -168,6 +180,7 @@ gh workflow run docker_build_trust_data_access_api.yml --ref <branch>
 **Root cause**: After `make full-deploy`, XNAT was just configured (Ansible wrote setup configs) and the XNAT Tomcat is serving its setup page. The container needs a full restart cycle to pick up the saved configuration.
 
 **Fix**:
+
 ```bash
 ssh flip-trust "docker service update --force xnat1_xnat-web"
 # Wait 90 seconds for Tomcat to start (it takes ~85s)
@@ -180,10 +193,12 @@ ssh flip-trust "docker service update --force xnat1_xnat-web"
 **Symptom**: `CREATE_IMAGING` / `REIMPORT_STUDIES` fail with `ReadTimeout` from trust-api → imaging-api → XNAT.
 
 **Root cause**: Multiple causes:
+
 1. **Credentials**: The XNAT admin password was changed from `admin` to `REDACTED_XNAT_PASSWORD` during setup. The imaging-api uses `XNAT_SERVICE_USER=flipServiceAccount` / `XNAT_SERVICE_PASSWORD=REDACTED_XNAT_PASSWORD` (from `.env.stag`). Verify these match.
 2. **Timeout**: The imaging-api's `requests` calls to XNAT had no `timeout` parameter. If XNAT's container management API hangs (e.g., Docker daemon busy), the imaging-api worker blocks permanently.
 
 **Fix**: Restart the imaging-api container (clears stuck state), and ensure the timeout fix is applied (see Section 3.3):
+
 ```bash
 ssh flip-trust "docker restart trust1-imaging-api-1"
 ```
@@ -199,9 +214,11 @@ ssh flip-trust "docker restart trust1-imaging-api-1"
 **Root cause**: `ENFORCE_MFA=true` (the Settings default in `flip-api/src/flip_api/config.py:85`) gates every authenticated route on TOTP enrollment. The production compose file (`deploy/compose.production.yml`) did not pass `ENFORCE_MFA`, so the default `true` always applied.
 
 **Fix**: The compose file now includes `ENFORCE_MFA=${ENFORCE_MFA:-false}`. To temporarily disable for testing, set in `.env.stag`:
+
 ```
 ENFORCE_MFA=false
 ```
+
 Then redeploy: `make deploy-centralhub PROD=stag`
 
 ---
@@ -217,6 +234,7 @@ Then redeploy: `make deploy-centralhub PROD=stag`
 1. **Environment file** (`.env.stag`): `NET_ENDPOINTS={"net-1":"http://flip-fl-api-net-1:8000"}`
 
 2. **Database** (the `fl_nets` table caches the endpoint from first seed — updating env var alone isn't enough):
+
    ```bash
    ssh flip "docker exec flip-api python3 -c \"
    import asyncpg, os, json, boto3; import asyncio
@@ -247,10 +265,12 @@ Then redeploy: `make deploy-centralhub PROD=stag`
 4. **imaging-api XNAT calls lack timeouts**: `requests.get/post/put/delete` to XNAT without `timeout=` hang forever if XNAT is unresponsive.
 
 **Fix** (already applied in PR #401):
+
 - `task_handlers.py`: CREATE_IMAGING/REIMPORT_STUDIES now have 120s timeouts
 - `projects.py`: All XNAT API calls now have 120s timeouts
 
 **Temporary workaround** (force import for stuck projects):
+
 ```bash
 # 1. Check if CREATE_IMAGING task failed
 ssh flip "docker exec flip-api python3 -c '...'"
@@ -274,6 +294,7 @@ ssh flip-trust "docker restart trust1-imaging-api-1"
 **Root cause**: The FL server container was restarted (e.g., during `deploy-centralhub`) and the client needs to re-establish the gRPC connection. The NVFLARE client retries automatically every 10 seconds. The FL server log should show `Re-activate the client: Trust_1`.
 
 **Fix**: Usually self-healing. Verify the FL server is listening:
+
 ```bash
 ssh flip "docker logs fl-server-net-1 --since 2m | grep -E 'Connection|re-activate|Client'"
 ```
@@ -287,9 +308,11 @@ ssh flip "docker logs fl-server-net-1 --since 2m | grep -E 'Connection|re-activa
 **Root cause**: The imaging-api made XNAT API calls without `timeout=` parameters. If XNAT's container management API (dcm2niix command enablement, event subscriptions) hung, the imaging-api worker thread blocked permanently. All subsequent requests queued behind the hung worker.
 
 **Fix**: Restart the imaging-api container:
+
 ```bash
 ssh flip-trust "docker restart trust1-imaging-api-1"
 ```
+
 The code fix (adding `timeout=120` to all XNAT calls) prevents recurrence.
 
 ---
@@ -327,11 +350,13 @@ The code fix (adding `timeout=120` to all XNAT calls) prevents recurrence.
 ## 5. Verification Commands
 
 ### Quick health check
+
 ```bash
 make status PROD=stag
 ```
 
 ### Check specific pipeline task status
+
 ```bash
 ssh flip "docker exec flip-api python3 -c \"
 import asyncpg, os, json, boto3, asyncio
@@ -347,6 +372,7 @@ asyncio.run(main())\"
 ```
 
 ### Check for stuck XNAT projects (last_reimport within last hour, zero reimports)
+
 ```bash
 ssh flip "docker exec flip-api python3 -c \"
 SELECT xnat_project_id, last_reimport, reimport_count FROM xnat_project_status WHERE last_reimport > NOW() - INTERVAL '1 hour' AND reimport_count = 0;
@@ -354,6 +380,7 @@ SELECT xnat_project_id, last_reimport, reimport_count FROM xnat_project_status W
 ```
 
 ### Scan container logs for errors
+
 ```bash
 # Central Hub
 ssh flip "docker logs flip-api 2>&1 | grep -iE 'ERROR|Exception|Traceback' | tail -20"
@@ -363,6 +390,7 @@ ssh flip-trust "docker logs trust1-trust-api-1 2>&1 | grep -iE 'ERROR|ReadTimeou
 ```
 
 ### Test XNAT connectivity from imaging-api
+
 ```bash
 ssh flip-trust "docker exec trust1-imaging-api-1 python3 -c \"
 import requests
@@ -372,6 +400,7 @@ print(f'HTTP {r.status_code}')
 ```
 
 ### Verify FL server clients
+
 ```bash
 ssh flip "docker logs fl-server-net-1 2>&1 | grep -E 'Client|Re-activate' | tail -5"
 ```
