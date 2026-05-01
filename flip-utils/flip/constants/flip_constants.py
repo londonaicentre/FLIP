@@ -48,21 +48,34 @@ class ProdSettings(_Common):
     """Production environment configuration.
 
     Used when LOCAL_DEV=false. Settings are grouped by which FL role uses them:
-    - **Server-only** (fl-server on Central Hub): CENTRAL_HUB_API_URL, INTERNAL_SERVICE_KEY*
-    - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL
+    - **Server-only** (fl-server on Central Hub): FLIP_API_INTERNAL_URL, INTERNAL_SERVICE_KEY*
+    - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL,
+      TRUST_INTERNAL_SERVICE_KEY*
     - **Shared**: IMAGES_DIR, NET_ID, UPLOADED_FEDERATED_DATA_BUCKET
     """
 
     LOCAL_DEV: bool = False
 
-    # -- Server-only: fl-server on Central Hub calls flip-api using these --
-    CENTRAL_HUB_API_URL: HttpUrl = "http://localhost:8000"  # type: ignore[assignment]
+    # -- Server-only: fl-server on Central Hub calls flip-api using these.
+    # FLIP_API_INTERNAL_URL must point at flip-api over the shared Docker network
+    # (e.g. http://flip-api:8000/api), never at the public CloudFront URL — the
+    # CloudFront distribution whitelists only Authorization/Content-Type/Origin
+    # and strips X-Internal-Service-Key at the edge, which would break auth.
+    FLIP_API_INTERNAL_URL: HttpUrl = "http://localhost:8000"  # type: ignore[assignment]
     INTERNAL_SERVICE_KEY_HEADER: str = "X-Internal-Service-Key"
     INTERNAL_SERVICE_KEY: str = ""
 
     # -- Client-only: fl-client on trust side calls local APIs using these --
     DATA_ACCESS_API_URL: HttpUrl = "http://localhost:8001"  # type: ignore[assignment]
     IMAGING_API_URL: HttpUrl = "http://localhost:8002"  # type: ignore[assignment]
+    # Trust-internal service auth — protects imaging-api and data-access-api on the
+    # trust Docker network from unauthenticated callers. The fl-client container is
+    # injected with the per-trust plaintext key in TRUST_INTERNAL_SERVICE_KEY by the
+    # trust compose stack (see trust/compose_trust.*.flower.yml / *.nvflare.yml in
+    # the FLIP repo). The flip package forwards it on every call to imaging-api or
+    # data-access-api; user training code does not deal with the header directly.
+    TRUST_INTERNAL_SERVICE_KEY_HEADER: str = "X-Trust-Internal-Service-Key"
+    TRUST_INTERNAL_SERVICE_KEY: str = ""
 
     # -- Shared --
     IMAGES_DIR: str = ""
