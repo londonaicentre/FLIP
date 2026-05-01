@@ -130,6 +130,7 @@ async def handle_create_imaging(payload: dict[str, Any]) -> dict[str, Any]:
             url=f"{IMAGING_API_URL}/projects/create-project-from-central-hub-project",
             json_body=payload,
             headers=_trust_internal_headers(),
+            timeout_seconds=120,
         )
 
         logger.info(f"Imaging project created: id={response.get('ID')}, name={response.get('name')}")
@@ -193,6 +194,7 @@ async def handle_get_imaging_status(payload: dict[str, Any]) -> dict[str, Any]:
             url=f"{IMAGING_API_URL}/retrieval/import_status_count/{imaging_project_id}",
             params={"encoded_query": encoded_query},
             headers=_trust_internal_headers(),
+            timeout_seconds=60,
         )
 
         logger.info(f"Imaging status retrieved: {imaging_project_id}")
@@ -224,6 +226,7 @@ async def handle_reimport_studies(payload: dict[str, Any]) -> dict[str, Any]:
             url=f"{IMAGING_API_URL}/retrieval/reimport_imaging_project_studies/{imaging_project_id}",
             params={"encoded_query": encoded_query},
             headers=_trust_internal_headers(),
+            timeout_seconds=120,
         )
 
         logger.info(f"Reimport initiated: {imaging_project_id}")

@@ -34,6 +34,8 @@ from imaging_api.utils.enums import ProjectPreArchiveSettings
 from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
 from imaging_api.utils.logger import logger
 
+XNAT_REQUEST_TIMEOUT = 120  # seconds — prevents hanging on unresponsive XNAT container API calls
+
 XNAT_URL = get_settings().XNAT_URL
 
 
@@ -105,7 +107,7 @@ def get_all_projects(headers: dict[str, str]) -> list[Project]:
         Exception: If the HTTP request to XNAT fails, or if XNAT returns a non-200 response.
     """
     try:
-        response = requests.get(f"{XNAT_URL}/data/projects", headers=headers)
+        response = requests.get(f"{XNAT_URL}/data/projects", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
     except Exception as e:
         raise Exception(f"Error: XNAT projects fetch failed: {str(e)}")
 
@@ -198,6 +200,7 @@ def create_project(
         xnat_projects_uri,
         headers={**headers, "Content-Type": "application/xml"},
         data=payload,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
 
     if response.status_code == 200:
@@ -243,6 +246,7 @@ def set_project_prearchive_settings(project_id: str, headers: dict[str, str]) ->
     response = requests.put(
         f"{XNAT_URL}/data/projects/{project_id}/prearchive_code/{ProjectPreArchiveSettings.SEND_ALL_TO_ARCHIVE_AND_IGNORE_EXISTING}",
         headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
     if response.status_code == 200:
         logger.info(f"Project prearchive settings set for project '{project_id}'")
@@ -267,7 +271,7 @@ def get_command_info(container: str, headers: dict[str, str]) -> tuple[int, str]
         Exception: If the command cannot be fetched from XNAT.
     """
     container_name_formatted = urllib.parse.quote(container)
-    response = requests.get(f"{XNAT_URL}/xapi/commands?image={container_name_formatted}", headers=headers)
+    response = requests.get(f"{XNAT_URL}/xapi/commands?image={container_name_formatted}", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
     if response.status_code != 200:
         raise Exception(f"Error: XNAT command fetch failed: {response.status_code} - {response.text}")
 
@@ -300,6 +304,7 @@ def create_project_event_subscription(project_id: str, container: str, active: b
     response = requests.put(
         f"{XNAT_URL}/xapi/projects/{project_id}/commands/{command_id}/wrappers/{wrapper_name}/enabled",
         headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
     if response.status_code != 200:
         raise Exception(
@@ -326,6 +331,7 @@ def create_project_event_subscription(project_id: str, container: str, active: b
         f"{XNAT_URL}/xapi/projects/{project_id}/events/subscription",
         headers=headers,
         json=subscription_payload,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
     if response.status_code in (200, 201):
         state = "active" if active else "inactive"
@@ -427,6 +433,7 @@ async def delete_queued_import_requests(project_id: str, headers: dict[str, str]
         f"{XNAT_URL}/xapi/dqr/import/queue",
         headers=headers,
         json=queued_imports_ids,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
 
     # Check status code and log response
@@ -463,7 +470,7 @@ async def delete_project(project_id: str, headers: dict[str, str]) -> Project:
     # Check if project exists
     project = get_project(project_id, headers)
 
-    response = requests.delete(f"{XNAT_URL}/data/projects/{project_id}?removeFiles=true", headers=headers)
+    response = requests.delete(f"{XNAT_URL}/data/projects/{project_id}?removeFiles=true", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
 
     # Check status code and log response
     if response.status_code != 200:
@@ -493,7 +500,7 @@ def get_subjects(project_id: str, headers: dict[str, str]) -> list[Subject]:
     """
     get_project(project_id, headers)
 
-    response = requests.get(f"{XNAT_URL}/data/projects/{project_id}/subjects", headers=headers)
+    response = requests.get(f"{XNAT_URL}/data/projects/{project_id}/subjects", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
     subjects = [Subject(**subject) for subject in response.json()["ResultSet"]["Result"]]
 
     if response.status_code == 200:
@@ -518,7 +525,7 @@ def get_experiments(project_id: str, headers: dict[str, str]) -> list[Experiment
     """
     get_project(project_id, headers)
 
-    response = requests.get(f"{XNAT_URL}/data/projects/{project_id}/experiments", headers=headers)
+    response = requests.get(f"{XNAT_URL}/data/projects/{project_id}/experiments", headers=headers, timeout=XNAT_REQUEST_TIMEOUT)
     experiments = [Experiment(**experiment) for experiment in response.json()["ResultSet"]["Result"]]
 
     if response.status_code == 200:
@@ -553,6 +560,7 @@ def get_experiment(project_id: str, experiment_id_or_label: str, headers: dict[s
     response = requests.get(
         f"{XNAT_URL}/data/projects/{project_id}/experiments/{experiment_id_or_label}?format=json",
         headers=headers,
+        timeout=XNAT_REQUEST_TIMEOUT,
     )
 
     if response.status_code == 200:
