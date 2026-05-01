@@ -37,6 +37,7 @@ EXIT CODES:
   1 - One or more checks failed
 """
 
+import base64
 import json
 import os
 import platform
@@ -224,6 +225,17 @@ def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) ->
         return False, str(e)
 
 
+def run_remote_python(ssh_key: str, host: str, container: str, source: str, timeout: int = 25) -> tuple[bool, str]:
+    """Execute a Python snippet inside a remote Docker container via base64 encoding.
+
+    Avoids shell quoting issues by encoding the snippet in base64, piping it
+    through ``docker exec -i``, and letting Python eval the decoded content.
+    """
+    encoded = base64.b64encode(source.encode()).decode()
+    cmd = f"echo {encoded} | base64 -d | docker exec -i {container} python3"
+    return run_ssh_command(ssh_key, host, cmd, timeout=timeout)
+
+
 def check_http_endpoint(
     url: str,
     name: str,
@@ -398,8 +410,6 @@ def check_ecs_cluster() -> None:
         print_status("INFO", "No ECS clusters found (EC2-only deployment)")
         return
 
-    # Only describe if we have at least one cluster
-    arn_list = " ".join(cluster_names)
     success2, output2 = run_aws_command([
         "ecs",
         "describe-clusters",
@@ -479,21 +489,26 @@ def check_trust_pipeline() -> None:
     """
     print_status("INFO", "Checking Trust_1 task pipeline health...")
 
-    success, output = run_ssh_command(
-        "",
-        "flip",
-        'docker exec flip-api python3 -c "import asyncpg,os,json,boto3,asyncio,sys;'
-        "async def m():"
-        " c=boto3.client('secretsmanager',region_name='eu-west-2');"
-        " s=c.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN']);"
-        " d=json.loads(s['SecretString']);p=d.get('password','');"
-        " conn=await asyncpg.connect(host=os.environ['DB_HOST'],port=5432,user=os.environ['POSTGRES_USER'],database=os.environ['POSTGRES_DB'],password=p);"
-        " r=await conn.fetch('SELECT task_type,status FROM trust_task WHERE trust_id=''3f0a8199-6adc-4519-982a-c412a6dae98d'' ORDER BY created_at DESC LIMIT 5');"
-        " for row in r: print(row[0],row[1]);"
-        " await conn.close();"
-        'asyncio.run(m())"',
-        timeout=20,
+    py = """\
+import asyncpg, os, json, boto3, asyncio
+async def m():
+    c = boto3.client("secretsmanager", region_name="eu-west-2")
+    s = c.get_secret_value(SecretId=os.environ["POSTGRES_SECRET_ARN"])
+    d = json.loads(s["SecretString"])
+    p = d.get("password", "")
+    conn = await asyncpg.connect(
+        host=os.environ["DB_HOST"], port=5432,
+        user=os.environ["POSTGRES_USER"], database=os.environ["POSTGRES_DB"], password=p,
     )
+    rows = await conn.fetch(
+        "SELECT task_type, status FROM trust_task ORDER BY created_at DESC LIMIT 5"
+    )
+    for row in rows:
+        print(row[0], row[1])
+    await conn.close()
+asyncio.run(m())
+"""
+    success, output = run_remote_python("", "flip", "flip-api", py, timeout=25)
 
     if not success or "Traceback" in output:
         print_status("INFO", "Could not query Trust_1 task pipeline (SSH or DB unavailable)")
@@ -514,14 +529,18 @@ def check_trust_pipeline() -> None:
 def check_xnat_health() -> None:
     """Verify XNAT is serving its API (not a setup page)."""
     print_status("INFO", "Checking XNAT API health (not setup page)...")
-    success, output = run_ssh_command(
-        "",
-        "flip-trust",
-        'docker exec trust1-imaging-api-1 python3 -c "import requests;'
-        "r=requests.get('http://xnat-web:8080/data/projects',auth=('flipServiceAccount','REDACTED_XNAT_PASSWORD'),timeout=10);"
-        "print(r.status_code,r.headers.get('content-type','').split(';')[0])\"",
-        timeout=25,
-    )
+
+    py = """\
+import os, requests
+r = requests.get(
+    "http://xnat-web:8080/data/projects",
+    auth=(os.environ.get("XNAT_SERVICE_USER", "flipServiceAccount"),
+          os.environ.get("XNAT_SERVICE_PASSWORD", "")),
+    timeout=10,
+)
+print(r.status_code, r.headers.get("content-type", "").split(";")[0])
+"""
+    success, output = run_remote_python("", "flip-trust", "trust1-imaging-api-1", py, timeout=25)
 
     if not success or "Traceback" in output:
         print_status("INFO", "Could not check XNAT (SSH unavailable)")
@@ -552,21 +571,32 @@ def check_xnat_health() -> None:
 def check_reimport_status() -> None:
     """Warn if any approved projects have zero reimports after >10 minutes."""
     print_status("INFO", "Checking for projects stuck without reimports...")
-    success, output = run_ssh_command(
-        "",
-        "flip",
-        'docker exec flip-api python3 -c "import asyncpg,os,json,boto3,asyncio,sys;'
-        "async def m():"
-        " c=boto3.client('secretsmanager',region_name='eu-west-2');"
-        " s=c.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN']);"
-        " d=json.loads(s['SecretString']);p=d.get('password','');"
-        " conn=await asyncpg.connect(host=os.environ['DB_HOST'],port=5432,user=os.environ['POSTGRES_USER'],database=os.environ['POSTGRES_DB'],password=p);"
-        " r=await conn.fetch('SELECT p.id,p.name,x.reimport_count,x.retrieve_image_status,x.last_reimport FROM xnat_project_status x JOIN projects p ON x.project_id=p.id WHERE x.reimport_count=0 AND x.last_reimport < NOW() - interval ''10 minutes'' AND p.status=''APPROVED''');"
-        " for row in r: print(str(row[0])[:8],str(row[1])[:30],row[2],row[3]);"
-        " await conn.close();"
-        'asyncio.run(m())"',
-        timeout=20,
+
+    py = """\
+import asyncpg, os, json, boto3, asyncio
+async def m():
+    c = boto3.client("secretsmanager", region_name="eu-west-2")
+    s = c.get_secret_value(SecretId=os.environ["POSTGRES_SECRET_ARN"])
+    d = json.loads(s["SecretString"])
+    p = d.get("password", "")
+    conn = await asyncpg.connect(
+        host=os.environ["DB_HOST"], port=5432,
+        user=os.environ["POSTGRES_USER"], database=os.environ["POSTGRES_DB"], password=p,
     )
+    rows = await conn.fetch(
+        "SELECT p.id, p.name, x.reimport_count, x.retrieve_image_status, x.last_reimport "
+        "FROM xnat_project_status x "
+        "JOIN projects p ON x.project_id = p.id "
+        "WHERE x.reimport_count = 0 "
+        "AND x.last_reimport < NOW() - interval '10 minutes' "
+        "AND p.status = 'APPROVED'"
+    )
+    for row in rows:
+        print(str(row[0])[:8], str(row[1])[:30], row[2], row[3])
+    await conn.close()
+asyncio.run(m())
+"""
+    success, output = run_remote_python("", "flip", "flip-api", py, timeout=25)
 
     if not success or "Traceback" in output:
         print_status("INFO", "Could not check reimport status (advanced check)")
@@ -615,7 +645,7 @@ def check_container_errors() -> None:
     success, output = run_ssh_command(
         "",
         "flip",
-        "docker logs flip-api --since 5m 2>&1 | grep -cE 'ERROR|Exception|Traceback|Name or service not known' || echo 0",
+        "docker logs flip-api --since 5m 2>&1 | grep -cE ' ERROR |Traceback|Exception|Name or service not known' || echo 0",
         timeout=15,
     )
 
@@ -645,21 +675,24 @@ def check_net_endpoints_consistency() -> None:
         print_status("WARN", "NET_ENDPOINTS not set or invalid JSON")
         return
 
-    success, output = run_ssh_command(
-        "",
-        "flip",
-        'docker exec flip-api python3 -c "import asyncpg,os,json,boto3,asyncio;'
-        "async def m():"
-        " c=boto3.client('secretsmanager',region_name='eu-west-2');"
-        " s=c.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN']);"
-        " d=json.loads(s['SecretString']);p=d.get('password','');"
-        " co=await asyncpg.connect(host=os.environ['DB_HOST'],port=5432,user=os.environ['POSTGRES_USER'],database=os.environ['POSTGRES_DB'],password=p);"
-        " rows=await co.fetch('SELECT name,endpoint FROM fl_nets');"
-        " for r in rows: print(str(r[0]),str(r[1]));"
-        " await co.close();"
-        'asyncio.run(m())"',
-        timeout=20,
+    py = """\
+import asyncpg, os, json, boto3, asyncio
+async def m():
+    c = boto3.client("secretsmanager", region_name="eu-west-2")
+    s = c.get_secret_value(SecretId=os.environ["POSTGRES_SECRET_ARN"])
+    d = json.loads(s["SecretString"])
+    p = d.get("password", "")
+    conn = await asyncpg.connect(
+        host=os.environ["DB_HOST"], port=5432,
+        user=os.environ["POSTGRES_USER"], database=os.environ["POSTGRES_DB"], password=p,
     )
+    rows = await conn.fetch("SELECT name, endpoint FROM fl_nets")
+    for r in rows:
+        print(str(r[0]), str(r[1]))
+    await conn.close()
+asyncio.run(m())
+"""
+    success, output = run_remote_python("", "flip", "flip-api", py, timeout=25)
 
     if not success or "Traceback" in output:
         print_status("INFO", "Could not check NET_ENDPOINTS consistency (advanced check)")

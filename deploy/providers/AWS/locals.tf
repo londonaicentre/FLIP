@@ -53,7 +53,7 @@ locals {
     fl_server = {
       LOCAL_DEV                      = "false"
       NET_ID                         = "net-1"
-      MIN_CLIENTS                    = var.MIN_CLIENTS
+      MIN_CLIENTS                    = tostring(var.MIN_CLIENTS)
       IMAGES_DIR                     = "/app/data/images"
       UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"

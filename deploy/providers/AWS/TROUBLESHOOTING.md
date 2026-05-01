@@ -194,7 +194,7 @@ ssh flip-trust "docker service update --force xnat1_xnat-web"
 
 **Root cause**: Multiple causes:
 
-1. **Credentials**: The XNAT admin password was changed from `admin` to `REDACTED_XNAT_PASSWORD` during setup. The imaging-api uses `XNAT_SERVICE_USER=flipServiceAccount` / `XNAT_SERVICE_PASSWORD=REDACTED_XNAT_PASSWORD` (from `.env.stag`). Verify these match.
+1. **Credentials**: The imaging-api authenticates to XNAT using `XNAT_SERVICE_USER` and `XNAT_SERVICE_PASSWORD` (from `.env.stag` or Secrets Manager). Verify the deployed values match the current XNAT service account credentials — do not hardcode real values in config files or documentation.
 2. **Timeout**: The imaging-api's `requests` calls to XNAT had no `timeout` parameter. If XNAT's container management API hangs (e.g., Docker daemon busy), the imaging-api worker blocks permanently.
 
 **Fix**: Restart the imaging-api container (clears stuck state), and ensure the timeout fix is applied (see Section 3.3):
@@ -264,7 +264,7 @@ Then redeploy: `make deploy-centralhub PROD=stag`
 
 4. **imaging-api XNAT calls lack timeouts**: `requests.get/post/put/delete` to XNAT without `timeout=` hang forever if XNAT is unresponsive.
 
-**Fix** (already applied in PR #401):
+**Fix** (already applied in PR #410):
 
 - `task_handlers.py`: CREATE_IMAGING/REIMPORT_STUDIES now have 120s timeouts
 - `projects.py`: All XNAT API calls now have 120s timeouts
@@ -393,8 +393,10 @@ ssh flip-trust "docker logs trust1-trust-api-1 2>&1 | grep -iE 'ERROR|ReadTimeou
 
 ```bash
 ssh flip-trust "docker exec trust1-imaging-api-1 python3 -c \"
-import requests
-r = requests.get('http://xnat-web:8080/data/projects', auth=('flipServiceAccount','REDACTED_XNAT_PASSWORD'), timeout=10)
+import os, requests
+r = requests.get('http://xnat-web:8080/data/projects',
+    auth=(os.environ.get('XNAT_SERVICE_USER', 'flipServiceAccount'),
+          os.environ.get('XNAT_SERVICE_PASSWORD', '')), timeout=10)
 print(f'HTTP {r.status_code}')
 \""
 ```
