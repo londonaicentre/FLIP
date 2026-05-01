@@ -46,10 +46,16 @@ resource "aws_efs_file_system" "flip_fl" {
 # resources allowing ingress 2049 from the ecs_fl_api and ecs_fl_server SGs
 # (which PR 2 also creates). Until then, the file system is unreachable —
 # which is the intended state during PR 1.
+#
+# No egress rule by design: EFS mount targets terminate NFS traffic at the
+# ENI and never initiate outbound connections, so denying egress costs
+# nothing. AWS provider 4.x stopped auto-creating the 0.0.0.0/0 egress that
+# older docs assume — calling out the omission here so the next reader
+# doesn't assume it's an oversight (see feedback_sg_egress.md).
 
 resource "aws_security_group" "efs_mount_target" {
   name        = "efs-mount-target"
-  description = "NFS 2049 from ECS fl-api and fl-server tasks (rules added in PR 2)"
+  description = "NFS 2049 from ECS fl-api and fl-server tasks (rules added in PR 2); no egress by design"
   vpc_id      = module.flip_vpc.vpc_id
 }
 

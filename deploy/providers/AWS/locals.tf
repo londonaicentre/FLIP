@@ -34,9 +34,11 @@ locals {
   # resolves to the task IP, so fl-server calls flip-api on port 8000.
   api_container_port = 8000
 
-  # Buckets and S3 paths used by the central hub services.
+  # Buckets and S3 paths used by the central hub services. Both reference
+  # the resource (not var.FLIP_BUCKET_NAME) so a future bucket rename only
+  # has to land in one place.
   flip_bucket_arn             = aws_s3_bucket.flip_bucket.arn
-  uploaded_federated_data_uri = "s3://${var.FLIP_BUCKET_NAME}/uploaded_federated_data"
+  uploaded_federated_data_uri = "s3://${aws_s3_bucket.flip_bucket.id}/uploaded_federated_data"
 
   # Env vars per service. Mirrors compose.production.yml +
   # compose.production.{nvflare,flower}.yml. PR 2 reads these into the ECS
