@@ -225,7 +225,7 @@ def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) ->
         return False, str(e)
 
 
-def run_remote_python(ssh_key: str, host: str, container: str, source: str, timeout: int = 25) -> tuple[bool, str]:
+def run_remote_python(host: str, container: str, source: str, timeout: int = 25) -> tuple[bool, str]:
     """Execute a Python snippet inside a remote Docker container via base64 encoding.
 
     Avoids shell quoting issues by encoding the snippet in base64, piping it
@@ -233,7 +233,7 @@ def run_remote_python(ssh_key: str, host: str, container: str, source: str, time
     """
     encoded = base64.b64encode(source.encode()).decode()
     cmd = f"echo {encoded} | base64 -d | docker exec -i {container} python3"
-    return run_ssh_command(ssh_key, host, cmd, timeout=timeout)
+    return run_ssh_command("", host, cmd, timeout=timeout)
 
 
 def check_http_endpoint(
@@ -508,7 +508,7 @@ async def m():
     await conn.close()
 asyncio.run(m())
 """
-    success, output = run_remote_python("", "flip", "flip-api", py, timeout=25)
+    success, output = run_remote_python("flip", "flip-api", py, timeout=25)
 
     if not success or "Traceback" in output:
         print_status("INFO", "Could not query Trust_1 task pipeline (SSH or DB unavailable)")
@@ -540,7 +540,7 @@ r = requests.get(
 )
 print(r.status_code, r.headers.get("content-type", "").split(";")[0])
 """
-    success, output = run_remote_python("", "flip-trust", "trust1-imaging-api-1", py, timeout=25)
+    success, output = run_remote_python("flip-trust", "trust1-imaging-api-1", py, timeout=25)
 
     if not success or "Traceback" in output:
         print_status("INFO", "Could not check XNAT (SSH unavailable)")
@@ -596,7 +596,7 @@ async def m():
     await conn.close()
 asyncio.run(m())
 """
-    success, output = run_remote_python("", "flip", "flip-api", py, timeout=25)
+    success, output = run_remote_python("flip", "flip-api", py, timeout=25)
 
     if not success or "Traceback" in output:
         print_status("INFO", "Could not check reimport status (advanced check)")
@@ -692,7 +692,7 @@ async def m():
     await conn.close()
 asyncio.run(m())
 """
-    success, output = run_remote_python("", "flip", "flip-api", py, timeout=25)
+    success, output = run_remote_python("flip", "flip-api", py, timeout=25)
 
     if not success or "Traceback" in output:
         print_status("INFO", "Could not check NET_ENDPOINTS consistency (advanced check)")
