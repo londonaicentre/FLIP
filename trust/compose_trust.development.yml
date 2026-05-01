@@ -72,6 +72,8 @@ services:
       ENV: development
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
+      TRUST_INTERNAL_SERVICE_KEY_HEADER: ${TRUST_INTERNAL_SERVICE_KEY_HEADER}
+      TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
     # NOTE the volume BASE_IMAGES_DOWNLOAD_DIR is mounted to share images downloaded from XNAT with FL clients
     volumes:
       - ./imaging-api/imaging_api:/app/imaging_api
@@ -101,6 +103,8 @@ services:
       DEBUG: ${DEBUG}
       ENV: development
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
+      TRUST_INTERNAL_SERVICE_KEY_HEADER: ${TRUST_INTERNAL_SERVICE_KEY_HEADER}
+      TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
     volumes:
       - ./data-access-api/data_access_api:/app/data_access_api
       - ./data-access-api/tests:/app/tests
@@ -136,6 +140,8 @@ services:
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
       ENV: development
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
+      TRUST_INTERNAL_SERVICE_KEY_HEADER: ${TRUST_INTERNAL_SERVICE_KEY_HEADER}
+      TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
     volumes:
       - ./trust-api/trust_api:/app/trust_api
       - ./trust-api/tests:/app/tests

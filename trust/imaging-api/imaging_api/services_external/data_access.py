@@ -52,11 +52,16 @@ async def get_accession_ids(encrypted_project_id: str, query: str) -> list[str]:
 
     logger.debug(f"get_accession_ids: Sending request to Data Access API with {encrypted_project_id=}")
 
+    headers = {
+        get_settings().TRUST_INTERNAL_SERVICE_KEY_HEADER: get_settings().TRUST_INTERNAL_SERVICE_KEY,
+    }
+
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{DATA_ACCESS_API_URL}/cohort/accession-ids",
                 json=request.model_dump(),
+                headers=headers,
             )
 
         response.raise_for_status()

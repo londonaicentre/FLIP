@@ -25,9 +25,10 @@ from imaging_api.services.projects import get_project
 from imaging_api.services.retrieval import get_import_status, retry_retrieve_images_for_project
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.exceptions import NotFoundError
+from imaging_api.utils.internal_auth import authenticate_internal_service
 from imaging_api.utils.logger import logger
 
-router = APIRouter(prefix="/retrieval", tags=["Retrieval"])
+router = APIRouter(prefix="/retrieval", tags=["Retrieval"], dependencies=[Depends(authenticate_internal_service)])
 
 XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 

@@ -21,9 +21,11 @@ from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERRO
 
 from flip_api.domain.schemas.users import CognitoUser
 from flip_api.utils.cognito_helpers import (
+    _origin_from_url,
     create_cognito_user,
     filter_enabled_users,
     get_cognito_users,
+    get_cors_allowed_origins,
     get_pool_id,
     get_user_by_email_or_id,
     is_mfa_enabled,
@@ -1179,6 +1181,75 @@ class TestGetCognitoUsers:
         expected_params = {"UserPoolId": "test-pool-id"}
         mock_client_instance.list_users.assert_called_once_with(**expected_params)
         assert len(result) == 2
+
+
+class TestOriginFromUrl:
+    """Tests for the _origin_from_url normalizer used by the CORS allowlist builder."""
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            # Default ports must be stripped — browsers omit them from the Origin header.
+            ("https://localhost:443", "https://localhost"),
+            ("http://example.com:80/path", "http://example.com"),
+            # Non-default ports must be preserved.
+            ("http://localhost:8080", "http://localhost:8080"),
+            ("https://localhost:8443/", "https://localhost:8443"),
+            # Path / query / fragment are dropped.
+            ("https://app.flip.aicentre.co.uk/login?x=1#frag", "https://app.flip.aicentre.co.uk"),
+            # Hostname is lowercased by urlparse.
+            ("https://APP.FLIP.aicentre.co.uk", "https://app.flip.aicentre.co.uk"),
+        ],
+    )
+    def test_normalizes_origin(self, url, expected):
+        assert _origin_from_url(url) == expected
+
+    @pytest.mark.parametrize("url", ["", "not-a-url", "/just/a/path"])
+    def test_returns_none_for_unusable_input(self, url):
+        assert _origin_from_url(url) is None
+
+
+class TestGetCorsAllowedOrigins:
+    """Tests for get_cors_allowed_origins (Cognito-derived CORS allowlist)."""
+
+    @pytest.fixture
+    def mock_boto3_client(self):
+        with patch("flip_api.utils.cognito_helpers.boto3.client") as mock_client:
+            yield mock_client
+
+    @pytest.fixture
+    def mock_settings(self):
+        with patch("flip_api.utils.cognito_helpers.get_settings") as mock_get_settings:
+            settings = mock_get_settings.return_value
+            settings.AWS_REGION = "eu-west-2"
+            settings.AWS_COGNITO_USER_POOL_ID = "pool-id"
+            settings.AWS_COGNITO_APP_CLIENT_ID = "client-id"
+            yield mock_get_settings
+
+    def test_returns_normalized_unique_origins(self, mock_boto3_client, mock_settings):
+        """CallbackURLs are normalized to origins and deduplicated, preserving order."""
+        mock_boto3_client.return_value.describe_user_pool_client.return_value = {
+            "UserPoolClient": {
+                "CallbackURLs": [
+                    "https://app.flip.aicentre.co.uk",
+                    "https://localhost:443",
+                    # Duplicate after normalization (default port stripped) — must be deduped.
+                    "https://app.flip.aicentre.co.uk/callback",
+                ]
+            }
+        }
+
+        origins = get_cors_allowed_origins()
+
+        assert origins == ["https://app.flip.aicentre.co.uk", "https://localhost"]
+        mock_boto3_client.assert_called_once_with("cognito-idp", region_name="eu-west-2")
+        mock_boto3_client.return_value.describe_user_pool_client.assert_called_once_with(
+            UserPoolId="pool-id", ClientId="client-id"
+        )
+
+    def test_returns_empty_list_when_no_callback_urls(self, mock_boto3_client, mock_settings):
+        mock_boto3_client.return_value.describe_user_pool_client.return_value = {"UserPoolClient": {}}
+        assert get_cors_allowed_origins() == []
 
 
 class TestResetUserMfa:

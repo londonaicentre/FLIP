@@ -12,7 +12,7 @@
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access up-local-trust generate-trust-api-keys generate-internal-service-key
+		check-aws-access up-local-trust generate-trust-api-keys generate-internal-service-key integration_test
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -259,7 +259,11 @@ unit_test:
 	$(MAKE) -C flip-ui unit_test
 	$(MAKE) -C trust/data-access-api unit_test
 	$(MAKE) -C trust/imaging-api unit_test
-	$(MAKE) -C trust/trust-api unit_test 
+	$(MAKE) -C trust/trust-api unit_test
+	$(MAKE) -C trust/xnat unit_test
+
+integration_test:
+	$(MAKE) -C flip-api integration_test
 
 generate-trust-api-keys:
 	$(MAKE) -C flip-api generate-trust-api-keys $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE))

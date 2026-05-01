@@ -12,7 +12,7 @@
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
 from data_access_api.config import get_settings
@@ -24,10 +24,11 @@ from data_access_api.routers.schema import (
 )
 from data_access_api.services.cohort import get_records, get_statistics, validate_query
 from data_access_api.utils.encryption import decrypt
+from data_access_api.utils.internal_auth import authenticate_internal_service
 from data_access_api.utils.logger import logger
 
 # Create Router
-router = APIRouter(prefix="/cohort", tags=["Cohort"])
+router = APIRouter(prefix="/cohort", tags=["Cohort"], dependencies=[Depends(authenticate_internal_service)])
 
 
 @router.post("/", response_model=StatisticsResponse)

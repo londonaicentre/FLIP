@@ -23,6 +23,12 @@ from tests.integration.utils import admin_authentication
 
 REGISTER_USER_MODULE = "flip_api.user_services.register_user"
 
+# The whole module depends on AWS Cognito (admin_authentication via boto3) and
+# a deployed Cognito user pool. Out of scope for B1 (Testcontainers-Postgres),
+# in scope for B2 (AWS-service-backed integration tests). Skip at module level
+# so the file collects cleanly under the new --skip-db-free integration run.
+pytestmark = pytest.mark.skip(reason="Requires AWS Cognito; in scope for B2, not B1")
+
 
 @pytest.fixture
 def fetch_roles():

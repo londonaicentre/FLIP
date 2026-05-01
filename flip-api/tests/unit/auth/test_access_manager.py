@@ -24,6 +24,7 @@ from flip_api.auth.access_manager import (
     _get_trust_api_key_hashes,
     authenticate_internal_service,
     authenticate_trust,
+    can_access_project,
     can_modify_model,
     can_modify_project,
     verify_trust_identity,
@@ -197,6 +198,55 @@ class TestCanModifyProject:
 
         with patch(PATCH_HAS_PERMISSIONS, return_value=False):
             result = can_modify_project(user_id, project_id, db)
+
+        assert result is False
+
+
+class TestCanAccessProject:
+    def test_admin_with_manage_projects_permission_bypasses_ownership_check(self):
+        """Admin (has CAN_MANAGE_PROJECTS) gets access without an ownership check."""
+        user_id = uuid4()
+        project_id = uuid4()
+        db = MagicMock(spec=Session)
+
+        with patch(PATCH_HAS_PERMISSIONS, return_value=True):
+            result = can_access_project(user_id, project_id, db)
+
+        assert result is True
+        db.exec.assert_not_called()
+
+    def test_researcher_without_manage_projects_can_access_owned_project(self):
+        """Researcher (no CAN_MANAGE_PROJECTS) can access projects via ownership / ProjectUserAccess."""
+        user_id = uuid4()
+        project_id = uuid4()
+        db = MagicMock(spec=Session)
+        db.exec.return_value.first.return_value = project_id
+
+        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
+            result = can_access_project(user_id, project_id, db)
+
+        assert result is True
+
+    def test_researcher_without_manage_projects_denied_for_unrelated_project(self):
+        """Researcher cannot see projects they neither own nor are a member of — this is the issue #358 fix."""
+        user_id = uuid4()
+        project_id = uuid4()
+        db = MagicMock(spec=Session)
+        db.exec.return_value.first.return_value = None
+
+        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
+            result = can_access_project(user_id, project_id, db)
+
+        assert result is False
+
+    def test_returns_false_on_database_exception(self):
+        user_id = uuid4()
+        project_id = uuid4()
+        db = MagicMock(spec=Session)
+        db.exec.side_effect = Exception("DB connection error")
+
+        with patch(PATCH_HAS_PERMISSIONS, return_value=False):
+            result = can_access_project(user_id, project_id, db)
 
         assert result is False
 

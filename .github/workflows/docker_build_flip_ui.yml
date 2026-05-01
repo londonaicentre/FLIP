@@ -41,7 +41,7 @@ jobs:
         working-directory: ./flip-ui
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build Docker image
         run: docker build -t flip-ui:ci .

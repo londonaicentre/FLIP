@@ -18,6 +18,7 @@
   - [Preparing pull requests](#preparing-pull-requests)
     1. [Checking the coding style](#checking-the-coding-style)
     1. [Unit testing](#unit-testing)
+    1. [Where does my test go?](#where-does-my-test-go)
     1. [Signing your work](#signing-your-work)
   - [Submitting pull requests](#submitting-pull-requests)
 
@@ -318,6 +319,27 @@ python_files = ["test_*.py", "*_test.py"]
 addopts = []
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 ```
+
+#### Where does my test go?
+
+A test belongs in `tests/integration/` **if and only if it touches a real backing service**. Examples of "real backing service":
+
+- A real Postgres (via the `session` fixture or Testcontainers)
+- A real or LocalStack-emulated AWS service (S3, Cognito, SES)
+- A running sibling API (trust-api, data-access-api, etc.) reachable over HTTP
+- A real Orthanc / XNAT / OMOP fixture
+
+If your test mocks **all** external dependencies (database session, HTTP client, AWS clients, sibling APIs), it's a unit test — put it in `tests/unit/`, mirroring the source layout (e.g. tests for `src/flip_api/user_services/set_user_roles.py` go in `tests/unit/user_services/test_set_user_roles.py`).
+
+FastAPI `TestClient` on its own does **not** make a test "integration" — what matters is whether the dependencies it transitively hits are real or mocked. A `TestClient`-based test that overrides every dependency (via `app.dependency_overrides`) and patches the DB session is a unit test; one that runs against an un-overridden real Postgres is an integration test.
+
+This rule applies across all services: `flip-api/tests/`, `trust/trust-api/tests/`, `trust/imaging-api/tests/`, `trust/data-access-api/tests/`, etc.
+
+##### flip-api: real-Postgres integration tests via Testcontainers
+
+`flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema from `SQLModel.metadata`, seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
+
+CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) are out of scope for this fixture and are skip-marked at the file level until ticket B2 lands.
 
 #### Signing your work
 

@@ -17,6 +17,8 @@ import pytest
 
 from trust_api.services.task_handlers import (
     TASK_HANDLERS,
+    TRUST_INTERNAL_SERVICE_KEY,
+    TRUST_INTERNAL_SERVICE_KEY_HEADER,
     handle_cohort_query,
     handle_create_imaging,
     handle_delete_imaging,
@@ -24,6 +26,13 @@ from trust_api.services.task_handlers import (
     handle_reimport_studies,
     handle_update_user_profile,
 )
+
+
+def _assert_trust_internal_auth_header(call_args) -> None:
+    """Every trust-internal call (imaging-api, data-access-api) must carry the
+    trust-internal service key header."""
+    headers = call_args.kwargs.get("headers") or {}
+    assert headers.get(TRUST_INTERNAL_SERVICE_KEY_HEADER) == TRUST_INTERNAL_SERVICE_KEY
 
 
 @pytest.fixture
@@ -75,6 +84,8 @@ async def test_handle_cohort_query_success(mock_make_request):
     first_call = mock_make_request.call_args_list[0]
     assert first_call.kwargs["method"] == "POST"
     assert "/cohort" in first_call.kwargs["url"]
+    # data-access-api now requires the trust-internal service key on /cohort.
+    _assert_trust_internal_auth_header(first_call)
 
     # Second call should be to central hub
     second_call = mock_make_request.call_args_list[1]
@@ -125,6 +136,7 @@ async def test_handle_create_imaging_success(mock_make_request):
     call_args = mock_make_request.call_args
     assert call_args.kwargs["method"] == "POST"
     assert "create-project-from-central-hub-project" in call_args.kwargs["url"]
+    _assert_trust_internal_auth_header(call_args)
 
 
 # ---- Delete imaging handler ----
@@ -140,6 +152,7 @@ async def test_handle_delete_imaging_success(mock_make_request):
     assert result["success"] is True
     call_args = mock_make_request.call_args
     assert call_args.kwargs["method"] == "DELETE"
+    _assert_trust_internal_auth_header(call_args)
 
 
 # ---- Get imaging status handler ----
@@ -159,6 +172,7 @@ async def test_handle_get_imaging_status_success(mock_make_request):
     call_args = mock_make_request.call_args
     assert call_args.kwargs["method"] == "GET"
     assert "import_status_count" in call_args.kwargs["url"]
+    _assert_trust_internal_auth_header(call_args)
 
 
 # ---- Reimport studies handler ----
@@ -178,6 +192,7 @@ async def test_handle_reimport_studies_success(mock_make_request):
     call_args = mock_make_request.call_args
     assert call_args.kwargs["method"] == "PUT"
     assert "reimport" in call_args.kwargs["url"]
+    _assert_trust_internal_auth_header(call_args)
 
 
 # ---- Update user profile handler ----
@@ -197,6 +212,7 @@ async def test_handle_update_user_profile_success(mock_make_request):
     call_args = mock_make_request.call_args
     assert call_args.kwargs["method"] == "PUT"
     assert "/users" in call_args.kwargs["url"]
+    _assert_trust_internal_auth_header(call_args)
 
 
 @pytest.mark.asyncio

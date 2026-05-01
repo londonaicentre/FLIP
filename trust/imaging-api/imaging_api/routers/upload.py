@@ -19,10 +19,11 @@ from imaging_api.services.upload import upload_data_to_xnat
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.encryption import decrypt
 from imaging_api.utils.exceptions import NotFoundError
+from imaging_api.utils.internal_auth import authenticate_internal_service
 from imaging_api.utils.logger import logger
 
 # Create router
-router = APIRouter(prefix="/upload", tags=["Upload"])
+router = APIRouter(prefix="/upload", tags=["Upload"], dependencies=[Depends(authenticate_internal_service)])
 
 XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 

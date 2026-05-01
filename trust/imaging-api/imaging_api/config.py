@@ -43,6 +43,14 @@ class Settings(BaseSettings):
     #
     AES_KEY_BASE64: str
 
+    # Trust-internal service auth — protects every router except /health from
+    # unauthenticated callers on the trust Docker network or via SSM port-forward,
+    # and is also forwarded outbound on calls to data-access-api. Every trust-
+    # internal service holds the same per-trust key in plaintext; the receiver
+    # validates with a constant-time compare.
+    TRUST_INTERNAL_SERVICE_KEY_HEADER: str = "X-Trust-Internal-Service-Key"
+    TRUST_INTERNAL_SERVICE_KEY: str = ""
+
     # Reimport settings
     REIMPORT_STUDIES_ENABLED: bool = True
 

@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     TRUST_API_KEY_HEADER: str
     AES_KEY_BASE64: str  # Shared key for decrypting task payloads from the hub
 
+    # Trust-internal service auth — sent on every call to imaging-api so it can
+    # distinguish authorised callers (this trust-api, fl-client) from anything
+    # else on the trust Docker network. Per-trust secret; never sent to the hub.
+    TRUST_INTERNAL_SERVICE_KEY: str = ""
+    TRUST_INTERNAL_SERVICE_KEY_HEADER: str = "X-Trust-Internal-Service-Key"
+
     # Polling configuration
     TRUST_NAME: str  # Must match Trust.name in hub DB (e.g. "Trust_1")
     POLL_INTERVAL_SECONDS: int = 5  # How often to poll the hub for tasks (seconds)

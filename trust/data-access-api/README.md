@@ -19,8 +19,12 @@
 [![Coverage](https://codecov.io/gh/londonaicentre/FLIP/branch/main/graph/badge.svg?flag=data-access-api)](https://codecov.io/gh/londonaicentre/FLIP)
 
 The **data-access-api** executes researcher-supplied SQL queries against the Trust's local OMOP database and returns
-aggregated statistics and dataframes. It is an internal Trust-side service called only by the
-[trust-api](../trust-api/).
+aggregated statistics and dataframes. It is an internal Trust-side service called by the
+[trust-api](../trust-api/) (`/cohort`), [imaging-api](../imaging-api/) (`/cohort/accession-ids`),
+and the [`flip` Python package](https://github.com/londonaicentre/flip-fl-base/tree/main/flip)
+shipped to fl-client containers (`/cohort/dataframe`, via `flip.get_dataframe(...)`). All callers
+must authenticate with the trust-internal service key — see [Authentication](#authentication)
+below.
 
 ## Role in the FLIP Platform
 
@@ -61,6 +65,37 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `DATA_ACCESS_POSTGRES_PASSWORD` | PostgreSQL password for OMOP database access |
 | `OMOP_POSTGRES_DB` | Name of the OMOP PostgreSQL database |
 | `AES_KEY_BASE64` | AES encryption key for decrypting project identifiers |
+| `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
+| `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Required on every `/cohort` request. |
+
+## Authentication
+
+data-access-api executes SQL against the OMOP database using a service account. To prevent any
+container on the trust Docker network — or any operator with SSM port-forward access — from
+running unrestricted queries against OMOP, every route under `/cohort` requires callers to send
+`TRUST_INTERNAL_SERVICE_KEY` in the configured header. data-access-api compares the header
+against its own copy of the same per-trust key with a constant-time compare. `/health` stays
+unauthenticated so liveness probes keep working.
+
+Callers in this repo: trust-api (`/cohort`) and imaging-api (`/cohort/accession-ids`). The fl-client
+container calls `/cohort/dataframe` indirectly: user training code calls `flip.get_dataframe(...)`
+from the [`flip` Python package](https://github.com/londonaicentre/flip-fl-base/tree/main/flip)
+(consumed by both NVFLARE and Flower fl-client / fl-server images), and that package reads
+`TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and adds the header to its HTTP request. Tutorials
+and user-uploaded `client_app.py` / `server_app.py` do not deal with the header directly.
+
+Each trust has a distinct key. Generate them with:
+
+```bash
+make -C ../../flip-api generate-trust-internal-service-keys
+```
+
+This populates `TRUST_INTERNAL_SERVICE_KEYS` (a JSON dict keyed by trust name) in your env file.
+`trust/Makefile` extracts the per-trust value into each trust-internal container's environment at
+deploy time as `TRUST_INTERNAL_SERVICE_KEY`.
+
+For the threat model, see the **Trust-internal Service Authentication** section in
+[`CLAUDE.md`](../../CLAUDE.md).
 
 ## Further Reading
 

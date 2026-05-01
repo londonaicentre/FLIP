@@ -22,8 +22,9 @@ from imaging_api.services.imaging import (
 )
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.exceptions import NotFoundError
+from imaging_api.utils.internal_auth import authenticate_internal_service
 
-router = APIRouter(prefix="/imaging", tags=["Imaging"])
+router = APIRouter(prefix="/imaging", tags=["Imaging"], dependencies=[Depends(authenticate_internal_service)])
 
 XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 

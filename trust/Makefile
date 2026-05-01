@@ -82,7 +82,8 @@ TRUST_1_VARS = \
 	TRUST_NETWORK_NAME=${network1} \
 	TRUST_NAME=Trust_1 \
 	TRUST_NUMBER=1 \
-	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),Trust_1)
+	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),Trust_1) \
+	TRUST_INTERNAL_SERVICE_KEY=$(call get_json_value,$(TRUST_INTERNAL_SERVICE_KEYS),Trust_1)
 TRUST_2_VARS = \
 	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST2} \
 	OMOP_DB_PORT=${OMOP_DB_PORT_TRUST_2} \
@@ -99,7 +100,8 @@ TRUST_2_VARS = \
 	TRUST_NETWORK_NAME=${network2} \
 	TRUST_NAME=Trust_2 \
 	TRUST_NUMBER=2 \
-	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),Trust_2)
+	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),Trust_2) \
+	TRUST_INTERNAL_SERVICE_KEY=$(call get_json_value,$(TRUST_INTERNAL_SERVICE_KEYS),Trust_2)
 
 # Host ports, bind paths, and the trust network are hardcoded here (not env
 # vars) so the local-trust stack can coexist with dev trust1/trust2 on one
@@ -127,6 +129,7 @@ LOCAL_TRUST_VARS = \
 	TRUST_NAME=$(LOCAL_TRUST_NAME) \
 	TRUST_NUMBER=$(subst Trust_,,$(LOCAL_TRUST_NAME)) \
 	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),$(LOCAL_TRUST_NAME)) \
+	TRUST_INTERNAL_SERVICE_KEY=$(call get_json_value,$(TRUST_INTERNAL_SERVICE_KEYS),$(LOCAL_TRUST_NAME)) \
 	OMOP_DATA_DIR=./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data \
 	ORTHANC_STORAGE_DIR=./orthanc/orthanc-storage-local \
 	OBSERVABILITY_CONFIG_DIR=./observability \

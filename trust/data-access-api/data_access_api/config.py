@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     #
     AES_KEY_BASE64: str
 
+    # Trust-internal service auth — protects the /cohort router from unauthenticated
+    # callers on the trust Docker network or via SSM port-forward. Callers (trust-api,
+    # imaging-api, fl-client) send the plaintext key in TRUST_INTERNAL_SERVICE_KEY_HEADER;
+    # data-access-api compares against its own copy of the same key with a constant-
+    # time compare. Every trust-internal service holds the same per-trust key.
+    TRUST_INTERNAL_SERVICE_KEY_HEADER: str = "X-Trust-Internal-Service-Key"
+    TRUST_INTERNAL_SERVICE_KEY: str = ""
+
     # Define the database URL for the OMOP database
     @property
     def OMOP_DATABASE_URL(self) -> SecretStr:

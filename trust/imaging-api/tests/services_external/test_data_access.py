@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from imaging_api.config import get_settings
 from imaging_api.services_external.data_access import get_accession_ids
 
 
@@ -32,7 +33,8 @@ class TestGetAccessionIds:
         mock_client.__aexit__ = AsyncMock(return_value=False)
         mock_client_cls.return_value = mock_client
 
-        accession_ids = await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
+        with patch.object(get_settings(), "TRUST_INTERNAL_SERVICE_KEY", "outbound-test-key"):
+            accession_ids = await get_accession_ids("encrypted-proj-id", "SELECT * FROM cohort")
 
         assert accession_ids == ["ACC001", "ACC002"]
         mock_client.post.assert_called_once()
@@ -43,6 +45,9 @@ class TestGetAccessionIds:
         }
         # Endpoint must be the projected accession-ids one, not the raw dataframe one.
         assert mock_client.post.call_args.args[0].endswith("/cohort/accession-ids")
+        # data-access-api now requires the trust-internal service key on every /cohort
+        # route; imaging-api is one of those callers and must forward the plaintext key.
+        assert call_kwargs["headers"][get_settings().TRUST_INTERNAL_SERVICE_KEY_HEADER] == "outbound-test-key"
 
     @pytest.mark.asyncio
     @patch("imaging_api.services_external.data_access.httpx.AsyncClient")

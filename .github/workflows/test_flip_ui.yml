@@ -37,10 +37,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set Node.js version
-        uses: actions/setup-node@v4 #
+        uses: actions/setup-node@v5 #
         with:
           node-version: "22" # Specify the Node.js version you need
       - name: Install dependencies
@@ -53,7 +53,7 @@ jobs:
         run: npm run test:unit
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           files: flip-ui/coverage/cobertura-coverage.xml
           flags: flip-ui
@@ -108,10 +108,10 @@ jobs:
         working-directory: ./flip-ui
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set Node.js version
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: npm
@@ -150,7 +150,7 @@ jobs:
 
       - name: Upload Cypress screenshots
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cypress-screenshots-${{ matrix.group }}
           path: flip-ui/test/cypress/screenshots

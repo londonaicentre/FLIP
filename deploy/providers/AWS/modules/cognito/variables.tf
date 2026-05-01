@@ -60,3 +60,13 @@ variable "templates_dir" {
   type        = string
   description = "Path to the directory containing invite.html, password_reset_code.html and password_reset_link.html. Callers typically pass $${path.module}/templates/cognito."
 }
+
+variable "mfa_configuration" {
+  type        = string
+  description = "Pool-level MFA mode. \"OPTIONAL\" honours per-user TOTP enrolment (the stag/prod default — see main.tf for the reasoning). \"OFF\" disables MFA at the Cognito layer entirely; useful in dev where the app-layer gate (Settings.ENFORCE_MFA) is the only enforcement point. \"ON\" forces every user through TOTP."
+  default     = "OPTIONAL"
+  validation {
+    condition     = contains(["OFF", "OPTIONAL", "ON"], var.mfa_configuration)
+    error_message = "mfa_configuration must be one of: OFF, OPTIONAL, ON."
+  }
+}

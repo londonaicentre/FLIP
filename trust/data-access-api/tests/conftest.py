@@ -12,6 +12,12 @@
 
 import os
 
+# Plaintext test key used by tests to authenticate against the /cohort router.
+# Provisioned via TRUST_INTERNAL_SERVICE_KEY below so Settings() picks it up at
+# app-import time.
+TEST_TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"
+AUTH_HEADERS = {"X-Trust-Internal-Service-Key": TEST_TRUST_INTERNAL_SERVICE_KEY}
+
 # Set dummy environment variables required by Settings() before any app code
 # is imported.  These are only used in tests; real values come from Docker
 # Compose environment or .env files in deployed environments.
@@ -20,6 +26,7 @@ _TEST_ENV_DEFAULTS = {
     "DATA_ACCESS_POSTGRES_PASSWORD": "test_password",
     "OMOP_POSTGRES_DB": "test_omop_db",
     "AES_KEY_BASE64": "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA=",  # 32-byte key, base64
+    "TRUST_INTERNAL_SERVICE_KEY": TEST_TRUST_INTERNAL_SERVICE_KEY,
 }
 
 for key, value in _TEST_ENV_DEFAULTS.items():

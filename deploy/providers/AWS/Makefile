@@ -53,6 +53,9 @@ endif
 endif
 
 ## SETTING VARIABLES FOR TERRAFORM
+# Map the Make-level PROD flag (true|stag) onto a Terraform-friendly environment name.
+# Used in main.tf to gate prod-only RDS hardening (deletion protection, final snapshot).
+export TF_VAR_environment=$(if $(filter true,$(PROD)),prod,stag)
 export TF_VAR_max_azs=2
 export TF_VAR_vpc_cidr=10.0.0.0/16
 export TF_VAR_public_subnets=["10.0.1.0/24", "10.0.2.0/24"]
@@ -507,23 +510,28 @@ generate-internal-service-key: ## Generate a new internal service key (fl-server
 	@echo "🔑 Generating internal service key..."
 	@$(MAKE) -C ../../../flip-api generate-internal-service-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))
 
+.PHONY: generate-trust-internal-service-keys
+generate-trust-internal-service-keys: ## Generate per-trust internal service keys (trust-api / fl-client → imaging-api auth)
+	@echo "🔑 Generating per-trust internal service keys (skipping already-generated)..."
+	@$(MAKE) -C ../../../flip-api generate-trust-internal-service-keys ENV_FILE=$(abspath $(MAIN_ENV_FILE)) $(if $(FORCE),FORCE=true)
+
 .PHONY: full-deploy
 full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trust + Central Hub
 	## Step order:
 	## 1. login + init + import: auth, Terraform init, import any pre-existing resources
-	## 2. generate-keys + generate-internal-service-key: generate all API keys
+	## 2. generate-keys + generate-internal-service-key + generate-trust-internal-service-keys: generate all API keys
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, secrets)
 	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure SSH aliases and provision EC2s with Docker
 	## 6. deploy-centralhub + deploy-trust + status: deploy containers and verify
-full-deploy: github-login aws-login init import-persistent generate-keys generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub deploy-trust status
+full-deploy: github-login aws-login init import-persistent generate-keys generate-internal-service-key generate-trust-internal-service-keys plan apply update-env ssh-config ansible-init deploy-centralhub deploy-trust status
 
 .PHONY: full-deploy-with-local-trust
 full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem local trust (requires LOCAL_TRUST_IP=<public-ip>)
 	## Works against either PROD=true or PROD=stag — PROD is inherited from the environment.
 	## Step order:
 	## 1. login + init + import: auth, Terraform init, import pre-existing persistent resources
-	## 2. generate-keys + generate-internal-service-key: generate all API keys
+	## 2. generate-keys + generate-internal-service-key + generate-trust-internal-service-keys: generate all API keys
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, ALB, secrets)
 	## 4. update-env: refresh .env.{PROD} with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure SSH aliases, provision EC2s with Docker + FL kit
@@ -534,7 +542,7 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## NOTE: After this completes you must manually:
 	##   - Start local trust stack: cd ../../../trust && env PROD=$(PROD) make up-local-trust
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-with-local-trust LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
-full-deploy-with-local-trust: github-login aws-login init import-persistent generate-keys generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub deploy-trust add-local-trust status
+full-deploy-with-local-trust: github-login aws-login init import-persistent generate-keys generate-internal-service-key generate-trust-internal-service-keys plan apply update-env ssh-config ansible-init deploy-centralhub deploy-trust add-local-trust status
 
 .PHONY: full-deploy-hybrid
 full-deploy-hybrid: ## Full hybrid deployment including local trust provisioning + hub redeploy (honours PROD)

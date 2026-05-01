@@ -59,7 +59,7 @@ def create_project_endpoint(
     logger.debug(f"Attempting to create project by user: {user_id}")
 
     # 1. Check user permissions
-    if not has_permissions(user_id, [PermissionRef.CAN_MANAGE_PROJECTS], db):
+    if not has_permissions(user_id, [PermissionRef.CAN_CREATE_PROJECTS], db):
         logger.error(f"User {user_id} does not have permission to create projects.")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

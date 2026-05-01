@@ -122,21 +122,23 @@ resource "aws_db_subnet_group" "flip_db_subnet_group" {
 }
 
 module "flip_db" {
-  source                     = "terraform-aws-modules/rds/aws"
-  version                    = "~> 6.0"
-  identifier                 = "flip-database"
-  engine                     = "postgres"
-  engine_version             = var.postgres_version
-  auto_minor_version_upgrade = true
-  instance_class             = "db.t3.micro"
-  allocated_storage          = 20
-  username                   = var.POSTGRES_USER
-  db_name                    = var.POSTGRES_DB
-  db_subnet_group_name       = aws_db_subnet_group.flip_db_subnet_group.name
-  vpc_security_group_ids     = [module.rds_security_group.security_group.id]
-  backup_retention_period    = 7
-  skip_final_snapshot        = true
-  family                     = "postgres${split(".", var.postgres_version)[0]}"
+  source                           = "terraform-aws-modules/rds/aws"
+  version                          = "~> 6.0"
+  identifier                       = "flip-database"
+  engine                           = "postgres"
+  engine_version                   = var.postgres_version
+  auto_minor_version_upgrade       = true
+  instance_class                   = "db.t3.micro"
+  allocated_storage                = 20
+  username                         = var.POSTGRES_USER
+  db_name                          = var.POSTGRES_DB
+  db_subnet_group_name             = aws_db_subnet_group.flip_db_subnet_group.name
+  vpc_security_group_ids           = [module.rds_security_group.security_group.id]
+  backup_retention_period          = 7
+  skip_final_snapshot              = var.environment != "prod"
+  deletion_protection              = var.environment == "prod"
+  final_snapshot_identifier_prefix = "flip-database-final"
+  family                           = "postgres${split(".", var.postgres_version)[0]}"
 }
 
 ############################
@@ -165,7 +167,13 @@ module "flip_api_secret" {
 # EC2
 ############################
 
-# IAM Role for EC2 instance
+# IAM Role for the Central Hub EC2.
+#
+# Scoped to exactly what flip-api / fl-server need at runtime, plus the SSM
+# and CloudWatch managed policies required by Session Manager and the agent.
+# The Trust EC2 uses a separate, narrower role (`trust_ec2_role` below) so
+# that Cognito / SES / flip-bucket access is not granted on a host that has
+# no business calling those APIs.
 module "ec2_role" {
   source                = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
   version               = "~> 5.0"
@@ -202,7 +210,10 @@ resource "aws_iam_role_policy" "ec2_secret" {
   })
 }
 
-# Scoped S3 access — limited to FLIP application buckets only
+# Scoped S3 access — limited to FLIP application buckets only.
+# - flip_bucket: model files / FL results / FL app destination (flip-api).
+# - aicentre_bucket: FL participant kits, fetched via `aws s3 cp` during
+#   Ansible provisioning on the Central Hub host.
 resource "aws_iam_role_policy" "s3_access" {
   name = "flip-s3-scoped"
   role = module.ec2_role.iam_role_name
@@ -230,7 +241,8 @@ resource "aws_iam_role_policy" "s3_access" {
   })
 }
 
-# Scoped Cognito access — limited to FLIP user pool operations
+# Scoped Cognito access — limited to FLIP user pool operations used by
+# flip-api (see flip_api/utils/cognito_helpers.py and the auth/MFA flows).
 resource "aws_iam_role_policy" "cognito_access" {
   name = "flip-cognito-scoped"
   role = module.ec2_role.iam_role_name
@@ -242,6 +254,8 @@ resource "aws_iam_role_policy" "cognito_access" {
       Action = [
         "cognito-idp:AdminCreateUser",
         "cognito-idp:AdminDeleteUser",
+        "cognito-idp:AdminDisableUser",
+        "cognito-idp:AdminEnableUser",
         "cognito-idp:AdminGetUser",
         "cognito-idp:AdminInitiateAuth",
         "cognito-idp:AdminRespondToAuthChallenge",
@@ -250,6 +264,7 @@ resource "aws_iam_role_policy" "cognito_access" {
         "cognito-idp:DescribeUserPool",
         "cognito-idp:DescribeUserPoolClient",
         "cognito-idp:ListUsers",
+        "cognito-idp:RevokeToken",
       ]
       Resource = [module.cognito.user_pool_arn]
     }]
@@ -271,9 +286,87 @@ resource "aws_iam_role_policy" "ses_access" {
   })
 }
 
-# CloudWatch Log Group
+# IAM Role for the Trust EC2.
+#
+# The Trust host runs trust-api, imaging-api, data-access-api, fl-client, XNAT,
+# Orthanc and the OMOP DB — none of those services use boto3. The only AWS
+# call from the Trust host is `aws s3 sync` against the AI Centre bucket
+# during Ansible provisioning to fetch the FL participant kit (see the
+# NVFLARE/Flower kit-download tasks in deploy/providers/AWS/site.yml).
+# Cognito, SES and the FLIP application bucket are deliberately *not*
+# granted here.
+#
+# Future directions — both would let us drop the trust_ec2_s3 policy below
+# and leave the Trust role with only SSM + CloudWatch:
+#
+#   1. Presigned URLs. flip-api already mints short-lived presigned URLs for
+#      user-facing S3 ops (see flip_api/utils/s3_client.py::get_presigned_url
+#      and ::get_put_presigned_url). Ansible could pull the kit over plain
+#      HTTPS via ansible.builtin.get_url against a URL minted by an
+#      authenticated trust-api → flip-api call — no AWS credentials on the
+#      Trust host at all.
+#
+#   2. Out-of-band kit delivery. The on-prem (hybrid) trust playbook
+#      (deploy/providers/local/site_local_trust.yml) already works this way:
+#      the operator stages the kit on their workstation via
+#      `make add-local-trust` and rsyncs it onto the host. Applying the same
+#      pattern to AWS-hosted trusts would remove S3 entirely from the Trust
+#      role's blast radius.
+module "trust_ec2_role" {
+  source                = "terraform-aws-modules/iam/aws//modules/iam-assumable-role"
+  version               = "~> 5.0"
+  role_name             = "trust-ec2-role"
+  create_role           = "true"
+  trusted_role_services = ["ec2.amazonaws.com"]
+  custom_role_policy_arns = [
+    "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+    "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy",
+  ]
+  role_requires_mfa = "false"
+}
+
+resource "aws_iam_instance_profile" "trust_ec2_profile" {
+  name = "trust-ec2-role-profile"
+  role = module.trust_ec2_role.iam_role_name
+}
+
+# Read-only access to the AI Centre bucket for FL participant-kit downloads.
+resource "aws_iam_role_policy" "trust_ec2_s3" {
+  name = "s3-aicentre-read"
+  role = module.trust_ec2_role.iam_role_name
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:ListBucket",
+          "s3:GetBucketLocation",
+        ]
+        Resource = [aws_s3_bucket.aicentre_bucket.arn]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = ["${aws_s3_bucket.aicentre_bucket.arn}/*"]
+      },
+    ]
+  })
+}
+
+# CloudWatch Log Groups for EC2 hosts. The CloudWatch agent on each host
+# (configured via Ansible — see deploy/providers/AWS/site.yml and the
+# templates/cloudwatch-agent*.json.j2 files) ships system + Docker logs
+# here. Defining the groups in Terraform pins retention deliberately rather
+# than relying on the agent's auto-create default (which never expires).
 resource "aws_cloudwatch_log_group" "flip_log_group" {
   name              = "/aws/ec2/flip"
+  retention_in_days = 7
+}
+
+resource "aws_cloudwatch_log_group" "flip_trust_log_group" {
+  name              = "/aws/ec2/flip-trust"
   retention_in_days = 7
 }
 
@@ -668,8 +761,10 @@ module "trust_ec2" {
   # use the trust SG, not the central EC2 SG
   security_group_ids = [module.trust_security_group.security_group.id]
 
-  # attaches the same ec2-role-profile instance profile to the Trust instance
-  iam_instance_profile_name = aws_iam_instance_profile.ec2_profile.name
+  # Trust EC2 uses its own narrower instance profile (SSM + CloudWatch +
+  # read-only S3 on the AI Centre bucket). It does not get Central Hub
+  # permissions like Cognito, SES or the FLIP application bucket.
+  iam_instance_profile_name = aws_iam_instance_profile.trust_ec2_profile.name
 }
 
 resource "aws_key_pair" "host_key" {

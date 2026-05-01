@@ -16,6 +16,16 @@ variable "AWS_REGION" {
   type = string
 }
 
+variable "environment" {
+  description = "Deployment environment. 'prod' enables RDS hardening (deletion protection + final snapshot); any other value (e.g. 'stag') keeps the database disposable for fast tear-down."
+  type        = string
+  default     = "stag"
+  validation {
+    condition     = contains(["prod", "stag"], var.environment)
+    error_message = "environment must be either 'prod' or 'stag'."
+  }
+}
+
 variable "VPC_NAME" {
   type = string
 }

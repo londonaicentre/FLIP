@@ -54,7 +54,8 @@ def seed_role_permissions(session: Session) -> None:
     seed (that would need an explicit migration, not a seed).
 
     - Admin: every permission defined in ``PermissionRef``.
-    - Researcher: ``CAN_MANAGE_PROJECTS``.
+    - Researcher: ``CAN_CREATE_PROJECTS`` only. ``CAN_MANAGE_PROJECTS`` is
+      reserved for Admin — it bypasses per-project access checks (see issue #358).
     - Observer: none — read-only access is enforced at the route layer by
       the absence of ``CAN_MANAGE_PROJECTS``.
 
@@ -73,7 +74,7 @@ def seed_role_permissions(session: Session) -> None:
 
     researcher_role_id = session.exec(select(Role.id).where(Role.name == "Researcher")).first()
     if researcher_role_id:
-        _grant_permissions(session, researcher_role_id, [PermissionRef.CAN_MANAGE_PROJECTS.value])
+        _grant_permissions(session, researcher_role_id, [PermissionRef.CAN_CREATE_PROJECTS.value])
     else:
         logger.debug("Researcher role not found. Cannot seed role permissions.")
 

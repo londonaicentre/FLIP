@@ -36,6 +36,11 @@ services:
       # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
       - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
       - IMAGING_API_URL=${IMAGING_API_URL}
+      # Trust-internal service auth — fl-client must send this header on every imaging-api call
+      # so the imaging-api can distinguish authorised callers from anything else on the trust network.
+      # This key is per-trust and never leaves the trust environment.
+      - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
+      - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
     networks:
       - default
       - deploy_shared-net-1
@@ -63,6 +68,11 @@ services:
       # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
       - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
       - IMAGING_API_URL=${IMAGING_API_URL}
+      # Trust-internal service auth — fl-client must send this header on every imaging-api call
+      # so the imaging-api can distinguish authorised callers from anything else on the trust network.
+      # This key is per-trust and never leaves the trust environment.
+      - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
+      - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
     networks:
       - default
       - deploy_shared-net-2

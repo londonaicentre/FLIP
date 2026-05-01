@@ -86,6 +86,32 @@ The flip-api is configured via environment variables. In development these are s
 
 See [`.env.development.example`](../.env.development.example) for the full list of required variables.
 
+## Testing
+
+Tests are split into `tests/unit/` (no real backing services) and `tests/integration/` (real Postgres / Cognito / S3 / sibling APIs). See [Where does my test go?](../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule.
+
+Run unit tests (no Docker / DB / network needed):
+
+```bash
+make unit_test
+```
+
+Run integration tests against a throwaway Postgres (Docker required, but no compose stack):
+
+```bash
+make integration_test
+```
+
+Integration tests use [testcontainers-python](https://github.com/testcontainers/testcontainers-python) to start a `postgres:16-alpine` container per test session and tear it down at the end. The schema is created from `SQLModel.metadata` and seeded with permissions / roles / role-permissions in `tests/integration/conftest.py`; per-test tables are truncated between tests. New integration tests just request the `session` (real DB) and/or `client` (FastAPI `TestClient` wired to the same DB) fixtures — no setup boilerplate.
+
+Tests that touch AWS Cognito, S3, or SES are covered by ticket B2 and are currently skip-marked under `tests/integration/` with a reference to the ticket.
+
+Run the full suite (lint + mypy + pytest, requires the dockerised dependencies):
+
+```bash
+make test
+```
+
 ## Further Reading
 
 - [Full FLIP Documentation](https://londonaicentreflip.readthedocs.io/en/latest/)

@@ -49,6 +49,7 @@ module "cognito" {
   templates_dir      = "${path.module}/../templates/cognito"
   callback_urls      = var.cognito_callback_urls
   logout_urls        = var.cognito_logout_urls
+  mfa_configuration  = var.cognito_mfa_configuration
 }
 
 module "ses" {

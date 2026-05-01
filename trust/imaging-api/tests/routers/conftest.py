@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from imaging_api.main import app
 from imaging_api.utils.auth import get_xnat_auth_headers
+from imaging_api.utils.internal_auth import authenticate_internal_service
 
 
 @pytest.fixture
@@ -24,6 +25,10 @@ def client():
 
 @pytest.fixture(autouse=True)
 def override_auth_headers():
+    # Bypass both the XNAT cookie fetch and the trust-internal service key check;
+    # router behaviour is the unit under test here, not the auth layer (see
+    # tests/utils/test_internal_auth.py for direct coverage of the auth dependency).
     app.dependency_overrides[get_xnat_auth_headers] = lambda: {"Cookie": "JSESSIONID=fake"}
+    app.dependency_overrides[authenticate_internal_service] = lambda: None
     yield
     app.dependency_overrides.clear()

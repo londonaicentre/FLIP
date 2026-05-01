@@ -66,7 +66,7 @@ def test_create_project_endpoint_success(
 
     # Assert
     mock_logger.debug.assert_called_once_with(f"Attempting to create project by user: {TEST_USER_ID}")
-    mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_MANAGE_PROJECTS], mock_db_session)
+    mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_CREATE_PROJECTS], mock_db_session)
     logged_message = mock_logger.info.call_args[0][0]
     assert "Project created successfully" in logged_message
     assert str(result.id) in logged_message
@@ -95,7 +95,7 @@ def test_create_project_endpoint_no_permission(
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
     assert exc_info.value.detail == f"User with ID: {TEST_USER_ID} was unable to create this project"
     mock_logger.debug.assert_called_once_with(f"Attempting to create project by user: {TEST_USER_ID}")
-    mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_MANAGE_PROJECTS], mock_db_session)
+    mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_CREATE_PROJECTS], mock_db_session)
     mock_logger.error.assert_called_once_with(f"User {TEST_USER_ID} does not have permission to create projects.")
     mock_db_session.add.assert_not_called()
     mock_db_session.commit.assert_not_called()
@@ -125,7 +125,7 @@ def test_create_project_endpoint_missing_name(
     assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
     assert exc_info.value.detail == "Project name is required."
     mock_logger.debug.assert_called_once_with(f"Attempting to create project by user: {TEST_USER_ID}")
-    mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_MANAGE_PROJECTS], mock_db_session)
+    mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_CREATE_PROJECTS], mock_db_session)
     mock_logger.error.assert_called_once_with("Project name is required.")
     mock_db_session.add.assert_not_called()
 
@@ -160,7 +160,7 @@ def test_create_project_endpoint_db_commit_fails(
     assert exc_info.value.detail == "An error occurred while creating the project."
 
     mock_logger.debug.assert_called_once_with(f"Attempting to create project by user: {TEST_USER_ID}")
-    mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_MANAGE_PROJECTS], mock_db_session)
+    mock_has_permissions.assert_called_once_with(TEST_USER_ID, [PermissionRef.CAN_CREATE_PROJECTS], mock_db_session)
     mock_db_session.commit.assert_called_once()
     mock_db_session.rollback.assert_called_once()
     mock_logger.error.assert_called_once_with(f"Error creating project: 500: Failed to create project: {commit_error}")

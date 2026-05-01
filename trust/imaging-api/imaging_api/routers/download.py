@@ -19,9 +19,10 @@ from imaging_api.services.download import download_and_unzip_images
 from imaging_api.utils.auth import get_xnat_auth_headers
 from imaging_api.utils.encryption import decrypt
 from imaging_api.utils.exceptions import LocalStorageError, NotFoundError
+from imaging_api.utils.internal_auth import authenticate_internal_service
 from imaging_api.utils.logger import logger
 
-router = APIRouter(prefix="/download", tags=["Download"])
+router = APIRouter(prefix="/download", tags=["Download"], dependencies=[Depends(authenticate_internal_service)])
 
 XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 

@@ -75,8 +75,8 @@ def test_grant_permissions_with_empty_list_still_commits(mock_session):
     mock_session.commit.assert_called_once()
 
 
-def test_seed_role_permissions_grants_admin_all_and_researcher_one(mock_session):
-    """Admin gets every permission; Researcher gets CAN_MANAGE_PROJECTS."""
+def test_seed_role_permissions_grants_admin_all_and_researcher_create_only(mock_session):
+    """Admin gets every permission; Researcher gets CAN_CREATE_PROJECTS only (see issue #358)."""
     admin_role_id = uuid4()
     researcher_role_id = uuid4()
     admin_perms = [MagicMock(id=uuid4()), MagicMock(id=uuid4()), MagicMock(id=uuid4())]
@@ -102,7 +102,8 @@ def test_seed_role_permissions_grants_admin_all_and_researcher_one(mock_session)
 
     researcher_added = [rp for rp in added if rp.role_id == researcher_role_id]
     assert len(researcher_added) == 1
-    assert researcher_added[0].permission_id == PermissionRef.CAN_MANAGE_PROJECTS.value
+    assert researcher_added[0].permission_id == PermissionRef.CAN_CREATE_PROJECTS.value
+    assert PermissionRef.CAN_MANAGE_PROJECTS.value not in {rp.permission_id for rp in researcher_added}
 
 
 def test_seed_role_permissions_logs_when_admin_role_missing(mock_session, caplog):

@@ -12,13 +12,14 @@
 
 import uuid
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import Projects
+from flip_api.db.models.user_models import PermissionRef
 from flip_api.domain.schemas.status import ProjectStatus
-from flip_api.project_services.get_projects import get_projects_paginated_orm
+from flip_api.project_services.get_projects import get_projects_endpoint, get_projects_paginated_orm
 from flip_api.utils.paging_utils import get_filter_details, get_paging_details
 
 paging_details = get_paging_details()
@@ -70,3 +71,44 @@ def test_get_projects_paginated_orm_some_results(user_id):
 
     assert len(project_response.data) == 2
     assert project_response.total_rows == 2
+
+
+@patch("flip_api.project_services.get_projects.get_projects_paginated_orm")
+@patch("flip_api.project_services.get_projects.has_permissions")
+def test_get_projects_endpoint_researcher_filters_by_user_id(
+    mock_has_permissions: MagicMock,
+    mock_get_projects_paginated_orm: MagicMock,
+):
+    """A user without CAN_MANAGE_PROJECTS (e.g. a researcher) must have the per-user filter applied."""
+    user_id = uuid.uuid4()
+    request = MagicMock()
+    request.query_params = {}
+    session = MagicMock(spec=Session)
+    mock_has_permissions.return_value = False
+    mock_get_projects_paginated_orm.return_value = MagicMock(data=[], total_rows=0)
+
+    get_projects_endpoint(request=request, session=session, user_id=user_id)
+
+    mock_has_permissions.assert_called_once_with(user_id, [PermissionRef.CAN_MANAGE_PROJECTS], session)
+    _, kwargs = mock_get_projects_paginated_orm.call_args
+    assert kwargs["user_id"] == user_id
+
+
+@patch("flip_api.project_services.get_projects.get_projects_paginated_orm")
+@patch("flip_api.project_services.get_projects.has_permissions")
+def test_get_projects_endpoint_admin_bypasses_user_filter(
+    mock_has_permissions: MagicMock,
+    mock_get_projects_paginated_orm: MagicMock,
+):
+    """A user with CAN_MANAGE_PROJECTS (e.g. an admin) lists every project — user_id=None is passed through."""
+    user_id = uuid.uuid4()
+    request = MagicMock()
+    request.query_params = {}
+    session = MagicMock(spec=Session)
+    mock_has_permissions.return_value = True
+    mock_get_projects_paginated_orm.return_value = MagicMock(data=[], total_rows=0)
+
+    get_projects_endpoint(request=request, session=session, user_id=user_id)
+
+    _, kwargs = mock_get_projects_paginated_orm.call_args
+    assert kwargs["user_id"] is None

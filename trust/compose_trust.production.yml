@@ -67,6 +67,8 @@ services:
       ENV: production
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
+      TRUST_INTERNAL_SERVICE_KEY_HEADER: ${TRUST_INTERNAL_SERVICE_KEY_HEADER}
+      TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
     # NOTE the volume BASE_IMAGES_DOWNLOAD_DIR is mounted to share images downloaded from XNAT with FL clients
     volumes:
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
@@ -85,6 +87,8 @@ services:
       DEBUG: ${DEBUG}
       ENV: production
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
+      TRUST_INTERNAL_SERVICE_KEY_HEADER: ${TRUST_INTERNAL_SERVICE_KEY_HEADER}
+      TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
 
   trust-api:
     image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}
@@ -105,6 +109,8 @@ services:
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
       ENV: production
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
+      TRUST_INTERNAL_SERVICE_KEY_HEADER: ${TRUST_INTERNAL_SERVICE_KEY_HEADER}
+      TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
 
   # --- Observability infrastructure ---
 

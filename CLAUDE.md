@@ -73,11 +73,12 @@ make debug-off-all         # Remove all debug modes
 
 ```bash
 make unit_test             # All unit tests across all services (from root)
+make integration_test      # flip-api integration tests (from root)
 make tests                 # flip-ui + flip-api tests (from root)
 # From a service directory (e.g., flip-api/):
 make test                  # ruff + mypy + pytest (unit + integration)
 make unit_test             # Unit tests only
-make integration_test      # Integration tests only
+make integration_test      # Integration tests only (also available from root)
 make local_test            # Tests without Docker
 ```
 
@@ -163,6 +164,7 @@ After changes, evaluate if docs need updating:
 - Line length: 120. Linter: Ruff (`select = ['I', 'F', 'E', 'W', 'PT']`). Type checker: mypy.
 - Docstrings: Google style. Naming: snake_case. Imports: alphabetically sorted.
 - Source layout: `src/[service_name]/`. Tests: `tests/unit/`, `tests/integration/`.
+- Test placement: a test goes in `tests/integration/` if and only if it touches a real backing service (Postgres via `session` fixture, real or LocalStack-emulated AWS, a running sibling API, real Orthanc/XNAT/OMOP). If every external dependency is mocked, it's a unit test in `tests/unit/`. FastAPI `TestClient` alone does not make a test "integration". See `CONTRIBUTING.md` ("Where does my test go?") for the canonical rule.
 - Dependency injection: FastAPI `Depends()`. Async DB: asyncpg with async context managers.
 
 ### JavaScript/TypeScript (flip-ui)
@@ -193,6 +195,8 @@ After changes, evaluate if docs need updating:
 - `INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for internal service auth
 - `INTERNAL_SERVICE_KEY` — internal service key for fl-server-to-hub auth (Central Hub only)
 - `INTERNAL_SERVICE_KEY_HASH` — hub-side SHA-256 hash of the internal service key
+- `TRUST_INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for trust-internal service auth, sent by every caller (trust-api, imaging-api, fl-client) on every call to imaging-api or data-access-api. Default `X-Trust-Internal-Service-Key`.
+- `TRUST_INTERNAL_SERVICE_KEYS` — JSON dict of per-trust plaintext keys; `trust/Makefile` extracts the per-trust value at deploy time and injects it into every trust-internal container as `TRUST_INTERNAL_SERVICE_KEY`. Each trust uses a distinct key — see the **Trust-internal Service Authentication** section below for the threat model. Distinct from the hub's `INTERNAL_SERVICE_KEY*`: per-trust scope, never sent to or stored on the hub.
 - `CENTRAL_HUB_API_URL` — public base URL of flip-api (with `/api`); read by flip-ui and trust-api. In prod this is the CloudFront URL.
 - `FLIP_API_INTERNAL_URL` — Central-Hub-internal base URL of flip-api (with `/api`); read **only** by fl-server. Must resolve over the Docker network (e.g. `http://flip-api:8000/api`), never the CloudFront URL — CloudFront strips `X-Internal-Service-Key` at the edge.
 - `ENFORCE_MFA` — `true` (the `Settings` default; do **not** set in `.env*` files for stag/prod) gates every authenticated route on TOTP enrolment via the app-layer MFA check in `verify_token`. The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator app; production-mode compose files inherit the Settings default. Intentionally not in `.env.development.example` or AWS Secrets Manager — the dev override is the only place this flag should appear, and stag/prod leave it untouched. The UI mirrors this flag from `/users/me/mfa/status` and skips the enrolment redirect when it's false.
@@ -233,8 +237,28 @@ TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict marker
 - Use `AES_KEY_BASE64` for trust communication encryption.
 - AWS Cognito for hub auth, per-trust API keys for trust-to-hub auth.
 - Internal service key for fl-server-to-hub auth (separate from trust keys).
+- Trust-internal service key for trust-api / imaging-api / fl-client → imaging-api / data-access-api auth (per-trust, never leaves trust env). See **Trust-internal Service Authentication** below.
 - FL clients intentionally have no Central Hub credentials.
 - Do not hardcode env values in Dockerfiles or compose files.
+
+## Trust-internal Service Authentication
+
+**Threat.** Imaging-api proxies privileged XNAT operations using a service account; data-access-api executes arbitrary SQL against OMOP using a service account. Without caller authentication on these APIs, any container on the trust Docker network — or any operator with SSM port-forward access — can drive XNAT-admin operations and run unrestricted OMOP queries. Both surfaces sit behind no inbound firewall on the trust host (everything is internal to the Docker network) and neither used to validate the caller's identity.
+
+**Mitigation.** Every trust-internal call carries a shared-secret header. The header name comes from `TRUST_INTERNAL_SERVICE_KEY_HEADER` (default `X-Trust-Internal-Service-Key`), the value is the per-trust plaintext key from `TRUST_INTERNAL_SERVICE_KEYS`. Receivers (imaging-api, data-access-api) compare the header against their own copy of the key with `hmac.compare_digest` (constant-time, defeats timing side-channels). Senders are trust-api, imaging-api (when calling data-access-api `/cohort/accession-ids`), and fl-client. The same key is held in plaintext by every trust-internal container — the trust boundary is the trust itself, not individual service-pairs within it. `/health` stays unauthenticated so liveness probes keep working.
+
+**Per-trust scope.** Each trust gets a distinct key. A leak in Trust_1 cannot drive operations on Trust_2's APIs. The hub never sees these keys — they live only in trust-side env (extracted by `trust/Makefile` via `get_json_value` at deploy time, exactly like `TRUST_API_KEYS`). This is deliberately distinct from the hub's `INTERNAL_SERVICE_KEY` (which protects fl-server → flip-api on the Central Hub).
+
+**Generating keys.** `make generate-trust-internal-service-keys` (wrapper for `flip-api/src/flip_api/scripts/generate_trust_internal_service_keys.py`) populates `TRUST_INTERNAL_SERVICE_KEYS` in the env file, preserving any keys that already exist. Add `--force` to rotate.
+
+**Per-service code.** The auth check lives in each receiving service's `utils/internal_auth.py`:
+- `trust/imaging-api/imaging_api/utils/internal_auth.py` — applied at the router level on every imaging-api router except `/health`.
+- `trust/data-access-api/data_access_api/utils/internal_auth.py` — applied at the router level on `/cohort` (covers `/cohort`, `/cohort/dataframe`, `/cohort/accession-ids`).
+
+The senders construct the header inline at call sites:
+- `trust-api/trust_api/services/task_handlers.py::_trust_internal_headers()` — used on outbound imaging-api and data-access-api calls.
+- `imaging-api/imaging_api/services_external/data_access.py` — used on the outbound `/cohort/accession-ids` call.
+- The [`flip` Python package](https://github.com/londonaicentre/flip-fl-base/tree/main/flip) — lives in `flip-fl-base` and is consumed by both the NVFLARE (`flip-fl-base`) and Flower (`flip-fl-base-flower`) fl-client / fl-server images. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth. Adding the header to these wrappers is a single follow-up PR in `flip-fl-base`, required before this branch can ship a working trust deployment.
 
 ## Code Modification Rules
 

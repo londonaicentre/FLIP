@@ -1111,7 +1111,7 @@ def main(
     # Check Trust EC2 CloudWatch logs if it exists
     if trust_id:
         print_status("INFO", "Checking Trust EC2 CloudWatch log groups...")
-        trust_log_group = "/aws/ec2/flipst"
+        trust_log_group = "/aws/ec2/flip-trust"
         success, output = run_aws_command([
             "logs",
             "describe-log-groups",

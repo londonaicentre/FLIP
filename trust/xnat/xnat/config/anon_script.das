@@ -9,12 +9,14 @@ version "6.3"
 // Store XNAT labels into DICOM headers
 (0010,4000) := project
 (0010,0010) := subject
+(0010,0020) := subject
 (0008,1030) := session
 
 // Remove direct patient identifiers
 - (0010,0030)    // Patient Birth Date
 - (0010,1000)    // Other Patient IDs
 - (0010,1001)    // Other Patient Names
+- (0010,1002)    // Other Patient IDs Sequence
 - (0010,1005)    // Patient Birth Name
 - (0010,1040)    // Patient Address
 - (0010,2154)    // Patient Telephone Numbers
@@ -49,6 +51,7 @@ version "6.3"
 // Hash UIDs for pseudonymization (repeatable hashing)
 (0020,000D) := hashUID[(0020,000D)]    // Study Instance UID
 (0020,000E) := hashUID[(0020,000E)]    // Series Instance UID
+(0008,0018) := hashUID[(0008,0018)]    // SOP Instance UID
 
 // Record de-identification method
 (0012,0062) := "YES"                                    // Patient Identity Removed

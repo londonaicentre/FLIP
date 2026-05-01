@@ -51,7 +51,7 @@ jobs:
         --build-arg XNAT_EMAIL=email@gstt.nhs.uk
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ github.event.workflow_run.head_repository.full_name }}
           ref: ${{ github.event.workflow_run.head_sha }}

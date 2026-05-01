@@ -68,6 +68,7 @@ dev = [
     "ollama>=0.4.8",
     "autopep8>=2.3.2",
     "libcst>=1.7.0",
+    "testcontainers[postgres]>=4.9",
 ]
 
 [tool.coverage.report]

@@ -69,10 +69,16 @@ resource "aws_cognito_user_pool" "flip_user_pool" {
   # same path — they sign in, mfaEnabled=false, and are routed to
   # mfa-setup before any protected route lets them through.
   # SMS MFA is intentionally disabled (no SNS dependency, no SIM-swap risk).
-  mfa_configuration = "OPTIONAL"
+  mfa_configuration = var.mfa_configuration
 
-  software_token_mfa_configuration {
-    enabled = true
+  # Cognito's UpdateUserPool API rejects a software_token_mfa_configuration block
+  # when mfa_configuration = "OFF" ("Software token MFA is not enabled for this
+  # User Pool"), so omit the block entirely in that case.
+  dynamic "software_token_mfa_configuration" {
+    for_each = var.mfa_configuration == "OFF" ? [] : [1]
+    content {
+      enabled = true
+    }
   }
 
 
