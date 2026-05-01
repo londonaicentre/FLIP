@@ -89,9 +89,39 @@ variable "INTERNAL_SERVICE_KEY" {
 }
 
 variable "docker_image_tag" {
-  description = "Container image tag for ECS task definitions. Empty default — deploys must pass an explicit tag (Git SHA preferred). 'latest' is intentionally not the default to avoid the mutable-tag pitfalls flagged in the v1 review."
+  description = "Docker image tag for flip-api and flip-ui"
   type        = string
   default     = ""
+}
+
+variable "flip_fl_image_tag" {
+  description = "Docker image tag for FL services (fl-api, fl-server, fl-client)"
+  type        = string
+  default     = ""
+}
+
+variable "docker_registry" {
+  description = "Docker image registry prefix (e.g. ghcr.io/londonaicentre/)"
+  type        = string
+  default     = "ghcr.io/londonaicentre/"
+}
+
+variable "fl_api_name" {
+  description = "FL API Docker image name (backend-specific: flare-fl-api or flower-fl-api)"
+  type        = string
+  default     = "flare-fl-api"
+}
+
+variable "fl_server_name" {
+  description = "FL server Docker image name (backend-specific: flare-fl-server or flower-fl-server)"
+  type        = string
+  default     = "flare-fl-server"
+}
+
+variable "fl_client_name" {
+  description = "FL client Docker image name (backend-specific: flare-fl-client or flower-fl-client)"
+  type        = string
+  default     = "flare-fl-client"
 }
 
 variable "MIN_CLIENTS" {
