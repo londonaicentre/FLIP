@@ -381,9 +381,12 @@ def check_ecs_cluster() -> None:
     print_status("INFO", "Checking ECS cluster...")
     cluster_names = []
     success, output = run_aws_command([
-        "ecs", "list-clusters",
-        "--query", "clusterArns",
-        "--output", "json",
+        "ecs",
+        "list-clusters",
+        "--query",
+        "clusterArns",
+        "--output",
+        "json",
     ])
     if success and output:
         try:
@@ -398,10 +401,14 @@ def check_ecs_cluster() -> None:
     # Only describe if we have at least one cluster
     arn_list = " ".join(cluster_names)
     success2, output2 = run_aws_command([
-        "ecs", "describe-clusters",
-        "--clusters", *cluster_names,
-        "--query", "clusters[0].{name:clusterName,status:status,services:activeServicesCount}",
-        "--output", "json",
+        "ecs",
+        "describe-clusters",
+        "--clusters",
+        *cluster_names,
+        "--query",
+        "clusters[0].{name:clusterName,status:status,services:activeServicesCount}",
+        "--output",
+        "json",
     ])
     if success2 and output2:
         try:
@@ -427,10 +434,14 @@ def check_vpc_endpoints() -> None:
     """
     print_status("INFO", "Checking VPC endpoints...")
     success, output = run_aws_command([
-        "ec2", "describe-vpc-endpoints",
-        "--filters", "Name=vpc-endpoint-type,Values=Interface",
-        "--query", "VpcEndpoints[].{Name:ServiceName,State:State}",
-        "--output", "json",
+        "ec2",
+        "describe-vpc-endpoints",
+        "--filters",
+        "Name=vpc-endpoint-type,Values=Interface",
+        "--query",
+        "VpcEndpoints[].{Name:ServiceName,State:State}",
+        "--output",
+        "json",
     ])
     if not success or not output:
         print_status("INFO", "Could not query VPC endpoints (may need ec2:DescribeVpcEndpoints)")
@@ -443,8 +454,12 @@ def check_vpc_endpoints() -> None:
         return
 
     essential_prefixes = [
-        "com.amazonaws.", ".ecr.dkr", ".ecr.api",
-        ".ssm", ".secretsmanager", ".logs",
+        "com.amazonaws.",
+        ".ecr.dkr",
+        ".ecr.api",
+        ".ssm",
+        ".secretsmanager",
+        ".logs",
     ]
     for ep in endpoints:
         name = ep.get("Name", "")
@@ -464,8 +479,10 @@ def check_trust_pipeline() -> None:
     """
     print_status("INFO", "Checking Trust_1 task pipeline health...")
 
-    success, output = run_ssh_command("", "flip",
-        "docker exec flip-api python3 -c \"import asyncpg,os,json,boto3,asyncio,sys;"
+    success, output = run_ssh_command(
+        "",
+        "flip",
+        'docker exec flip-api python3 -c "import asyncpg,os,json,boto3,asyncio,sys;'
         "async def m():"
         " c=boto3.client('secretsmanager',region_name='eu-west-2');"
         " s=c.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN']);"
@@ -474,7 +491,7 @@ def check_trust_pipeline() -> None:
         " r=await conn.fetch('SELECT task_type,status FROM trust_task WHERE trust_id=''3f0a8199-6adc-4519-982a-c412a6dae98d'' ORDER BY created_at DESC LIMIT 5');"
         " for row in r: print(row[0],row[1]);"
         " await conn.close();"
-        "asyncio.run(m())\"",
+        'asyncio.run(m())"',
         timeout=20,
     )
 
@@ -483,7 +500,11 @@ def check_trust_pipeline() -> None:
         return
 
     critical = {"CREATE_IMAGING", "REIMPORT_STUDIES"}
-    failed_count = sum(1 for line in output.split("\n") if line and line.split(" ", 1)[-1] == "FAILED" and line.split(" ", 1)[0] in critical)
+    failed_count = sum(
+        1
+        for line in output.split("\n")
+        if line and line.split(" ", 1)[-1] == "FAILED" and line.split(" ", 1)[0] in critical
+    )
     if failed_count:
         print_status("FAIL", f"{failed_count} critical Trust_1 task(s) in FAILED state")
     else:
@@ -493,8 +514,10 @@ def check_trust_pipeline() -> None:
 def check_xnat_health() -> None:
     """Verify XNAT is serving its API (not a setup page)."""
     print_status("INFO", "Checking XNAT API health (not setup page)...")
-    success, output = run_ssh_command("", "flip-trust",
-        "docker exec trust1-imaging-api-1 python3 -c \"import requests;"
+    success, output = run_ssh_command(
+        "",
+        "flip-trust",
+        'docker exec trust1-imaging-api-1 python3 -c "import requests;'
         "r=requests.get('http://xnat-web:8080/data/projects',auth=('flipServiceAccount','REDACTED_XNAT_PASSWORD'),timeout=10);"
         "print(r.status_code,r.headers.get('content-type','').split(';')[0])\"",
         timeout=25,
@@ -529,8 +552,10 @@ def check_xnat_health() -> None:
 def check_reimport_status() -> None:
     """Warn if any approved projects have zero reimports after >10 minutes."""
     print_status("INFO", "Checking for projects stuck without reimports...")
-    success, output = run_ssh_command("", "flip",
-        "docker exec flip-api python3 -c \"import asyncpg,os,json,boto3,asyncio,sys;"
+    success, output = run_ssh_command(
+        "",
+        "flip",
+        'docker exec flip-api python3 -c "import asyncpg,os,json,boto3,asyncio,sys;'
         "async def m():"
         " c=boto3.client('secretsmanager',region_name='eu-west-2');"
         " s=c.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN']);"
@@ -539,7 +564,7 @@ def check_reimport_status() -> None:
         " r=await conn.fetch('SELECT p.id,p.name,x.reimport_count,x.retrieve_image_status,x.last_reimport FROM xnat_project_status x JOIN projects p ON x.project_id=p.id WHERE x.reimport_count=0 AND x.last_reimport < NOW() - interval ''10 minutes'' AND p.status=''APPROVED''');"
         " for row in r: print(str(row[0])[:8],str(row[1])[:30],row[2],row[3]);"
         " await conn.close();"
-        "asyncio.run(m())\"",
+        'asyncio.run(m())"',
         timeout=20,
     )
 
@@ -558,7 +583,9 @@ def check_reimport_status() -> None:
 def check_fl_server_clients() -> None:
     """Verify the FL server has connected clients (Trust_1)."""
     print_status("INFO", "Checking FL server clients...")
-    success, output = run_ssh_command("", "flip",
+    success, output = run_ssh_command(
+        "",
+        "flip",
         "docker logs fl-server-net-1 2>&1 | grep -c 'Re-activate the client' | tail -1",
         timeout=10,
     )
@@ -570,7 +597,9 @@ def check_fl_server_clients() -> None:
     if count > 0:
         print_status("PASS", f"FL server has re-activated clients at least once (found {count})")
     else:
-        success2, output2 = run_ssh_command("", "flip",
+        success2, output2 = run_ssh_command(
+            "",
+            "flip",
             "docker logs fl-server-net-1 2>&1 | grep 'Client: New' | tail -3",
             timeout=10,
         )
@@ -583,7 +612,9 @@ def check_fl_server_clients() -> None:
 def check_container_errors() -> None:
     """Scan central hub container logs for recent errors."""
     print_status("INFO", "Scanning central hub container logs for recent errors...")
-    success, output = run_ssh_command("", "flip",
+    success, output = run_ssh_command(
+        "",
+        "flip",
         "docker logs flip-api --since 5m 2>&1 | grep -cE 'ERROR|Exception|Traceback|Name or service not known' || echo 0",
         timeout=15,
     )
@@ -614,8 +645,10 @@ def check_net_endpoints_consistency() -> None:
         print_status("WARN", "NET_ENDPOINTS not set or invalid JSON")
         return
 
-    success, output = run_ssh_command("", "flip",
-        "docker exec flip-api python3 -c \"import asyncpg,os,json,boto3,asyncio;"
+    success, output = run_ssh_command(
+        "",
+        "flip",
+        'docker exec flip-api python3 -c "import asyncpg,os,json,boto3,asyncio;'
         "async def m():"
         " c=boto3.client('secretsmanager',region_name='eu-west-2');"
         " s=c.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN']);"
@@ -624,7 +657,7 @@ def check_net_endpoints_consistency() -> None:
         " rows=await co.fetch('SELECT name,endpoint FROM fl_nets');"
         " for r in rows: print(str(r[0]),str(r[1]));"
         " await co.close();"
-        "asyncio.run(m())\"",
+        'asyncio.run(m())"',
         timeout=20,
     )
 
@@ -641,10 +674,7 @@ def check_net_endpoints_consistency() -> None:
     for net_name, endpoint in env_nets.items():
         db_value = db_nets.get(net_name, "")
         if db_value and db_value != endpoint:
-            print_status(
-                "FAIL",
-                f"NET_ENDPOINTS mismatch for {net_name}: env={endpoint}, DB={db_value}"
-            )
+            print_status("FAIL", f"NET_ENDPOINTS mismatch for {net_name}: env={endpoint}, DB={db_value}")
         elif not db_value:
             print_status("WARN", f"NET_ENDPOINTS for {net_name} not found in fl_nets table")
         else:
@@ -654,8 +684,10 @@ def check_net_endpoints_consistency() -> None:
 def check_mfa_config() -> None:
     """Check ENFORCE_MFA configuration on flip-api."""
     print_status("INFO", "Checking MFA enforcement configuration...")
-    success, output = run_ssh_command("", "flip",
-        "docker exec flip-api python3 -c \"from flip_api.config import get_settings; print(get_settings().ENFORCE_MFA)\"",
+    success, output = run_ssh_command(
+        "",
+        "flip",
+        'docker exec flip-api python3 -c "from flip_api.config import get_settings; print(get_settings().ENFORCE_MFA)"',
         timeout=10,
     )
 
@@ -705,13 +737,13 @@ def check_mfa_config() -> None:
     help="Skip deep smoke tests (ECS, VPC endpoints, container errors, config checks)",
 )
 def main(
-        terraform_dir: Path,
-        skip_network: bool,
-        skip_endpoints: bool,
-        skip_docker: bool,
-        skip_pipeline: bool,
-        skip_deep: bool,
-    ) -> None:
+    terraform_dir: Path,
+    skip_network: bool,
+    skip_endpoints: bool,
+    skip_docker: bool,
+    skip_pipeline: bool,
+    skip_deep: bool,
+) -> None:
     """FLIP Deployment Status Checker.
 
     Verifies that the AWS deployment is functioning correctly.
@@ -1135,9 +1167,15 @@ def main(
                 if code in expected:
                     print_status("PASS", f"{name} responding (HTTP {code}) — {url}")
                 elif code == "000":
-                    print_status("FAIL", f"{name}: connection refused / service not listening — check `docker ps` on Trust EC2 — {url}")
+                    print_status(
+                        "FAIL",
+                        f"{name}: connection refused / service not listening — check `docker ps` on Trust EC2 — {url}",
+                    )
                 else:
-                    print_status("FAIL", f"{name}: unexpected HTTP {code} (expected {expected}) — service responding but unhealthy — {url}")
+                    print_status(
+                        "FAIL",
+                        f"{name}: unexpected HTTP {code} (expected {expected}) — service responding but unhealthy — {url}",
+                    )
 
             print_status(
                 "INFO",
