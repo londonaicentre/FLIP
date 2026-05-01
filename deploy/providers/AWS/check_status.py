@@ -584,7 +584,7 @@ def check_container_errors() -> None:
     """Scan central hub container logs for recent errors."""
     print_status("INFO", "Scanning central hub container logs for recent errors...")
     success, output = run_ssh_command("", "flip",
-        "docker logs flip-api --since 5m 2>&1 | grep -ciE 'ERROR|Exception|Traceback|Name or service not known' || echo 0",
+        "docker logs flip-api --since 5m 2>&1 | grep -cE 'ERROR|Exception|Traceback|Name or service not known' || echo 0",
         timeout=15,
     )
 
@@ -592,7 +592,10 @@ def check_container_errors() -> None:
         print_status("INFO", "Could not scan container logs (SSH unavailable)")
         return
 
-    count = int(output.strip() or "0")
+    try:
+        count = int(output.strip().split("\n")[-1])
+    except ValueError:
+        count = 0
     if count == 0:
         print_status("PASS", "No errors in flip-api logs (last 5 min)")
     elif count <= 5:
