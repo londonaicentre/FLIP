@@ -669,6 +669,7 @@ def check_mfa_config() -> None:
         print_status("WARN", f"Unexpected ENFORCE_MFA value: {value}")
 
 
+@click.command()
 @click.option(
     "--terraform-dir",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
