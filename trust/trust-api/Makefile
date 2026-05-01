@@ -24,6 +24,8 @@ test_coverage_html_command_integration = uv run pytest ./tests/integration --tb=
 docker_command = docker compose -f ../compose_trust.development.yml
 run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
+SCHEMATHESIS_BASE_URL ?= http://localhost:8020
+SCHEMATHESIS_ARGS ?= --checks all --max-examples 25 --request-timeout 5 --wait-for-schema 10
 
 build:
 	@export BASE_IMAGES_DOWNLOAD_DIR=/tmp/images; \
@@ -56,3 +58,6 @@ unit_test: local_test
 integration_test:
 	@export BASE_IMAGES_DOWNLOAD_DIR=/tmp/images TRUST_NAME=TestTrust; \
 	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_integration)
+
+schemathesis_test:
+	uvx --from schemathesis schemathesis run $(SCHEMATHESIS_BASE_URL)/openapi.json $(SCHEMATHESIS_ARGS)

@@ -306,6 +306,22 @@ make unit_test
 `make tests` is a narrower target that runs `flip-ui` unit tests followed by the full `flip-api` test suite (ruff,
 mypy, and pytest).
 
+#### OpenAPI fuzz smoke tests
+
+The FastAPI services expose OpenAPI schemas at `/openapi.json`. Service Makefiles include a `schemathesis_test`
+target that runs [Schemathesis](https://schemathesis.readthedocs.io/) against an already-running service:
+
+```bash
+# From flip-api/, trust/trust-api/, trust/imaging-api/, or trust/data-access-api/
+make schemathesis_test
+
+# Override the default localhost port when needed
+SCHEMATHESIS_BASE_URL=http://localhost:8020 make schemathesis_test
+```
+
+The first CI wiring runs these smoke tests with `continue-on-error: true` so baseline schema and 5xx findings are
+visible without blocking unrelated PRs. When a service baseline is triaged, remove `continue-on-error` for that service.
+
 For the `flip-fl-base` repository, unit tests can be run with:
 
 ```bash

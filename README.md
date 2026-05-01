@@ -87,6 +87,7 @@ For example:
 | `make up-local-trust` | Run a local (on-premises) trust (set `PROD=true` or `PROD=stag` for environment) |
 | `make unit_test` | Run unit tests across all services |
 | `make tests` | Run flip-ui unit tests and the full flip-api test suite (lint + mypy + pytest) |
+| `make schemathesis_test` | From an API service directory, run Schemathesis against that service's `/openapi.json` |
 | `make debug SERVICE=<name>` | Restart one service in debug mode (waits for a debugger on port 5678). Services: `flip-api`, `fl-api-net-1`, `trust-api`, `imaging-api`, `data-access-api` |
 | `make debug-off SERVICE=<name>` | Take a single service back out of debug mode |
 | `make debug-all` | Restart every API service in debug mode |

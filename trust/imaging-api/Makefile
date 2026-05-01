@@ -30,6 +30,8 @@ test_coverage_html_command = uv run pytest --tb=short --disable-warnings --cov=i
 docker_command = docker compose -f ../compose_trust.development.yml
 run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
+SCHEMATHESIS_BASE_URL ?= http://localhost:8001
+SCHEMATHESIS_ARGS ?= --checks all --max-examples 25 --request-timeout 5 --wait-for-schema 10
 
 build:
 	TRUST_NETWORK_NAME="deploy_trust-network-1" \
@@ -64,3 +66,5 @@ local_test:
 	export BASE_IMAGES_DOWNLOAD_DIR=/tmp/images; \
 	$(lint_command) && $(mypy_command) && $(test_coverage_html_command)
 unit_test: local_test
+schemathesis_test:
+	uvx --from schemathesis schemathesis run $(SCHEMATHESIS_BASE_URL)/openapi.json $(SCHEMATHESIS_ARGS)

@@ -30,6 +30,8 @@ test_coverage_html_command_integration = uv run pytest ./tests/integration $(tes
 docker_command = DEBUG=$(DEBUG) docker compose -f ../deploy/compose.development.yml
 run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
+SCHEMATHESIS_BASE_URL ?= http://localhost:8000
+SCHEMATHESIS_ARGS ?= --checks all --max-examples 25 --request-timeout 5 --wait-for-schema 10
 
 up:
 # Note we need to start the db first
@@ -65,6 +67,8 @@ unit_test:
 # don't try to call boto3.
 integration_test:
 	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_integration) --skip-client
+schemathesis_test:
+	uvx --from schemathesis schemathesis run $(SCHEMATHESIS_BASE_URL)/openapi.json $(SCHEMATHESIS_ARGS)
 build:
 	$(docker_command) build $(service_name)
 restart: down up

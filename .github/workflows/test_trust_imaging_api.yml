@@ -58,6 +58,10 @@ jobs:
           echo "ENV=development" >> ../../.env.development
         run: make local_test
 
+      - name: Run Schemathesis OpenAPI smoke test
+        continue-on-error: true
+        run: make schemathesis_test
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
