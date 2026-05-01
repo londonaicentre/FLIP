@@ -544,7 +544,7 @@ def check_reimport_status() -> None:
     )
 
     if not success or "Traceback" in output:
-        print_status("INFO", "Could not check reimport status (SSH unavailable)")
+        print_status("INFO", "Could not check reimport status (advanced check)")
         return
 
     stuck = [l for l in output.split("\n") if l.strip()]
@@ -629,7 +629,7 @@ def check_net_endpoints_consistency() -> None:
     )
 
     if not success or "Traceback" in output:
-        print_status("INFO", "Could not check NET_ENDPOINTS consistency (SSH unavailable)")
+        print_status("INFO", "Could not check NET_ENDPOINTS consistency (advanced check)")
         return
 
     db_nets = {}
