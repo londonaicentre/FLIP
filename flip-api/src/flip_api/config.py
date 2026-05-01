@@ -94,11 +94,13 @@ class Settings(BaseSettings):
 
     @field_validator("ENFORCE_MFA", mode="before")
     @classmethod
-    def coerce_empty_mfa(cls, v: object) -> bool:
-        """Treat empty-string ENFORCE_MFA as the default True."""
+    def coerce_empty_mfa(cls, v: str | bool | None) -> bool:
+        """Treat empty-string or None ENFORCE_MFA as the default True."""
         if v is None or v == "":
             return True
-        return v
+        if isinstance(v, bool):
+            return v
+        return v.lower() in ("true", "1")    # type: ignore[union-attr]
 
     # Trust task queue settings
     HEARTBEAT_TIMEOUT_SECONDS: int = 30  # How long since last heartbeat before a trust is considered offline
