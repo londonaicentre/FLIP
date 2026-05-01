@@ -1,0 +1,439 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ---------------------------------------------------------------------------
+# Global trust-wide configuration
+# ---------------------------------------------------------------------------
+trustName: "Trust_1"
+trustNumber: 1
+environment: production
+logLevel: INFO
+
+# AWS region for S3 bucket access (used by FL client init container and other AWS-integrated services)
+awsRegion: "eu-west-2"
+
+# S3 bucket for uploaded federated data (mounted by FL client)
+uploadedFederatedDataBucket: ""
+
+# FL backend selection — switches image, command, volumes, env for the FL client
+# Supported values: "nvflare" | "flower"
+flBackend: "nvflare"
+
+# Global image pull secrets (optional — for private registries)
+imagePullSecrets: []
+#   - name: my-registry-credentials
+
+# Whether to create the namespace as part of the chart install
+namespace:
+  create: true
+  name: ""
+
+# ---------------------------------------------------------------------------
+# Secrets management
+# ---------------------------------------------------------------------------
+# When secrets.create is true, the chart creates a Secret with the keys listed
+# in the template. The operator must provide the values (e.g. via --set or a
+# separate secrets file). When false, the operator must create the Secret
+# externally before installing the chart.
+secrets:
+  create: false
+  # Name of the existing Secret (when secrets.create=false)
+  existingName: "flip-trust-secrets"
+  # Key-value pairs for the Secret (when secrets.create=true)
+  # These should be provided via --set or a separate values file, not checked in.
+  data:
+    aes-key-base64: ""
+    trust-api-key: ""
+    omop-postgres-password: ""
+    data-access-postgres-password: ""
+    orthanc-username: ""
+    orthanc-password: ""
+    xnat-admin-user: ""
+    xnat-admin-password: ""
+    xnat-service-user: ""
+    xnat-service-password: ""
+    xnat-datasource-password: ""
+    grafana-admin-password: ""
+    s3-access-key-id: ""
+    s3-secret-access-key: ""
+
+# ---------------------------------------------------------------------------
+# trust-api — API gateway, polls Central Hub for tasks, orchestrates trust
+# ---------------------------------------------------------------------------
+trustApi:
+  enabled: true
+  image:
+    repository: ghcr.io/londonaicentre/trust-api
+    tag: stag
+    pullPolicy: Always
+  replicas: 1
+  service:
+    port: 8000
+    type: ClusterIP
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  env:
+    CENTRAL_HUB_API_URL: ""
+    TRUST_API_KEY_HEADER: "X-Trust-Api-Key"
+    POLL_INTERVAL_SECONDS: "5"
+    # Internal service URLs (other services in the same K8s namespace)
+    dataAccessApiUrl: "http://data-access-api:8000"
+    imagingApiUrl: "http://imaging-api:8000"
+
+# ---------------------------------------------------------------------------
+# imaging-api — DICOM image retrieval from PACS / XNAT
+# ---------------------------------------------------------------------------
+imagingApi:
+  enabled: true
+  image:
+    repository: ghcr.io/londonaicentre/imaging-api
+    tag: stag
+    pullPolicy: Always
+  replicas: 1
+  command:
+    - "uv"
+    - "run"
+    - "python"
+    - "-m"
+    - "uvicorn"
+    - "imaging_api.main:app"
+    - "--host"
+    - "0.0.0.0"
+    - "--port"
+    - "8000"
+  service:
+    port: 8000
+    type: ClusterIP
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  env:
+    XNAT_URL: "http://xnat-web:8080"
+    XNAT_PORT: "8080"
+    PACS_ID: "1"
+    XNAT_DATABASE_URL: "postgresql+asyncpg://xnat:xnat@xnat-db:5432/xnat"
+    DATA_ACCESS_API_URL: "http://data-access-api:8000"
+    BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
+
+# ---------------------------------------------------------------------------
+# data-access-api — OMOP database queries for cohort analysis
+# ---------------------------------------------------------------------------
+dataAccessApi:
+  enabled: true
+  image:
+    repository: ghcr.io/londonaicentre/data-access-api
+    tag: stag
+    pullPolicy: Always
+  replicas: 1
+  service:
+    port: 8000
+    type: ClusterIP
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  env:
+    OMOP_DB_SERVICE_NAME: "omop-db"
+    OMOP_POSTGRES_DB: "trustomopdb"
+    DATA_ACCESS_POSTGRES_USER: "data_analyst_reader"
+
+# ---------------------------------------------------------------------------
+# Shared images PVC — used by imaging-api and fl-client to share downloaded
+# DICOM images
+# ---------------------------------------------------------------------------
+sharedImagesPvc:
+  enabled: true
+  storageClassName: ""
+  size: 100Gi
+  accessMode: ReadWriteMany
+
+# ---------------------------------------------------------------------------
+# FL client — federated learning participant
+# ---------------------------------------------------------------------------
+flClient:
+  enabled: true
+  netId: "net-1"
+  s3EndpointOverride: ""
+  imagesDir: /app/data/images
+  image:
+    repository: ghcr.io/londonaicentre
+    tag: stag
+    pullPolicy: Always
+  nvflare:
+    kitFromS3:
+      enabled: true
+      bucket: ""
+      kitDate: "20260318"
+      pathTemplate: "fl-flare-participant-kits/{{ .Values.flClient.nvflare.kitFromS3.kitDate }}/net-1/services/{{ .Values.trustName }}"
+  flower:
+    kitFromS3:
+      enabled: true
+      bucket: ""
+      kitDate: "20260401"
+      pathTemplate: "fl-flower-participant-kits/{{ .Values.flClient.flower.kitFromS3.kitDate }}/net-1"
+    superlink: ""
+    supernodeClientAppIoAddress: "127.0.0.1:9094"
+  resources:
+    requests:
+      memory: "8Gi"
+      cpu: "4"
+    limits:
+      memory: "32Gi"
+      cpu: "16"
+  shmSize: 8Gi
+  gpu:
+    enabled: true
+    count: 1
+    operator:
+      # Set to true to enable GPU operator validation resources
+      enabled: false
+
+# ---------------------------------------------------------------------------
+# omop-db — Mocked OMOP patient database (PostgreSQL)
+# ---------------------------------------------------------------------------
+omopDb:
+  enabled: true
+  external:
+    host: ""
+    port: 5432
+  image:
+    repository: ghcr.io/londonaicentre/omop-db
+    tag: latest
+    pullPolicy: Always
+  persistence:
+    enabled: true
+    storageClassName: ""
+    size: 10Gi
+    accessMode: ReadWriteOnce
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  credentials:
+    user: postgres
+    # password is supplied via secrets.data.omop-postgres-password
+  initJob:
+    enabled: false
+    s3Bucket: ""
+    s3Path: "omop-data/backups/latest.tar.gz"
+
+# ---------------------------------------------------------------------------
+# orthanc — Mocked DICOM PACS server
+# ---------------------------------------------------------------------------
+orthanc:
+  enabled: true
+  external:
+    host: ""
+    port: 8042
+  image:
+    repository: ghcr.io/londonaicentre/orthanc
+    tag: stag
+    pullPolicy: Always
+  replicas: 1
+  service:
+    port: 8042
+    type: ClusterIP
+  persistence:
+    enabled: true
+    storageClassName: ""
+    size: 50Gi
+    accessMode: ReadWriteOnce
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+# ---------------------------------------------------------------------------
+# XNAT — Neuroimaging platform (multi-component)
+# ---------------------------------------------------------------------------
+xnat:
+  enabled: true
+  initJob:
+    enabled: false
+  web:
+    enabled: true
+    adminUser: "admin"
+    image:
+      repository: ghcr.io/londonaicentre/xnat-web
+      tag: stag
+      pullPolicy: Always
+    service:
+      port: 8080
+      type: ClusterIP
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 100Gi
+      accessMode: ReadWriteOnce
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+    env:
+      XNAT_MIN_HEAP: "1024m"
+      XNAT_MAX_HEAP: "3072m"
+  db:
+    enabled: true
+    datasourceUsername: "xnat"
+    image:
+      repository: ghcr.io/londonaicentre/xnat-db
+      tag: stag
+      pullPolicy: Always
+    service:
+      port: 5432
+      type: ClusterIP
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 20Gi
+      accessMode: ReadWriteOnce
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+  nginx:
+    enabled: true
+    image:
+      repository: ghcr.io/londonaicentre/xnat-nginx
+      tag: stag
+      pullPolicy: Always
+    service:
+      port: 80
+      type: ClusterIP
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+
+# ---------------------------------------------------------------------------
+# Observability Stack — Loki, Alloy, Grafana
+# ---------------------------------------------------------------------------
+observability:
+  loki:
+    enabled: true
+    image:
+      repository: grafana/loki
+      tag: "3.4.0"
+      pullPolicy: IfNotPresent
+    service:
+      port: 3100
+      type: ClusterIP
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 10Gi
+      accessMode: ReadWriteOnce
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "200m"
+  alloy:
+    enabled: true
+    image:
+      repository: grafana/alloy
+      tag: "v1.9.0"
+      pullPolicy: IfNotPresent
+    service:
+      port: 12345
+      type: ClusterIP
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+  grafana:
+    enabled: true
+    image:
+      repository: grafana/grafana
+      tag: "11.5.0"
+      pullPolicy: IfNotPresent
+    service:
+      port: 3000
+      type: ClusterIP
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 1Gi
+      accessMode: ReadWriteOnce
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "200m"
+    # adminPassword is supplied via secrets.data.grafana-admin-password
+
+# ---------------------------------------------------------------------------
+# Horizontal Pod Autoscaler configuration
+# ---------------------------------------------------------------------------
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# ---------------------------------------------------------------------------
+# Pod Disruption Budget
+# ---------------------------------------------------------------------------
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# ---------------------------------------------------------------------------
+# Network policies — zero inbound trust model
+# ---------------------------------------------------------------------------
+networkPolicies:
+  enabled: true
+  # CIDRs that are allowed for egress (in addition to intra-namespace)
+  # Central Hub API URL and FL server NLB should be added here
+  allowedEgressCIDRs: []
+  #   - 10.0.0.0/8
+  #   - 172.16.0.0/12
+  # Egress rules to allow (DNS, NTP, etc.)
+  allowedEgressPorts:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
