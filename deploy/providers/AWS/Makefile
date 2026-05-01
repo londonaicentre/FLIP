@@ -81,6 +81,14 @@ $(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $
 $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
 export TF_VAR_MIN_CLIENTS=${MIN_CLIENTS}
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
+export TF_VAR_flip_fl_image_tag=${DOCKER_FL_TAG}
+export TF_VAR_docker_registry=${DOCKER_REGISTRY}
+export TF_VAR_fl_api_name=${DOCKER_FL_API_NAME}
+export TF_VAR_fl_server_name=${DOCKER_FL_SERVER_NAME}
+export TF_VAR_fl_client_name=${DOCKER_FL_CLIENT_NAME}
+export TF_VAR_fl_backend=${FL_BACKEND}
+export TF_VAR_flare_kit_date=${FLARE_KIT_DATE}
+export TF_VAR_flower_kit_date=${FLOWER_KIT_DATE}
 export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
 export TF_VAR_DB_PORT=${DB_PORT}
 export TF_VAR_UI_PORT=${UI_PORT}

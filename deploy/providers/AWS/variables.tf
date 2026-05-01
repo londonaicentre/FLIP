@@ -124,6 +124,24 @@ variable "fl_client_name" {
   default     = "flare-fl-client"
 }
 
+variable "fl_backend" {
+  description = "FL backend: nvflare or flower"
+  type        = string
+  default     = "nvflare"
+}
+
+variable "flare_kit_date" {
+  description = "Date stamp for the NVFLARE provisioned kit (e.g. 20260429), used to construct the S3 path for cert syncing"
+  type        = string
+  default     = ""
+}
+
+variable "flower_kit_date" {
+  description = "Date stamp for the Flower provisioned kit"
+  type        = string
+  default     = ""
+}
+
 variable "MIN_CLIENTS" {
   description = "Minimum number of FL clients required before the server starts training"
   type        = number
