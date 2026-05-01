@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from unittest.mock import call, patch
 
 import pytest
-from nvflare.fuel.flare_api.api_spec import InternalError
+from nvflare.fuel.flare_api.api_spec import InternalError, SessionClosed
 
 from fl_api.utils.flip_session import FLIP_Session
 from fl_api.utils.schemas import ServerInfoModel, SystemInfoModel
@@ -48,6 +48,40 @@ def test_do_command_retries_once_on_session_inactive(session):
     try_connect.assert_called_once_with(timeout=5.0)
     assert parent_do_command.call_count == 2
     parent_do_command.assert_has_calls([call("CMD"), call("CMD")])
+
+
+def test_do_command_retries_once_on_session_closed(session):
+    """✅ Reconnect + retry once when parent _do_command raises SessionClosed."""
+    sentinel = {"reconnected": True}
+    with (
+        patch(
+            "nvflare.fuel.flare_api.flare_api.Session._do_command",
+            side_effect=[SessionClosed("session closed"), sentinel],
+        ) as parent_do_command,
+        patch.object(session, "_reconnect") as mock_reconnect,
+    ):
+        result = session._do_command("CMD")
+
+    assert result == sentinel
+    mock_reconnect.assert_called_once_with()
+    assert parent_do_command.call_count == 2
+    parent_do_command.assert_has_calls([call("CMD"), call("CMD")])
+
+
+def test_do_command_propagates_exception_if_retry_fails_after_reconnect(session):
+    """❌ SessionClosed propagates when the retry after reconnect also raises."""
+    with (
+        patch(
+            "nvflare.fuel.flare_api.flare_api.Session._do_command",
+            side_effect=[SessionClosed("session closed"), SessionClosed("still closed")],
+        ) as parent_do_command,
+        patch.object(session, "_reconnect") as mock_reconnect,
+    ):
+        with pytest.raises(SessionClosed, match="still closed"):
+            session._do_command("CMD")
+
+    mock_reconnect.assert_called_once_with()
+    assert parent_do_command.call_count == 2
 
 
 def test_check_server_status_returns_server_info(session):
