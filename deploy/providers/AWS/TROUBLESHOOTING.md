@@ -213,7 +213,7 @@ ssh flip-trust "docker restart trust1-imaging-api-1"
 
 **Root cause**: `ENFORCE_MFA=true` (the Settings default in `flip-api/src/flip_api/config.py:85`) gates every authenticated route on TOTP enrollment. The production compose file (`deploy/compose.production.yml`) did not pass `ENFORCE_MFA`, so the default `true` always applied.
 
-**Fix**: The compose file now includes `ENFORCE_MFA=${ENFORCE_MFA:-false}`. To temporarily disable for testing, set in `.env.stag`:
+**Fix**: The compose file now passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` (inheriting the secure default). To temporarily disable for testing, set in `.env.stag`:
 
 ```
 ENFORCE_MFA=false
@@ -343,7 +343,21 @@ The code fix (adding `timeout=120` to all XNAT calls) prevents recurrence.
 
 **Root cause**: The production compose file (`deploy/compose.production.yml`) did not include `ENFORCE_MFA` in the flip-api environment block. The Pydantic Settings default (`true`) was never overridden.
 
-**Fix**: The compose file now includes `ENFORCE_MFA=${ENFORCE_MFA:-false}`.
+**Fix**: The compose file now passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so the env var can be overridden. To disable MFA in staging, add `ENFORCE_MFA=false` to `.env.stag` and redeploy. Note: the default in compose is `true` (secure by default) — you must explicitly set `false` to disable.
+
+---
+
+### 4.4 DHCP options change not applied to running instances
+
+**Symptom**: After deploying the ECS foundation, `flip.local` domain resolution doesn't work from existing EC2 instances.
+
+**Root cause**: The `dhcp.tf` resource associates a new DHCP options set (with `flip.local` search domain) to the VPC. Existing EC2 instances won't pick up the new options until their DHCP lease expires and renews (typically 24-72 hours for AWS default, or a reboot). Until renewal, the instances continue using the previous (default) DHCP options.
+
+**Fix**: Reboot the EC2 instance to force an immediate DHCP renewal:
+```bash
+aws ec2 reboot-instances --instance-ids <instance-id> --profile FlipDeveloperAccess
+```
+Or wait for the lease to renew naturally. This only matters if the instance needs to resolve `flip.local` domains (which it doesn't during PR 1 — ECS Fargate tasks are the consumers in PR 2).
 
 ---
 
@@ -365,7 +379,7 @@ async def main():
     secret = client.get_secret_value(SecretId=os.environ['POSTGRES_SECRET_ARN'])
     pwd = json.loads(secret['SecretString']).get('password','')
     conn = await asyncpg.connect(host=os.environ['DB_HOST'], port=5432, user=os.environ['POSTGRES_USER'], database=os.environ['POSTGRES_DB'], password=pwd)
-    rows = await conn.fetch('SELECT task_type, status, created_at FROM trust_task WHERE trust_id = \$1 ORDER BY created_at DESC LIMIT 10', '3f0a8199-6adc-4519-982a-c412a6dae98d')
+    rows = await conn.fetch('SELECT task_type, status, created_at FROM trust_task WHERE trust_id = \$1 ORDER BY created_at DESC LIMIT 10', '<trust-id>')  # replace <trust-id> with the actual Trust UUID
     for r in rows: print(f'{r[0]:30s} {r[1]:12s} {r[2]}')
     await conn.close()
 asyncio.run(main())\"

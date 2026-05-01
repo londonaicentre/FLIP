@@ -16,34 +16,42 @@
 # secrets, and write logs without traversing the NAT gateway. Required because
 # Fargate tasks in private subnets need outbound access to AWS APIs at task
 # launch — without these, image pulls and secret reads silently hang.
+#
+# Gated behind enable_ecs_endpoints: creating 5 interface endpoints costs
+# ~$73/month in idle ENI hourly charges. Until PR 2 deploys ECS services
+# that consume them, existing EC2 traffic uses the NAT gateway just fine.
+# The S3 gateway endpoint is always created (no hourly charge).
 
 ############################
 # Security group for interface endpoints
 ############################
 
 resource "aws_security_group" "vpc_endpoints" {
+  count       = var.enable_ecs_endpoints ? 1 : 0
   name        = "vpc-endpoints"
   description = "TLS 443 to AWS interface endpoints from VPC tasks"
   vpc_id      = module.flip_vpc.vpc_id
 }
 
 resource "aws_security_group_rule" "vpc_endpoints_ingress_from_vpc" {
+  count             = var.enable_ecs_endpoints ? 1 : 0
   type              = "ingress"
   description       = "HTTPS from anywhere in the VPC (ECS tasks)"
   from_port         = 443
   to_port           = 443
   protocol          = "tcp"
-  security_group_id = aws_security_group.vpc_endpoints.id
+  security_group_id = aws_security_group.vpc_endpoints[0].id
   cidr_blocks       = [var.vpc_cidr]
 }
 
 resource "aws_security_group_rule" "vpc_endpoints_egress_all" {
+  count             = var.enable_ecs_endpoints ? 1 : 0
   type              = "egress"
   description       = "Default egress for endpoint ENIs"
   from_port         = 0
   to_port           = 0
   protocol          = "-1"
-  security_group_id = aws_security_group.vpc_endpoints.id
+  security_group_id = aws_security_group.vpc_endpoints[0].id
   cidr_blocks       = ["0.0.0.0/0"]
 }
 
@@ -73,11 +81,11 @@ locals {
 }
 
 resource "aws_vpc_endpoint" "interface" {
-  for_each            = local.interface_endpoint_services
+  for_each            = var.enable_ecs_endpoints ? local.interface_endpoint_services : toset([])
   vpc_id              = module.flip_vpc.vpc_id
   service_name        = "com.amazonaws.${var.AWS_REGION}.${each.value}"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = module.flip_vpc.private_subnets
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
   private_dns_enabled = true
 }

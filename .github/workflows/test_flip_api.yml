@@ -59,7 +59,10 @@ jobs:
           echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
           echo "SES_VERIFIED_EMAIL=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../.env.development
           echo "AWS_SES_ADMIN_EMAIL_ADDRESS=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../../.env.development
-          echo "AWS_SES_SENDER_EMAIL_ADDRESS=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../../.env.development
+          # The GitHub environment can inject empty-string env vars; Pydantic
+          # Settings treats explicit env vars (even empty) as an override of
+          # the model default. Set ENV explicitly to prevent validation failure.
+          echo "ENV=development" >> ../.env.development
 
       - name: Run unit tests
         run: make unit_test

@@ -55,7 +55,7 @@ jobs:
           echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
           echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
           echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-      - name: Run tests with pytest (example)
+          echo "ENV=development" >> ../../.env.development
         run: make local_test
 
       - name: Upload coverage to Codecov

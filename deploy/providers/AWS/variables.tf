@@ -106,6 +106,12 @@ variable "enable_efs" {
   default     = false
 }
 
+variable "enable_ecs_endpoints" {
+  description = "Enable VPC interface endpoints (SSM, Secrets, Logs, ECR) for ECS Fargate. Gated to false until PR 2 adds ECS services that consume them — existing EC2 traffic uses the NAT gateway. Unconditionally creating endpoints before PR 2 incurs ~$73/month idle cost."
+  type        = bool
+  default     = false
+}
+
 variable "enable_service_discovery" {
   description = "Enable Cloud Map Service Discovery namespace. Gated to false until PR 2 adds ECS services that register — creating the namespace without registrants is dead infra."
   type        = bool

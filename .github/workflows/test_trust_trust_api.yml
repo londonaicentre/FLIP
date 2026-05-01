@@ -55,6 +55,9 @@ jobs:
           echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
           echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
           echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
+          # The GitHub environment can inject empty-string env vars; Pydantic
+          # Settings treats explicit env vars (even empty) as an override.
+          echo "ENV=development" >> ../../.env.development
 
       - name: Run tests with pytest (example)
         # Replace with your actual test command
