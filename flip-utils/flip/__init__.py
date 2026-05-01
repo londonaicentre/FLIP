@@ -36,4 +36,4 @@ from flip.core.factory import FLIP
 
 __all__ = ["FLIP", "FLIPBase"]
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"

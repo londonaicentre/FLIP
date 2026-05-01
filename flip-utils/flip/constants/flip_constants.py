@@ -49,7 +49,8 @@ class ProdSettings(_Common):
 
     Used when LOCAL_DEV=false. Settings are grouped by which FL role uses them:
     - **Server-only** (fl-server on Central Hub): FLIP_API_INTERNAL_URL, INTERNAL_SERVICE_KEY*
-    - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL
+    - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL,
+      TRUST_INTERNAL_SERVICE_KEY*
     - **Shared**: IMAGES_DIR, NET_ID, UPLOADED_FEDERATED_DATA_BUCKET
     """
 
@@ -67,6 +68,14 @@ class ProdSettings(_Common):
     # -- Client-only: fl-client on trust side calls local APIs using these --
     DATA_ACCESS_API_URL: HttpUrl = "http://localhost:8001"  # type: ignore[assignment]
     IMAGING_API_URL: HttpUrl = "http://localhost:8002"  # type: ignore[assignment]
+    # Trust-internal service auth — protects imaging-api and data-access-api on the
+    # trust Docker network from unauthenticated callers. The fl-client container is
+    # injected with the per-trust plaintext key in TRUST_INTERNAL_SERVICE_KEY by the
+    # trust compose stack (see trust/compose_trust.*.flower.yml / *.nvflare.yml in
+    # the FLIP repo). The flip package forwards it on every call to imaging-api or
+    # data-access-api; user training code does not deal with the header directly.
+    TRUST_INTERNAL_SERVICE_KEY_HEADER: str = "X-Trust-Internal-Service-Key"
+    TRUST_INTERNAL_SERVICE_KEY: str = ""
 
     # -- Shared --
     IMAGES_DIR: str = ""
