@@ -1,0 +1,170 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if and .Values.xnat.enabled .Values.xnat.web.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-web
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-web
+data:
+  XNAT_HOME: /data/xnat/home
+  XNAT_ADMIN_USER: {{ .Values.xnat.web.adminUser | quote }}
+  XNAT_PORT: "8080"
+  XNAT_DATASOURCE_DRIVER: "org.postgresql.Driver"
+  XNAT_DATASOURCE_NAME: "xnat"
+  XNAT_DATASOURCE_USERNAME: {{ .Values.xnat.db.datasourceUsername | quote }}
+  XNAT_DATASOURCE_URL: "jdbc:postgresql://xnat-db:5432/xnat"
+  XNAT_ACTIVEMQ_URL: ""
+  XNAT_SMTP_ENABLED: "false"
+  XNAT_EMAIL: "email@gstt.nhs.uk"
+  XNAT_MIN_HEAP: {{ .Values.xnat.web.env.XNAT_MIN_HEAP | quote }}
+  XNAT_MAX_HEAP: {{ .Values.xnat.web.env.XNAT_MAX_HEAP | quote }}
+  CATALINA_OPTS: "-Xms{{ .Values.xnat.web.env.XNAT_MIN_HEAP }} -Xmx{{ .Values.xnat.web.env.XNAT_MAX_HEAP }} -Dxnat.home=/data/xnat/home -XX:+UseG1GC -Djava.awt.headless=true"
+  PACS_DICOM_PORT: "4242"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: xnat-web
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-web
+spec:
+  type: {{ .Values.xnat.web.service.type }}
+  ports:
+    - port: {{ .Values.xnat.web.service.port }}
+      targetPort: tomcat
+      protocol: TCP
+      name: tomcat
+  selector:
+    {{- include "flip-trust.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-web
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-web
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: xnat-web
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: xnat-web
+    spec:
+      enableServiceLinks: false
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: wait-for-xnat-db
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              until nc -z xnat-db 5432; do
+                echo "Waiting for xnat-db:5432..."
+                sleep 3
+              done
+              echo "xnat-db is ready."
+      containers:
+        - name: tomcat
+          image: "{{ .Values.xnat.web.image.repository }}:{{ .Values.xnat.web.image.tag }}"
+          imagePullPolicy: {{ .Values.xnat.web.image.pullPolicy }}
+          ports:
+            - name: tomcat
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "flip-trust.fullname" . }}-xnat-web
+          env:
+            - name: XNAT_ADMIN_INITIAL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-admin-password
+            - name: XNAT_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-admin-password
+            - name: XNAT_SERVICE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-service-user
+            - name: XNAT_SERVICE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-service-password
+            - name: XNAT_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-datasource-password
+          volumeMounts:
+            - name: data
+              mountPath: /data/xnat/home/logs
+              subPath: logs
+            - name: data
+              mountPath: /data/xnat/archive
+              subPath: archive
+            - name: data
+              mountPath: /data/xnat/build
+              subPath: build
+            - name: data
+              mountPath: /data/xnat/cache
+              subPath: cache
+          resources:
+            {{- toYaml .Values.xnat.web.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "flip-trust.fullname" . }}-xnat-web
+{{- if .Values.xnat.web.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-web
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-web
+spec:
+  accessModes:
+    - {{ .Values.xnat.web.persistence.accessMode }}
+  {{- if .Values.xnat.web.persistence.storageClassName }}
+  storageClassName: {{ .Values.xnat.web.persistence.storageClassName }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.xnat.web.persistence.size }}
+{{- end }}
+{{- end }}

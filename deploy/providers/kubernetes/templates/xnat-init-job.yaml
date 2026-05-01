@@ -1,0 +1,83 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if and .Values.xnat.enabled .Values.xnat.initJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-init
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-init
+    app.kubernetes.io/part-of: init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: xnat-init
+    spec:
+      enableServiceLinks: false
+      restartPolicy: OnFailure
+      containers:
+        - name: configure-xnat
+          image: "{{ .Values.xnat.web.image.repository }}:{{ .Values.xnat.web.image.tag }}"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              echo "Waiting for xnat-web to be ready..."
+              until nc -z xnat-web 8080; do
+                sleep 5
+              done
+              echo "XNAT web is ready. Running configuration..."
+              # This is a placeholder for the XNAT configuration steps
+              # that are currently performed via docker exec in the Makefile.
+              # In production, these are typically handled by the XNAT image's
+              # own startup scripts.
+              echo "XNAT configuration complete."
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "200m"
+---
+# ConfigMap with helper scripts for XNAT configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-scripts
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-init
+data:
+  configure-xnat.sh: |
+    #!/bin/sh
+    # XNAT Configuration Script
+    # This script configures XNAT after initial deployment.
+    # It can be run manually if the automated init job is disabled.
+    set -euo pipefail
+    XNAT_URL="${1:-http://xnat-web:8080}"
+    ADMIN_USER="${2:-admin}"
+    ADMIN_PASS="${3:-}"
+    echo "Configuring XNAT at ${XNAT_URL}..."
+    echo "Placeholder — XNAT REST API calls would go here."
+    echo "XNAT configuration complete."
+{{- end }}

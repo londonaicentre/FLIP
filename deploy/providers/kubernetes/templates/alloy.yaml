@@ -1,0 +1,112 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if .Values.observability.alloy.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-alloy
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alloy
+data:
+  config.alloy: |
+{{ .Files.Get "config/alloy-config.alloy" | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alloy
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alloy
+spec:
+  type: {{ .Values.observability.alloy.service.type }}
+  ports:
+    - port: {{ .Values.observability.alloy.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "flip-trust.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: alloy
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-alloy
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alloy
+spec:
+  selector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: alloy
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: alloy
+    spec:
+      enableServiceLinks: false
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "flip-trust.fullname" . }}-alloy
+      containers:
+        - name: alloy
+          image: "{{ .Values.observability.alloy.image.repository }}:{{ .Values.observability.alloy.image.tag }}"
+          imagePullPolicy: {{ .Values.observability.alloy.image.pullPolicy }}
+          args:
+            - run
+            - --server.http.listen-addr=0.0.0.0:12345
+            - /etc/alloy/config.alloy
+          ports:
+            - name: http
+              containerPort: 12345
+              protocol: TCP
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: varlib
+              mountPath: /var/lib
+              readOnly: true
+          resources:
+            {{- toYaml .Values.observability.alloy.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "flip-trust.fullname" . }}-alloy
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: varlib
+          hostPath:
+            path: /var/lib
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-alloy
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alloy
+{{- end }}

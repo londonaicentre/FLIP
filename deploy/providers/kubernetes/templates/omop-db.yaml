@@ -1,0 +1,159 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if .Values.omopDb.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-omop-db
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-db
+data:
+  POSTGRES_USER: {{ .Values.omopDb.credentials.user | quote }}
+  POSTGRES_DB: {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: omop-db
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-db
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5432
+      targetPort: postgres
+      protocol: TCP
+      name: postgres
+  selector:
+    {{- include "flip-trust.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-db
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-omop-db
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-db
+spec:
+  serviceName: omop-db
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: omop-db
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: omop-db
+    spec:
+      enableServiceLinks: false
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: postgres
+          image: "{{ .Values.omopDb.image.repository }}:{{ .Values.omopDb.image.tag }}"
+          imagePullPolicy: {{ .Values.omopDb.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "flip-trust.fullname" . }}-omop-db
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: omop-postgres-password
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            {{- toYaml .Values.omopDb.resources | nindent 12 }}
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.omopDb.credentials.user | quote }}
+                - -d
+                - {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }}
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.omopDb.credentials.user | quote }}
+                - -d
+                - {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+  {{- if .Values.omopDb.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "flip-trust.labels" . | nindent 10 }}
+          app.kubernetes.io/component: omop-db
+      spec:
+        accessModes:
+          - {{ .Values.omopDb.persistence.accessMode }}
+        {{- if .Values.omopDb.persistence.storageClassName }}
+        storageClassName: {{ .Values.omopDb.persistence.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.omopDb.persistence.size }}
+  {{- else }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 1Gi
+  {{- end }}
+{{- else }}
+# External omop-db: create a minimal Service to point at the external host
+apiVersion: v1
+kind: Service
+metadata:
+  name: omop-db
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-db
+    flip/external: "true"
+spec:
+  type: ExternalName
+  externalName: {{ .Values.omopDb.external.host | quote }}
+  ports:
+    - port: {{ .Values.omopDb.external.port }}
+      targetPort: {{ .Values.omopDb.external.port }}
+      protocol: TCP
+      name: postgres
+{{- end }}

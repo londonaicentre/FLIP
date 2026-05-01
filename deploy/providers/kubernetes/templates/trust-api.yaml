@@ -1,0 +1,114 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if .Values.trustApi.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-trust-api
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trust-api
+{{- if .Values.imagePullSecrets }}
+{{ include "flip-trust.imagePullSecrets" . }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-trust-api
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trust-api
+data:
+  CENTRAL_HUB_API_URL: {{ .Values.trustApi.env.CENTRAL_HUB_API_URL | quote }}
+  DATA_ACCESS_API_URL: {{ .Values.trustApi.env.dataAccessApiUrl | quote }}
+  IMAGING_API_URL: {{ .Values.trustApi.env.imagingApiUrl | quote }}
+  POLL_INTERVAL_SECONDS: {{ .Values.trustApi.env.POLL_INTERVAL_SECONDS | quote }}
+  TRUST_API_KEY_HEADER: {{ .Values.trustApi.env.TRUST_API_KEY_HEADER | quote }}
+  TRUST_NAME: {{ .Values.trustName | quote }}
+  ENV: {{ .Values.environment | quote }}
+  LOG_LEVEL: {{ .Values.logLevel | quote }}
+  TRUST_NUMBER: {{ .Values.trustNumber | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-trust-api
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trust-api
+spec:
+  replicas: {{ .Values.trustApi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: trust-api
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: trust-api
+    spec:
+      enableServiceLinks: false
+      serviceAccountName: {{ include "flip-trust.fullname" . }}-trust-api
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: trust-api
+          image: "{{ .Values.trustApi.image.repository }}:{{ .Values.trustApi.image.tag }}"
+          imagePullPolicy: {{ .Values.trustApi.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.trustApi.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "flip-trust.fullname" . }}-trust-api
+          env:
+            - name: TRUST_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-api-key
+            - name: AES_KEY_BASE64
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: aes-key-base64
+          resources:
+            {{- toYaml .Values.trustApi.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trust-api
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: trust-api
+spec:
+  type: {{ .Values.trustApi.service.type }}
+  ports:
+    - port: {{ .Values.trustApi.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "flip-trust.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: trust-api
+{{- end }}
