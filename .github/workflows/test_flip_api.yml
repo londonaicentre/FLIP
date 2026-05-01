@@ -52,16 +52,14 @@ jobs:
       - name: Setup environment file
         run: |
           cp ../.env.development.example ../.env.development
-          # Override sensitive values with GitHub secrets
-          echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 }}" >> ../.env.development
-          echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-          echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-          echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-          echo "SES_VERIFIED_EMAIL=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../.env.development
-          echo "AWS_SES_ADMIN_EMAIL_ADDRESS=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../../.env.development
-          # The GitHub environment can inject empty-string env vars; Pydantic
-          # Settings treats explicit env vars (even empty) as an override of
-          # the model default. Set ENV explicitly to prevent validation failure.
+          # Use deterministic non-secret CI values so fork PR tests do not depend on repository secrets.
+          echo "AES_KEY_BASE64=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" >> ../.env.development
+          echo "DATA_ACCESS_POSTGRES_PASSWORD=test-password" >> ../.env.development
+          echo "OMOP_POSTGRES_PASSWORD=test-password" >> ../.env.development
+          echo "POSTGRES_PASSWORD=test-password" >> ../.env.development
+          echo "SES_VERIFIED_EMAIL=ci@example.com" >> ../.env.development
+          echo "AWS_SES_ADMIN_EMAIL_ADDRESS=ci@example.com" >> ../.env.development
+          echo "AWS_SES_SENDER_EMAIL_ADDRESS=ci@example.com" >> ../.env.development
           echo "ENV=development" >> ../.env.development
 
       - name: Run unit tests

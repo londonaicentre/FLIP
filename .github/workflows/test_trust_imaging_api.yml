@@ -47,14 +47,14 @@ jobs:
         run: pip install uv
 
       - name: Setup environment file
-        run: | # pragma: allowlist secret
+        run: |
           cp ../../.env.development.example ../../.env.development
-          # Override sensitive values with GitHub secrets
-          echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=' }}" >> ../../.env.development  # pragma: allowlist secret
-          echo "TRUST_API_KEY=${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}" >> ../../.env.development
-          echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-          echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-          echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
+          # Use deterministic non-secret CI values so fork PR tests do not depend on repository secrets.
+          echo "AES_KEY_BASE64=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" >> ../../.env.development
+          echo "TRUST_API_KEY=test-trust-api-key-for-ci" >> ../../.env.development
+          echo "DATA_ACCESS_POSTGRES_PASSWORD=test-password" >> ../../.env.development
+          echo "OMOP_POSTGRES_PASSWORD=test-password" >> ../../.env.development
+          echo "POSTGRES_PASSWORD=test-password" >> ../../.env.development
           echo "ENV=development" >> ../../.env.development
         run: make local_test
 
