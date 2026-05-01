@@ -624,7 +624,6 @@ wheels = [
 ]
 
 [[package]]
-version = "0.1.4"
 name = "flip-utils"
 source = { editable = "." }
 dependencies = [
