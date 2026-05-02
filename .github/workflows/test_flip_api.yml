@@ -52,15 +52,20 @@ jobs:
       - name: Setup environment file
         run: |
           cp ../.env.development.example ../.env.development
-          # Use deterministic non-secret CI values so fork PR tests do not depend on repository secrets.
-          echo "AES_KEY_BASE64=MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=" >> ../.env.development
-          echo "DATA_ACCESS_POSTGRES_PASSWORD=test-password" >> ../.env.development
-          echo "OMOP_POSTGRES_PASSWORD=test-password" >> ../.env.development
-          echo "POSTGRES_PASSWORD=test-password" >> ../.env.development
-          echo "SES_VERIFIED_EMAIL=ci@example.com" >> ../.env.development
-          echo "AWS_SES_ADMIN_EMAIL_ADDRESS=ci@example.com" >> ../.env.development
-          echo "AWS_SES_SENDER_EMAIL_ADDRESS=ci@example.com" >> ../.env.development
-          echo "ENV=development" >> ../.env.development
+          # Generate CI-only non-secret values so fork PR tests do not depend on repository secrets or reusable defaults.
+          python - <<'PY' >> ../.env.development
+          import base64
+          import secrets
+
+          print(f"AES_KEY_BASE64={base64.b64encode(secrets.token_bytes(32)).decode()}")
+          print(f"DATA_ACCESS_POSTGRES_PASSWORD={secrets.token_urlsafe(24)}")
+          print(f"OMOP_POSTGRES_PASSWORD={secrets.token_urlsafe(24)}")
+          print(f"POSTGRES_PASSWORD={secrets.token_urlsafe(24)}")
+          print("SES_VERIFIED_EMAIL=ci@example.com")
+          print("AWS_SES_ADMIN_EMAIL_ADDRESS=ci@example.com")
+          print("AWS_SES_SENDER_EMAIL_ADDRESS=ci@example.com")
+          print("ENV=development")
+          PY
 
       - name: Run unit tests
         run: make unit_test
