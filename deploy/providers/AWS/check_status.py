@@ -44,6 +44,7 @@ import platform
 import ssl
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -254,6 +255,12 @@ def check_http_endpoint(
         True if endpoint is accessible, False otherwise
     """
     print_status("INFO", f"Checking {name} at {url}...")
+
+    # Validate URL scheme — only http and https are permitted
+    _scheme = urllib.parse.urlparse(url).scheme
+    if _scheme not in ("http", "https"):
+        print_status("FAIL", f"{name}: unsupported URL scheme '{_scheme}' (only http/https allowed)")
+        return False
 
     # Convert single int to list for uniform handling
     valid_statuses = [expected_status] if isinstance(expected_status, int) else expected_status
@@ -1021,7 +1028,7 @@ def main(
         # Try HTTP request over HTTPS
         try:
             req = urllib.request.Request(https_url, method="HEAD")
-            with urllib.request.urlopen(req, timeout=10) as response:
+            with urllib.request.urlopen(req, timeout=10, context=context) as response:
                 print_status("PASS", f"HTTPS endpoint responding (HTTP {response.status})")
         except urllib.error.URLError as e:
             if hasattr(e, "reason") and "CERTIFICATE" in str(e.reason).upper():
@@ -1571,7 +1578,7 @@ def main(
             )
             # Open centralhub on browser
             try:
-                os.system(f"open https://{alb_subdomain}")
+                subprocess.run(["open", f"https://{alb_subdomain}"], check=False)
             except Exception:
                 pass
         sys.exit(0)
