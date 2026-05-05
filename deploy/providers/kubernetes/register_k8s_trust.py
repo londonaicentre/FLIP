@@ -252,14 +252,6 @@ secrets:
   create: false
   existingName: flip-trust-secrets
 """
-#
-#   kubectl -n flip-trust create secret generic flip-trust-secrets \\
-#     --from-literal=trust-api-key={trust_api_key} \\
-#     --from-literal=aes-key-base64={aes_key} \\
-#     --from-literal=trust-internal-service-key-header={internal_service_key_header} \\
-#     --from-literal=trust-internal-service-key={internal_service_key} \\
-#     [other existing keys...]
-"""
 
     override_path.write_text(content)
     print(f"\n  ✓ Helm values override written to {override_path}")
@@ -293,22 +285,14 @@ def main(
     if not isinstance(trust_names, list):
         trust_names = []
 
-    trust_api_keys = read_json_env(env_file, "TRUST_API_KEYS")
-    if not isinstance(trust_api_keys, dict):
-        trust_api_keys = {}
-
     trust_api_key_hashes = read_json_env(env_file, "TRUST_API_KEY_HASHES")
     if not isinstance(trust_api_key_hashes, dict):
         trust_api_key_hashes = {}
 
-    trust_internal_keys = read_json_env(env_file, "TRUST_INTERNAL_SERVICE_KEYS")
-    if not isinstance(trust_internal_keys, dict):
-        trust_internal_keys = {}
-
     # Check if trust already exists
-    if trust_name in trust_api_keys and not force:
-        print(f"⚠️  {trust_name} already has a TRUST_API_KEY. Use --force to regenerate.")
-        print(f"   To use existing keys, set them in your K8s Secret directly.")
+    if trust_name in trust_api_key_hashes and not force:
+        print(f"⚠️  {trust_name} already has a key hash registered. Use --force to regenerate.")
+        print(f"   To use existing keys, update your K8s Secret directly.")
         sys.exit(0)
 
     # ── Add trust name to TRUST_NAMES ────────────────────────────────
@@ -325,7 +309,6 @@ def main(
 
     # ── Generate trust-internal service key ──────────────────────────
     internal_key, _ = generate_key()
-    trust_internal_keys[trust_name] = internal_key
 
     # ── Read shared secrets ──────────────────────────────────────────
     env_vars = read_env_vars(env_file)
