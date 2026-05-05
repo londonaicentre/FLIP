@@ -103,21 +103,7 @@ jobs:
       - name: Create namespace and secrets
         run: |
           kubectl create namespace flip-trust
-          kubectl create secret generic flip-trust-secrets \
-            --namespace flip-trust \
-            --from-literal=aes-key-base64=dGVzdC1hZXMta2V5LTEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNAo= \
-            --from-literal=trust-api-key=test-trust-key \
-            --from-literal=omop-postgres-password=test-omop-pass \
-            --from-literal=data-access-postgres-password=test-data-pass \
-            --from-literal=orthanc-username=test-orthanc-user \
-            --from-literal=orthanc-password=test-orthanc-pass \
-            --from-literal=xnat-admin-password=test-xnat-admin \
-            --from-literal=xnat-service-user=test-xnat-svc \
-            --from-literal=xnat-service-password=test-xnat-svc-pass \
-            --from-literal=xnat-datasource-password=test-xnat-ds-pass \
-            --from-literal=grafana-admin-password=test-grafana-pass \
-            --from-literal=s3-access-key-id=test-s3-key \
-            --from-literal=s3-secret-access-key=test-s3-secret
+          kubectl apply -f deploy/providers/kubernetes/ci/test-secret.yaml
 
       - name: Install chart
         run: |
