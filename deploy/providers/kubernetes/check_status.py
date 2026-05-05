@@ -282,7 +282,7 @@ def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 
         return False
 
 
-def forward_then_check(pod_name: str, remote_port: int, url: str, name: str, expected: int | list[int], timeout: int = 20) -> bool:
+def forward_then_check(pod_name: str, remote_port: int, url: str, name: str, expected: int | list[int], namespace: str, timeout: int = 20) -> bool:
     """Port-forward to a pod, check the endpoint, then clean up.
 
     This is a diagnostic convenience — not a persistent tunnel. Each check
@@ -308,8 +308,8 @@ def forward_then_check(pod_name: str, remote_port: int, url: str, name: str, exp
         local_port = s.getsockname()[1]
 
     proc = subprocess.Popen(
-        ["kubectl", "port-forward", pod_name, f"{local_port}:{remote_port}"],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        ["kubectl", "port-forward", "-n", namespace, pod_name, f"{local_port}:{remote_port}"],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
 
     # Wait for port-forward to become ready
@@ -321,16 +321,14 @@ def forward_then_check(pod_name: str, remote_port: int, url: str, name: str, exp
         except (ConnectionRefusedError, OSError):
             time.sleep(0.5)
     else:
+        _, stderr = proc.communicate(timeout=2)
         proc.terminate()
         proc.wait()
-        print_status("FAIL", f"Port-forward to {pod_name}:{remote_port} did not become ready")
+        err_msg = stderr.decode() if stderr else "no output"
+        print_status("FAIL", f"Port-forward to {pod_name}:{remote_port} did not become ready: {err_msg[:120]}")
         return False
 
     local_url = url.replace(f":{remote_port}", f":{local_port}").replace("localhost", "127.0.0.1")
-    if f"127.0.0.1:{remote_port}" in local_url:
-        local_url = local_url.replace(f"127.0.0.1:{remote_port}", f"127.0.0.1:{local_port}")
-    else:
-        local_url = f"http://127.0.0.1:{local_port}"
 
     result = check_http_endpoint(local_url, name, expected)
 
@@ -512,15 +510,15 @@ def main(
 
         # Map of {service_label: [(pod_ref, container_port, url_suffix, name, expected_http_status)]}
         service_endpoints = [
-            ("deployment/flip-trust-trust-api", 8001, "/health", "trust-api", 200),
-            ("deployment/flip-trust-imaging-api", 8001, "/health", "imaging-api", 200),
+            ("deployment/flip-trust-trust-api", 8000, "/health", "trust-api", 200),
+            ("deployment/flip-trust-imaging-api", 8000, "/health", "imaging-api", 200),
             ("deployment/flip-trust-data-access-api", 8000, "/health", "data-access-api", 200),
             ("deployment/flip-trust-orthanc", 8042, "/", "Orthanc", [200, 401]),
         ]
 
         for pod_ref, container_port, path, name, expected in service_endpoints:
             url = f"http://localhost:{container_port}{path}"
-            forward_then_check(pod_ref, container_port, url, name, expected)
+            forward_then_check(pod_ref, container_port, url, name, expected, namespace)
 
         # ── MinIO S3 check ────────────────────────────────────────────────
         print_section("MinIO S3 Store")
