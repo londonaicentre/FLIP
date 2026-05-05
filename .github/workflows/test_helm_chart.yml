@@ -102,7 +102,12 @@ jobs:
 
       - name: Create namespace and secrets
         run: |
-          kubectl create namespace flip-trust
+          kubectl create namespace flip-trust 2>/dev/null || true
+          kubectl label namespace flip-trust app.kubernetes.io/managed-by=Helm --overwrite
+          kubectl annotate namespace flip-trust \
+            meta.helm.sh/release-name=trust-release \
+            meta.helm.sh/release-namespace=flip-trust \
+            --overwrite
           kubectl apply -f deploy/providers/kubernetes/ci/test-secret.yaml
 
       - name: Install chart
