@@ -323,12 +323,15 @@ def main(
     print()
     print(f"Create the Kubernetes Secret with the generated keys:")
     print()
+    print(f"  Keys have been stored in {env_file}. Use them to create the Secret:")
+    masked_api = trust_api_key[:8] + "..." if len(trust_api_key) > 8 else trust_api_key
+    masked_internal = internal_key[:8] + "..." if len(internal_key) > 8 else internal_key
     secret_kubectl = (
         f"kubectl -n flip-trust create secret generic flip-trust-secrets \\\n"
-        f"  --from-literal=trust-api-key={trust_api_key} \\\n"
-        f"  --from-literal=aes-key-base64={aes_key} \\\n"
+        f"  --from-literal=trust-api-key=$(grep TRUST_API_KEYS {env_file} | python3 -c \"import json,sys,os; print(json.loads(os.environ.get('V','').replace(\\\"'\\\",'\\\"'))['{trust_name}'])\") \\\n"
+        f"  --from-literal=aes-key-base64=$(grep AES_KEY_BASE64 {env_file} | cut -d= -f2) \\\n"
         f"  --from-literal=trust-internal-service-key-header={internal_service_key_header} \\\n"
-        f"  --from-literal=trust-internal-service-key={internal_key} \\\n"
+        f"  --from-literal=trust-internal-service-key=(TRUST_INTERNAL_SERVICE_KEYS {trust_name} value from {env_file}) \\\n"
         f"  [plus your existing data-access-postgres-password, orthanc-*, s3-*, etc.]"
     )
     print(f"  {secret_kubectl}")

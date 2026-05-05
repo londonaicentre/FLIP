@@ -304,7 +304,7 @@ def forward_then_check(pod_name: str, remote_port: int, url: str, name: str, exp
 
     # Find a free local port
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
+        s.bind(("127.0.0.1", 0))
         local_port = s.getsockname()[1]
 
     proc = subprocess.Popen(
@@ -544,7 +544,7 @@ def main(
             # Port-forward then probe MinIO
             import socket
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(("", 0))
+                s.bind(("127.0.0.1", 0))
                 minio_local = s.getsockname()[1]
 
             minio_proc = subprocess.Popen(

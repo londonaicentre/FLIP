@@ -11,6 +11,9 @@
 
 name: Test Helm Chart
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     paths:
