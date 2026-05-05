@@ -145,6 +145,12 @@ spec:
           env:
             - name: UPLOADED_FEDERATED_DATA_BUCKET
               value: {{ .Values.uploadedFederatedDataBucket | default "" | quote }}
+            {{- if .Values.flClient.gpu.enabled }}
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "0"
+            {{- end }}
           volumeMounts:
             - name: images
               mountPath: {{ .Values.flClient.imagesDir }}
