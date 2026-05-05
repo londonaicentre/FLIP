@@ -54,6 +54,8 @@ def _parse_and_emit(query: str) -> str:
         raise HTTPException(status_code=400, detail=f"Invalid SQL syntax: {exc}") from exc
     if not transpiled or not transpiled[0].strip():
         raise HTTPException(status_code=400, detail="SQL query is empty or could not be parsed")
+    if len(transpiled) > 1:
+        raise HTTPException(status_code=400, detail="Multiple SQL statements are not allowed")
     return transpiled[0]
 
 
