@@ -116,9 +116,7 @@ jobs:
             --namespace flip-trust \
             -f deploy/providers/kubernetes/ci/test-values.yaml \
             --set secrets.existingName=flip-trust-secrets \
-            --set trustApi.env.CENTRAL_HUB_API_URL=http://test-hub.example.com/api \
-            --wait \
-            --timeout 3m
+            --set trustApi.env.CENTRAL_HUB_API_URL=http://test-hub.example.com/api
 
       - name: Check pod status
         run: |
