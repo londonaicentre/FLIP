@@ -38,17 +38,14 @@ jobs:
       REGISTRY: ghcr.io
       IMAGE_NAME: londonaicentre/xnat-web
       FLIP_ARTIFACTS_BUCKET_NAME: flipdev-artifacts
+      # Credential and SMTP env values are NOT passed as build args — they are
+      # injected at container start from the deployment env file so they are
+      # never written into image layers (verifiable via docker history --no-trunc).
       BUILD_ARGS: |
         --build-arg XNAT_VERSION=1.9.3
-        --build-arg XNAT_SMTP_ENABLED=false
-        --build-arg XNAT_DATASOURCE_DRIVER=org.postgresql.Driver
-        --build-arg XNAT_DATASOURCE_USERNAME=xnat
-        --build-arg XNAT_DATASOURCE_PASSWORD=xnat
-        --build-arg XNAT_DATASOURCE_URL=jdbc:postgresql://xnat-db/xnat
         --build-arg TOMCAT_XNAT_FOLDER=ROOT
         --build-arg XNAT_ROOT=/data/xnat
         --build-arg XNAT_HOME=/data/xnat/home
-        --build-arg XNAT_EMAIL=email@gstt.nhs.uk
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

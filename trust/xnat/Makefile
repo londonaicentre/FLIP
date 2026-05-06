@@ -70,15 +70,9 @@ build:
 	@echo "🐳 Building xnat-web image..."
 	docker build \
 		--build-arg XNAT_VERSION=${XNAT_VERSION} \
-		--build-arg XNAT_SMTP_ENABLED=${XNAT_SMTP_ENABLED} \
-		--build-arg XNAT_DATASOURCE_DRIVER=${XNAT_DATASOURCE_DRIVER} \
-		--build-arg XNAT_DATASOURCE_USERNAME=${XNAT_DATASOURCE_USERNAME} \
-		--build-arg XNAT_DATASOURCE_PASSWORD=${XNAT_DATASOURCE_PASSWORD} \
-		--build-arg XNAT_DATASOURCE_URL=${XNAT_DATASOURCE_URL} \
 		--build-arg TOMCAT_XNAT_FOLDER=${TOMCAT_XNAT_FOLDER} \
 		--build-arg XNAT_ROOT=${XNAT_ROOT} \
 		--build-arg XNAT_HOME=${XNAT_HOME} \
-		--build-arg XNAT_EMAIL=${XNAT_EMAIL} \
 		-t ${DOCKER_REGISTRY}xnat-web:${DOCKER_TAG} \
 		xnat/
 	@echo "🐳 Building xnat-db image..."

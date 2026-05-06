@@ -86,3 +86,5 @@ generate-internal-service-key:
 	uv run python -m flip_api.scripts.generate_internal_service_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
 generate-trust-internal-service-keys:
 	uv run python -m flip_api.scripts.generate_trust_internal_service_keys $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
+generate-xnat-credentials:
+	uv run python -m flip_api.scripts.generate_xnat_credentials $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
