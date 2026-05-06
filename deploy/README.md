@@ -229,7 +229,14 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 
 ## Service Authentication
 
-FLIP uses two separate authentication mechanisms for service-to-hub communication:
+FLIP uses three separate authentication mechanisms for service-to-service communication. Generate all keys
+in one go with:
+
+```bash
+make generate-trust-api-keys
+make generate-internal-service-key
+make generate-trust-internal-service-keys
+```
 
 ### Trust API Keys (trust-api → flip-api)
 
@@ -237,13 +244,25 @@ Each trust has a unique API key stored in the `TRUST_API_KEYS` JSON dict and sen
 The hub stores only SHA-256 hashes of these keys in `TRUST_API_KEY_HASHES`. Used for task polling, cohort result
 submission, and heartbeat endpoints.
 
-Generate keys with `make generate-trust-api-keys` and `make generate-internal-service-key`.
-
 ### Internal Service Key (fl-server → flip-api)
 
-The fl-server on the Central Hub authenticates to flip-api using `INTERNAL_SERVICE_KEY` sent in the
-`INTERNAL_SERVICE_KEY_HEADER` header. The hub validates it against
-`INTERNAL_SERVICE_KEY_HASH`. Used for model status updates, training metrics, and training log endpoints.
+The fl-server on the Central Hub authenticates to flip-api using `INTERNAL_SERVICE_KEY` (a plain string) sent
+in the `INTERNAL_SERVICE_KEY_HEADER` header. The hub validates it against `INTERNAL_SERVICE_KEY_HASH` (the
+SHA-256 hash of the key). Used for model status updates, training metrics, and training log endpoints. This
+is a **single, hub-internal** secret and is separate from the per-trust internal keys below.
+
+### Trust-Internal Service Keys (trust-api / imaging-api / fl-client → imaging-api / data-access-api)
+
+Inside each trust, every call from trust-api / imaging-api / fl-client to imaging-api or data-access-api
+carries a shared-secret header. The header name comes from `TRUST_INTERNAL_SERVICE_KEY_HEADER` (default
+`X-Trust-Internal-Service-Key`); the value is the per-trust plaintext key from `TRUST_INTERNAL_SERVICE_KEYS`
+(a JSON dict keyed by trust name). Receivers compare the header against their own copy with a constant-time
+compare. `/health` is intentionally exempt so liveness probes still work.
+
+Each trust gets a distinct key — a leak in `Trust_1` cannot drive operations on `Trust_2`'s APIs. The hub
+never sees these keys: they live only in trust-side env (extracted by `trust/Makefile` via `get_json_value`
+at deploy time, exactly like `TRUST_API_KEYS`). See the **Trust-internal Service Authentication** section
+in the repo-root [`CLAUDE.md`](../CLAUDE.md) for the full threat model.
 
 FL clients (trust side) **do not** have Central Hub API credentials. Only the fl-server communicates with flip-api.
 FL clients relay metrics and exceptions to the fl-server, which forwards them to the Central Hub.
@@ -261,16 +280,20 @@ outside the hub's Docker network.
 | `TRUST_API_KEYS` | trust-api | JSON dict of trust name → plaintext key |
 | `TRUST_API_KEY_HASHES` | flip-api | JSON dict of trust name → SHA-256 hash |
 | `INTERNAL_SERVICE_KEY_HEADER` | flip-api, fl-server | Header name for internal service auth |
-| `INTERNAL_SERVICE_KEY` | fl-server | Internal service plaintext key |
-| `INTERNAL_SERVICE_KEY_HASH` | flip-api | SHA-256 hash of internal service key |
+| `INTERNAL_SERVICE_KEY` | fl-server | Internal service plaintext key (plain string) |
+| `INTERNAL_SERVICE_KEY_HASH` | flip-api | SHA-256 hash of internal service key (plain string) |
+| `TRUST_INTERNAL_SERVICE_KEY_HEADER` | trust-api, imaging-api, data-access-api, fl-client | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
+| `TRUST_INTERNAL_SERVICE_KEYS` | trust-side only | JSON dict of trust name → per-trust plaintext key. The hub never sees these. |
 | `CENTRAL_HUB_API_URL` | flip-ui, trust-api | Public base URL of flip-api (in prod: CloudFront URL) |
 | `FLIP_API_INTERNAL_URL` | fl-server | Docker-network URL of flip-api on the Central Hub (e.g. `http://flip-api:8000/api`) |
 
-#### Note on future ECS migration
+#### Note on the ECS migration
 
-`FLIP_API_INTERNAL_URL` names the intent ("flip-api's internal URL on the Central Hub"), not the
-mechanism, so the split survives a move from EC2 + docker-compose to ECS. When migrating, point it
-at whichever in-VPC, header-preserving endpoint flip-api exposes:
+The Central Hub is moving from EC2 + docker-compose to ECS Fargate; the foundation Terraform (cluster,
+EFS, IAM, parameter store, service discovery, VPC endpoints) has landed under `deploy/providers/AWS/`,
+but task definitions and services are still being rolled out. `FLIP_API_INTERNAL_URL` names the intent
+("flip-api's internal URL on the Central Hub"), not the mechanism, so the split survives the move. When
+migrating, point it at whichever in-VPC, header-preserving endpoint flip-api exposes:
 
 | ECS layout | `FLIP_API_INTERNAL_URL` |
 |---|---|
@@ -282,3 +305,7 @@ at whichever in-VPC, header-preserving endpoint flip-api exposes:
 What it must not be: the public CloudFront URL. That's orthogonal to compute — CloudFront strips
 `X-Internal-Service-Key` regardless of whether flip-api runs on EC2 or ECS. Internal ALBs preserve
 all request headers by default, so that option works; CloudFront doesn't.
+
+> **Note on troubleshooting**: AWS-deployment-specific failure modes (Terraform state drift, ECS
+> service stuck in `PENDING`, CloudFront cache invalidation, RDS connectivity) are documented in
+> [`providers/AWS/TROUBLESHOOTING.md`](providers/AWS/TROUBLESHOOTING.md).

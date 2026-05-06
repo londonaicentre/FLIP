@@ -17,7 +17,11 @@ on:
     branches: [main, develop]
     paths:
       - "trust/trust-api/**"
+      - "trust/compose.test.yml"
+      - "trust/data-access-api/**"
+      - "trust/observability/**"
       - ".github/workflows/test_trust_trust_api.yml"
+      - ".github/actions/setup-trust-test-env/**"
   pull_request:
     branches: [main, develop]
 
@@ -36,25 +40,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Setup trust test env
+        uses: ./.github/actions/setup-trust-test-env
         with:
-          # get python version from ./trust/trust-api/.python-version file
-          # if not found, use 3.11
           python-version: ${{ github.event.inputs.python-version || '3.11' }}
-
-      - name: Install uv (if used for dependency management)
-        run: pip install uv
-
-      - name: Setup environment file
-        run: | # pragma: allowlist secret
-          cp ../../.env.development.example ../../.env.development
-          # Override sensitive values with GitHub secrets
-          echo "TRUST_API_KEY=${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}" >> ../../.env.development
-          echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=' }}" >> ../../.env.development  # pragma: allowlist secret
-          echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-          echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
-          echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
+          trust-api-key: ${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}
+          aes-key-base64: ${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=' }}  # pragma: allowlist secret
+          postgres-password: ${{ secrets.POSTGRES_PASSWORD }}
 
       - name: Run tests with pytest (example)
         # Replace with your actual test command
@@ -63,8 +55,91 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: trust/trust-api/coverage.xml
+          files: trust/trust-api/coverage-unit.xml
           flags: trust-api
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  trust-api-integration:
+    # Brings up the omop-db + data-access-api Compose stack and exercises
+    # ``handle_cohort_query`` end-to-end (issue #369, B3). Runs alongside the
+    # unit job rather than on its `needs:` so a unit-suite regression doesn't
+    # mask integration-only signal.
+    #
+    # Steps are split out (not bundled into ``make integration_test``) so a
+    # failure shows the actual offending phase in the GitHub Actions UI —
+    # bundled make recipes hide which sub-command tripped.
+    runs-on: ubuntu-latest
+    environment: flip
+    defaults:
+      run:
+        working-directory: ./trust/trust-api
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup trust test env
+        uses: ./.github/actions/setup-trust-test-env
+        with:
+          python-version: ${{ github.event.inputs.python-version || '3.12' }}
+          trust-api-key: ${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}
+          aes-key-base64: ${{ secrets.AES_KEY_BASE64 || 'QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA=' }}  # pragma: allowlist secret
+          postgres-password: ${{ secrets.POSTGRES_PASSWORD || 'test_password' }}
+
+      - name: Sync trust-api venv (incl. testcontainers)
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        env:
+          BASE_IMAGES_DOWNLOAD_DIR: /tmp/images
+          TRUST_NAME: TestTrust
+        run: uv run ruff check .
+
+      - name: Type check (mypy)
+        env:
+          BASE_IMAGES_DOWNLOAD_DIR: /tmp/images
+          TRUST_NAME: TestTrust
+        run: uv run mypy . --ignore-missing-imports
+
+      - name: Validate compose file
+        working-directory: ./trust
+        run: docker compose -f compose.test.yml config --quiet
+
+      - name: Pre-pull base images
+        run: |
+          docker pull --quiet postgres:16-alpine
+          docker pull --quiet python:3.12-slim-bookworm
+
+      - name: Build compose stack (data-access-api image)
+        working-directory: ./trust
+        # Built up-front so build failures aren't bundled into the test run; the
+        # subsequent test step can then start the stack from a hot cache.
+        run: docker compose -f compose.test.yml build
+
+      - name: Run pytest integration suite
+        env:
+          BASE_IMAGES_DOWNLOAD_DIR: /tmp/images
+          TRUST_NAME: TestTrust
+        run: uv run pytest ./tests/integration --tb=long --disable-warnings -v --cov=trust_api/ --cov-report=xml:coverage-integration.xml
+
+      - name: Show data-access-api container logs on failure
+        if: failure()
+        working-directory: ./trust
+        run: |
+          echo "::group::data-access-api-test logs"
+          docker compose -f compose.test.yml logs data-access-api-test || true
+          echo "::endgroup::"
+          echo "::group::omop-db-test logs"
+          docker compose -f compose.test.yml logs omop-db-test || true
+          echo "::endgroup::"
+
+      - name: Upload integration coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: trust/trust-api/coverage-integration.xml
+          flags: trust-api-integration
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

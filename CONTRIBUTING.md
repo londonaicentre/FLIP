@@ -18,6 +18,7 @@
   - [Preparing pull requests](#preparing-pull-requests)
     1. [Checking the coding style](#checking-the-coding-style)
     1. [Unit testing](#unit-testing)
+    1. [Where does my test go?](#where-does-my-test-go)
     1. [Signing your work](#signing-your-work)
   - [Submitting pull requests](#submitting-pull-requests)
 
@@ -129,17 +130,20 @@ To get started, copy the example file:
 cp .env.development.example .env.development
 ```
 
-Then generate per-trust API keys and the internal service key (the trust keys must be done before `make up`; the
-internal service key is also generated automatically by `make up`):
+Then generate per-trust API keys, the internal service key, and the per-trust internal service keys (the trust
+keys must be done before `make up`; the internal service key is also generated automatically by `make up`):
 
 ```bash
 make generate-trust-api-keys
 make generate-internal-service-key
+make generate-trust-internal-service-keys
 ```
 
 These commands write all API keys directly into `.env.development`: trust plaintext keys
-in `TRUST_API_KEYS` (JSON dict) with their hashes in `TRUST_API_KEY_HASHES`, and `INTERNAL_SERVICE_KEY`
-with `INTERNAL_SERVICE_KEY_HASH` for fl-server-to-hub authentication. No separate key files are used.
+in `TRUST_API_KEYS` (JSON dict) with their hashes in `TRUST_API_KEY_HASHES`, `INTERNAL_SERVICE_KEY`
+with `INTERNAL_SERVICE_KEY_HASH` for fl-server-to-hub authentication, and per-trust plaintext keys in
+`TRUST_INTERNAL_SERVICE_KEYS` (JSON dict) for trust-internal service-to-service authentication. No
+separate key files are used.
 
 Docker services receive these variables via the `env_file` directive in the
 compose file — avoid hardcoding values in Dockerfiles or compose files directly.
@@ -152,6 +156,14 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 - `INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for fl-server-to-hub authentication.
 - `INTERNAL_SERVICE_KEY` — internal service key used by the fl-server on the Central Hub.
 - `INTERNAL_SERVICE_KEY_HASH` — hub-side SHA-256 hash of the internal service key.
+- `TRUST_INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for trust-internal service auth (default
+  `X-Trust-Internal-Service-Key`). Sent by every caller (trust-api, imaging-api, fl-client) on every
+  call to imaging-api or data-access-api.
+- `TRUST_INTERNAL_SERVICE_KEYS` — JSON dict of per-trust plaintext keys. Each trust uses a distinct key;
+  `trust/Makefile` extracts the per-trust value at deploy time and injects it into every trust-internal
+  container as `TRUST_INTERNAL_SERVICE_KEY`. The hub never sees these keys — they live only in trust-side
+  env. Distinct from `INTERNAL_SERVICE_KEY*` (which protects fl-server → flip-api on the Central Hub).
+  See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the threat model.
 
 FL clients (trust side) intentionally do **not** receive Central Hub API credentials. Only the fl-server (on the Central
 Hub) communicates with flip-api. FL clients relay metrics and exceptions to the fl-server, which forwards them.
@@ -318,6 +330,27 @@ python_files = ["test_*.py", "*_test.py"]
 addopts = []
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 ```
+
+#### Where does my test go?
+
+A test belongs in `tests/integration/` **if and only if it touches a real backing service**. Examples of "real backing service":
+
+- A real Postgres (via the `session` fixture or Testcontainers)
+- A real AWS service (S3, Cognito, SES)
+- A running sibling API (trust-api, data-access-api, etc.) reachable over HTTP
+- A real Orthanc / XNAT / OMOP fixture
+
+If your test mocks **all** external dependencies (database session, HTTP client, AWS clients, sibling APIs), it's a unit test — put it in `tests/unit/`, mirroring the source layout (e.g. tests for `src/flip_api/user_services/set_user_roles.py` go in `tests/unit/user_services/test_set_user_roles.py`).
+
+FastAPI `TestClient` on its own does **not** make a test "integration" — what matters is whether the dependencies it transitively hits are real or mocked. A `TestClient`-based test that overrides every dependency (via `app.dependency_overrides`) and patches the DB session is a unit test; one that runs against an un-overridden real Postgres is an integration test.
+
+This rule applies across all services: `flip-api/tests/`, `trust/trust-api/tests/`, `trust/imaging-api/tests/`, `trust/data-access-api/tests/`, etc.
+
+##### flip-api: real-Postgres integration tests via Testcontainers
+
+`flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema from `SQLModel.metadata`, seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
+
+CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) are out of scope for this fixture and are skip-marked at the file level until ticket B2 lands.
 
 #### Signing your work
 

@@ -159,6 +159,7 @@ module "flip_api_secret" {
     aes_key                   = var.AES_KEY_BASE64
     trust_api_key_hashes      = var.TRUST_API_KEY_HASHES
     internal_service_key_hash = var.INTERNAL_SERVICE_KEY_HASH
+    internal_service_key      = var.INTERNAL_SERVICE_KEY
   })
 }
 

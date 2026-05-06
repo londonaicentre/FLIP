@@ -214,7 +214,17 @@ See [`dev/README.md`](./dev/README.md) for the one-time `terraform import` workf
 
 ```
 deploy/providers/AWS/
-├── main.tf / services.tf       # prod + stag stack root
+├── main.tf / services.tf       # prod + stag stack root (VPC, RDS, Cognito, SES, EC2)
+├── ecs.tf                      # ECS cluster + capacity providers (Central Hub migration foundation)
+├── efs.tf                      # EFS file systems for shared workspace volumes
+├── iam_ecs.tf                  # IAM execution + task roles for ECS Fargate tasks
+├── parameter_store.tf          # SSM Parameter Store entries consumed by ECS tasks
+├── service_discovery.tf        # Cloud Map private DNS namespace for ECS services
+├── vpc_endpoints.tf            # Interface endpoints (ECR, Secrets Manager, SSM, etc.)
+├── dhcp.tf                     # VPC DHCP option set
+├── locals.tf                   # Shared locals
+├── cloudfront.tf               # CloudFront distribution for flip-ui
+├── certificate.tf              # ACM certificates (ALB + CloudFront)
 ├── modules/
 │   ├── cognito/                # shared: pool, domain, client, seed users
 │   ├── ses/                    # shared: sender identity, transactional templates
@@ -222,6 +232,10 @@ deploy/providers/AWS/
 │   └── trust_ec2/              # prod/stag only
 └── dev/                        # dev-account root (calls cognito + ses modules)
 ```
+
+The ECS / EFS / parameter store files are the **foundation** for the Central Hub migration from EC2 +
+docker-compose to ECS Fargate. The cluster, IAM, and networking are provisioned today; task definitions
+and services land in subsequent PRs.
 
 The Cognito and SES resources used to live at the root of the prod/stag stack. `services.tf` and `main.tf` ship `moved` blocks that re-anchor the old root addresses onto the new `module.cognito.*` / `module.ses.*` paths, so any state still on the old layout self-heals on the next plan — no manual `terraform state mv` needed. `scripts/import-resources.sh` already targets the module addresses, so a fresh import lands in the right place too.
 
@@ -373,6 +387,13 @@ This will automatically diagnose:
 - System resource usage
 
 Review the output for failed checks and follow the specific troubleshooting steps below.
+
+### Detailed Troubleshooting Guide
+
+For known failure modes encountered during staging/production deployment — including Terraform state
+drift, ECS service errors, CloudFront cache invalidation, RDS connectivity, and SSM Session Manager
+issues — see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md). Each entry includes symptoms, root cause, and
+fix.
 
 ## Architecture
 

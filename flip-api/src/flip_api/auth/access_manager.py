@@ -79,10 +79,11 @@ def can_access_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
 
 def can_modify_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
     """
-    Check if a user can perform write operations on a project.
+    Check if a user can perform project-level write operations (edit / stage / delete the project itself).
 
-    Returns True for users with CAN_MANAGE_PROJECTS permission (Admins, Researchers)
-    or for the project owner. Returns False for Observers.
+    Returns True for Admins (CAN_MANAGE_PROJECTS) and the project owner. Project membership alone
+    does NOT unlock project-level writes — see :func:`can_contribute_to_project` for the looser
+    check used by model-write endpoints.
 
     Args:
         user_id (UUID): ID of the user
@@ -107,11 +108,65 @@ def can_modify_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
     return False
 
 
+def can_contribute_to_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
+    """
+    Check if a user can contribute artefacts (e.g. models) to a project.
+
+    Looser than :func:`can_modify_project`: a Researcher who has been added to a project via
+    ``ProjectUserAccess`` can contribute their own models even though they cannot edit the
+    project itself. Observers — who hold no permissions — are excluded by the
+    ``CAN_CREATE_PROJECTS`` clause, so membership alone does not unlock writes for them.
+
+    Returns True when any of the following holds:
+        - The caller has ``CAN_MANAGE_PROJECTS`` (Admin), or
+        - The caller is the project owner, or
+        - The caller has a ``ProjectUserAccess`` row for the project AND holds
+          ``CAN_CREATE_PROJECTS`` (Researcher member).
+
+    Args:
+        user_id (UUID): ID of the user
+        project_id (UUID): ID of the project
+        db (Session): Database session
+
+    Returns:
+        bool: True if the user can contribute to the project, False otherwise.
+    """
+    logger.debug(f"Checking if user: {user_id} can contribute to project: {project_id}")
+
+    if has_permissions(user_id, [PermissionRef.CAN_MANAGE_PROJECTS], db):
+        return True
+
+    try:
+        project = db.exec(select(Projects).where(Projects.id == project_id)).first()
+        if not project:
+            return False
+        if project.owner_id == user_id:
+            return True
+
+        if not has_permissions(user_id, [PermissionRef.CAN_CREATE_PROJECTS], db):
+            return False
+
+        membership = db.exec(
+            select(ProjectUserAccess.id)
+            .where(ProjectUserAccess.project_id == project_id)
+            .where(ProjectUserAccess.user_id == user_id)
+        ).first()
+        return membership is not None
+    except Exception as e:
+        logger.error(f"Error checking project contribute access for user {user_id}, project {project_id}: {str(e)}")
+        return False
+
+
 def can_modify_model(user_id: UUID, model_id: UUID, db: Session) -> bool:
     """
     Check if a user can perform write operations on a model.
 
-    Looks up the model's project_id, then delegates to can_modify_project.
+    Allows:
+        - Admins (``CAN_MANAGE_PROJECTS``).
+        - The project owner (unrestricted across all models on the project).
+        - The model's own ``owner_id``, but only if they could still contribute to the project
+          (per :func:`can_contribute_to_project`). The contribution check is defence-in-depth:
+          it locks an Observer out even if they somehow ended up as ``Model.owner_id``.
 
     Args:
         user_id (UUID): ID of the user
@@ -130,7 +185,14 @@ def can_modify_model(user_id: UUID, model_id: UUID, db: Session) -> bool:
         model = db.exec(select(Model).where(Model.id == model_id)).first()
         if not model or not model.project_id:
             return False
-        return can_modify_project(user_id, model.project_id, db)
+
+        if can_modify_project(user_id, model.project_id, db):
+            return True
+
+        if model.owner_id != user_id:
+            return False
+
+        return can_contribute_to_project(user_id, model.project_id, db)
     except Exception as e:
         logger.error(f"Error checking model modify access for user {user_id}, model {model_id}: {str(e)}")
         return False

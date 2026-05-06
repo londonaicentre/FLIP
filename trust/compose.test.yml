@@ -1,0 +1,100 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Compose stack used by trust-api / data-access-api integration tests (issue #369, B3).
+#
+# Brings up a throwaway omop-db (vanilla Postgres seeded from a fixture .sql) plus the
+# data-access-api built from source. The trust-api side runs in-process inside pytest —
+# the test imports task_handlers.handle_cohort_query and dispatches it directly. This
+# keeps the stack to two services (fast bring-up) while still exercising the real
+# trust-api → data-access-api → omop-db chain over HTTP and SQL.
+#
+# Conventions:
+# - All published ports use ephemeral host bindings (":<container_port>"). Tests look up
+#   the bound host port via Testcontainers' DockerCompose.get_service_port() so multiple
+#   test runs on the same host don't collide.
+# - The seed SQL is mounted into the postgres init dir so the schema and data are loaded
+#   on first container start. The container is created and torn down per pytest session.
+# - All env values here are deliberately hard-coded test values, not template references
+#   to .env.development. The compose file must run identically in CI and locally without
+#   any ambient env file.
+
+services:
+  omop-db-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: test_omop_db
+    ports:
+      - "5432"
+    volumes:
+      - ./trust-api/tests/integration/fixtures/omop_seed.sql:/docker-entrypoint-initdb.d/omop_seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d test_omop_db"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  data-access-api-test:
+    build:
+      context: ./data-access-api
+      dockerfile: Dockerfile
+      target: development
+      args:
+        UID: "1000"
+        GID: "1000"
+        UNAME: "appuser"
+        DEBUG_PORT: "5678"
+    depends_on:
+      omop-db-test:
+        condition: service_healthy
+    # Override the entrypoint script — it forks based on $ENV and adds either
+    # ``fastapi dev --reload`` or ``fastapi run`` (multi-worker). For a hermetic
+    # test stack we want the simplest possible single-worker uvicorn process so
+    # the healthcheck and fixture wait deterministically.
+    command: ["uv", "run", "uvicorn", "data_access_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      OMOP_DB_SERVICE_NAME: omop-db-test
+      OMOP_DB_PORT: "5432"
+      DATA_ACCESS_POSTGRES_USER: test_user
+      DATA_ACCESS_POSTGRES_PASSWORD: test_password
+      OMOP_POSTGRES_DB: test_omop_db
+      AES_KEY_BASE64: "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA="  # pragma: allowlist secret
+      ENV: production
+      DEBUG: "false"
+      LOG_LEVEL: INFO
+      TRUST_INTERNAL_SERVICE_KEY_HEADER: X-Trust-Internal-Service-Key
+      # Must match the value pre-set in trust/trust-api/tests/conftest.py so the
+      # in-process trust-api side and the containerised data-access-api use the
+      # same per-trust shared secret on every /cohort call.
+      TRUST_INTERNAL_SERVICE_KEY: "test-trust-internal-service-key"  # pragma: allowlist secret
+      # 5 instead of the prod default of 10 so the seed's 6 M + 6 F image-bearing
+      # patients each clear the bucket-rollup threshold individually, letting the
+      # sex/age distribution assertions test the real per-bucket counts rather
+      # than always rolling into the "Other" bucket.
+      COHORT_QUERY_THRESHOLD: "5"
+    ports:
+      - "8000"
+    volumes:
+      - ./data-access-api/data_access_api:/app/data_access_api
+      - ./observability/log_config:/app/log_config:ro
+    healthcheck:
+      # Targets the canonical /health route (no trailing slash) so the check doesn't
+      # depend on FastAPI's redirect_slashes default. urllib raises on non-2xx.
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      # Grace window before failed probes count against the retry budget — uvicorn
+      # cold start can take a few seconds on the first request even after the
+      # process binds the port.
+      start_period: 10s

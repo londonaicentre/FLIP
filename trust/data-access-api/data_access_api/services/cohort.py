@@ -15,11 +15,14 @@ from collections.abc import Mapping
 from typing import Any
 
 import pandas as pd
+import sqlglot
 from fastapi import HTTPException
 from psycopg2 import errors as pg_errors
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 from sqlalchemy.sql.elements import TextClause
+from sqlglot import exp
+from sqlglot.errors import SqlglotError
 
 from data_access_api.config import get_settings
 from data_access_api.db.database import engine
@@ -30,35 +33,127 @@ from data_access_api.utils.sql_parsers import extract_missing_identifier
 
 COHORT_QUERY_THRESHOLD = get_settings().COHORT_QUERY_THRESHOLD
 
+# OMOP schema is the only schema callers may reference. Any qualified
+# reference to a different schema is rejected by validate_query.
+ALLOWED_SCHEMA = "omop"
+
+# Reject pathologically large queries before sqlglot does any work — cheap DoS guard
+# at the API layer. The DB role limits blast radius too, but rejecting here is
+# defence in depth and stops the parser allocating an arbitrarily large AST.
+MAX_QUERY_LENGTH = 10_240  # 10 KiB
+
+# Top-level statement shapes that count as SELECT-like for the cohort API.
+_ALLOWED_QUERY_TYPES: tuple[type[exp.Expression], ...] = (
+    exp.Select,
+    exp.Union,
+    exp.Intersect,
+    exp.Except,
+)
+
 
 def validate_query(query: str) -> bool:
     """
-    Validates the SQL query to ensure it is safe to execute.
-    This function checks that the query not contain sql injection risks or other unsafe elements.
+    Validates that an inbound SQL query is structurally safe to run against OMOP.
+
+    Database-layer protections already in place
+    -------------------------------------------
+    The data-access-api connects as ``data_analyst_reader`` (see
+    ``flip-omop-db/files/create_readonly_users.sql``), a Postgres role granted
+    only ``CONNECT`` + ``USAGE`` on schema ``omop`` + ``SELECT`` on its tables
+    and sequences, with ``INSERT``, ``UPDATE``, ``DELETE``, ``TRUNCATE``, and
+    ``CREATE`` explicitly REVOKEd. Any DDL or DML is therefore rejected by
+    Postgres itself, so this function does NOT keyword-filter for ``DROP`` /
+    ``INSERT`` / ``UPDATE`` / etc. — those are already covered at the DB layer.
+
+    What this function enforces
+    ---------------------------
+    Since the read-only role can still issue arbitrary ``SELECT`` queries:
+
+    1. The query is shorter than ``MAX_QUERY_LENGTH`` (DoS guard).
+    2. The query parses as exactly one non-empty statement (defeats query stacking,
+       stray semicolons that bypass the count check, and empty inputs).
+    3. The top-level statement is SELECT-shaped (rejects ``COPY``, ``EXPLAIN``,
+       and any DDL/DML the DB would also reject — fail fast at the API).
+    4. Any schema-qualified table reference targets only the ``omop`` schema
+       (blocks enumeration of ``information_schema``, ``pg_catalog``,
+       ``pg_class`` etc., which Postgres makes readable to role ``public``
+       by default).
+    5. Every ``LIMIT`` and ``OFFSET`` is a literal integer (defeats the blind
+       data-extraction technique that abuses
+       ``LIMIT CASE WHEN <predicate> THEN n ELSE m END`` to make the row count
+       a function of a single character value, then reads it back via the
+       cohort-size error message).
 
     Args:
-        query (str): The SQL query to validate.
+        query: The SQL query string from the caller.
 
     Returns:
-        bool: True if the query is valid.
+        ``True`` when the query is structurally safe.
 
     Raises:
-        HTTPException: If the query is invalid or contains unsafe elements.
+        HTTPException(400): When any of the rules above is violated.
     """
-    # TODO: Implement more comprehensive validation logic.
-    # Check if the user is using PostgreSQL internal functions that are not allowed.
-    if "pg_catalog" in query or "information_schema" in query:
+    if len(query) > MAX_QUERY_LENGTH:
         raise HTTPException(
-            status_code=400, detail="Query contains restricted PostgreSQL internal functions or schemas."
+            status_code=400,
+            detail=f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters.",
         )
-    if "DROP" in query or "DELETE" in query or "UPDATE" in query:
-        raise HTTPException(status_code=400, detail="Query contains unsafe operations like DROP, DELETE, or UPDATE.")
-    if "INSERT" in query:
-        raise HTTPException(status_code=400, detail="Query contains unsafe operation like INSERT.")
-    if "CREATE" in query:
-        raise HTTPException(status_code=400, detail="Query contains unsafe operation like CREATE.")
-    if "ALTER" in query:
-        raise HTTPException(status_code=400, detail="Query contains unsafe operation like ALTER.")
+
+    try:
+        statements = sqlglot.parse(query, read="postgres")
+    except SqlglotError as e:
+        # SqlglotError is the parent of both ParseError (e.g. "SELECT FROM") and
+        # TokenError (e.g. unterminated string literals); catch the parent so a
+        # tokenizer failure can't bubble up as an unhandled 500.
+        raise HTTPException(status_code=400, detail=f"Could not parse SQL query: {e}") from e
+
+    # sqlglot returns ``None`` for empty/whitespace input and for stray semicolons
+    # (e.g. ``SELECT 1; ;`` parses to ``[Select, None]``). Reject if the result is
+    # not exactly one non-empty statement — silently filtering ``None`` would let
+    # callers smuggle an extra trailing semicolon past the single-statement check.
+    if len(statements) != 1 or statements[0] is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Exactly one SQL statement is allowed per request.",
+        )
+
+    stmt = statements[0]
+
+    if not isinstance(stmt, _ALLOWED_QUERY_TYPES):
+        raise HTTPException(
+            status_code=400,
+            detail="Only SELECT statements are allowed.",
+        )
+
+    # Walk the whole AST so subqueries, CTEs, and set-operation arms are checked.
+    for table in stmt.find_all(exp.Table):
+        schema_node = table.args.get("db")
+        if schema_node is None:
+            # Unqualified — Postgres resolves via search_path, which is set to
+            # the omop schema in the OMOP DB image, so unqualified references
+            # can only resolve to omop tables.
+            continue
+        # exp.Table.args["db"] is always None or an Identifier in sqlglot's
+        # schema, so .name is safe here.
+        schema_name = schema_node.name.lower()
+        if schema_name != ALLOWED_SCHEMA:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Schema '{schema_name}' is not accessible. "
+                    f"Only the '{ALLOWED_SCHEMA}' schema is allowed."
+                ),
+            )
+
+    for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
+        for node in stmt.find_all(clause_type):
+            value = node.expression
+            if not isinstance(value, exp.Literal) or not value.is_int:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{label} must be a literal integer.",
+                )
+
     return True
 
 

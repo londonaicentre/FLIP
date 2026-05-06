@@ -49,7 +49,7 @@ def get_project_from_central_hub_project_id(central_hub_project_id: str, headers
         Project: XNAT project object
 
     Raises:
-        NotFoundError: If no XNAT project has a matching ``secondary_ID``.
+        imaging_api.utils.exceptions.NotFoundError: If no XNAT project has a matching ``secondary_ID``.
         Exception: If the upstream ``get_all_projects`` call fails.
     """
     try:
@@ -76,7 +76,7 @@ def get_project(project_id: str, headers: dict[str, str]) -> Project:
         Project: XNAT project object
 
     Raises:
-        NotFoundError: If no XNAT project matches ``project_id``.
+        imaging_api.utils.exceptions.NotFoundError: If no XNAT project matches ``project_id``.
         Exception: If the upstream ``get_all_projects`` call fails.
     """
     try:
@@ -457,7 +457,7 @@ async def delete_project(project_id: str, headers: dict[str, str]) -> Project:
         Project: XNAT project object
 
     Raises:
-        NotFoundError: If the project does not exist on XNAT.
+        imaging_api.utils.exceptions.NotFoundError: If the project does not exist on XNAT.
         Exception: If XNAT returns a non-200 response for the delete call.
     """
     # Check if project exists
