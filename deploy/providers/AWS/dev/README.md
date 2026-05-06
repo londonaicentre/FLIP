@@ -35,7 +35,8 @@ The Cognito and SES resource definitions are shared with the prod stack via the 
 | `AWS_PROFILE` | dev SSO profile; also guarded against prod/stag account IDs |
 | `AWS_REGION` | region for the dev Cognito + SES resources |
 | `SES_VERIFIED_EMAIL` | SES sender identity; also defaults the seed admin email |
-| `ADMIN_USER_PASSWORD` | initial password for the seed admin (and researcher, if set) |
+| `ADMIN_USER_PASSWORD` | optional permanent password for the seed admin user; if unset, Cognito emails a one-time temp password and forces a change on first sign-in |
+| `RESEARCHER_USER_PASSWORD` | optional permanent password for the seed researcher user; distinct from `ADMIN_USER_PASSWORD` so the two seed identities never share a credential. If unset, Cognito emails a one-time temp password and forces a change on first sign-in |
 | `FLIP_TFSTATE_BUCKET_NAME` | S3 bucket for `flip/dev/terraform.tfstate` |
 | `flip_cognito_admin_email` (optional) | overrides the seed admin email if you want it distinct from `SES_VERIFIED_EMAIL` |
 | `flip_cognito_researcher_email` (optional) | set to create a second seed user; leave unset to skip |

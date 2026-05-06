@@ -50,9 +50,17 @@ variable "researcher_email" {
   default     = ""
 }
 
-variable "seed_user_password" {
+variable "admin_user_password" {
   type        = string
-  description = "Initial password set for the seed users. Both admin and researcher share this value."
+  description = "Permanent password set for the seed admin user. Leave null to let Cognito generate a one-time temporary password and deliver it through the admin_create_user_config invite template — first sign-in then forces a password change. A non-null value places the user in CONFIRMED state immediately, which is needed by the flip-api integration tests (they sign in as admin via USER_PASSWORD_AUTH)."
+  default     = null
+  sensitive   = true
+}
+
+variable "researcher_user_password" {
+  type        = string
+  description = "Permanent password set for the seed researcher user. Distinct from admin_user_password so a leak of one credential does not compromise the other. Defaults to null — Cognito generates a one-time temporary password and emails it via the invite template, and first sign-in forces a password change."
+  default     = null
   sensitive   = true
 }
 

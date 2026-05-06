@@ -49,7 +49,15 @@ variable "flip_cognito_researcher_email" {
 
 variable "ADMIN_USER_PASSWORD" {
   type        = string
-  description = "Initial password set for both seed users. Read from TF_VAR_ADMIN_USER_PASSWORD; keep out of git."
+  description = "Permanent password for the seeded Cognito admin user. Read from TF_VAR_ADMIN_USER_PASSWORD; keep out of git. Optional — leave unset and Cognito will generate a one-time temporary password and email it via the invite template (first sign-in forces a change). Dev deployments typically set this so flip-api integration tests can sign in as admin via USER_PASSWORD_AUTH."
+  default     = null
+  sensitive   = true
+}
+
+variable "RESEARCHER_USER_PASSWORD" {
+  type        = string
+  description = "Permanent password for the seeded Cognito researcher user. Distinct variable from ADMIN_USER_PASSWORD so the two seed identities never share a credential. Optional — defaults to null so Cognito generates a one-time temporary password and emails it via the invite template (first sign-in forces a change)."
+  default     = null
   sensitive   = true
 }
 

@@ -152,13 +152,14 @@ resource "aws_s3_bucket_cors_configuration" "aicentre_bucket_cors" {
 module "cognito" {
   source = "./modules/cognito"
 
-  user_pool_name     = var.flip_user_pool_name
-  client_name        = var.flip_cognito_client
-  sign_in_hostname   = var.flip_alb_subdomain
-  admin_email        = var.flip_cognito_admin_email
-  researcher_email   = var.flip_cognito_researcher_email
-  seed_user_password = var.ADMIN_USER_PASSWORD
-  templates_dir      = "${path.module}/templates/cognito"
+  user_pool_name           = var.flip_user_pool_name
+  client_name              = var.flip_cognito_client
+  sign_in_hostname         = var.flip_alb_subdomain
+  admin_email              = var.flip_cognito_admin_email
+  researcher_email         = var.flip_cognito_researcher_email
+  admin_user_password      = var.ADMIN_USER_PASSWORD
+  researcher_user_password = var.RESEARCHER_USER_PASSWORD
+  templates_dir            = "${path.module}/templates/cognito"
   # The UI uses USER_PASSWORD_AUTH (not OAuth redirect), so callback_urls are
   # hygiene only — keep the canonical subdomain + localhost for dev.
   callback_urls = ["https://${var.flip_alb_subdomain}", "https://localhost:443"]

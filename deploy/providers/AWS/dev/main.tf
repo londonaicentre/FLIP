@@ -40,16 +40,17 @@ provider "aws" {
 module "cognito" {
   source = "../modules/cognito"
 
-  user_pool_name     = var.flip_user_pool_name
-  client_name        = var.flip_cognito_client
-  sign_in_hostname   = var.sign_in_hostname
-  admin_email        = var.flip_cognito_admin_email
-  researcher_email   = var.flip_cognito_researcher_email
-  seed_user_password = var.ADMIN_USER_PASSWORD
-  templates_dir      = "${path.module}/../templates/cognito"
-  callback_urls      = var.cognito_callback_urls
-  logout_urls        = var.cognito_logout_urls
-  mfa_configuration  = var.cognito_mfa_configuration
+  user_pool_name           = var.flip_user_pool_name
+  client_name              = var.flip_cognito_client
+  sign_in_hostname         = var.sign_in_hostname
+  admin_email              = var.flip_cognito_admin_email
+  researcher_email         = var.flip_cognito_researcher_email
+  admin_user_password      = var.ADMIN_USER_PASSWORD
+  researcher_user_password = var.RESEARCHER_USER_PASSWORD
+  templates_dir            = "${path.module}/../templates/cognito"
+  callback_urls            = var.cognito_callback_urls
+  logout_urls              = var.cognito_logout_urls
+  mfa_configuration        = var.cognito_mfa_configuration
 }
 
 module "ses" {

@@ -14,7 +14,9 @@
 # Shares the same env file as the local Docker Compose dev stack
 # (../../../.env.development) so developers only maintain one set of
 # credentials. The variables we need — AWS_PROFILE, AWS_REGION,
-# SES_VERIFIED_EMAIL, ADMIN_USER_PASSWORD — already live there.
+# SES_VERIFIED_EMAIL, ADMIN_USER_PASSWORD, RESEARCHER_USER_PASSWORD — already
+# live there (the password vars are optional; leave unset to let Cognito
+# generate one-time temp passwords for the seed users).
 # Cognito admin/researcher emails are usually set in .env.development as
 # well for seeding the local stack; reuse them here.
 
@@ -71,6 +73,7 @@ export TF_VAR_sign_in_hostname ?= localhost
 export TF_VAR_flip_cognito_admin_email
 export TF_VAR_flip_cognito_researcher_email ?= $(flip_cognito_researcher_email)
 export TF_VAR_ADMIN_USER_PASSWORD := $(ADMIN_USER_PASSWORD)
+export TF_VAR_RESEARCHER_USER_PASSWORD := $(RESEARCHER_USER_PASSWORD)
 export TF_VAR_SES_VERIFIED_EMAIL := $(SES_VERIFIED_EMAIL)
 
 .PHONY: create-backend init plan apply destroy validate status fmt

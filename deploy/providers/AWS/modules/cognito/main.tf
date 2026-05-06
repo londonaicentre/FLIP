@@ -160,12 +160,22 @@ resource "aws_cognito_user" "admin_user" {
     "email"          = var.admin_email
     "email_verified" = true
   }
-  password = var.seed_user_password
+  # When null, the AdminCreateUser call omits a password and Cognito generates
+  # a one-time temporary one, delivered via the invite template above. First
+  # sign-in then forces a password change. Operators who need a known value
+  # (dev integration tests rely on this) set var.admin_user_password.
+  password = var.admin_user_password
 
   lifecycle {
     prevent_destroy = true
+    # password is in ignore_changes for two reasons: (1) Cognito has no API
+    # to "unset" a password, so a transition value→null on an existing user
+    # would otherwise trigger a forced replacement that prevent_destroy then
+    # blocks; (2) post-create rotations belong to operators (Cognito console,
+    # AdminSetUserPassword), not to this stack.
     ignore_changes = [
-      enabled
+      enabled,
+      password,
     ]
   }
 }
@@ -180,12 +190,16 @@ resource "aws_cognito_user" "researcher_user" {
     "email"          = var.researcher_email
     "email_verified" = true
   }
-  password = var.seed_user_password
+  # Distinct variable from the admin so the two seed identities never share a
+  # credential. Default null — Cognito generates a one-time temp password and
+  # emails it via the invite template; first sign-in forces the change.
+  password = var.researcher_user_password
 
   lifecycle {
     prevent_destroy = true
     ignore_changes = [
-      enabled
+      enabled,
+      password,
     ]
   }
 }

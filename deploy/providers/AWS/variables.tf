@@ -142,8 +142,17 @@ variable "flip_cognito_researcher_email" {
 }
 
 variable "ADMIN_USER_PASSWORD" {
-  description = "Default password for FLIP admin user on Cognito"
+  description = "Permanent password for the seeded Cognito admin user. Optional — leave unset and Cognito will generate a one-time temporary password and email it via the invite template; first sign-in then forces a password change. Set this explicitly only when a known value is needed (e.g. flip-api integration tests sign in as admin via USER_PASSWORD_AUTH)."
   type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "RESEARCHER_USER_PASSWORD" {
+  description = "Permanent password for the seeded Cognito researcher user. Distinct from ADMIN_USER_PASSWORD so the two seed accounts never share a credential. Optional — defaults to null so Cognito generates a one-time temporary password and emails it via the invite template; first sign-in forces a password change."
+  type        = string
+  default     = null
+  sensitive   = true
 }
 
 variable "flip_cognito_client" {
