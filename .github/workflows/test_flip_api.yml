@@ -73,7 +73,7 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: flip-api/coverage.xml
+          files: flip-api/coverage-unit.xml,flip-api/coverage-integration.xml
           flags: flip-api
           fail_ci_if_error: false
         env:
