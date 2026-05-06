@@ -180,15 +180,21 @@ def test_post_presigned_url_endpoint_returns_working_upload_policy(
     assert obj["Body"].read() == payload
 
 
-def test_post_presigned_url_policy_rejects_oversized_upload(
+def test_post_presigned_url_policy_carries_size_cap_and_content_type_lock(
     client: TestClient, session, s3_buckets, monkeypatch
 ):
-    """Bytes exceeding the size cap baked into the policy must be refused.
+    """The policy returned by the endpoint must bake the size cap and the
+    Content-Type lock in directly.
 
-    Locks in the storage-cost-DoS mitigation: the policy carries
-    ``content-length-range`` with ``MAX_MODEL_FILE_BYTES`` as the upper
-    bound, so S3 rejects bodies larger than the cap before they land.
+    Real S3 enforces ``content-length-range`` and Content-Type conditions
+    server-side — that's the actual storage-cost-DoS mitigation. moto's
+    fake doesn't enforce policy conditions on POST uploads (oversized
+    payloads still get a 204), so this test asserts the structural
+    contract by base64-decoding the policy field instead.
     """
+    import base64
+    import json as _json
+
     user_id = admin_user(session)
     _, model_id = _seed_project_and_model(session, user_id)
     override_verify_token_as(user_id)
@@ -200,25 +206,16 @@ def test_post_presigned_url_policy_rejects_oversized_upload(
         json={"fileName": "huge.bin", "contentType": "application/octet-stream"},
     )
     assert response.status_code == 200, response.text
-    policy = response.json()
-    assert policy["maxBytes"] == 64
+    policy_response = response.json()
+    assert policy_response["maxBytes"] == 64
+    assert policy_response["fields"]["Content-Type"] == "application/octet-stream"
 
-    oversized = b"x" * 1024
-    post = requests.post(
-        policy["url"],
-        data=policy["fields"],
-        files={"file": ("huge.bin", oversized, "application/octet-stream")},
-        timeout=10,
-    )
-    assert post.status_code >= 400, post.text
-
-    settings = get_settings()
-    bucket, prefix = _bucket_and_prefix(settings.UPLOADED_MODEL_FILES_BUCKET)
-    listing = boto3.client("s3").list_objects_v2(
-        Bucket=bucket, Prefix=f"{prefix}/{model_id}/"
-    )
-    assert "Contents" not in listing or all(
-        obj["Key"] != f"{prefix}/{model_id}/huge.bin" for obj in listing["Contents"]
+    decoded = _json.loads(base64.b64decode(policy_response["fields"]["policy"]))
+    conditions = decoded["conditions"]
+    assert ["content-length-range", 0, 64] in conditions
+    assert any(
+        isinstance(c, dict) and c.get("Content-Type") == "application/octet-stream"
+        for c in conditions
     )
 
 
