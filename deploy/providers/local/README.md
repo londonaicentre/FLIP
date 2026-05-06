@@ -80,12 +80,20 @@ make full-deploy-hybrid PROD=<stag|true> LOCAL_TRUST_IP=<public-ip> [LOCAL_TRUST
 ```
 
 This wrapper target runs the full AWS + local trust provisioning pipeline, updates the trust configuration in AWS Secrets Manager (per-trust `TRUST_API_KEY`, `AES_KEY_BASE64`, and `TRUST_API_KEY_HASHES`), and redeploys Central Hub so the new secret values are loaded. `PROD` is inherited from the environment and supports both staging (`stag`) and production (`true`). Omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP.
-You still need to start the local trust stack on the trust host:
+You still need to start the local trust stack on the trust host. The playbook
+deliberately does **not** add the SSH login user to the `docker` group (docker
+group membership is equivalent to root on the host — any member can mount `/`
+into a container and chroot in), so docker commands and `make up-local-trust`
+must be run via `sudo`:
 
 ```bash
 cd trust
-env PROD=<stag|true> make up-local-trust
+sudo -E env PROD=<stag|true> make up-local-trust
 ```
+
+`sudo -E` preserves the `PROD` env var for the make target. Any direct `docker`,
+`docker compose`, or `docker swarm` invocations on the trust host should
+likewise be prefixed with `sudo`.
 
 ### Provision a remote trust host (via SSH)
 
@@ -115,14 +123,16 @@ make add-local-trust LOCAL_TRUST_IP=<public-ip>
 
 ### Post-provisioning manual steps
 
-1. **Start the trust stack** on the trust host:
+1. **Start the trust stack** on the trust host. The login user is intentionally
+   **not** in the `docker` group (see the security note in the recommended
+   end-to-end target above), so use `sudo`:
 
    ```bash
    cd trust
-   env PROD=stag make up-local-trust
+   sudo -E env PROD=stag make up-local-trust
    ```
 
-2. **Verify** the trust can poll the hub (check trust-api logs for successful task polling).
+2. **Verify** the trust can poll the hub (check trust-api logs for successful task polling — `sudo docker compose logs trust-api`).
 
 ## Communication Model
 
@@ -202,7 +212,7 @@ TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply
 
 | Symptom | Check |
 | --- | --- |
-| Trust not polling hub | Trust stack running? (`docker ps` on trust host). Check trust-api logs for polling errors. |
+| Trust not polling hub | Trust stack running? (`sudo docker ps` on trust host). Check trust-api logs for polling errors. |
 | `Connection timed out` (FL) | Trust's public IP changed? Update NLB security group. Host/router firewall blocking outbound on port 8002? |
 | Firewall blocking outbound | Check host/router firewall allows outbound HTTPS (443) and gRPC (8002) |
 | Ansible `Permission denied` | SSH key correct? User has sudo? `ANSIBLE_BECOME_PASS` set for local mode? |
