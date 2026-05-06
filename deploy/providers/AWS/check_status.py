@@ -267,7 +267,7 @@ def check_http_endpoint(
 
     # Build SSL context: use provided CA bundle, or system defaults for HTTPS URLs.
     ssl_ctx: ssl.SSLContext | None = None
-    if url.startswith("https://"):
+    if _scheme == "https":
         if cafile and Path(cafile).exists():
             ssl_ctx = ssl.create_default_context(cafile=cafile)
         else:
@@ -996,12 +996,12 @@ def main(
         https_url = f"https://{alb_subdomain}"
         print_status("INFO", f"Testing HTTPS connection to {https_url}...")
 
-        try:
-            import socket
-            import ssl
+        import socket
+        import ssl
 
+        context = ssl.create_default_context()
+        try:
             # Test SSL/TLS handshake
-            context = ssl.create_default_context()
             with socket.create_connection((alb_subdomain, 443), timeout=10) as sock:
                 with context.wrap_socket(sock, server_hostname=alb_subdomain) as ssock:
                     cert = ssock.getpeercert()

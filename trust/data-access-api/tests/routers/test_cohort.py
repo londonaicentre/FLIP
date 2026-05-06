@@ -417,3 +417,31 @@ def test_parse_and_emit_complex_pg_syntax():
     result = _parse_and_emit(query)
     assert "person_id" in result
     assert "adult_count" in result.lower() or "ADULT_COUNT" in result
+
+
+def test_parse_and_emit_rejects_insert():
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_and_emit("INSERT INTO omop.person (person_id) VALUES (1)")
+    assert exc_info.value.status_code == 400
+    assert "SELECT" in exc_info.value.detail
+
+
+def test_parse_and_emit_rejects_drop():
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_and_emit("DROP TABLE omop.person")
+    assert exc_info.value.status_code == 400
+    assert "SELECT" in exc_info.value.detail
+
+
+def test_parse_and_emit_rejects_update():
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_and_emit("UPDATE omop.person SET gender_concept_id = 0 WHERE person_id = 1")
+    assert exc_info.value.status_code == 400
+    assert "SELECT" in exc_info.value.detail
+
+
+def test_parse_and_emit_rejects_delete():
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_and_emit("DELETE FROM omop.person WHERE person_id = 1")
+    assert exc_info.value.status_code == 400
+    assert "SELECT" in exc_info.value.detail

@@ -14,6 +14,7 @@ from typing import Any
 
 import sqlglot
 import sqlglot.errors
+import sqlglot.expressions
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -29,6 +30,13 @@ from data_access_api.utils.encryption import decrypt
 from data_access_api.utils.internal_auth import authenticate_internal_service
 from data_access_api.utils.logger import logger
 
+_READ_ONLY_STATEMENT_TYPES = (
+    sqlglot.expressions.Select,
+    sqlglot.expressions.Union,
+    sqlglot.expressions.Intersect,
+    sqlglot.expressions.Except,
+)
+
 
 def _parse_and_emit(query: str) -> str:
     """Parse SQL with sqlglot and re-emit it to break the injection taint chain.
@@ -39,6 +47,10 @@ def _parse_and_emit(query: str) -> str:
     all valid SELECT queries while also normalising trailing semicolons and
     whitespace.
 
+    Only read-only SELECT-shaped statements (SELECT, UNION, INTERSECT, EXCEPT)
+    are permitted.  DML (INSERT, UPDATE, DELETE) and DDL (DROP, CREATE, ALTER,
+    TRUNCATE) are rejected with HTTP 400.
+
     Args:
         query: Raw SQL string from the caller.
 
@@ -46,16 +58,23 @@ def _parse_and_emit(query: str) -> str:
         Re-emitted SQL string.
 
     Raises:
-        HTTPException: 400 if the query cannot be parsed or is empty.
+        HTTPException: 400 if the query cannot be parsed, is empty, contains
+            multiple statements, or is not a read-only SELECT statement.
     """
     try:
         transpiled = sqlglot.transpile(query, read="postgres", write="postgres")
-    except sqlglot.errors.ParseError as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid SQL syntax: {exc}") from exc
+    except sqlglot.errors.SqlglotError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid SQL: {exc}") from exc
     if not transpiled or not transpiled[0].strip():
         raise HTTPException(status_code=400, detail="SQL query is empty or could not be parsed")
     if len(transpiled) > 1:
         raise HTTPException(status_code=400, detail="Multiple SQL statements are not allowed")
+    try:
+        ast = sqlglot.parse_one(transpiled[0], dialect="postgres")
+    except sqlglot.errors.SqlglotError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid SQL: {exc}") from exc
+    if not isinstance(ast, _READ_ONLY_STATEMENT_TYPES):
+        raise HTTPException(status_code=400, detail="Only SELECT statements are allowed")
     return transpiled[0]
 
 
