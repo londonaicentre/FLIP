@@ -21,7 +21,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "spleen-segmentation-evaluation"
+name = "evaluation-app"
 version = "1.2.1"
 description = "MONAI-based supervised evaluation"
 license = "Apache-2.0"
@@ -63,6 +63,7 @@ num-classes = 2
 flip-model-id = "uuid"
 flip-project-id = "uuid"
 flip-cohort-query = "*"
+flip-job-dir = "job-dir"
 
 # Metrics specification for evaluation
 # Define metric names and their expected types ("float" or "int" only - native numeric types)
