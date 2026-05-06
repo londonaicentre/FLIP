@@ -49,7 +49,11 @@ class Settings(BaseSettings):
     UPLOADED_FEDERATED_DATA_BUCKET: str
     FL_APP_BASE_BUCKET: str
     FL_APP_DESTINATION_BUCKET: str
-    PRE_SIGNED_URL: str | None = None
+
+    # Hard cap on model-file uploads. Bound on the presigned POST policy so
+    # S3 rejects oversized payloads at the edge — the hub never sees them.
+    MAX_MODEL_FILE_BYTES: int = 100 * 1024 * 1024
+    PRE_SIGNED_URL_EXPIRATION_SECONDS: int = 3600
 
     # Reimport imaging project studies
     PROJECT_REIMPORT_RATE: int = 60  # How often to reimport studies for a given project (in minutes)

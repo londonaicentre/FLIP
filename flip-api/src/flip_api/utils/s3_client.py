@@ -67,32 +67,58 @@ class S3Client:
         )
         return url
 
-    def get_put_presigned_url(self, s3_path: str, expiration: int = 3600) -> str:
+    def get_put_presigned_post(
+        self,
+        s3_path: str,
+        max_bytes: int,
+        content_type: str | None = None,
+        expiration: int = 3600,
+    ) -> dict[str, Any]:
         """
-        Generate a pre-signed URL for uploading a file to S3.
+        Generate a pre-signed POST policy for uploading a file to S3 with
+        explicit size and (optional) content-type constraints baked in.
+
+        S3 enforces the policy at the edge: PUTs exceeding ``max_bytes`` or
+        with a Content-Type the policy doesn't allow are rejected before any
+        bytes touch the bucket. The single-PUT URL produced by
+        ``generate_presigned_url("put_object", ...)`` carries no such
+        constraints, which is the whole point of using POST here instead.
 
         Args:
-            s3_path: Full S3 path (e.g., s3://bucket-name/key)
-            expiration: URL expiration time in seconds (default: 1 hour)
+            s3_path: Full S3 path (e.g., s3://bucket-name/key).
+            max_bytes: Hard cap on uploaded body size (bytes).
+            content_type: If provided, the policy locks Content-Type to this
+                exact value. If ``None``, any Content-Type is accepted but
+                the size cap still applies.
+            expiration: URL/policy expiration (seconds). Defaults to 1 hour.
 
         Returns:
-            str: Pre-signed URL string
+            dict[str, Any]: ``{"url": ..., "fields": {...}}`` — pass through
+            to the client as multipart/form-data POST.
 
         Raises:
-            Exception: If URL generation fails
+            Exception: If policy generation fails.
         """
         try:
             bucket, key = parse_s3_path(s3_path)
 
-            url = self.client.generate_presigned_url(
-                "put_object",
-                Params={"Bucket": bucket, "Key": key},
+            conditions: list[Any] = [["content-length-range", 0, max_bytes]]
+            fields: dict[str, str] = {}
+            if content_type is not None:
+                conditions.append({"Content-Type": content_type})
+                fields["Content-Type"] = content_type
+
+            response = self.client.generate_presigned_post(
+                Bucket=bucket,
+                Key=key,
+                Fields=fields,
+                Conditions=conditions,
                 ExpiresIn=expiration,
             )
-            return url
+            return response
         except ClientError as e:
-            logger.error(f"Error generating pre-signed URL: {e}")
-            raise Exception("Unable to create a pre-signed URL")
+            logger.error(f"Error generating pre-signed POST policy: {e}")
+            raise Exception("Unable to create a pre-signed POST policy")
 
     def delete_object(self, s3_path: str) -> None:
         """

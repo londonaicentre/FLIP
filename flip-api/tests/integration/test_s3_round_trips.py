@@ -138,12 +138,16 @@ def test_s3_client_list_objects_returns_full_paths_with_scheme(s3_buckets):
 # ---------------------------------------------------------------------------
 
 
-def test_post_presigned_url_endpoint_returns_working_upload_url(client: TestClient, session, s3_buckets):
-    """Endpoint returns a presigned PUT URL; the URL actually accepts an upload.
+def test_post_presigned_url_endpoint_returns_working_upload_policy(
+    client: TestClient, session, s3_buckets
+):
+    """Endpoint returns a presigned POST policy; the policy actually accepts an upload.
 
-    This is the strongest possible end-to-end S3 test: build the URL via the
-    endpoint, sign it with moto's signing path, send a real PUT through
-    ``requests``, then verify the object lands at the expected key.
+    Build the policy via the endpoint, sign it with moto's signing path, send
+    a real multipart POST through ``requests``, then verify the object lands
+    at the expected key. Locks in the contract that the response carries
+    ``url`` + ``fields`` + ``maxBytes`` and that the POSTed object materialises
+    in the bucket.
     """
     user_id = admin_user(session)
     _, model_id = _seed_project_and_model(session, user_id)
@@ -151,21 +155,71 @@ def test_post_presigned_url_endpoint_returns_working_upload_url(client: TestClie
 
     response = client.post(
         f"/api/files/preSignedUrl/model/{model_id}",
-        json={"fileName": "weights.bin"},
+        json={"fileName": "weights.bin", "contentType": "application/octet-stream"},
     )
     assert response.status_code == 200, response.text
-    presigned_url = response.json()
-    assert presigned_url, "endpoint returned an empty URL"
+    policy = response.json()
+    assert policy["url"], "endpoint returned an empty URL"
+    assert isinstance(policy["fields"], dict)
+    assert policy["maxBytes"] > 0
+    assert policy["fields"].get("Content-Type") == "application/octet-stream"
 
     payload = b"\x00\x01\x02moto-bytes"
-    put = requests.put(presigned_url, data=payload, timeout=10)
-    assert put.status_code == 200, put.text
+    post = requests.post(
+        policy["url"],
+        data=policy["fields"],
+        files={"file": ("weights.bin", payload, "application/octet-stream")},
+        timeout=10,
+    )
+    assert post.status_code in (200, 204), post.text
 
     settings = get_settings()
     bucket, prefix = _bucket_and_prefix(settings.UPLOADED_MODEL_FILES_BUCKET)
     expected_key = f"{prefix}/{model_id}/weights.bin"
     obj = boto3.client("s3").get_object(Bucket=bucket, Key=expected_key)
     assert obj["Body"].read() == payload
+
+
+def test_post_presigned_url_policy_rejects_oversized_upload(
+    client: TestClient, session, s3_buckets, monkeypatch
+):
+    """Bytes exceeding the size cap baked into the policy must be refused.
+
+    Locks in the storage-cost-DoS mitigation: the policy carries
+    ``content-length-range`` with ``MAX_MODEL_FILE_BYTES`` as the upper
+    bound, so S3 rejects bodies larger than the cap before they land.
+    """
+    user_id = admin_user(session)
+    _, model_id = _seed_project_and_model(session, user_id)
+    override_verify_token_as(user_id)
+
+    monkeypatch.setattr(get_settings(), "MAX_MODEL_FILE_BYTES", 64)
+
+    response = client.post(
+        f"/api/files/preSignedUrl/model/{model_id}",
+        json={"fileName": "huge.bin", "contentType": "application/octet-stream"},
+    )
+    assert response.status_code == 200, response.text
+    policy = response.json()
+    assert policy["maxBytes"] == 64
+
+    oversized = b"x" * 1024
+    post = requests.post(
+        policy["url"],
+        data=policy["fields"],
+        files={"file": ("huge.bin", oversized, "application/octet-stream")},
+        timeout=10,
+    )
+    assert post.status_code >= 400, post.text
+
+    settings = get_settings()
+    bucket, prefix = _bucket_and_prefix(settings.UPLOADED_MODEL_FILES_BUCKET)
+    listing = boto3.client("s3").list_objects_v2(
+        Bucket=bucket, Prefix=f"{prefix}/{model_id}/"
+    )
+    assert "Contents" not in listing or all(
+        obj["Key"] != f"{prefix}/{model_id}/huge.bin" for obj in listing["Contents"]
+    )
 
 
 def test_post_presigned_url_endpoint_404_for_unknown_model(client: TestClient, session, s3_buckets):

@@ -57,6 +57,29 @@ class UploadFileBody(BaseModel):
     """Model for file upload request body."""
 
     fileName: str = Field(..., description="Name of the file to upload")
+    contentType: str | None = Field(
+        default=None,
+        description=(
+            "Content-Type the client intends to upload with. When provided, "
+            "the presigned POST policy locks the upload's Content-Type to "
+            "this exact value."
+        ),
+    )
+
+
+class PresignedUploadResponse(BaseModel):
+    """Response for a presigned-POST upload request.
+
+    The client must POST ``multipart/form-data`` to ``url`` with every entry
+    in ``fields`` included as a form field, plus the file last under the
+    field name ``file``. ``maxBytes`` mirrors the size cap baked into the
+    policy so the UI can short-circuit oversized files locally and surface
+    a clear error.
+    """
+
+    url: str
+    fields: dict[str, str]
+    maxBytes: int
 
 
 class ModelFile(BaseModel):
