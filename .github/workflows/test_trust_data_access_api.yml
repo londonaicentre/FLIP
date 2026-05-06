@@ -54,7 +54,7 @@ jobs:
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: trust/data-access-api/coverage.xml
+          files: trust/data-access-api/coverage-unit.xml
           flags: data-access-api
           fail_ci_if_error: false
         env:
