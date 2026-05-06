@@ -272,6 +272,7 @@ def check_http_endpoint(
             ssl_ctx = ssl.create_default_context(cafile=cafile)
         else:
             ssl_ctx = ssl.create_default_context()
+        ssl_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
 
     try:
         req = urllib.request.Request(url, method="GET")
@@ -1000,6 +1001,7 @@ def main(
         import ssl
 
         context = ssl.create_default_context()
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         try:
             # Test SSL/TLS handshake
             with socket.create_connection((alb_subdomain, 443), timeout=10) as sock:
