@@ -19,6 +19,7 @@ from flip_api.domain.interfaces.fl import (
     IClientStatus,
     IServerStatus,
 )
+from flip_api.domain.schemas.status import ClientStatus
 from flip_api.fl_services.get_status import get_status_endpoint
 
 
@@ -75,6 +76,20 @@ def mock_fetch_client_status():
         mock.return_value = [
             IClientStatus(name="trust-1", status="no_jobs"),
         ]
+        yield mock
+
+
+@pytest.fixture(autouse=True)
+def auto_mock_is_trust_online_by_heartbeat():
+    """Mock is_trust_online_by_heartbeat globally to avoid hitting real DB in tests.
+
+    Default: all trusts are considered offline (matching original NO_REPLY behavior).
+    Override with mock_is_trust_online_by_heartbeat fixture in specific tests.
+    """
+    with patch(
+        "flip_api.fl_services.get_status.is_trust_online_by_heartbeat",
+        return_value=False,
+    ) as mock:
         yield mock
 
 
@@ -139,7 +154,14 @@ def test_get_status_endpoint_server_status_none(
     assert result[0].clients == []
 
 
-def test_get_status_endpoint_client_status_none(
+@pytest.fixture
+def mock_is_trust_online_by_heartbeat(auto_mock_is_trust_online_by_heartbeat):
+    """Override default to make trust-1 online, trust-2 offline."""
+    auto_mock_is_trust_online_by_heartbeat.side_effect = lambda name, _: name == "trust-1"
+    yield auto_mock_is_trust_online_by_heartbeat
+
+
+def test_get_status_endpoint_client_status_none_fallback_to_heartbeat(
     fake_request,
     mock_db,
     mock_get_nets,
@@ -147,14 +169,57 @@ def test_get_status_endpoint_client_status_none(
     mock_fetch_server_status,
     mock_fetch_client_status,
     mock_get_settings,
+    mock_is_trust_online_by_heartbeat,
 ):
+    """When fetch_client_status returns None, fall back to heartbeat checks."""
     mock_fetch_server_status.return_value = IServerStatus(
         status="stopped",
     )
-    mock_fetch_client_status.return_value = []
+    mock_fetch_client_status.return_value = None
 
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
     assert len(result) == 1
-    assert result[0].online is False
-    assert result[0].fl_backend == "nvflare"
-    assert result[0].clients == []
+    net = result[0]
+    assert net.online is True  # Server is reachable, clients fall back to heartbeat
+    assert net.fl_backend == "nvflare"
+    assert len(net.clients) == 2
+    # trust-1 has recent heartbeat -> online -> NO_JOBS
+    trust_1 = next(c for c in net.clients if c.name == "trust-1")
+    assert trust_1.status == ClientStatus.NO_JOBS.value
+    assert trust_1.online is True
+    # trust-2 has no recent heartbeat -> offline -> NO_REPLY
+    trust_2 = next(c for c in net.clients if c.name == "trust-2")
+    assert trust_2.status == ClientStatus.NO_REPLY.value
+    assert trust_2.online is False
+
+
+def test_get_status_endpoint_trust_not_in_client_list_fallback_to_heartbeat(
+    fake_request,
+    mock_db,
+    mock_get_nets,
+    mock_get_trusts,
+    mock_fetch_server_status,
+    mock_fetch_client_status,
+    mock_get_settings,
+    mock_is_trust_online_by_heartbeat,
+):
+    """When a trust is not found in client statuses, fall back to heartbeat checks."""
+    mock_fetch_server_status.return_value = IServerStatus(status="started")
+    # Only trust-1 is in client statuses; trust-2 is missing
+    mock_fetch_client_status.return_value = [
+        IClientStatus(name="trust-1", status="CONNECTED"),
+    ]
+
+    result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
+    assert len(result) == 1
+    net = result[0]
+    assert net.online is True
+    assert len(net.clients) == 2
+    # trust-1 matched directly -> CONNECTED -> online
+    trust_1 = next(c for c in net.clients if c.name == "trust-1")
+    assert trust_1.status == "CONNECTED"
+    assert trust_1.online is True
+    # trust-2 not in client list -> heartbeat fallback -> NO_REPLY (no recent heartbeat)
+    trust_2 = next(c for c in net.clients if c.name == "trust-2")
+    assert trust_2.status == ClientStatus.NO_REPLY.value
+    assert trust_2.online is False

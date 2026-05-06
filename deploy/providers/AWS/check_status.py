@@ -526,6 +526,79 @@ asyncio.run(m())
         print_status("PASS", "No critical Trust_1 tasks in FAILED state")
 
 
+def check_trust_heartbeats() -> None:
+    """Check trust liveness via last_heartbeat timestamps in the database.
+
+    Queries the trust table for each trust's last_heartbeat and reports
+    whether it falls within the expected timeout window (default 15s).
+    This is the canonical check for NAT-based trusts that use outbound-only
+    polling.
+    """
+    print_status("INFO", "Checking trust heartbeats...")
+
+    py = """\
+import asyncpg, os, json, boto3, asyncio
+from datetime import datetime, timezone
+
+HEARTBEAT_TIMEOUT = 15
+
+async def m():
+    c = boto3.client("secretsmanager", region_name="eu-west-2")
+    s = c.get_secret_value(SecretId=os.environ["POSTGRES_SECRET_ARN"])
+    d = json.loads(s["SecretString"])
+    p = d.get("password", "")
+    conn = await asyncpg.connect(
+        host=os.environ["DB_HOST"], port=5432,
+        user=os.environ["POSTGRES_USER"], database=os.environ["POSTGRES_DB"], password=p,
+    )
+    rows = await conn.fetch("SELECT name, last_heartbeat FROM trust")
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        name = row[0]
+        hb = row[1]
+        if hb is None:
+            print(f"{name}:never_heartbeated")
+        else:
+            elapsed = (now - hb.replace(tzinfo=timezone.utc)).total_seconds()
+            is_online = elapsed < HEARTBEAT_TIMEOUT
+            tag = "online" if is_online else "stale"
+            print(f"{name}:{tag}:{int(elapsed)}s")
+    await conn.close()
+asyncio.run(m())
+"""
+    success, output = run_remote_python("flip", "flip-api", py, timeout=25)
+
+    if not success or "Traceback" in output:
+        print_status("INFO", "Could not query trust heartbeats (SSH or DB unavailable)")
+        return
+
+    lines = [l.strip() for l in output.strip().split("\n") if l.strip()]
+    if not lines:
+        print_status("INFO", "No trusts registered in the database")
+        return
+
+    online_count = 0
+    offline_count = 0
+    for line in lines:
+        parts = line.split(":")
+        name = parts[0]
+        state = parts[1]
+        if state == "online":
+            elapsed = parts[2]
+            print_status("PASS", f"Trust '{name}' online (heartbeat {elapsed} ago)")
+            online_count += 1
+        elif state == "stale":
+            elapsed = parts[2]
+            print_status("FAIL", f"Trust '{name}' stale (heartbeat {elapsed} ago, >15s timeout)")
+            offline_count += 1
+        elif state == "never_heartbeated":
+            print_status("WARN", f"Trust '{name}' has never heartbeated")
+            offline_count += 1
+
+    if online_count > 0 and offline_count == 0:
+        print_status("PASS", f"All {online_count} trust(s) have recent heartbeats")
+
+
 def check_xnat_health() -> None:
     """Verify XNAT is serving its API (not a setup page)."""
     print_status("INFO", "Checking XNAT API health (not setup page)...")
@@ -1172,6 +1245,10 @@ def main(
                     "WARN",
                     f"FL API Net {nets} returned empty client list — SuperNodes may not have connected yet",
                 )
+
+        # For trusts behind NAT where the FL server is unreachable (check_client_status failed
+        # above), fall back to querying the database for heartbeat timestamps directly.
+        check_trust_heartbeats()
 
         # Trust EC2 endpoint checks
         if trust_id:

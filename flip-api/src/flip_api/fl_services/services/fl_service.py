@@ -11,6 +11,8 @@
 #
 
 import json
+import os
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -19,7 +21,7 @@ from sqlmodel import Session, select
 
 from flip_api.config import get_settings
 from flip_api.db.database import engine
-from flip_api.db.models.main_models import FLJob
+from flip_api.db.models.main_models import FLJob, Trust
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
     IJobMetaData,
@@ -916,6 +918,30 @@ def add_fl_job(model_id: UUID, clients: list[str], session: Session) -> None:
         raise
 
     logger.info(f"FL job {job.id} added for model ID: {model_id}")
+
+
+HEARTBEAT_TIMEOUT_SECONDS = int(os.getenv("TRUST_HEARTBEAT_TIMEOUT_SECONDS", "15"))
+
+
+def is_trust_online_by_heartbeat(trust_name: str, session: Session) -> bool:
+    """Check if a trust is online based on its last_heartbeat timestamp.
+
+    A trust is considered online if it sent a heartbeat within the
+    configurable timeout window (default 15s = 3 x 5s poll interval).
+
+    Args:
+        trust_name (str): The name of the trust to check.
+        session (Session): SQLModel session object.
+
+    Returns:
+        bool: True if the trust has a recent heartbeat, False otherwise.
+    """
+    statement = select(Trust).where(Trust.name == trust_name)
+    trust = session.exec(statement).first()
+    if not trust or not trust.last_heartbeat:
+        return False
+    elapsed = (datetime.now(timezone.utc) - trust.last_heartbeat).total_seconds()
+    return elapsed < HEARTBEAT_TIMEOUT_SECONDS
 
 
 def keep_fl_api_session_alive() -> None:

@@ -17,6 +17,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from datetime import datetime, timedelta, timezone
+
 from flip_api.config import Settings
 from flip_api.domain.interfaces import fl as fl_interfaces
 from flip_api.domain.interfaces.fl import (
@@ -912,3 +914,53 @@ def test_add_fl_job_rollback_on_exception(model_id):
     with pytest.raises(Exception, match="DB Error"):
         fl_service.add_fl_job(model_id, ["client1"], fake_session)
     fake_session.rollback.assert_called_once()
+
+
+@patch("flip_api.fl_services.services.fl_service.select")
+def test_is_trust_online_by_heartbeat_recent(mock_select, fake_session):
+    """Trust with recent heartbeat (< 15s) is considered online."""
+    from flip_api.db.models.main_models import Trust
+
+    mock_trust = MagicMock(spec=Trust)
+    mock_trust.last_heartbeat = datetime.now(timezone.utc) - timedelta(seconds=5)
+    result_proxy = MagicMock()
+    result_proxy.first.return_value = mock_trust
+    fake_session.exec.return_value = result_proxy
+
+    assert fl_service.is_trust_online_by_heartbeat("Trust_1", fake_session) is True
+
+
+@patch("flip_api.fl_services.services.fl_service.select")
+def test_is_trust_online_by_heartbeat_stale(mock_select, fake_session):
+    """Trust with stale heartbeat (> 15s) is considered offline."""
+    from flip_api.db.models.main_models import Trust
+
+    mock_trust = MagicMock(spec=Trust)
+    mock_trust.last_heartbeat = datetime.now(timezone.utc) - timedelta(seconds=30)
+    result_proxy = MagicMock()
+    result_proxy.first.return_value = mock_trust
+    fake_session.exec.return_value = result_proxy
+
+    assert fl_service.is_trust_online_by_heartbeat("Trust_1", fake_session) is False
+
+
+@patch("flip_api.fl_services.services.fl_service.select")
+def test_is_trust_online_by_heartbeat_no_heartbeat(mock_select, fake_session):
+    """Trust with no heartbeat (None) is considered offline."""
+    mock_trust = MagicMock()
+    mock_trust.last_heartbeat = None
+    result_proxy = MagicMock()
+    result_proxy.first.return_value = mock_trust
+    fake_session.exec.return_value = result_proxy
+
+    assert fl_service.is_trust_online_by_heartbeat("Trust_1", fake_session) is False
+
+
+@patch("flip_api.fl_services.services.fl_service.select")
+def test_is_trust_online_by_heartbeat_not_found(mock_select, fake_session):
+    """When the trust is not in the database, it is considered offline."""
+    result_proxy = MagicMock()
+    result_proxy.first.return_value = None
+    fake_session.exec.return_value = result_proxy
+
+    assert fl_service.is_trust_online_by_heartbeat("Unknown_Trust", fake_session) is False

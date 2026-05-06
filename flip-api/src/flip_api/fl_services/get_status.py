@@ -25,7 +25,11 @@ from flip_api.domain.interfaces.fl import (
 )
 from flip_api.domain.schemas.status import ClientStatus, ServerEngineStatus
 from flip_api.fl_services.services.fl_scheduler_service import get_nets
-from flip_api.fl_services.services.fl_service import fetch_client_status, fetch_server_status
+from flip_api.fl_services.services.fl_service import (
+    fetch_client_status,
+    fetch_server_status,
+    is_trust_online_by_heartbeat,
+)
 from flip_api.trusts_services.services.trust import get_trusts
 from flip_api.utils.logger import logger
 
@@ -91,22 +95,41 @@ def get_status_endpoint(
             clients = fetch_client_status(net.endpoint)
 
             if not clients:
-                logger.error(f"{net.name}: No clients connected")
+                logger.warning(
+                    f"{net.name}: No response from FL API client endpoint, "
+                    f"falling back to heartbeat checks"
+                )
+                trusts = get_trusts(db)
+                trust_client_statuses: list[IClientStatus] = []
+                for trust in trusts:
+                    if is_trust_online_by_heartbeat(trust.name, db):
+                        trust_client_statuses.append(
+                            IClientStatus(
+                                name=trust.name, status=ClientStatus.NO_JOBS.value
+                            )
+                        )
+                    else:
+                        trust_client_statuses.append(
+                            IClientStatus(
+                                name=trust.name, status=ClientStatus.NO_REPLY.value
+                            )
+                        )
                 net_statuses.append(
                     INetStatus(
                         name=net.name,
                         fl_backend=fl_backend,
-                        online=False,
-                        registered_clients=0,
-                        clients=[],
-                        net_in_use=False,
+                        online=True,
+                        registered_clients=len(trust_client_statuses),
+                        net_in_use=server_status.status
+                        in [ServerEngineStatus.STARTING, ServerEngineStatus.STARTED],
+                        clients=trust_client_statuses,
                     )
                 )
                 continue
 
             # For each net, we would like to know which Trusts are connected and their statuses.
             trusts = get_trusts(db)
-            trust_client_statuses: list[IClientStatus] = []
+            trust_client_statuses = []
             for trust in trusts:
                 connected_client_info = None
 
@@ -117,7 +140,18 @@ def get_status_endpoint(
                         break
                 else:
                     logger.warning(f"Trust {trust.name} not found in client statuses")
-                    trust_client_statuses.append(IClientStatus(name=trust.name, status=ClientStatus.NO_REPLY.value))
+                    if is_trust_online_by_heartbeat(trust.name, db):
+                        trust_client_statuses.append(
+                            IClientStatus(
+                                name=trust.name, status=ClientStatus.NO_JOBS.value
+                            )
+                        )
+                    else:
+                        trust_client_statuses.append(
+                            IClientStatus(
+                                name=trust.name, status=ClientStatus.NO_REPLY.value
+                            )
+                        )
                     continue
 
                 # Log the trust and connected client information
