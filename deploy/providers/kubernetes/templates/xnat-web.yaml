@@ -29,7 +29,7 @@ data:
   XNAT_DATASOURCE_URL: "jdbc:postgresql://xnat-db:5432/xnat"
   XNAT_ACTIVEMQ_URL: ""
   XNAT_SMTP_ENABLED: "false"
-  XNAT_EMAIL: "email@gstt.nhs.uk"
+  XNAT_EMAIL: {{ .Values.xnat.web.env.XNAT_EMAIL | quote }}
   XNAT_MIN_HEAP: {{ .Values.xnat.web.env.XNAT_MIN_HEAP | quote }}
   XNAT_MAX_HEAP: {{ .Values.xnat.web.env.XNAT_MAX_HEAP | quote }}
   CATALINA_OPTS: "-Xms{{ .Values.xnat.web.env.XNAT_MIN_HEAP }} -Xmx{{ .Values.xnat.web.env.XNAT_MAX_HEAP }} -Dxnat.home=/data/xnat/home -XX:+UseG1GC -Djava.awt.headless=true"

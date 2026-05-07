@@ -299,6 +299,7 @@ xnat:
         memory: "4Gi"
         cpu: "2"
     env:
+      XNAT_EMAIL: ""
       XNAT_MIN_HEAP: "1024m"
       XNAT_MAX_HEAP: "3072m"
   db:
