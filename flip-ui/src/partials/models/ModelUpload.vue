@@ -233,7 +233,7 @@ const uploadFile = async (fileList: FileList) => {
             );
 
             if (!policy) {
-                throw Error("No presigned URL returned 😢");
+                throw Error("No presigned upload policy returned");
             }
 
             if (file.size > policy.maxBytes) {

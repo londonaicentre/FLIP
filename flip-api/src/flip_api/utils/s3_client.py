@@ -78,11 +78,12 @@ class S3Client:
         Generate a pre-signed POST policy for uploading a file to S3 with
         explicit size and (optional) content-type constraints baked in.
 
-        S3 enforces the policy at the edge: PUTs exceeding ``max_bytes`` or
-        with a Content-Type the policy doesn't allow are rejected before any
-        bytes touch the bucket. The single-PUT URL produced by
-        ``generate_presigned_url("put_object", ...)`` carries no such
-        constraints, which is the whole point of using POST here instead.
+        S3 enforces the policy at the edge: multipart/form-data POSTs whose
+        body exceeds ``max_bytes`` or whose Content-Type form field doesn't
+        match the policy are rejected before any bytes land in the bucket.
+        The single-PUT URL produced by ``generate_presigned_url("put_object",
+        ...)`` carries no such constraints, which is the whole point of
+        using POST here instead.
 
         Args:
             s3_path: Full S3 path (e.g., s3://bucket-name/key).

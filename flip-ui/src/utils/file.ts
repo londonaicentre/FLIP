@@ -23,8 +23,8 @@ import { getPreSignedUrl,
 
 /**
  * Thrown when a file fails the client-side size guard. The component layer
- * inspects the name to surface a user-friendly snackbar instead of the
- * generic upload-error message.
+ * detects this via `instanceof FileTooLargeError` to surface a user-friendly
+ * snackbar instead of the generic upload-error message.
  */
 export class FileTooLargeError extends Error {
     public readonly limitBytes: number;
