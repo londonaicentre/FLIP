@@ -11,7 +11,6 @@
 #
 
 import json
-import os
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -920,14 +919,12 @@ def add_fl_job(model_id: UUID, clients: list[str], session: Session) -> None:
     logger.info(f"FL job {job.id} added for model ID: {model_id}")
 
 
-HEARTBEAT_TIMEOUT_SECONDS = int(os.getenv("TRUST_HEARTBEAT_TIMEOUT_SECONDS", "15"))
-
-
 def is_trust_online_by_heartbeat(trust_name: str, session: Session) -> bool:
     """Check if a trust is online based on its last_heartbeat timestamp.
 
     A trust is considered online if it sent a heartbeat within the
-    configurable timeout window (default 15s = 3 x 5s poll interval).
+    configurable timeout window from Settings.HEARTBEAT_TIMEOUT_SECONDS
+    (default 30s).
 
     Args:
         trust_name (str): The name of the trust to check.
@@ -944,7 +941,35 @@ def is_trust_online_by_heartbeat(trust_name: str, session: Session) -> bool:
     if last_hb.tzinfo is None:
         last_hb = last_hb.replace(tzinfo=timezone.utc)
     elapsed = (datetime.now(timezone.utc) - last_hb).total_seconds()
-    return elapsed < HEARTBEAT_TIMEOUT_SECONDS
+    return elapsed < get_settings().HEARTBEAT_TIMEOUT_SECONDS
+
+
+def get_trust_liveness_map(session: Session) -> dict[str, bool]:
+    """Return a {trust_name: is_online} map for all trusts in one query.
+
+    Preloads all Trust.last_heartbeat values and computes liveness
+    in-memory, avoiding N+1 queries when checking many trusts.
+
+    Args:
+        session (Session): SQLModel session object.
+
+    Returns:
+        dict[str, bool]: Mapping of trust name to online status.
+    """
+    statement = select(Trust.name, Trust.last_heartbeat)
+    rows = session.exec(statement).all()
+    timeout = get_settings().HEARTBEAT_TIMEOUT_SECONDS
+    now = datetime.now(timezone.utc)
+    result: dict[str, bool] = {}
+    for name, last_hb in rows:
+        if last_hb is None:
+            result[name] = False
+            continue
+        if last_hb.tzinfo is None:
+            last_hb = last_hb.replace(tzinfo=timezone.utc)
+        elapsed = (now - last_hb).total_seconds()
+        result[name] = elapsed < timeout
+    return result
 
 
 def keep_fl_api_session_alive() -> None:

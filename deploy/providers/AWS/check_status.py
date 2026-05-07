@@ -540,7 +540,7 @@ def check_trust_heartbeats() -> None:
 import asyncpg, os, json, boto3, asyncio
 from datetime import datetime, timezone
 
-HEARTBEAT_TIMEOUT = int(os.environ.get("TRUST_HEARTBEAT_TIMEOUT_SECONDS", "15"))
+HEARTBEAT_TIMEOUT = int(os.environ.get("HEARTBEAT_TIMEOUT_SECONDS", "30"))
 
 async def m():
     c = boto3.client("secretsmanager", region_name="eu-west-2")

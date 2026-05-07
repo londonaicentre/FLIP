@@ -80,15 +80,15 @@ def mock_fetch_client_status():
 
 
 @pytest.fixture(autouse=True)
-def auto_mock_is_trust_online_by_heartbeat():
-    """Mock is_trust_online_by_heartbeat globally to avoid hitting real DB in tests.
+def auto_mock_get_trust_liveness_map():
+    """Mock get_trust_liveness_map globally to avoid hitting real DB in tests.
 
     Default: all trusts are considered offline (matching original NO_REPLY behavior).
-    Override with mock_is_trust_online_by_heartbeat fixture in specific tests.
+    Override with mock_liveness_map fixture in specific tests.
     """
     with patch(
-        "flip_api.fl_services.get_status.is_trust_online_by_heartbeat",
-        return_value=False,
+        "flip_api.fl_services.get_status.get_trust_liveness_map",
+        return_value={"trust-1": False, "trust-2": False},
     ) as mock:
         yield mock
 
@@ -155,10 +155,10 @@ def test_get_status_endpoint_server_status_none(
 
 
 @pytest.fixture
-def mock_is_trust_online_by_heartbeat(auto_mock_is_trust_online_by_heartbeat):
+def mock_liveness_map_trust1_online(auto_mock_get_trust_liveness_map):
     """Override default to make trust-1 online, trust-2 offline."""
-    auto_mock_is_trust_online_by_heartbeat.side_effect = lambda name, _: name == "trust-1"
-    yield auto_mock_is_trust_online_by_heartbeat
+    auto_mock_get_trust_liveness_map.return_value = {"trust-1": True, "trust-2": False}
+    yield auto_mock_get_trust_liveness_map
 
 
 def test_get_status_endpoint_client_status_none_fallback_to_heartbeat(
@@ -169,7 +169,7 @@ def test_get_status_endpoint_client_status_none_fallback_to_heartbeat(
     mock_fetch_server_status,
     mock_fetch_client_status,
     mock_get_settings,
-    mock_is_trust_online_by_heartbeat,
+    mock_liveness_map_trust1_online,
 ):
     """When fetch_client_status returns None, fall back to heartbeat checks."""
     mock_fetch_server_status.return_value = IServerStatus(
@@ -201,7 +201,7 @@ def test_get_status_endpoint_trust_not_in_client_list_fallback_to_heartbeat(
     mock_fetch_server_status,
     mock_fetch_client_status,
     mock_get_settings,
-    mock_is_trust_online_by_heartbeat,
+    mock_liveness_map_trust1_online,
 ):
     """When a trust is not found in client statuses, fall back to heartbeat checks."""
     mock_fetch_server_status.return_value = IServerStatus(status="started")

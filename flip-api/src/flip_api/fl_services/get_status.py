@@ -28,12 +28,27 @@ from flip_api.fl_services.services.fl_scheduler_service import get_nets
 from flip_api.fl_services.services.fl_service import (
     fetch_client_status,
     fetch_server_status,
-    is_trust_online_by_heartbeat,
+    get_trust_liveness_map,
 )
 from flip_api.trusts_services.services.trust import get_trusts
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/fl", tags=["fl_services"])
+
+
+def _heartbeat_status(trust_name: str, liveness_map: dict[str, bool]) -> IClientStatus:
+    """Build an IClientStatus for a trust from a preloaded liveness map."""
+    if liveness_map.get(trust_name, False):
+        return IClientStatus(name=trust_name, status=ClientStatus.NO_JOBS.value)
+    return IClientStatus(name=trust_name, status=ClientStatus.NO_REPLY.value)
+
+
+def build_heartbeat_client_statuses(
+    trusts: list, db: Session
+) -> list[IClientStatus]:
+    """Build IClientStatus list for all trusts using one DB query for liveness."""
+    liveness = get_trust_liveness_map(db)
+    return [_heartbeat_status(t.name, liveness) for t in trusts]
 
 
 # [#114] ✅
@@ -100,20 +115,7 @@ def get_status_endpoint(
                     f"falling back to heartbeat checks"
                 )
                 trusts = get_trusts(db)
-                trust_client_statuses: list[IClientStatus] = []
-                for trust in trusts:
-                    if is_trust_online_by_heartbeat(trust.name, db):
-                        trust_client_statuses.append(
-                            IClientStatus(
-                                name=trust.name, status=ClientStatus.NO_JOBS.value
-                            )
-                        )
-                    else:
-                        trust_client_statuses.append(
-                            IClientStatus(
-                                name=trust.name, status=ClientStatus.NO_REPLY.value
-                            )
-                        )
+                trust_client_statuses = build_heartbeat_client_statuses(trusts, db)
                 net_statuses.append(
                     INetStatus(
                         name=net.name,
@@ -129,6 +131,8 @@ def get_status_endpoint(
 
             # For each net, we would like to know which Trusts are connected and their statuses.
             trusts = get_trusts(db)
+            # Preload all trust heartbeats in one query to avoid N+1
+            liveness_map = get_trust_liveness_map(db)
             trust_client_statuses = []
             for trust in trusts:
                 connected_client_info = None
@@ -140,18 +144,9 @@ def get_status_endpoint(
                         break
                 else:
                     logger.warning(f"Trust {trust.name} not found in client statuses")
-                    if is_trust_online_by_heartbeat(trust.name, db):
-                        trust_client_statuses.append(
-                            IClientStatus(
-                                name=trust.name, status=ClientStatus.NO_JOBS.value
-                            )
-                        )
-                    else:
-                        trust_client_statuses.append(
-                            IClientStatus(
-                                name=trust.name, status=ClientStatus.NO_REPLY.value
-                            )
-                        )
+                    trust_client_statuses.append(
+                        _heartbeat_status(trust.name, liveness_map)
+                    )
                     continue
 
                 # Log the trust and connected client information
