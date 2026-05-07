@@ -28,8 +28,8 @@
 # keys, startup files and transfer directories survive task restarts.
 
 locals {
-  fl_api_image         = "${var.docker_registry}${var.fl_api_name}:${var.flip_fl_image_tag}"
-  fl_server_image      = "${var.docker_registry}${var.fl_server_name}:${var.flip_fl_image_tag}"
+  fl_api_image    = "${var.docker_registry}${var.fl_api_name}:${var.flip_fl_image_tag}"
+  fl_server_image = "${var.docker_registry}${var.fl_server_name}:${var.flip_fl_image_tag}"
 }
 
 ############################
@@ -100,9 +100,9 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
 
   container_definitions = jsonencode([
     {
-      name  = "fl-api-net-1"
-      image = local.fl_api_image
-      cpu   = 512
+      name              = "fl-api-net-1"
+      image             = local.fl_api_image
+      cpu               = 512
       memoryReservation = 1024
 
       portMappings = [
@@ -117,14 +117,18 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
         { name = k, value = v }
       ]
 
+      # Container paths must match what the fl-api image expects (mirrors
+      # compose.production.nvflare.yml: /app/admin/{local,startup}). NVFLARE
+      # initialises a Workspace from FL_ADMIN_DIRECTORY/startup at boot - if
+      # the dir is missing the lifespan startup raises and the task crashes.
       mountPoints = [
         {
           sourceVolume  = "efs-fl-api-net-1-local"
-          containerPath = "/app/data/fl-api-net-1/local"
+          containerPath = "/app/admin/local"
         },
         {
           sourceVolume  = "efs-fl-api-net-1-startup"
-          containerPath = "/app/data/fl-api-net-1/startup"
+          containerPath = "/app/admin/startup"
         },
       ]
 
@@ -189,9 +193,9 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
 
   container_definitions = jsonencode([
     {
-      name  = "fl-server-net-1"
-      image = local.fl_server_image
-      cpu   = 1024
+      name              = "fl-server-net-1"
+      image             = local.fl_server_image
+      cpu               = 1024
       memoryReservation = 2048
 
       portMappings = [
@@ -206,26 +210,36 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
         { name = k, value = v }
       ]
 
+      # INTERNAL_SERVICE_KEY is sourced from the FLIP_API Secrets Manager
+      # secret rather than passed as a plain env, so the raw key never lands
+      # in the task definition JSON or CloudFormation describe output. The
+      # JSON-key syntax (`:internal_service_key::`) extracts that single
+      # field from the multi-field secret payload.
+      secrets = [
+        {
+          name      = "INTERNAL_SERVICE_KEY"
+          valueFrom = "${module.flip_api_secret.secret_arn}:internal_service_key::"
+        },
+      ]
+
+      # Container paths must match what the fl-server image expects (mirrors
+      # compose.production.nvflare.yml: /app/{local,startup,transfer}). The
+      # entrypoint chmods scripts in /app/startup and reads
+      # /app/local/log_config.template.json - wrong paths -> crash loop.
+      # certs and keys live inside /app/local (NVFLARE puts them under
+      # site-1/ssl-key, ssl-cert), so no separate mount is needed.
       mountPoints = [
         {
           sourceVolume  = "efs-fl-server-net-1-local"
-          containerPath = "/app/data/fl-server-net-1/local"
+          containerPath = "/app/local"
         },
         {
           sourceVolume  = "efs-fl-server-net-1-startup"
-          containerPath = "/app/data/fl-server-net-1/startup"
+          containerPath = "/app/startup"
         },
         {
           sourceVolume  = "efs-fl-server-net-1-transfer"
-          containerPath = "/app/data/fl-server-net-1/transfer"
-        },
-        {
-          sourceVolume  = "efs-fl-server-net-1-certs"
-          containerPath = "/app/data/fl-server-net-1/certs"
-        },
-        {
-          sourceVolume  = "efs-fl-server-net-1-keys"
-          containerPath = "/app/data/fl-server-net-1/keys"
+          containerPath = "/app/transfer"
         },
       ]
 
@@ -285,35 +299,11 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
     }
   }
 
-  volume {
-    name = "efs-fl-server-net-1-certs"
-
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.flip_fl[0].id
-      root_directory     = "/"
-      transit_encryption = "ENABLED"
-
-      authorization_config {
-        access_point_id = aws_efs_access_point.flip_fl["fl_server_certs"].id
-        iam             = "ENABLED"
-      }
-    }
-  }
-
-  volume {
-    name = "efs-fl-server-net-1-keys"
-
-    efs_volume_configuration {
-      file_system_id     = aws_efs_file_system.flip_fl[0].id
-      root_directory     = "/"
-      transit_encryption = "ENABLED"
-
-      authorization_config {
-        access_point_id = aws_efs_access_point.flip_fl["fl_server_keys"].id
-        iam             = "ENABLED"
-      }
-    }
-  }
+  # NVFLARE keeps SSL key + cert under /app/local/site-1/ssl-* (i.e. inside
+  # the local volume), so no separate certs/keys mounts are needed. The
+  # corresponding fl_server_certs / fl_server_keys access points in efs.tf
+  # are left in place to avoid a destroy on this hot path - drop them in a
+  # follow-up cleanup PR once the cutover is stable.
 
   tags = {
     Name = "fl-server-net-1"

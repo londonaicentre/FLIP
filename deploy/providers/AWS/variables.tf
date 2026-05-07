@@ -274,6 +274,35 @@ variable "PACS_UI_PORT" {
   type        = number
 }
 
+variable "TRUST_NAMES" {
+  description = "JSON-array string of registered trust names, e.g. [\"Trust_1\",\"Trust_2\"]. Consumed by flip-api to validate inbound trust API calls."
+  type        = string
+}
+
+variable "TRUST_API_KEY_HEADER" {
+  description = "HTTP header name carrying per-trust API keys on trust-to-hub calls. Compose default: Authorization."
+  type        = string
+  default     = "Authorization"
+}
+
+variable "INTERNAL_SERVICE_KEY_HEADER" {
+  description = "HTTP header name carrying the internal service key on fl-server-to-flip-api callbacks."
+  type        = string
+  default     = "X-Internal-Service-Key"
+}
+
+variable "FL_ADMIN_DIRECTORY" {
+  description = "Container path that fl-api looks at for NVFLARE admin secrets (local + startup subdirs)."
+  type        = string
+  default     = "/app/admin"
+}
+
+variable "ENFORCE_MFA" {
+  description = "Gate authenticated routes on TOTP enrolment. Defaults to true; flip-api Settings default also enforces this when unset."
+  type        = string
+  default     = "true"
+}
+
 variable "local_trust_public_ip" {
   description = "Public IP of an on-premises Trust host. When non-empty, AWS security group rules are created to allow consolidated FL communication on port 8002 from this IP to the Central Hub."
   type        = string

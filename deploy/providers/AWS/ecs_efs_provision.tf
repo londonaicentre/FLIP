@@ -19,7 +19,14 @@
 # so we need a bootstrap run that creates the required directory layout.
 
 locals {
-  fl_provision_base_s3 = "s3://${aws_s3_bucket.flip_bucket.id}/base-application/${var.fl_backend}/${var.flare_kit_date}"
+  # NVFLARE participant kits are produced by `nvflare provision` and uploaded
+  # to the AI Centre bucket - NOT the FLIP bucket. The path mirrors the
+  # source-of-truth used by site.yml's central-hub kit sync (lines 168-169).
+  # Bucket: aicentre_bucket; layout:
+  #   fl-flare-participant-kits/{date}/net-1/services/fl-server-net-1/{startup,local}/...
+  #   fl-flare-participant-kits/{date}/net-1/services/flip-fl-api-net-1/{startup,local}/...
+  # NB: the fl-api kit dir on S3 keeps the docker-prefix `flip-fl-api-net-1`.
+  fl_provision_base_s3 = "s3://${aws_s3_bucket.aicentre_bucket.id}/fl-flare-participant-kits/${var.flare_kit_date}/net-1/services"
 }
 
 resource "null_resource" "provision_efs_certs" {
@@ -29,7 +36,7 @@ resource "null_resource" "provision_efs_certs" {
   }
 
   provisioner "local-exec" {
-    command = <<-EOT
+    command     = <<-EOT
       aws ecs run-task \
         --cluster ${aws_ecs_cluster.flip.name} \
         --task-definition ${aws_ecs_task_definition.efs_provision.arn} \
@@ -54,27 +61,31 @@ resource "aws_ecs_task_definition" "efs_provision" {
 
   container_definitions = jsonencode([
     {
-      name    = "provision-efs-certs"
-      image   = "amazon/aws-cli:latest"
+      name  = "provision-efs-certs"
+      image = "amazon/aws-cli:latest"
+      # The amazon/aws-cli image's ENTRYPOINT is `aws`, so a command like
+      # ["/bin/sh", "-c", ...] would get appended as args to aws and fail
+      # with "Found invalid choice '/bin/sh'". Override entryPoint so the
+      # shell is the actual entrypoint and the heredoc is its argument.
+      entryPoint = ["/bin/sh", "-c"]
       command = [
-        "/bin/sh", "-c",
         <<-SCRIPT
         set -e
         S3_BASE=${local.fl_provision_base_s3}
-        echo "Syncing certs from $S3_BASE to EFS..."
+        echo "Syncing NVFLARE participant kit from $S3_BASE to EFS..."
 
-        # fl-api-net-1
+        # fl-api-net-1: kit dir on S3 keeps the docker-prefix `flip-fl-api-net-1`
         mkdir -p /mnt/fl-api/local /mnt/fl-api/startup
-        aws s3 sync "$S3_BASE/fl-api-net-1/local/" /mnt/fl-api/local/ --delete || true
-        aws s3 sync "$S3_BASE/fl-api-net-1/startup/" /mnt/fl-api/startup/ --delete || true
+        aws s3 sync "$S3_BASE/flip-fl-api-net-1/local/" /mnt/fl-api/local/ --delete
+        aws s3 sync "$S3_BASE/flip-fl-api-net-1/startup/" /mnt/fl-api/startup/ --delete
 
-        # fl-server-net-1
-        mkdir -p /mnt/fl-server/local /mnt/fl-server/startup /mnt/fl-server/transfer /mnt/fl-server/certs /mnt/fl-server/keys
-        aws s3 sync "$S3_BASE/fl-server-net-1/local/" /mnt/fl-server/local/ --delete || true
-        aws s3 sync "$S3_BASE/fl-server-net-1/startup/" /mnt/fl-server/startup/ --delete || true
-        aws s3 sync "$S3_BASE/fl-server-net-1/transfer/" /mnt/fl-server/transfer/ --delete || true
-        aws s3 sync "$S3_BASE/fl-server-net-1/certs/" /mnt/fl-server/certs/ --delete || true
-        aws s3 sync "$S3_BASE/fl-server-net-1/keys/" /mnt/fl-server/keys/ --delete || true
+        # fl-server-net-1: SSL key + cert live inside `local/` (NVFLARE puts
+        # them under site-1/ssl-*), so no separate certs/keys mounts are
+        # synced here. transfer/ is created empty for runtime use by the
+        # NVFLARE server (training jobs write checkpoints there).
+        mkdir -p /mnt/fl-server/local /mnt/fl-server/startup /mnt/fl-server/transfer
+        aws s3 sync "$S3_BASE/fl-server-net-1/local/" /mnt/fl-server/local/ --delete
+        aws s3 sync "$S3_BASE/fl-server-net-1/startup/" /mnt/fl-server/startup/ --delete
 
         echo "EFS provisioning complete."
         SCRIPT
@@ -101,14 +112,6 @@ resource "aws_ecs_task_definition" "efs_provision" {
           sourceVolume  = "efs-fl-server-transfer"
           containerPath = "/mnt/fl-server/transfer"
         },
-        {
-          sourceVolume  = "efs-fl-server-certs"
-          containerPath = "/mnt/fl-server/certs"
-        },
-        {
-          sourceVolume  = "efs-fl-server-keys"
-          containerPath = "/mnt/fl-server/keys"
-        },
       ]
 
       logConfiguration = {
@@ -122,22 +125,23 @@ resource "aws_ecs_task_definition" "efs_provision" {
     }
   ])
 
-  # Mount the same EFS access points as the runtime services
+  # Mount the same EFS access points as the runtime services. certs/keys
+  # access points still exist in efs.tf for state continuity, but the
+  # provisioning task no longer touches them (kit puts SSL files under
+  # local/site-1/ssl-*).
   dynamic "volume" {
     for_each = {
-      "efs-fl-api-local"    = "fl_api_local"
-      "efs-fl-api-startup"  = "fl_api_startup"
-      "efs-fl-server-local" = "fl_server_local"
-      "efs-fl-server-startup" = "fl_server_startup"
+      "efs-fl-api-local"       = "fl_api_local"
+      "efs-fl-api-startup"     = "fl_api_startup"
+      "efs-fl-server-local"    = "fl_server_local"
+      "efs-fl-server-startup"  = "fl_server_startup"
       "efs-fl-server-transfer" = "fl_server_transfer"
-      "efs-fl-server-certs" = "fl_server_certs"
-      "efs-fl-server-keys"  = "fl_server_keys"
     }
     content {
       name = volume.key
       efs_volume_configuration {
-        file_system_id = aws_efs_file_system.flip_fl[0].id
-        root_directory = "/"
+        file_system_id     = aws_efs_file_system.flip_fl[0].id
+        root_directory     = "/"
         transit_encryption = "ENABLED"
         authorization_config {
           access_point_id = aws_efs_access_point.flip_fl[volume.value].id
