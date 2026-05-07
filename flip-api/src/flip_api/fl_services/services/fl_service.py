@@ -940,7 +940,10 @@ def is_trust_online_by_heartbeat(trust_name: str, session: Session) -> bool:
     trust = session.exec(statement).first()
     if not trust or not trust.last_heartbeat:
         return False
-    elapsed = (datetime.now(timezone.utc) - trust.last_heartbeat).total_seconds()
+    last_hb = trust.last_heartbeat
+    if last_hb.tzinfo is None:
+        last_hb = last_hb.replace(tzinfo=timezone.utc)
+    elapsed = (datetime.now(timezone.utc) - last_hb).total_seconds()
     return elapsed < HEARTBEAT_TIMEOUT_SECONDS
 
 
