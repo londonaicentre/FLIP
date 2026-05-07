@@ -52,10 +52,11 @@ secrets:
   data:
     aes-key-base64: ""
     trust-api-key: ""
+    trust-internal-service-key-header: ""
+    trust-internal-service-key: ""
     omop-postgres-password: ""
     data-access-postgres-password: ""
-    orthanc-username: ""
-    orthanc-password: ""
+    orthanc-registered-users: ""
     xnat-admin-user: ""
     xnat-admin-password: ""
     xnat-service-user: ""
@@ -348,7 +349,7 @@ observability:
   loki:
     enabled: true
     image:
-      repository: grafana/loki
+      repository: ghcr.io/grafana/loki
       tag: "3.4.0"
       pullPolicy: IfNotPresent
     service:
@@ -369,7 +370,7 @@ observability:
   alloy:
     enabled: true
     image:
-      repository: grafana/alloy
+      repository: ghcr.io/grafana/alloy
       tag: "v1.9.0"
       pullPolicy: IfNotPresent
     service:
@@ -385,7 +386,7 @@ observability:
   grafana:
     enabled: true
     image:
-      repository: grafana/grafana
+      repository: ghcr.io/grafana/grafana
       tag: "11.5.0"
       pullPolicy: IfNotPresent
     service:
@@ -432,9 +433,13 @@ networkPolicies:
   allowedEgressCIDRs: []
   #   - 10.0.0.0/8
   #   - 172.16.0.0/12
-  # Egress rules to allow (DNS, NTP, etc.)
+  # Egress rules to allow (defaults include DNS/HTTP/HTTPS)
   allowedEgressPorts:
     - port: 53
       protocol: UDP
     - port: 53
+      protocol: TCP
+    - port: 80
+      protocol: TCP
+    - port: 443
       protocol: TCP

@@ -52,9 +52,11 @@ list: ## List all Helm releases in the namespace
 test: lint template validate ## Run all validation steps
 
 validate: ## Validate rendered templates against Kubernetes schema
-	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) | \
-		kubeconform --kubernetes-version 1.28 --strict 2>/dev/null || \
-		echo "⚠️  kubeconform not installed; skipping schema validation"
+	@if command -v kubeconform >/dev/null 2>&1; then \
+		$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) | kubeconform --kubernetes-version 1.28 --strict; \
+	else \
+		echo "⚠️  kubeconform not installed; skipping schema validation"; \
+	fi
 
 template-all-backends: ## Render templates for all FL backend variants
 	@echo "=== Default (nvflare) ==="
@@ -85,5 +87,4 @@ register-trust: ## Register a K8s trust with the CENTRAL HUB (requires --hub-url
 	@python3 $(CHART_DIR)/register_k8s_trust.py \
 		--trust-name $(TRUST_NAME) \
 		--hub-url $(HUB_URL) \
-		--env-file $(CHART_DIR)/../../.env.development \
 		--output-dir $(CHART_DIR)

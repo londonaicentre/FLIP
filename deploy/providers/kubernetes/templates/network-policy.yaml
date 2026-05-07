@@ -53,12 +53,12 @@ metadata:
 spec:
   podSelector: {}
   egress:
-    # Allow DNS resolution
+    # Allow configured egress ports (defaults include DNS/HTTP/HTTPS)
     - ports:
-        - port: 53
-          protocol: UDP
-        - port: 53
-          protocol: TCP
+{{- range .Values.networkPolicies.allowedEgressPorts }}
+        - port: {{ .port }}
+          protocol: {{ .protocol }}
+{{- end }}
     # Allow intra-namespace egress (all ports)
     - to:
         - namespaceSelector:
@@ -76,12 +76,6 @@ spec:
     - to:
         - ipBlock:
             cidr: 169.254.169.254/32
-    # Allow HTTPS egress (for Central Hub API and general outbound)
-    - ports:
-        - port: 443
-          protocol: TCP
-        - port: 80
-          protocol: TCP
   policyTypes:
     - Egress
 {{- end }}

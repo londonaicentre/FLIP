@@ -20,7 +20,8 @@ metadata:
     {{- include "flip-trust.labels" . | nindent 4 }}
     app.kubernetes.io/component: trust-api
 {{- if .Values.imagePullSecrets }}
-{{ include "flip-trust.imagePullSecrets" . }}
+imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 2 }}
 {{- end }}
 ---
 apiVersion: v1

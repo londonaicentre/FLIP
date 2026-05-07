@@ -78,11 +78,8 @@ Create the name of the service account to use
 Image pull secrets helper
 */}}
 {{- define "flip-trust.imagePullSecrets" -}}
-{{- if .Values.imagePullSecrets }}
-imagePullSecrets:
 {{- range .Values.imagePullSecrets }}
-  - name: {{ .name }}
-{{- end }}
+- name: {{ .name }}
 {{- end }}
 {{- end }}
 
