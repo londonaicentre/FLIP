@@ -76,24 +76,34 @@ resource "aws_ecs_task_definition" "efs_provision" {
 
         # fl-api-net-1: kit dir on S3 keeps the docker-prefix `flip-fl-api-net-1`.
         # NVFLARE participant kits are signed at provision time (signature.json
-        # over each file), so we sync the kit verbatim - any post-sync edit
-        # would trip LoadResult.INVALID_SIGNATURE on fl-api startup. The kit
-        # hard-codes the short hostname `fl-server-net-1` in fed_admin.json
-        # which does not resolve on Fargate awsvpc; getting fl-api to talk
-        # to fl-server on ECS therefore needs the kit to be regenerated with
-        # an ECS-aware hostname (e.g. fl-server-net-1.flip.local) - tracked
-        # as a follow-up in the cutover PR.
+        # over each file). Editing any file post-sync trips
+        # LoadResult.INVALID_SIGNATURE on fl-api startup, so the kit must be
+        # regenerated upstream (see net-1_project_stag.yml in flip-fl-base)
+        # whenever a hostname/SAN changes and re-uploaded to S3 under a new
+        # FLARE_KIT_DATE prefix.
+        #
+        # We wipe the access-point contents first because `aws s3 sync` skips
+        # files when source/dest size + mtime "look equivalent", and a fresh
+        # kit can have files with sizes coincidentally similar to the
+        # previous one - leaving fed_admin.json or signature.json stale and
+        # producing INVALID_SIGNATURE at fl-api boot. `find ... -delete` is
+        # cheaper than recreating the access point and avoids a DB-level
+        # lifecycle on the EFS file system.
         mkdir -p /mnt/fl-api/local /mnt/fl-api/startup
-        aws s3 sync "$S3_BASE/flip-fl-api-net-1/local/" /mnt/fl-api/local/ --delete
-        aws s3 sync "$S3_BASE/flip-fl-api-net-1/startup/" /mnt/fl-api/startup/ --delete
+        find /mnt/fl-api/local -mindepth 1 -delete 2>/dev/null || true
+        find /mnt/fl-api/startup -mindepth 1 -delete 2>/dev/null || true
+        aws s3 sync "$S3_BASE/flip-fl-api-net-1/local/" /mnt/fl-api/local/
+        aws s3 sync "$S3_BASE/flip-fl-api-net-1/startup/" /mnt/fl-api/startup/
 
         # fl-server-net-1: SSL key + cert live inside `local/` (NVFLARE puts
         # them under site-1/ssl-*), so no separate certs/keys mounts are
         # synced here. transfer/ is created empty for runtime use by the
         # NVFLARE server (training jobs write checkpoints there).
         mkdir -p /mnt/fl-server/local /mnt/fl-server/startup /mnt/fl-server/transfer
-        aws s3 sync "$S3_BASE/fl-server-net-1/local/" /mnt/fl-server/local/ --delete
-        aws s3 sync "$S3_BASE/fl-server-net-1/startup/" /mnt/fl-server/startup/ --delete
+        find /mnt/fl-server/local -mindepth 1 -delete 2>/dev/null || true
+        find /mnt/fl-server/startup -mindepth 1 -delete 2>/dev/null || true
+        aws s3 sync "$S3_BASE/fl-server-net-1/local/" /mnt/fl-server/local/
+        aws s3 sync "$S3_BASE/fl-server-net-1/startup/" /mnt/fl-server/startup/
 
         echo "EFS provisioning complete."
         SCRIPT
