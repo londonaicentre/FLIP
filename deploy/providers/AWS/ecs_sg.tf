@@ -38,13 +38,13 @@ resource "aws_security_group_rule" "ecs_flip_api_ingress_alb_http" {
 }
 
 resource "aws_security_group_rule" "ecs_flip_api_ingress_vpc_http" {
-  type                     = "ingress"
-  description              = "HTTP from VPC (fl-server callbacks via Service Discovery)"
-  from_port                = local.api_container_port
-  to_port                  = local.api_container_port
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.ecs_flip_api.id
-  cidr_blocks              = [var.vpc_cidr]
+  type              = "ingress"
+  description       = "HTTP from VPC (fl-server callbacks via Service Discovery)"
+  from_port         = local.api_container_port
+  to_port           = local.api_container_port
+  protocol          = "tcp"
+  security_group_id = aws_security_group.ecs_flip_api.id
+  cidr_blocks       = [var.vpc_cidr]
 }
 
 resource "aws_security_group_rule" "ecs_flip_api_egress_all" {
@@ -105,6 +105,21 @@ resource "aws_security_group_rule" "ecs_fl_server_ingress_nlb_grpc" {
   protocol                 = "tcp"
   security_group_id        = aws_security_group.ecs_fl_server.id
   source_security_group_id = module.fl_server_nlb.security_group_id
+}
+
+# fl-api (the NVFLARE admin client) connects directly to fl-server on the
+# admin port (same 8002 as the gRPC client port; NVFLARE multiplexes admin
+# and client RPC over a single HTTP/2 stream). It does NOT go through the
+# NLB - that path is reserved for off-VPC FL clients on trusts. Without
+# this rule fl-api startup hangs in `try_connect` until the 20s timeout.
+resource "aws_security_group_rule" "ecs_fl_server_ingress_fl_api_admin" {
+  type                     = "ingress"
+  description              = "NVFLARE admin from fl-api task (direct, not via NLB)"
+  from_port                = 8002
+  to_port                  = 8002
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.ecs_fl_server.id
+  source_security_group_id = aws_security_group.ecs_fl_api.id
 }
 
 resource "aws_security_group_rule" "ecs_fl_server_ingress_vpc_http" {

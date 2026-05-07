@@ -74,7 +74,15 @@ resource "aws_ecs_task_definition" "efs_provision" {
         S3_BASE=${local.fl_provision_base_s3}
         echo "Syncing NVFLARE participant kit from $S3_BASE to EFS..."
 
-        # fl-api-net-1: kit dir on S3 keeps the docker-prefix `flip-fl-api-net-1`
+        # fl-api-net-1: kit dir on S3 keeps the docker-prefix `flip-fl-api-net-1`.
+        # NVFLARE participant kits are signed at provision time (signature.json
+        # over each file), so we sync the kit verbatim - any post-sync edit
+        # would trip LoadResult.INVALID_SIGNATURE on fl-api startup. The kit
+        # hard-codes the short hostname `fl-server-net-1` in fed_admin.json
+        # which does not resolve on Fargate awsvpc; getting fl-api to talk
+        # to fl-server on ECS therefore needs the kit to be regenerated with
+        # an ECS-aware hostname (e.g. fl-server-net-1.flip.local) - tracked
+        # as a follow-up in the cutover PR.
         mkdir -p /mnt/fl-api/local /mnt/fl-api/startup
         aws s3 sync "$S3_BASE/flip-fl-api-net-1/local/" /mnt/fl-api/local/ --delete
         aws s3 sync "$S3_BASE/flip-fl-api-net-1/startup/" /mnt/fl-api/startup/ --delete
