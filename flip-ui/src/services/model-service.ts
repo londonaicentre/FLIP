@@ -40,6 +40,9 @@ export interface IModel {
     description: string;
     ownerId: string;
     projectId: string;
+    // Optional only because cached payloads from before the backend exposed
+    // it on the project-models list may still be in flight on first paint.
+    status?: ModelStatus;
 }
 
 export interface ILog {
@@ -108,6 +111,26 @@ export enum ModelStatusEnum {
     "PREPARED",
     "TRAINING_STARTED",
     "RESULTS_UPLOADED",
+}
+
+const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
+    PENDING: "Model Created",
+    INITIATED: "Model Queued",
+    PREPARED: "Model Prepared",
+    TRAINING_STARTED: "Training Started",
+    RESULTS_UPLOADED: "Results Uploaded",
+    ERROR: "Error",
+    STOPPED: "Stopped"
+};
+
+/** Human-readable label for a model status. Falls back to "—" if unknown. */
+export function modelStatusLabel(status: ModelStatus | undefined): string {
+    return status ? MODEL_STATUS_LABELS[status] ?? "—" : "—";
+}
+
+/** True for terminal failure / cancellation states (drives the red-cross icon). */
+export function isModelStatusError(status: ModelStatus | undefined): boolean {
+    return status === "ERROR" || status === "STOPPED";
 }
 
 /**
