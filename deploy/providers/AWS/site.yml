@@ -278,10 +278,18 @@
       when: fl_backend == "nvflare"
 
     - name: sync NVFLARE Trust_1 participant kit from S3
+      # `aws s3 sync` skips files when source/dest size + mtime "look
+      # equivalent", so a freshly regenerated kit can leave stale
+      # rootCA.pem / client.crt / fed_client.json in place — the
+      # symptom is fl-client failing with CERTIFICATE_VERIFY_FAILED
+      # against a server cert signed by the new rootCA. Wipe the
+      # destination first to force a clean copy. Mirrors the
+      # ecs_efs_provision.tf fix on the central-hub side.
       shell: |
         set -euo pipefail
         dest="{{ trust_services_dir }}/Trust_1"
         mkdir -p "$dest"
+        find "$dest" -mindepth 1 -delete 2>/dev/null || true
         aws s3 sync \
           "{{ trust_s3_source }}" \
           "$dest"
@@ -308,9 +316,15 @@
       when: fl_backend == "flower"
 
     - name: sync Flower net-1 certificates and keys from S3
+      # See the NVFLARE sync above — same staleness trap. Flower's
+      # mTLS chain (rootCA.pem / server.pem / client.pem) is
+      # regenerated whenever the kit date changes; without a wipe
+      # `aws s3 sync` can leave a previous rootCA in place and the
+      # client fails the TLS handshake to fl-server.
       shell: |
         set -euo pipefail
         mkdir -p "{{ trust_services_dir }}/net-1"
+        find "{{ trust_services_dir }}/net-1" -mindepth 1 -delete 2>/dev/null || true
         aws s3 sync \
           "{{ trust_s3_source }}/" \
           "{{ trust_services_dir }}/net-1/"
