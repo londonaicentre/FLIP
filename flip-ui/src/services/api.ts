@@ -66,11 +66,11 @@ class Http {
                     // so freshly-signed-in users don't hit a 401 on the
                     // very next request (e.g. getMfaStatus from hydrate).
                     let session = await fetchAuthSession();
-                    let token = session.tokens?.idToken?.toString();
+                    let token = session.tokens?.accessToken?.toString();
                     if (!token) {
                         try {
                             session = await fetchAuthSession({ forceRefresh: true });
-                            token = session.tokens?.idToken?.toString();
+                            token = session.tokens?.accessToken?.toString();
                         } catch (e) {
                             // The request will go out unauthenticated and
                             // the 401 handler will force a sign-out, but

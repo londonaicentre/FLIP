@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
-from flip_api.auth.access_manager import can_modify_project
+from flip_api.auth.access_manager import can_contribute_to_project
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Model, ModelTrustIntersect, ProjectTrustIntersect
@@ -56,11 +56,12 @@ def save_model(
     """
     logger.info(f"User {user_id} requested model creation for project {payload.project_id}")
 
-    # Access control
-    if not can_modify_project(user_id, payload.project_id, db):
+    # Access control: project owner, admins, and project-member Researchers may create models.
+    # Observers (no CAN_CREATE_PROJECTS) and non-members are rejected here.
+    if not can_contribute_to_project(user_id, payload.project_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"User with ID: {user_id} is not allowed to modify this project",
+            detail=f"User with ID: {user_id} is not allowed to contribute models to this project",
         )
 
     # Validate project

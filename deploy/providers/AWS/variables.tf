@@ -82,6 +82,42 @@ variable "INTERNAL_SERVICE_KEY_HASH" {
   type        = string
 }
 
+variable "INTERNAL_SERVICE_KEY" {
+  description = "Raw internal service key used by fl-server to authenticate callbacks to flip-api. Stored in Secrets Manager (FLIP_API secret) and consumed by the fl-server ECS task definition via the secrets block."
+  type        = string
+  sensitive   = true
+}
+
+variable "docker_image_tag" {
+  description = "Container image tag for ECS task definitions. Empty default — deploys must pass an explicit tag (Git SHA preferred). 'latest' is intentionally not the default to avoid the mutable-tag pitfalls flagged in the v1 review."
+  type        = string
+  default     = ""
+}
+
+variable "MIN_CLIENTS" {
+  description = "Minimum number of FL clients required before the server starts training"
+  type        = number
+  default     = 1
+}
+
+variable "enable_efs" {
+  description = "Enable EFS file system for FL task persistent storage. Gated to false until PR 2 adds ECS task definitions that mount EFS volumes — creating EFS without consumers is dead infra."
+  type        = bool
+  default     = false
+}
+
+variable "enable_ecs_endpoints" {
+  description = "Enable VPC interface endpoints (SSM, Secrets, Logs, ECR) for ECS Fargate. Gated to false until PR 2 adds ECS services that consume them — existing EC2 traffic uses the NAT gateway. Unconditionally creating endpoints before PR 2 incurs ~$73/month idle cost."
+  type        = bool
+  default     = false
+}
+
+variable "enable_service_discovery" {
+  description = "Enable Cloud Map Service Discovery namespace. Gated to false until PR 2 adds ECS services that register — creating the namespace without registrants is dead infra."
+  type        = bool
+  default     = false
+}
+
 variable "FLIP_BUCKET_NAME" {
   type = string
 }

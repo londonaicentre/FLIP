@@ -353,3 +353,95 @@ def test_health_does_not_require_auth():
     locked down."""
     response = client.get("/health/")
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# _parse_and_emit unit tests
+# ---------------------------------------------------------------------------
+
+from data_access_api.routers.cohort import _parse_and_emit  # noqa: E402
+
+
+def test_parse_and_emit_empty_string():
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_and_emit("")
+    assert exc_info.value.status_code == 400
+    assert "empty" in exc_info.value.detail.lower()
+
+
+def test_parse_and_emit_whitespace_only():
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_and_emit("   \n\t  ")
+    assert exc_info.value.status_code == 400
+
+
+def test_parse_and_emit_multi_statement():
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_and_emit("SELECT 1; SELECT 2")
+    assert exc_info.value.status_code == 400
+    assert "Multiple SQL statements" in exc_info.value.detail
+
+
+def test_parse_and_emit_multi_statement_with_drop():
+    """A semicolon-separated DML statement is rejected before any execution."""
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_and_emit("SELECT id FROM omop.person; DROP TABLE omop.person")
+    assert exc_info.value.status_code == 400
+    assert "Multiple SQL statements" in exc_info.value.detail
+
+
+def test_parse_and_emit_strips_trailing_semicolon():
+    result = _parse_and_emit("SELECT 1;")
+    assert ";" not in result
+    assert "1" in result
+
+
+def test_parse_and_emit_valid_select():
+    result = _parse_and_emit("SELECT * FROM omop.radiology_occurrence")
+    assert "omop.radiology_occurrence" in result
+
+
+def test_parse_and_emit_cte_roundtrip():
+    query = "WITH cte AS (SELECT id FROM omop.person) SELECT * FROM cte"
+    result = _parse_and_emit(query)
+    assert "cte" in result.lower()
+    assert result.upper().startswith("WITH")
+
+
+def test_parse_and_emit_complex_pg_syntax():
+    """PG-specific constructs (window functions, FILTER, LATERAL) survive the round-trip."""
+    query = (
+        "SELECT person_id, COUNT(*) FILTER (WHERE age > 18) AS adult_count "
+        "FROM omop.person GROUP BY person_id"
+    )
+    result = _parse_and_emit(query)
+    assert "person_id" in result
+    assert "adult_count" in result.lower() or "ADULT_COUNT" in result
+
+
+def test_parse_and_emit_rejects_insert():
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_and_emit("INSERT INTO omop.person (person_id) VALUES (1)")
+    assert exc_info.value.status_code == 400
+    assert "SELECT" in exc_info.value.detail
+
+
+def test_parse_and_emit_rejects_drop():
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_and_emit("DROP TABLE omop.person")
+    assert exc_info.value.status_code == 400
+    assert "SELECT" in exc_info.value.detail
+
+
+def test_parse_and_emit_rejects_update():
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_and_emit("UPDATE omop.person SET gender_concept_id = 0 WHERE person_id = 1")
+    assert exc_info.value.status_code == 400
+    assert "SELECT" in exc_info.value.detail
+
+
+def test_parse_and_emit_rejects_delete():
+    with pytest.raises(HTTPException) as exc_info:
+        _parse_and_emit("DELETE FROM omop.person WHERE person_id = 1")
+    assert exc_info.value.status_code == 400
+    assert "SELECT" in exc_info.value.detail

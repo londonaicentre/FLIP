@@ -74,6 +74,8 @@ def retrieve_model_files_list(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=error_message,
                 )
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"An error occurred when finding the result data: {s3_path}. Error: {str(e)}")
             raise HTTPException(

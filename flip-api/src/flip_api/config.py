@@ -12,7 +12,7 @@
 
 from typing import Literal
 
-from pydantic import EmailStr, SecretStr
+from pydantic import EmailStr, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -83,6 +83,24 @@ class Settings(BaseSettings):
     # Not tied to ENV — kept as a dedicated flag so a developer can flip
     # it on locally to verify MFA end-to-end without pretending to be prod.
     ENFORCE_MFA: bool = True
+
+    @field_validator("ENV", mode="before")
+    @classmethod
+    def coerce_empty_env(cls, v: str) -> str:
+        """Treat empty-string ENV (e.g. from CI environment injection) as 'development'."""
+        if v is None or v == "":
+            return "development"
+        return v
+
+    @field_validator("ENFORCE_MFA", mode="before")
+    @classmethod
+    def coerce_empty_mfa(cls, v: str | bool | None) -> bool:
+        """Treat empty-string or None ENFORCE_MFA as the default True."""
+        if v is None or v == "":
+            return True
+        if isinstance(v, bool):
+            return v
+        return v.lower() in ("true", "1")    # type: ignore[union-attr]
 
     # Trust task queue settings
     HEARTBEAT_TIMEOUT_SECONDS: int = 30  # How long since last heartbeat before a trust is considered offline

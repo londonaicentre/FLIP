@@ -23,7 +23,8 @@ FLIP supports two deployment modes for trust-side services:
   governance or infrastructure constraints require data access through a TRE rather than
   direct on-premise compute.
 
-This guide covers the TRE deployment mode. For on-premise deployment, see :ref:`deployment`.
+This guide covers the TRE deployment mode. For on-premise deployment, see the deployment
+instructions in the FLIP repository's ``deploy/`` directory.
 
 .. note::
 
@@ -116,7 +117,6 @@ Both pathways use **outbound-only** connections, making FLIP compatible with TRE
 policies that block inbound traffic.
 
 .. figure:: ../assets/tre/TRE_FLIP_diagram_steps.png
-   :width: 700
    :align: center
 
    FLIP TRE deployment: outbound-only connections from the FLIP node to the Central Hub.

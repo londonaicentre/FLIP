@@ -109,7 +109,7 @@ def get_user_profile_by(key: str, value: str, headers: dict[str, str]) -> User:
 
     Raises:
         AssertionError: If ``key`` is not ``"username"`` or ``"email"``.
-        NotFoundError: If no XNAT user matches ``value`` for the given ``key``.
+        imaging_api.utils.exceptions.NotFoundError: If no XNAT user matches ``value`` for the given ``key``.
         Exception: If fetching XNAT users fails.
     """
     assert key in [

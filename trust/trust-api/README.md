@@ -77,6 +77,15 @@ If horizontal scaling is needed, the hub endpoint (`GET /tasks/{trust_name}/pend
 updated to use `SELECT ... FOR UPDATE SKIP LOCKED` to ensure each task is claimed by exactly
 one replica.
 
+## Testing
+
+Tests are split into `tests/unit/` (no real backing services) and `tests/integration/` (real OMOP database via the shared `trust/compose.test.yml` stack). See [Where does my test go?](../../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule, and [`trust/README.md`](../README.md#integration-tests-cohort-query-end-to-end) for how the cohort-query end-to-end suite is wired.
+
+```bash
+make local_test         # ruff + mypy + unit suite (no Docker required)
+make integration_test   # ruff + mypy + cohort-query end-to-end suite (Docker required)
+```
+
 ## Further Reading
 
 - [Full FLIP Documentation](https://londonaicentreflip.readthedocs.io/en/latest/)

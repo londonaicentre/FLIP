@@ -28,31 +28,9 @@ jobs:
   flip-api:
     runs-on: ubuntu-latest
     environment: flip
-    services:
-      # label used to access the service container
-      postgres:
-        # Docker Hub image
-        image: postgres:latest
-        # service environment variables
-        # `POSTGRES_HOST` is `postgres`
-        env:
-          # optional (defaults to `postgres`)
-          POSTGRES_DB: centralhub
-          # required
-          POSTGRES_PASSWORD: some_password # pragma: allowlist secret
-          # optional (defaults to `5432`)
-          POSTGRES_PORT: 5432
-          # optional (defaults to `postgres`)
-          POSTGRES_USER: local_user
-        ports:
-          # maps tcp port 5432 on service container to the host
-          - 5432:5432
-        # set health checks to wait until postgres has started
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+    # Postgres for integration tests is managed by Testcontainers (see
+    # flip-api/tests/integration/conftest.py). Docker is preinstalled on
+    # ubuntu-latest, so no `services:` block is needed here.
     defaults:
       run:
         working-directory: ./flip-api # Set working directory for subsequent steps
@@ -81,15 +59,21 @@ jobs:
           echo "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
           echo "SES_VERIFIED_EMAIL=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../.env.development
           echo "AWS_SES_ADMIN_EMAIL_ADDRESS=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../../.env.development
-          echo "AWS_SES_SENDER_EMAIL_ADDRESS=${{ secrets.SES_VERIFIED_EMAIL }}" >> ../../.env.development
+          # The GitHub environment can inject empty-string env vars; Pydantic
+          # Settings treats explicit env vars (even empty) as an override of
+          # the model default. Set ENV explicitly to prevent validation failure.
+          echo "ENV=development" >> ../.env.development
 
       - name: Run unit tests
         run: make unit_test
 
+      - name: Run integration tests (Testcontainers-managed Postgres)
+        run: make integration_test
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
-          files: flip-api/coverage.xml
+          files: flip-api/coverage-unit.xml,flip-api/coverage-integration.xml
           flags: flip-api
           fail_ci_if_error: false
         env:

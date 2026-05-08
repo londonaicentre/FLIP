@@ -14,13 +14,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const httpGet = vi.fn();
+const httpDelete = vi.fn();
+const httpPost = vi.fn();
 const fetchJobTypesMock = vi.fn();
 
 vi.mock("@/services/api", () => ({
     _http: {
         get: (...args: unknown[]) => httpGet(...args),
-        delete: vi.fn(),
-        post: vi.fn()
+        delete: (...args: unknown[]) => httpDelete(...args),
+        post: (...args: unknown[]) => httpPost(...args)
     }
 }));
 
@@ -28,14 +30,20 @@ vi.mock("@/services/model-service", async () => {
     const actual = await vi.importActual<typeof import("@/services/model-service")>(
         "@/services/model-service"
     );
+
     return {
         ...actual,
         fetchJobTypes: (...args: unknown[]) => fetchJobTypesMock(...args)
     };
 });
 
-import { getJobTypeFromConfig, resolveModelConfigState } from "@/services/file-service";
 import { FileUploadStatus } from "@/interfaces/model/types";
+import { deleteModelFile,
+    downloadModelFile,
+    getJobTypeFromConfig,
+    getModelConfig,
+    processScannedFile,
+    resolveModelConfigState } from "@/services/file-service";
 import { DEFAULT_JOB_TYPE } from "@/services/model-service";
 
 const jobTypes = {
@@ -43,9 +51,11 @@ const jobTypes = {
     diffusion: ["trainer.py", "config.json", "diffusion.py"]
 };
 
-const configBlob = (payload: unknown): { data: Blob } => ({
-    data: new Blob([JSON.stringify(payload)], { type: "application/json" })
-});
+const configBlob = (payload: unknown): { data: Blob } => {
+    const data = new Blob([JSON.stringify(payload)], { type: "application/json" });
+
+    return { data };
+};
 
 describe("getJobTypeFromConfig", () => {
     beforeEach(() => {
@@ -73,9 +83,7 @@ describe("getJobTypeFromConfig", () => {
     });
 
     it("falls back to DEFAULT_JOB_TYPE when config.json cannot be parsed", async () => {
-        httpGet.mockResolvedValueOnce({
-            data: new Blob(["not-json"], { type: "application/json" })
-        });
+        httpGet.mockResolvedValueOnce({ data: new Blob(["not-json"], { type: "application/json" }) });
         const result = await getJobTypeFromConfig("model-4", jobTypes);
         expect(result).toBe(DEFAULT_JOB_TYPE);
     });
@@ -113,7 +121,10 @@ describe("resolveModelConfigState", () => {
     });
 
     it("reports no change when config.json status matches previous status", async () => {
-        const files = [{ name: "config.json", status: FileUploadStatus.COMPLETED }];
+        const files = [{
+            name: "config.json",
+            status: FileUploadStatus.COMPLETED
+        }];
         const result = await resolveModelConfigState(
             files,
             FileUploadStatus.COMPLETED,
@@ -125,7 +136,10 @@ describe("resolveModelConfigState", () => {
     });
 
     it("reports no change when config.json is absent and previous status was null", async () => {
-        const files = [{ name: "trainer.py", status: FileUploadStatus.COMPLETED }];
+        const files = [{
+            name: "trainer.py",
+            status: FileUploadStatus.COMPLETED
+        }];
         const result = await resolveModelConfigState(files, null, jobTypes, "model-id");
         expect(result.changed).toBe(false);
         expect(httpGet).not.toHaveBeenCalled();
@@ -136,7 +150,10 @@ describe("resolveModelConfigState", () => {
             isAxiosError: true,
             response: { status: 502 }
         }));
-        const files = [{ name: "config.json", status: FileUploadStatus.COMPLETED }];
+        const files = [{
+            name: "config.json",
+            status: FileUploadStatus.COMPLETED
+        }];
         const result = await resolveModelConfigState(
             files,
             FileUploadStatus.SCANNING,
@@ -148,7 +165,10 @@ describe("resolveModelConfigState", () => {
     });
 
     it("transitions to SCANNING without downloading config.json", async () => {
-        const files = [{ name: "config.json", status: FileUploadStatus.SCANNING }];
+        const files = [{
+            name: "config.json",
+            status: FileUploadStatus.SCANNING
+        }];
         const result = await resolveModelConfigState(files, null, jobTypes, "model-id");
         if (!result.changed) throw new Error("expected changed:true");
         expect(result.configStatus).toBe(FileUploadStatus.SCANNING);
@@ -159,7 +179,10 @@ describe("resolveModelConfigState", () => {
 
     it("downloads config.json and resolves the job type once status becomes COMPLETED", async () => {
         httpGet.mockResolvedValueOnce(configBlob({ job_type: "diffusion" }));
-        const files = [{ name: "config.json", status: FileUploadStatus.COMPLETED }];
+        const files = [{
+            name: "config.json",
+            status: FileUploadStatus.COMPLETED
+        }];
         const result = await resolveModelConfigState(
             files,
             FileUploadStatus.SCANNING,
@@ -174,7 +197,10 @@ describe("resolveModelConfigState", () => {
     });
 
     it("resets to defaults when config.json is removed", async () => {
-        const files = [{ name: "trainer.py", status: FileUploadStatus.COMPLETED }];
+        const files = [{
+            name: "trainer.py",
+            status: FileUploadStatus.COMPLETED
+        }];
         const result = await resolveModelConfigState(
             files,
             FileUploadStatus.COMPLETED,
@@ -186,5 +212,118 @@ describe("resolveModelConfigState", () => {
         expect(result.jobType).toBe(DEFAULT_JOB_TYPE);
         expect(result.requiredFiles).toEqual(jobTypes.standard);
         expect(httpGet).not.toHaveBeenCalled();
+    });
+});
+
+describe("downloadModelFile", () => {
+    beforeEach(() => {
+        httpGet.mockReset();
+    });
+
+    it("GETs the URL with responseType=blob and returns the body", async () => {
+        // The blob responseType is the load-bearing detail: without it
+        // axios would JSON-parse a presigned-url body and throw on
+        // anything non-JSON (e.g. trainer.py). Test pins it.
+        const blob = new Blob(["payload"]);
+        httpGet.mockResolvedValueOnce({ data: blob });
+
+        const result = await downloadModelFile("/files/model/m-1/trainer.py");
+
+        expect(httpGet).toHaveBeenCalledWith(
+            "/files/model/m-1/trainer.py",
+            { responseType: "blob" }
+        );
+        expect(result).toBe(blob);
+    });
+});
+
+describe("getModelConfig", () => {
+    beforeEach(() => {
+        httpGet.mockReset();
+    });
+
+    it("returns the parsed config when the blob is valid JSON", async () => {
+        httpGet.mockResolvedValueOnce({ data: new Blob([JSON.stringify({ job_type: "diffusion" })]) });
+
+        const result = await getModelConfig("m-1");
+
+        expect(result).toEqual({ job_type: "diffusion" });
+    });
+
+    it("URL-encodes the literal config.json filename", async () => {
+        httpGet.mockResolvedValueOnce({ data: new Blob([JSON.stringify({})]) });
+
+        await getModelConfig("m-1");
+
+        expect(httpGet).toHaveBeenCalledWith(
+            "/files/model/m-1/config.json",
+            { responseType: "blob" }
+        );
+    });
+
+    it("returns null when config.json is not yet uploaded (404)", async () => {
+        httpGet.mockRejectedValueOnce(Object.assign(new Error("not found"), {
+            isAxiosError: true,
+            response: { status: 404 }
+        }));
+
+        const result = await getModelConfig("m-1");
+
+        expect(result).toBeNull();
+    });
+
+    it("returns null on unparseable JSON so callers fall back to defaults", async () => {
+        // The model could legitimately have a half-uploaded config.json
+        // that's not yet valid JSON; treating that as "missing" lets the
+        // poller retry on the next tick instead of crashing.
+        const consoleWarn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        httpGet.mockResolvedValueOnce({ data: new Blob(["not-json"]) });
+
+        const result = await getModelConfig("m-1");
+
+        expect(result).toBeNull();
+        expect(consoleWarn).toHaveBeenCalled();
+        consoleWarn.mockRestore();
+    });
+
+    it("re-throws non-404 axios errors so callers can retry", async () => {
+        // 5xx / network failures must propagate — a silent null would
+        // lock the UI to DEFAULT_JOB_TYPE for the rest of the session.
+        httpGet.mockRejectedValueOnce(Object.assign(new Error("bad gateway"), {
+            isAxiosError: true,
+            response: { status: 502 }
+        }));
+
+        await expect(getModelConfig("m-1")).rejects.toThrow("bad gateway");
+    });
+});
+
+describe("deleteModelFile", () => {
+    beforeEach(() => {
+        httpDelete.mockReset();
+    });
+
+    it("DELETEs the URL and returns the response body", async () => {
+        httpDelete.mockResolvedValueOnce({ data: "ok" });
+
+        const result = await deleteModelFile("/files/model/m-1/trainer.py");
+
+        expect(httpDelete).toHaveBeenCalledWith("/files/model/m-1/trainer.py");
+        expect(result).toBe("ok");
+    });
+});
+
+describe("processScannedFile", () => {
+    beforeEach(() => {
+        httpPost.mockReset();
+    });
+
+    it("POSTs to the URL and returns the response body", async () => {
+        httpPost.mockResolvedValueOnce({ data: "scanned" });
+
+        const result = await processScannedFile("/files/model/m-1/trainer.py/process");
+
+        expect(httpPost).toHaveBeenCalledWith("/files/model/m-1/trainer.py/process");
+        expect(result).toBe("scanned");
     });
 });

@@ -11,79 +11,451 @@
  * limitations under the License.
  */
 
-/* override table width restrictions */
- .wy-table-responsive table td, .wy-table-responsive table th {
-     white-space: normal;
- }
+/* ──────────────────────────────────────────────────────────────────────
+ *  FLIP × Read the Docs — drop-in stylesheet
+ *  Replaces docs/source/_static/style.css
+ *
+ *  Aligns the sphinx-rtd-theme rendering of FLIP's docs with the
+ *  FLIP Design System (purple primary #61366E, signature gradient,
+ *  Bai Jamjuree headings, Montserrat body, JetBrains Mono code).
+ *
+ *  Drop this file at docs/source/_static/style.css and keep the existing
+ *  layout.html that links it via {% block extrahead %}.
+ * ──────────────────────────────────────────────────────────────────────*/
 
- .wy-table-responsive {
-     margin-bottom: 24px;
-     max-width: 100%;
-     overflow: visible;
- }
+/* Webfonts ─ these are the same files shipping in the flip-ui webapp.
+ * The companion layout.html copies them into _static/fonts/. */
+@font-face {
+    font-family: 'Bai Jamjuree';
+    font-weight: 500;
+    src: url('fonts/BaiJamjuree-Medium.ttf') format('truetype');
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Bai Jamjuree';
+    font-weight: 600;
+    src: url('fonts/BaiJamjuree-SemiBold.ttf') format('truetype');
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Bai Jamjuree';
+    font-weight: 700;
+    src: url('fonts/BaiJamjuree-Bold.ttf') format('truetype');
+    font-display: swap;
+}
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
 
- .wy-table-responsive th p {
-     margin-bottom: unset;
- }
+:root {
+    /* Brand */
+    --flip-primary:       #61366E;   /* product primary */
+    --flip-primary-400:   #9452A8;
+    --flip-primary-300:   #B88AC6;
+    --flip-primary-200:   #DBC4E2;
+    --flip-primary-100:   #F7F3F9;
+    --flip-deep-purple:   #5C2D82;
+    --flip-plum:          #872B6E;
+    --flip-magenta:       #C41E6A;
+    --flip-hot-pink:      #E91E63;
+    --flip-navy:          #2C3E6B;
+    --flip-charcoal:      #333333;
 
- .wy-nav-content {
-    max-width: 1200px !important;
+    --flip-gradient-bar: linear-gradient(
+        90deg,
+        var(--flip-deep-purple) 0%,
+        var(--flip-plum) 35%,
+        var(--flip-magenta) 65%,
+        var(--flip-hot-pink) 100%
+    );
+
+    /* Neutrals (match flip-ui Tailwind gray scale) */
+    --gray-50:  #F9FAFB;
+    --gray-100: #F3F4F6;
+    --gray-200: #E5E7EB;
+    --gray-300: #D1D5DB;
+    --gray-400: #9CA3AF;
+    --gray-500: #6B7280;
+    --gray-700: #374151;
+    --gray-800: #1F2937;
+    --gray-900: #111827;
+
+    --font-heading: "Bai Jamjuree", system-ui, sans-serif;
+    --font-body:    "Montserrat", system-ui, sans-serif;
+    --font-mono:    "JetBrains Mono", ui-monospace, monospace;
 }
 
- .wy-side-nav-search, .wy-nav-top {
-    background: #8d1b60;
- }
-
- .wy-side-nav-search a:link, .wy-nav-top a:link {
-    color: #fff;
+/* ── Body & typography ─────────────────────────────────────────────────*/
+body, .wy-body-for-nav,
+.rst-content, .rst-content p, .rst-content li,
+.wy-nav-content {
+    font-family: var(--font-body) !important;
+    color: var(--gray-700);
 }
- .wy-side-nav-search a:visited, .wy-nav-top a:visited {
-    color: #fff;
-}
-
- .wy-side-nav-search a:hover, .wy-nav-top a:hover {
-    color: #fff;
-}
-
- .wy-menu-vertical a:link, .wy-menu-vertical a:visited {
-    color: #d9d9d9
-}
-
- .wy-menu-vertical a:active {
-    background-color: #e82678
-}
-
- .wy-side-nav-search>div.version {
-    color: rgba(0, 0, 0, 0.3)
-}
-
- .wy-nav-content {
-    max-width: 80%;
-}
-
- .floatleftcol {
-    float: left;
-    max-width: 60%;
-    padding-right: 20px;
-}
-
- a:link, a:visited {
-    color: #8d1b60;
-}
-
- a:hover {
-    color: #e82678;
-}
-
-p {
+.rst-content p {
+    font-size: 15.5px;
+    line-height: 1.65;
     margin-bottom: 1em;
 }
+.rst-content h1, .rst-content h2, .rst-content h3,
+.rst-content h4, .rst-content h5, .rst-content h6 {
+    font-family: var(--font-heading) !important;
+    color: var(--gray-900);
+    letter-spacing: -0.005em;
+}
+.rst-content h1 {
+    font-size: 32px;
+    font-weight: 700;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--gray-200);
+    margin-bottom: 24px;
+    position: relative;
+}
+.rst-content h1::after {
+    /* signature gradient accent under H1 */
+    content: "";
+    position: absolute;
+    left: 0;
+    bottom: -1px;
+    width: 96px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--flip-gradient-bar);
+}
+.rst-content h2 { font-size: 22px; font-weight: 600; margin-top: 36px; }
+.rst-content h3 { font-size: 18px; font-weight: 600; margin-top: 28px; color: var(--flip-primary); }
+.rst-content h4 { font-size: 16px; font-weight: 600; }
 
- .rst-content dl dt {
-    font-weight: unset;
-    margin-bottom: 0;
+/* ── Sidebar ───────────────────────────────────────────────────────────*/
+.wy-nav-side {
+    background: #1A1320;            /* near-black w/ purple cast */
+}
+.wy-side-nav-search,
+.wy-nav-top {
+    background: var(--flip-primary-100) !important;
+    border-bottom: 3px solid transparent;
+    border-image: var(--flip-gradient-bar) 1;
+    position: relative;
+}
+.wy-side-nav-search {
+    padding: 18px 16px 14px;
+}
+.wy-side-nav-search input[type="text"] {
+    border-radius: 6px;
+    border: 1px solid var(--flip-primary-400);
+    background: rgba(255,255,255,0.08);
+    color: var(--flip-primary-400);
+    font-family: var(--font-body);
+    font-size: 13.5px;
+    padding: 8px 12px;
+    box-shadow: none;
+    transition: border-color 150ms ease, background 150ms ease;
+}
+.wy-side-nav-search input[type="text"]::placeholder { color:var(--flip-primary-400); }
+.wy-side-nav-search input[type="text"]:focus {
+    border-color:var(--flip-primary-400);
+    background: rgba(255,255,255,0.14);
+    outline: none;
+}
+.wy-side-nav-search > a,
+.wy-side-nav-search .wy-dropdown > a {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    color: #fff !important;
+}
+.wy-side-nav-search > a img.logo {
+    max-width: 140px;
+    margin-bottom: 6px;
+}
+.wy-side-nav-search > div.version {
+    color: rgba(255,255,255,0.55);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 
- .rst-content .section ul p {
-    margin-bottom: 0px;
+/* Sidebar nav links */
+.wy-menu-vertical a:link,
+.wy-menu-vertical a:visited,
+.wy-menu-vertical li.toctree-l2 a,
+.wy-menu-vertical li.toctree-l3 a,
+.wy-menu-vertical li.toctree-l4 a,
+.wy-menu-vertical li.toctree-l5 a,
+.wy-menu-vertical li.toctree-l6 a,
+.wy-menu-vertical li.toctree-l7 a,
+.wy-menu-vertical li.toctree-l8 a,
+.wy-menu-vertical li.toctree-l9 a,
+.wy-menu-vertical li.toctree-l10 a {
+    color: #E2DCE8;
+    font-family: var(--font-body);
+    font-size: 14px;
+    font-weight: 500;
+    transition: background 150ms ease, color 150ms ease;
 }
+.wy-menu-vertical a:hover {
+    background: rgba(97, 54, 110, 0.45);
+    color: #fff;
+}
+.wy-menu-vertical li.current {
+    background: transparent;
+}
+.wy-menu-vertical li.current > a,
+.wy-menu-vertical li.toctree-l1.current > a {
+    background: rgba(97, 54, 110, 0.55);
+    color: #fff;
+    border: none;
+    border-left: 3px solid var(--flip-magenta);
+    padding-left: calc(1.618em - 3px);
+    font-weight: 600;
+}
+.wy-menu-vertical li.toctree-l2.current > a,
+.wy-menu-vertical li.toctree-l3.current > a,
+.wy-menu-vertical li.toctree-l4.current > a {
+    background: rgba(97, 54, 110, 0.35);
+    color: #fff;
+}
+.wy-menu-vertical li.toctree-l2 a,
+.wy-menu-vertical li.toctree-l3 a,
+.wy-menu-vertical li.toctree-l4 a {
+    background: transparent;
+}
+/* Descendants of a current section: theme greys them out; restore brand palette */
+.wy-menu-vertical li.toctree-l2.current li.toctree-l3 > a,
+.wy-menu-vertical li.toctree-l3.current li.toctree-l4 > a,
+.wy-menu-vertical li.toctree-l4.current li.toctree-l5 > a,
+.wy-menu-vertical li.toctree-l5.current li.toctree-l6 > a {
+    background: transparent;
+    color: #E2DCE8;
+}
+.wy-menu-vertical p.caption {
+    color: var(--flip-primary-300);
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-top: 18px;
+}
+
+/* ── Content area ──────────────────────────────────────────────────────*/
+.wy-nav-content-wrap { background: #FAFAFB; }
+.wy-nav-content {
+    background: #FFFFFF;
+    max-width: 1040px !important;
+    padding: 36px 48px;
+}
+
+/* ── Links ─────────────────────────────────────────────────────────────*/
+a:link, a:visited {
+    color: var(--flip-primary);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: color 150ms ease, border-color 150ms ease;
+}
+a:hover {
+    color: var(--flip-magenta);
+    border-bottom-color: var(--flip-magenta);
+}
+.wy-side-nav-search a:link,
+.wy-side-nav-search a:visited,
+.wy-nav-top a:link,
+.wy-nav-top a:visited,
+.wy-menu-vertical a:link,
+.wy-menu-vertical a:visited {
+    border-bottom: none;
+}
+
+/* ── Code & inline literals ────────────────────────────────────────────*/
+.rst-content code, .rst-content tt,
+.rst-content code.literal, .rst-content tt.literal {
+    background: var(--flip-primary-100);
+    color: var(--flip-primary);
+    border: 1px solid #EADDF0;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    padding: 1px 6px;
+}
+.rst-content pre,
+.highlight {
+    background: var(--flip-primary-100);
+    color: var(--gray-900);
+    border: 1px solid #EADDF0;
+    border-radius: 8px;
+}
+.rst-content pre {
+    padding: 14px 16px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.55;
+    margin: 0 0 24px;
+    overflow-x: auto;
+}
+.highlight {
+    overflow: hidden;
+    margin-bottom: 24px;
+}
+.highlight pre {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    margin: 0;
+}
+
+/* ── Admonitions (notes, warnings, tips) ───────────────────────────────*/
+.rst-content .admonition,
+.rst-content .note,
+.rst-content .warning,
+.rst-content .tip,
+.rst-content .important {
+    border-radius: 8px;
+    border: 1px solid var(--gray-200);
+    background: #FFFFFF;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    padding: 0;
+    overflow: hidden;
+}
+.rst-content .admonition .admonition-title,
+.rst-content .note .admonition-title,
+.rst-content .warning .admonition-title,
+.rst-content .tip .admonition-title {
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 10px 16px;
+    margin: 0;
+}
+.rst-content .admonition > *:not(.admonition-title),
+.rst-content .note > *:not(.admonition-title),
+.rst-content .warning > *:not(.admonition-title),
+.rst-content .tip > *:not(.admonition-title) {
+    padding-left: 16px;
+    padding-right: 16px;
+}
+.rst-content .admonition > p:last-child,
+.rst-content .note > p:last-child,
+.rst-content .warning > p:last-child,
+.rst-content .tip > p:last-child {
+    padding-bottom: 14px;
+}
+
+/* Note → primary purple */
+.rst-content .note .admonition-title,
+.rst-content .admonition.note .admonition-title {
+    background: var(--flip-primary-100);
+    color: var(--flip-primary);
+    border-bottom: 1px solid #EADDF0;
+}
+/* Warning → magenta accent */
+.rst-content .warning .admonition-title {
+    background: #FCE7EF;
+    color: #9E1A4F;
+    border-bottom: 1px solid #F5C9D8;
+}
+/* Tip → teal */
+.rst-content .tip .admonition-title {
+    background: #E0F5F0;
+    color: #0F6E56;
+    border-bottom: 1px solid #B5E2D5;
+}
+
+/* ── Tables ────────────────────────────────────────────────────────────*/
+.wy-table-responsive { margin-bottom: 24px; max-width: 100%; overflow: visible; }
+.wy-table-responsive table { border: 1px solid var(--gray-200); border-radius: 8px; border-collapse: separate; border-spacing: 0; overflow: hidden; }
+.wy-table-responsive table td,
+.wy-table-responsive table th { white-space: normal; border-bottom: 1px solid var(--gray-200); }
+.wy-table-responsive table tr:last-child td { border-bottom: none; }
+.rst-content table.docutils thead {
+    background: var(--flip-primary-100);
+}
+.rst-content table.docutils thead th {
+    color: var(--flip-primary);
+    font-family: var(--font-body);
+    font-weight: 700;
+    font-size: 12.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border: none;
+}
+.rst-content table.docutils tbody tr:nth-child(odd) { background: var(--gray-50); }
+.rst-content table.docutils tbody tr:nth-child(even) { background: #fff; }
+.rst-content table.docutils td { font-size: 14px; }
+
+/* ── Buttons / next-prev nav ───────────────────────────────────────────*/
+.rst-content .btn,
+.btn-neutral {
+    background: #fff !important;
+    color: var(--flip-primary) !important;
+    border: 1px solid var(--gray-300) !important;
+    box-shadow: none !important;
+    border-radius: 6px !important;
+    font-family: var(--font-body);
+    font-weight: 600;
+    text-shadow: none !important;
+    transition: background 150ms ease, border-color 150ms ease;
+}
+.rst-content .btn:hover, .btn-neutral:hover {
+    background: var(--flip-primary-100) !important;
+    border-color: var(--flip-primary-300) !important;
+    color: var(--flip-primary) !important;
+}
+
+/* ── Footer ────────────────────────────────────────────────────────────*/
+footer {
+    color: var(--gray-500);
+    font-size: 12.5px;
+    border-top: 1px solid var(--gray-200);
+    margin-top: 48px;
+    padding-top: 16px;
+    position: relative;
+}
+footer::before {
+    /* echoes the gradient accent at top */
+    content: "";
+    position: absolute;
+    top: -1px;
+    left: 0;
+    width: 80px;
+    height: 2px;
+    background: var(--flip-gradient-bar);
+    border-radius: 1px;
+}
+footer hr { display: none; }
+
+/* ── Definition lists (autoapi) ────────────────────────────────────────*/
+.rst-content dl:not(.docutils) dt,
+.rst-content dl dt {
+    background: var(--flip-primary-100);
+    color: var(--flip-primary);
+    border-top: 3px solid var(--flip-primary);
+    border-left: none;
+    font-family: var(--font-mono);
+    border-radius: 0 6px 0 0;
+}
+
+/* ── Page-level layout polish ──────────────────────────────────────────*/
+.rst-content .figure,
+.rst-content figure {
+    text-align: center;
+    margin: 28px auto;
+}
+.rst-content .figure img,
+.rst-content figure img {
+    border-radius: 6px;
+    border: 1px solid var(--gray-200);
+    background: #fff;
+    padding: 8px;
+}
+.rst-content .figure .caption,
+.rst-content figcaption {
+    font-size: 13px;
+    color: var(--gray-500);
+    margin-top: 8px;
+    font-style: normal;
+}
+
+/* ── Scrollbar hint in dark sidebar ────────────────────────────────────*/
+.wy-menu-vertical { scrollbar-color: rgba(255,255,255,0.2) transparent; }

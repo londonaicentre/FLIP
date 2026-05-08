@@ -10,27 +10,44 @@
 # limitations under the License.
 #
 
-from unittest.mock import patch
+import os
 
-import pytest
-import requests
-from pytest_factoryboy import register
+# Install dummy values for env vars whose absence (or unreplaced
+# `<placeholder>`) would crash test runs that exercise app code reading them.
+# Mirrors the pattern in trust/*/tests/conftest.py — applied here too because
+# flip-api was missed by f3d785c. Without this, an unedited .env.development
+# leaks the literal placeholder string into encryption helpers and base64
+# decode fails with "Incorrect padding" mid-test (see test_trust_tasks).
+_TEST_ENV_DEFAULTS = {
+    "AES_KEY_BASE64": "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA=",  # 32-byte key, base64
+}
 
-from tests.fixtures import db_fixtures
-from tests.fixtures.main_fixtures import (  # noqa: F401
+for _key, _value in _TEST_ENV_DEFAULTS.items():
+    _current = os.environ.get(_key, "")
+    if not _current or (_current.startswith("<") and _current.endswith(">")):
+        os.environ[_key] = _value
+
+from unittest.mock import patch  # noqa: E402
+
+import pytest  # noqa: E402
+import requests  # noqa: E402
+from pytest_factoryboy import register  # noqa: E402
+
+from tests.fixtures import db_fixtures  # noqa: E402
+from tests.fixtures.main_fixtures import (  # noqa: E402, F401
     client,
     mock_db_session,
     mock_db_session_with_exec,
     session,
 )
-from tests.fixtures.model_fixtures import create_model_data, model_id  # noqa: F401
-from tests.fixtures.project_fixture import (  # noqa: F401
+from tests.fixtures.model_fixtures import create_model_data, model_id  # noqa: E402, F401
+from tests.fixtures.project_fixture import (  # noqa: E402, F401
     create_project_data,
     mock_project,
     project_id,
     project_with_approved_trusts,
 )
-from tests.fixtures.user_fixtures import mock_request, user_data, user_email, user_id  # noqa: F401
+from tests.fixtures.user_fixtures import mock_request, user_data, user_email, user_id  # noqa: E402, F401
 
 register(db_fixtures.ProjectFactory)
 register(db_fixtures.ModelFactory)
