@@ -95,7 +95,7 @@ describe("authStore", () => {
         // resolves without triggering the forceRefresh fallback. Tests that
         // exercise the race re-arm this with mockResolvedValueOnce.
         vi.mocked(fetchAuthSession).mockResolvedValue({
-            tokens: { idToken: { toString: () => "id-token" } as never, accessToken: {} as never }
+            tokens: { accessToken: { toString: () => "access-token" } as never }
         } as never);
     });
 
@@ -423,10 +423,10 @@ describe("authStore", () => {
             expect(getCurrentUser).not.toHaveBeenCalled();
         });
 
-        it("throws MissingSessionTokensError when forceRefresh fails and no idToken is available", async () => {
+        it("throws MissingSessionTokensError when forceRefresh fails and no accessToken is available", async () => {
             // Amplify's forceRefresh can throw on its own (expired refresh
             // token, Cognito transient failure). The wait helper logs the
-            // throw and the "no idToken" warn, then throws a typed error
+            // throw and the "no accessToken" warn, then throws a typed error
             // so the caller can surface a real message instead of letting
             // hydrate proceed unauthenticated and 401 generically.
             const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -453,10 +453,10 @@ describe("authStore", () => {
                 "waitForSessionTokens: forceRefresh threw:",
                 expect.objectContaining({ message: "Refresh token expired" })
             );
-            // Also covers the "still no idToken after forceRefresh" warn —
+            // Also covers the "still no accessToken after forceRefresh" warn —
             // the rejected forceRefresh leaves `session.tokens` undefined.
             expect(consoleWarnSpy).toHaveBeenCalledWith(
-                "waitForSessionTokens: no idToken after forceRefresh",
+                "waitForSessionTokens: no accessToken after forceRefresh",
                 expect.any(Object)
             );
             consoleErrorSpy.mockRestore();
@@ -473,7 +473,7 @@ describe("authStore", () => {
                 .mockReset()
                 .mockResolvedValueOnce({ tokens: undefined } as never)
                 .mockResolvedValueOnce({
-                    tokens: { idToken: { toString: () => "id" } as never }
+                    tokens: { accessToken: { toString: () => "access" } as never }
                 } as never);
             vi.mocked(signIn).mockResolvedValue({
                 isSignedIn: true,

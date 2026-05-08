@@ -12,6 +12,7 @@
 
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -20,6 +21,14 @@ class Settings(BaseSettings):
 
     # Environment flag
     ENV: Literal["development", "production"] = "development"
+
+    @field_validator("ENV", mode="before")
+    @classmethod
+    def coerce_empty_env(cls, v: str) -> str:
+        """Treat empty-string ENV (e.g. from CI environment injection) as 'development'."""
+        if v is None or v == "":
+            return "development"
+        return v
 
     #
     LOG_LEVEL: str = "INFO"

@@ -23,10 +23,10 @@ endif
 
 service_name = flip-api
 lint_command = uv run ruff check . --fix
-test_args = --tb=short --disable-warnings --cov=src/ --cov-report=html --cov-report=term-missing --cov-report=xml:coverage.xml
-test_coverage_html_command = uv run pytest $(test_args)
-test_coverage_html_command_unit = uv run pytest ./tests/unit ./tests/step_functions_services $(test_args)
-test_coverage_html_command_integration = uv run pytest ./tests/integration $(test_args)
+test_args = --tb=short --disable-warnings --cov=src/ --cov-report=term-missing
+test_coverage_html_command = uv run pytest $(test_args) --cov-report=html --cov-report=xml:coverage.xml
+test_coverage_html_command_unit = uv run pytest ./tests/unit ./tests/step_functions_services $(test_args) --cov-report=html:htmlcov-unit --cov-report=xml:coverage-unit.xml
+test_coverage_html_command_integration = uv run pytest ./tests/integration $(test_args) --cov-report=html:htmlcov-integration --cov-report=xml:coverage-integration.xml
 docker_command = DEBUG=$(DEBUG) docker compose -f ../deploy/compose.development.yml
 run_clean = run --rm --remove-orphans
 mypy_command = uv run mypy . --ignore-missing-imports
@@ -58,9 +58,13 @@ local_mypy:
 local_test:
 	$(lint_command) && $(mypy_command) && $(test_coverage_html_command) --skip-client --skip-db
 unit_test:
-	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_unit) --skip-client --skip-db
+	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_unit) --skip-client
+# Integration tests boot a throwaway Postgres via Testcontainers (see
+# tests/integration/conftest.py). --skip-client stays so the AWS-Cognito tests
+# (out of scope for B1, see tests/integration/test_user_registration_real_api.py)
+# don't try to call boto3.
 integration_test:
-	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_integration)
+	$(lint_command) && $(mypy_command) && $(test_coverage_html_command_integration) --skip-client
 build:
 	$(docker_command) build $(service_name)
 restart: down up

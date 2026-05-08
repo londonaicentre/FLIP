@@ -37,12 +37,14 @@ EXIT CODES:
   1 - One or more checks failed
 """
 
+import base64
 import json
 import os
 import platform
 import ssl
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -224,6 +226,17 @@ def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) ->
         return False, str(e)
 
 
+def run_remote_python(host: str, container: str, source: str, timeout: int = 25) -> tuple[bool, str]:
+    """Execute a Python snippet inside a remote Docker container via base64 encoding.
+
+    Avoids shell quoting issues by encoding the snippet in base64, piping it
+    through ``docker exec -i``, and letting Python eval the decoded content.
+    """
+    encoded = base64.b64encode(source.encode()).decode()
+    cmd = f"echo {encoded} | base64 -d | docker exec -i {container} python3"
+    return run_ssh_command("", host, cmd, timeout=timeout)
+
+
 def check_http_endpoint(
     url: str,
     name: str,
@@ -243,16 +256,23 @@ def check_http_endpoint(
     """
     print_status("INFO", f"Checking {name} at {url}...")
 
+    # Validate URL scheme — only http and https are permitted
+    _scheme = urllib.parse.urlparse(url).scheme
+    if _scheme not in ("http", "https"):
+        print_status("FAIL", f"{name}: unsupported URL scheme '{_scheme}' (only http/https allowed)")
+        return False
+
     # Convert single int to list for uniform handling
     valid_statuses = [expected_status] if isinstance(expected_status, int) else expected_status
 
     # Build SSL context: use provided CA bundle, or system defaults for HTTPS URLs.
     ssl_ctx: ssl.SSLContext | None = None
-    if url.startswith("https://"):
+    if _scheme == "https":
         if cafile and Path(cafile).exists():
             ssl_ctx = ssl.create_default_context(cafile=cafile)
         else:
             ssl_ctx = ssl.create_default_context()
+        ssl_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
 
     try:
         req = urllib.request.Request(url, method="GET")
@@ -369,6 +389,362 @@ def ping_host(host: str) -> bool:
         return False
 
 
+# ── Deep Smoke Tests (added from EC2-to-ECS migration lessons) ────
+
+
+def check_ecs_cluster() -> None:
+    """Verify the ECS cluster exists and is ACTIVE.
+
+    Detects: missing cluster, cluster in DEPROVISIONING state, or no cluster
+    defined at all (EC2-only deployment with no ECS migration in progress).
+    """
+    print_status("INFO", "Checking ECS cluster...")
+    cluster_names = []
+    success, output = run_aws_command([
+        "ecs",
+        "list-clusters",
+        "--query",
+        "clusterArns",
+        "--output",
+        "json",
+    ])
+    if success and output:
+        try:
+            cluster_names = json.loads(output)
+        except json.JSONDecodeError:
+            pass
+
+    if not cluster_names:
+        print_status("INFO", "No ECS clusters found (EC2-only deployment)")
+        return
+
+    success2, output2 = run_aws_command([
+        "ecs",
+        "describe-clusters",
+        "--clusters",
+        *cluster_names,
+        "--query",
+        "clusters[0].{name:clusterName,status:status,services:activeServicesCount}",
+        "--output",
+        "json",
+    ])
+    if success2 and output2:
+        try:
+            data = json.loads(output2)
+            name = data.get("name", "?")
+            status = data.get("status", "?")
+            svc_count = data.get("services", 0)
+            if status == "ACTIVE":
+                print_status("PASS", f"ECS cluster '{name}' is ACTIVE ({svc_count} services)")
+            else:
+                print_status("WARN", f"ECS cluster '{name}' status: {status} ({svc_count} services)")
+        except (json.JSONDecodeError, KeyError):
+            print_status("WARN", f"Could not parse ECS cluster status: {output2[:200]}")
+    else:
+        print_status("WARN", "Could not describe ECS clusters")
+
+
+def check_vpc_endpoints() -> None:
+    """Verify essential VPC interface endpoints are AVAILABLE.
+
+    Detects: missing or broken endpoints that would block ECS Fargate tasks
+    from pulling images (ECR), reading secrets (Secrets Manager), or logging.
+    """
+    print_status("INFO", "Checking VPC endpoints...")
+    success, output = run_aws_command([
+        "ec2",
+        "describe-vpc-endpoints",
+        "--filters",
+        "Name=vpc-endpoint-type,Values=Interface",
+        "--query",
+        "VpcEndpoints[].{Name:ServiceName,State:State}",
+        "--output",
+        "json",
+    ])
+    if not success or not output:
+        print_status("INFO", "Could not query VPC endpoints (may need ec2:DescribeVpcEndpoints)")
+        return
+
+    try:
+        endpoints = json.loads(output)
+    except json.JSONDecodeError:
+        print_status("WARN", "Could not parse VPC endpoint data")
+        return
+
+    essential_prefixes = [
+        "com.amazonaws.",
+        ".ecr.dkr",
+        ".ecr.api",
+        ".ssm",
+        ".secretsmanager",
+        ".logs",
+    ]
+    for ep in endpoints:
+        name = ep.get("Name", "")
+        state = ep.get("State", "?")
+        is_essential = any(p in name for p in essential_prefixes)
+        if is_essential:
+            if state == "available":
+                print_status("PASS", f"VPC endpoint {name.split('.')[-1]} is {state}")
+            else:
+                print_status("WARN", f"VPC endpoint {name.split('.')[-1]} is {state}")
+
+
+def check_trust_pipeline() -> None:
+    """Check Trust task pipeline health: recent FAILED tasks.
+
+    Detects: CREATE_IMAGING or REIMPORT_STUDIES stuck in FAILED state.
+    """
+    print_status("INFO", "Checking Trust_1 task pipeline health...")
+
+    py = """\
+import asyncpg, os, json, boto3, asyncio
+async def m():
+    c = boto3.client("secretsmanager", region_name="eu-west-2")
+    s = c.get_secret_value(SecretId=os.environ["POSTGRES_SECRET_ARN"])
+    d = json.loads(s["SecretString"])
+    p = d.get("password", "")
+    conn = await asyncpg.connect(
+        host=os.environ["DB_HOST"], port=5432,
+        user=os.environ["POSTGRES_USER"], database=os.environ["POSTGRES_DB"], password=p,
+    )
+    rows = await conn.fetch(
+        "SELECT task_type, status FROM trust_task ORDER BY created_at DESC LIMIT 5"
+    )
+    for row in rows:
+        print(row[0], row[1])
+    await conn.close()
+asyncio.run(m())
+"""
+    success, output = run_remote_python("flip", "flip-api", py, timeout=25)
+
+    if not success or "Traceback" in output:
+        print_status("INFO", "Could not query Trust_1 task pipeline (SSH or DB unavailable)")
+        return
+
+    critical = {"CREATE_IMAGING", "REIMPORT_STUDIES"}
+    failed_count = sum(
+        1
+        for line in output.split("\n")
+        if line and line.split(" ", 1)[-1] == "FAILED" and line.split(" ", 1)[0] in critical
+    )
+    if failed_count:
+        print_status("FAIL", f"{failed_count} critical Trust_1 task(s) in FAILED state")
+    else:
+        print_status("PASS", "No critical Trust_1 tasks in FAILED state")
+
+
+def check_xnat_health() -> None:
+    """Verify XNAT is serving its API (not a setup page)."""
+    print_status("INFO", "Checking XNAT API health (not setup page)...")
+
+    py = """\
+import os, requests
+r = requests.get(
+    "http://xnat-web:8080/data/projects",
+    auth=(os.environ.get("XNAT_SERVICE_USER", "flipServiceAccount"),
+          os.environ.get("XNAT_SERVICE_PASSWORD", "")),
+    timeout=10,
+)
+print(r.status_code, r.headers.get("content-type", "").split(";")[0])
+"""
+    success, output = run_remote_python("flip-trust", "trust1-imaging-api-1", py, timeout=25)
+
+    if not success or "Traceback" in output:
+        print_status("INFO", "Could not check XNAT (SSH unavailable)")
+        return
+
+    parts = output.strip().split()
+    if not parts:
+        print_status("WARN", "XNAT returned empty response")
+        return
+
+    try:
+        code = int(parts[0])
+        ctype = parts[1] if len(parts) > 1 else ""
+    except (ValueError, IndexError):
+        print_status("WARN", f"Could not parse XNAT response: {output[:100]}")
+        return
+
+    if code == 200 and "html" not in ctype.lower():
+        print_status("PASS", f"XNAT API responding (HTTP {code})")
+    elif code == 200 and "html" in ctype.lower():
+        print_status("FAIL", "XNAT returned HTML (setup page?) — restart XNAT web container")
+    elif code == 401:
+        print_status("FAIL", "XNAT API returned 401 — check XNAT_SERVICE_USER/PASSWORD in .env.stag")
+    else:
+        print_status("WARN", f"XNAT API returned HTTP {code}")
+
+
+def check_reimport_status() -> None:
+    """Warn if any approved projects have zero reimports after >10 minutes."""
+    print_status("INFO", "Checking for projects stuck without reimports...")
+
+    py = """\
+import asyncpg, os, json, boto3, asyncio
+async def m():
+    c = boto3.client("secretsmanager", region_name="eu-west-2")
+    s = c.get_secret_value(SecretId=os.environ["POSTGRES_SECRET_ARN"])
+    d = json.loads(s["SecretString"])
+    p = d.get("password", "")
+    conn = await asyncpg.connect(
+        host=os.environ["DB_HOST"], port=5432,
+        user=os.environ["POSTGRES_USER"], database=os.environ["POSTGRES_DB"], password=p,
+    )
+    rows = await conn.fetch(
+        "SELECT p.id, p.name, x.reimport_count, x.retrieve_image_status, x.last_reimport "
+        "FROM xnat_project_status x "
+        "JOIN projects p ON x.project_id = p.id "
+        "WHERE x.reimport_count = 0 "
+        "AND x.last_reimport < NOW() - interval '10 minutes' "
+        "AND p.status = 'APPROVED'"
+    )
+    for row in rows:
+        print(str(row[0])[:8], str(row[1])[:30], row[2], row[3])
+    await conn.close()
+asyncio.run(m())
+"""
+    success, output = run_remote_python("flip", "flip-api", py, timeout=25)
+
+    if not success or "Traceback" in output:
+        print_status("INFO", "Could not check reimport status (advanced check)")
+        return
+
+    stuck = [l for l in output.split("\n") if l.strip()]
+    if stuck:
+        for line in stuck:
+            print_status("WARN", f"Project {line} — zero reimports, may be stuck")
+    else:
+        print_status("PASS", "No projects stuck with zero reimports")
+
+
+def check_fl_server_clients() -> None:
+    """Verify the FL server has connected clients (Trust_1)."""
+    print_status("INFO", "Checking FL server clients...")
+    success, output = run_ssh_command(
+        "",
+        "flip",
+        "docker logs fl-server-net-1 2>&1 | grep -c 'Re-activate the client' | tail -1",
+        timeout=10,
+    )
+    if not success:
+        print_status("INFO", "Could not check FL server logs (SSH unavailable)")
+        return
+
+    count = int(output.strip() or "0")
+    if count > 0:
+        print_status("PASS", f"FL server has re-activated clients at least once (found {count})")
+    else:
+        success2, output2 = run_ssh_command(
+            "",
+            "flip",
+            "docker logs fl-server-net-1 2>&1 | grep 'Client: New' | tail -3",
+            timeout=10,
+        )
+        if success2 and output2.strip():
+            print_status("PASS", "FL server has connected clients")
+        else:
+            print_status("WARN", "FL server has no connected clients — check NLB and trust FL client")
+
+
+def check_container_errors() -> None:
+    """Scan central hub container logs for recent errors."""
+    print_status("INFO", "Scanning central hub container logs for recent errors...")
+    success, output = run_ssh_command(
+        "",
+        "flip",
+        "docker logs flip-api --since 5m 2>&1 | grep -cE ' ERROR |Traceback|Exception|Name or service not known' || echo 0",
+        timeout=15,
+    )
+
+    if not success:
+        print_status("INFO", "Could not scan container logs (SSH unavailable)")
+        return
+
+    try:
+        count = int(output.strip().split("\n")[-1])
+    except ValueError:
+        count = 0
+    if count == 0:
+        print_status("PASS", "No errors in flip-api logs (last 5 min)")
+    elif count <= 5:
+        print_status("WARN", f"{count} error(s) in flip-api logs (last 5 min) — review if recurring")
+    else:
+        print_status("FAIL", f"{count} errors in flip-api logs (last 5 min) — investigate immediately")
+
+
+def check_net_endpoints_consistency() -> None:
+    """Verify NET_ENDPOINTS env var matches the fl_nets database table."""
+    print_status("INFO", "Checking NET_ENDPOINTS consistency (env vs DB)...")
+    env_value = os.getenv("NET_ENDPOINTS", "{}")
+    try:
+        env_nets = json.loads(env_value.replace("'", '"'))
+    except json.JSONDecodeError:
+        print_status("WARN", "NET_ENDPOINTS not set or invalid JSON")
+        return
+
+    py = """\
+import asyncpg, os, json, boto3, asyncio
+async def m():
+    c = boto3.client("secretsmanager", region_name="eu-west-2")
+    s = c.get_secret_value(SecretId=os.environ["POSTGRES_SECRET_ARN"])
+    d = json.loads(s["SecretString"])
+    p = d.get("password", "")
+    conn = await asyncpg.connect(
+        host=os.environ["DB_HOST"], port=5432,
+        user=os.environ["POSTGRES_USER"], database=os.environ["POSTGRES_DB"], password=p,
+    )
+    rows = await conn.fetch("SELECT name, endpoint FROM fl_nets")
+    for r in rows:
+        print(str(r[0]), str(r[1]))
+    await conn.close()
+asyncio.run(m())
+"""
+    success, output = run_remote_python("flip", "flip-api", py, timeout=25)
+
+    if not success or "Traceback" in output:
+        print_status("INFO", "Could not check NET_ENDPOINTS consistency (advanced check)")
+        return
+
+    db_nets = {}
+    for line in output.strip().split("\n"):
+        parts = line.split(" ", 1)
+        if len(parts) == 2:
+            db_nets[parts[0]] = parts[1]
+
+    for net_name, endpoint in env_nets.items():
+        db_value = db_nets.get(net_name, "")
+        if db_value and db_value != endpoint:
+            print_status("FAIL", f"NET_ENDPOINTS mismatch for {net_name}: env={endpoint}, DB={db_value}")
+        elif not db_value:
+            print_status("WARN", f"NET_ENDPOINTS for {net_name} not found in fl_nets table")
+        else:
+            print_status("PASS", f"NET_ENDPOINTS consistent for {net_name}")
+
+
+def check_mfa_config() -> None:
+    """Check ENFORCE_MFA configuration on flip-api."""
+    print_status("INFO", "Checking MFA enforcement configuration...")
+    success, output = run_ssh_command(
+        "",
+        "flip",
+        'docker exec flip-api python3 -c "from flip_api.config import get_settings; print(get_settings().ENFORCE_MFA)"',
+        timeout=10,
+    )
+
+    if not success:
+        print_status("INFO", "Could not check MFA config (SSH unavailable)")
+        return
+
+    value = output.strip().lower()
+    if value == "false":
+        print_status("WARN", "ENFORCE_MFA=false — TOTP enforcement disabled")
+    elif value == "true":
+        print_status("PASS", "ENFORCE_MFA=true — TOTP enforcement enabled")
+    else:
+        print_status("WARN", f"Unexpected ENFORCE_MFA value: {value}")
+
+
 @click.command()
 @click.option(
     "--terraform-dir",
@@ -391,11 +767,23 @@ def ping_host(host: str) -> bool:
     is_flag=True,
     help="Skip Docker container checks",
 )
+@click.option(
+    "--skip-pipeline",
+    is_flag=True,
+    help="Skip trust pipeline health checks (task status, reimport, FL clients)",
+)
+@click.option(
+    "--skip-deep",
+    is_flag=True,
+    help="Skip deep smoke tests (ECS, VPC endpoints, container errors, config checks)",
+)
 def main(
     terraform_dir: Path,
     skip_network: bool,
     skip_endpoints: bool,
     skip_docker: bool,
+    skip_pipeline: bool,
+    skip_deep: bool,
 ) -> None:
     """FLIP Deployment Status Checker.
 
@@ -609,12 +997,13 @@ def main(
         https_url = f"https://{alb_subdomain}"
         print_status("INFO", f"Testing HTTPS connection to {https_url}...")
 
-        try:
-            import socket
-            import ssl
+        import socket
+        import ssl
 
+        context = ssl.create_default_context()
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        try:
             # Test SSL/TLS handshake
-            context = ssl.create_default_context()
             with socket.create_connection((alb_subdomain, 443), timeout=10) as sock:
                 with context.wrap_socket(sock, server_hostname=alb_subdomain) as ssock:
                     cert = ssock.getpeercert()
@@ -641,7 +1030,7 @@ def main(
         # Try HTTP request over HTTPS
         try:
             req = urllib.request.Request(https_url, method="HEAD")
-            with urllib.request.urlopen(req, timeout=10) as response:
+            with urllib.request.urlopen(req, timeout=10, context=context) as response:
                 print_status("PASS", f"HTTPS endpoint responding (HTTP {response.status})")
         except urllib.error.URLError as e:
             if hasattr(e, "reason") and "CERTIFICATE" in str(e.reason).upper():
@@ -820,9 +1209,15 @@ def main(
                 if code in expected:
                     print_status("PASS", f"{name} responding (HTTP {code}) — {url}")
                 elif code == "000":
-                    print_status("FAIL", f"{name}: connection refused / service not listening — check `docker ps` on Trust EC2 — {url}")
+                    print_status(
+                        "FAIL",
+                        f"{name}: connection refused / service not listening — check `docker ps` on Trust EC2 — {url}",
+                    )
                 else:
-                    print_status("FAIL", f"{name}: unexpected HTTP {code} (expected {expected}) — service responding but unhealthy — {url}")
+                    print_status(
+                        "FAIL",
+                        f"{name}: unexpected HTTP {code} (expected {expected}) — service responding but unhealthy — {url}",
+                    )
 
             print_status(
                 "INFO",
@@ -1148,6 +1543,25 @@ def main(
         else:
             print_status("WARN", "Trust EC2 CloudWatch log group not found")
 
+    # Deep smoke tests (ECS, VPC, pipeline, config)
+    if not skip_deep:
+        print_section("Deep Smoke Tests")
+
+        check_ecs_cluster()
+        check_vpc_endpoints()
+        check_container_errors()
+        check_mfa_config()
+        check_net_endpoints_consistency()
+
+    # Trust pipeline health checks
+    if not skip_pipeline:
+        print_section("Trust Pipeline Health")
+
+        check_trust_pipeline()
+        check_xnat_health()
+        check_reimport_status()
+        check_fl_server_clients()
+
     # Final summary
     print_section("Summary")
 
@@ -1166,7 +1580,7 @@ def main(
             )
             # Open centralhub on browser
             try:
-                os.system(f"open https://{alb_subdomain}")
+                subprocess.run(["open", f"https://{alb_subdomain}"], check=False)
             except Exception:
                 pass
         sys.exit(0)

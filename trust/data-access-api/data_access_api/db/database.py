@@ -16,5 +16,5 @@ from data_access_api.config import get_settings
 
 engine = create_engine(
     get_settings().OMOP_DATABASE_URL.get_secret_value(),
-    echo=True,
+    echo=False,
 )

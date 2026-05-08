@@ -14,10 +14,27 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, validator
 
 from flip_api.domain.schemas.status import ModelStatus, ProjectStatus
 from flip_api.domain.schemas.users import CognitoUser
+
+# Blocks the three characters most likely to enable structural XML injection
+# downstream in the imaging-api projectData payload. This is not exhaustive —
+# ElementTree also escapes " and ' where they're significant (attribute values),
+# but the project name lands as element text where they aren't, so blocking
+# them at this layer is unnecessary. The downstream serializer is the canonical
+# defence; this validator is the hub-boundary fail-fast that returns a 422
+# instead of letting the corrupted name flow to the trust.
+_XML_FORBIDDEN_CHARS = ("<", ">", "&")
+
+
+def _reject_xml_control_chars(v: str) -> str:
+    if any(c in v for c in _XML_FORBIDDEN_CHARS):
+        raise ValueError(
+            f"name must not contain XML control characters {_XML_FORBIDDEN_CHARS}"
+        )
+    return v
 
 
 class IProjectQuery(BaseModel):
@@ -111,11 +128,15 @@ class IEditProject(BaseModel):
             return []
         return value
 
+    _validate_name_xml = field_validator("name")(_reject_xml_control_chars)
+
 
 class IProjectDetails(BaseModel):
     name: str = Field(..., description="Project name")
     description: str = Field(default="", description="Project description")
     users: list[UUID] | None = Field(default=[], description="List of user IDs to add to the project")  # type: ignore[arg-type]
+
+    _validate_name_xml = field_validator("name")(_reject_xml_control_chars)
 
 
 class IProjectApproval(BaseModel):

@@ -27,10 +27,12 @@ security = HTTPBearer()
 
 def _decode_cognito_jwt(token: str) -> dict[str, Any]:
     """
-    Verify a Cognito-issued JWT and return its claims.
+    Verify a Cognito-issued access token and return its claims.
 
     Performs the verification steps documented by AWS for Cognito user pool tokens:
-    signature, expiry, issuer, token_use, and audience binding to this app client.
+    signature, expiry, issuer, ``token_use == "access"``, and ``client_id`` binding
+    to this app client. ID tokens (and any other ``token_use``) are rejected — see
+    issue #344 for the rationale.
 
     Raises ``jwt.InvalidTokenError`` (or a subclass) on any validation failure.
     """
@@ -50,22 +52,18 @@ def _decode_cognito_jwt(token: str) -> dict[str, Any]:
         algorithms=["RS256"],
         issuer=issuer,
         options={
-            # aud is validated manually below so we can also handle access tokens (which use client_id).
-            # TODO(#344): drop ID-token support and validate aud directly via PyJWT once flip-ui sends access tokens.
+            # Cognito access tokens bind to the app client via `client_id` rather than `aud`,
+            # so PyJWT's audience check is disabled and `client_id` is verified manually below.
             "verify_aud": False,
             "require": ["exp", "iss", "sub", "token_use"],
         },
     )
 
     token_use = payload.get("token_use")
-    if token_use == "id":
-        if payload.get("aud") != app_client_id:
-            raise jwt.InvalidTokenError("Invalid audience")
-    elif token_use == "access":
-        if payload.get("client_id") != app_client_id:
-            raise jwt.InvalidTokenError("Invalid client_id")
-    else:
+    if token_use != "access":
         raise jwt.InvalidTokenError(f"Unsupported token_use: {token_use!r}")
+    if payload.get("client_id") != app_client_id:
+        raise jwt.InvalidTokenError("Invalid client_id")
 
     return payload
 
@@ -130,14 +128,12 @@ def _extract_user_id(payload: dict[str, Any]) -> UUID:
 
 def _extract_username(payload: dict[str, Any]) -> str:
     """
-    Return the Cognito Username claim (email in our pool).
-
-    Access tokens carry it as ``username``; ID tokens as ``cognito:username``.
+    Return the Cognito Username claim (email in our pool) from an access token.
 
     Raises:
-        HTTPException: If neither claim is present (401).
+        HTTPException: If the claim is missing (401).
     """
-    username = payload.get("username") or payload.get("cognito:username")
+    username = payload.get("username")
     if not username:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

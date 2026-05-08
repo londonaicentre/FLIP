@@ -33,11 +33,25 @@
           - pgdata_archive is defined
           - pgdata_archive | length > 0
         fail_msg: "The pgdata_archive variable must be defined to proceed (e.g. trust1_pgdata_20260106.tar.gz)."
-    - name: use plugin to extract Terraform outputs
-      community.general.terraform:
-        state: present
-        project_path: "./"
-      register: terraform_output
+    - name: initialize Terraform backend for validation
+      command: >
+        terraform init
+        -backend-config="bucket={{ lookup('env', 'FLIP_TFSTATE_BUCKET_NAME') }}"
+        -backend-config="region={{ lookup('env', 'AWS_REGION') | default('eu-west-2', true) }}"
+        -reconfigure
+      args:
+        chdir: ./
+      changed_when: false
+    - name: extract Terraform outputs as JSON
+      command: terraform output -json
+      args:
+        chdir: ./
+      register: terraform_raw_output
+      changed_when: false
+    - name: parse Terraform outputs
+      set_fact:
+        terraform_output:
+          outputs: "{{ terraform_raw_output.stdout | from_json }}"
     - name: add Central Hub EC2 instance to Ansible inventory
       add_host:
         # Use the SSH alias so Ansible tunnels through SSM Session Manager

@@ -97,6 +97,15 @@ deploy time as `TRUST_INTERNAL_SERVICE_KEY`.
 For the threat model, see the **Trust-internal Service Authentication** section in
 [`CLAUDE.md`](../../CLAUDE.md).
 
+## Testing
+
+Tests are split into `tests/unit/` (no real backing services) and `tests/integration/` (real OMOP database via the shared `trust/compose.test.yml` stack). See [Where does my test go?](../../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule, and [`trust/README.md`](../README.md#integration-tests-cohort-query-end-to-end) for how the cohort-query end-to-end suite is wired.
+
+```bash
+make local_test         # ruff + mypy + unit suite (no Docker required)
+make integration_test   # ruff + mypy + /cohort endpoint suite (Docker required)
+```
+
 ## Further Reading
 
 - [OMOP Database setup](../omop-db/README.md)

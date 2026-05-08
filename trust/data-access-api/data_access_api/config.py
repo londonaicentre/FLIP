@@ -13,7 +13,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import PositiveInt, SecretStr
+from pydantic import PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +22,14 @@ class Settings(BaseSettings):
 
     # Environment flag
     ENV: Literal["development", "production"] = "development"
+
+    @field_validator("ENV", mode="before")
+    @classmethod
+    def coerce_empty_env(cls, v: str) -> str:
+        """Treat empty-string ENV (e.g. from CI environment injection) as 'development'."""
+        if v is None or v == "":
+            return "development"
+        return v
 
     # env file is 3 directories up from this file
     # Get current directory: data-access-api/data_access_api/config.py

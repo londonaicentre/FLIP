@@ -519,7 +519,8 @@ resource "aws_wafv2_web_acl_logging_configuration" "flip_ui_cloudfront" {
 # browser console + `Content-Security-Policy-Report-Only` response headers
 # without blocking traffic. After one release cycle with no real-user
 # violations, move the policy body from `content_security_policy_report_only`
-# to `content_security_policy` (enforcing).
+# to `content_security_policy` (enforcing). Tracked in
+# https://github.com/londonaicentre/FLIP/issues/417.
 resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
   name    = "flip-ui-spa-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
   comment = "Security response headers for the flip-ui SPA at ${var.flip_alb_subdomain}"

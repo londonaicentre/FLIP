@@ -73,11 +73,12 @@ make debug-off-all         # Remove all debug modes
 
 ```bash
 make unit_test             # All unit tests across all services (from root)
+make integration_test      # flip-api + trust integration tests (from root)
 make tests                 # flip-ui + flip-api tests (from root)
 # From a service directory (e.g., flip-api/):
 make test                  # ruff + mypy + pytest (unit + integration)
 make unit_test             # Unit tests only
-make integration_test      # Integration tests only
+make integration_test      # Integration tests only (also available from root and trust/)
 make local_test            # Tests without Docker
 ```
 
@@ -163,6 +164,7 @@ After changes, evaluate if docs need updating:
 - Line length: 120. Linter: Ruff (`select = ['I', 'F', 'E', 'W', 'PT']`). Type checker: mypy.
 - Docstrings: Google style. Naming: snake_case. Imports: alphabetically sorted.
 - Source layout: `src/[service_name]/`. Tests: `tests/unit/`, `tests/integration/`.
+- Test placement: a test goes in `tests/integration/` if and only if it touches a real backing service (Postgres via `session` fixture, real AWS, a running sibling API, real Orthanc/XNAT/OMOP). If every external dependency is mocked, it's a unit test in `tests/unit/`. FastAPI `TestClient` alone does not make a test "integration". See `CONTRIBUTING.md` ("Where does my test go?") for the canonical rule.
 - Dependency injection: FastAPI `Depends()`. Async DB: asyncpg with async context managers.
 
 ### JavaScript/TypeScript (flip-ui)
@@ -197,7 +199,7 @@ After changes, evaluate if docs need updating:
 - `TRUST_INTERNAL_SERVICE_KEYS` — JSON dict of per-trust plaintext keys; `trust/Makefile` extracts the per-trust value at deploy time and injects it into every trust-internal container as `TRUST_INTERNAL_SERVICE_KEY`. Each trust uses a distinct key — see the **Trust-internal Service Authentication** section below for the threat model. Distinct from the hub's `INTERNAL_SERVICE_KEY*`: per-trust scope, never sent to or stored on the hub.
 - `CENTRAL_HUB_API_URL` — public base URL of flip-api (with `/api`); read by flip-ui and trust-api. In prod this is the CloudFront URL.
 - `FLIP_API_INTERNAL_URL` — Central-Hub-internal base URL of flip-api (with `/api`); read **only** by fl-server. Must resolve over the Docker network (e.g. `http://flip-api:8000/api`), never the CloudFront URL — CloudFront strips `X-Internal-Service-Key` at the edge.
-- `ENFORCE_MFA` — `true` (the `Settings` default; do **not** set in `.env*` files for stag/prod) gates every authenticated route on TOTP enrolment via the app-layer MFA check in `verify_token`. The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator app; production-mode compose files inherit the Settings default. Intentionally not in `.env.development.example` or AWS Secrets Manager — the dev override is the only place this flag should appear, and stag/prod leave it untouched. The UI mirrors this flag from `/users/me/mfa/status` and skips the enrolment redirect when it's false.
+- `ENFORCE_MFA` — `true` (the `Settings` default; do **not** set in `.env*` files for stag/prod) gates every authenticated route on TOTP enrolment via the app-layer MFA check in `verify_token`. The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator app. Production compose (`compose.production.yml`) passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so the env var can be overridden from `.env.stag`/`.env.prod` for testing, but falls back to the secure `true` default when unset. Intentionally not in `.env.development.example` or AWS Secrets Manager — the Settings default (`true`) is the canonical secure anchor. The UI mirrors this flag from `/users/me/mfa/status` and skips the enrolment redirect when it's false.
 
 ## Deployment Architecture
 
