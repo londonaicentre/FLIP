@@ -124,7 +124,7 @@ jobs:
           kubectl wait --for=condition=ready pod \
             -l app.kubernetes.io/instance=trust-release \
             --namespace flip-trust \
-            --timeout=120s || true
+            --timeout=120s
 
       - name: Verify services
         run: |
