@@ -178,8 +178,12 @@ spec:
             {{- toYaml .Values.flClient.resources | nindent 12 }}
       volumes:
         - name: images
+{{- if .Values.sharedImagesPvc.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "flip-trust.fullname" . }}-shared-images
+{{- else }}
+          emptyDir: {}
+{{- end }}
         - name: dshm
           emptyDir:
             medium: Memory

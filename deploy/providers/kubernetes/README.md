@@ -38,10 +38,11 @@ kubectl create secret generic flip-trust-secrets \
   --namespace flip-trust \
   --from-literal=aes-key-base64='<your-base64-aes-key>' \
   --from-literal=trust-api-key='<your-trust-api-key>' \
+  --from-literal=trust-internal-service-key-header='<your-header-name>' \
+  --from-literal=trust-internal-service-key='<your-internal-key>' \
   --from-literal=omop-postgres-password='<your-omop-password>' \
   --from-literal=data-access-postgres-password='<your-data-access-password>' \
-  --from-literal=orthanc-username='<your-orthanc-username>' \
-  --from-literal=orthanc-password='<your-orthanc-password>' \
+  --from-literal=orthanc-registered-users='<your-orthanc-registered-users>' \
   --from-literal=xnat-admin-password='<your-xnat-admin-password>' \
   --from-literal=xnat-service-password='<your-xnat-service-password>' \
   --from-literal=xnat-datasource-password='<your-xnat-datasource-password>' \
@@ -56,7 +57,6 @@ kubectl create secret generic flip-trust-secrets \
 ### 2. Install the chart
 
 ```bash
-helm repo add flip-trust https://github.com/londonaicentre/FLIP
 helm install trust-release ./deploy/providers/kubernetes/ \
   --namespace flip-trust \
   --create-namespace \
@@ -227,10 +227,11 @@ with `secrets.create=true` or pre-created externally):
 |-----------|---------|-------------|
 | `aes-key-base64` | trust-api, imaging-api, data-access-api | AES-256 encryption key (base64) |
 | `trust-api-key` | trust-api | API key for hub authentication |
+| `trust-internal-service-key-header` | trust-api, imaging-api, data-access-api | Header name for trust-internal auth |
+| `trust-internal-service-key` | trust-api, imaging-api, data-access-api | Secret key for trust-internal auth |
 | `omop-postgres-password` | omop-db | PostgreSQL password |
 | `data-access-postgres-password` | data-access-api | Data reader DB password |
-| `orthanc-username` | orthanc | Orthanc admin username |
-| `orthanc-password` | orthanc | Orthanc admin password |
+| `orthanc-registered-users` | orthanc | Orthanc registered users (JSON) |
 | `xnat-admin-password` | xnat-web | XNAT admin password |
 | `xnat-service-user` | xnat-web, imaging-api | XNAT service account username |
 | `xnat-service-password` | xnat-web, imaging-api | XNAT service account password |
