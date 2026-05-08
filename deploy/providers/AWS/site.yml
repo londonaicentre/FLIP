@@ -234,9 +234,19 @@
         mode: "0755"
       loop:
         - /opt/flip
-        # Data directory for Trust 1 (where XNAT images will be downloaded for the FL client to use)
-        # NOTE if this is not created here, it will be created later by Docker Compose but owned by root, and will cause permission issues
-        - /opt/flip/data/images
+        # Bind-mount sources for the imaging-api / fl-client images dir.
+        # Both compose projects (trust1-, trust2-) bind-mount one of these
+        # onto /app/data/images via BASE_IMAGES_DOWNLOAD_DIR_TRUST{1,2}, then
+        # imaging-api creates /app/data/images/net-1/ inside it as uid 1000
+        # (the `flip` user in the container).
+        # If we don't pre-create them here Docker creates the missing source
+        # path as root at first startup, leaving the container unable to
+        # mkdir net-1 inside it - imaging-api then 500s every download with
+        # `[Errno 13] Permission denied: '/app/data/images/net-1'`, and the
+        # FL training run fails downstream with `num_samples=0` because the
+        # whole cohort's image fetches errored out.
+        - /opt/flip/data/trust-1
+        - /opt/flip/data/trust-2
         # XNAT bind-mount directories (Docker Swarm does not auto-create them)
         - /opt/flip/xnat
         - /opt/flip/xnat/xnat-data/tomcat_logs
