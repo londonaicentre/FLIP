@@ -174,7 +174,7 @@ describe("ModelList — Status column", () => {
         expect(cell.find("[data-test='model-status-icon-cross']").exists()).toBe(true);
     });
 
-    test("missing status falls back to a placeholder rather than crashing", async () => {
+    test("missing status renders the '—' placeholder with no icon", async () => {
         // Defensive: an older API response (or a stale cache from before the
         // backend started returning status) leaves the cell with neither a
         // tick nor a cross — and shouldn't blow up the row.
@@ -182,9 +182,9 @@ describe("ModelList — Status column", () => {
         const wrapper = mountModelList();
         await flushPromises();
 
-        expect(wrapper.exists()).toBe(true);
         const cell = wrapper.find("[data-test='model-status-m1']");
         expect(cell.exists()).toBe(true);
+        expect(cell.text()).toContain("—");
         expect(cell.find("[data-test='model-status-icon-tick']").exists()).toBe(false);
         expect(cell.find("[data-test='model-status-icon-cross']").exists()).toBe(false);
     });
