@@ -141,12 +141,30 @@ spec:
             - name: data
               mountPath: /data/xnat/cache
               subPath: cache
+            - name: plugins
+              mountPath: /data/xnat/home/plugins
+          livenessProbe:
+            httpGet:
+              path: /xnat/
+              port: tomcat
+            initialDelaySeconds: {{ .Values.xnat.web.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.xnat.web.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.xnat.web.probes.liveness.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /xnat/
+              port: tomcat
+            initialDelaySeconds: {{ .Values.xnat.web.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.xnat.web.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.xnat.web.probes.readiness.timeoutSeconds }}
           resources:
             {{- toYaml .Values.xnat.web.resources | nindent 12 }}
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "flip-trust.fullname" . }}-xnat-web
+        - name: plugins
+          emptyDir: {}
 {{- if .Values.xnat.web.persistence.enabled }}
 ---
 apiVersion: v1

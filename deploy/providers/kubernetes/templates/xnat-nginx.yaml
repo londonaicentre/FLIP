@@ -91,6 +91,20 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/nginx/conf.d
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: {{ .Values.xnat.nginx.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.xnat.nginx.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.xnat.nginx.probes.liveness.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: {{ .Values.xnat.nginx.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.xnat.nginx.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.xnat.nginx.probes.readiness.timeoutSeconds }}
           resources:
             {{- toYaml .Values.xnat.nginx.resources | nindent 12 }}
       volumes:
