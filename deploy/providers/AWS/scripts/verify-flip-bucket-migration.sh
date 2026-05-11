@@ -43,28 +43,58 @@ for var in FLIP_BUCKET_NAME FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME \
     fi
 done
 
-# Strip the bucket-name segment off an `s3://bucket/path/` URL, leaving the
-# key prefix (`path/`). Used so the source `model_files/uploaded/` prefix
-# and the destination `uploaded/` prefix both reduce to the same relative
-# suffix (e.g. `<model_id>/file.py`) for comparison.
-strip_bucket_from_s3_url() {
-    echo "$1" | sed 's|^s3://[^/]*/||'
+# Parse `s3://bucket/path/` into ("bucket", "path/") via stdout (one per line).
+# We pass these to `aws s3api list-objects-v2 --bucket --prefix` because that
+# returns structured JSON — `aws s3 ls --recursive | awk '{print $4}'` (the
+# obvious shorter alternative) silently truncates any S3 key containing a
+# space, and model uploads use a user-supplied filename so spaces in keys
+# are plausible. Truncation here would manufacture false negatives and
+# could green-light a `aws s3 rb` on the legacy bucket with missing objects.
+parse_s3_url() {
+    local s3_path="$1"
+    local bucket prefix
+    bucket="$(echo "$s3_path" | sed -E 's|^s3://([^/]+)/.*|\1|')"
+    prefix="$(echo "$s3_path" | sed -E 's|^s3://[^/]+/(.*)|\1|')"
+    printf '%s\n%s\n' "$bucket" "$prefix"
 }
 
-# List all non-folder-marker keys under an s3:// path, strip the key prefix,
-# emit one relative suffix per line, sorted. Folder markers (zero-byte
-# objects with keys ending in `/`) are filtered because `aws s3 sync`
-# intentionally does not copy them — leaving them in the count would
-# manufacture a false off-by-one.
+# List all non-folder-marker keys under an s3:// path, strip the request
+# prefix, emit one relative suffix per line, sorted. Folder markers
+# (zero-byte objects with keys ending in `/`) are filtered because
+# `aws s3 sync` intentionally does not copy them — leaving them in the
+# count would manufacture a false off-by-one.
+#
+# `--page-size 1000` triggers auto-pagination across buckets with more than
+# a single page of contents; without it the response is capped at 1000 keys.
 list_suffixes() {
     local s3_path="$1"
-    local prefix
-    prefix="$(strip_bucket_from_s3_url "$s3_path")"
-    aws s3 ls --recursive "$s3_path" 2>/dev/null \
-        | awk '$3!="0" || $4 !~ /\/$/' \
-        | awk '{print $4}' \
-        | sed "s|^${prefix}||" \
+    local bucket prefix
+    {
+        read -r bucket
+        read -r prefix
+    } < <(parse_s3_url "$s3_path")
+
+    # Export PREFIX (rather than the `VAR=val cmd` prefix form) so the
+    # downstream python3 in the pipeline inherits it. The prefix form only
+    # applies to the immediate command.
+    export PREFIX="$prefix"
+    aws s3api list-objects-v2 \
+        --bucket "$bucket" \
+        --prefix "$prefix" \
+        --page-size 1000 \
+        --output json 2>/dev/null \
+        | python3 -c '
+import json, os, sys
+prefix = os.environ["PREFIX"]
+data = json.load(sys.stdin)
+for obj in data.get("Contents") or []:
+    key = obj["Key"]
+    if obj.get("Size", 0) == 0 and key.endswith("/"):
+        continue
+    sys.stdout.write(key[len(prefix):] + "\n")
+        ' \
         | sort
+    unset PREFIX
 }
 
 ok=true

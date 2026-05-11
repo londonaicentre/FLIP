@@ -132,8 +132,13 @@ cd deploy/providers/AWS
 export AWS_PROFILE=stag && make aws-login              # if SSO has expired
 
 # 1. Bring stag's Terraform state in line with what's actually in AWS — this
-#    imports the legacy flipstag bucket + every other persistent resource the
-#    `removed` blocks expect to find. Idempotent: rerun safely after a fix.
+#    imports the three new application buckets (if a previous run created them
+#    manually), the AI Centre bucket, Secrets Manager, Cognito, SES, and ACM.
+#    It does NOT import the legacy `aws_s3_bucket.flip_bucket` (that resource
+#    has been removed from the configuration and replaced with `removed`
+#    blocks). The `removed` blocks then plan as no-ops on the stag-state gap,
+#    which is fine: nothing to remove means nothing accidentally gets removed.
+#    Idempotent: rerun safely after a fix.
 make import-persistent                                  # PROD unset → stag (see Makefile defaults)
 
 # 2. Plan — confirm the diff matches the prod cutover's shape:

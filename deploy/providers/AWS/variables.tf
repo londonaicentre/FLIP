@@ -119,7 +119,7 @@ variable "enable_service_discovery" {
 }
 
 variable "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME" {
-  description = "Globally-unique S3 bucket name for researcher-uploaded model files (browser presigned-POST surface). Required, no default — must be set per environment in the matching .env.*."
+  description = "Globally-unique S3 bucket name for researcher-uploaded model files (browser presigned-PUT surface today; narrows to presigned POST once PR #438 lands). Required, no default — must be set per environment in the matching .env.*."
   type        = string
 }
 

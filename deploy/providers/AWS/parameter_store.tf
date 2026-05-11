@@ -32,7 +32,7 @@ resource "aws_ssm_parameter" "flip_api_internal_url" {
 
 resource "aws_ssm_parameter" "flip_model_files_uploads_bucket" {
   name        = "${local.ssm_prefix}/flip_model_files_uploads_bucket"
-  description = "S3 URI of the researcher model-files-uploads bucket (browser presigned-POST target; flip-api reads/deletes)"
+  description = "S3 URI of the researcher model-files-uploads bucket (browser presigned-PUT target today; flips to presigned POST once PR #438 lands; flip-api reads/deletes)"
   type        = "String"
   value       = local.flip_model_files_uploads_bucket_uri
 }

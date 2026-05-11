@@ -15,17 +15,23 @@
 # FLIP application S3 bucket — one bucket per tenant (model file uploads, FL
 # results, FL app bundles). Splitting the previously-shared flip_bucket into
 # three purpose-built buckets lets each tenant carry the minimum CORS surface
-# it needs (model file uploads = browser POST only, FL results = browser GET
-# only, app bundles = server-only / no CORS), so a future CORS change to one
-# tenant no longer drags every other tenant along.
+# it needs. Each caller passes `cors_methods` for the tenant it's standing
+# up — at the time of writing the model-files-uploads bucket is on `["PUT"]`
+# pending PR #438 (presigned PUT → POST migration), fl-results is on
+# `["GET"]`, and app-bundles passes an empty list (server-only).
 
 resource "aws_s3_bucket" "this" {
   bucket = var.bucket_name
   lifecycle {
-    # prevent_destroy must be a literal — Terraform refuses to interpolate
-    # variables here. All three FLIP application buckets hold persistent
-    # state (uploaded artefacts, training results, FL bundles) that we never
-    # want to drop on a refactor, so hardcoded true is the right default.
+    # Hardcoded `true` is deliberate. Issue #24's design originally listed
+    # `prevent_destroy` as a module variable, but Terraform refuses to
+    # interpolate a variable into `prevent_destroy` — it must be a literal.
+    # All three FLIP application buckets hold persistent state (uploaded
+    # artefacts, training results, FL bundles) that we never want to drop
+    # on a refactor, so `true` is the right value for every caller. If a
+    # future ephemeral-env caller needs a destroyable bucket, fork this
+    # module rather than parameterise (Terraform's grammar doesn't allow
+    # `prevent_destroy = var.x`).
     prevent_destroy = true
   }
 }

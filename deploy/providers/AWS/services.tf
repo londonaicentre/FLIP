@@ -19,7 +19,7 @@
 # The previous single `aws_s3_bucket.flip_bucket` held three tenants with
 # materially different access patterns:
 #
-#   - model file uploads (researcher → browser POST → AV-scan → flip-api reads)
+#   - model file uploads (researcher → browser PUT today, browser POST once #438 lands → AV-scan → flip-api reads)
 #   - FL results (fl-server writes; researcher downloads via browser GET)
 #   - FL app bundles (server-only — flip-api copies base → destination)
 #
