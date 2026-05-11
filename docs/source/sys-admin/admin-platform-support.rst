@@ -10,8 +10,9 @@ Trusts authenticate to the Central Hub using per-trust API keys. Each trust is i
 
 See :ref:`deploy-flip-node-on-prem` for details on trust provisioning and authentication setup.
 
+***********
 Networking
-==========
+***********
 
 All trust communication is **outbound** — trusts poll the Central Hub for tasks over HTTPS (via the ALB). 
 The hub never makes inbound connections to trusts. FL clients connect outbound to the FL server via the NLB. 
