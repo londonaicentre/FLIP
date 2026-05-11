@@ -123,9 +123,9 @@ const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
     STOPPED: "Stopped"
 };
 
-/** Human-readable label for a model status. Falls back to "—" if unknown. */
+/** Human-readable label for a model status. Returns "—" when status is undefined. */
 export function modelStatusLabel(status: ModelStatus | undefined): string {
-    return status ? MODEL_STATUS_LABELS[status] ?? "—" : "—";
+    return status ? MODEL_STATUS_LABELS[status] : "—";
 }
 
 /** True for terminal failure / cancellation states (drives the red-cross icon). */
