@@ -22,6 +22,14 @@ spec:
   podSelector: {}
   policyTypes:
     - Ingress
+  {{- if .Values.networkPolicies.allowKubeSystemIngress }}
+  # Allow ingress from kube-system (kubelet health checks, metrics scraping)
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+  {{- end }}
 ---
 # Allow intra-namespace communication (trust-api → imaging-api, data-access-api, etc.)
 apiVersion: networking.k8s.io/v1

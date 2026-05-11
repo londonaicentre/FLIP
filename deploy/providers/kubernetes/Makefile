@@ -23,16 +23,22 @@ else
 	VALUES_OPTS := -f $(VALUES_FILE)
 endif
 
-.PHONY: help lint template deploy undeploy test validate clean
+.PHONY: help lint template deploy undeploy test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps register-trust
 
 help: ## Display this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
 
 lint: ## Lint the Helm chart
 	$(HELM) lint $(CHART_DIR)
 
 template: ## Render Helm templates to stdout
 	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS)
+
+dry-run: ## Render templates with --debug (dry-run equivalent)
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) --debug
+
+update-deps: ## Update Helm chart dependencies
+	$(HELM) dependency update $(CHART_DIR)
 
 deploy: ## Deploy the Helm chart to the cluster
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
@@ -42,6 +48,12 @@ deploy: ## Deploy the Helm chart to the cluster
 
 undeploy: ## Remove the Helm release from the cluster
 	$(HELM) uninstall $(RELEASE_NAME) --namespace $(NAMESPACE)
+
+deploy-trust-k8s: deploy ## Deploy trust services to K8s (alias for deploy)
+	@true
+
+undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undeploy)
+	@true
 
 status: ## Show the status of the Helm release
 	$(HELM) status $(RELEASE_NAME) --namespace $(NAMESPACE)
