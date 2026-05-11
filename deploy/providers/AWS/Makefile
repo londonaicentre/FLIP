@@ -444,6 +444,32 @@ endif
 	@echo "   1. On the trust host — start the trust stack: cd trust && PROD=$(PROD) make up-local-trust"
 	@echo "   2. Verify the trust can poll the hub (check trust-api logs for successful task polling)"
 
+.PHONY: add-k8s-trust
+add-k8s-trust: ## Register a K8s trust with the hub (runs register script + terraform apply for NLB rule)
+	@echo "=== Registering K8s Trust ==="
+	@[ -n "$(TRUST_NAME)" ] || (echo "❌  TRUST_NAME is required. Usage: make add-k8s-trust TRUST_NAME=Trust_K8s HUB_URL=https://stag.flip.aicentre.co.uk/api K8S_TRUST_IP=<public-ip>"; exit 1)
+	@[ -n "$(HUB_URL)" ] || (echo "❌  HUB_URL is required."; exit 1)
+	@[ -n "$(K8S_TRUST_IP)" ] || (echo "❌  K8S_TRUST_IP is required (public IP of the K8s trust node for NLB security group)."; exit 1)
+	@echo "🔑 Generating trust credentials and registering with hub..."
+	@python3 deploy/providers/kubernetes/register_k8s_trust.py \
+		--trust-name $(TRUST_NAME) \
+		--hub-url $(HUB_URL) \
+		--output-dir deploy/providers/kubernetes/
+	@echo "🔐 Updating NLB security group to allow traffic from K8s trust IP..."
+	@cd deploy/providers/AWS && \
+		TF_VAR_K8S_TRUST_IP=$(K8S_TRUST_IP) terraform plan \
+		-target=aws_security_group_rule.k8s_trust_fl_server_nlb \
+		-out=k8s-trust.tfplan && \
+		TF_VAR_K8S_TRUST_IP=$(K8S_TRUST_IP) terraform apply k8s-trust.tfplan && \
+		rm -f k8s-trust.tfplan
+	@echo ""
+	@echo "✅ K8s Trust $(TRUST_NAME) provisioned!"
+	@echo ""
+	@echo "📋 Next steps:"
+	@echo "   1. Review the generated override: deploy/providers/kubernetes/k8s-trust-$(TRUST_NAME).yaml"
+	@echo "   2. Deploy the chart: make -C deploy/providers/kubernetes/ deploy SECRETS_FILE=k8s-trust-$(TRUST_NAME).yaml"
+	@echo "   3. Verify trust polling: python3 deploy/providers/kubernetes/check_status.py"
+
 .PHONY: down
 down:
 	@echo "🛑 Stopping all containers..."
