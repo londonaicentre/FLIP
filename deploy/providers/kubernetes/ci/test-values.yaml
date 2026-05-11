@@ -21,6 +21,11 @@ trustApi:
     limits:
       memory: "256Mi"
       cpu: "200m"
+  probes:
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
 
 imagingApi:
   resources:
@@ -46,10 +51,18 @@ flClient:
 orthanc:
   persistence:
     size: 1Gi
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+    readiness:
+      initialDelaySeconds: 10
 
 omopDb:
   persistence:
     size: 1Gi
+  probes:
+    readiness:
+      initialDelaySeconds: 5
 
 xnat:
   enabled: false  # Disable XNAT in CI to save resources
@@ -64,6 +77,7 @@ observability:
 
 sharedImagesPvc:
   size: 1Gi
+  accessMode: ReadWriteOnce  # Kind's local-path provisioner only supports RWO
 
 # Use default storage class
 persistence:
