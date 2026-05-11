@@ -64,6 +64,10 @@ spec:
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
       {{- end }}
+      {{- with .Values.imagingApi.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: imaging-api
           image: "{{ .Values.imagingApi.image.repository }}:{{ .Values.imagingApi.image.tag }}"
@@ -110,6 +114,20 @@ spec:
               mountPath: {{ .Values.imagingApi.env.BASE_IMAGES_DOWNLOAD_DIR }}
           resources:
             {{- toYaml .Values.imagingApi.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.imagingApi.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.imagingApi.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.imagingApi.probes.liveness.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.imagingApi.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.imagingApi.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.imagingApi.probes.readiness.timeoutSeconds }}
       volumes:
         - name: images
 {{- if .Values.sharedImagesPvc.enabled }}

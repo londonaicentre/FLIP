@@ -86,6 +86,27 @@ trustApi:
     limits:
       memory: "1Gi"
       cpu: "500m"
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - trust-api
+            topologyKey: kubernetes.io/hostname
   env:
     CENTRAL_HUB_API_URL: ""
     TRUST_API_KEY_HEADER: "X-Trust-Api-Key"
@@ -125,6 +146,27 @@ imagingApi:
     limits:
       memory: "1Gi"
       cpu: "500m"
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - imaging-api
+            topologyKey: kubernetes.io/hostname
   env:
     XNAT_URL: "http://xnat-web:8080"
     XNAT_PORT: "8080"
@@ -153,6 +195,27 @@ dataAccessApi:
     limits:
       memory: "1Gi"
       cpu: "500m"
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - data-access-api
+            topologyKey: kubernetes.io/hostname
   env:
     OMOP_DB_SERVICE_NAME: "omop-db"
     OMOP_POSTGRES_DB: "trustomopdb"
@@ -208,6 +271,20 @@ flClient:
     operator:
       # Set to true to enable GPU operator validation resources
       enabled: false
+  probes:
+    liveness:
+      port: 9094
+      initialDelaySeconds: 60
+      periodSeconds: 30
+    readiness:
+      port: 9094
+      initialDelaySeconds: 30
+      periodSeconds: 15
+  serviceAccount:
+    annotations: {}
+      # eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/fl-client-s3-access
+  sidecar:
+    enabled: false
 
 # ---------------------------------------------------------------------------
 # omop-db — Mocked OMOP patient database (PostgreSQL)
@@ -262,6 +339,15 @@ orthanc:
     storageClassName: ""
     size: 50Gi
     accessMode: ReadWriteOnce
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
   resources:
     requests:
       memory: "512Mi"
@@ -299,6 +385,15 @@ xnat:
       limits:
         memory: "4Gi"
         cpu: "2"
+    probes:
+      liveness:
+        initialDelaySeconds: 120
+        periodSeconds: 20
+        timeoutSeconds: 10
+      readiness:
+        initialDelaySeconds: 30
+        periodSeconds: 15
+        timeoutSeconds: 5
     env:
       XNAT_EMAIL: ""
       XNAT_MIN_HEAP: "1024m"
@@ -334,6 +429,15 @@ xnat:
     service:
       port: 80
       type: ClusterIP
+    probes:
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 10
+        timeoutSeconds: 5
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 5
+        timeoutSeconds: 3
     resources:
       requests:
         memory: "128Mi"
@@ -346,6 +450,7 @@ xnat:
 # Observability Stack — Loki, Alloy, Grafana
 # ---------------------------------------------------------------------------
 observability:
+  enabled: true   # single gate: set false to skip all observability components
   loki:
     enabled: true
     image:
@@ -428,6 +533,10 @@ podDisruptionBudget:
 # ---------------------------------------------------------------------------
 networkPolicies:
   enabled: true
+  # When true, allows ingress from kube-system namespace (kubelet health checks,
+  # metrics scraping). Set to true if your CNI requires explicit carve-outs for
+  # kubelet probes or cluster-internal monitoring.
+  allowKubeSystemIngress: false
   # CIDRs that are allowed for egress (in addition to intra-namespace)
   # Central Hub API URL and FL server NLB should be added here
   allowedEgressCIDRs: []

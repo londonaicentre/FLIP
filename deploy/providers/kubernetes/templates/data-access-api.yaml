@@ -61,6 +61,10 @@ spec:
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
       {{- end }}
+      {{- with .Values.dataAccessApi.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: data-access-api
           image: "{{ .Values.dataAccessApi.image.repository }}:{{ .Values.dataAccessApi.image.tag }}"
@@ -95,6 +99,20 @@ spec:
                   key: trust-internal-service-key
           resources:
             {{- toYaml .Values.dataAccessApi.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.dataAccessApi.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.dataAccessApi.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.dataAccessApi.probes.liveness.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.dataAccessApi.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.dataAccessApi.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.dataAccessApi.probes.readiness.timeoutSeconds }}
 ---
 apiVersion: v1
 kind: Service

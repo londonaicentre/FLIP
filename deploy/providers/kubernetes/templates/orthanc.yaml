@@ -98,6 +98,20 @@ spec:
               mountPath: /var/lib/orthanc/db
           resources:
             {{- toYaml .Values.orthanc.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /system
+              port: orthanc-api
+            initialDelaySeconds: {{ .Values.orthanc.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.orthanc.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.orthanc.probes.liveness.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /system
+              port: orthanc-api
+            initialDelaySeconds: {{ .Values.orthanc.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.orthanc.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.orthanc.probes.readiness.timeoutSeconds }}
       volumes:
         - name: data
           persistentVolumeClaim:

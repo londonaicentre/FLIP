@@ -69,6 +69,10 @@ spec:
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
       {{- end }}
+      {{- with .Values.trustApi.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: trust-api
           image: "{{ .Values.trustApi.image.repository }}:{{ .Values.trustApi.image.tag }}"
@@ -103,6 +107,20 @@ spec:
                   key: aes-key-base64
           resources:
             {{- toYaml .Values.trustApi.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.trustApi.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.trustApi.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.trustApi.probes.liveness.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.trustApi.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.trustApi.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.trustApi.probes.readiness.timeoutSeconds }}
 ---
 apiVersion: v1
 kind: Service
