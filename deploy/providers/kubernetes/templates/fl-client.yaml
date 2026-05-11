@@ -19,6 +19,10 @@ metadata:
   labels:
     {{- include "flip-trust.labels" . | nindent 4 }}
     app.kubernetes.io/component: fl-client
+  {{- with .Values.flClient.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -151,6 +155,16 @@ spec:
             - name: NVIDIA_VISIBLE_DEVICES
               value: "0"
             {{- end }}
+            - name: TRUST_INTERNAL_SERVICE_KEY_HEADER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key-header
+            - name: TRUST_INTERNAL_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key
           volumeMounts:
             - name: images
               mountPath: {{ .Values.flClient.imagesDir }}
@@ -176,6 +190,16 @@ spec:
           {{- end }}
           resources:
             {{- toYaml .Values.flClient.resources | nindent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.flClient.probes.liveness.port }}
+            initialDelaySeconds: {{ .Values.flClient.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.flClient.probes.liveness.periodSeconds }}
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.flClient.probes.readiness.port }}
+            initialDelaySeconds: {{ .Values.flClient.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.flClient.probes.readiness.periodSeconds }}
       volumes:
         - name: images
 {{- if .Values.sharedImagesPvc.enabled }}
