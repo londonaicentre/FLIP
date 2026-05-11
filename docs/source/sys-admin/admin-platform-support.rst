@@ -36,6 +36,7 @@ The following is the list of ports required to be opened for the Secure Enclave 
 .. list-table:: Firewall Rules
    :header-rows: 1
    :widths: 50 25 25
+   :align: center
 
    * - Description
      - Inbound
