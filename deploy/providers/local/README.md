@@ -210,5 +210,6 @@ TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply
 ## Related Documentation
 
 - [AWS Provider README](../AWS/README.md) — Central Hub and cloud Trust deployment
+- [Kubernetes Provider README](../kubernetes/README.md) — K8s-based trust deployment via Helm
 - [Trust README](../../../trust/README.md) — Trust service stack details
 - [Deploy README](../../README.md) — General deployment prerequisites (AWS CLI, SSH keys, GHCR login)

@@ -227,6 +227,18 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 >
 > **Warning:** This path is an AWS-level escape hatch and is **not** audit-logged inside FLIP. Use it only for administrator self-recovery. For any user who is not currently locked out of FLIP itself, prefer the Admin UI flow so the reset is captured in the application logs.
 
+## Deployment Models
+
+FLIP supports three trust deployment models:
+
+| Model | Location | Documentation |
+|-------|----------|---------------|
+| **Cloud (EC2)** | AWS EC2 (same account as Central Hub) | [`deploy/providers/AWS/README.md`](providers/AWS/README.md) |
+| **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server) | [`deploy/providers/local/README.md`](providers/local/README.md) |
+| **Kubernetes** | Any K8s cluster 1.28+ (EKS, AKS, on-prem) | [`deploy/providers/kubernetes/README.md`](providers/kubernetes/README.md) |
+
+In all models, trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound** from the trust. The hub never makes inbound requests to trusts.
+
 ## Service Authentication
 
 FLIP uses two separate authentication mechanisms for service-to-hub communication:

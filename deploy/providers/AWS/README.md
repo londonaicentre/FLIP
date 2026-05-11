@@ -21,6 +21,7 @@ This provider manages the **Central Hub** (always in AWS) and, optionally, one o
 | --- | --- | --- |
 | **Cloud** | AWS EC2 (same account as Central Hub) | This provider (`deploy/providers/AWS/`) |
 | **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server, etc.) | [`deploy/providers/local/`](../local/README.md) + selected targets in this Makefile |
+| **Kubernetes** | Any Kubernetes cluster 1.28+ (EKS, AKS, on-prem) | [`deploy/providers/kubernetes/`](../kubernetes/README.md) Helm chart |
 
 In both models, trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound from the trust** to the hub. The hub never makes inbound requests to trusts.
 
