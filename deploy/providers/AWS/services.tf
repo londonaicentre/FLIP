@@ -55,7 +55,10 @@ resource "aws_s3_bucket_cors_configuration" "flip_bucket_cors" {
 
   cors_rule {
     allowed_headers = ["*"]
-    allowed_methods = ["PUT"]
+    # Model-file uploads use presigned POST (multipart/form-data) so the
+    # size + content-type policy is enforced by S3 at the edge; browsers
+    # preflight the POST, so the bucket has to advertise it.
+    allowed_methods = ["POST"]
     allowed_origins = ["https://${var.flip_alb_subdomain}"]
     expose_headers  = []
   }

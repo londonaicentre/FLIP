@@ -316,13 +316,20 @@ def upload_files(
             ),
             f"presigned URL for {path.name}",
         )
-        upload_url = presigned_resp.json()
-        # S3 presigned PUTs do not accept the flip-api auth header.
+        policy = presigned_resp.json()
+        # Presigned POST policy: every signed field must be appended verbatim
+        # and `file` must come last. S3 does not accept the flip-api auth
+        # header on this request.
         with path.open("rb") as fh:
-            put_resp = requests.put(upload_url, data=fh, timeout=120)
-        if put_resp.status_code >= 300:
-            raise SmokeFailure(f"S3 upload failed for {path.name}: HTTP {put_resp.status_code}")
-        # The presigned PUT only puts bytes in S3 — the DB row is written by
+            post_resp = requests.post(
+                policy["url"],
+                data=policy["fields"],
+                files={"file": (path.name, fh, content_type)},
+                timeout=120,
+            )
+        if post_resp.status_code >= 300:
+            raise SmokeFailure(f"S3 upload failed for {path.name}: HTTP {post_resp.status_code}")
+        # The presigned POST only puts bytes in S3 — the DB row is written by
         # /files/process-scanned-file, which is the SNS-driven webhook the
         # antivirus scanner calls in prod. The UI invokes it directly after a
         # 3s grace, so the file shows up in the model dashboard. Without this
