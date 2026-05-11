@@ -64,8 +64,17 @@ export TF_VAR_flip_keypair=~/.ssh/host-aws
 export TF_VAR_ec2_public_key_path=$(HOME)/.ssh/host-aws.pub
 export TF_VAR_flip_user_pool_name=flip-user-pool
 export TF_VAR_flip_cognito_client=flip-cognito-client
-export TF_VAR_FLIP_BUCKET_NAME=${FLIP_BUCKET_NAME}
+export TF_VAR_FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME=${FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME}
+export TF_VAR_FLIP_FL_RESULTS_BUCKET_NAME=${FLIP_FL_RESULTS_BUCKET_NAME}
+export TF_VAR_FLIP_APP_BUNDLES_BUCKET_NAME=${FLIP_APP_BUNDLES_BUCKET_NAME}
 export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
+# Fail fast with a useful message if the per-tenant bucket names are missing
+# from the env file. The variables are required (no default) so Terraform
+# would otherwise prompt mid-plan with a generic message that gives no hint
+# about where to set the value.
+$(if $(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME),,$(error 🪣 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
+$(if $(FLIP_FL_RESULTS_BUCKET_NAME),,$(error 🪣 FLIP_FL_RESULTS_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
+$(if $(FLIP_APP_BUNDLES_BUCKET_NAME),,$(error 🪣 FLIP_APP_BUNDLES_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
 export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
 export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
@@ -163,6 +172,41 @@ init: ## Initialize Terraform configuration
 .PHONY: import-persistent
 import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement
 	@bash scripts/import-resources.sh
+
+
+.PHONY: migrate-flip-bucket
+migrate-flip-bucket: ## One-time: sync legacy flip_bucket prefixes into the three new buckets (run after `make apply` creates the new buckets)
+	## Source bucket: $${FLIP_BUCKET_NAME} (read from $(MAIN_ENV_FILE))
+	## Destination buckets: $${FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME}, $${FLIP_FL_RESULTS_BUCKET_NAME}, $${FLIP_APP_BUNDLES_BUCKET_NAME}
+	##
+	## Sequencing: (1) `make apply` provisions the new buckets, (2) this target copies
+	## prefixes into them, (3) redeploy with the new env vars, (4) smoke-test, (5) after
+	## a 24-48h cooldown manually decommission the old bucket with:
+	##     terraform state rm aws_s3_bucket.flip_bucket   # `prevent_destroy = true` blocks normal destroys
+	##     aws s3 rb s3://$${FLIP_BUCKET_NAME} --force    # only after `aws s3 ls` confirms it is empty
+	##
+	## Idempotent: `aws s3 sync` skips files already present at the destination.
+	@if [ -z "$(FLIP_BUCKET_NAME)" ]; then \
+		echo "❌ FLIP_BUCKET_NAME is not set in $(MAIN_ENV_FILE) — nothing to migrate from."; exit 1; \
+	fi
+	@echo "📦 Migrating contents of s3://$(FLIP_BUCKET_NAME) into the three split buckets ..."
+	@echo "  • model file uploads → s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/"
+	@AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+		s3://$(FLIP_BUCKET_NAME)/model_files/uploaded/ \
+		s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/
+	@echo "  • FL results     → s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/"
+	@AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+		s3://$(FLIP_BUCKET_NAME)/uploaded_federated_data/ \
+		s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/
+	@echo "  • FL base apps   → s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/base-application/"
+	@AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+		s3://$(FLIP_BUCKET_NAME)/base-application/ \
+		s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/base-application/
+	@echo "  • FL app dests   → s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/"
+	@AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+		s3://$(FLIP_BUCKET_NAME)/app_destination_bucket/ \
+		s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/
+	@echo "✅ migrate-flip-bucket complete. Run \`aws s3 ls --recursive\` on source vs destinations to verify parity before decommissioning."
 
 
 .PHONY: force-unlock

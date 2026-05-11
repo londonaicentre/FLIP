@@ -11,24 +11,58 @@ check_aws_profile
 
 log_info "Importing persistent resources..."
 
-# 1. FLIP S3 Bucket
+# 1. FLIP application S3 buckets
+#
+# The single legacy `flip_bucket` has been split into three purpose-built
+# buckets (model file uploads / FL results / app bundles). Imports below match the
+# `module.flip_*_bucket.aws_s3_bucket.this` addresses emitted by
+# modules/flip_s3_bucket. Each block is independent so a stack that already
+# created two of the three (e.g. mid-rollout) still picks up the missing one.
+#
+# `aws_s3_bucket_cors_configuration` and friends use `<bucket-name>` as their
+# import ID — same as the bare bucket — because every sub-resource is
+# bucket-keyed in S3.
 echo ""
-log_info "1️⃣  FLIP S3 Bucket..."
-BUCKET_NAME="${FLIP_BUCKET_NAME}"
-if [ -n "$BUCKET_NAME" ]; then
-    if aws_cmd s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
-        log_success "Found bucket: $BUCKET_NAME"
-        terraform import aws_s3_bucket.flip_bucket "$BUCKET_NAME" 2>/dev/null || log_success "FLIP S3 bucket (already in state)"
-        terraform import aws_s3_bucket_cors_configuration.flip_bucket_cors "$BUCKET_NAME" 2>/dev/null || log_success "FLIP S3 CORS"
-        terraform import aws_s3_object.app_destination_bucket "$BUCKET_NAME/app_destination_bucket/" 2>/dev/null || log_success "app_destination_bucket folder"
-        terraform import aws_s3_object.model_files "$BUCKET_NAME/model_files/" 2>/dev/null || log_success "model_files folder"
-        terraform import aws_s3_object.uploaded_federated_data "$BUCKET_NAME/uploaded_federated_data/" 2>/dev/null || log_success "uploaded_federated_data folder"
-    else
-        log_warn "Bucket $BUCKET_NAME does not exist in AWS"
+log_info "1️⃣  FLIP application S3 buckets..."
+import_flip_bucket() {
+    # $1 = module label (e.g. flip_model_files_uploads_bucket)
+    # $2 = bucket name (from env)
+    # $3 = friendly description for logs
+    # $4 = "yes" if the module renders a CORS configuration (uploads + fl-results), else "no"
+    local module_label="$1"
+    local bucket_name="$2"
+    local description="$3"
+    local has_cors="$4"
+
+    if [ -z "$bucket_name" ]; then
+        log_warn "$description: environment variable not set, skipping import"
+        return
     fi
-else
-    log_warn "FLIP_BUCKET_NAME not set in environment"
-fi
+
+    if ! aws_cmd s3api head-bucket --bucket "$bucket_name" 2>/dev/null; then
+        log_warn "$description ($bucket_name): does not exist in AWS yet — Terraform will create it"
+        return
+    fi
+
+    log_success "$description: found $bucket_name"
+    terraform import "module.${module_label}.aws_s3_bucket.this" "$bucket_name" 2>/dev/null \
+        || log_success "$description bucket (already in state)"
+    terraform import "module.${module_label}.aws_s3_bucket_public_access_block.this" "$bucket_name" 2>/dev/null \
+        || log_success "$description public access block"
+    terraform import "module.${module_label}.aws_s3_bucket_server_side_encryption_configuration.this" "$bucket_name" 2>/dev/null \
+        || log_success "$description SSE config"
+    terraform import "module.${module_label}.aws_s3_bucket_versioning.this" "$bucket_name" 2>/dev/null \
+        || log_success "$description versioning"
+    # CORS sub-resource only exists when cors_methods is non-empty in the module call.
+    if [ "$has_cors" = "yes" ]; then
+        terraform import "module.${module_label}.aws_s3_bucket_cors_configuration.this[0]" "$bucket_name" 2>/dev/null \
+            || log_success "$description CORS"
+    fi
+}
+
+import_flip_bucket flip_model_files_uploads_bucket "${FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME}" "Model file uploads" yes
+import_flip_bucket flip_fl_results_bucket "${FLIP_FL_RESULTS_BUCKET_NAME}" "FL results" yes
+import_flip_bucket flip_app_bundles_bucket "${FLIP_APP_BUNDLES_BUCKET_NAME}" "App bundles" no
 
 # 2. AI Centre S3 Bucket
 echo ""

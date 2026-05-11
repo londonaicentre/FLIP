@@ -90,6 +90,14 @@ services:
       - DEBUG=${DEBUG}
       - AWS_PROFILE=${AWS_PROFILE}
       - AWS_REGION=${AWS_REGION}
+      # Force boto3 to mint presigned URLs against the regional S3 endpoint
+      # (e.g. s3.eu-west-2.amazonaws.com) instead of the legacy global one
+      # (s3.amazonaws.com). DNS for a freshly created bucket in a non-us-east-1
+      # region can take up to ~24h to propagate on the global endpoint — see
+      # the matching note in compose.production.yml for the FLIP#24 incident
+      # that surfaced this. Regional endpoints never have this lag and are
+      # AWS's recommended path for non-us-east-1 buckets anyway.
+      - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION}.amazonaws.com
       - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
       - POSTGRES_USER=${POSTGRES_USER}

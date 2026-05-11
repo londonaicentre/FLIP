@@ -30,11 +30,25 @@ resource "aws_ssm_parameter" "flip_api_internal_url" {
   value       = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
 }
 
-resource "aws_ssm_parameter" "uploaded_federated_data_bucket" {
-  name        = "${local.ssm_prefix}/uploaded_federated_data_bucket"
-  description = "S3 URI prefix for FL training results (must NOT default to s3://default-bucket)"
+resource "aws_ssm_parameter" "flip_model_files_uploads_bucket" {
+  name        = "${local.ssm_prefix}/flip_model_files_uploads_bucket"
+  description = "S3 URI of the researcher model-files-uploads bucket (browser presigned-POST target; flip-api reads/deletes)"
   type        = "String"
-  value       = local.uploaded_federated_data_uri
+  value       = local.flip_model_files_uploads_bucket_uri
+}
+
+resource "aws_ssm_parameter" "flip_fl_results_bucket" {
+  name        = "${local.ssm_prefix}/flip_fl_results_bucket"
+  description = "S3 URI of the FL training-results bucket (fl-server writes; researcher downloads via browser presigned-GET)"
+  type        = "String"
+  value       = local.flip_fl_results_bucket_uri
+}
+
+resource "aws_ssm_parameter" "flip_app_bundles_bucket" {
+  name        = "${local.ssm_prefix}/flip_app_bundles_bucket"
+  description = "S3 URI of the FL app-bundles bucket (server-only; flip-api copies base → destination during FL bundling)"
+  type        = "String"
+  value       = local.flip_app_bundles_bucket_uri
 }
 
 resource "aws_ssm_parameter" "internal_service_key_header" {

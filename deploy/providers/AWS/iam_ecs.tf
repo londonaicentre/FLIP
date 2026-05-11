@@ -138,8 +138,12 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
       "s3:PutObject",
     ]
     resources = [
-      aws_s3_bucket.flip_bucket.arn,
-      "${aws_s3_bucket.flip_bucket.arn}/*",
+      module.flip_model_files_uploads_bucket.bucket_arn,
+      "${module.flip_model_files_uploads_bucket.bucket_arn}/*",
+      module.flip_fl_results_bucket.bucket_arn,
+      "${module.flip_fl_results_bucket.bucket_arn}/*",
+      module.flip_app_bundles_bucket.bucket_arn,
+      "${module.flip_app_bundles_bucket.bucket_arn}/*",
       aws_s3_bucket.aicentre_bucket.arn,
       "${aws_s3_bucket.aicentre_bucket.arn}/*",
     ]
@@ -174,12 +178,12 @@ resource "aws_iam_role" "ecs_fl_api_task" {
 # fl-server is reachable from untrusted FL clients via the NLB. Its role is
 # minimal: read its INTERNAL_SERVICE_KEY from the FLIP_API secret (so it can
 # call back to flip-api on /api/model/{id}/status) and write training results
-# to s3://${FLIP_BUCKET_NAME}/uploaded_federated_data/*. Crucially, it has
-# NO access to AES_KEY_BASE64, TRUST_API_KEY_HASHES, or any flip-api-only
-# data. The secret is shared today (single FLIP_API secret) so the
-# execution role's GetSecretValue covers fetch; the task role here only
-# needs to expose ListSecretVersionIds for runtime introspection if
-# needed — kept empty until PR 2 wires actual runtime calls.
+# to the dedicated flip-fl-results bucket. Crucially, it has NO access to
+# AES_KEY_BASE64, TRUST_API_KEY_HASHES, the model-files-uploads or app-bundles
+# buckets, or any flip-api-only data. The secret is shared today (single
+# FLIP_API secret) so the execution role's GetSecretValue covers fetch; the
+# task role here only needs to expose ListSecretVersionIds for runtime
+# introspection if needed — kept empty until PR 2 wires actual runtime calls.
 
 resource "aws_iam_role" "ecs_fl_server_task" {
   name               = "ecs-fl-server-task-role"
@@ -187,23 +191,22 @@ resource "aws_iam_role" "ecs_fl_server_task" {
 }
 
 data "aws_iam_policy_document" "ecs_fl_server_task" {
+  # The whole flip-fl-results bucket is dedicated to FL training output, so the
+  # prefix-scoped condition that used to constrain access to
+  # `${flip_bucket}/uploaded_federated_data/*` is no longer needed — bucket-wide
+  # scope is now the same least-privilege boundary.
   statement {
-    sid     = "S3UploadFederatedData"
+    sid     = "S3FlResults"
     actions = ["s3:PutObject", "s3:GetObject", "s3:HeadObject", "s3:DeleteObject"]
     resources = [
-      "${aws_s3_bucket.flip_bucket.arn}/uploaded_federated_data/*",
+      "${module.flip_fl_results_bucket.bucket_arn}/*",
     ]
   }
 
   statement {
-    sid       = "S3ListFlipBucket"
+    sid       = "S3ListFlResultsBucket"
     actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
-    resources = [aws_s3_bucket.flip_bucket.arn]
-    condition {
-      test     = "StringLike"
-      variable = "s3:prefix"
-      values   = ["uploaded_federated_data/*", "uploaded_federated_data"]
-    }
+    resources = [module.flip_fl_results_bucket.bucket_arn]
   }
 }
 

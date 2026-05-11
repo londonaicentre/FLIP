@@ -34,11 +34,15 @@ locals {
   # resolves to the task IP, so fl-server calls flip-api on port 8000.
   api_container_port = 8000
 
-  # Buckets and S3 paths used by the central hub services. Both reference
-  # the resource (not var.FLIP_BUCKET_NAME) so a future bucket rename only
-  # has to land in one place.
-  flip_bucket_arn             = aws_s3_bucket.flip_bucket.arn
-  uploaded_federated_data_uri = "s3://${aws_s3_bucket.flip_bucket.id}/uploaded_federated_data"
+  # Buckets and S3 paths used by the central hub services. Each reference goes
+  # through the module output (not the variable) so a future bucket rename
+  # only has to land in one place.
+  #
+  # After the split, FL results live in their own purpose-built bucket — no
+  # `/uploaded_federated_data` prefix needed any more.
+  flip_model_files_uploads_bucket_uri = "s3://${module.flip_model_files_uploads_bucket.bucket_id}"
+  flip_fl_results_bucket_uri          = "s3://${module.flip_fl_results_bucket.bucket_id}"
+  flip_app_bundles_bucket_uri         = "s3://${module.flip_app_bundles_bucket.bucket_id}"
 
   # Env vars per service. Mirrors compose.production.yml +
   # compose.production.{nvflare,flower}.yml. PR 2 reads these into the ECS
@@ -48,14 +52,14 @@ locals {
       ENV                            = "production"
       AWS_REGION                     = var.AWS_REGION
       AWS_SECRET_NAME                = "FLIP_API" # pragma: allowlist secret
-      UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
+      UPLOADED_FEDERATED_DATA_BUCKET = local.flip_fl_results_bucket_uri
     }
     fl_server = {
       LOCAL_DEV                      = "false"
       NET_ID                         = "net-1"
       MIN_CLIENTS                    = tostring(var.MIN_CLIENTS)
       IMAGES_DIR                     = "/app/data/images"
-      UPLOADED_FEDERATED_DATA_BUCKET = local.uploaded_federated_data_uri
+      UPLOADED_FEDERATED_DATA_BUCKET = local.flip_fl_results_bucket_uri
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
     }
     fl_api = {

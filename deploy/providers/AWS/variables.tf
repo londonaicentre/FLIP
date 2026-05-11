@@ -118,8 +118,19 @@ variable "enable_service_discovery" {
   default     = false
 }
 
-variable "FLIP_BUCKET_NAME" {
-  type = string
+variable "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME" {
+  description = "Globally-unique S3 bucket name for researcher-uploaded model files (browser presigned-POST surface). Required, no default — must be set per environment in the matching .env.*."
+  type        = string
+}
+
+variable "FLIP_FL_RESULTS_BUCKET_NAME" {
+  description = "Globally-unique S3 bucket name for FL training results (browser presigned-GET surface). Required, no default — must be set per environment in the matching .env.*."
+  type        = string
+}
+
+variable "FLIP_APP_BUNDLES_BUCKET_NAME" {
+  description = "Globally-unique S3 bucket name for FL app bundles (server-only; never browser-direct). Required, no default — must be set per environment in the matching .env.*."
+  type        = string
 }
 
 variable "AICENTRE_BUCKET_NAME" {

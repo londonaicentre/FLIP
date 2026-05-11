@@ -61,7 +61,7 @@ Managed policies that cover these requirements:
 
 **Note**: The deployed EC2 instances use separate, scoped IAM roles following the principle of least privilege:
 
-- **Central Hub** (`ec2-role`): SSM + CloudWatch managed policies, plus inline policies for `secretsmanager:GetSecretValue` on the FLIP API and DB secrets, Cognito user-pool admin actions on the FLIP user pool, S3 object access on the FLIP and AI Centre buckets, and `ses:SendEmail` on the verified sender identity.
+- **Central Hub** (`ec2-role`): SSM + CloudWatch managed policies, plus inline policies for `secretsmanager:GetSecretValue` on the FLIP API and DB secrets, Cognito user-pool admin actions on the FLIP user pool, S3 object access on the three FLIP application buckets (see [FLIP application S3 buckets](#flip-application-s3-buckets)) and the AI Centre bucket, and `ses:SendEmail` on the verified sender identity.
 - **Trust EC2** (`trust-ec2-role`): SSM + CloudWatch managed policies, plus a read-only S3 inline policy on the AI Centre bucket for FL participant-kit downloads. No Cognito, SES, Secrets Manager or FLIP application bucket access.
 
 ## Deployment Workflow
@@ -97,6 +97,38 @@ This command executes the following steps in order:
 The UI is served from S3 behind CloudFront at the canonical user-facing subdomain (`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront also forwards `/api/*` to the ALB, using a backend-only `api.<subdomain>` DNS name that only CloudFront uses — trusts and users never see it. CloudFront is the only supported UI-hosting path; there is no legacy EC2 UI container or ALB UI target group to fall back to.
 
 **Subsequent UI deploys**: just `make deploy-ui PROD=stag|true` — builds the UI from the working tree, regenerates `window.js`, syncs to S3, invalidates CloudFront. No Terraform involved.
+
+### FLIP application S3 buckets
+
+The Central Hub uses four S3 buckets, each with a distinct purpose, access pattern, and CORS surface. The three **FLIP application buckets** were split out of a single legacy `flip{env}` bucket so each tenant can carry the minimum CORS surface its consumer needs (a CORS change for one tenant no longer drags every other tenant along, and a browser-direct bucket can no longer accidentally expose objects belonging to a server-only flow).
+
+| Bucket (per env) | Env-var (`.env.{stag,production}`) | Consumer | Browser CORS | Holds |
+|---|---|---|---|---|
+| `flip{env}-model-files-uploads` | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` | researcher browser (presigned **PUT** on `origin/develop`; flips to presigned **POST** once [#438](https://github.com/londonaicentre/FLIP/pull/438) lands), flip-api reads | `PUT` today; narrows to `POST` from `https://<flip_alb_subdomain>` when #438 merges | researcher-uploaded model artefacts under `uploaded/` (today the AV-scanned copy reads from the same prefix — see the FIXME in `.env.production`) |
+| `flip{env}-fl-results` | `FLIP_FL_RESULTS_BUCKET_NAME` | fl-server writes, researcher browser (presigned **GET**) | `GET` from `https://<flip_alb_subdomain>` | FL training output / aggregated weights — the whole bucket is dedicated to this tenant so no prefix is needed |
+| `flip{env}-app-bundles` | `FLIP_APP_BUNDLES_BUCKET_NAME` | flip-api (boto3 only); `flip-fl-base{,-flower}` CI publishes here on merge to main | **none** (server-only — no `aws_s3_bucket_cors_configuration` resource is emitted at all) | `base-application/{nvflare,flower}/` (pushed by the upstream FL repos), `app_destinations/<model_id>/` (per-bundle FL apps), `base-application-dev/pull-requests/<n>/` (PR previews on the dev account) |
+| `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | Trust EC2 (`aws s3 cp` during Ansible), AI Centre operators | `PUT`, `GET` | FL participant kits |
+
+All four share standard configs: public access blocked, AES-256+KMS server-side encryption, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which is consumed by both `main.tf` (prod / stag) and `dev/main.tf` (dev account) — so a CORS or bucket-policy change plans identically across every environment, closing the dev-drift gap that masked the presigned-PUT → presigned-POST regression in #438.
+
+**Where the bucket-names come from outside FLIP itself.** `flip-fl-base` and `flip-fl-base-flower` push their `src/` tree to `flip{env}-app-bundles/base-application/{nvflare,flower}/` on every merge to `main`. The bucket name is computed in the workflow YAML as `${{ vars.AWS_*_S3_BUCKET_NAME }}-app-bundles` — the `AWS_*_S3_BUCKET_NAME` GitHub Environment variable still holds the legacy bucket name, and the `-app-bundles` suffix is appended in-place. That way the variable can stay set to the legacy bucket (still consulted by other migration tooling) without the FL-base workflow accidentally writing back to it. The GitHub OIDC role those workflows assume (`GitHubAction-AssumeRoleWithAction-FLIP`, defined in the `aicentre-iac` repo) attaches the AWS-managed `AmazonS3FullAccess` policy, so no IAM change is needed when new app-bundles buckets come online in a new env.
+
+#### Migrating off the legacy single-bucket layout
+
+For an account that was created **before** the split, the legacy `flip{env}` bucket holds the contents that now belong in the three split buckets above. The cutover:
+
+```bash
+make plan PROD=true                  # confirms 3 new buckets being created + IAM rewires
+make apply PROD=true                 # 17 add / 3 change / 8 forgotten-from-state (legacy bucket survives)
+make migrate-flip-bucket PROD=true   # aws s3 sync — copies the four legacy prefixes into the new buckets
+make deploy-centralhub PROD=true     # restarts flip-api on EC2 with the new env-var values
+# … browser smoke (CORS POST + GET); FL e2e; 24–48h cooldown …
+aws s3 rm s3://<legacy-bucket-name> --recursive   # then `aws s3 rb` once empty
+```
+
+The `removed { destroy = false }` blocks in `services.tf` drop the legacy bucket from Terraform state on the first apply **without** destroying the AWS resource — that's what lets `make migrate-flip-bucket` run against the still-live source. There is a brief window between `make apply` finishing and `make deploy-centralhub` finishing where flip-api's IAM no longer grants the legacy bucket but its env vars still point at it — every S3 call returns 403 during that window (~5 minutes). To eliminate it, temporarily add the legacy bucket back to the IAM grant for the duration of the deploy, then strip it in a follow-up apply.
+
+Once a decommission is complete in every environment, drop the `FLIP_BUCKET_NAME` line from `.env.*`, the `removed` blocks in `services.tf`, and the `migrate-flip-bucket` Makefile target in a follow-up PR.
 
 ### Manual Step-by-Step Deployment
 
@@ -261,7 +293,7 @@ make destroy
 
 - Cognito User Pool and users (authentication data)
 - Secrets Manager secret (FLIP_API configuration)
-- S3 bucket (application data)
+- S3 buckets — both the application buckets and the AI Centre bucket (see [FLIP application S3 buckets](#flip-application-s3-buckets))
 
 #### RDS lifecycle (stag vs prod)
 
