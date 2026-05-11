@@ -145,10 +145,11 @@ def yaml_dump(data, indent=0):
     return "\n".join(lines)
 
 
-def write_yaml(data, path):
-    """Write a YAML file using the stdlib serializer."""
+def write_yaml(data, path, permissions=0o644):
+    """Write a YAML file using the stdlib serializer with given file permissions."""
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w") as f:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, permissions)
+    with os.fdopen(fd, "w") as f:
         f.write(yaml_dump(data))
         f.write("\n")
 
@@ -198,8 +199,8 @@ def main():
         args.output_dir, "values-secrets.yaml"
     )
     if secrets:
-        write_yaml({"secrets": {"create": True, "data": secrets}}, secrets_path)
-        print("Wrote secrets values to: {}".format(secrets_path))
+        write_yaml({"secrets": {"create": True, "data": secrets}}, secrets_path, permissions=0o600)
+        print("Wrote secrets values to: {} (permissions: 0o600)".format(secrets_path))
         print("WARNING: values-secrets.yaml contains sensitive data.", file=sys.stderr)
         print(
             "   Do not commit it to version control. Add it to .gitignore.",
