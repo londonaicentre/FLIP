@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-{{- if .Values.observability.grafana.enabled }}
+{{- if and .Values.observability.enabled .Values.observability.grafana.enabled }}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -34,6 +34,8 @@ metadata:
 data:
   dashboards.yml: |
 {{ .Files.Get "config/grafana-dashboards.yaml" | nindent 4 }}
+  trust-apis.json: |
+{{ .Files.Get "config/grafana-dashboard-trust-apis.json" | nindent 4 }}
 ---
 apiVersion: v1
 kind: Service
