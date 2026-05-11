@@ -115,24 +115,99 @@ All four share standard configs: public access blocked, SSE-KMS server-side encr
 
 #### Migrating off the legacy single-bucket layout
 
-For an account that was created **before** the split, the legacy `flip{env}` bucket holds the contents that now belong in the three split buckets above. The cutover:
+For an account that was created **before** the split, the legacy `flip{env}` bucket holds the contents that now belong in the three split buckets above. The runbook differs slightly between prod and stag because stag's Terraform state is known to be missing live resources (see [Stag migration runbook](#stag-migration-runbook) below); the **prod** flow is:
 
 ```bash
+cd deploy/providers/AWS
+export AWS_PROFILE=prod && make aws-login              # if SSO has expired
 make plan PROD=true                  # confirms 3 new buckets being created + IAM rewires
 make apply PROD=true                 # 17 add / 3 change / 8 forgotten-from-state (legacy bucket survives)
 make migrate-flip-bucket PROD=true   # aws s3 sync — copies the four legacy prefixes into the new buckets
+make verify-flip-bucket-migration PROD=true  # key-set subset check; exits non-zero on any source key missing from destination
 make deploy-centralhub PROD=true     # restarts flip-api on EC2 with the new env-var values
 # … browser smoke (CORS POST + GET); FL e2e; 24–48h cooldown …
-aws s3 rm s3://<legacy-bucket-name> --recursive   # then `aws s3 rb` once empty
+make verify-flip-bucket-migration PROD=true  # re-run to confirm parity is still good after cooldown
+aws s3 rm s3://flipprod --recursive  # then `aws s3 rb s3://flipprod` once empty
 ```
 
 The `removed { destroy = false }` blocks in `services.tf` drop the legacy bucket from Terraform state on the first apply **without** destroying the AWS resource — that's what lets `make migrate-flip-bucket` run against the still-live source. There is a brief window between `make apply` finishing and `make deploy-centralhub` finishing where flip-api's IAM no longer grants the legacy bucket but its env vars still point at it — every S3 call returns 403 during that window (~5 minutes). To eliminate it, temporarily add the legacy bucket back to the IAM grant for the duration of the deploy, then strip it in a follow-up apply.
 
-> **Stag-specific pre-flight.** Stag's Terraform state is known to be missing live resources (see internal notes), so the `removed` blocks will plan as no-ops on stag if `aws_s3_bucket.flip_bucket` was never registered there. The next stag apply will then try to *create* whatever `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` points to — if that's accidentally set to the legacy bucket name, the apply fails on `BucketAlreadyOwnedByYou`. **Run `make import-persistent` against stag before `make apply`** so the legacy resources land in state first and the `removed` blocks do their intended drop.
+> **Verify before decommissioning.** `aws s3 sync` exits 0 even when individual object copies fail (per-object KMS / throttle / timeout errors print to stderr but don't fail the sync). After running `make migrate-flip-bucket`, always run `make verify-flip-bucket-migration` — it computes a key-set subset check (every source key must exist on destination; extras on destination from post-cutover writes are allowed) and exits non-zero on any miss. Do not run `aws s3 rb` on the legacy bucket until the target prints all-✅.
 
-> **Verify before decommissioning.** `aws s3 sync` exits 0 even when individual object copies fail (per-object KMS / throttle / timeout errors print to stderr but don't fail the sync). After running `make migrate-flip-bucket`, always run `make verify-flip-bucket-migration` — it counts objects per prefix on both sides and exits non-zero on any mismatch. Do not run `aws s3 rb` on the legacy bucket until that target prints all-✅.
+#### Stag migration runbook
 
-Once a decommission is complete in every environment, drop the `FLIP_BUCKET_NAME` line from `.env.*`, the `removed` blocks in `services.tf`, and the `migrate-flip-bucket` Makefile target in a follow-up PR.
+Stag's Terraform state is known to be missing ~70 live resources. The `removed` blocks in `services.tf` plan as no-ops if `aws_s3_bucket.flip_bucket` was never registered in stag state to begin with — and the next stag apply would then try to *create* whatever `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` points to. If that's set to the legacy bucket name as a typo, the apply fails on `BucketAlreadyOwnedByYou`; if it's set to a new name but the new buckets already exist in AWS from a manual create, the apply also fails. The fix is to import every persistent resource first, then run apply / migrate / verify exactly like prod.
+
+```bash
+cd deploy/providers/AWS
+export AWS_PROFILE=stag && make aws-login              # if SSO has expired
+
+# 1. Bring stag's Terraform state in line with what's actually in AWS — this
+#    imports the legacy flipstag bucket + every other persistent resource the
+#    `removed` blocks expect to find. Idempotent: rerun safely after a fix.
+make import-persistent                                  # PROD unset → stag (see Makefile defaults)
+
+# 2. Plan — confirm the diff matches prod's shape:
+#    17 to add (3 new buckets), 3 to change (IAM rewires), 1 to destroy
+#    (old uploaded_federated_data SSM param renamed), 8 forgotten-from-state.
+#    If you see anything trying to DESTROY a bucket, stop — that means the
+#    import-persistent step missed something. Don't apply.
+make plan
+
+# 3. Apply — same diff as prod.
+make apply
+
+# 4. Sync the four legacy prefixes (model_files/uploaded, uploaded_federated_data,
+#    base-application, app_destination_bucket) into the three new buckets.
+make migrate-flip-bucket
+
+# 5. Parity-check — must print all-✅ before decommissioning.
+make verify-flip-bucket-migration
+
+# 6. Redeploy stag's central hub so flip-api picks up the new bucket env vars.
+make deploy-centralhub
+
+# … browser smoke against stag's URL; FL e2e; 24–48h cooldown …
+
+# 7. Final verify + decommission.
+make verify-flip-bucket-migration
+aws s3 rm s3://flipstag --recursive
+aws s3 rb s3://flipstag
+```
+
+Two stag-specific watch-outs:
+
+- **`make import-persistent` failing partway through** is fine on a re-run — every import in `scripts/import-resources.sh` is idempotent (probes `terraform state list` before importing). The script will skip already-imported resources and only attempt the missing ones.
+- **The deploy-centralhub redeploy needs the docker image tag pinned in `.env.stag`** (`DOCKER_TAG`) to be a tag that exists in GHCR. Branch tags do **not** auto-build on push — trigger the `docker_build_*` workflows via `workflow_dispatch` first if you're stag-testing a feature branch (see [the build trigger note in CLAUDE.md](../../../CLAUDE.md#docker-image-builds-manual-trigger-required-for-branches)).
+
+#### Dev migration runbook
+
+Dev is simpler — no central hub redeploy step because dev runs locally via Docker Compose against the dev account's Cognito + SES + S3 buckets. The dev TF root (`deploy/providers/AWS/dev/`) has no ECS/EC2 resources, so the IAM-cutover 403 window doesn't apply.
+
+```bash
+cd deploy/providers/AWS/dev
+export AWS_PROFILE=dev && make aws-login               # if SSO has expired
+
+# 1. Plan + apply the three new dev buckets.
+make plan
+make apply
+
+# 2. Sync the legacy flipdev prefixes. There's no Makefile target for dev — run
+#    the four `aws s3 sync` calls directly. Five prefixes if you also want the
+#    PR-preview `base-application-dev/` directory (used by the flip-fl-base
+#    push-pr workflow).
+AWS_PROFILE=dev aws s3 sync s3://flipdev/model_files/uploaded/      s3://flipdev-model-files-uploads/uploaded/
+AWS_PROFILE=dev aws s3 sync s3://flipdev/uploaded_federated_data/   s3://flipdev-fl-results/
+AWS_PROFILE=dev aws s3 sync s3://flipdev/base-application/          s3://flipdev-app-bundles/base-application/
+AWS_PROFILE=dev aws s3 sync s3://flipdev/app_destination_bucket/    s3://flipdev-app-bundles/app_destinations/
+AWS_PROFILE=dev aws s3 sync s3://flipdev/base-application-dev/      s3://flipdev-app-bundles/base-application-dev/
+
+# 3. Verify locally and decommission once you're done.
+# (No `make verify-flip-bucket-migration` for dev — run the count diff manually
+# or extend the Makefile if you want it.)
+```
+
+Once a decommission is complete in every environment, drop the `FLIP_BUCKET_NAME` line from `.env.*`, the `removed` blocks in `services.tf`, and the `migrate-flip-bucket` / `verify-flip-bucket-migration` Makefile targets in a follow-up PR.
 
 ### Manual Step-by-Step Deployment
 
