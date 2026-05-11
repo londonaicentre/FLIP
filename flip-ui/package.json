@@ -117,7 +117,7 @@
         "uuid": "$uuid",
         "fast-xml-parser": ">=5.7.0",
         "fast-xml-builder": ">=1.1.7",
-        "@babel/plugin-transform-modules-systemjs": ">=7.24.7"
+        "@babel/plugin-transform-modules-systemjs": ">=7.29.4"
     },
     "babel": {
         "presets": [
