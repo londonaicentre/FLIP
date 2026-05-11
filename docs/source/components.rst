@@ -1,5 +1,5 @@
 ################
-FLIP Components
+FLIP components
 ################
 
 .. toctree::
