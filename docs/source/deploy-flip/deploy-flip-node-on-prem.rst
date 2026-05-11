@@ -1,0 +1,231 @@
+.. _deploy-flip-node-on-prem:
+
+###############################
+Deploy a FLIP node on-prem
+###############################
+
+An on-prem FLIP node runs the trust-side stack (trust-api, imaging-api,
+data-access-api, FL client, optional XNAT/Orthanc) on an Ubuntu host owned by
+the Trust. The node polls the Central Hub for tasks over HTTPS — all
+communication is outbound, no inbound ports are opened. This is the deployment
+model used when the Trust has direct, governed access to its own OMOP database
+and PACS. For deployment inside a TRE see :doc:`deploy-flip-node-in-tre`; for
+the Central Hub side see :doc:`deploy-central-hub`.
+
+.. contents:: On this page
+   :local:
+   :depth: 2
+
+************
+Architecture
+************
+
+.. code-block:: text
+
+            Internet
+                │
+                ▼
+        ┌──────────────────┐
+        │   AWS Central     │
+        │   Hub             │
+        └─▲──────────────▲─┘
+          │              │
+   polls  │              │  polls
+  (HTTPS) │              │ (HTTPS)
+          │              │
+   ┌──────┴───┐    ┌─────┴───────┐
+   │ Trust A   │    │ Trust B      │
+   │ (AWS EC2) │    │ (on-prem)    │
+   └──────────┘    └─────────────┘
+
+Each on-prem Trust host runs the same Docker Compose stack used on cloud
+trusts. Container ports are not published on the host (the local-trust compose
+file communicates over the internal Docker network only), so the stack can
+coexist with the dev compose stack on the same machine without port conflicts.
+
++-----------------+----------------+--------------------------------------------+
+| Service         | Container port | Protocol                                   |
++=================+================+============================================+
+| trust-api       | 8000           | HTTP (polls hub outbound)                  |
++-----------------+----------------+--------------------------------------------+
+| imaging-api     | 8000           | HTTP (internal)                            |
++-----------------+----------------+--------------------------------------------+
+| data-access-api | 8000           | HTTP (internal)                            |
++-----------------+----------------+--------------------------------------------+
+| fl-client       | —              | TCP (outbound to FL server via NLB)        |
++-----------------+----------------+--------------------------------------------+
+
+*************
+Prerequisites
+*************
+
+**Operator workstation** (the machine you run commands from — typically your
+laptop):
+
+- Python 3.12+ and `UV <https://docs.astral.sh/uv/guides/install-python/>`_.
+- Ansible (installed automatically by ``uv sync`` inside ``deploy/providers/AWS/``).
+- Terraform outputs available — you must have already run ``make init`` and
+  ``make apply`` in ``deploy/providers/AWS/`` (the Central Hub deployment).
+- SSH access to the trust host, if provisioning remotely.
+
+**Trust host** — an Ubuntu 22.04+ machine (physical or VM) with:
+
+- A user account with ``sudo`` privileges (default: ``ubuntu``).
+- SSH access from the operator workstation (if remote), or local access.
+- Internet connectivity (to pull Docker images and packages).
+- A writable directory for the FLIP application (default ``/opt/flip``).
+
+**Central Hub deployed in AWS** — required so the trust can resolve the hub
+URL, fetch the FL participant kit from S3, and so the operator can update the
+NLB security group with the trust's public IP. See :doc:`deploy-central-hub`.
+
+************************************
+Recommended end-to-end (hybrid) flow
+************************************
+
+The wrapper target ``full-deploy-hybrid`` performs the full Central Hub deploy,
+provisions the on-prem trust, updates AWS Secrets Manager with the trust's
+keys, and redeploys the hub so the new secret values are loaded:
+
+.. code-block:: shell
+
+   cd deploy/providers/AWS
+   make full-deploy-hybrid PROD=<stag|true> \
+     LOCAL_TRUST_IP=<public-ip> \
+     [LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key]
+
+If ``LOCAL_TRUST_IP`` is omitted, the operator workstation's public IP is
+auto-detected via ``curl ipify.org``. ``PROD`` is inherited from the
+environment and supports both staging (``stag``) and production (``true``).
+
+After the wrapper exits, you still need to start the trust stack on the host
+itself:
+
+.. code-block:: shell
+
+   cd trust
+   env PROD=<stag|true> make up-local-trust
+
+Then verify the trust is polling: ``docker logs -f trust-api`` should show
+successful task polls against the Central Hub.
+
+************************
+Provision-only flows
+************************
+
+If the Central Hub is already deployed and you only need to add a new on-prem
+trust, run provisioning directly:
+
+**Remote trust host (via SSH):**
+
+.. code-block:: shell
+
+   cd deploy/providers/AWS
+   make add-local-trust \
+     LOCAL_TRUST_IP=<public-ip> \
+     LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key
+
+**Local trust host (no SSH — provisioning the same machine you're on):**
+
+.. code-block:: shell
+
+   set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
+   make add-local-trust LOCAL_TRUST_IP=<public-ip>
+
+What ``add-local-trust`` does:
+
+1. Runs the Ansible playbook ``deploy/providers/local/site_local_trust.yml``,
+   which installs Docker, required system packages, and creates the
+   ``/opt/flip/`` directory tree.
+2. Downloads the trust's FL participant kit from S3 and deploys it to
+   ``/opt/flip/services/<TRUST_NAME>/{startup,local,transfer}`` on the trust host.
+3. Runs a targeted ``terraform apply`` to add the NLB security group rule that
+   allows FL traffic from the trust's public IP.
+
+Post-provisioning, start the trust stack on the host:
+
+.. code-block:: shell
+
+   cd trust
+   env PROD=stag make up-local-trust
+
+***********************
+Trust authentication
+***********************
+
+The Central Hub identifies a trust by its API key, not by IP address or
+hostname — any host with the correct credentials in its ``.env`` can act as
+that trust. The trust's env must contain:
+
++----------------------------------+--------------------------------------------------------+
+| Variable                         | Purpose                                                |
++==================================+========================================================+
+| ``TRUST_NAME``                   | Must match a name in the hub's ``TRUST_NAMES`` list    |
+|                                  | (e.g. ``Trust_2``).                                    |
++----------------------------------+--------------------------------------------------------+
+| ``TRUST_API_KEY``                | Per-trust secret used on every outbound call to the    |
+|                                  | hub.                                                   |
++----------------------------------+--------------------------------------------------------+
+| ``CENTRAL_HUB_API_URL``          | Public hub URL the trust polls (e.g.                   |
+|                                  | ``https://app.flip.aicentre.co.uk``).                  |
++----------------------------------+--------------------------------------------------------+
+| ``AES_KEY_BASE64``               | Symmetric key shared with the hub for encrypted        |
+|                                  | payloads.                                              |
++----------------------------------+--------------------------------------------------------+
+| ``TRUST_INTERNAL_SERVICE_KEY``   | Per-trust shared secret used inside the trust for      |
+|                                  | calls between trust-api / imaging-api / fl-client and  |
+|                                  | imaging-api / data-access-api. Never leaves the trust. |
++----------------------------------+--------------------------------------------------------+
+
+**Hub-side prerequisites** (must already be in place before the trust can
+connect):
+
+1. ``TRUST_NAMES`` must include this trust's name.
+2. ``TRUST_API_KEY_HASHES`` must contain the SHA-256 hash of this trust's
+   ``TRUST_API_KEY``.
+3. The hub must be redeployed so the new secret values are loaded
+   (``make deploy-centralhub``).
+
+The ``full-deploy-hybrid`` wrapper handles key generation and hub redeployment
+automatically. When using ``add-local-trust`` standalone, the keys must
+already be configured on the hub.
+
+***********************
+Network requirements
+***********************
+
+**No inbound port forwarding is needed.** Trusts poll the hub outbound for
+tasks, and FL clients connect outbound to the FL server via the NLB. All
+communication is trust-initiated.
+
+The trust host must be able to make outbound connections to:
+
+- The Central Hub FLIP API over HTTPS (port 443).
+- The FL Server endpoint over gRPC or HTTP (configurable port; e.g. 8002).
+
+If the trust's public IP changes (common with residential broadband), update
+the NLB security group:
+
+.. code-block:: shell
+
+   TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply
+
+***************
+Troubleshooting
+***************
+
++----------------------------------+------------------------------------------------------------+
+| Symptom                          | Check                                                      |
++==================================+============================================================+
+| Trust not polling hub            | Trust stack running? ``docker ps`` on the trust host.      |
+|                                  | Check ``trust-api`` logs for polling errors.               |
++----------------------------------+------------------------------------------------------------+
+| ``Connection timed out`` (FL)    | Trust's public IP changed? Update the NLB security group.  |
+|                                  | Host/router firewall blocking outbound on port 8002?       |
++----------------------------------+------------------------------------------------------------+
+| Firewall blocking outbound       | Confirm the host/router firewall allows outbound HTTPS     |
+|                                  | (443) and the FL gRPC port (default 8002).                 |
++----------------------------------+------------------------------------------------------------+
+| Ansible ``Permission denied``    | SSH key correct? User has ``sudo``? ``ANSIBLE_BECOME_PASS``|
+|                                  | set if running in local-host mode?                         |
++----------------------------------+------------------------------------------------------------+
