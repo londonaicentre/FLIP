@@ -1,10 +1,10 @@
-###################################
-Flower app walkthrough for FLIP
-###################################
+####################################
+Create a FLIP app from a Flower app
+####################################
 
 .. warning::
 
-   This page assumes you are familiar with the :ref:`flip-fl-nodes` component page and with the project / model lifecycle described in :doc:`user-common`. Before starting, you must already have: a FLIP account with the ``researcher`` role, an approved project with a saved cohort query, and a model created under that project (so you have a ``flip-model-id``).
+   This page assumes you are familiar with the :ref:`flip-fl-nodes` component page and with the project / model lifecycle described in :doc:`/user-guides/user-common`. Before starting, you must already have: a FLIP account with the ``researcher`` role, an approved project with a saved cohort query, and a model created under that project (so you have a ``flip-model-id``).
 
 This page walks through the code changes required to adapt a stock Flower app (for example, one copied from the official `Flower quickstart examples <https://flower.ai/docs/examples.html>`_ or pulled from the internal FLIP app hub) so that it can run on FLIP. The walkthrough covers the four first-class SDK calls a FLIP-compatible app needs:
 
@@ -272,7 +272,7 @@ Once you have the cohort DataFrame, iterate its ``accession_id`` column and call
 ClientApp: sending per-round metrics to the hub
 ***************************************************
 
-Per-round, per-client metrics are pushed to the central hub with ``flip.send_metrics``. This is what populates the graphs on the model page (see the "Metrics" section of :doc:`user-common`). This push is independent of any ``MetricRecord`` you return inside the Flower ``Message`` — the ``MetricRecord`` is for in-network aggregation by the strategy, while ``send_metrics`` is for FLIP UI surfacing.
+Per-round, per-client metrics are pushed to the central hub with ``flip.send_metrics``. This is what populates the graphs on the model page (see the "Metrics" section of :doc:`/user-guides/user-common`). This push is independent of any ``MetricRecord`` you return inside the Flower ``Message`` — the ``MetricRecord`` is for in-network aggregation by the strategy, while ``send_metrics`` is for FLIP UI surfacing.
 
 .. code-block:: python
 
@@ -345,7 +345,7 @@ Abridged from ``flip-fl-base-flower/tutorials/monai/pyproject.toml``:
 Submitting the app to FLIP
 ************************************
 
-Once your app runs locally (see the next section), upload it through the FLIP UI's model page the same way you would upload a FLARE app. FLIP validates the required files for a Flower app (which differ from those required for a FLARE app — see the "Model Files" subsection of :doc:`user-common` and the :ref:`flip-fl-nodes` page for the canonical list) and then lets you click **Initiate Training**.
+Once your app runs locally (see the next section), upload it through the FLIP UI's model page the same way you would upload a FLARE app. FLIP validates the required files for a Flower app (which differ from those required for a FLARE app — see the "Model Files" subsection of :doc:`/user-guides/user-common` and the :ref:`flip-fl-nodes` page for the canonical list) and then lets you click **Initiate Training**.
 
 At submit time, the FLIP FL API:
 

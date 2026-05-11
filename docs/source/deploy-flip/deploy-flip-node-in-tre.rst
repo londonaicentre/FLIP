@@ -1,8 +1,8 @@
 .. _tre-deployment:
 
-===================================
-Deploying FLIP in a TRE
-===================================
+================================
+Deploy a FLIP node in a TRE
+================================
 
 .. contents:: Table of Contents
    :local:
@@ -308,7 +308,7 @@ Observability
 FLIP deploys a log-aggregation stack (Grafana Alloy, Loki, Grafana) alongside the Trust
 APIs. Alloy scrapes container stdout via the Docker socket, Loki stores logs with 30-day
 retention, and Grafana provides a pre-provisioned dashboard. The stack runs entirely
-inside the TRE boundary -- no log data is sent to the Central Hub. See :doc:`admin-logging`
+inside the TRE boundary -- no log data is sent to the Central Hub. See :doc:`/components/component-logging-stack`
 for details on configuration, ports, and persistent volumes.
 
 Use Case 1: Federated Evaluation
