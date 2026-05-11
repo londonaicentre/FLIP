@@ -454,6 +454,8 @@ add-k8s-trust: ## Register a K8s trust with the hub (runs register script + terr
 	@python3 deploy/providers/kubernetes/register_k8s_trust.py \
 		--trust-name $(TRUST_NAME) \
 		--hub-url $(HUB_URL) \
+		--env-file $(MAIN_ENV_FILE) \
+		--trust-number $(if $(TRUST_NUMBER),$(TRUST_NUMBER),3) \
 		--output-dir deploy/providers/kubernetes/
 	@echo "🔐 Updating NLB security group to allow traffic from K8s trust IP..."
 	@cd deploy/providers/AWS && \

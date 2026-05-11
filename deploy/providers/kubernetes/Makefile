@@ -99,4 +99,7 @@ register-trust: ## Register a K8s trust with the CENTRAL HUB (requires --hub-url
 	@python3 $(CHART_DIR)/register_k8s_trust.py \
 		--trust-name $(TRUST_NAME) \
 		--hub-url $(HUB_URL) \
+		--trust-number $(if $(TRUST_NUMBER),$(TRUST_NUMBER),3) \
 		--output-dir $(CHART_DIR)
+	@echo ""
+	@echo "ⓘ  Env file auto-detected from \$$PROD (set PROD=stag or PROD=true)"

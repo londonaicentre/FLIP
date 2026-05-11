@@ -424,8 +424,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--env-file",
         type=Path,
-        default=Path(__file__).resolve().parents[3] / ".env.development",
-        help="Path to the .env file (default: <repo_root>/.env.development)",
+        default=None,
+        help="Path to the .env file (default: auto-detected from PROD env var)",
     )
     parser.add_argument(
         "--output-dir",
@@ -446,10 +446,23 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    # Auto-detect env file from PROD env var if not explicitly set
+    if args.env_file is None:
+        prod = os.environ.get("PROD", "")
+        repo_root = Path(__file__).resolve().parents[3]
+        if prod == "true":
+            env_file = repo_root / ".env.production"
+        elif prod == "stag":
+            env_file = repo_root / ".env.stag"
+        else:
+            env_file = repo_root / ".env.development"
+    else:
+        env_file = args.env_file
+
     main(
         trust_name=args.trust_name,
         hub_url=args.hub_url,
-        env_file=args.env_file,
+        env_file=env_file,
         output_dir=args.output_dir,
         trust_number=args.trust_number,
         force=args.force,
