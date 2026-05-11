@@ -464,6 +464,53 @@ class TestFLIPStandardProdUploadResultsToS3:
             assert upload_args[2].startswith("uploads/model-123/")
             assert upload_args[2].endswith(".zip")
 
+    def test_upload_results_to_s3_no_leading_slash_with_bare_bucket_uri(self, flip_prod, tmp_path):
+        """Regression for FLIP#465: bare-bucket env (s3://<bucket>) must not produce leading-slash keys."""
+        results_folder = tmp_path / "results"
+        results_folder.mkdir()
+        (results_folder / "metrics.json").write_text("{}")
+
+        mock_s3_client = Mock()
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.boto3.client", return_value=mock_s3_client),
+        ):
+            mock_constants.UPLOADED_FEDERATED_DATA_BUCKET = "s3://test-bucket"
+
+            flip_prod.upload_results_to_s3(results_folder, "model-123")
+
+            upload_args = mock_s3_client.upload_file.call_args[0]
+            assert upload_args[1] == "test-bucket"
+            # Key must NOT start with a leading slash — `list_objects_v2` with
+            # `Prefix=model-123` does not match keys like `/model-123/...`,
+            # which is what the buggy concatenation produced when the env
+            # was a bare bucket URI with empty `urlparse(...).path`.
+            assert not upload_args[2].startswith("/"), upload_args[2]
+            assert upload_args[2].startswith("model-123/")
+            assert upload_args[2].endswith(".zip")
+
+    def test_upload_results_to_s3_normalises_trailing_slash_in_bucket_uri(self, flip_prod, tmp_path):
+        """A trailing slash in the env value must not produce a double-slash key."""
+        results_folder = tmp_path / "results"
+        results_folder.mkdir()
+        (results_folder / "metrics.json").write_text("{}")
+
+        mock_s3_client = Mock()
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.boto3.client", return_value=mock_s3_client),
+        ):
+            mock_constants.UPLOADED_FEDERATED_DATA_BUCKET = "s3://test-bucket/uploads/"
+
+            flip_prod.upload_results_to_s3(results_folder, "model-123")
+
+            upload_args = mock_s3_client.upload_file.call_args[0]
+            assert upload_args[1] == "test-bucket"
+            assert "//" not in upload_args[2], upload_args[2]
+            assert upload_args[2].startswith("uploads/model-123/")
+
     def test_upload_results_to_s3_raises_when_archive_creation_fails(self, flip_prod, tmp_path):
         """upload_results_to_s3 should raise a consistent exception when archiving fails."""
         results_folder = tmp_path / "results"
