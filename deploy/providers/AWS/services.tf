@@ -55,10 +55,15 @@ resource "aws_s3_bucket_cors_configuration" "flip_bucket_cors" {
 
   cors_rule {
     allowed_headers = ["*"]
-    # Model-file uploads use presigned POST (multipart/form-data) so the
-    # size + content-type policy is enforced by S3 at the edge; browsers
-    # preflight the POST, so the bucket has to advertise it.
-    allowed_methods = ["POST"]
+    # TEMPORARY: this single bucket fronts two browser-direct flows —
+    # presigned POST for researcher model-file uploads (size + content-type
+    # policy enforced at the S3 edge, see #438) and presigned GET for FL
+    # results downloads. CORS is bucket-wide, so both methods have to be
+    # advertised together until each tenant gets its own purpose-scoped
+    # bucket. Tracked in https://github.com/londonaicentre/FLIP/issues/24
+    # — post-split this rule collapses to ["POST"] here, ["GET"] on the
+    # results bucket, and disappears on the app-bundles bucket.
+    allowed_methods = ["POST", "GET"]
     allowed_origins = ["https://${var.flip_alb_subdomain}"]
     expose_headers  = []
   }
