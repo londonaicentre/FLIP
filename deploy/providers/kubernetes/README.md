@@ -314,6 +314,75 @@ The chart is validated in CI via:
 4. `kubeconform` — schema validation against Kubernetes 1.28+
 5. kind-based e2e — deploys the chart to a kind cluster and verifies pods start
 
+## Troubleshooting
+
+### Pods stuck in Pending
+
+| Cause | Check | Fix |
+|-------|-------|-----|
+| **PVC binding** | `kubectl describe pod <name> -n <ns>` — look for `FailedBinding` events | Ensure a default StorageClass exists or set `persistence.storageClassName` per service. For ReadWriteMany volumes (shared-images), verify the cluster has a RWX-capable provisioner (e.g., EFS, Longhorn, NFS). |
+| **Resource limits** | Pod requests may exceed node capacity | Check node resources: `kubectl describe nodes`. Reduce `resources.requests` or add worker nodes. |
+| **GPU unschedulable** | `kubectl describe pod <fl-client>` shows `nvidia.com/gpu` in `Status` | Verify NVIDIA GPU Operator is installed. Check node labels: `kubectl get nodes -o json \| jq '.items[].metadata.labels' \| grep nvidia` |
+| **Image pull** | Pod event shows `ErrImagePull` or `ImagePullBackOff` | Verify GHCR credentials. Check `imagePullSecrets` config. For private repos ensure `image.tag` exists. |
+
+### Pods in CrashLoopBackOff
+
+| Cause | Check | Fix |
+|-------|-------|-----|
+| **Missing secrets** | `kubectl logs <pod> -n <ns>` shows auth/connection errors | Verify the Secret exists: `kubectl get secret -n <ns>`. Compare keys against the [Secrets Reference](#secrets-reference). |
+| **Bad env vars** | `kubectl exec <pod> -n <ns> -- env` shows empty/wrong URLs | Check ConfigMap values. For trust-api, verify `CENTRAL_HUB_API_URL` is reachable. |
+| **DB unreachable** | trust-api / imaging-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
+| **Init container failed** | `kubectl logs <pod> -c <init-container> -n <ns>` | For fl-client: check S3 bucket exists and access keys are valid. For omop-db-init: verify PVC is bound. |
+
+### FL client won't connect
+
+1. **S3 kit download failed**: Check the `kit-init` init container logs. Verify `s3-access-key-id` and `s3-secret-access-key` in the Secret are correct and the bucket path exists.
+2. **Kit path mismatch**: Verify `flClient.nvflare.kitFromS3.pathTemplate` or `flClient.flower.kitFromS3.pathTemplate` resolves to a valid S3 path. The `tpl` function renders `.Values.trustName` so ensure `trustName` is set.
+3. **Network policy blocking**: Check egress CIDRs allow reaching the Central Hub and FL server. Temporarily disable policies with `--set networkPolicies.enabled=false` to isolate.
+4. **GPU not visible**: Verify `nvidia.com/gpu` annotation on the fl-client pod. Check CUDA env vars (`CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`) are set via `flClient.gpu.enabled: true`.
+5. **Flower superlink**: For Flower backend, verify `flClient.flower.superlink` is a reachable gRPC endpoint and root certificates are in the kit.
+
+### Network policy blocking intra-service traffic
+
+Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeout).
+
+1. Check namespace labels: the `allow-intra-namespace` policy uses `namespaceSelector` matching `kubernetes.io/metadata.name: <namespace>`. Verify the label exists.
+2. Check if `allowKubeSystemIngress` needs to be enabled for your CNI (e.g., Cilium, Calico with strict policies).
+3. Temporarily disable network policies to isolate: `helm upgrade trust-release . --set networkPolicies.enabled=false`
+4. Re-enable with `networkPolicies.enabled=true` and add specific `allowedEgressCIDRs` for the Central Hub and FL server.
+
+### XNAT takes very long to start
+
+| Cause | Check | Fix |
+|-------|-------|-----|
+| **Heap too small** | `kubectl logs <xnat-web-pod> -n <ns>` shows GC/OutOfMemoryError | Increase `xnat.web.env.XNAT_MAX_HEAP` (default `3072m`). For large datasets, set to `4096m` or higher. |
+| **DB init** | Postgres init on first deploy loads schema | First start can take 2-5 minutes. Check `xnat-db` pod for `pg_isready` success. |
+| **Plugin loading** | XNAT loads plugins at startup | No workaround — plugins are image-baked. Each plugin adds ~30s startup time. |
+| **PVC speed** | Slow storage class delays archive/DB I/O | Use SSD-backed storage classes (e.g., `gp3` on EKS, `Premium` on AKS). |
+
+### Orthanc / OMOP init job fails
+
+**Orthanc**:
+- Check `orthanc-registered-users` secret — must be valid JSON. Test with `echo '<value>' | python3 -m json.tool`.
+- Orthanc uses SQLite embedded DB — `replicas` must stay at 1. The PVC is `ReadWriteOnce`.
+
+**OMOP init job** (`omop-db-init-job`):
+- The init Job is a Helm `post-install,post-upgrade` hook that downloads and restores OMOP data from S3.
+- If the Job fails: check `s3-bucket` and `s3-path` values. Verify `s3-access-key-id` / `s3-secret-access-key` in the Secret.
+- PVC name must match the StatefulSet's `volumeClaimTemplates` — the Job expects a PVC named `<release-name>-omop-db-data`.
+- To re-run: `helm upgrade trust-release . --set omopDb.initJob.enabled=true` or delete the Job and let Helm re-create it.
+
+### Getting help
+
+If the above doesn't resolve your issue, please open a GitHub issue at:
+https://github.com/londonaicentre/FLIP/issues/new
+
+Include:
+- `helm version` and `kubectl version` output
+- `kubectl describe pod -n <ns>` for the affected pod(s)
+- `kubectl logs -n <ns> <pod-name>` output (redact secrets)
+- Your `values.yaml` overrides (redact sensitive keys)
+
 ## Known Limitations
 
 1. **XNAT Docker socket**: The XNAT container service plugin that uses
