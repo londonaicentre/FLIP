@@ -128,8 +128,10 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
 
   statement {
     sid = "S3FlipBuckets"
+    # s3:CopyObject is not a real IAM action — AWS implements server-side copy
+    # via s3:GetObject on the source + s3:PutObject on the destination, both
+    # already granted below — so we don't list CopyObject explicitly.
     actions = [
-      "s3:CopyObject",
       "s3:DeleteObject",
       "s3:GetBucketLocation",
       "s3:GetObject",

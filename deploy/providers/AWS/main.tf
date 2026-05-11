@@ -233,8 +233,10 @@ resource "aws_iam_role_policy" "s3_access" {
     Version = "2012-10-17"
     Statement = [{
       Effect = "Allow"
+      # See iam_ecs.tf for the rationale on dropping `s3:CopyObject` — it's
+      # not a real IAM action and AWS server-side copy already rolls up under
+      # the GetObject (source) + PutObject (destination) grants below.
       Action = [
-        "s3:CopyObject",
         "s3:DeleteObject",
         "s3:GetBucketLocation",
         "s3:GetObject",
