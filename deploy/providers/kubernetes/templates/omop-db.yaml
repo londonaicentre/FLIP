@@ -85,11 +85,6 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: omop-postgres-password
-            - name: DATA_ACCESS_POSTGRES_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: data-access-postgres-password
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data

@@ -65,5 +65,5 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
-            claimName: {{ include "flip-trust.fullname" . }}-omop-db-data
+            claimName: data-{{ include "flip-trust.fullname" . }}-omop-db-0
 {{- end }}
