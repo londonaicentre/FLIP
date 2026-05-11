@@ -93,6 +93,7 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: orthanc-registered-users
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /var/lib/orthanc/db
