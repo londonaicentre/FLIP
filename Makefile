@@ -267,6 +267,15 @@ integration_test:
 	$(MAKE) -C flip-api integration_test
 	$(MAKE) -C trust integration_test
 
+# Drives a fresh project end-to-end against a running `make up` stack:
+# create → approve → upload model → wait for image pull → start training.
+# Defaults to the xray classification tutorial in flip-fl-base (sibling repo)
+# for both model files and cohort query. Useful for sanity-checking PRs
+# without manually clicking through the UI. See flip-api/Makefile for
+# overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
+e2e_smoke:
+	$(MAKE) -C flip-api e2e_smoke $(if $(MODEL_FILES_DIR),MODEL_FILES_DIR=$(MODEL_FILES_DIR)) $(if $(QUERY_FILE),QUERY_FILE=$(QUERY_FILE)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
+
 generate-trust-api-keys:
 	$(MAKE) -C flip-api generate-trust-api-keys $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE))
 

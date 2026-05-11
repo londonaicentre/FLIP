@@ -78,6 +78,23 @@ create_testing_projects:
 delete_testing_projects:
 	@echo "🔢 Removing projects created for debugging..."
 	env DB_HOST=localhost uv run python -m tests.debug_post_debug_task
+# End-to-end smoke against a running `make up` stack: creates a project, gets
+# it approved, uploads model files, waits for image pull, kicks off training,
+# waits for results, downloads them. Intended for PR sanity checks — replaces
+# the manual UI clickthrough.
+#
+# Defaults are pinned to the xray classification tutorial in flip-fl-base
+# (sibling repo to FLIP/): MODEL_FILES_DIR is its app_files/, and QUERY_FILE
+# is its query.sql (used as-is — the tutorial owns the LIMIT). Override either:
+#     make e2e_smoke MODEL_FILES_DIR=/path/to/app_files
+#     make e2e_smoke QUERY_FILE=/path/to/your_cohort.sql
+# Anything else passed via EXTRA_ARGS goes straight to the script:
+#     make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5"
+MODEL_FILES_DIR ?= ../../flip-fl-base/tutorials/image_classification/xray_classification/app_files
+QUERY_FILE ?= $(MODEL_FILES_DIR)/../query.sql
+e2e_smoke:
+	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."
+	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir $(MODEL_FILES_DIR) --query-file $(QUERY_FILE) $(EXTRA_ARGS)
 generate-trust-key:
 	uv run python -m flip_api.scripts.generate_trust_key --trust-name $(TRUST_NAME)
 generate-trust-api-keys:
