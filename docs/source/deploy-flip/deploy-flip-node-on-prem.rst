@@ -95,8 +95,9 @@ keys, and redeploys the hub so the new secret values are loaded:
      [LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key]
 
 If ``LOCAL_TRUST_IP`` is omitted, the operator workstation's public IP is
-auto-detected via ``curl ipify.org``. ``PROD`` is inherited from the
-environment and supports both staging (``stag``) and production (``true``).
+auto-detected via ``curl -s https://api.ipify.org``. ``PROD`` is inherited
+from the environment and supports both staging (``stag``) and production
+(``true``).
 
 After the wrapper exits, you still need to start the trust stack on the host
 itself:
@@ -127,8 +128,18 @@ trust, run provisioning directly:
 
 **Local trust host (no SSH — provisioning the same machine you're on):**
 
-.. code-block:: shell
+.. code-block:: bash
 
+   cd deploy/providers/AWS
+   read -rsp 'Sudo password: ' ANSIBLE_BECOME_PASS && echo
+   export ANSIBLE_BECOME_PASS
+   make add-local-trust LOCAL_TRUST_IP=<public-ip>
+
+In Fish, the prompt-and-export idiom is different:
+
+.. code-block:: fish
+
+   cd deploy/providers/AWS
    set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
    make add-local-trust LOCAL_TRUST_IP=<public-ip>
 
