@@ -1,0 +1,63 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Setup trust test env
+description: |
+  Common Python + uv + .env.development bootstrap shared by every trust-side
+  test job (unit and integration, both trust-api and data-access-api). Without
+  this composite action the same Setup-Python / pip-install-uv / .env-from-
+  example block is duplicated four times, so adding a new env variable means
+  touching every workflow.
+
+inputs:
+  python-version:
+    description: Python toolchain version
+    required: false
+    default: "3.12"
+  trust-api-key:
+    description: TRUST_API_KEY value (CI fallback when secret is unset)
+    required: false
+    default: "test-trust-api-key-for-ci"
+  aes-key-base64:
+    description: AES_KEY_BASE64 value (CI fallback when secret is unset)
+    required: false
+    default: "QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA="  # pragma: allowlist secret
+  postgres-password:
+    description: Postgres password used for both DATA_ACCESS / OMOP roles
+    required: false
+    default: "test_password"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install uv
+      shell: bash
+      run: pip install uv
+
+    - name: Setup environment file
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: | # pragma: allowlist secret
+        cp .env.development.example .env.development
+        echo "TRUST_API_KEY=${{ inputs.trust-api-key }}" >> .env.development
+        echo "AES_KEY_BASE64=${{ inputs.aes-key-base64 }}" >> .env.development  # pragma: allowlist secret
+        echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ inputs.postgres-password }}" >> .env.development
+        echo "OMOP_POSTGRES_PASSWORD=${{ inputs.postgres-password }}" >> .env.development
+        echo "POSTGRES_PASSWORD=${{ inputs.postgres-password }}" >> .env.development
+        # The GitHub environment can inject empty-string env vars; Pydantic Settings
+        # treats explicit env vars (even empty) as an override, so pin ENV=development
+        # explicitly so the Literal field doesn't fail validation in CI.
+        echo "ENV=development" >> .env.development

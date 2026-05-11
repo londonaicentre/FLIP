@@ -107,7 +107,10 @@ jobs:
           echo "Generated tags: ${TAGS}"
 
       - name: Log in to GitHub Container Registry
-        run: echo ${{ secrets.GITHUB_TOKEN }} | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | docker login $REGISTRY -u "$GH_ACTOR" --password-stdin
 
       - name: Download XNAT WAR
         run: aws s3 cp s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/xnat-web-1.9.3.war build-artifacts/xnat-web-1.9.3.war

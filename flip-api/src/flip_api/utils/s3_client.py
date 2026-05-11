@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import hashlib
 from collections import defaultdict
 from typing import Any
 from urllib.parse import urlparse
@@ -19,6 +20,11 @@ from botocore.exceptions import ClientError, EndpointConnectionError
 
 from flip_api.config import get_settings
 from flip_api.utils.logger import logger
+
+# Upper bound on PUT pre-signed URL lifetime. A leaked URL is a writable
+# capability against the upload bucket, so the leak window must stay tight.
+# 600s is the security ceiling — callers may pass less.
+MAX_PUT_PRESIGNED_URL_TTL_SECONDS = 600
 
 
 def parse_s3_path(s3_path: str) -> tuple[str, str]:
@@ -35,6 +41,11 @@ def parse_s3_path(s3_path: str) -> tuple[str, str]:
     bucket = parsed.netloc
     key = parsed.path.lstrip("/")
     return bucket, key
+
+
+def hash_s3_key(key: str) -> str:
+    """SHA-256 prefix of an S3 key, suitable for log correlation without leaking the key itself."""
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
 
 class S3Client:
@@ -67,32 +78,56 @@ class S3Client:
         )
         return url
 
-    def get_put_presigned_url(self, s3_path: str, expiration: int = 3600) -> str:
-        """
-        Generate a pre-signed URL for uploading a file to S3.
+    def get_put_presigned_url(self, s3_path: str, expiration: int = MAX_PUT_PRESIGNED_URL_TTL_SECONDS) -> str:
+        """Generate a pre-signed URL for uploading a file to S3.
 
         Args:
-            s3_path: Full S3 path (e.g., s3://bucket-name/key)
-            expiration: URL expiration time in seconds (default: 1 hour)
+            s3_path (str): Full S3 path (e.g., ``s3://bucket-name/key``).
+            expiration (int): URL expiration time in seconds. Values above
+                ``MAX_PUT_PRESIGNED_URL_TTL_SECONDS`` are silently clamped to
+                the ceiling — a warning is logged so an over-limit caller
+                leaves an audit trail. Silent clamping is deliberate: the
+                ceiling is a hard security policy, never an error condition.
 
         Returns:
-            str: Pre-signed URL string
+            str: Pre-signed URL string.
 
         Raises:
-            Exception: If URL generation fails
+            Exception: If URL generation fails.
         """
+        bucket, key = parse_s3_path(s3_path)
+        ttl = min(expiration, MAX_PUT_PRESIGNED_URL_TTL_SECONDS)
+        if expiration > MAX_PUT_PRESIGNED_URL_TTL_SECONDS:
+            logger.warning(
+                f"Requested PUT pre-signed URL TTL {expiration}s exceeds the "
+                f"{MAX_PUT_PRESIGNED_URL_TTL_SECONDS}s security ceiling; clamped to {ttl}s."
+            )
         try:
-            bucket, key = parse_s3_path(s3_path)
-
             url = self.client.generate_presigned_url(
                 "put_object",
                 Params={"Bucket": bucket, "Key": key},
-                ExpiresIn=expiration,
+                ExpiresIn=ttl,
+            )
+            # Never log the URL itself: the query string carries
+            # X-Amz-Signature / X-Amz-Credential, and writable capability
+            # leaks chain into FL supply-chain attacks.
+            logger.info(
+                "Generated pre-signed PUT URL "
+                f"bucket={bucket} key_hash={hash_s3_key(key)} expires_in={ttl}"
             )
             return url
         except ClientError as e:
-            logger.error(f"Error generating pre-signed URL: {e}")
-            raise Exception("Unable to create a pre-signed URL")
+            # Log a structured line without the traceback. ``logger.exception``
+            # would emit ``str(e)`` via the formatter, and a future boto error
+            # shape that embeds a URL fragment in ``Error.Message`` would then
+            # leak through ``exc_info``. Keep only the AWS error code, which
+            # is an enum-like string (``AccessDenied``, ``NoSuchBucket``, …).
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            logger.error(
+                f"Error generating pre-signed PUT URL bucket={bucket} "
+                f"key_hash={hash_s3_key(key)} error_code={error_code}"
+            )
+            raise Exception("Unable to create a pre-signed URL") from e
 
     def delete_object(self, s3_path: str) -> None:
         """

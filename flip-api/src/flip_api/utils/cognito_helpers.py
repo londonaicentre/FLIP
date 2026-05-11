@@ -23,6 +23,8 @@ from uuid import UUID
 import boto3
 from botocore.exceptions import ClientError
 from fastapi import HTTPException, Request, status
+from pydantic import TypeAdapter, ValidationError
+from pydantic.networks import EmailStr
 from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
@@ -30,6 +32,8 @@ from flip_api.db.models.user_models import Role, UserRole
 from flip_api.domain.schemas.users import CognitoUser, Disabled, IRole, IUser
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import PagingInfo
+
+_EMAIL_VALIDATOR: TypeAdapter[str] = TypeAdapter(EmailStr)
 
 boto3.set_stream_logger("boto3.resources", logging.INFO)
 
@@ -151,36 +155,90 @@ def get_cognito_users(params: dict[str, Any] | None = None) -> list[CognitoUser]
     elif "UserPoolId" not in params:
         params["UserPoolId"] = user_pool_id
 
+    # Log only the pool ID, not the full params dict — params can carry a
+    # ``Filter`` whose value is an email or other PII, and an operator who
+    # turns debug logging on for a different reason should not be opting
+    # into PII capture as a side-effect.
+    logger.debug(f"Listing Cognito users in pool {params.get('UserPoolId')}")
+    # Cognito ListUsers returns up to 60 users per page. Use the boto3
+    # paginator so callers see the whole pool — the admin "list users"
+    # endpoint and the per-trust XNAT-onboarding lookup both walk the
+    # full set, and silent truncation at page 1 would hide users from
+    # the UI and skip XNAT provisioning for anyone past the boundary.
+    paginator = client.get_paginator("list_users")
+    users: list[CognitoUser] = []
+    page_index = 0
+
     try:
-        logger.debug(f"Cognito list users params: {params}")
-        response = client.list_users(**params)
+        for page_index, page in enumerate(paginator.paginate(**params), start=1):
+            for user in page.get("Users", []):
+                attributes = {attr["Name"]: attr["Value"] for attr in user.get("Attributes", [])}
+                user_id = attributes.get("sub", "")
+                email = attributes.get("email", user.get("Username", ""))
+                is_disabled = not user.get("Enabled", True)
 
-        cognito_users = response.get("Users", [])
-        users: list[CognitoUser] = []
-
-        for user in cognito_users:
-            attributes = {attr["Name"]: attr["Value"] for attr in user.get("Attributes", [])}
-            user_id = attributes.get("sub", "")
-            email = attributes.get("email", user.get("Username", ""))
-            is_disabled = not user.get("Enabled", True)
-
-            users.append(
-                CognitoUser(
-                    id=UUID(user_id),
-                    email=email,
-                    is_disabled=is_disabled,
-                )  # type: ignore[call-arg]
-            )
+                users.append(
+                    CognitoUser(
+                        id=UUID(user_id),
+                        email=email,
+                        is_disabled=is_disabled,
+                    )  # type: ignore[call-arg]
+                )
 
         return users
     except ClientError as e:
         # boto3 ClientError messages can carry request IDs and ARNs that
         # don't belong in a 500 detail surfaced to API clients. Log the
-        # full error server-side, return a generic message.
-        logger.exception("Error getting Cognito users")
+        # full error server-side (with page+collected so operators can
+        # distinguish a mid-walk throttle from a page-1 hard failure),
+        # return a generic message.
+        logger.exception(
+            f"Error getting Cognito users (page={page_index + 1}, collected={len(users)})"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get Cognito users"
         ) from e
+
+
+def _safe_email_for_cognito_filter(email: str) -> str:
+    """Validate that ``email`` is safe to interpolate into a Cognito ListUsers
+    Filter expression.
+
+    Cognito's filter syntax delimits values with double quotes; an unescaped
+    ``"`` (or backslash) in the value can break out of the quoted context and
+    inject additional clauses. EmailStr already forbids the characters that
+    would let an attacker do this, but rejecting them explicitly here keeps
+    this helper safe to call from any future caller that forgets the
+    upstream validation.
+    """
+    try:
+        validated = _EMAIL_VALIDATOR.validate_python(email)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email address format"
+        ) from exc
+    if '"' in validated or "\\" in validated:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid email address format"
+        )
+    return validated
+
+
+def _safe_uuid_for_cognito_filter(user_id: str | UUID) -> str:
+    """Coerce ``user_id`` to its canonical string UUID form, raising 400 if
+    it isn't a valid UUID.
+
+    A valid UUID's string form is hex+hyphen only, so once normalised it
+    can be interpolated into Cognito's filter syntax without escaping.
+    """
+    if isinstance(user_id, UUID):
+        return str(user_id)
+    try:
+        return str(UUID(user_id))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid user ID format"
+        ) from exc
 
 
 def get_user_by_email_or_id(
@@ -198,13 +256,20 @@ def get_user_by_email_or_id(
         CognitoUser: The user matching the email or ID.
 
     Raises:
-        HTTPException: If neither email nor user_id is provided
+        HTTPException: If neither email nor user_id is provided, or if the
+            supplied identifier fails format validation.
     """
     if not email and not user_id:
         logger.error("No user email address or ID provided")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No user email address or ID provided")
 
-    filter_expr = f'email = "{email}"' if email else f'sub = "{user_id}"'
+    if email:
+        safe_email = _safe_email_for_cognito_filter(email)
+        filter_expr = f'email = "{safe_email}"'
+    else:
+        assert user_id is not None  # guaranteed by the guard above
+        safe_user_id = _safe_uuid_for_cognito_filter(user_id)
+        filter_expr = f'sub = "{safe_user_id}"'
 
     params = {"UserPoolId": user_pool_id, "Filter": filter_expr, "Limit": 1}
 
@@ -243,11 +308,13 @@ def get_username(user_id: str, user_pool_id: str) -> str:
         str: The username (email) associated with the user ID.
 
     Raises:
-        HTTPException: 404 if no matching user, 500 on Cognito errors.
+        HTTPException: 400 if ``user_id`` isn't a valid UUID, 404 if no
+            matching user, 500 on Cognito errors.
     """
+    safe_user_id = _safe_uuid_for_cognito_filter(user_id)
     params = {
         "UserPoolId": user_pool_id,
-        "Filter": f'sub="{user_id}"',
+        "Filter": f'sub="{safe_user_id}"',
     }
 
     users = get_cognito_users(params)

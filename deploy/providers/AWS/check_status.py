@@ -44,6 +44,7 @@ import platform
 import ssl
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -255,16 +256,23 @@ def check_http_endpoint(
     """
     print_status("INFO", f"Checking {name} at {url}...")
 
+    # Validate URL scheme — only http and https are permitted
+    _scheme = urllib.parse.urlparse(url).scheme
+    if _scheme not in ("http", "https"):
+        print_status("FAIL", f"{name}: unsupported URL scheme '{_scheme}' (only http/https allowed)")
+        return False
+
     # Convert single int to list for uniform handling
     valid_statuses = [expected_status] if isinstance(expected_status, int) else expected_status
 
     # Build SSL context: use provided CA bundle, or system defaults for HTTPS URLs.
     ssl_ctx: ssl.SSLContext | None = None
-    if url.startswith("https://"):
+    if _scheme == "https":
         if cafile and Path(cafile).exists():
             ssl_ctx = ssl.create_default_context(cafile=cafile)
         else:
             ssl_ctx = ssl.create_default_context()
+        ssl_ctx.minimum_version = ssl.TLSVersion.TLSv1_2
 
     try:
         req = urllib.request.Request(url, method="GET")
@@ -989,12 +997,13 @@ def main(
         https_url = f"https://{alb_subdomain}"
         print_status("INFO", f"Testing HTTPS connection to {https_url}...")
 
-        try:
-            import socket
-            import ssl
+        import socket
+        import ssl
 
+        context = ssl.create_default_context()
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        try:
             # Test SSL/TLS handshake
-            context = ssl.create_default_context()
             with socket.create_connection((alb_subdomain, 443), timeout=10) as sock:
                 with context.wrap_socket(sock, server_hostname=alb_subdomain) as ssock:
                     cert = ssock.getpeercert()
@@ -1021,7 +1030,7 @@ def main(
         # Try HTTP request over HTTPS
         try:
             req = urllib.request.Request(https_url, method="HEAD")
-            with urllib.request.urlopen(req, timeout=10) as response:
+            with urllib.request.urlopen(req, timeout=10, context=context) as response:
                 print_status("PASS", f"HTTPS endpoint responding (HTTP {response.status})")
         except urllib.error.URLError as e:
             if hasattr(e, "reason") and "CERTIFICATE" in str(e.reason).upper():
@@ -1571,7 +1580,7 @@ def main(
             )
             # Open centralhub on browser
             try:
-                os.system(f"open https://{alb_subdomain}")
+                subprocess.run(["open", f"https://{alb_subdomain}"], check=False)
             except Exception:
                 pass
         sys.exit(0)

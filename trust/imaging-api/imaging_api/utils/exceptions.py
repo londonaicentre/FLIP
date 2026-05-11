@@ -14,7 +14,7 @@
 class NotFoundError(Exception):
     """Exception raised when a resource is not found."""
 
-    def __init__(self, detail: str = "Resource not found", status_code: int = 404):
+    def __init__(self, detail: str = "Resource not found", status_code: int = 404) -> None:
         self.status_code = status_code
         self.detail = detail
         super().__init__(f"{status_code}: {detail}")
@@ -29,7 +29,7 @@ class AlreadyExistsError(Exception):
 class InternalServerError(Exception):
     """Exception raised for internal server errors."""
 
-    def __init__(self, detail: str = "Internal server error", status_code: int = 500):
+    def __init__(self, detail: str = "Internal server error", status_code: int = 500) -> None:
         self.status_code = status_code
         self.detail = detail
         super().__init__(f"{status_code}: {detail}")
@@ -44,7 +44,7 @@ class LocalStorageError(Exception):
     issue and should surface as 500, not 404.
     """
 
-    def __init__(self, detail: str = "Local storage error", status_code: int = 500):
+    def __init__(self, detail: str = "Local storage error", status_code: int = 500) -> None:
         self.status_code = status_code
         self.detail = detail
         super().__init__(f"{status_code}: {detail}")

@@ -99,7 +99,7 @@ def run_jobs_core(db: Session) -> None:
         )
 
 
-def run_jobs_scheduled_task():
+def run_jobs_scheduled_task() -> None:
     """
     Scheduled task to run jobs every minute.
     This function is called by the scheduler.

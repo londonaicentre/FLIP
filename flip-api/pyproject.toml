@@ -69,6 +69,7 @@ dev = [
     "autopep8>=2.3.2",
     "libcst>=1.7.0",
     "testcontainers[postgres]>=4.9",
+    "moto[cognitoidp,s3,ses]>=5.0",
 ]
 
 [tool.coverage.report]

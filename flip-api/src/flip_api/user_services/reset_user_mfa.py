@@ -19,7 +19,7 @@ from sqlmodel import Session
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.user_models import PermissionRef
+from flip_api.db.models.user_models import PermissionRef, UsersAudit
 from flip_api.utils.cognito_helpers import get_user_pool_id, get_username, reset_user_mfa
 from flip_api.utils.logger import logger
 
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/users", tags=["user_services"])
 
 @router.post("/{user_id}/mfa/reset", response_model=dict[str, Any])
 def reset_mfa_for_user(
-    user_id: str,
+    user_id: UUID,
     request: Request,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
@@ -45,10 +45,12 @@ def reset_mfa_for_user(
     post-auth enrolment page instead.
 
     Args:
-        user_id: ID (Cognito ``sub``) of the user whose MFA should be reset
-        request: FastAPI request object
-        db: Database session
-        token_id: ID of the authenticated user performing the reset
+        user_id (UUID): ID (Cognito ``sub``) of the user whose MFA should be
+            reset. FastAPI validates the path segment, returning 422 on
+            malformed input.
+        request (Request): FastAPI request object.
+        db (Session): Database session.
+        token_id (UUID): ID of the authenticated user performing the reset.
 
     Returns:
         dict[str, Any]: Empty dictionary on success.
@@ -66,16 +68,37 @@ def reset_mfa_for_user(
             )
 
         user_pool_id = get_user_pool_id(request)
-        username = get_username(user_id, user_pool_id)
+        username = get_username(str(user_id), user_pool_id)
 
         reset_user_mfa(username, user_pool_id)
+
+        # Cognito mutation succeeded; record the audit row. If the audit
+        # commit fails, the security-relevant Cognito state has already
+        # changed — surface a 500 so the operator knows reconciliation may
+        # be needed, and log richly enough that they can do it. A retry is
+        # safe (admin_set_user_mfa_preference is idempotent on the
+        # SoftwareTokenMfaSettings payload, and admin_user_global_sign_out
+        # is idempotent once sessions are already revoked).
+        try:
+            db.add(UsersAudit(action="Reset user MFA", user_id=user_id, modified_by_user_id=token_id))
+            db.commit()
+        except Exception as audit_err:
+            db.rollback()
+            logger.exception(
+                f"Cognito MFA reset succeeded for user_id={user_id} (initiated by {token_id}) "
+                f"but audit-row write failed; manual audit-log reconciliation required."
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="MFA reset partially succeeded; please verify and contact ops.",
+            ) from audit_err
 
         return {}
 
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
         logger.exception(f"Error resetting user MFA for user_id={user_id}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to reset user MFA"
-        )
+        ) from e

@@ -45,3 +45,19 @@ See dedicated README under [omop-db/README.md](omop-db/README.md) for instructio
 ## Start XNAT
 
 See dedicated README under [xnat/README.md](xnat/README.md).
+
+## Integration tests (cohort-query end-to-end)
+
+The `trust-api` and `data-access-api` integration suites run against a throwaway Compose stack — vanilla Postgres seeded from a small OMOP fixture plus a freshly-built `data-access-api`. The stack is defined in [`compose.test.yml`](compose.test.yml) and brought up by [Testcontainers](https://testcontainers-python.readthedocs.io/) inside session-scoped pytest fixtures, so a single test invocation is enough — no `make up` first.
+
+```sh
+# trust-api: drives ``handle_cohort_query`` end-to-end through trust-api → data-access-api → omop-db
+make -C trust-api integration_test
+
+# data-access-api: hits ``/cohort`` endpoints directly against the same stack
+make -C data-access-api integration_test
+```
+
+The seed data lives in [`trust-api/tests/integration/fixtures/omop_seed.sql`](trust-api/tests/integration/fixtures/omop_seed.sql) and follows the MI-CDM shape — `image_occurrence` joined to `concept` for modality lookups. Counts there match the assertions in `test_cohort_query.py` and `test_cohort_endpoint.py` (16 patients, 24 image occurrences). When adjusting the seed, update both. The trust-api side mocks nothing on the HTTP boundary — the only stub is an in-process HTTP server that catches the trust-api → flip-api callback (B3 is intentionally scoped to exclude the hub leg, see issue #369).
+
+Both Make targets are also wired into CI via dedicated jobs in `test_trust_trust_api.yml` and `test_trust_data_access_api.yml`.

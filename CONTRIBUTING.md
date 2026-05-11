@@ -134,17 +134,20 @@ To get started, copy the example file:
 cp .env.development.example .env.development
 ```
 
-Then generate per-trust API keys and the internal service key (the trust keys must be done before `make up`; the
-internal service key is also generated automatically by `make up`):
+Then generate per-trust API keys, the internal service key, and the per-trust internal service keys (the trust
+keys must be done before `make up`; the internal service key is also generated automatically by `make up`):
 
 ```bash
 make generate-trust-api-keys
 make generate-internal-service-key
+make generate-trust-internal-service-keys
 ```
 
 These commands write all API keys directly into `.env.development`: trust plaintext keys
-in `TRUST_API_KEYS` (JSON dict) with their hashes in `TRUST_API_KEY_HASHES`, and `INTERNAL_SERVICE_KEY`
-with `INTERNAL_SERVICE_KEY_HASH` for fl-server-to-hub authentication. No separate key files are used.
+in `TRUST_API_KEYS` (JSON dict) with their hashes in `TRUST_API_KEY_HASHES`, `INTERNAL_SERVICE_KEY`
+with `INTERNAL_SERVICE_KEY_HASH` for fl-server-to-hub authentication, and per-trust plaintext keys in
+`TRUST_INTERNAL_SERVICE_KEYS` (JSON dict) for trust-internal service-to-service authentication. No
+separate key files are used.
 
 Docker services receive these variables via the `env_file` directive in the
 compose file — avoid hardcoding values in Dockerfiles or compose files directly.
@@ -157,6 +160,14 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 - `INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for fl-server-to-hub authentication.
 - `INTERNAL_SERVICE_KEY` — internal service key used by the fl-server on the Central Hub.
 - `INTERNAL_SERVICE_KEY_HASH` — hub-side SHA-256 hash of the internal service key.
+- `TRUST_INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for trust-internal service auth (default
+  `X-Trust-Internal-Service-Key`). Sent by every caller (trust-api, imaging-api, fl-client) on every
+  call to imaging-api or data-access-api.
+- `TRUST_INTERNAL_SERVICE_KEYS` — JSON dict of per-trust plaintext keys. Each trust uses a distinct key;
+  `trust/Makefile` extracts the per-trust value at deploy time and injects it into every trust-internal
+  container as `TRUST_INTERNAL_SERVICE_KEY`. The hub never sees these keys — they live only in trust-side
+  env. Distinct from `INTERNAL_SERVICE_KEY*` (which protects fl-server → flip-api on the Central Hub).
+  See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the threat model.
 
 FL clients (trust side) intentionally do **not** receive Central Hub API credentials. Only the fl-server (on the Central
 Hub) communicates with flip-api. FL clients relay metrics and exceptions to the fl-server, which forwards them.
@@ -344,7 +355,7 @@ filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 A test belongs in `tests/integration/` **if and only if it touches a real backing service**. Examples of "real backing service":
 
 - A real Postgres (via the `session` fixture or Testcontainers)
-- A real or LocalStack-emulated AWS service (S3, Cognito, SES)
+- A real AWS service (S3, Cognito, SES)
 - A running sibling API (trust-api, data-access-api, etc.) reachable over HTTP
 - A real Orthanc / XNAT / OMOP fixture
 

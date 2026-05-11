@@ -159,6 +159,59 @@ def test_create_payload_for_project_creation():
     assert "<description>A description</description>" in payload
 
 
+def test_create_payload_for_project_creation_escapes_xml_control_chars():
+    """
+    name/description must be XML-escaped, never interpolated raw, so an
+    attacker-supplied value cannot inject elements into the projectData
+    document XNAT receives.
+    """
+    import xml.etree.ElementTree as ET
+
+    payload = create_payload_for_project_creation(
+        "http://xnat/projects",
+        "P1",
+        "S1",
+        'evil</name><name>injected',
+        "less < and & ampersand",
+    )
+
+    # Raw injection markers must be absent, replaced by entity references.
+    assert "</name><name>injected" not in payload
+    assert "&lt;/name&gt;&lt;name&gt;injected" in payload
+    assert "&lt;" in payload
+    assert "&amp;" in payload
+
+    # The payload still parses as a single projectData element with the
+    # attacker's value carried verbatim as text — never as markup. Children
+    # are in no namespace (only the root carries the xnat prefix).
+    root = ET.fromstring(payload)
+    name_elements = root.findall("name")
+    assert len(name_elements) == 1
+    assert name_elements[0].text == "evil</name><name>injected"
+
+
+def test_create_payload_for_project_creation_blocks_xxe_doctype():
+    """
+    XNAT-side payload must never carry a DOCTYPE/ENTITY block. ElementTree's
+    serializer never emits one, so attacker-controlled fields can't smuggle XXE
+    even when they look like a DOCTYPE declaration.
+    """
+    attacker_value = '<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>'
+    payload = create_payload_for_project_creation(
+        "http://xnat/projects",
+        "P1",
+        "S1",
+        attacker_value,
+        "",
+    )
+    # The serializer must never emit DOCTYPE/ENTITY markup tokens — they would
+    # only appear if the attacker value were interpolated raw.
+    assert "<!DOCTYPE" not in payload
+    assert "<!ENTITY" not in payload
+    # The attacker value survives only as escaped text, never as markup.
+    assert "&lt;!DOCTYPE" in payload
+
+
 # ===========================================================================
 # create_project
 # ===========================================================================

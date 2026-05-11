@@ -12,7 +12,16 @@
  */
 
 import { _http } from "@/services/api";
-import { getMfaStatus, getUserPermissions, resetUserMfa } from "@/services/user-service";
+import { getMfaStatus,
+    getUserPermissions,
+    getUsers,
+    registerUser,
+    resetUserMfa,
+    revokeToken,
+    submitAccessRequest,
+    updateUserDisabledState,
+    updateUserRoles,
+    validateUser } from "@/services/user-service";
 import { Snackbar } from "@/utils/snackbar";
 
 // Stub the low-level axios wrapper so each test can assert the URL + payload
@@ -39,6 +48,8 @@ describe("user-service", () => {
     beforeEach(() => {
         vi.mocked(_http.get).mockReset();
         vi.mocked(_http.post).mockReset();
+        vi.mocked(_http.put).mockReset();
+        vi.mocked(_http.delete).mockReset();
         vi.mocked(Snackbar.error).mockReset();
     });
 
@@ -68,31 +79,41 @@ describe("user-service", () => {
             // required (does this environment demand MFA?) — the store
             // relies on both fields being passed through untouched.
             vi.mocked(_http.get).mockResolvedValue({
-                data: { enabled: true, required: true }
+                data: {
+                    enabled: true,
+                    required: true
+                }
             } as never);
 
             const result = await getMfaStatus();
 
             expect(_http.get).toHaveBeenCalledWith("/users/me/mfa/status");
-            expect(result).toEqual({ enabled: true, required: true });
+            expect(result).toEqual({
+                enabled: true,
+                required: true
+            });
         });
 
         it("returns enabled=false, required=false for an unenrolled dev caller", async () => {
             vi.mocked(_http.get).mockResolvedValue({
-                data: { enabled: false, required: false }
+                data: {
+                    enabled: false,
+                    required: false
+                }
             } as never);
 
             const result = await getMfaStatus();
 
-            expect(result).toEqual({ enabled: false, required: false });
+            expect(result).toEqual({
+                enabled: false,
+                required: false
+            });
         });
     });
 
     describe("getUserPermissions", () => {
         it("returns the permission list on success", async () => {
-            vi.mocked(_http.get).mockResolvedValue({
-                data: { permissions: ["CanManageUsers"] }
-            } as never);
+            vi.mocked(_http.get).mockResolvedValue({ data: { permissions: ["CanManageUsers"] } } as never);
 
             const result = await getUserPermissions("abc");
 
@@ -112,9 +133,7 @@ describe("user-service", () => {
 
             expect(result).toEqual({ permissions: [] });
             expect(Snackbar.error).toHaveBeenCalledTimes(1);
-            expect(Snackbar.error).toHaveBeenCalledWith(expect.objectContaining({
-                title: expect.stringContaining("permissions")
-            }));
+            expect(Snackbar.error).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringContaining("permissions") }));
             expect(consoleError).toHaveBeenCalled();
             consoleError.mockRestore();
         });
@@ -142,6 +161,114 @@ describe("user-service", () => {
 
             expect(result).toEqual({ permissions: [] });
             expect(Snackbar.error).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("getUsers", () => {
+        it("GETs the URL and returns the paginated body", async () => {
+            const body = {
+                page: 1,
+                pageSize: 10,
+                totalPages: 1,
+                totalRecords: 0,
+                data: []
+            };
+            vi.mocked(_http.get).mockResolvedValue({ data: body } as never);
+
+            const result = await getUsers("/users?page=1");
+
+            expect(_http.get).toHaveBeenCalledWith("/users?page=1");
+            expect(result).toEqual(body);
+        });
+    });
+
+    describe("updateUserRoles", () => {
+        it("POSTs the role list under the `roles` key", async () => {
+            // Pinned to `{ roles: [...] }` because the backend ignores any
+            // top-level array body — a regression here would silently
+            // succeed with no roles attached.
+            vi.mocked(_http.post).mockResolvedValue({ data: ["r-1"] } as never);
+
+            const result = await updateUserRoles("u-1", ["r-1"]);
+
+            expect(_http.post).toHaveBeenCalledWith("/users/u-1/roles", { roles: ["r-1"] });
+            expect(result).toEqual(["r-1"]);
+        });
+    });
+
+    describe("registerUser", () => {
+        it("POSTs to /step/users with the payload", async () => {
+            const dto = {
+                email: "new@example.test",
+                roles: ["r-1"]
+            };
+            vi.mocked(_http.post).mockResolvedValue({ data: dto } as never);
+
+            const result = await registerUser(dto);
+
+            expect(_http.post).toHaveBeenCalledWith("/step/users", dto);
+            expect(result).toEqual(dto);
+        });
+    });
+
+    describe("updateUserDisabledState", () => {
+        it("PUTs the disabled flag to /users/{userId}", async () => {
+            vi.mocked(_http.put).mockResolvedValue({ data: { disabled: true } } as never);
+
+            const result = await updateUserDisabledState("u-1", { disabled: true });
+
+            expect(_http.put).toHaveBeenCalledWith("/users/u-1", { disabled: true });
+            expect(result).toEqual({ disabled: true });
+        });
+    });
+
+    describe("validateUser", () => {
+        it("GETs /users/{email} and returns the resolved user", async () => {
+            const user = {
+                id: "u-1",
+                email: "x@example.test",
+                isDisabled: false
+            };
+            vi.mocked(_http.get).mockResolvedValue({ data: user } as never);
+
+            const result = await validateUser("x@example.test");
+
+            expect(_http.get).toHaveBeenCalledWith("/users/x@example.test");
+            expect(result).toEqual(user);
+        });
+    });
+
+    describe("revokeToken", () => {
+        it("PUTs to /users/revoke/{refreshToken}", async () => {
+            vi.mocked(_http.put).mockResolvedValue({ data: undefined } as never);
+
+            await revokeToken("rt-abc");
+
+            expect(_http.put).toHaveBeenCalledWith("/users/revoke/rt-abc");
+        });
+    });
+
+    describe("submitAccessRequest", () => {
+        it("POSTs to /users/access with an empty Authorization header (anonymous endpoint)", async () => {
+            // The access-request form is reachable while signed out; the
+            // empty Authorization tells the request interceptor to skip
+            // injecting a Bearer token (which would 401 against a public
+            // endpoint that rejects unrecognised JWTs).
+            vi.mocked(_http.post).mockResolvedValue({ data: undefined } as never);
+
+            const body = {
+                email: "x@example.test",
+                fullName: "X Y",
+                reasonForAccess: "research"
+            };
+
+            await submitAccessRequest(body);
+
+            expect(_http.post).toHaveBeenCalledWith(
+                "/users/access",
+                body,
+                { headers: { Authorization: "" } }
+            );
         });
     });
 });

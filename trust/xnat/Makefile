@@ -42,6 +42,15 @@ endif
 DOCKER_TAG ?= stag
 export DOCKER_TAG
 
+# XNAT images often lag the rest of the stack — branch builds for trust-api /
+# imaging-api / data-access-api / orthanc are cheap (small images, fast builds)
+# but the XNAT images are large and slow to rebuild for ad-hoc branches.
+# XNAT_TAG lets a deploy pin the XNAT layer at a known-good tag (e.g. stag)
+# while the rest of the stack runs a feature-branch tag via DOCKER_TAG.
+# Defaults to DOCKER_TAG so existing single-tag deploys are unchanged.
+XNAT_TAG ?= ${DOCKER_TAG}
+export XNAT_TAG
+
 project1 = xnat1
 project2 = xnat2
 project_local = xnat-local

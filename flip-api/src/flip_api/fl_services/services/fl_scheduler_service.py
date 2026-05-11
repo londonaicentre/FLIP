@@ -49,7 +49,7 @@ from flip_api.utils.exceptions import DatabaseError, NotFoundError
 from flip_api.utils.logger import logger
 
 
-def remove_job(job_id: UUID, session: Session):
+def remove_job(job_id: UUID, session: Session) -> None:
     """
     Sets the job status to DELETED and clears the started timestamp.
 
@@ -61,7 +61,7 @@ def remove_job(job_id: UUID, session: Session):
         None
 
     Raises:
-        NotFoundError: If no ``FLJob`` exists with the given ID.
+        flip_api.utils.exceptions.NotFoundError: If no ``FLJob`` exists with the given ID.
         DatabaseError: If the update fails at the DB layer.
     """
     logger.info(f"Reverting job pickup: {job_id}")
@@ -84,7 +84,7 @@ def remove_job(job_id: UUID, session: Session):
         raise DatabaseError("Error reverting job pickup") from e
 
 
-def remove_job_from_queue(model_id: UUID, session: Session):
+def remove_job_from_queue(model_id: UUID, session: Session) -> None:
     """
     Sets the job status to DELETED for all jobs associated with the given model ID.
 
@@ -120,7 +120,7 @@ def remove_job_from_queue(model_id: UUID, session: Session):
         raise DatabaseError("Error removing job from queue") from e
 
 
-def revert_scheduler_pickup(scheduler_id: UUID, session: Session):
+def revert_scheduler_pickup(scheduler_id: UUID, session: Session) -> None:
     """
     Sets the scheduler status to AVAILABLE and clears the job_id.
 
@@ -132,7 +132,7 @@ def revert_scheduler_pickup(scheduler_id: UUID, session: Session):
         None
 
     Raises:
-        NotFoundError: If no ``FLScheduler`` exists with the given ID.
+        flip_api.utils.exceptions.NotFoundError: If no ``FLScheduler`` exists with the given ID.
         DatabaseError: If the update fails at the DB layer.
     """
     logger.info("Reverting scheduler pickup")
@@ -167,7 +167,7 @@ def get_net_by_model_id(model_id: UUID, session: Session) -> INetDetails:
         INetDetails: Details of the net.
 
     Raises:
-        NotFoundError: If no net is associated with the given ``model_id``.
+        flip_api.utils.exceptions.NotFoundError: If no net is associated with the given ``model_id``.
         DatabaseError: If the query fails at the DB layer.
     """
     logger.info("Getting the net endpoint via its model ID...")
@@ -238,7 +238,7 @@ def get_nets(session: Session) -> list[INetDetails]:
         list[INetDetails]: A list of all nets.
 
     Raises:
-        NotFoundError: If no nets are registered in the database.
+        flip_api.utils.exceptions.NotFoundError: If no nets are registered in the database.
         DatabaseError: If the query fails at the DB layer.
     """
     logger.info("Getting net info from db...")
@@ -310,7 +310,7 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         IJobResponse | None: The job response if a queued job is found, otherwise None.
 
     Raises:
-        NotFoundError: If the scheduler referenced by ``scheduler_id`` cannot be found.
+        flip_api.utils.exceptions.NotFoundError: If the scheduler referenced by ``scheduler_id`` cannot be found.
         DatabaseError: If the query or update fails at the DB layer.
         Exception: If the job references invalid trusts.
     """
@@ -360,7 +360,7 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         raise DatabaseError("Error checking for queued jobs") from e
 
 
-def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[str], session: Session):
+def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[str], session: Session) -> None:
     """
     Prepares and starts the training process for a given model.
 
@@ -444,7 +444,7 @@ def get_required_training_details(model_id: UUID, session: Session) -> IRequired
         IRequiredTrainingInformation: The required training information.
 
     Raises:
-        NotFoundError: If the model or its associated cohort query cannot be found.
+        flip_api.utils.exceptions.NotFoundError: If the model or its associated cohort query cannot be found.
         DatabaseError: If the query fails at the DB layer.
     """
     logger.info(f"Getting required details for training for model: {model_id}")
@@ -475,7 +475,7 @@ def get_required_training_details(model_id: UUID, session: Session) -> IRequired
         raise DatabaseError("Error getting required training details") from e
 
 
-def update_fl_scheduler(model_id: UUID, session: Session):
+def update_fl_scheduler(model_id: UUID, session: Session) -> None:
     """
     Updates the FL job status to COMPLETED and sets the associated scheduler status to AVAILABLE.
 

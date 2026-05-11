@@ -143,14 +143,15 @@ make xnat-shell  # Get a shell in the XNAT container
 
 ### Trust API Key Setup
 
-Before starting the platform, generate per-trust API keys and the internal service key, and write them into `.env.development` using:
+Before starting the platform, generate per-trust API keys, the internal service key, and the per-trust internal service keys, and write them into `.env.development` using:
 
 ```bash
 make generate-trust-api-keys
 make generate-internal-service-key
+make generate-trust-internal-service-keys
 ```
 
-`generate-trust-api-keys` generates a unique key for each trust found in `.env.development`, and writes both `TRUST_API_KEYS` and `TRUST_API_KEY_HASHES` (JSON dicts) directly into the env file. `generate-internal-service-key` writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` for fl-server-to-hub authentication. `make up` invokes `generate-internal-service-key` automatically.
+`generate-trust-api-keys` generates a unique key for each trust found in `.env.development`, and writes both `TRUST_API_KEYS` and `TRUST_API_KEY_HASHES` (JSON dicts) directly into the env file. `generate-internal-service-key` writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` (plain strings) for fl-server-to-hub authentication. `make up` invokes `generate-internal-service-key` automatically. `generate-trust-internal-service-keys` writes `TRUST_INTERNAL_SERVICE_KEYS` (JSON dict) used by trust-api / imaging-api / data-access-api / fl-client to authenticate to one another inside each trust — distinct from the hub's `INTERNAL_SERVICE_KEY` and never sent to the hub. See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the threat model.
 
 To generate a key for a single trust (e.g. when adding a new trust):
 

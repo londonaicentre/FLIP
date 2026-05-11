@@ -47,7 +47,8 @@ def save_cohort_query(
 
     Args:
         request (Request): HTTP request object
-        cohort_query (CohortQueryInput): CohortQueryInput object containing the query details
+        cohort_query (flip_api.domain.schemas.cohort.CohortQueryInput): CohortQueryInput object
+            containing the query details
         db (Session): Database session
         user_id (UUID): ID of the user making the request, obtained from authentication
 

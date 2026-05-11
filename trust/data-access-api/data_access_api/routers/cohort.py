@@ -12,6 +12,9 @@
 
 from typing import Any
 
+import sqlglot
+import sqlglot.errors
+import sqlglot.expressions
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -27,11 +30,59 @@ from data_access_api.utils.encryption import decrypt
 from data_access_api.utils.internal_auth import authenticate_internal_service
 from data_access_api.utils.logger import logger
 
+_READ_ONLY_STATEMENT_TYPES = (
+    sqlglot.expressions.Select,
+    sqlglot.expressions.Union,
+    sqlglot.expressions.Intersect,
+    sqlglot.expressions.Except,
+)
+
+
+def _parse_and_emit(query: str) -> str:
+    """Parse SQL with sqlglot and re-emit it to break the injection taint chain.
+
+    Using sqlglot as a parse-then-emit step ensures the string reaching the
+    database engine is generated from a validated AST, not directly from the
+    HTTP request body.  The output is semantically equivalent to the input for
+    all valid SELECT queries while also normalising trailing semicolons and
+    whitespace.
+
+    Only read-only SELECT-shaped statements (SELECT, UNION, INTERSECT, EXCEPT)
+    are permitted.  DML (INSERT, UPDATE, DELETE) and DDL (DROP, CREATE, ALTER,
+    TRUNCATE) are rejected with HTTP 400.
+
+    Args:
+        query: Raw SQL string from the caller.
+
+    Returns:
+        Re-emitted SQL string.
+
+    Raises:
+        HTTPException: 400 if the query cannot be parsed, is empty, contains
+            multiple statements, or is not a read-only SELECT statement.
+    """
+    try:
+        transpiled = sqlglot.transpile(query, read="postgres", write="postgres")
+    except sqlglot.errors.SqlglotError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid SQL: {exc}") from exc
+    if not transpiled or not transpiled[0].strip():
+        raise HTTPException(status_code=400, detail="SQL query is empty or could not be parsed")
+    if len(transpiled) > 1:
+        raise HTTPException(status_code=400, detail="Multiple SQL statements are not allowed")
+    try:
+        ast = sqlglot.parse_one(transpiled[0], dialect="postgres")
+    except sqlglot.errors.SqlglotError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid SQL: {exc}") from exc
+    if not isinstance(ast, _READ_ONLY_STATEMENT_TYPES):
+        raise HTTPException(status_code=400, detail="Only SELECT statements are allowed")
+    return transpiled[0]
+
+
 # Create Router
 router = APIRouter(prefix="/cohort", tags=["Cohort"], dependencies=[Depends(authenticate_internal_service)])
 
 
-@router.post("/", response_model=StatisticsResponse)
+@router.post("", response_model=StatisticsResponse)
 def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     """
     Receives a cohort query and returns the aggregated statistics.
@@ -50,22 +101,19 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
     logger.info(f"Minimum cohort size needed to return statistics: {minimum_cohort_size}")
 
-    # Validate the query
-    try:
-        validate_query(query_input.query)
-    except ValueError as e:
-        logger.error(f"Invalid query: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+    validate_query(query_input.query)
 
     # On the original implementation get_records was invoked within get_statistics. However, to better handle
     # exceptions and log the query execution, we separate the two calls here.
     # Execute the query and get the DataFrame
     # TODO: Move this check to centralhub and use the aggregated results only, here we are using partial results from
     # each trust
+    safe_query = _parse_and_emit(query_input.query)
+
     try:
         logger.info("Executing cohort query")
 
-        df = get_records(query_input.query)
+        df = get_records(safe_query)
         df = df.dropna(axis=1, how="all")  # Ignore entirely empty columns
         # drop duplicate columns
         df = df.loc[:, ~df.columns.duplicated()]
@@ -111,15 +159,12 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
 
     logger.info(f"Received DataFrame query for project {project_id}")
 
-    # Validate the query
-    try:
-        validate_query(query_input.query)
-    except ValueError as e:
-        logger.error(f"Invalid query: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+    validate_query(query_input.query)
+
+    safe_query = _parse_and_emit(query_input.query)
 
     try:
-        df = get_records(query_input.query)
+        df = get_records(safe_query)
     except SQLAlchemyError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
@@ -152,16 +197,13 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
 
     logger.info(f"Received accession-ids query for project {project_id}")
 
-    try:
-        validate_query(query_input.query)
-    except ValueError as e:
-        logger.error(f"Invalid query: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+    validate_query(query_input.query)
 
-    # Strip trailing whitespace and a single optional trailing semicolon so the
-    # caller's SQL composes cleanly inside a SELECT subquery.
-    inner_query = query_input.query.rstrip().rstrip(";").rstrip()
-    wrapped_query = f"SELECT accession_id FROM ({inner_query}) AS cohort_subquery"
+    # Parse and re-emit the caller's SQL via sqlglot to break any injection
+    # taint chain.  sqlglot also strips trailing semicolons so the inner query
+    # composes cleanly inside the outer SELECT subquery.
+    safe_inner = _parse_and_emit(query_input.query)
+    wrapped_query = f"SELECT accession_id FROM ({safe_inner}) AS cohort_subquery"
 
     try:
         df = get_records(wrapped_query)

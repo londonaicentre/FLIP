@@ -12,6 +12,7 @@
 
 import urllib.parse
 import uuid
+import xml.etree.ElementTree as ET
 from typing import Any
 
 import requests
@@ -36,6 +37,13 @@ from imaging_api.utils.logger import logger
 
 XNAT_URL = get_settings().XNAT_URL
 
+# Register the xnat namespace prefix once at module load. ET.register_namespace
+# mutates a process-global mapping; doing it here (rather than per-call) makes
+# the global-state nature explicit and avoids re-registering on every project
+# creation. The URI matches the value passed to create_payload_for_project_creation
+# from create_project, so the serializer emits the historical xmlns:xnat="…" form.
+ET.register_namespace("xnat", f"{XNAT_URL}/data/projects")
+
 
 def get_project_from_central_hub_project_id(central_hub_project_id: str, headers: dict[str, str]) -> Project:
     """
@@ -49,7 +57,7 @@ def get_project_from_central_hub_project_id(central_hub_project_id: str, headers
         Project: XNAT project object
 
     Raises:
-        NotFoundError: If no XNAT project has a matching ``secondary_ID``.
+        imaging_api.utils.exceptions.NotFoundError: If no XNAT project has a matching ``secondary_ID``.
         Exception: If the upstream ``get_all_projects`` call fails.
     """
     try:
@@ -76,7 +84,7 @@ def get_project(project_id: str, headers: dict[str, str]) -> Project:
         Project: XNAT project object
 
     Raises:
-        NotFoundError: If no XNAT project matches ``project_id``.
+        imaging_api.utils.exceptions.NotFoundError: If no XNAT project matches ``project_id``.
         Exception: If the upstream ``get_all_projects`` call fails.
     """
     try:
@@ -126,6 +134,11 @@ def create_payload_for_project_creation(
     """
     Creates the payload for creating a new project in XNAT.
 
+    Builds the XML using ``xml.etree.ElementTree`` so that XML control characters
+    (``<``, ``>``, ``&``, ``"``, ``'``) in any field are escaped as entity
+    references rather than interpolated raw — this defeats XML injection that
+    could otherwise mutate the projectData document sent to XNAT.
+
     Args:
         xnat_projects_uri (str): XNAT projects URI.
         project_id (str): Unique identifier for the project.
@@ -136,14 +149,12 @@ def create_payload_for_project_creation(
     Returns:
         str: XML payload for creating the project.
     """
-    payload = f"""
-    <xnat:projectData xmlns:xnat="{xnat_projects_uri}">
-        <ID>{project_id}</ID>
-        <secondary_ID>{project_secondary_id}</secondary_ID>
-        <name>{project_name}</name>
-        <description>{project_description}</description>
-    </xnat:projectData>"""
-    return payload
+    root = ET.Element(f"{{{xnat_projects_uri}}}projectData")
+    ET.SubElement(root, "ID").text = project_id
+    ET.SubElement(root, "secondary_ID").text = project_secondary_id
+    ET.SubElement(root, "name").text = project_name
+    ET.SubElement(root, "description").text = project_description
+    return ET.tostring(root, encoding="unicode", short_empty_elements=False)
 
 
 def create_project(
@@ -457,7 +468,7 @@ async def delete_project(project_id: str, headers: dict[str, str]) -> Project:
         Project: XNAT project object
 
     Raises:
-        NotFoundError: If the project does not exist on XNAT.
+        imaging_api.utils.exceptions.NotFoundError: If the project does not exist on XNAT.
         Exception: If XNAT returns a non-200 response for the delete call.
     """
     # Check if project exists

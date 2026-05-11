@@ -43,7 +43,7 @@ def get_users(headers: XNATAuthHeaders) -> list[User]:
         headers (XNATAuthHeaders): XNAT authentication headers injected via FastAPI dependency.
 
     Returns:
-        list[User]: All users currently registered on the XNAT instance.
+        list[imaging_api.routers.schemas.User]: All users currently registered on the XNAT instance.
     """
     return get_xnat_users(headers)
 

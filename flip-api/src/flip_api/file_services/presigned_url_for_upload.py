@@ -22,7 +22,7 @@ from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Model, Projects
 from flip_api.domain.schemas.file import UploadFileBody
 from flip_api.utils.logger import logger
-from flip_api.utils.s3_client import S3Client
+from flip_api.utils.s3_client import MAX_PUT_PRESIGNED_URL_TTL_SECONDS, S3Client, hash_s3_key, parse_s3_path
 
 router = APIRouter(prefix="/files", tags=["file_services"])
 
@@ -81,34 +81,46 @@ def get_presigned_url_for_upload(
                 detail=f"Model ID: {model_id} does not exist or is deleted.",
             )
 
-        # Check if a pre-signed URL override is provided via environment variable
+        # Check if a pre-signed URL override is provided via environment variable.
+        # Never log the override value: it may itself be a signed URL.
         pre_signed_url = get_settings().PRE_SIGNED_URL
         if pre_signed_url:
-            logger.info(f"Using environment variable override for pre-signed URL: {pre_signed_url}")
+            logger.info("Using PRE_SIGNED_URL environment-variable override")
             return pre_signed_url
 
-        # Generate a new pre-signed URL
-        logger.info("No pre-signed URL override found. Generating a new pre-signed URL.")
-
         s3_path = f"{get_settings().UPLOADED_MODEL_FILES_BUCKET}/{model_id}/{body.fileName}"
+        bucket, key = parse_s3_path(s3_path)
+        key_hash = hash_s3_key(key)
+        logger.info(
+            "Generating pre-signed PUT URL "
+            f"bucket={bucket} key_hash={key_hash} model_id={model_id}"
+        )
 
         s3 = S3Client()
         try:
-            pre_signed_url = s3.get_put_presigned_url(s3_path)
-            logger.info(f"Generated pre-signed URL: {pre_signed_url}")
+            pre_signed_url = s3.get_put_presigned_url(s3_path, expiration=MAX_PUT_PRESIGNED_URL_TTL_SECONDS)
             return pre_signed_url
         except Exception as e:
-            error_msg = f"Could not create a pre-signed URL for {s3_path}. Error: {str(e)}"
-            logger.error(error_msg)
+            # Drop ``exc_info`` entirely: the formatter would otherwise emit
+            # ``str(e)`` via the traceback, and a future exception type that
+            # embeds the URL in its message would leak through that channel.
+            # Log structured context plus the exception class name only.
+            logger.error(
+                f"Could not create a pre-signed URL for bucket={bucket} "
+                f"key_hash={key_hash} error_type={type(e).__name__}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=error_msg,
+                detail="Could not create a pre-signed URL",
             )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unhandled error: {str(e)}")
+        logger.error(
+            f"Unhandled error in get_presigned_url_for_upload "
+            f"model_id={model_id} error_type={type(e).__name__}"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",

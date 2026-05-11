@@ -48,14 +48,15 @@ or as part of the full platform:
 make up
 ```
 
-Before starting the platform, generate per-trust API keys and the internal service key:
+Before starting the platform, generate per-trust API keys, the internal service key, and the per-trust internal service keys:
 
 ```bash
-make generate-trust-api-keys        # from repo root
-make generate-internal-service-key  # from repo root (also invoked automatically by `make up`)
+make generate-trust-api-keys                  # from repo root
+make generate-internal-service-key            # from repo root (also invoked automatically by `make up`)
+make generate-trust-internal-service-keys     # from repo root
 ```
 
-`generate-trust-api-keys` updates `TRUST_API_KEYS` and `TRUST_API_KEY_HASHES` in `.env.development`. `generate-internal-service-key` writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` (used for fl-server-to-hub authentication).
+`generate-trust-api-keys` updates `TRUST_API_KEYS` and `TRUST_API_KEY_HASHES` in `.env.development`. `generate-internal-service-key` writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` (used for fl-server-to-hub authentication). `generate-trust-internal-service-keys` writes `TRUST_INTERNAL_SERVICE_KEYS` (per-trust JSON dict) used for trust-api / imaging-api / data-access-api / fl-client authentication inside each trust — never sent to the hub.
 See [`.env.development.example`](../.env.development.example) for the expected format.
 
 The API is served on the port defined by `API_PORT` in [`.env.development.example`](../.env.development.example)
@@ -104,7 +105,19 @@ make integration_test
 
 Integration tests use [testcontainers-python](https://github.com/testcontainers/testcontainers-python) to start a `postgres:16-alpine` container per test session and tear it down at the end. The schema is created from `SQLModel.metadata` and seeded with permissions / roles / role-permissions in `tests/integration/conftest.py`; per-test tables are truncated between tests. New integration tests just request the `session` (real DB) and/or `client` (FastAPI `TestClient` wired to the same DB) fixtures — no setup boilerplate.
 
-Tests that touch AWS Cognito, S3, or SES are covered by ticket B2 and are currently skip-marked under `tests/integration/` with a reference to the ticket.
+### AWS-touching tests (S3, Cognito, SES)
+
+A session-scoped autouse fixture (`aws_mock` in `tests/integration/conftest.py`) enters [`moto.mock_aws()`](https://github.com/getmoto/moto) for the whole test session, intercepting `boto3.client(...)` calls at the botocore layer. The flip-api production code paths in `src/flip_api/utils/s3_client.py`, `src/flip_api/utils/cognito_helpers.py`, and the inline `boto3.client("sesv2", ...)` constructions in `user_services/access_request.py` and `private_services/imaging_notifications.py` all hit the moto fake with no test-only branches in source.
+
+Per-service helper fixtures bootstrap the state each test needs:
+
+- `s3_buckets` — creates the buckets configured in `Settings` (`UPLOADED_MODEL_FILES_BUCKET`, `SCANNED_MODEL_FILES_BUCKET`, `UPLOADED_FEDERATED_DATA_BUCKET`, `FL_APP_BASE_BUCKET`, `FL_APP_DESTINATION_BUCKET`).
+- `cognito_user_pool` — creates a moto user pool + app client and rebinds `Settings.AWS_COGNITO_USER_POOL_ID` / `AWS_COGNITO_APP_CLIENT_ID` to point at them, clearing the `_cognito_client` `lru_cache` so the next call rebuilds against the fresh IDs.
+- `ses_send_email_recorder` — captures every `sesv2.send_email` call. moto v5 explicitly raises `NotImplementedError` on `send_email` with `Content.Template`, and every flip-api SES caller uses templated content; the recorder wraps the production-code path up to the SDK boundary so the test asserts the boto3 call shape (`FromEmailAddress`, `Destination.ToAddresses`, `TemplateName`, `TemplateData`). It's the closest approximation to a real SES round-trip moto's coverage allows today.
+
+Why moto and not LocalStack: `cognito-idp` and `sesv2` are Pro-only on LocalStack — the free tier rejects `CreateUserPool` / `CreateEmailIdentity` outright. moto covers all three in OSS and runs in-process, so there's no container boot per test session.
+
+`aws_mock` also pins `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` / `AWS_DEFAULT_REGION` to test-only stub values in the environment for the duration of the session, and clobbers any `AWS_PROFILE` from the developer's shell. Real-AWS credentials are never reachable while the fixture is active.
 
 Run the full suite (lint + mypy + pytest, requires the dockerised dependencies):
 

@@ -126,7 +126,7 @@ describe("api.ts Http client", () => {
     describe("request interceptor", () => {
         it("attaches Bearer token from the current Amplify session", async () => {
             vi.mocked(fetchAuthSession).mockResolvedValue({
-                tokens: { idToken: { toString: () => "token-abc" } }
+                tokens: { accessToken: { toString: () => "token-abc" } }
             } as never);
             primeHttp();
 
@@ -148,7 +148,7 @@ describe("api.ts Http client", () => {
             expect((out.headers as Record<string, string>).Authorization).toBe("");
         });
 
-        it("returns the config unchanged when no idToken is present", async () => {
+        it("returns the config unchanged when no accessToken is present", async () => {
             vi.mocked(fetchAuthSession).mockResolvedValue({ tokens: undefined } as never);
             primeHttp();
 

@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.abspath("../../trust/trust-api"))
 
 # -- Project information -----------------------------------------------------
 project = "FLIP"
-copyright = "2025, The London AI Centre for Value-Based Healthcare"
+copyright = "2026, The London AI Centre for Value-Based Healthcare"
 author = "The London AI Centre for Value-Based Healthcare"
 
 # The full version of the documentation, including alpha/beta/rc tags
@@ -106,11 +106,11 @@ html_theme = "sphinx_rtd_theme"
 html_theme_options = {
     "analytics_id": "",  # Provided by Google in your dashboard
     "analytics_anonymize_ip": False,
-    "logo_only": False,
+    "logo_only": True,
     "prev_next_buttons_location": "bottom",
     "style_external_links": False,
     "vcs_pageview_mode": "",
-    "style_nav_header_background": "",
+    "style_nav_header_background": "#61366E",
     # Toc options
     "collapse_navigation": True,
     "sticky_navigation": True,
@@ -123,7 +123,8 @@ html_sidebars = {
 }
 html_scaled_image_link = False
 html_show_sourcelink = True
-# html_favicon = 'assets/favicon.ico'
+html_favicon = 'assets/favicon.ico'
+html_logo = 'assets/flip-logo.png'
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".

@@ -24,6 +24,7 @@ from flip_api.cohort_services import (
     save_cohort_query,
     submit_cohort_query,
 )
+from flip_api.config import get_settings
 from flip_api.file_services import (
     delete_file,
     download_file,
@@ -124,15 +125,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 API_PREFIX = "/api"
 
+# Disable Swagger / OpenAPI / ReDoc in production. Serving them lets an
+# unauthenticated attacker enumerate every route, parameter, and schema in one
+# request — a free attack-surface map. Dev/stag keep them on for debugging.
+_docs_enabled = get_settings().ENV != "production"
+
 # Initialize the FastAPI app
 app = FastAPI(
     title="FLIP CentralHub API",
     description="Main API for FLIP CentralHub, providing communication between the frontend and backend services.",
     version="0.1.0",
     lifespan=lifespan,
-    docs_url=f"{API_PREFIX}/docs",
-    openapi_url=f"{API_PREFIX}/openapi.json",
-    redoc_url=f"{API_PREFIX}/redoc",
+    docs_url=f"{API_PREFIX}/docs" if _docs_enabled else None,
+    openapi_url=f"{API_PREFIX}/openapi.json" if _docs_enabled else None,
+    redoc_url=f"{API_PREFIX}/redoc" if _docs_enabled else None,
 )
 
 # Rate limiter — keyed by trust_name path parameter (falls back to client IP)
@@ -247,7 +253,7 @@ include_api_routers(app)
 
 # Root endpoint
 @app.get(API_PREFIX, response_model=dict[str, str])
-def root():
+def root() -> dict[str, str]:
     """Root endpoint to verify the API is running.
 
     Returns:
@@ -257,7 +263,7 @@ def root():
 
 
 @app.get(f"{API_PREFIX}/health", response_model=dict[str, str])
-def health_check():
+def health_check() -> dict[str, str]:
     """Health check endpoint to verify the API is running.
 
     Returns:
@@ -266,7 +272,7 @@ def health_check():
     return {"status": "ok", "message": "flip is running"}
 
 
-def main():
+def main() -> None:
     """Entry point for the application script"""
     uvicorn.run("flip_api.main:app", host="0.0.0.0", port=81, reload=True)
 

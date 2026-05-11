@@ -1,8 +1,8 @@
 .. _tre-deployment:
 
-===================================
-Deploying FLIP in a TRE
-===================================
+================================
+Deploy a FLIP node in a TRE
+================================
 
 .. contents:: Table of Contents
    :local:
@@ -23,7 +23,8 @@ FLIP supports two deployment modes for trust-side services:
   governance or infrastructure constraints require data access through a TRE rather than
   direct on-premise compute.
 
-This guide covers the TRE deployment mode. For on-premise deployment, see :ref:`deployment`.
+This guide covers the TRE deployment mode. For on-premise deployment, see the deployment
+instructions in the FLIP repository's ``deploy/`` directory.
 
 .. note::
 
@@ -116,7 +117,6 @@ Both pathways use **outbound-only** connections, making FLIP compatible with TRE
 policies that block inbound traffic.
 
 .. figure:: ../assets/tre/TRE_FLIP_diagram_steps.png
-   :width: 700
    :align: center
 
    FLIP TRE deployment: outbound-only connections from the FLIP node to the Central Hub.
@@ -308,7 +308,7 @@ Observability
 FLIP deploys a log-aggregation stack (Grafana Alloy, Loki, Grafana) alongside the Trust
 APIs. Alloy scrapes container stdout via the Docker socket, Loki stores logs with 30-day
 retention, and Grafana provides a pre-provisioned dashboard. The stack runs entirely
-inside the TRE boundary -- no log data is sent to the Central Hub. See :doc:`admin-logging`
+inside the TRE boundary -- no log data is sent to the Central Hub. See :doc:`/components/component-logging-stack`
 for details on configuration, ports, and persistent volumes.
 
 Use Case 1: Federated Evaluation

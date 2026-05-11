@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     # Environment flag
     ENV: Literal["development", "production"] = "development"
 
+    # Application log level. Defaults to INFO so any unknown environment
+    # (prod, stag, any new deploy) emits at INFO and avoids leaking the
+    # contents of debug-only diagnostics. Dev compose may override to DEBUG
+    # for local development.
+    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+
     model_config = SettingsConfigDict(
         env_file=f"../.env.{ENV}",
         env_file_encoding="utf-8",
@@ -101,6 +107,21 @@ class Settings(BaseSettings):
         if isinstance(v, bool):
             return v
         return v.lower() in ("true", "1")    # type: ignore[union-attr]
+
+    @field_validator("LOG_LEVEL", mode="before")
+    @classmethod
+    def coerce_log_level(cls, v: object) -> object:
+        """Treat empty-string or None LOG_LEVEL as the default INFO; uppercase string input.
+
+        Non-string, non-empty input is returned unchanged so the downstream
+        Literal validator rejects it loudly, instead of ``.upper()`` raising
+        ``AttributeError`` mid-validation on e.g. ``Settings(LOG_LEVEL=10)``.
+        """
+        if v is None or v == "":
+            return "INFO"
+        if isinstance(v, str):
+            return v.upper()
+        return v
 
     # Trust task queue settings
     HEARTBEAT_TIMEOUT_SECONDS: int = 30  # How long since last heartbeat before a trust is considered offline

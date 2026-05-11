@@ -66,6 +66,17 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 | `TRUST_API_KEY` | Per-trust API key for authenticating with the Central Hub. Keys are stored in `TRUST_API_KEYS` JSON dict; generate with `make generate-trust-api-keys` |
 | `AES_KEY_BASE64` | Base64-encoded AES-256 key shared with the hub, used to decrypt encrypted task payloads |
 | `POLL_INTERVAL_SECONDS` | Polling frequency in seconds (default: 5) |
+| `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
+| `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Generated alongside the other trust keys via `make generate-trust-internal-service-keys` (run from the repo root or `flip-api/`). |
+
+## Authentication
+
+trust-api authenticates **outbound** in two directions:
+
+- **To the Central Hub**: every request carries `TRUST_API_KEY` in the `TRUST_API_KEY_HEADER`. The hub validates against the SHA-256 hash stored in `TRUST_API_KEY_HASHES`.
+- **To sibling trust services** (imaging-api, data-access-api): every request carries `TRUST_INTERNAL_SERVICE_KEY` in the configured header. Receivers compare with `hmac.compare_digest` against their own copy of the same per-trust key. See the **Trust-internal Service Authentication** section in [`CLAUDE.md`](../../CLAUDE.md) for the threat model.
+
+trust-api itself does **not** receive inbound requests from the hub or any external caller — it only polls outbound — so it does not validate an inbound trust-internal header.
 
 ## Scaling Assumptions
 
@@ -76,6 +87,15 @@ for the same trust would cause duplicate task execution.
 If horizontal scaling is needed, the hub endpoint (`GET /tasks/{trust_name}/pending`) must be
 updated to use `SELECT ... FOR UPDATE SKIP LOCKED` to ensure each task is claimed by exactly
 one replica.
+
+## Testing
+
+Tests are split into `tests/unit/` (no real backing services) and `tests/integration/` (real OMOP database via the shared `trust/compose.test.yml` stack). See [Where does my test go?](../../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule, and [`trust/README.md`](../README.md#integration-tests-cohort-query-end-to-end) for how the cohort-query end-to-end suite is wired.
+
+```bash
+make local_test         # ruff + mypy + unit suite (no Docker required)
+make integration_test   # ruff + mypy + cohort-query end-to-end suite (Docker required)
+```
 
 ## Further Reading
 

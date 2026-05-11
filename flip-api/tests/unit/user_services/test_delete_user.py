@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException, status
 
-from flip_api.db.models.user_models import PermissionRef
+from flip_api.db.models.user_models import PermissionRef, UsersAudit
 from flip_api.user_services.delete_user import delete_user
 
 
@@ -31,14 +31,14 @@ def mock_db():
 
 @pytest.fixture
 def user_id():
-    """User ID fixture."""
-    return str(uuid.uuid4())
+    """User ID fixture (a Cognito sub)."""
+    return uuid.uuid4()
 
 
 @pytest.fixture
 def token_id():
-    """Token ID fixture."""
-    return str(uuid.uuid4())
+    """Token ID fixture (caller making the delete)."""
+    return uuid.uuid4()
 
 
 def test_permission_denied(mock_request, mock_db, user_id, token_id):
@@ -59,8 +59,13 @@ def test_permission_denied(mock_request, mock_db, user_id, token_id):
         mock_has_permissions.assert_called_once_with(token_id, [PermissionRef.CAN_MANAGE_USERS], mock_db)
 
 
-def test_user_not_found(mock_request, mock_db, user_id, token_id):
-    """Test when user doesn't exist in Cognito."""
+def test_cognito_user_already_gone_still_drops_role_grants(mock_request, mock_db, user_id, token_id):
+    """If get_username 404s (Cognito side already gone), still reap any ghost role grants and
+    write the audit row — but skip the Cognito delete itself.
+
+    This is the idempotency contract: a retry after a partial failure should clean up the DB
+    state instead of raising 404 and leaving dangling grants behind.
+    """
     user_pool_id = "test-user-pool-id"
 
     with (
@@ -71,21 +76,57 @@ def test_user_not_found(mock_request, mock_db, user_id, token_id):
     ):
         mock_has_permissions.return_value = True
         mock_get_settings.return_value.AWS_COGNITO_USER_POOL_ID = user_pool_id
-        mock_get_username.return_value = None  # User not found
+        mock_get_username.side_effect = HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="not found"
+        )
 
-        # Execute
         result = delete_user(user_id, mock_request, mock_db, token_id)
 
-        # Assert
-        assert result == {}  # Empty response for 204 status
-        mock_has_permissions.assert_called_once()
-        mock_get_settings.assert_called_once_with()
-        mock_get_username.assert_called_once_with(user_id, user_pool_id)
-        mock_delete_cognito_user.assert_not_called()  # Should not try to delete non-existent user
+        assert result == {}
+        mock_get_username.assert_called_once_with(str(user_id), user_pool_id)
+        # DB cleanup runs even though Cognito is gone — that's the whole point.
+        mock_db.execute.assert_called_once()
+        mock_db.add.assert_called_once()
+        audit_row = mock_db.add.call_args[0][0]
+        assert isinstance(audit_row, UsersAudit)
+        assert audit_row.action == "Deleted user"
+        mock_db.commit.assert_called_once()
+        # No Cognito call — there's nothing left to delete on that side.
+        mock_delete_cognito_user.assert_not_called()
+
+
+def test_get_username_non_404_propagates(mock_request, mock_db, user_id, token_id):
+    """A 5xx from get_username (e.g. Cognito read failure) must propagate untouched.
+
+    Without this, a transient Cognito read error would silently drop the user's role grants.
+    """
+    user_pool_id = "test-user-pool-id"
+
+    with (
+        patch("flip_api.user_services.delete_user.has_permissions") as mock_has_permissions,
+        patch("flip_api.user_services.delete_user.get_settings") as mock_get_settings,
+        patch("flip_api.user_services.delete_user.get_username") as mock_get_username,
+        patch("flip_api.user_services.delete_user.delete_cognito_user") as mock_delete_cognito_user,
+    ):
+        mock_has_permissions.return_value = True
+        mock_get_settings.return_value.AWS_COGNITO_USER_POOL_ID = user_pool_id
+        mock_get_username.side_effect = HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="cognito error"
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            delete_user(user_id, mock_request, mock_db, token_id)
+
+        assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        # No DB writes — we couldn't confirm Cognito state, so don't touch the grants.
+        mock_db.execute.assert_not_called()
+        mock_db.add.assert_not_called()
+        mock_db.commit.assert_not_called()
+        mock_delete_cognito_user.assert_not_called()
 
 
 def test_user_deleted_successfully(mock_request, mock_db, user_id, token_id):
-    """Test successful user deletion."""
+    """Happy path: user_role rows dropped, audit row written, Cognito user removed."""
     user_pool_id = "test-user-pool-id"
     username = "test@example.com"
 
@@ -98,21 +139,36 @@ def test_user_deleted_successfully(mock_request, mock_db, user_id, token_id):
         mock_has_permissions.return_value = True
         mock_get_settings.return_value.AWS_COGNITO_USER_POOL_ID = user_pool_id
         mock_get_username.return_value = username
-        mock_delete_cognito_user.return_value = True
 
-        # Execute
         result = delete_user(user_id, mock_request, mock_db, token_id)
 
-        # Assert
-        assert result == {}  # Empty response for 204 status
-        mock_has_permissions.assert_called_once()
-        mock_get_settings.assert_called_once_with()
-        mock_get_username.assert_called_once_with(user_id, user_pool_id)
+        assert result == {}
+        mock_get_username.assert_called_once_with(str(user_id), user_pool_id)
+
+        # user_role rows deleted in a single execute() call
+        mock_db.execute.assert_called_once()
+
+        # Audit row written
+        mock_db.add.assert_called_once()
+        audit_row = mock_db.add.call_args[0][0]
+        assert isinstance(audit_row, UsersAudit)
+        assert audit_row.action == "Deleted user"
+        assert audit_row.user_id == user_id
+        assert audit_row.modified_by_user_id == token_id
+
+        # DB commits before Cognito delete (so a Cognito failure can't leave dangling grants)
+        mock_db.commit.assert_called_once()
         mock_delete_cognito_user.assert_called_once_with(username, user_pool_id)
 
 
-def test_internal_server_error(mock_request, mock_db, user_id, token_id):
-    """Test handling of internal server errors."""
+def test_db_cleanup_durable_when_cognito_delete_fails(mock_request, mock_db, user_id, token_id):
+    """Lock the documented ordering: DB cleanup commits BEFORE the Cognito delete.
+
+    If Cognito raises after the DB commit, the role grants are already gone and the audit row
+    is durable — preferable to dangling grants on a deleted user. The response detail must
+    name the half-deleted state explicitly so the operator knows the user can still
+    authenticate but has zero app authority, and that manual Cognito cleanup is required.
+    """
     user_pool_id = "test-user-pool-id"
     username = "test@example.com"
 
@@ -126,12 +182,27 @@ def test_internal_server_error(mock_request, mock_db, user_id, token_id):
         mock_has_permissions.return_value = True
         mock_get_settings.return_value.AWS_COGNITO_USER_POOL_ID = user_pool_id
         mock_get_username.return_value = username
-        mock_delete_cognito_user.side_effect = Exception("Test exception")
+        # Production path: delete_cognito_user wraps boto3 ClientError as HTTPException.
+        mock_delete_cognito_user.side_effect = HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user"
+        )
 
-        # Execute and assert
         with pytest.raises(HTTPException) as exc_info:
             delete_user(user_id, mock_request, mock_db, token_id)
 
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-        assert "Internal server error" in exc_info.value.detail
-        mock_logger.error.assert_called_once()
+        # Detail must name the half-deleted state so the operator knows what to clean up.
+        detail = exc_info.value.detail.lower()
+        assert "role grants revoked" in detail
+        assert "cognito" in detail
+        assert "manual" in detail
+
+        # DB cleanup ran and committed BEFORE the Cognito call.
+        mock_db.execute.assert_called_once()
+        mock_db.add.assert_called_once()
+        audit_row = mock_db.add.call_args[0][0]
+        assert isinstance(audit_row, UsersAudit)
+        assert audit_row.action == "Deleted user"
+        mock_db.commit.assert_called_once()
+        mock_delete_cognito_user.assert_called_once_with(username, user_pool_id)
+        mock_logger.exception.assert_called_once()
