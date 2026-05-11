@@ -79,7 +79,7 @@ def test_receive_cohort_query_success(mock_get_statistics, mock_validate_query, 
 @patch("data_access_api.routers.cohort.validate_query")
 def test_receive_cohort_query_invalid_validation(mock_validate_query, mock_get_settings):
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
-    mock_validate_query.side_effect = ValueError("Invalid field in query")
+    mock_validate_query.side_effect = HTTPException(status_code=400, detail="Invalid field in query")
 
     response = client.post("/cohort", json=sample_query_input, headers=AUTH_HEADERS)
 
@@ -174,7 +174,7 @@ def test_get_dataframe_success(mock_get_records, mock_decrypt):
 @patch("data_access_api.routers.cohort.validate_query")
 def test_get_dataframe_invalid_query(mock_validate_query, mock_decrypt):
     mock_decrypt.return_value = "decrypted-id"
-    mock_validate_query.side_effect = ValueError("Invalid query syntax")
+    mock_validate_query.side_effect = HTTPException(status_code=400, detail="Invalid query syntax")
 
     response = client.post("/cohort/dataframe", json=sample_dataframe_query, headers=AUTH_HEADERS)
 
@@ -252,7 +252,7 @@ def test_get_accession_ids_strips_trailing_semicolon(mock_get_records, mock_decr
 @patch("data_access_api.routers.cohort.validate_query")
 def test_get_accession_ids_invalid_query(mock_validate_query, mock_decrypt):
     mock_decrypt.return_value = "decrypted-id"
-    mock_validate_query.side_effect = ValueError("Invalid query syntax")
+    mock_validate_query.side_effect = HTTPException(status_code=400, detail="Invalid query syntax")
 
     response = client.post("/cohort/accession-ids", json=sample_dataframe_query, headers=AUTH_HEADERS)
 

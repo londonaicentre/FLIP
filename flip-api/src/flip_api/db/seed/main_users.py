@@ -14,7 +14,7 @@ from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
 from flip_api.config import get_settings
-from flip_api.db.models.user_models import RoleRef, User, UserRole
+from flip_api.db.models.user_models import RoleRef, UserRole
 from flip_api.utils.cognito_helpers import (
     get_user_by_email_or_id,
 )
@@ -23,7 +23,12 @@ from flip_api.utils.logger import logger
 
 
 def ensure_user_and_role(email: str, role_ref: RoleRef, session: Session) -> None:
-    """Fetch or create a Cognito + DB user and assign a role.
+    """Look up the Cognito user for ``email`` and grant them ``role_ref``.
+
+    Cognito is the source of truth for user identity, so this function does
+    not create or maintain a local users row. It only ensures the
+    ``user_role`` grant exists for the Cognito sub corresponding to the
+    given email.
 
     Args:
         email (str): The user's email, used to look up the corresponding Cognito user.
@@ -47,49 +52,69 @@ def ensure_user_and_role(email: str, role_ref: RoleRef, session: Session) -> Non
     user_id = cognito_user.id
     logger.debug(f"Found Cognito user {email} with sub {user_id}")
 
-    # 2️⃣ Ensure the user exists in the local DB
-    db_user = session.exec(select(User).where(User.id == user_id)).first()
-    if not db_user:
-        logger.info(f"Creating local user for {email} with id {user_id}")
-        db_user = User(id=user_id, email=email)
-        session.add(db_user)
-        session.commit()
-        session.refresh(db_user)
-
-    # 3️⃣ Ensure the user has the expected role
+    # 2️⃣ Ensure the user has the expected role
     role_exists = session.exec(
-        select(UserRole).where(UserRole.user_id == db_user.id).where(UserRole.role_id == role_ref.value)
+        select(UserRole).where(UserRole.user_id == user_id).where(UserRole.role_id == role_ref.value)
     ).first()
 
     if not role_exists:
         logger.info(f"Assigning role {role_ref.name} to {email}")
-        new_role = UserRole(user_id=db_user.id, role_id=role_ref.value)
-        session.add(new_role)
+        session.add(UserRole(user_id=user_id, role_id=role_ref.value))
         session.commit()
+
+
+def _ensure_user_and_role_resilient(email: str, role_ref: RoleRef, session: Session) -> None:
+    """Run ``ensure_user_and_role`` but tolerate transient Cognito-side HTTP failures.
+
+    Seeding now reads from Cognito on every boot. A 5xx blip mid-deploy would
+    otherwise couple flip-api liveness to Cognito read availability — log the skip
+    loudly and continue with the remaining users instead.
+
+    Definitive 4xx failures (e.g. 400 "no email/id provided", 403 if a future
+    auth gate is added) still propagate: those are config / programming errors
+    that should fail boot loudly rather than producing a platform with quietly
+    missing grants.
+
+    Args:
+        email (str): The user's email used to look up the corresponding Cognito user.
+        role_ref (RoleRef): The role to grant if missing.
+        session (Session): The SQLModel session used for DB reads and writes.
+    """
+    try:
+        ensure_user_and_role(email, role_ref, session)
+    except HTTPException as exc:
+        if exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR:
+            raise
+        logger.warning(
+            "Skipping seed for %s with role %s due to Cognito read failure (status=%s); "
+            "platform will boot without this grant — investigate if it persists.",
+            email,
+            role_ref.name,
+            exc.status_code,
+        )
 
 
 def seed_main_users(session: Session) -> None:
     """
-    Seed the admin and researcher users into the database.
+    Seed role grants for the well-known admin/researcher/observer emails.
 
-    - Get the user from Cognito by email.
-    - If the user does not exist in DB, create them with the correct Cognito sub.
-    - Assign appropriate roles.
+    Resolves each email to its Cognito sub and ensures the corresponding
+    ``user_role`` row exists. No local users-table state is created.
 
     Args:
         session (Session): The SQLModel session used for DB reads and writes.
     """
     logger.debug("Seeding main users...")
 
-    # Create / sync the admin users
-    ensure_user_and_role(ADMIN_EMAIL_1, RoleRef.ADMIN, session)
-    ensure_user_and_role(ADMIN_EMAIL_2, RoleRef.ADMIN, session)
-    ensure_user_and_role(ADMIN_EMAIL_3, RoleRef.ADMIN, session)
+    # Ensure the Admin role grant for each well-known admin email.
+    _ensure_user_and_role_resilient(ADMIN_EMAIL_1, RoleRef.ADMIN, session)
+    _ensure_user_and_role_resilient(ADMIN_EMAIL_2, RoleRef.ADMIN, session)
+    _ensure_user_and_role_resilient(ADMIN_EMAIL_3, RoleRef.ADMIN, session)
 
-    # Create / sync the researcher user
-    ensure_user_and_role(RESEARCHER_EMAIL, RoleRef.RESEARCHER, session)
+    # Ensure the Researcher role grant.
+    _ensure_user_and_role_resilient(RESEARCHER_EMAIL, RoleRef.RESEARCHER, session)
 
-    # Create / sync the observer user
-    ensure_user_and_role(OBSERVER_EMAIL, RoleRef.OBSERVER, session)
+    # Ensure the Observer role grant.
+    _ensure_user_and_role_resilient(OBSERVER_EMAIL, RoleRef.OBSERVER, session)
 
     logger.info("✅ Finished seeding main users.")

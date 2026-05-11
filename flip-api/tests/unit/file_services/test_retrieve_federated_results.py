@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import logging
 import uuid
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -27,6 +28,7 @@ from flip_api.file_services.retrieve_federated_results import retrieve_federated
 from flip_api.main import app
 from flip_api.utils.s3_client import S3Client
 from tests.fixtures.db_fixtures import ModelFactory, ProjectFactory
+from tests.unit._log_policy import _FAKE_SIGNED_URL, _assert_logs_have_no_presigned_url
 
 
 @pytest.fixture
@@ -313,3 +315,107 @@ class TestS3Client:
                 s3_client.get_presigned_url("test-bucket", "test-key")
 
             assert "An error occurred (AccessDenied)" in str(exc_info.value)
+
+
+# ---------------------------------------------------------------------------
+# Logging policy: the route used to JSON-dump the presigned-URL list at INFO,
+# which made every entry's X-Amz-Signature / X-Amz-Credential reachable from
+# the application log. The shared helper lives in ``tests/unit/_log_policy``;
+# pin that the policy holds for this route too.
+# ---------------------------------------------------------------------------
+
+
+def test_retrieve_federated_results_does_not_log_url_list(caplog):
+    """The route must never emit the list of presigned URLs into a log line."""
+    caplog.set_level(logging.DEBUG, logger="uvicorn")
+    model_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+
+    settings = Settings(
+        UPLOADED_FEDERATED_DATA_BUCKET="s3://test-bucket/uploaded_federated_data",
+    )
+
+    mock_session = MagicMock()
+    mock_session.exec.return_value.first.return_value = MagicMock()  # bypass the 404 branch
+    app.dependency_overrides[get_session] = lambda: mock_session
+    app.dependency_overrides[verify_token] = lambda: user_id
+    try:
+        with (
+            patch("flip_api.file_services.retrieve_federated_results.get_settings", return_value=settings),
+            patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True),
+            patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3_cls,
+        ):
+            mock_s3 = MagicMock()
+            mock_s3.list_objects.return_value = [
+                f"s3://test-bucket/uploaded_federated_data/{model_id}/metrics.json",
+                f"s3://test-bucket/uploaded_federated_data/{model_id}/weights.bin",
+            ]
+            mock_s3.get_presigned_url.side_effect = [
+                _FAKE_SIGNED_URL,
+                _FAKE_SIGNED_URL.replace("weights.bin", "metrics.json"),
+            ]
+            mock_s3_cls.return_value = mock_s3
+
+            response = TestClient(app).get(f"/api/files/model/{model_id}/fl/results")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()) == 2
+    _assert_logs_have_no_presigned_url(caplog.records)
+
+
+def test_retrieve_federated_results_redacts_url_when_get_presigned_raises(caplog):
+    """If ``get_presigned_url`` raises with a URL in the message, redaction must hold."""
+    caplog.set_level(logging.DEBUG, logger="uvicorn")
+    model_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+
+    settings = Settings(UPLOADED_FEDERATED_DATA_BUCKET="s3://test-bucket/uploaded_federated_data")
+    mock_session = MagicMock()
+    mock_session.exec.return_value.first.return_value = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_session
+    app.dependency_overrides[verify_token] = lambda: user_id
+    try:
+        with (
+            patch("flip_api.file_services.retrieve_federated_results.get_settings", return_value=settings),
+            patch("flip_api.file_services.retrieve_federated_results.can_access_model", return_value=True),
+            patch("flip_api.file_services.retrieve_federated_results.S3Client") as mock_s3_cls,
+        ):
+            mock_s3 = MagicMock()
+            mock_s3.list_objects.return_value = [
+                f"s3://test-bucket/uploaded_federated_data/{model_id}/weights.bin"
+            ]
+            mock_s3.get_presigned_url.side_effect = Exception(_FAKE_SIGNED_URL)
+            mock_s3_cls.return_value = mock_s3
+
+            response = TestClient(app).get(f"/api/files/model/{model_id}/fl/results")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 500, response.text
+    assert _FAKE_SIGNED_URL not in response.text  # static detail in HTTP body
+    _assert_logs_have_no_presigned_url(caplog.records)
+
+
+def test_retrieve_federated_results_redacts_url_when_unhandled_error(caplog):
+    """The outer ``except Exception`` must not echo the exception into the HTTP body or log message."""
+    caplog.set_level(logging.DEBUG, logger="uvicorn")
+    model_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+
+    mock_session = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_session
+    app.dependency_overrides[verify_token] = lambda: user_id
+    try:
+        with patch(
+            "flip_api.file_services.retrieve_federated_results.can_access_model",
+            side_effect=Exception(_FAKE_SIGNED_URL),
+        ):
+            response = TestClient(app).get(f"/api/files/model/{model_id}/fl/results")
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 500, response.text
+    assert _FAKE_SIGNED_URL not in response.text
+    _assert_logs_have_no_presigned_url(caplog.records)

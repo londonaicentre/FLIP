@@ -10,16 +10,18 @@
 # limitations under the License.
 #
 
-"""Tests for flip_api.main rate limit handler and CORS configuration."""
+"""Tests for flip_api.main rate limit handler, CORS, and docs gating."""
 
 import asyncio
+import importlib
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
-from flip_api import main
+from flip_api import config, main
 from flip_api.main import app, rate_limit_exceeded_handler
 
 
@@ -82,3 +84,42 @@ class TestCORSConfiguration:
         # but no Access-Control-Allow-Origin header may be sent for an unlisted origin.
         assert response.status_code == 200
         assert "access-control-allow-origin" not in {k.lower() for k in response.headers.keys()}
+
+
+class TestDocsGating:
+    """Swagger UI / OpenAPI / ReDoc must be disabled in production environments."""
+
+    def test_docs_urls_set_in_dev(self):
+        """Tests run with ENV=development, so the live app must expose all three URLs."""
+        assert app.docs_url == "/api/docs"
+        assert app.openapi_url == "/api/openapi.json"
+        assert app.redoc_url == "/api/redoc"
+
+    def test_dev_endpoints_serve_200(self):
+        """Hitting the dev URLs returns a successful response (Swagger/Redoc HTML, OpenAPI JSON)."""
+        client = TestClient(app)
+        assert client.get("/api/docs").status_code == 200
+        assert client.get("/api/openapi.json").status_code == 200
+        assert client.get("/api/redoc").status_code == 200
+
+    def test_docs_urls_none_in_production(self, monkeypatch):
+        """With ENV=production, the FastAPI app must build with all three URLs unset."""
+        monkeypatch.setattr(config, "_settings", SimpleNamespace(ENV="production"))
+        try:
+            # FastAPI bakes docs_url/openapi_url/redoc_url into the router at app
+            # construction time, so patching the live app object after the fact has
+            # no effect on routing — we must reload the module to construct a new
+            # app under the production settings.
+            importlib.reload(main)
+            assert main.app.docs_url is None
+            assert main.app.openapi_url is None
+            assert main.app.redoc_url is None
+
+            client = TestClient(main.app)
+            assert client.get("/api/docs").status_code == 404
+            assert client.get("/api/openapi.json").status_code == 404
+            assert client.get("/api/redoc").status_code == 404
+        finally:
+            # Other tests in the suite hold references to the dev-mode app — restore it.
+            monkeypatch.undo()
+            importlib.reload(main)

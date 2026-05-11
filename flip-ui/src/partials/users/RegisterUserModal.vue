@@ -115,6 +115,7 @@ import { IOption } from "@/components/AiSelect/interfaces";
 import { IRole } from "@/services/role-service";
 import { IRegisterUserDto, registerUser } from "@/services/user-service";
 import { useErrorStore } from "@/store/error";
+import { extractErrorDetail } from "@/utils/api-errors";
 import { Snackbar } from "@/utils/snackbar";
 
 interface IRegisterUserModalProps {
@@ -199,7 +200,7 @@ const submitAction = async () => {
             }
         } catch (e) {
             Snackbar.error({
-                text: "There was an error, please try again.",
+                text: extractErrorDetail(e, "There was an error, please try again."),
                 title: "User not registered"
             });
             errorStore.setError();

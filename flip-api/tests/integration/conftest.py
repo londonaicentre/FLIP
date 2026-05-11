@@ -50,7 +50,7 @@ import tests.fixtures.main_fixtures as main_fixtures
 from flip_api.auth.dependencies import verify_token
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
-from flip_api.db.models.user_models import RoleRef, User, UserRole
+from flip_api.db.models.user_models import RoleRef, UserRole
 from flip_api.db.seed.permissions import seed_permissions
 from flip_api.db.seed.role_permissions import seed_role_permissions
 from flip_api.db.seed.roles import seed_roles
@@ -365,18 +365,18 @@ def ses_send_email_recorder(aws_mock, monkeypatch) -> list[dict]:
 
 
 def admin_user(session: Session) -> UUID:
-    """Persist an Admin-roled user and return its id.
+    """Persist an Admin role grant for a fresh Cognito-sub-shaped UUID and return it.
 
     Admin grants every permission via the seed contract verified in
     ``test_auth_permissions_db_flow``, so any ``can_*`` check short-circuits
-    True for this user without per-resource access rows.
+    True for this user without per-resource access rows. Cognito is the
+    source of truth for user identity (no local users table), so the
+    returned UUID stands in for a Cognito ``sub``.
     """
-    user = User(id=uuid4(), email=f"admin.{uuid4().hex[:8]}@example.com")
-    session.add(user)
-    session.flush()
-    session.add(UserRole(user_id=user.id, role_id=RoleRef.ADMIN.value))
+    user_id = uuid4()
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.ADMIN.value))
     session.commit()
-    return user.id
+    return user_id
 
 
 def override_verify_token_as(user_id: UUID) -> None:

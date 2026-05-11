@@ -116,7 +116,7 @@ def test_seed_role_permissions_logs_when_admin_role_missing(mock_session, caplog
         _exec_result(first=None),
     ]
 
-    with caplog.at_level("DEBUG"):
+    with caplog.at_level("DEBUG", logger="uvicorn"):
         seed_role_permissions(mock_session)
 
     assert any("Admin role not found" in rec.message for rec in caplog.records)
@@ -135,7 +135,7 @@ def test_seed_role_permissions_logs_when_researcher_role_missing(mock_session, c
         _exec_result(first=None),
     ]
 
-    with caplog.at_level("DEBUG"):
+    with caplog.at_level("DEBUG", logger="uvicorn"):
         seed_role_permissions(mock_session)
 
     assert any("Researcher role not found" in rec.message for rec in caplog.records)
@@ -150,7 +150,7 @@ def test_seed_role_permissions_no_roles_still_logs_completion(mock_session, capl
         _exec_result(first=None),
     ]
 
-    with caplog.at_level("DEBUG"):
+    with caplog.at_level("DEBUG", logger="uvicorn"):
         seed_role_permissions(mock_session)
 
     messages = [rec.message for rec in caplog.records]

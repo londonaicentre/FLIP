@@ -155,8 +155,7 @@ body, .wy-body-for-nav,
     background: rgba(255,255,255,0.14);
     outline: none;
 }
-.wy-side-nav-search > a,
-.wy-side-nav-search .wy-dropdown > a {
+.wy-side-nav-search > a {
     font-family: var(--font-heading);
     font-weight: 700;
     font-size: 22px;
@@ -167,8 +166,17 @@ body, .wy-body-for-nav,
     max-width: 140px;
     margin-bottom: 6px;
 }
-.wy-side-nav-search > div.version {
-    color: rgba(255,255,255,0.55);
+/* Default any interactive element in the search area to readable purple
+   so future additions (e.g. a language picker) don't fail contrast. */
+.wy-side-nav-search select,
+.wy-side-nav-search button {
+    color: var(--flip-primary-400);
+}
+.wy-side-nav-search > div.version,
+.wy-side-nav-search .wy-dropdown > a,
+.wy-side-nav-search > div.version a,
+.wy-side-nav-search > div.version select {
+    color: var(--flip-primary-400) !important;
     font-family: var(--font-mono);
     font-size: 11.5px;
     letter-spacing: 0.04em;

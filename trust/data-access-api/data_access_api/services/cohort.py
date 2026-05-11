@@ -51,6 +51,11 @@ _ALLOWED_QUERY_TYPES: tuple[type[exp.Expression], ...] = (
 )
 
 
+def _invalid_query(detail: str) -> HTTPException:
+    logger.warning(f"Query validation failed: {detail}")
+    return HTTPException(status_code=400, detail=detail)
+
+
 def validate_query(query: str) -> bool:
     """
     Validates that an inbound SQL query is structurally safe to run against OMOP.
@@ -94,10 +99,7 @@ def validate_query(query: str) -> bool:
         HTTPException(400): When any of the rules above is violated.
     """
     if len(query) > MAX_QUERY_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters.",
-        )
+        raise _invalid_query(f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters.")
 
     try:
         statements = sqlglot.parse(query, read="postgres")
@@ -105,25 +107,19 @@ def validate_query(query: str) -> bool:
         # SqlglotError is the parent of both ParseError (e.g. "SELECT FROM") and
         # TokenError (e.g. unterminated string literals); catch the parent so a
         # tokenizer failure can't bubble up as an unhandled 500.
-        raise HTTPException(status_code=400, detail=f"Could not parse SQL query: {e}") from e
+        raise _invalid_query(f"Could not parse SQL query: {e}") from e
 
     # sqlglot returns ``None`` for empty/whitespace input and for stray semicolons
     # (e.g. ``SELECT 1; ;`` parses to ``[Select, None]``). Reject if the result is
     # not exactly one non-empty statement — silently filtering ``None`` would let
     # callers smuggle an extra trailing semicolon past the single-statement check.
     if len(statements) != 1 or statements[0] is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Exactly one SQL statement is allowed per request.",
-        )
+        raise _invalid_query("Exactly one SQL statement is allowed per request.")
 
     stmt = statements[0]
 
     if not isinstance(stmt, _ALLOWED_QUERY_TYPES):
-        raise HTTPException(
-            status_code=400,
-            detail="Only SELECT statements are allowed.",
-        )
+        raise _invalid_query("Only SELECT statements are allowed.")
 
     # Walk the whole AST so subqueries, CTEs, and set-operation arms are checked.
     for table in stmt.find_all(exp.Table):
@@ -137,22 +133,15 @@ def validate_query(query: str) -> bool:
         # schema, so .name is safe here.
         schema_name = schema_node.name.lower()
         if schema_name != ALLOWED_SCHEMA:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Schema '{schema_name}' is not accessible. "
-                    f"Only the '{ALLOWED_SCHEMA}' schema is allowed."
-                ),
+            raise _invalid_query(
+                f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."
             )
 
     for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
         for node in stmt.find_all(clause_type):
             value = node.expression
             if not isinstance(value, exp.Literal) or not value.is_int:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"{label} must be a literal integer.",
-                )
+                raise _invalid_query(f"{label} must be a literal integer.")
 
     return True
 

@@ -12,21 +12,21 @@
 
 """Integration coverage of role assignment / revocation against real Postgres.
 
-Set/get/revoke operate on the ``user_role`` join table; these tests prove the
-composite-PK FK constraints behave as the SQLModel definition claims, which a
-mocked Session can't.
+Set/get/revoke operate on the ``user_role`` join table, keyed on the Cognito
+``sub`` UUID. Cognito is the source of truth for user identity — there is no
+local users table — so tests use a bare ``uuid4()`` to stand in for a sub.
 """
+
+from uuid import uuid4
 
 from sqlmodel import col, delete, select
 
-from flip_api.db.models.user_models import Role, RoleRef, User, UserRole
+from flip_api.db.models.user_models import Role, RoleRef, UserRole
 
 
-def test_assign_revoke_lists_user_roles_round_trip(session, user_factory):
+def test_assign_revoke_lists_user_roles_round_trip(session):
     """Assign two seeded roles to a user, list them, revoke one, list again."""
-    user = user_factory()
-    session.add(user)
-    session.commit()
+    user_id = uuid4()
 
     admin_role_id = session.exec(select(Role.id).where(Role.id == RoleRef.ADMIN.value)).first()
     researcher_role_id = session.exec(select(Role.id).where(Role.id == RoleRef.RESEARCHER.value)).first()
@@ -35,53 +35,49 @@ def test_assign_revoke_lists_user_roles_round_trip(session, user_factory):
     assert researcher_role_id is not None
 
     session.add_all([
-        UserRole(user_id=user.id, role_id=admin_role_id),
-        UserRole(user_id=user.id, role_id=researcher_role_id),
+        UserRole(user_id=user_id, role_id=admin_role_id),
+        UserRole(user_id=user_id, role_id=researcher_role_id),
     ])
     session.commit()
 
-    after_assign = session.exec(select(UserRole.role_id).where(UserRole.user_id == user.id)).all()
+    after_assign = session.exec(select(UserRole.role_id).where(UserRole.user_id == user_id)).all()
     assert set(after_assign) == {admin_role_id, researcher_role_id}
 
     # Revoke admin
     session.execute(
-        delete(UserRole).where(col(UserRole.user_id) == user.id).where(col(UserRole.role_id) == admin_role_id)
+        delete(UserRole).where(col(UserRole.user_id) == user_id).where(col(UserRole.role_id) == admin_role_id)
     )
     session.commit()
 
-    after_revoke = session.exec(select(UserRole.role_id).where(UserRole.user_id == user.id)).all()
+    after_revoke = session.exec(select(UserRole.role_id).where(UserRole.user_id == user_id)).all()
     assert set(after_revoke) == {researcher_role_id}
 
 
-def test_user_role_join_returns_role_metadata(session, user_factory):
+def test_user_role_join_returns_role_metadata(session):
     """A simple JOIN through user_role → roles — the kind of multi-table query
     that breaks silently if a column rename misses one side."""
-    user = user_factory()
-    session.add(user)
-    session.commit()
+    user_id = uuid4()
 
-    session.add(UserRole(user_id=user.id, role_id=RoleRef.ADMIN.value))
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.ADMIN.value))
     session.commit()
 
     row = session.exec(
         select(Role.name)
         .join(UserRole, col(UserRole.role_id) == Role.id)
-        .where(UserRole.user_id == user.id)
+        .where(UserRole.user_id == user_id)
     ).first()
     assert row == "Admin"
 
 
-def test_revoke_all_roles_leaves_user_intact(session, user_factory):
-    """Revoking all roles must remove join rows but leave the User row alone."""
-    user = user_factory()
-    session.add(user)
+def test_revoke_all_roles_leaves_no_join_rows(session):
+    """Revoking all roles must remove every join row for that sub — Cognito retains the
+    underlying identity, but we no longer mirror it here."""
+    user_id = uuid4()
+
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.OBSERVER.value))
     session.commit()
 
-    session.add(UserRole(user_id=user.id, role_id=RoleRef.OBSERVER.value))
+    session.execute(delete(UserRole).where(col(UserRole.user_id) == user_id))
     session.commit()
 
-    session.execute(delete(UserRole).where(col(UserRole.user_id) == user.id))
-    session.commit()
-
-    assert session.exec(select(UserRole).where(UserRole.user_id == user.id)).first() is None
-    assert session.get(User, user.id) is not None
+    assert session.exec(select(UserRole).where(UserRole.user_id == user_id)).first() is None

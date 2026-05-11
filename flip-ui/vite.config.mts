@@ -13,9 +13,25 @@ import Layouts from "vite-plugin-vue-layouts-next";
 import svgLoader from "vite-svg-loader";
 
 // https://vitejs.dev/config/
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
 
     const env = loadEnv(mode, process.cwd());
+
+    // Belt-and-braces guard for `vite build` invoked directly (bypassing
+    // the npm prebuild hook in package.json). Vite inlines VITE_LOCAL at
+    // build time and the auth-bypass branch in src/utils/auth.ts is then
+    // dead-code-eliminated only when the flag is anything but "true" —
+    // shipping a build with VITE_LOCAL=true would yield an unauthenticated
+    // bundle. The dev server (`vite` / `command === "serve"`) is
+    // unaffected, since that's the legitimate use of the flag.
+    if (command === "build" && env.VITE_LOCAL === "true") {
+        throw new Error(
+            "Refusing to build flip-ui: VITE_LOCAL=true is set. " +
+            "VITE_LOCAL bypasses Cognito auth and enables the MirageJS mock; " +
+            "it must never be inlined into a production build. Unset it or " +
+            "set it to 'false' before running `vite build`."
+        );
+    }
 
     const envWithProcessPrefix = Object.entries(env).reduce(
         (prev, [key, val]) => {
@@ -109,7 +125,7 @@ export default defineConfig(({ mode }) => {
             globals: true,
             environment: "jsdom",
             setupFiles: ["./test/setup.ts"],
-            include: ["src/**/*.spec.ts"],
+            include: ["src/**/*.spec.ts", "scripts/**/*.spec.ts"],
             coverage: { reporter: ["text", "json", "cobertura"] },
             deps: {
                 optimizer: {

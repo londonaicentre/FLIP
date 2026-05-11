@@ -101,12 +101,7 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
     logger.info(f"Minimum cohort size needed to return statistics: {minimum_cohort_size}")
 
-    # Validate the query
-    try:
-        validate_query(query_input.query)
-    except ValueError as e:
-        logger.error(f"Invalid query: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+    validate_query(query_input.query)
 
     # On the original implementation get_records was invoked within get_statistics. However, to better handle
     # exceptions and log the query execution, we separate the two calls here.
@@ -164,12 +159,7 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
 
     logger.info(f"Received DataFrame query for project {project_id}")
 
-    # Validate the query
-    try:
-        validate_query(query_input.query)
-    except ValueError as e:
-        logger.error(f"Invalid query: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+    validate_query(query_input.query)
 
     safe_query = _parse_and_emit(query_input.query)
 
@@ -207,11 +197,7 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
 
     logger.info(f"Received accession-ids query for project {project_id}")
 
-    try:
-        validate_query(query_input.query)
-    except ValueError as e:
-        logger.error(f"Invalid query: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+    validate_query(query_input.query)
 
     # Parse and re-emit the caller's SQL via sqlglot to break any injection
     # taint chain.  sqlglot also strips trailing semicolons so the inner query

@@ -13,10 +13,12 @@
 """Integration coverage of permission resolution against real Postgres.
 
 ``has_permissions`` is the gatekeeper for every authenticated route on the Hub: it walks
-``users → user_role → role_permission → permission`` to decide whether to admit a request.
-``get_user_permissions`` traverses the same join family (read-only, hydrating the Permission
-rows themselves) and feeds ``GET /users/{id}/permissions``. ``has_role`` is the smaller
-existence check used to 404 users with no roles.
+``user_role → role_permission → permission`` to decide whether to admit a request — keyed on
+the Cognito ``sub`` (Cognito is the source of truth for user identity; there is no local
+users table). ``get_user_permissions``
+traverses the same join family (read-only, hydrating the Permission rows themselves) and
+feeds ``GET /users/{id}/permissions``. ``has_role`` is the smaller existence check used to
+404 users with no roles.
 
 Mocked-Session unit tests can't catch a join-column rename, an FK drift, or the seed
 contract drifting away from ``PermissionRef`` / ``RoleRef`` — these can.
@@ -34,62 +36,54 @@ from flip_api.db.models.user_models import (
 from flip_api.user_services.retrieve_user_permissions import get_user_permissions, has_role
 
 
-def test_has_permissions_returns_true_when_admin_role_grants_every_permission(session, user_factory):
+def test_has_permissions_returns_true_when_admin_role_grants_every_permission(session):
     """An Admin user should pass every ``PermissionRef`` check — Admin is seeded with all of them."""
-    user = user_factory()
-    session.add(user)
-    session.commit()
-    session.add(UserRole(user_id=user.id, role_id=RoleRef.ADMIN.value))
+    user_id = uuid4()
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.ADMIN.value))
     session.commit()
 
     # All permissions, in one call — proves the ALL-required semantics, not just any-one.
-    assert has_permissions(user.id, list(PermissionRef), session) is True
+    assert has_permissions(user_id, list(PermissionRef), session) is True
 
 
-def test_has_permissions_returns_false_when_researcher_lacks_admin_only_permission(session, user_factory):
+def test_has_permissions_returns_false_when_researcher_lacks_admin_only_permission(session):
     """A Researcher has CAN_CREATE_PROJECTS but not CAN_APPROVE_PROJECTS — the deny path."""
-    user = user_factory()
-    session.add(user)
-    session.commit()
-    session.add(UserRole(user_id=user.id, role_id=RoleRef.RESEARCHER.value))
+    user_id = uuid4()
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.RESEARCHER.value))
     session.commit()
 
-    assert has_permissions(user.id, [PermissionRef.CAN_CREATE_PROJECTS], session) is True
-    assert has_permissions(user.id, [PermissionRef.CAN_APPROVE_PROJECTS], session) is False
+    assert has_permissions(user_id, [PermissionRef.CAN_CREATE_PROJECTS], session) is True
+    assert has_permissions(user_id, [PermissionRef.CAN_APPROVE_PROJECTS], session) is False
     # Mixed list must short-circuit to False — a single missing perm denies the whole check.
     assert (
         has_permissions(
-            user.id, [PermissionRef.CAN_CREATE_PROJECTS, PermissionRef.CAN_APPROVE_PROJECTS], session
+            user_id, [PermissionRef.CAN_CREATE_PROJECTS, PermissionRef.CAN_APPROVE_PROJECTS], session
         )
         is False
     )
 
 
-def test_has_permissions_returns_false_for_observer_with_no_seeded_perms(session, user_factory):
+def test_has_permissions_returns_false_for_observer_with_no_seeded_perms(session):
     """Observer is seeded with zero RolePermission rows; any permission check must fail."""
-    user = user_factory()
-    session.add(user)
-    session.commit()
-    session.add(UserRole(user_id=user.id, role_id=RoleRef.OBSERVER.value))
+    user_id = uuid4()
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.OBSERVER.value))
     session.commit()
 
-    assert has_permissions(user.id, [PermissionRef.CAN_CREATE_PROJECTS], session) is False
+    assert has_permissions(user_id, [PermissionRef.CAN_CREATE_PROJECTS], session) is False
 
 
-def test_has_permissions_dedupes_across_multiple_roles(session, user_factory):
+def test_has_permissions_dedupes_across_multiple_roles(session):
     """A user with both Admin and Researcher should still pass — overlapping perms must not break the check."""
-    user = user_factory()
-    session.add(user)
-    session.commit()
+    user_id = uuid4()
     session.add_all(
         [
-            UserRole(user_id=user.id, role_id=RoleRef.ADMIN.value),
-            UserRole(user_id=user.id, role_id=RoleRef.RESEARCHER.value),
+            UserRole(user_id=user_id, role_id=RoleRef.ADMIN.value),
+            UserRole(user_id=user_id, role_id=RoleRef.RESEARCHER.value),
         ]
     )
     session.commit()
 
-    assert has_permissions(user.id, [PermissionRef.CAN_CREATE_PROJECTS], session) is True
+    assert has_permissions(user_id, [PermissionRef.CAN_CREATE_PROJECTS], session) is True
 
 
 def test_has_permissions_returns_false_for_unknown_user(session):
@@ -97,65 +91,55 @@ def test_has_permissions_returns_false_for_unknown_user(session):
     assert has_permissions(uuid4(), [PermissionRef.CAN_CREATE_PROJECTS], session) is False
 
 
-def test_get_user_permissions_returns_permission_rows_for_researcher(session, user_factory):
+def test_get_user_permissions_returns_permission_rows_for_researcher(session):
     """``get_user_permissions`` hydrates the Permission rows themselves, not just IDs."""
-    user = user_factory()
-    session.add(user)
-    session.commit()
-    session.add(UserRole(user_id=user.id, role_id=RoleRef.RESEARCHER.value))
+    user_id = uuid4()
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.RESEARCHER.value))
     session.commit()
 
-    perms = get_user_permissions(user.id, session)
+    perms = get_user_permissions(user_id, session)
 
     assert {p.permission_name for p in perms} == {PermissionRef.CAN_CREATE_PROJECTS.name}
 
 
-def test_get_user_permissions_returns_admin_permissions_deduped(session, user_factory):
+def test_get_user_permissions_returns_admin_permissions_deduped(session):
     """Admin + Researcher in combination must dedupe — CAN_CREATE_PROJECTS appears once, not twice."""
-    user = user_factory()
-    session.add(user)
-    session.commit()
+    user_id = uuid4()
     session.add_all(
         [
-            UserRole(user_id=user.id, role_id=RoleRef.ADMIN.value),
-            UserRole(user_id=user.id, role_id=RoleRef.RESEARCHER.value),
+            UserRole(user_id=user_id, role_id=RoleRef.ADMIN.value),
+            UserRole(user_id=user_id, role_id=RoleRef.RESEARCHER.value),
         ]
     )
     session.commit()
 
-    perms = get_user_permissions(user.id, session)
+    perms = get_user_permissions(user_id, session)
     names = [p.permission_name for p in perms]
 
     assert len(names) == len(set(names)), "Duplicates leak when role permissions overlap"
     assert set(names) == {p.name for p in PermissionRef}
 
 
-def test_get_user_permissions_returns_empty_for_user_without_roles(session, user_factory):
-    """A persisted user with no UserRole rows yields an empty list — the upstream 404 path."""
-    user = user_factory()
-    session.add(user)
+def test_get_user_permissions_returns_empty_for_user_without_roles(session):
+    """A user_id with no UserRole rows yields an empty list — the upstream 404 path."""
+    user_id = uuid4()
+
+    assert get_user_permissions(user_id, session) == []
+
+
+def test_has_role_true_when_user_has_any_role(session):
+    user_id = uuid4()
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.OBSERVER.value))
     session.commit()
 
-    assert get_user_permissions(user.id, session) == []
+    assert has_role(user_id, session) is True
 
 
-def test_has_role_true_when_user_has_any_role(session, user_factory):
-    user = user_factory()
-    session.add(user)
-    session.commit()
-    session.add(UserRole(user_id=user.id, role_id=RoleRef.OBSERVER.value))
-    session.commit()
-
-    assert has_role(user.id, session) is True
-
-
-def test_has_role_false_when_user_has_no_roles(session, user_factory):
+def test_has_role_false_when_user_has_no_roles(session):
     """Distinguishes "user exists, no role" (401/404 path) from "user has perms" (allowed)."""
-    user = user_factory()
-    session.add(user)
-    session.commit()
+    user_id = uuid4()
 
-    assert has_role(user.id, session) is False
+    assert has_role(user_id, session) is False
 
 
 def test_role_permission_seed_contract(session):

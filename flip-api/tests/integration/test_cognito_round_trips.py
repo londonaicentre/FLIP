@@ -15,9 +15,10 @@
 Replaces the all-mocked unit tests for register/delete/update/list users.
 moto's ``cognito-idp`` provider intercepts the boto3 calls that
 ``cognito_helpers`` makes, so the production code path runs end-to-end:
-``register_user`` actually creates a user in the moto pool and a row in the
-Postgres test container; ``delete_user`` actually removes both; ``update_user``
-flips the ``enabled`` flag in the pool and queues XNAT trust tasks.
+``register_user`` actually creates a user in the moto pool and an audit row
+in the Postgres test container; ``delete_user`` actually removes the Cognito
+user, drops role grants, and writes audit; ``update_user`` flips the
+``enabled`` flag in the pool, queues XNAT trust tasks, and writes audit.
 """
 
 from uuid import UUID, uuid4
@@ -27,7 +28,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import select
 
 from flip_api.db.models.main_models import TaskType, TrustTask
-from flip_api.db.models.user_models import RoleRef, User, UserRole
+from flip_api.db.models.user_models import RoleRef, UserRole, UsersAudit
 from tests.integration.conftest import admin_user, override_verify_token_as
 
 
@@ -48,10 +49,10 @@ def _admin_create_user(pool_id: str, email: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def test_register_user_creates_user_in_pool_and_db(
+def test_register_user_creates_user_in_pool_and_writes_audit(
     client: TestClient, session, cognito_user_pool
 ):
-    """Happy path: endpoint creates a Cognito user AND a DB row, returns the sub."""
+    """Happy path: endpoint creates a Cognito user AND writes a 'Registered user' audit row."""
     admin_id = admin_user(session)
     override_verify_token_as(admin_id)
 
@@ -72,9 +73,11 @@ def test_register_user_creates_user_in_pool_and_db(
     }
     assert str(new_user_id) in pool_subs
 
-    db_user = session.exec(select(User).where(User.id == new_user_id)).first()
-    assert db_user is not None
-    assert db_user.email == "newuser@example.com"
+    audit = session.exec(
+        select(UsersAudit).where(UsersAudit.user_id == new_user_id).where(UsersAudit.action == "Registered user")
+    ).first()
+    assert audit is not None
+    assert audit.modified_by_user_id == admin_id
 
 
 def test_register_user_duplicate_email_returns_400(
@@ -96,12 +99,10 @@ def test_register_user_duplicate_email_returns_400(
 
 def test_register_user_403_for_non_admin(client: TestClient, session, cognito_user_pool):
     """Researcher cannot register users — CAN_MANAGE_USERS is admin-only."""
-    user = User(id=uuid4(), email=f"researcher.{uuid4().hex[:8]}@example.com")
-    session.add(user)
+    user_id = uuid4()
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.RESEARCHER.value))
     session.commit()
-    session.add(UserRole(user_id=user.id, role_id=RoleRef.RESEARCHER.value))
-    session.commit()
-    override_verify_token_as(user.id)
+    override_verify_token_as(user_id)
 
     response = client.post(
         "/api/users/",
@@ -116,11 +117,16 @@ def test_register_user_403_for_non_admin(client: TestClient, session, cognito_us
 # ---------------------------------------------------------------------------
 
 
-def test_delete_user_removes_user_from_pool(client: TestClient, session, cognito_user_pool):
-    """Endpoint must remove the user from the Cognito pool."""
+def test_delete_user_removes_user_from_pool_and_drops_role_grants(
+    client: TestClient, session, cognito_user_pool
+):
+    """Endpoint must remove the user from Cognito, drop user_role rows, and write audit."""
     admin_id = admin_user(session)
     override_verify_token_as(admin_id)
     sub = _admin_create_user(cognito_user_pool["pool_id"], "delete.me@example.com")
+    # Pre-seed a role grant so we can assert it's dropped on delete.
+    session.add(UserRole(user_id=UUID(sub), role_id=RoleRef.RESEARCHER.value))
+    session.commit()
 
     response = client.delete(f"/api/users/{sub}")
     assert response.status_code == 200, response.text
@@ -132,6 +138,15 @@ def test_delete_user_removes_user_from_pool(client: TestClient, session, cognito
         for u in remaining
     }
     assert sub not in remaining_subs
+
+    leftover_roles = session.exec(select(UserRole).where(UserRole.user_id == UUID(sub))).all()
+    assert leftover_roles == []
+
+    audit = session.exec(
+        select(UsersAudit).where(UsersAudit.user_id == UUID(sub)).where(UsersAudit.action == "Deleted user")
+    ).first()
+    assert audit is not None
+    assert audit.modified_by_user_id == admin_id
 
 
 # ---------------------------------------------------------------------------
@@ -191,20 +206,15 @@ def test_update_user_queues_xnat_profile_task(
 # ---------------------------------------------------------------------------
 
 
-def test_get_users_returns_pool_members_joined_with_db_rows(
-    client: TestClient, session, cognito_user_pool
-):
-    """The endpoint joins Cognito's ListUsers output with the DB; both ends must round-trip."""
+def test_get_users_returns_pool_members(client: TestClient, session, cognito_user_pool):
+    """``GET /api/users`` reads from Cognito; identity is sourced from the pool, not the DB."""
     admin_id = admin_user(session)
     override_verify_token_as(admin_id)
 
     pool_id = cognito_user_pool["pool_id"]
     seeded_emails = ["alice@example.com", "bob@example.com", "carol@example.com"]
     for email in seeded_emails:
-        sub = _admin_create_user(pool_id, email)
-        # ``get_users`` joins on the DB; without a row the user is filtered out.
-        session.add(User(id=UUID(sub), email=email, enabled=True))
-    session.commit()
+        _admin_create_user(pool_id, email)
 
     response = client.get("/api/users")
     assert response.status_code == 200, response.text

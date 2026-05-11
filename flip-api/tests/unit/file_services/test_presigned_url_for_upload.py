@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import logging
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -21,6 +22,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.config import Settings
 from flip_api.db.database import get_session
 from flip_api.main import app
+from tests.unit._log_policy import _FAKE_SIGNED_URL, _assert_logs_have_no_presigned_url
 
 # A fixed user / model pair keeps assertion strings stable across runs.
 _USER_ID = uuid.uuid4()
@@ -42,6 +44,9 @@ def override_auth_dependencies():
 @pytest.fixture
 def mocked_settings():
     """Pin the bucket and the size cap so test assertions are exact."""
+    # Use an ``s3://`` prefix so ``parse_s3_path`` exercises the same code
+    # path as production — without the scheme, ``urlparse`` sets ``netloc=""``
+    # and the production parser would silently emit ``bucket=`` empty.
     settings = Settings(
         UPLOADED_MODEL_FILES_BUCKET="s3://test-uploaded-bucket/uploads",
         MAX_MODEL_FILE_BYTES=1234,
@@ -206,3 +211,96 @@ def test_endpoint_returns_422_for_non_uuid_model_id(
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
     mock_s3_client.get_put_presigned_post.assert_not_called()
+
+
+def test_endpoint_rejects_path_traversal_filename(
+    override_auth_dependencies, mocked_settings, mock_s3_client
+):
+    """The ``fileName`` validator must short-circuit before any S3 call."""
+    response = client.post(
+        f"/api/files/preSignedUrl/model/{_MODEL_ID}",
+        json={"fileName": "../escape.bin"},
+    )
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY, response.text
+    mock_s3_client.get_put_presigned_post.assert_not_called()
+
+
+def test_endpoint_success_path_does_not_log_signed_url(
+    caplog, override_auth_dependencies, mocked_settings, mock_s3_client
+):
+    """The success path must never log the policy's signed URL or fields."""
+    caplog.set_level(logging.DEBUG, logger="uvicorn")
+    mock_session = override_auth_dependencies
+    _existing_model(mock_session)
+
+    # Have the mocked policy return a realistic SigV4-style URL so the
+    # log-policy assertion exercises the same surface as production.
+    mock_s3_client.get_put_presigned_post.return_value = {
+        "url": _FAKE_SIGNED_URL,
+        "fields": {"Content-Type": "application/octet-stream"},
+    }
+
+    with patch(
+        "flip_api.file_services.presigned_url_for_upload.can_modify_model",
+        return_value=True,
+    ):
+        response = client.post(
+            f"/api/files/preSignedUrl/model/{_MODEL_ID}",
+            json={"fileName": "weights.bin"},
+        )
+
+    assert response.status_code == status.HTTP_200_OK, response.text
+    _assert_logs_have_no_presigned_url(caplog.records)
+
+
+def test_endpoint_redacts_url_when_s3_raises(
+    caplog, override_auth_dependencies, mocked_settings, mock_s3_client
+):
+    """If ``S3Client.get_put_presigned_post`` raises with a URL embedded in the
+    exception message, the route's error handler must not leak it to the log.
+
+    Exception paths evolve more often than happy paths, so pin redaction here
+    even though boto's own ``ClientError`` does not carry the URL today.
+    """
+    caplog.set_level(logging.DEBUG, logger="uvicorn")
+    mock_session = override_auth_dependencies
+    _existing_model(mock_session)
+    mock_s3_client.get_put_presigned_post.side_effect = Exception(_FAKE_SIGNED_URL)
+
+    with patch(
+        "flip_api.file_services.presigned_url_for_upload.can_modify_model",
+        return_value=True,
+    ):
+        response = client.post(
+            f"/api/files/preSignedUrl/model/{_MODEL_ID}",
+            json={"fileName": "weights.bin"},
+        )
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR, response.text
+    assert _FAKE_SIGNED_URL not in response.text
+    _assert_logs_have_no_presigned_url(caplog.records)
+
+
+def test_endpoint_redacts_url_when_unhandled_error(
+    caplog, override_auth_dependencies, mocked_settings, mock_s3_client
+):
+    """The outer ``except Exception`` must not leak a URL via ``logger.error``.
+
+    Force the access check to raise with a URL in the message — without the
+    redaction in place this would land in the unhandled-error log line.
+    """
+    caplog.set_level(logging.DEBUG, logger="uvicorn")
+
+    with patch(
+        "flip_api.file_services.presigned_url_for_upload.can_modify_model",
+        side_effect=Exception(_FAKE_SIGNED_URL),
+    ):
+        response = client.post(
+            f"/api/files/preSignedUrl/model/{_MODEL_ID}",
+            json={"fileName": "weights.bin"},
+        )
+
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR, response.text
+    assert _FAKE_SIGNED_URL not in response.text
+    _assert_logs_have_no_presigned_url(caplog.records)

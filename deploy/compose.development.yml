@@ -82,6 +82,11 @@ services:
       # Settings.ENFORCE_MFA defaults to True elsewhere. Flip to `true`
       # here (and `make restart`) to test the MFA flow end-to-end locally.
       - ENFORCE_MFA=false
+      # Settings.LOG_LEVEL defaults to INFO so unknown environments emit
+      # at INFO. Local dev defaults to DEBUG when LOG_LEVEL is unset
+      # (override via LOG_LEVEL in .env.development) so debug-level
+      # diagnostics are still visible during development.
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - DEBUG=${DEBUG}
       - AWS_PROFILE=${AWS_PROFILE}
       - AWS_REGION=${AWS_REGION}
