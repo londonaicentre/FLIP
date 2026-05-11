@@ -38,8 +38,16 @@ locals {
   # through the module output (not the variable) so a future bucket rename
   # only has to land in one place.
   #
-  # After the split, FL results live in their own purpose-built bucket — no
-  # `/uploaded_federated_data` prefix needed any more.
+  # After the split, FL results live in their own purpose-built bucket. The
+  # ECS task env below pins fl-server / flip-api to the `${bucket}/results`
+  # path, not the bucket root, as a workaround for a leading-slash bug in
+  # the FL package's S3 upload path-construction
+  # (flip-fl-base/flip/core/standard.py:415-427: when `urlparse(bucket).path`
+  # is empty, the concatenation `f"{prefix}/{key}"` produces `/<key>` with
+  # a literal leading slash, so flip-api's `list_objects_v2(Prefix=<model_id>)`
+  # never matches the keys fl-server actually uploads). Removing this
+  # workaround requires patching flip-fl-base, rebuilding fl-server, and
+  # redeploying — see PR description on FLIP#465 for the long-term fix path.
   flip_model_files_uploads_bucket_uri = "s3://${module.flip_model_files_uploads_bucket.bucket_id}"
   flip_fl_results_bucket_uri          = "s3://${module.flip_fl_results_bucket.bucket_id}"
   flip_app_bundles_bucket_uri         = "s3://${module.flip_app_bundles_bucket.bucket_id}"
@@ -52,14 +60,14 @@ locals {
       ENV                            = "production"
       AWS_REGION                     = var.AWS_REGION
       AWS_SECRET_NAME                = "FLIP_API" # pragma: allowlist secret
-      UPLOADED_FEDERATED_DATA_BUCKET = local.flip_fl_results_bucket_uri
+      UPLOADED_FEDERATED_DATA_BUCKET = "${local.flip_fl_results_bucket_uri}/results"
     }
     fl_server = {
       LOCAL_DEV                      = "false"
       NET_ID                         = "net-1"
       MIN_CLIENTS                    = tostring(var.MIN_CLIENTS)
       IMAGES_DIR                     = "/app/data/images"
-      UPLOADED_FEDERATED_DATA_BUCKET = local.flip_fl_results_bucket_uri
+      UPLOADED_FEDERATED_DATA_BUCKET = "${local.flip_fl_results_bucket_uri}/results"
       FLIP_API_INTERNAL_URL          = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
     }
     fl_api = {
