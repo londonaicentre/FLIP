@@ -180,33 +180,48 @@ migrate-flip-bucket: ## One-time: sync legacy flip_bucket prefixes into the thre
 	## Destination buckets: $${FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME}, $${FLIP_FL_RESULTS_BUCKET_NAME}, $${FLIP_APP_BUNDLES_BUCKET_NAME}
 	##
 	## Sequencing: (1) `make apply` provisions the new buckets, (2) this target copies
-	## prefixes into them, (3) redeploy with the new env vars, (4) smoke-test, (5) after
-	## a 24-48h cooldown manually decommission the old bucket with:
+	## prefixes into them, (3) `make verify-flip-bucket-migration` parity-checks, (4) redeploy
+	## with the new env vars, (5) smoke-test, (6) after a 24-48h cooldown manually decommission
+	## the old bucket with:
 	##     terraform state rm aws_s3_bucket.flip_bucket   # `prevent_destroy = true` blocks normal destroys
-	##     aws s3 rb s3://$${FLIP_BUCKET_NAME} --force    # only after `aws s3 ls` confirms it is empty
+	##     aws s3 rb s3://$${FLIP_BUCKET_NAME} --force    # only after `make verify-flip-bucket-migration` is green
 	##
-	## Idempotent: `aws s3 sync` skips files already present at the destination.
+	## Safe to re-run: `aws s3 sync` re-copies any source object whose mtime/size differs
+	## from the destination, and skips matching ones. Per-object failures (KMS grant gaps,
+	## throttling) do NOT cause `aws s3 sync` to exit non-zero — always finish with
+	## `make verify-flip-bucket-migration` before trusting that the migration completed.
 	@if [ -z "$(FLIP_BUCKET_NAME)" ]; then \
 		echo "❌ FLIP_BUCKET_NAME is not set in $(MAIN_ENV_FILE) — nothing to migrate from."; exit 1; \
 	fi
 	@echo "📦 Migrating contents of s3://$(FLIP_BUCKET_NAME) into the three split buckets ..."
 	@echo "  • model file uploads → s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/"
-	@AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+	@aws s3 sync \
 		s3://$(FLIP_BUCKET_NAME)/model_files/uploaded/ \
 		s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/
 	@echo "  • FL results     → s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/"
-	@AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+	@aws s3 sync \
 		s3://$(FLIP_BUCKET_NAME)/uploaded_federated_data/ \
 		s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/
 	@echo "  • FL base apps   → s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/base-application/"
-	@AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+	@aws s3 sync \
 		s3://$(FLIP_BUCKET_NAME)/base-application/ \
 		s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/base-application/
 	@echo "  • FL app dests   → s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/"
-	@AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
+	@aws s3 sync \
 		s3://$(FLIP_BUCKET_NAME)/app_destination_bucket/ \
 		s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/
-	@echo "✅ migrate-flip-bucket complete. Run \`aws s3 ls --recursive\` on source vs destinations to verify parity before decommissioning."
+	@echo "📦 Sync calls complete. Run \`make verify-flip-bucket-migration\` to confirm parity before decommissioning."
+
+
+.PHONY: verify-flip-bucket-migration
+verify-flip-bucket-migration: ## Parity-check the four migrated prefixes (every src key must exist on dst; extras on dst are fine)
+	## Why this exists: `aws s3 sync` returns exit code 0 even when individual object copies
+	## fail (per-object AccessDenied / throttling / RequestTimeout), so the migrate target's
+	## green banner is not enough to safely decommission the source bucket. The companion
+	## script computes a key-set subset check — every source key must exist on the
+	## destination. Keys present only on destination (e.g. researcher uploads landing on the
+	## new bucket after the env-var cutover) are reported but do not fail.
+	@bash scripts/verify-flip-bucket-migration.sh
 
 
 .PHONY: force-unlock

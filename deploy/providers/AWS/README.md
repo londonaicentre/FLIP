@@ -128,6 +128,10 @@ aws s3 rm s3://<legacy-bucket-name> --recursive   # then `aws s3 rb` once empty
 
 The `removed { destroy = false }` blocks in `services.tf` drop the legacy bucket from Terraform state on the first apply **without** destroying the AWS resource — that's what lets `make migrate-flip-bucket` run against the still-live source. There is a brief window between `make apply` finishing and `make deploy-centralhub` finishing where flip-api's IAM no longer grants the legacy bucket but its env vars still point at it — every S3 call returns 403 during that window (~5 minutes). To eliminate it, temporarily add the legacy bucket back to the IAM grant for the duration of the deploy, then strip it in a follow-up apply.
 
+> **Stag-specific pre-flight.** Stag's Terraform state is known to be missing live resources (see internal notes), so the `removed` blocks will plan as no-ops on stag if `aws_s3_bucket.flip_bucket` was never registered there. The next stag apply will then try to *create* whatever `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` points to — if that's accidentally set to the legacy bucket name, the apply fails on `BucketAlreadyOwnedByYou`. **Run `make import-persistent` against stag before `make apply`** so the legacy resources land in state first and the `removed` blocks do their intended drop.
+
+> **Verify before decommissioning.** `aws s3 sync` exits 0 even when individual object copies fail (per-object KMS / throttle / timeout errors print to stderr but don't fail the sync). After running `make migrate-flip-bucket`, always run `make verify-flip-bucket-migration` — it counts objects per prefix on both sides and exits non-zero on any mismatch. Do not run `aws s3 rb` on the legacy bucket until that target prints all-✅.
+
 Once a decommission is complete in every environment, drop the `FLIP_BUCKET_NAME` line from `.env.*`, the `removed` blocks in `services.tf`, and the `migrate-flip-bucket` Makefile target in a follow-up PR.
 
 ### Manual Step-by-Step Deployment

@@ -24,6 +24,34 @@ log_info "Importing persistent resources..."
 # bucket-keyed in S3.
 echo ""
 log_info "1️⃣  FLIP application S3 buckets..."
+# Snapshot of terraform state addresses, refreshed lazily inside the helper.
+# `terraform state list` is moderately expensive; we capture it once per
+# `import_flip_bucket` call so multiple sub-resource probes share the read.
+_tf_state_list=""
+
+_refresh_tf_state_list() {
+    _tf_state_list="$(terraform state list 2>/dev/null || true)"
+}
+
+# Probe state first, then import only on miss. Real `terraform import` errors
+# (wrong address, AWS permission denied, expired credentials, state-lock
+# contention) propagate via `set -e` — the previous `2>/dev/null || log_success`
+# pattern silently swallowed all of those and made the script's idempotent-import
+# contract a lie.
+_import_if_missing() {
+    local addr="$1"
+    local import_id="$2"
+    local description="$3"
+
+    if printf '%s\n' "$_tf_state_list" | grep -qxF "$addr"; then
+        log_success "$description already in state"
+        return
+    fi
+    log_info "Importing $description ..."
+    terraform import "$addr" "$import_id"
+    log_success "$description imported"
+}
+
 import_flip_bucket() {
     # $1 = module label (e.g. flip_model_files_uploads_bucket)
     # $2 = bucket name (from env)
@@ -39,24 +67,29 @@ import_flip_bucket() {
         return
     fi
 
-    if ! aws_cmd s3api head-bucket --bucket "$bucket_name" 2>/dev/null; then
-        log_warn "$description ($bucket_name): does not exist in AWS yet — Terraform will create it"
-        return
-    fi
+    # Distinguish "bucket does not exist" (404) from "I can't see it" (403).
+    # Without this, a permissions gap looks identical to a never-created bucket
+    # and the script would skip the import, after which `terraform apply` would
+    # try to create the existing bucket and fail on BucketAlreadyOwnedByYou.
+    local head_stderr
+    head_stderr="$(aws_cmd s3api head-bucket --bucket "$bucket_name" 2>&1 >/dev/null)" || {
+        if printf '%s' "$head_stderr" | grep -qE "Not Found|404"; then
+            log_warn "$description ($bucket_name): does not exist in AWS yet — Terraform will create it"
+            return
+        fi
+        log_error "$description ($bucket_name): head-bucket failed — fix this before re-running:"
+        printf '%s\n' "$head_stderr" >&2
+        return 1
+    }
 
     log_success "$description: found $bucket_name"
-    terraform import "module.${module_label}.aws_s3_bucket.this" "$bucket_name" 2>/dev/null \
-        || log_success "$description bucket (already in state)"
-    terraform import "module.${module_label}.aws_s3_bucket_public_access_block.this" "$bucket_name" 2>/dev/null \
-        || log_success "$description public access block"
-    terraform import "module.${module_label}.aws_s3_bucket_server_side_encryption_configuration.this" "$bucket_name" 2>/dev/null \
-        || log_success "$description SSE config"
-    terraform import "module.${module_label}.aws_s3_bucket_versioning.this" "$bucket_name" 2>/dev/null \
-        || log_success "$description versioning"
-    # CORS sub-resource only exists when cors_methods is non-empty in the module call.
+    _refresh_tf_state_list
+    _import_if_missing "module.${module_label}.aws_s3_bucket.this" "$bucket_name" "$description bucket"
+    _import_if_missing "module.${module_label}.aws_s3_bucket_public_access_block.this" "$bucket_name" "$description public access block"
+    _import_if_missing "module.${module_label}.aws_s3_bucket_server_side_encryption_configuration.this" "$bucket_name" "$description SSE config"
+    _import_if_missing "module.${module_label}.aws_s3_bucket_versioning.this" "$bucket_name" "$description versioning"
     if [ "$has_cors" = "yes" ]; then
-        terraform import "module.${module_label}.aws_s3_bucket_cors_configuration.this[0]" "$bucket_name" 2>/dev/null \
-            || log_success "$description CORS"
+        _import_if_missing "module.${module_label}.aws_s3_bucket_cors_configuration.this[0]" "$bucket_name" "$description CORS"
     fi
 }
 

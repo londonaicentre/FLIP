@@ -97,7 +97,8 @@ services:
       # the matching note in compose.production.yml for the FLIP#24 incident
       # that surfaced this. Regional endpoints never have this lag and are
       # AWS's recommended path for non-us-east-1 buckets anyway.
-      - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION}.amazonaws.com
+      # See compose.production.yml for the `:?` rationale (load-bearing guard).
+      - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
       - POSTGRES_USER=${POSTGRES_USER}

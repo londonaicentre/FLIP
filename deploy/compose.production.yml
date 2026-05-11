@@ -39,7 +39,12 @@ services:
       # the new uploads bucket until propagation completed. Regional endpoints
       # never have this lag and are AWS's recommended path for non-us-east-1
       # buckets anyway.
-      - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION}.amazonaws.com
+      # `:?` makes docker compose abort if AWS_REGION is empty — without the
+      # guard the URL becomes `https://s3..amazonaws.com` and boto3 fails late
+      # at request time with an opaque EndpointConnectionError, which is
+      # exactly the kind of CORS-preflight-failure surprise this env var is
+      # supposed to prevent.
+      - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
       - POSTGRES_USER=${POSTGRES_USER}

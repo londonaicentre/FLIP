@@ -27,7 +27,8 @@
 # CORS change to widen across every consumer. Splitting into three buckets
 # gives each tenant the minimum CORS surface it needs:
 #
-#   - flip-model-files-uploads: CORS POST (browser presigned upload)
+#   - flip-model-files-uploads: CORS PUT today; narrows to POST once #438 lands
+#     (see the per-module comment below for the dependency)
 #   - flip-fl-results: CORS GET (browser presigned download)
 #   - flip-app-bundles: no CORS resource (server-only, never browser-direct)
 #
