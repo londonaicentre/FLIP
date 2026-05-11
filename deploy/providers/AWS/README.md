@@ -171,6 +171,8 @@ Two stag-specific watch-outs:
 
 For a **future fresh prod or dev** account that needs the same migration, the flow is the stag runbook above minus step 1 (`make import-persistent` is only needed on environments with the stag-style state gap) and with `PROD=true` on every `make` call for prod (dev uses the separate `deploy/providers/AWS/dev/` Terraform root, no `PROD=` flag).
 
+> **Do not `aws s3 rb s3://flipdev` on the legacy dev bucket.** The `test-data/` prefix in there (~42 objects) is consumed by `flip-fl-base` and `flip-fl-base-flower` (their CI fixtures), so it is outside the scope of the FLIP#24 migration and must survive. Either leave the `flipdev` bucket alive solely for `test-data/`, or move `test-data/` to a dedicated bucket and update both FL-base repos' references in lockstep before any `aws s3 rb`. The same constraint may apply to a `test-data/` prefix in `flipstag` / `flipprod` if one exists — check with `aws s3 ls s3://flipstag/test-data/` before decommissioning either.
+
 Once a decommission is complete in every environment, drop the `FLIP_BUCKET_NAME` line from `.env.*`, the `removed` blocks in `services.tf`, and the `migrate-flip-bucket` / `verify-flip-bucket-migration` Makefile targets in a follow-up PR.
 
 ### Manual Step-by-Step Deployment
