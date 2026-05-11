@@ -255,7 +255,7 @@ make destroy
 The RDS instance behaves differently per environment, driven by `TF_VAR_environment`:
 
 | Setting                            | `stag` (default) | `prod` (`PROD=true`)              |
-|------------------------------------|------------------|-----------------------------------|
+| ------------------------------------ | ------------------ | ----------------------------------- |
 | `skip_final_snapshot`              | `true`           | `false`                           |
 | `deletion_protection`              | `false`          | `true`                            |
 | `final_snapshot_identifier_prefix` | `flip-database-final` | `flip-database-final`        |
@@ -572,7 +572,7 @@ Both aliases resolve through the SSM tunnel — no public IP or open port 22 is 
 **Troubleshooting SSM Access**
 
 | Problem | Diagnostics | Solution |
-|---------|-------------|----------|
+| --------- | ------------- | ---------- |
 | `Unable to locate credentials` | `aws sts get-caller-identity` returns error | Run `aws sso login --profile $AWS_PROFILE` to refresh session |
 | `SessionManagerPlugin not found` | `command -v session-manager-plugin` returns nothing | Install plugin: `brew install session-manager-plugin` (macOS) or see prerequisites above |
 | `[ERROR] SessionManagerPlugin is not installed` | Session manager plugin is missing or outdated | Upgrade plugin: `brew upgrade session-manager-plugin` or download latest version |
@@ -693,7 +693,7 @@ After deploying, test that emails are delivered correctly by using the **Registe
 ### Email Client Compatibility
 
 | Client | Support | Notes |
-|--------|---------|-------|
+| -------- | --------- | ------- |
 | Gmail Web | Full | CSS gradients supported |
 | Outlook Web | Full | CSS gradients with fallback |
 | Apple Mail | Full | Dark mode compatible |
@@ -714,7 +714,7 @@ Before testing emails:
 ### Troubleshooting Email Issues
 
 | Issue | Solution |
-|-------|----------|
+| ------- | ---------- |
 | Email gradients don't render | Most clients support gradients; solid color fallback in template |
 | Button not clickable | Some clients disable links for security; check email client settings |
 | Text wraps awkwardly | Tables use responsive max-width: 600px (standard) |

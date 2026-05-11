@@ -221,6 +221,11 @@ apply: ## Apply Terraform configuration to update AWS infrastructure (with envir
 	@echo "🛠️ Applying Terraform configuration..."
 	@terraform apply plan.tfplan
 
+.PHONY: import-cloudfront
+import-cloudfront: ## Import existing CloudFront distribution into terraform state
+	@echo "🔗 Importing existing CloudFront distribution..."
+	@terraform import aws_cloudfront_distribution.flip_ui E31HHLGOWBDENB
+
 .PHONY: forward-trust
 forward-trust: ## SSM port-forward all Trust web UIs and API swagger docs (Ctrl+C to stop)
 	@bash scripts/forward-trust-all.sh

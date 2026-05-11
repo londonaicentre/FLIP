@@ -3,7 +3,7 @@
 ## Documentation Index (read on demand)
 
 | File | Topic |
-|------|-------|
+| ------ | ------- |
 | `source/1_overview.rst` | Project overview, architecture, motivation |
 | `source/2_components.rst` | Component descriptions (API, UI, trust services, FL nodes) |
 | `source/3_sys-admin.rst` | System administration, deployment, auth configuration |
@@ -15,7 +15,7 @@
 ## Sub-docs
 
 | File | Topic |
-|------|-------|
+| ------ | ------- |
 | `source/components/component-fl-nodes.rst` | FL training nodes (NVFLARE/Flower) |
 | `source/components/component-user-roles.rst` | User roles and permissions |
 | `source/user-guides/` | User guide files |

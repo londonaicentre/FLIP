@@ -82,7 +82,7 @@ kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api
 ### Global Settings
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
+| ----------- | --------- | ------------- |
 | `trustName` | `Trust_1` | Name of this trust institution |
 | `trustNumber` | `1` | Numeric identifier for this trust |
 | `environment` | `production` | Deployment environment (production, stag, dev) |
@@ -96,7 +96,7 @@ kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api
 ### Secrets
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
+| ----------- | --------- | ------------- |
 | `secrets.create` | `false` | Whether the chart creates a Secret resource |
 | `secrets.existingName` | `flip-trust-secrets` | Name of existing Secret |
 | `secrets.data.*` | `""` | Secret key-value pairs (base64 encoded) |
@@ -128,7 +128,7 @@ serviceName:
 Available services:
 
 | Service Block | Description | Stateful? |
-|---------------|-------------|-----------|
+| --------------- | ------------- | ----------- |
 | `trustApi` | API gateway, polls Central Hub | No |
 | `imagingApi` | DICOM image retrieval | No |
 | `dataAccessApi` | OMOP database queries | No |
@@ -224,7 +224,7 @@ The following keys must be present in the Secret (either created by the chart
 with `secrets.create=true` or pre-created externally):
 
 | Secret Key | Used By | Description |
-|-----------|---------|-------------|
+| ----------- | --------- | ------------- |
 | `aes-key-base64` | trust-api, imaging-api, data-access-api | AES-256 encryption key (base64) |
 | `trust-api-key` | trust-api | API key for hub authentication |
 | `trust-internal-service-key-header` | trust-api, imaging-api, data-access-api | Header name for trust-internal auth |
@@ -319,7 +319,7 @@ The chart is validated in CI via:
 ### Pods stuck in Pending
 
 | Cause | Check | Fix |
-|-------|-------|-----|
+| ------- | ------- | ----- |
 | **PVC binding** | `kubectl describe pod <name> -n <ns>` — look for `FailedBinding` events | Ensure a default StorageClass exists or set `persistence.storageClassName` per service. For ReadWriteMany volumes (shared-images), verify the cluster has a RWX-capable provisioner (e.g., EFS, Longhorn, NFS). |
 | **Resource limits** | Pod requests may exceed node capacity | Check node resources: `kubectl describe nodes`. Reduce `resources.requests` or add worker nodes. |
 | **GPU unschedulable** | `kubectl describe pod <fl-client>` shows `nvidia.com/gpu` in `Status` | Verify NVIDIA GPU Operator is installed. Check node labels: `kubectl get nodes -o json \| jq '.items[].metadata.labels' \| grep nvidia` |
@@ -328,7 +328,7 @@ The chart is validated in CI via:
 ### Pods in CrashLoopBackOff
 
 | Cause | Check | Fix |
-|-------|-------|-----|
+| ------- | ------- | ----- |
 | **Missing secrets** | `kubectl logs <pod> -n <ns>` shows auth/connection errors | Verify the Secret exists: `kubectl get secret -n <ns>`. Compare keys against the [Secrets Reference](#secrets-reference). |
 | **Bad env vars** | `kubectl exec <pod> -n <ns> -- env` shows empty/wrong URLs | Check ConfigMap values. For trust-api, verify `CENTRAL_HUB_API_URL` is reachable. |
 | **DB unreachable** | trust-api / imaging-api logs show DB connection errors | If using external DB: verify `external.host:port` is correct and firewall allows. For in-cluster DB: check the StatefulSet pod is running. |
@@ -354,7 +354,7 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 ### XNAT takes very long to start
 
 | Cause | Check | Fix |
-|-------|-------|-----|
+| ------- | ------- | ----- |
 | **Heap too small** | `kubectl logs <xnat-web-pod> -n <ns>` shows GC/OutOfMemoryError | Increase `xnat.web.env.XNAT_MAX_HEAP` (default `3072m`). For large datasets, set to `4096m` or higher. |
 | **DB init** | Postgres init on first deploy loads schema | First start can take 2-5 minutes. Check `xnat-db` pod for `pg_isready` success. |
 | **Plugin loading** | XNAT loads plugins at startup | No workaround — plugins are image-baked. Each plugin adds ~30s startup time. |
@@ -363,10 +363,12 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 ### Orthanc / OMOP init job fails
 
 **Orthanc**:
+
 - Check `orthanc-registered-users` secret — must be valid JSON. Test with `echo '<value>' | python3 -m json.tool`.
 - Orthanc uses SQLite embedded DB — `replicas` must stay at 1. The PVC is `ReadWriteOnce`.
 
 **OMOP init job** (`omop-db-init-job`):
+
 - The init Job is a Helm `post-install,post-upgrade` hook that downloads and restores OMOP data from S3.
 - If the Job fails: check `s3-bucket` and `s3-path` values. Verify `s3-access-key-id` / `s3-secret-access-key` in the Secret.
 - PVC name must match the StatefulSet's `volumeClaimTemplates` — the Job expects a PVC named `<release-name>-omop-db-data`.
@@ -375,9 +377,10 @@ Symptoms: trust-api can't reach imaging-api or data-access-api (connection timeo
 ### Getting help
 
 If the above doesn't resolve your issue, please open a GitHub issue at:
-https://github.com/londonaicentre/FLIP/issues/new
+<https://github.com/londonaicentre/FLIP/issues/new>
 
 Include:
+
 - `helm version` and `kubectl version` output
 - `kubectl describe pod -n <ns>` for the affected pod(s)
 - `kubectl logs -n <ns> <pod-name>` output (redact secrets)

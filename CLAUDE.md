@@ -33,7 +33,7 @@ Service-specific details are in `flip-api/CLAUDE.md`, `trust/CLAUDE.md`, `trust/
 ## Tech Stack
 
 | Layer | Technology |
-|-------|-----------|
+| ------- | ----------- |
 | Backend APIs | Python 3.12+, FastAPI, SQLAlchemy/SQLModel, Pydantic |
 | Frontend | Vue 3, TypeScript, Vite, TailwindCSS, Pinia |
 | Database | PostgreSQL (asyncpg) |
@@ -128,6 +128,7 @@ make -C flip-api generate-trust-key TRUST_NAME=Trust_1  # Single trust key
 ### Always Use Make Commands
 
 When a Makefile target exists, always use it instead of raw commands. Make targets encapsulate correct flags, environment setup, and command sequences:
+
 - `make test` instead of raw ruff + mypy + pytest
 - `make build` instead of raw docker compose build
 - `make up`/`make down` instead of raw docker compose
@@ -135,6 +136,7 @@ When a Makefile target exists, always use it instead of raw commands. Make targe
 ### Always Verify Changes
 
 After code changes, run verification before committing:
+
 1. Identify affected services.
 2. Run service-level test: `make test` (or `make unit_test` if no Docker).
 3. For cross-service changes, run root-level: `make unit_test`.
@@ -146,7 +148,7 @@ After code changes, run verification before committing:
 After changes, evaluate if docs need updating:
 
 | Change Type | Documentation to Review |
-|-------------|------------------------|
+| ------------- | ------------------------ |
 | New service/component | `README.md`, `CONTRIBUTING.md`, `docs/source/2_components.rst` |
 | New API endpoints | `docs/source/5_api_reference.rst`, service `README.md` |
 | Changed env vars | `.env.development.example`, `CONTRIBUTING.md`, `docs/source/3_sys-admin.rst` |
@@ -161,6 +163,7 @@ After changes, evaluate if docs need updating:
 ## Code Style & Conventions
 
 ### Python
+
 - Line length: 120. Linter: Ruff (`select = ['I', 'F', 'E', 'W', 'PT']`). Type checker: mypy.
 - Docstrings: Google style. Naming: snake_case. Imports: alphabetically sorted.
 - Source layout: `src/[service_name]/`. Tests: `tests/unit/`, `tests/integration/`.
@@ -168,11 +171,13 @@ After changes, evaluate if docs need updating:
 - Dependency injection: FastAPI `Depends()`. Async DB: asyncpg with async context managers.
 
 ### JavaScript/TypeScript (flip-ui)
+
 - Line length: 120. Linter: ESLint + TypeScript + Vue plugins.
 - Components: PascalCase in `src/partials/` (reusable) and `src/pages/`.
 - State: Pinia stores in `src/stores/`. Icons: Heroicons.
 
 ### General
+
 - All files include Apache 2.0 copyright header.
 - Commits must be signed off (DCO): `git commit -s`
 - PRs target `develop`. Branch naming: `[ticket_id]-[task_name]`.
@@ -187,6 +192,7 @@ After changes, evaluate if docs need updating:
 6. `make create-networks`
 
 ### Key Environment Variables
+
 - `FL_BACKEND` — `flower` (default) or `nvflare`
 - `PROD` — `true` (production), `stag` (staging), unset (development)
 - `AES_KEY_BASE64` — encryption key for trust communication
@@ -252,10 +258,12 @@ TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict marker
 **Generating keys.** `make generate-trust-internal-service-keys` (wrapper for `flip-api/src/flip_api/scripts/generate_trust_internal_service_keys.py`) populates `TRUST_INTERNAL_SERVICE_KEYS` in the env file, preserving any keys that already exist. Add `--force` to rotate.
 
 **Per-service code.** The auth check lives in each receiving service's `utils/internal_auth.py`:
+
 - `trust/imaging-api/imaging_api/utils/internal_auth.py` — applied at the router level on every imaging-api router except `/health`.
 - `trust/data-access-api/data_access_api/utils/internal_auth.py` — applied at the router level on `/cohort` (covers `/cohort`, `/cohort/dataframe`, `/cohort/accession-ids`).
 
 The senders construct the header inline at call sites:
+
 - `trust-api/trust_api/services/task_handlers.py::_trust_internal_headers()` — used on outbound imaging-api and data-access-api calls.
 - `imaging-api/imaging_api/services_external/data_access.py` — used on the outbound `/cohort/accession-ids` call.
 - The [`flip` Python package](https://github.com/londonaicentre/flip-fl-base/tree/main/flip) — lives in `flip-fl-base` and is consumed by both the NVFLARE (`flip-fl-base`) and Flower (`flip-fl-base-flower`) fl-client / fl-server images. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth. Adding the header to these wrappers is a single follow-up PR in `flip-fl-base`, required before this branch can ship a working trust deployment.
@@ -273,7 +281,7 @@ The senders construct the header inline at call sites:
 ## Related Repositories
 
 | Repository | Purpose |
-|-----------|---------|
+| ----------- | --------- |
 | [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo |
 | [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | NVIDIA FLARE base library |
 | [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower base library |
@@ -281,6 +289,7 @@ The senders construct the header inline at call sites:
 ## Documentation Files
 
 Key docs (read on demand):
+
 - Auth/deployment: `docs/source/3_sys-admin.rst`
 - Components: `docs/source/2_components.rst`
 - API reference: `docs/source/5_api_reference.rst`

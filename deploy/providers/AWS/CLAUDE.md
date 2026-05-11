@@ -3,7 +3,7 @@
 ## Terraform Files
 
 | File | Resources |
-|------|-----------|
+| ------ | ----------- |
 | `main.tf` | Provider config, VPC, subnets, IGW, NAT, route tables |
 | `services.tf` | RDS, Secrets Manager, Cognito, SES |
 | `ecs.tf` | ECS cluster, task definitions, IAM execution roles |
@@ -20,7 +20,7 @@
 ## AWS Profiles
 
 | Alias | Environment | Account |
-|-------|-------------|---------|
+| ------- | ------------- | --------- |
 | `stag` | Staging | `flipstag` |
 | `prod` | Production | `flipprod` |
 | `FlipDeveloperAccess-080369786334` | Developer access | — |

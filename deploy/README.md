@@ -232,7 +232,7 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 FLIP supports three trust deployment models:
 
 | Model | Location | Documentation |
-|-------|----------|---------------|
+| ------- | ---------- | --------------- |
 | **Cloud (EC2)** | AWS EC2 (same account as Central Hub) | [`deploy/providers/AWS/README.md`](providers/AWS/README.md) |
 | **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server) | [`deploy/providers/local/README.md`](providers/local/README.md) |
 | **Kubernetes** | Any K8s cluster 1.28+ (EKS, AKS, on-prem) | [`deploy/providers/kubernetes/README.md`](providers/kubernetes/README.md) |
@@ -268,7 +268,7 @@ public `CENTRAL_HUB_API_URL` is reserved for flip-ui and trust-side (trust-api) 
 outside the hub's Docker network.
 
 | Variable | Where used | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `TRUST_API_KEY_HEADER` | flip-api, trust-api | Header name for trust auth |
 | `TRUST_API_KEYS` | trust-api | JSON dict of trust name → plaintext key |
 | `TRUST_API_KEY_HASHES` | flip-api | JSON dict of trust name → SHA-256 hash |
@@ -285,7 +285,7 @@ mechanism, so the split survives a move from EC2 + docker-compose to ECS. When m
 at whichever in-VPC, header-preserving endpoint flip-api exposes:
 
 | ECS layout | `FLIP_API_INTERNAL_URL` |
-|---|---|
+| --- | --- |
 | Sidecar (both containers in one task, awsvpc) | `http://localhost:8000/api` |
 | Separate services + ECS Service Connect | `http://flip-api:8000/api` |
 | Separate services + Cloud Map private DNS | `http://flip-api.<namespace>.local:8000/api` |

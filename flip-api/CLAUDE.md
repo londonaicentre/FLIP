@@ -7,7 +7,7 @@ Central Hub REST API. FastAPI + asyncpg + SQLModel. Handles user auth (Cognito),
 ## Key Files
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `src/flip_api/__init__.py` | FastAPI app factory, middleware, router registration |
 | `src/flip_api/config.py` | Pydantic settings, env var loading |
 | `src/flip_api/db/database.py` | asyncpg async session, DB connection |
@@ -22,7 +22,7 @@ Central Hub REST API. FastAPI + asyncpg + SQLModel. Handles user auth (Cognito),
 ## Service Modules
 
 | Module | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `user_services/` | Register, authenticate, update/delete users, roles, permissions |
 | `project_services/` | Project CRUD, approval workflows |
 | `model_services/` | ML model management, metrics, logs, approvals |
