@@ -205,6 +205,29 @@ data "aws_iam_policy_document" "ecs_fl_server_task" {
       values   = ["uploaded_federated_data/*", "uploaded_federated_data"]
     }
   }
+
+  # Read access to the NVFLARE participant kit on the AICENTRE bucket. Used
+  # by the one-shot efs-provision-certs task (which runs under this role and
+  # syncs the kit into EFS at boot). Runtime fl-server never reads from
+  # this prefix - the data lives on EFS by the time the service starts.
+  statement {
+    sid     = "S3ReadFlareKit"
+    actions = ["s3:GetObject", "s3:HeadObject"]
+    resources = [
+      "${aws_s3_bucket.aicentre_bucket.arn}/fl-flare-participant-kits/*",
+    ]
+  }
+
+  statement {
+    sid       = "S3ListAicentreBucketForKit"
+    actions   = ["s3:ListBucket", "s3:GetBucketLocation"]
+    resources = [aws_s3_bucket.aicentre_bucket.arn]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["fl-flare-participant-kits/*", "fl-flare-participant-kits"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "ecs_fl_server_task" {

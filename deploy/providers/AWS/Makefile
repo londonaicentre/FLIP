@@ -81,6 +81,14 @@ $(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $
 $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
 export TF_VAR_MIN_CLIENTS=${MIN_CLIENTS}
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
+export TF_VAR_flip_fl_image_tag=${DOCKER_FL_TAG}
+export TF_VAR_docker_registry=${DOCKER_REGISTRY}
+export TF_VAR_fl_api_name=${DOCKER_FL_API_NAME}
+export TF_VAR_fl_server_name=${DOCKER_FL_SERVER_NAME}
+export TF_VAR_fl_client_name=${DOCKER_FL_CLIENT_NAME}
+export TF_VAR_fl_backend=${FL_BACKEND}
+export TF_VAR_flare_kit_date=${FLARE_KIT_DATE}
+export TF_VAR_flower_kit_date=${FLOWER_KIT_DATE}
 export TF_VAR_POSTGRES_USER=${POSTGRES_USER}
 export TF_VAR_DB_PORT=${DB_PORT}
 export TF_VAR_UI_PORT=${UI_PORT}
@@ -96,6 +104,14 @@ export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
+# flip-api / fl-* env vars consumed by ECS task definitions (locals.tf).
+# These mirror compose.production.yml so the running container sees the same
+# values whether it runs on EC2+compose or ECS Fargate.
+export TF_VAR_TRUST_NAMES=${TRUST_NAMES}
+export TF_VAR_TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
+export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+export TF_VAR_FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
+export TF_VAR_ENFORCE_MFA=${ENFORCE_MFA}
 CENTRALHUB_IMAGES = \
 	$(DOCKER_REGISTRY)flip-api:$(DOCKER_TAG)
 
