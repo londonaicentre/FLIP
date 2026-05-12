@@ -17,19 +17,23 @@ training, wait for training to finish, download the FL results. Hits the same
 flip-api endpoints the UI does, so it covers the API + trust + FL integration
 paths without the fragility of UI selectors.
 
-The defaults are pinned to the xray classification tutorial in flip-fl-base
-(sibling repo to FLIP/): `--model-files-dir` points at its `app_files/`, and
-`make e2e_smoke` wires `--query-file` to its `query.sql` (used as-is). Other
-cohorts / tutorials work fine via `--model-files-dir` and `--query-file`.
+Backend-agnostic: the script uploads whatever files are in `--model-files-dir`,
+and the FL framework (Flower vs NVFLARE) is decided server-side by `FL_BACKEND`
+in flip-api's bundling code. `make e2e_smoke` picks the chest-xray tutorial
+that matches FL_BACKEND — the Flower tutorial lives in flip-fl-base-flower,
+the NVFLARE one in flip-fl-base. Both reuse the same `query.sql` against the
+trust mock OMOP data. Override either path with `--model-files-dir` and
+`--query-file`.
 
 Usage (preferred):
-    make e2e_smoke
+    make e2e_smoke                    # picks Flower tutorial (default)
+    FL_BACKEND=nvflare make e2e_smoke # picks NVFLARE tutorial
 
 Direct invocation:
     cd flip-api
     uv run python -m tests.e2e_smoke \\
-        --model-files-dir ../../flip-fl-base/tutorials/image_classification/xray_classification/app_files \\
-        --query-file /path/to/cohort.sql
+        --model-files-dir ../../flip-fl-base-flower/tutorials/image_classification/xray_classification/app \\
+        --query-file ../../flip-fl-base-flower/tutorials/image_classification/xray_classification/query.sql
 
 Run on a stack that already has trusts approved (`make up` plus the usual
 seeding) and non-empty XNAT data so image pull has something to do.
@@ -449,9 +453,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--model-files-dir",
         type=Path,
         required=True,
-        help="Directory whose files are uploaded to the model. "
-        "For the xray classification tutorial: "
-        "../../flip-fl-base/tutorials/image_classification/xray_classification/app_files",
+        help="Directory whose files are uploaded to the model. Flower: "
+        "../../flip-fl-base-flower/tutorials/image_classification/xray_classification/app. "
+        "NVFLARE: ../../flip-fl-base/tutorials/image_classification/xray_classification/app_files.",
     )
     parser.add_argument(
         "--query-file",
