@@ -90,7 +90,7 @@ resource "aws_ecs_task_definition" "flip_api" {
 ############################
 
 resource "aws_ecs_task_definition" "fl_api_net_1" {
-  count = var.enable_efs ? 1 : 0
+  count                    = var.enable_efs ? 1 : 0
   family                   = "fl-api-net-1"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
@@ -184,7 +184,7 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
 ############################
 
 resource "aws_ecs_task_definition" "fl_server_net_1" {
-  count = var.enable_efs ? 1 : 0
+  count                    = var.enable_efs ? 1 : 0
   family                   = "fl-server-net-1"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]

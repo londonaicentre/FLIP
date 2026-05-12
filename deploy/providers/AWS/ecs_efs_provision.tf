@@ -76,7 +76,7 @@ resource "null_resource" "provision_efs_certs" {
 }
 
 resource "aws_ecs_task_definition" "efs_provision" {
-  count = var.enable_efs ? 1 : 0
+  count                    = var.enable_efs ? 1 : 0
   family                   = "efs-provision-certs"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
