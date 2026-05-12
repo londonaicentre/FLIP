@@ -32,6 +32,11 @@ provider "aws" {
 
 data "aws_availability_zones" "available" {}
 
+# Cross-stack: aicentre-iac's network_account_flip module reads
+# /flip/networking/vpc_id and /flip/networking/private_subnet_ids from
+# this account's SSM (see parameter_store.tf) to back the cross-account
+# TGW VPC attachment. If you recreate or rename this VPC, plan against
+# aicentre-iac immediately afterwards.
 module "flip_vpc" {
   source               = "terraform-aws-modules/vpc/aws"
   version              = "~> 6.0"
