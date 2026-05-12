@@ -12,13 +12,10 @@
 
 """xray-classification: Flower / MONAI ClientApp for chest-X-ray multi-lesion classification.
 
-Hyperparameters come from the per-tutorial ``app/config.json`` (LOCAL_ROUNDS,
-LR_START/END, splits, BATCH_SIZE, LESIONS, ...) rather than ``run_config`` —
-the base bundle ships a single ``pyproject.toml`` shared by all tutorials, so
-config.json is the only per-tutorial knob that actually rides through the
-upload flow. Metrics flow through MetricRecord with the ``<label>.round_<N>``
-key convention; the fl-server forwards them to the Central Hub on the
-client's behalf (clients hold no hub credentials).
+Hyperparameters come from the per-tutorial ``app/config.json`` rather than
+``run_config`` — the base bundle ships a single ``pyproject.toml`` shared by
+all tutorials, so config.json is the only per-tutorial knob that rides
+through the upload flow.
 """
 
 import json
@@ -41,19 +38,16 @@ app = ClientApp()
 
 
 def _load_config() -> dict:
-    """Read the per-tutorial config.json shipped alongside this app."""
     config_path = Path(__file__).parent / "config.json"
     with open(config_path) as fh:
         return json.load(fh)
 
 
 def _build_lesions(config: dict) -> tuple[LesionDict, dict, str]:
-    """Parse LESIONS / value_to_numerical from config.json into typed objects."""
     lesions_raw = dict(config["LESIONS"])
-    if "-1" in lesions_raw:
-        normal_key = lesions_raw.pop("-1")
-    else:
-        normal_key = "Normal"
+    # The "-1" key in LESIONS holds the column name that, when "Yes", forces
+    # every lesion to negative — it's a normal-override marker, not a lesion.
+    normal_key = lesions_raw.pop("-1", "Normal")
     lesions = LesionDict(items=[Lesion(id=int(k), lesion=v) for k, v in lesions_raw.items()])
 
     value_to_numerical = {int(k): v for k, v in config["value_to_numerical"].items()}
@@ -63,8 +57,24 @@ def _build_lesions(config: dict) -> tuple[LesionDict, dict, str]:
 
 
 def _flatten_per_lesion(metrics: dict, prefix: str) -> dict[str, float]:
-    """Turn the {loss, precision-Effusion, ...} aggregated dict into MetricRecord-shaped keys."""
     return {f"{prefix}_{k}": float(v) for k, v in metrics.items()}
+
+
+def _build_flip_utils(context: Context) -> FLIP_BASE:
+    flip_utils = FLIP_BASE()
+    flip_utils.project_id = context.run_config.get("flip-project-id", "xray-flower-tutorial")
+    flip_utils.query = context.run_config.get("flip-cohort-query", "*")
+    flip_utils.fetch_dataframe()
+    return flip_utils
+
+
+def _load_model_on_device(msg: Message) -> tuple[torch.nn.Module, torch.device]:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    log(INFO, "Using device: %s", device)
+    model = get_model()
+    model.load_state_dict(msg.content["arrays"].to_torch_state_dict(), strict=False)
+    model.to(device)
+    return model, device
 
 
 @app.train()
@@ -83,18 +93,12 @@ def train(msg: Message, context: Context) -> Message:
     client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
     global_round = int(msg.content["config"]["server-round"]) - 1
 
-    flip_utils = FLIP_BASE()
-    flip_utils.project_id = context.run_config.get("flip-project-id", "xray-flower-tutorial")
-    flip_utils.query = context.run_config.get("flip-cohort-query", "*")
-    log(INFO, "Fetching FLIP dataframe project_id=%s query=%s", flip_utils.project_id, flip_utils.query)
-    flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
-    log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
-
     if val_split + test_split >= 1.0:
         # fl-server sees the raised error and forwards it via handle_client_exception;
         # it transitions the model status to ERROR.
         raise ValueError("Invalid split configuration: val_split + test_split must be < 1.0")
 
+    flip_utils = _build_flip_utils(context)
     train_datalist, val_datalist = flip_utils.get_image_and_label_list(
         lesions=lesions,
         value_to_numerical=value_to_numerical,
@@ -109,13 +113,7 @@ def train(msg: Message, context: Context) -> Message:
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    log(INFO, "Training on device: %s", device)
-
-    model = get_model()
-    state_dict = msg.content["arrays"].to_torch_state_dict()
-    model.load_state_dict(state_dict=state_dict, strict=False)
-    model.to(device)
+    model, device = _load_model_on_device(msg)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr_start)
     gamma_lr = (lr_end / lr_start) ** (1 / max(local_rounds, 1))
@@ -163,13 +161,7 @@ def evaluate(msg: Message, context: Context) -> Message:
 
     client_name = os.getenv("SUPERNODE_NAME", "unknown_client")
 
-    flip_utils = FLIP_BASE()
-    flip_utils.project_id = context.run_config.get("flip-project-id", "xray-flower-tutorial")
-    flip_utils.query = context.run_config.get("flip-cohort-query", "*")
-    log(INFO, "Fetching FLIP dataframe project_id=%s query=%s", flip_utils.project_id, flip_utils.query)
-    flip_utils.dataframe = flip_utils.flip.get_dataframe(project_id=flip_utils.project_id, query=flip_utils.query)
-    log(INFO, f"FLIP dataframe has {len(flip_utils.dataframe)} rows.")
-
+    flip_utils = _build_flip_utils(context)
     test_datalist = flip_utils.get_image_and_label_list(
         lesions=lesions,
         value_to_numerical=value_to_numerical,
@@ -181,13 +173,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     test_dataset = Dataset(test_datalist, transform=get_xray_transforms(is_validation=True))
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    log(INFO, "Evaluating on device: %s", device)
-
-    model = get_model()
-    state_dict = msg.content["arrays"].to_torch_state_dict()
-    model.load_state_dict(state_dict=state_dict, strict=False)
-    model.to(device)
+    model, device = _load_model_on_device(msg)
 
     if len(test_loader.dataset) == 0:
         log(INFO, "No test data found!")

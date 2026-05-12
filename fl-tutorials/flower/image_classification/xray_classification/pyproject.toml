@@ -54,8 +54,6 @@ clientapp = "app.client_app:app"
 
 [tool.flwr.app.config]
 num-server-rounds = 1
-# Per-tutorial training hyperparameters live in app/config.json (LOCAL_ROUNDS,
-# LR_*, splits, BATCH_SIZE, LESIONS, ...). Anything below is simulation-only.
 flip-model-id = "uuid"
 flip-project-id = "uuid"
 flip-cohort-query = "*"

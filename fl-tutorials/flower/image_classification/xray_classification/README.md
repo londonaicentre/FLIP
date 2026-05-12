@@ -42,12 +42,8 @@ xray_classification/
     └── loss_and_metrics.py    # BCE loss + per-lesion P/R/F1
 ```
 
-`server_app.py` and `strategy.py` are intentionally absent. FLIP's base bundle
-provides the canonical `app/server_app.py` and overrides any user upload at
-bundle time (`bundle_flower_application` skips reserved names with a warning),
-so shipping a per-tutorial `server_app.py` would only be useful for `flwr run`
-simulation — and the spleen tutorial's README already documents why `flwr run`
-is brittle here. Better to not invite the footgun.
+`server_app.py` and `strategy.py` are intentionally absent — see the
+"What goes through the upload" table below.
 
 ## Running through FLIP (recommended)
 

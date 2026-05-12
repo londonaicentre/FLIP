@@ -14,8 +14,6 @@
 import numpy as np
 import torch
 
-from app.data_loading import LesionDict
-
 
 def get_bce_loss(outputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     """Compute Binary Cross-Entropy with logits, ignoring -1 (masked/unknown) targets."""
@@ -26,31 +24,19 @@ def get_bce_loss(outputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
 
 
 def compute_precision_recall_f1(
-    prediction: torch.Tensor, ground_truth: torch.Tensor, pathology: str, lesions: LesionDict
+    prediction: torch.Tensor, ground_truth: torch.Tensor, lesion_id: int
 ) -> tuple[float, float, float]:
     """Per-lesion precision/recall/F1, returning NaN when the denominator is zero.
 
     The trainer averages metrics across batches with ``np.nanmean`` so empty-class
     batches don't artificially deflate the epoch score.
     """
-    prediction = prediction.detach().cpu().numpy().round()
-    ground_truth = ground_truth.detach().cpu().numpy()
+    pred_col = prediction.detach().cpu().numpy().round()[:, lesion_id]
+    gt_col = ground_truth.detach().cpu().numpy()[:, lesion_id]
 
-    prediction_new = []
-    ground_truth_new = []
-    for b in range(prediction.shape[0]):
-        for lesion in lesions.items:
-            if lesion.lesion == pathology:
-                prediction_new.append(prediction[b, int(lesion.id)])
-                ground_truth_new.append(ground_truth[b, int(lesion.id)])
-                break
-
-    prediction_new = np.array(prediction_new)
-    ground_truth_new = np.array(ground_truth_new)
-
-    tp = np.sum((prediction_new == 1) & (ground_truth_new == 1))
-    fp = np.sum((prediction_new == 1) & (ground_truth_new == 0))
-    fn = np.sum((prediction_new == 0) & (ground_truth_new == 1))
+    tp = np.sum((pred_col == 1) & (gt_col == 1))
+    fp = np.sum((pred_col == 1) & (gt_col == 0))
+    fn = np.sum((pred_col == 0) & (gt_col == 1))
 
     precision = tp / (tp + fp) if (tp + fp) > 0 else np.nan
     recall = tp / (tp + fn) if (tp + fn) > 0 else np.nan

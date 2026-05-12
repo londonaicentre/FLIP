@@ -61,18 +61,17 @@ def get_labels_from_radiology_row(
         dict: ``{lesion_name: 0|1|-1}``. -1 marks unknown / not annotated;
         the BCE loss masks these out.
     """
+    yes_str, no_str = value_to_numerical[1], value_to_numerical[0]
+    columns = radiology_row.keys()
+    override_negative = normal_label in columns and radiology_row[normal_label] == yes_str
+    binary = {yes_str: 1, no_str: 0}
+
     out_dict = {}
     for lesion in lesions.items:
-        lesion_name = lesion.lesion
-        if normal_label in radiology_row.keys() and radiology_row[normal_label] == value_to_numerical[1]:
-            out_dict[lesion_name] = 0
-        elif lesion_name in radiology_row.keys():
-            if radiology_row[lesion_name] == value_to_numerical[1]:
-                out_dict[lesion_name] = 1
-            elif radiology_row[lesion_name] == value_to_numerical[0]:
-                out_dict[lesion_name] = 0
-            else:
-                out_dict[lesion_name] = -1
+        if override_negative:
+            out_dict[lesion.lesion] = 0
+        elif lesion.lesion in columns:
+            out_dict[lesion.lesion] = binary.get(radiology_row[lesion.lesion], -1)
     return out_dict
 
 
@@ -94,6 +93,16 @@ class FLIP_BASE:
         self.query: str = ""
         self.dataframe = None
         self.flip = FLIP()
+
+    def fetch_dataframe(self) -> None:
+        """Populate ``self.dataframe`` from the FLIP cohort query.
+
+        Reads ``self.project_id`` and ``self.query`` set by the caller (mirrors
+        the spleen tutorial's call shape).
+        """
+        log(INFO, f"Fetching FLIP dataframe project_id={self.project_id} query={self.query}")
+        self.dataframe = self.flip.get_dataframe(project_id=self.project_id, query=self.query)
+        log(INFO, f"FLIP dataframe has {len(self.dataframe)} rows.")
 
     def get_image_and_label_list(
         self,
