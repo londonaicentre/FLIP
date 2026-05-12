@@ -126,19 +126,19 @@ class MissingSessionTokensError extends Error {
 
 const waitForSessionTokens = async (): Promise<void> => {
     let session = await fetchAuthSession();
-    if (session.tokens?.idToken) return;
+    if (session.tokens?.accessToken) return;
     try {
         session = await fetchAuthSession({ forceRefresh: true });
     } catch (e) {
         console.error("waitForSessionTokens: forceRefresh threw:", e);
     }
-    if (!session.tokens?.idToken) {
+    if (!session.tokens?.accessToken) {
         // Log what Amplify *thinks* the session is so DevTools can
         // distinguish "no session at all" (bad storage / misconfigured
         // client) from "session exists but tokens are empty"
         // (token-refresh issue), then throw so the caller surfaces it.
         console.warn(
-            "waitForSessionTokens: no idToken after forceRefresh",
+            "waitForSessionTokens: no accessToken after forceRefresh",
             {
                 userSub: session.userSub,
                 hasCredentials: !!session.credentials
