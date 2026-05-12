@@ -934,8 +934,12 @@ def main(
         if success:
             print_status("PASS", f"S3 bucket '{bucket_name}' ({label}) is accessible")
         else:
+            # FAIL (not WARN): an inaccessible application bucket means the
+            # flip-api data plane is broken (uploads, presigned downloads, FL
+            # result retrieval all dead). WARN here would let the final exit
+            # code stay 0 and let a CI/monitoring consumer report green.
             print_status(
-                "WARN",
+                "FAIL",
                 f"S3 bucket '{bucket_name}' ({label}) not accessible (may need different name or permissions)",
             )
 

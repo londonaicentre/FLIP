@@ -78,11 +78,15 @@ list_suffixes() {
     # downstream python3 in the pipeline inherits it. The prefix form only
     # applies to the immediate command.
     export PREFIX="$prefix"
+    # No `2>/dev/null` on the aws call: `set -euo pipefail` already makes the
+    # script abort on a non-zero exit, but suppressing stderr also hides the
+    # underlying cause (ExpiredToken, AccessDenied, throttling) from the
+    # operator. Let the AWS error message through.
     aws s3api list-objects-v2 \
         --bucket "$bucket" \
         --prefix "$prefix" \
         --page-size 1000 \
-        --output json 2>/dev/null \
+        --output json \
         | python3 -c '
 import json, os, sys
 prefix = os.environ["PREFIX"]
