@@ -115,7 +115,11 @@ services:
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
-      - ${FL_PROVISIONED_DIR}/../register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
+      # Dev-overlay: edit the script in the sibling repo and the change applies
+      # without a rebuild. The script is also baked into both fl-base / fl-server
+      # images, so removing the mount would still work — net-2's was previously
+      # missing entirely, hence the asymmetry.
+      - ${FL_PROVISIONED_DIR}/../fl_services/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-1:
@@ -171,6 +175,9 @@ services:
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro
+      # Symmetric with net-1's dev-overlay; the script is also baked into the
+      # fl-server image, so this is for "edit in sibling repo, see effect now".
+      - ${FL_PROVISIONED_DIR}/../fl_services/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-2:
