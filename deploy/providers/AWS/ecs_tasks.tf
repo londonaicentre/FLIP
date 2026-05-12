@@ -200,6 +200,19 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
       cpu               = 1024
       memoryReservation = 2048
 
+      # CRITICAL: The image's /app/entrypoint.sh runs `./start.sh` which
+      # executes `./sub_start.sh &` -- but because start.sh is a *subshell*,
+      # its background jobs become orphaned when it exits. The entrypoint's
+      # `wait` returns immediately because it sees zero background jobs, so
+      # the container exits with code 0 in ~1 second.
+      #
+      # Workaround: source start.sh (`. ./start.sh`) so sub_start.sh & runs
+      # in the SAME shell as the entrypoint. `wait` then properly blocks on
+      # sub_start.sh's while-true loop, keeping the container alive.
+      # Trap is set BEFORE the blocking source so SIGTERM is caught and
+      # stop_fl.sh runs gracefully.
+      entryPoint = ["/bin/bash", "-c", "source /app/.venv/bin/activate && echo '[custom-ep] Starting...' && cd /app/startup && trap \"echo 'SIGTERM caught'; /app/startup/stop_fl.sh\" SIGTERM && . ./start.sh && wait"]
+
       portMappings = [
         {
           containerPort = 8002
