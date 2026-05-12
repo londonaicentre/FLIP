@@ -30,27 +30,53 @@ locals {
 }
 
 resource "null_resource" "provision_efs_certs" {
+  count = var.enable_efs ? 1 : 0
+
   triggers = {
     s3_source = local.fl_provision_base_s3
-    task_def  = aws_ecs_task_definition.efs_provision.arn
+    task_def  = aws_ecs_task_definition.efs_provision[0].arn
   }
 
   provisioner "local-exec" {
     command     = <<-EOT
-      aws ecs run-task \
+      TASK_ARN=$(aws ecs run-task \
         --cluster ${aws_ecs_cluster.flip.name} \
-        --task-definition ${aws_ecs_task_definition.efs_provision.arn} \
+        --task-definition ${aws_ecs_task_definition.efs_provision[0].arn} \
         --launch-type FARGATE \
         --network-configuration "awsvpcConfiguration={subnets=[${join(",", module.flip_vpc.private_subnets)}],securityGroups=[${aws_security_group.ecs_fl_server.id}],assignPublicIp=DISABLED}" \
         --count 1 \
         --region ${var.AWS_REGION} \
-        --no-cli-pager
+        --no-cli-pager \
+        --query 'tasks[0].taskArn' \
+        --output text)
+
+      echo "Provisioning task ARN: $TASK_ARN"
+
+      aws ecs wait tasks-stopped \
+        --cluster ${aws_ecs_cluster.flip.name} \
+        --tasks "$TASK_ARN" \
+        --region ${var.AWS_REGION}
+
+      EXIT_CODE=$(aws ecs describe-tasks \
+        --cluster ${aws_ecs_cluster.flip.name} \
+        --tasks "$TASK_ARN" \
+        --region ${var.AWS_REGION} \
+        --query 'tasks[0].containers[0].exitCode' \
+        --output text)
+
+      if [ "$EXIT_CODE" != "0" ]; then
+        echo "EFS provisioning task failed with exit code $EXIT_CODE"
+        exit 1
+      fi
+
+      echo "EFS provisioning task completed successfully."
     EOT
     interpreter = ["bash", "-c"]
   }
 }
 
 resource "aws_ecs_task_definition" "efs_provision" {
+  count = var.enable_efs ? 1 : 0
   family                   = "efs-provision-certs"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]

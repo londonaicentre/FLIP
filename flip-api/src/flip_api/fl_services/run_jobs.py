@@ -13,11 +13,11 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select, update
+from sqlalchemy import text
+from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import engine, get_session
-from flip_api.db.models.main_models import FLJob, FLScheduler
 from flip_api.domain.schemas.status import NetStatus
 from flip_api.fl_services.services.fl_scheduler_service import (
     check_for_available_net,
@@ -40,20 +40,23 @@ def _recover_stale_busy_schedulers(db: Session) -> int:
     are unrecoverable unless cleaned up here. This prevents a single crash
     from permanently starving a net of new training jobs.
     """
-    stmt = (
-        update(FLScheduler)
-        .where(FLScheduler.status == NetStatus.BUSY)
-        .where(
-            (FLScheduler.job_id.is_(None))
-            | ~FLScheduler.job_id.in_(select(FLJob.id))
-        )
-        .values(status=NetStatus.AVAILABLE, job_id=None)
+    stmt = text(
+        """
+        UPDATE fl_scheduler
+        SET status = :available, jobid = NULL
+        WHERE status = :busy
+          AND (jobid IS NULL OR jobid NOT IN (SELECT id FROM fl_job))
+        """
     )
-    result = db.exec(stmt)
-    if result.rowcount:
+    result = db.execute(
+        stmt,
+        {"available": NetStatus.AVAILABLE.value, "busy": NetStatus.BUSY.value},
+    )
+    recovered = result.rowcount  # type: ignore[attr-defined]
+    if recovered:
         db.commit()
-        logger.info("Recovered %d stale BUSY scheduler(s)", result.rowcount)
-    return result.rowcount
+        logger.info("Recovered %d stale BUSY scheduler(s)", recovered)
+    return recovered
 
 
 # [#114] ✅

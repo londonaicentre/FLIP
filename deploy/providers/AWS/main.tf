@@ -490,44 +490,14 @@ module "alb" {
         protocol    = "HTTPS"
         status_code = "HTTP_301"
       }
-    },
-    "api-listener" = {
-      port     = var.API_PORT
-      protocol = "HTTP"
-      forward = {
-        target_group_key = "ec2-instance-api"
-      }
-    },
-    "fl-api-listener" = {
-      port     = var.FL_API_PORT
-      protocol = "HTTP"
-      forward = {
-        target_group_key = "ec2-instance-fl-api"
-      }
     }
   }
 
-  # UI is served from S3 + CloudFront; no ec2-instance-ui target group.
-  target_groups = {
-    ec2-instance-api = {
-      port      = var.API_PORT
-      protocol  = "HTTP"
-      target_id = aws_instance.ec2_instance.id
-
-      health_check = {
-        enabled  = true
-        protocol = "HTTP"
-        path     = "/api/health"
-        port     = "traffic-port"
-        matcher  = "200"
-      }
-    },
-    ec2-instance-fl-api = {
-      port      = var.FL_API_PORT
-      protocol  = "HTTP"
-      target_id = aws_instance.ec2_instance.id
-    }
-  }
+  # No EC2-instance target groups — the EC2 host no longer runs application
+  # containers (they run on ECS Fargate). Legacy `api-listener` and
+  # `fl-api-listener` listeners were removed in PR #452 review; the ALB
+  # only routes the https-listener /api/* path to the ECS target group.
+  target_groups = {}
 }
 
 # Network Load Balancer for FL server TCP/TLS pass-through
