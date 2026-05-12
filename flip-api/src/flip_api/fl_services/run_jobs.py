@@ -13,7 +13,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select
+from sqlmodel import Session, select, update
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import engine, get_session
@@ -32,21 +32,28 @@ router = APIRouter(prefix="/fl", tags=["fl_services"])
 def _recover_stale_busy_schedulers(db: Session) -> int:
     """Reset all FLScheduler rows stuck in BUSY to AVAILABLE.
 
+    Uses a single atomic UPDATE statement to avoid read-side races with
+    check_for_queued_jobs (which uses with_for_update) and eliminates the
+    N+1 query pattern of the previous row-by-row approach.
+
     BUSY schedulers with no associated job, or whose job has been deleted,
     are unrecoverable unless cleaned up here. This prevents a single crash
     from permanently starving a net of new training jobs.
     """
-    stale = 0
-    rows = db.exec(select(FLScheduler).where(FLScheduler.status == NetStatus.BUSY)).all()
-    for s in rows:
-        if s.job_id is None or db.get(FLJob, s.job_id) is None:
-            s.status = NetStatus.AVAILABLE
-            s.job_id = None
-            stale += 1
-    if stale:
+    stmt = (
+        update(FLScheduler)
+        .where(FLScheduler.status == NetStatus.BUSY)
+        .where(
+            (FLScheduler.job_id.is_(None))
+            | ~FLScheduler.job_id.in_(select(FLJob.id))
+        )
+        .values(status=NetStatus.AVAILABLE, job_id=None)
+    )
+    result = db.exec(stmt)
+    if result.rowcount:
         db.commit()
-        logger.info("Recovered %d stale BUSY scheduler(s)", stale)
-    return stale
+        logger.info("Recovered %d stale BUSY scheduler(s)", result.rowcount)
+    return result.rowcount
 
 
 # [#114] ✅

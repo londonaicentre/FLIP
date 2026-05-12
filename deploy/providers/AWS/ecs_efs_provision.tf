@@ -62,7 +62,7 @@ resource "aws_ecs_task_definition" "efs_provision" {
   container_definitions = jsonencode([
     {
       name  = "provision-efs-certs"
-      image = "amazon/aws-cli:latest"
+      image = "amazon/aws-cli:2.22.35"
       # The amazon/aws-cli image's ENTRYPOINT is `aws`, so a command like
       # ["/bin/sh", "-c", ...] would get appended as args to aws and fail
       # with "Found invalid choice '/bin/sh'". Override entryPoint so the
