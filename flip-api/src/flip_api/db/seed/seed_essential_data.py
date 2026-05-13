@@ -10,19 +10,36 @@
 # limitations under the License.
 #
 
-from sqlmodel import Session, SQLModel
+import logging
+import sys
 
-from flip_api.db.database import engine
-from flip_api.db.seed.banner import seed_banner
-from flip_api.db.seed.fl_nets import seed_fl_nets
-from flip_api.db.seed.fl_scheduler import seed_fl_scheduler
-from flip_api.db.seed.main_users import seed_main_users
-from flip_api.db.seed.permissions import seed_permissions
-from flip_api.db.seed.role_permissions import seed_role_permissions
-from flip_api.db.seed.roles import seed_roles
-from flip_api.db.seed.site_config import seed_config
-from flip_api.db.seed.trusts import seed_trusts
-from flip_api.utils.logger import logger
+# Configure root logging BEFORE importing flip_api.utils.logger (transitively
+# pulled in by every seed sub-module). The shared logger is
+# `logging.getLogger("uvicorn")` — under FastAPI/uvicorn that logger has
+# handlers, but this script runs standalone via entrypoint.sh before uvicorn
+# boots, so without root-level handlers every `logger.info` / `logger.debug`
+# call in the seed phase is silently dropped (Python's `lastResort` only
+# emits WARNING+). basicConfig adds a StreamHandler to root so the
+# "uvicorn" logger's records propagate and reach stderr → CloudWatch.
+logging.basicConfig(
+    level=logging.INFO,
+    stream=sys.stderr,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
+from sqlmodel import Session, SQLModel  # noqa: E402
+
+from flip_api.db.database import engine  # noqa: E402
+from flip_api.db.seed.banner import seed_banner  # noqa: E402
+from flip_api.db.seed.fl_nets import seed_fl_nets  # noqa: E402
+from flip_api.db.seed.fl_scheduler import seed_fl_scheduler  # noqa: E402
+from flip_api.db.seed.main_users import seed_main_users  # noqa: E402
+from flip_api.db.seed.permissions import seed_permissions  # noqa: E402
+from flip_api.db.seed.role_permissions import seed_role_permissions  # noqa: E402
+from flip_api.db.seed.roles import seed_roles  # noqa: E402
+from flip_api.db.seed.site_config import seed_config  # noqa: E402
+from flip_api.db.seed.trusts import seed_trusts  # noqa: E402
+from flip_api.utils.logger import logger  # noqa: E402
 
 
 def main() -> None:
