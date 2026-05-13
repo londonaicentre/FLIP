@@ -414,17 +414,26 @@ class FLIPStandardProd(FLIPBase):
                 # Parse bucket
                 parsed = urlparse(s3_bucket)
                 bucket = parsed.netloc
-                prefix = parsed.path.lstrip("/")
+                prefix = parsed.path.lstrip("/").rstrip("/")
 
                 bucket_zip_path = f"{model_id}/{zip_name}.zip"
 
-                self.logger.info(f"Uploading zip file {zip_file} to {bucket}/{prefix}/{bucket_zip_path}...")
+                # Filter empty parts before joining so a bare bucket URI
+                # (`s3://<bucket>` — `parsed.path` empty, `prefix` empty)
+                # produces `<model_id>/<file>.zip`, NOT `/<model_id>/<file>.zip`.
+                # A leading-slash key is silently accepted by S3 but downstream
+                # listers (e.g. `list_objects_v2(Prefix=<model_id>)`) won't
+                # match it, and the FLIP UI then reports "no result files".
+                # See FLIP#465 for the incident this guards against.
+                key = "/".join(part for part in (prefix, bucket_zip_path) if part)
+
+                self.logger.info(f"Uploading zip file {zip_file} to {bucket}/{key}...")
 
                 s3_client = boto3.client("s3")
                 s3_client.upload_file(
                     zip_file,
                     bucket,
-                    f"{prefix}/{bucket_zip_path}",
+                    key,
                 )
 
                 self.logger.info("Upload .zip to the S3 bucket successful")
