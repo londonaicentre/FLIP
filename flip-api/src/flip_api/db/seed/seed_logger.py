@@ -21,17 +21,24 @@ below WARNING. Every seed-phase `logger.info`/`logger.debug` is invisible.
 
 This module owns a self-contained logger with its own `StreamHandler(stderr)`
 so seed-phase output reaches CloudWatch regardless of who runs the script.
-Propagation is disabled so we don't double-print when the seed module is
-imported under uvicorn (e.g. in tests).
+Propagation is left enabled so pytest's `caplog` (which hooks the root
+logger) can still capture records during tests — the "double-print" risk
+under uvicorn is theoretical: uvicorn configures the "uvicorn" logger, not
+root, so a "flip_api.seed" record propagating to root finds no extra
+handlers in normal production.
 """
 
 import logging
 import sys
 
+# Logger level is DEBUG so individual records pass through to handlers and
+# propagation. The StreamHandler is set to INFO so production stderr stays
+# at INFO+; tests that use `caplog.at_level("DEBUG")` can still capture the
+# DEBUG records via propagation to root (where caplog hooks).
 logger = logging.getLogger("flip_api.seed")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 if not logger.handlers:
     _handler = logging.StreamHandler(sys.stderr)
+    _handler.setLevel(logging.INFO)
     _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
     logger.addHandler(_handler)
-    logger.propagate = False
