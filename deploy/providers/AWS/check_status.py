@@ -1258,7 +1258,7 @@ def main(
         # Fargate behind the ALB, so the legacy EC2 ``http://localhost:8080``
         # check has been retired — the ALB endpoint is the source of truth.
         check_http_endpoint(f"https://{alb_subdomain}", "FLIP UI", 200)
-        check_http_endpoint(f"https://{alb_subdomain}/api/health", "FLIP API Health (ALB)", 200)
+        check_http_endpoint(f"https://{alb_subdomain}/api/health", "FLIP API Health (CloudFront → ALB)", 200)
         # FL API and FL server health: the per-net containers are ECS tasks
         # behind Cloud Map (fl-api-net-N.flip.local:8000) reachable only from
         # inside the VPC, so we cannot curl them from a developer workstation.
