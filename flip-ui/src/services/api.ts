@@ -65,21 +65,36 @@ class Http {
                     // session. If tokens aren't there yet, force a refresh
                     // so freshly-signed-in users don't hit a 401 on the
                     // very next request (e.g. getMfaStatus from hydrate).
-                    let session = await fetchAuthSession();
-                    let token = session.tokens?.accessToken?.toString();
-                    if (!token) {
-                        try {
+                    //
+                    // Both fetchAuthSession calls are wrapped because the
+                    // bare call can transparently trigger an internal token
+                    // refresh, and that path crashes with
+                    // "Cannot read properties of undefined (reading 'payload')"
+                    // in @aws-amplify/auth's refreshAuthTokens.mjs when the
+                    // Cognito refresh-token response has no AccessToken
+                    // (refresh token expired / revoked / throttled) —
+                    // `decodeJWT(AuthenticationResult?.AccessToken ?? '')`
+                    // produces an object without `.payload` and the next
+                    // `accessToken.payload` access throws. Catching here
+                    // lets the request go out unauthenticated; the
+                    // response interceptor's 401 handler forces a clean
+                    // sign-out instead of an unhandled-promise console
+                    // error and a stuck page (observed on /connectionstatus
+                    // 2026-05-13).
+                    let token: string | undefined;
+                    try {
+                        let session = await fetchAuthSession();
+                        token = session.tokens?.accessToken?.toString();
+                        if (!token) {
                             session = await fetchAuthSession({ forceRefresh: true });
                             token = session.tokens?.accessToken?.toString();
-                        } catch (e) {
-                            // The request will go out unauthenticated and
-                            // the 401 handler will force a sign-out, but
-                            // we log the underlying Amplify error so
-                            // DevTools surfaces *why* (throttle, expired
-                            // refresh token, storage blocked) instead of
-                            // collapsing every cause to "signed out".
-                            console.warn("Token forceRefresh failed:", e);
                         }
+                    } catch (e) {
+                        // Log the underlying Amplify error so DevTools
+                        // surfaces *why* (throttle, expired refresh token,
+                        // storage blocked, refreshAuthTokens bug) instead
+                        // of collapsing every cause to "signed out".
+                        console.warn("fetchAuthSession failed:", e);
                     }
 
                     if (token) {

@@ -174,7 +174,7 @@ describe("api.ts Http client", () => {
 
             expect((out.headers as Record<string, string>).Authorization).toBeUndefined();
             expect(consoleWarn).toHaveBeenCalledWith(
-                "Token forceRefresh failed:",
+                "fetchAuthSession failed:",
                 expect.objectContaining({ name: "TooManyRequestsException" })
             );
             consoleWarn.mockRestore();
