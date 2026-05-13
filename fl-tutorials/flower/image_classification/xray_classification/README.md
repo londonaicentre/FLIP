@@ -48,7 +48,7 @@ xray_classification/
 `src/standard/app/`. They exist only so that `flwr run` from this tutorial
 can resolve `app.server_app` / `app.strategy` locally — FLIP's
 `bundle_flower_application` overlays the same base files at deploy time, so
-the upload flow is unaffected (see the table below).
+the upload flow is unaffected.
 
 ## Running this tutorial
 
@@ -127,44 +127,6 @@ absolute paths (`$(git rev-parse --show-toplevel)/data/...`), and (c) accept
 that some FLIP-side behaviour driven by the import-time singleton will still
 reflect whatever env the superlink was born with. Don't do it for real work —
 use the compose stack above.
-
-### Running via the FLIP smoke (`make e2e_smoke`)
-
-End-to-end against a full FLIP stack (Central Hub + trusts) instead of the
-flip-fl-base-flower local compose:
-
-```bash
-# from the FLIP repo root
-make up FL_BACKEND=flower
-make e2e_smoke                                 # picks this tutorial because FL_BACKEND=flower
-make e2e_smoke QUERY_FILE=/abs/path/to/your.sql  # swap the cohort
-```
-
-`flip-api/Makefile` reads `FL_BACKEND` to point `MODEL_FILES_DIR` and
-`QUERY_FILE` at this tutorial.
-
-## What goes through the upload
-
-`bundle_flower_application` in flip-api copies every file in `app/` into
-`app/<filename>` under the destination bundle, then overlays the base
-bundle's `app/server_app.py` and root-level `pyproject.toml`. That means:
-
-| File                      | Wins after bundling? |
-|---------------------------|----------------------|
-| `app/client_app.py`       | uploaded (required)  |
-| `app/models.py`           | uploaded (required)  |
-| `app/task.py`             | uploaded             |
-| `app/data_loading.py`     | uploaded             |
-| `app/transforms.py`       | uploaded             |
-| `app/loss_and_metrics.py` | uploaded             |
-| `app/__init__.py`         | uploaded             |
-| `app/config.json`         | uploaded — read by client_app.py |
-| `app/server_app.py`       | symlink to `src/standard/app/server_app.py`; uploaded resolved-content but the base bundle's identical file wins after overlay |
-| `app/strategy.py`         | symlink to `src/standard/app/strategy.py`; same as above |
-| `pyproject.toml`          | not uploaded by the smoke (sits at tutorial root); base bundle's wins regardless |
-
-So `app/config.json` is the only knob worth changing per tutorial — the base
-`pyproject.toml` is shared across every Flower tutorial.
 
 ## Hyperparameters
 
