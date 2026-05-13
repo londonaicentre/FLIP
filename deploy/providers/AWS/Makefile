@@ -64,8 +64,17 @@ export TF_VAR_flip_keypair=~/.ssh/host-aws
 export TF_VAR_ec2_public_key_path=$(HOME)/.ssh/host-aws.pub
 export TF_VAR_flip_user_pool_name=flip-user-pool
 export TF_VAR_flip_cognito_client=flip-cognito-client
-export TF_VAR_FLIP_BUCKET_NAME=${FLIP_BUCKET_NAME}
+export TF_VAR_FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME=${FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME}
+export TF_VAR_FLIP_FL_RESULTS_BUCKET_NAME=${FLIP_FL_RESULTS_BUCKET_NAME}
+export TF_VAR_FLIP_APP_BUNDLES_BUCKET_NAME=${FLIP_APP_BUNDLES_BUCKET_NAME}
 export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
+# Fail fast with a useful message if the per-tenant bucket names are missing
+# from the env file. The variables are required (no default) so Terraform
+# would otherwise prompt mid-plan with a generic message that gives no hint
+# about where to set the value.
+$(if $(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME),,$(error 🪶 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
+$(if $(FLIP_FL_RESULTS_BUCKET_NAME),,$(error 🪶 FLIP_FL_RESULTS_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
+$(if $(FLIP_APP_BUNDLES_BUCKET_NAME),,$(error 🪶 FLIP_APP_BUNDLES_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
 export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
 export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
@@ -179,6 +188,57 @@ init: ## Initialize Terraform configuration
 .PHONY: import-persistent
 import-persistent: ## Import persistent resources (S3, Secrets, Cognito) to prevent replacement
 	@bash scripts/import-resources.sh
+
+
+.PHONY: migrate-flip-bucket
+migrate-flip-bucket: ## One-time: sync legacy flip_bucket prefixes into the three new buckets (run after `make apply` creates the new buckets)
+	## Source bucket: $${FLIP_BUCKET_NAME} (read from $(MAIN_ENV_FILE))
+	## Destination buckets: $${FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME}, $${FLIP_FL_RESULTS_BUCKET_NAME}, $${FLIP_APP_BUNDLES_BUCKET_NAME}
+	##
+	## Sequencing: (1) `make apply` provisions the new buckets, (2) this target copies
+	## prefixes into them, (3) `make verify-flip-bucket-migration` parity-checks, (4) redeploy
+	## with the new env vars, (5) smoke-test, (6) after a 24-48h cooldown manually decommission
+	## the old bucket with:
+	##     aws s3 rb s3://$${FLIP_BUCKET_NAME} --force    # only after `make verify-flip-bucket-migration` is green
+	## Note: `terraform state rm` is NOT needed — the `removed { destroy = false }`
+	## blocks in services.tf already forgot the legacy bucket on the last apply.
+	##
+	## Safe to re-run: `aws s3 sync` re-copies any source object whose mtime/size differs
+	## from the destination, and skips matching ones. Per-object failures (KMS grant gaps,
+	## throttling) do NOT cause `aws s3 sync` to exit non-zero — always finish with
+	## `make verify-flip-bucket-migration` before trusting that the migration completed.
+	@if [ -z "$(FLIP_BUCKET_NAME)" ]; then \
+		echo "❌ FLIP_BUCKET_NAME is not set in $(MAIN_ENV_FILE) — nothing to migrate from."; exit 1; \
+	fi
+	@echo "📦 Migrating contents of s3://$(FLIP_BUCKET_NAME) into the three split buckets ..."
+	@echo "  • model file uploads → s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/"
+	@aws s3 sync \
+		s3://$(FLIP_BUCKET_NAME)/model_files/uploaded/ \
+		s3://$(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME)/uploaded/
+	@echo "  • FL results     → s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/"
+	@aws s3 sync \
+		s3://$(FLIP_BUCKET_NAME)/uploaded_federated_data/ \
+		s3://$(FLIP_FL_RESULTS_BUCKET_NAME)/
+	@echo "  • FL base apps   → s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/base-application/"
+	@aws s3 sync \
+		s3://$(FLIP_BUCKET_NAME)/base-application/ \
+		s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/base-application/
+	@echo "  • FL app dests   → s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/"
+	@aws s3 sync \
+		s3://$(FLIP_BUCKET_NAME)/app_destination_bucket/ \
+		s3://$(FLIP_APP_BUNDLES_BUCKET_NAME)/app_destinations/
+	@echo "📦 Sync calls complete. Run \`make verify-flip-bucket-migration\` to confirm parity before decommissioning."
+
+
+.PHONY: verify-flip-bucket-migration
+verify-flip-bucket-migration: ## Parity-check the four migrated prefixes (every src key must exist on dst; extras on dst are fine)
+	## Why this exists: `aws s3 sync` returns exit code 0 even when individual object copies
+	## fail (per-object AccessDenied / throttling / RequestTimeout), so the migrate target's
+	## green banner is not enough to safely decommission the source bucket. The companion
+	## script computes a key-set subset check — every source key must exist on the
+	## destination. Keys present only on destination (e.g. researcher uploads landing on the
+	## new bucket after the env-var cutover) are reported but do not fail.
+	@bash scripts/verify-flip-bucket-migration.sh
 
 
 .PHONY: force-unlock

@@ -228,9 +228,20 @@ resource "aws_iam_role_policy" "ec2_secret" {
 }
 
 # Scoped S3 access — limited to FLIP application buckets only.
-# - flip_bucket: model files / FL results / FL app destination (flip-api).
+# - flip-model-files-uploads / flip-fl-results / flip-app-bundles: the three
+#   buckets that replaced the previous single flip_bucket (model file uploads,
+#   FL results,
+#   FL app bundles). flip-api on EC2 uses the instance role for boto3 creds
+#   (see compose.production.yml — AWS_PROFILE is commented out in prod with
+#   the explicit note "credentials are retrieved from the instance role"), so
+#   this grant must cover every application bucket flip-api touches.
 # - aicentre_bucket: FL participant kits, fetched via `aws s3 cp` during
 #   Ansible provisioning on the Central Hub host.
+#
+# Once flip-api is migrated to an ECS Fargate task (PR 2), its IAM identity
+# becomes the task role in iam_ecs.tf and these three new-bucket grants can
+# be dropped from the EC2 role, leaving only the aicentre_bucket grant
+# (consumed by Ansible) here.
 resource "aws_iam_role_policy" "s3_access" {
   name = "flip-s3-scoped"
   role = module.ec2_role.iam_role_name
@@ -239,8 +250,10 @@ resource "aws_iam_role_policy" "s3_access" {
     Version = "2012-10-17"
     Statement = [{
       Effect = "Allow"
+      # See iam_ecs.tf for the rationale on dropping `s3:CopyObject` — it's
+      # not a real IAM action and AWS server-side copy already rolls up under
+      # the GetObject (source) + PutObject (destination) grants below.
       Action = [
-        "s3:CopyObject",
         "s3:DeleteObject",
         "s3:GetBucketLocation",
         "s3:GetObject",
@@ -249,8 +262,12 @@ resource "aws_iam_role_policy" "s3_access" {
         "s3:PutObject",
       ]
       Resource = [
-        aws_s3_bucket.flip_bucket.arn,
-        "${aws_s3_bucket.flip_bucket.arn}/*",
+        module.flip_model_files_uploads_bucket.bucket_arn,
+        "${module.flip_model_files_uploads_bucket.bucket_arn}/*",
+        module.flip_fl_results_bucket.bucket_arn,
+        "${module.flip_fl_results_bucket.bucket_arn}/*",
+        module.flip_app_bundles_bucket.bucket_arn,
+        "${module.flip_app_bundles_bucket.bucket_arn}/*",
         aws_s3_bucket.aicentre_bucket.arn,
         "${aws_s3_bucket.aicentre_bucket.arn}/*",
       ]

@@ -54,7 +54,11 @@ from pathlib import Path
 
 import click
 
-flip_bucket_name = os.getenv("FLIP_BUCKET_NAME")
+flip_application_bucket_names = [
+    ("model file uploads", os.getenv("FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME")),
+    ("FL results", os.getenv("FLIP_FL_RESULTS_BUCKET_NAME")),
+    ("app bundles", os.getenv("FLIP_APP_BUNDLES_BUCKET_NAME")),
+]
 
 
 # Color codes for terminal output
@@ -1082,16 +1086,24 @@ def main(
     else:
         print_status("FAIL", "RDS endpoint not found")
 
-    # Check S3 bucket
-    print_status("INFO", "Checking S3 bucket...")
-    success, _ = run_aws_command(["s3", "ls", f"s3://{flip_bucket_name}"])
-    if success:
-        print_status("PASS", f"S3 bucket '{flip_bucket_name}' is accessible")
-    else:
-        print_status(
-            "WARN",
-            f"S3 bucket '{flip_bucket_name}' not accessible (may need different name or permissions)",
-        )
+    # Check FLIP application S3 buckets
+    print_status("INFO", "Checking FLIP application S3 buckets...")
+    for label, bucket_name in flip_application_bucket_names:
+        if not bucket_name:
+            print_status("WARN", f"{label} bucket env var not set in environment")
+            continue
+        success, _ = run_aws_command(["s3", "ls", f"s3://{bucket_name}"])
+        if success:
+            print_status("PASS", f"S3 bucket '{bucket_name}' ({label}) is accessible")
+        else:
+            # FAIL (not WARN): an inaccessible application bucket means the
+            # flip-api data plane is broken (uploads, presigned downloads, FL
+            # result retrieval all dead). WARN here would let the final exit
+            # code stay 0 and let a CI/monitoring consumer report green.
+            print_status(
+                "FAIL",
+                f"S3 bucket '{bucket_name}' ({label}) not accessible (may need different name or permissions)",
+            )
 
     # Check Secrets Manager
     print_status("INFO", "Checking Secrets Manager...")
