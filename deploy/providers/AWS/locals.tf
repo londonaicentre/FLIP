@@ -37,16 +37,37 @@ locals {
   # resolves to the task IP, so fl-server calls flip-api on port 8000.
   api_container_port = 8000
 
-  # Buckets and S3 paths used by the central hub services. References the
-  # resource (not var.FLIP_BUCKET_NAME) so a future bucket rename only has to
-  # land in one place. Paths mirror .env.stag values for the same env-var name.
-  flip_bucket_id              = aws_s3_bucket.flip_bucket.id
-  flip_bucket_arn             = aws_s3_bucket.flip_bucket.arn
-  uploaded_federated_data_uri = "s3://${local.flip_bucket_id}/uploaded_federated_data"
-  uploaded_model_files_uri    = "s3://${local.flip_bucket_id}/model_files/uploaded"
-  scanned_model_files_uri     = "s3://${local.flip_bucket_id}/model_files/uploaded"
-  fl_app_base_uri             = "s3://${local.flip_bucket_id}/base-application/${var.fl_backend}"
-  fl_app_destination_uri      = "s3://${local.flip_bucket_id}/app_destination_bucket"
+  # Buckets and S3 paths used by the central hub services. Each reference goes
+  # through the module output (not the variable) so a future bucket rename
+  # only has to land in one place.
+  #
+  # After the split, FL results live in their own purpose-built bucket. The
+  # ECS task env below pins fl-server / flip-api to the `${bucket}/results`
+  # path, not the bucket root, as a workaround for a leading-slash bug in
+  # the FL package's S3 upload path-construction
+  # (flip-fl-base/flip/core/standard.py:415-427: when `urlparse(bucket).path`
+  # is empty, the concatenation `f"{prefix}/{key}"` produces `/<key>` with
+  # a literal leading slash, so flip-api's `list_objects_v2(Prefix=<model_id>)`
+  # never matches the keys fl-server actually uploads). Removing this
+  # workaround requires patching flip-fl-base, rebuilding fl-server, and
+  # redeploying — see PR description on FLIP#465 for the long-term fix path.
+  flip_model_files_uploads_bucket_uri = "s3://${module.flip_model_files_uploads_bucket.bucket_id}"
+  flip_fl_results_bucket_uri          = "s3://${module.flip_fl_results_bucket.bucket_id}"
+  flip_app_bundles_bucket_uri         = "s3://${module.flip_app_bundles_bucket.bucket_id}"
+
+  # Sub-paths under the new three-bucket layout. The legacy single-bucket
+  # prefixes (`model_files/uploaded`, `uploaded_federated_data`,
+  # `base-application/${fl_backend}`, `app_destination_bucket`) are re-pointed
+  # at the new purpose-built buckets per the migration mapping in
+  # `make migrate-flip-bucket` (see deploy/providers/AWS/Makefile). Keeping
+  # the same local names (`uploaded_federated_data_uri`, …) means the
+  # ecs_task_env map below can stay byte-identical with the prior single-bucket
+  # layout — only the value behind each local changes.
+  uploaded_federated_data_uri = "${local.flip_fl_results_bucket_uri}/results"
+  uploaded_model_files_uri    = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
+  scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
+  fl_app_base_uri             = "${local.flip_app_bundles_bucket_uri}/base-application/${var.fl_backend}"
+  fl_app_destination_uri      = "${local.flip_app_bundles_bucket_uri}/app_destinations"
 
   # NET_ENDPOINTS tells flip-api how to reach each FL network's fl-api. On
   # ECS the hostname differs from compose (compose uses Docker DNS:

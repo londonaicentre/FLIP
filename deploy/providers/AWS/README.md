@@ -61,7 +61,7 @@ Managed policies that cover these requirements:
 
 **Note**: The deployed EC2 instances use separate, scoped IAM roles following the principle of least privilege:
 
-- **Central Hub** (`ec2-role`): SSM + CloudWatch managed policies, plus inline policies for `secretsmanager:GetSecretValue` on the FLIP API and DB secrets, Cognito user-pool admin actions on the FLIP user pool, S3 object access on the FLIP and AI Centre buckets, and `ses:SendEmail` on the verified sender identity.
+- **Central Hub** (`ec2-role`): SSM + CloudWatch managed policies, plus inline policies for `secretsmanager:GetSecretValue` on the FLIP API and DB secrets, Cognito user-pool admin actions on the FLIP user pool, S3 object access on the three FLIP application buckets (see [FLIP application S3 buckets](#flip-application-s3-buckets)) and the AI Centre bucket, and `ses:SendEmail` on the verified sender identity.
 - **Trust EC2** (`trust-ec2-role`): SSM + CloudWatch managed policies, plus a read-only S3 inline policy on the AI Centre bucket for FL participant-kit downloads. No Cognito, SES, Secrets Manager or FLIP application bucket access.
 
 ## Deployment Workflow
@@ -97,6 +97,88 @@ This command executes the following steps in order:
 The UI is served from S3 behind CloudFront at the canonical user-facing subdomain (`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront also forwards `/api/*` to the ALB, using a backend-only `api.<subdomain>` DNS name that only CloudFront uses — trusts and users never see it. CloudFront is the only supported UI-hosting path; there is no legacy EC2 UI container or ALB UI target group to fall back to.
 
 **Subsequent UI deploys**: just `make deploy-ui PROD=stag|true` — builds the UI from the working tree, regenerates `window.js`, syncs to S3, invalidates CloudFront. No Terraform involved.
+
+### FLIP application S3 buckets
+
+The Central Hub uses four S3 buckets, each with a distinct purpose, access pattern, and CORS surface. The three **FLIP application buckets** were split out of a single legacy `flip{env}` bucket so each tenant can carry the minimum CORS surface its consumer needs (a CORS change for one tenant no longer drags every other tenant along, and a browser-direct bucket can no longer accidentally expose objects belonging to a server-only flow).
+
+| Bucket (per env) | Env-var (`.env.{stag,production}`) | Consumer | Browser CORS | Holds |
+|---|---|---|---|---|
+| `flip{env}-model-files-uploads` | `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` | researcher browser (presigned **PUT** on `origin/develop`; flips to presigned **POST** once [#438](https://github.com/londonaicentre/FLIP/pull/438) lands), flip-api reads | `PUT` today; narrows to `POST` from `https://<flip_alb_subdomain>` when #438 merges | researcher-uploaded model artefacts under `uploaded/` (today the AV-scanned copy reads from the same prefix — see the FIXME in `.env.production`) |
+| `flip{env}-fl-results` | `FLIP_FL_RESULTS_BUCKET_NAME` | fl-server writes, researcher browser (presigned **GET**) | `GET` from `https://<flip_alb_subdomain>` | FL training output / aggregated weights — the whole bucket is dedicated to this tenant so no prefix is needed |
+| `flip{env}-app-bundles` | `FLIP_APP_BUNDLES_BUCKET_NAME` | flip-api (boto3 only); `flip-fl-base{,-flower}` CI publishes here on merge to main | **none** (server-only — no `aws_s3_bucket_cors_configuration` resource is emitted at all) | `base-application/{nvflare,flower}/` (pushed by the upstream FL repos), `app_destinations/<model_id>/` (per-bundle FL apps), `base-application-dev/pull-requests/<n>/` (PR previews on the dev account) |
+| `flip{env}-aicentre` | `AICENTRE_BUCKET_NAME` | Trust EC2 (`aws s3 cp` during Ansible), AI Centre operators | `PUT`, `GET` | FL participant kits |
+
+All four share standard configs: public access blocked, SSE-KMS server-side encryption with bucket keys enabled, versioning enabled. The three FLIP application buckets are rendered by the shared **`modules/flip_s3_bucket`** module, which is consumed by both `main.tf` (prod / stag) and `dev/main.tf` (dev account) — so a CORS or bucket-policy change plans identically across every environment, closing the dev-drift gap that masked the presigned-PUT → presigned-POST regression in #438.
+
+**Where the bucket-names come from outside FLIP itself.** `flip-fl-base` and `flip-fl-base-flower` push their `src/` tree to `flip{env}-app-bundles/base-application/{nvflare,flower}/` on every merge to `main`. The bucket name is computed in the workflow YAML as `${{ vars.AWS_*_S3_BUCKET_NAME }}-app-bundles` — the `AWS_*_S3_BUCKET_NAME` GitHub Environment variable still holds the legacy bucket name, and the `-app-bundles` suffix is appended in-place. That way the variable can stay set to the legacy bucket (still consulted by other migration tooling) without the FL-base workflow accidentally writing back to it. The GitHub OIDC role those workflows assume (`GitHubAction-AssumeRoleWithAction-FLIP`, defined in the `aicentre-iac` repo) attaches the AWS-managed `AmazonS3FullAccess` policy, so no IAM change is needed when new app-bundles buckets come online in a new env.
+
+#### Migrating off the legacy single-bucket layout
+
+For an account that was created **before** the split, the legacy `flip{env}` bucket holds the contents that now belong in the three split buckets above. **Prod and dev were migrated as part of FLIP#24** (the bucket-split PR) — see that PR's description for the as-built details and verification logs. The only environment still pending a cutover at the time of writing is **stag**; the runbook below is the canonical reference for stag and for any future fresh prod/dev account that needs the same migration.
+
+The mechanism the runbook leans on:
+
+- The `removed { destroy = false }` blocks in `services.tf` drop the legacy bucket from Terraform state on the first apply **without** destroying the AWS resource — that's what lets `make migrate-flip-bucket` run against the still-live source.
+- `make verify-flip-bucket-migration` is the safety net for the fact that `aws s3 sync` exits 0 even when individual object copies fail (per-object KMS / throttle / timeout errors print to stderr but don't fail the sync). It computes a key-set subset check — every source key must exist on the destination; extras on the destination from post-cutover writes are allowed. Always green before `aws s3 rb`.
+- There is a brief window between `make apply` finishing and `make deploy-centralhub` finishing where flip-api's IAM no longer grants the legacy bucket but its env vars still point at it — every S3 call returns 403 during that window (~5 minutes). To eliminate it, temporarily add the legacy bucket back to the IAM grant for the duration of the deploy, then strip it in a follow-up apply.
+
+#### Stag migration runbook
+
+Stag's Terraform state is known to be missing ~70 live resources. The `removed` blocks plan as no-ops if `aws_s3_bucket.flip_bucket` was never registered in stag state to begin with — and the next stag apply would then try to *create* whatever `FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME` points to. If that's set to the legacy bucket name as a typo, the apply fails on `BucketAlreadyOwnedByYou`; if it's set to a new name but the new buckets already exist in AWS from a manual create, the apply also fails. The fix is to import every persistent resource first, then run apply / migrate / verify.
+
+```bash
+cd deploy/providers/AWS
+export AWS_PROFILE=stag && make aws-login              # if SSO has expired
+
+# 1. Bring stag's Terraform state in line with what's actually in AWS — this
+#    imports the three new application buckets (if a previous run created them
+#    manually), the AI Centre bucket, Secrets Manager, Cognito, SES, and ACM.
+#    It does NOT import the legacy `aws_s3_bucket.flip_bucket` (that resource
+#    has been removed from the configuration and replaced with `removed`
+#    blocks). The `removed` blocks then plan as no-ops on the stag-state gap,
+#    which is fine: nothing to remove means nothing accidentally gets removed.
+#    Idempotent: rerun safely after a fix.
+make import-persistent                                  # PROD unset → stag (see Makefile defaults)
+
+# 2. Plan — confirm the diff matches the prod cutover's shape:
+#    17 to add (3 new buckets), 3 to change (IAM rewires), 1 to destroy
+#    (old uploaded_federated_data SSM param renamed), 8 forgotten-from-state.
+#    If you see anything trying to DESTROY a bucket, stop — that means the
+#    import-persistent step missed something. Don't apply.
+make plan
+
+# 3. Apply — same diff as prod.
+make apply
+
+# 4. Sync the four legacy prefixes (model_files/uploaded, uploaded_federated_data,
+#    base-application, app_destination_bucket) into the three new buckets.
+make migrate-flip-bucket
+
+# 5. Parity-check — must print all-✅ before continuing.
+make verify-flip-bucket-migration
+
+# 6. Redeploy stag's central hub so flip-api picks up the new bucket env vars.
+make deploy-centralhub
+
+# … browser smoke against stag's URL; FL e2e; 24–48h cooldown …
+
+# 7. Final verify + decommission.
+make verify-flip-bucket-migration
+aws s3 rm s3://flipstag --recursive
+aws s3 rb s3://flipstag
+```
+
+Two stag-specific watch-outs:
+
+- **`make import-persistent` failing partway through** is fine on a re-run — every import in `scripts/import-resources.sh` is idempotent (probes `terraform state list` before importing). The script will skip already-imported resources and only attempt the missing ones.
+- **The deploy-centralhub redeploy needs the docker image tag pinned in `.env.stag`** (`DOCKER_TAG`) to be a tag that exists in GHCR. Branch tags do **not** auto-build on push — trigger the `docker_build_*` workflows via `workflow_dispatch` first if you're stag-testing a feature branch (see [the build trigger note in CLAUDE.md](../../../CLAUDE.md#docker-image-builds-manual-trigger-required-for-branches)).
+
+For a **future fresh prod or dev** account that needs the same migration, the flow is the stag runbook above minus step 1 (`make import-persistent` is only needed on environments with the stag-style state gap) and with `PROD=true` on every `make` call for prod (dev uses the separate `deploy/providers/AWS/dev/` Terraform root, no `PROD=` flag).
+
+> **Do not `aws s3 rb s3://flipdev` on the legacy dev bucket.** The `test-data/` prefix in there (~42 objects) is consumed by `flip-fl-base` and `flip-fl-base-flower` (their CI fixtures), so it is outside the scope of the FLIP#24 migration and must survive. Either leave the `flipdev` bucket alive solely for `test-data/`, or move `test-data/` to a dedicated bucket and update both FL-base repos' references in lockstep before any `aws s3 rb`. The same constraint may apply to a `test-data/` prefix in `flipstag` / `flipprod` if one exists — check with `aws s3 ls s3://flipstag/test-data/` before decommissioning either.
+
+Once a decommission is complete in every environment, drop the `FLIP_BUCKET_NAME` line from `.env.*`, the `removed` blocks in `services.tf`, and the `migrate-flip-bucket` / `verify-flip-bucket-migration` Makefile targets in a follow-up PR.
 
 ### Manual Step-by-Step Deployment
 
@@ -261,7 +343,7 @@ make destroy
 
 - Cognito User Pool and users (authentication data)
 - Secrets Manager secret (FLIP_API configuration)
-- S3 bucket (application data)
+- S3 buckets — both the application buckets and the AI Centre bucket (see [FLIP application S3 buckets](#flip-application-s3-buckets))
 
 #### RDS lifecycle (stag vs prod)
 
