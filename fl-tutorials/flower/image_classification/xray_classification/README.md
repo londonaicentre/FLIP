@@ -39,11 +39,16 @@ xray_classification/
     ├── data_loading.py        # FLIP_BASE + lesion / row helpers
     ├── transforms.py          # MONAI X-ray transforms
     ├── models.py              # DenseNet121
-    └── loss_and_metrics.py    # BCE loss + per-lesion P/R/F1
+    ├── loss_and_metrics.py    # BCE loss + per-lesion P/R/F1
+    ├── server_app.py          # symlink → ../../../../src/standard/app/server_app.py
+    └── strategy.py            # symlink → ../../../../src/standard/app/strategy.py
 ```
 
-`server_app.py` and `strategy.py` are intentionally absent — see the
-"What goes through the upload" table below.
+`server_app.py` and `strategy.py` are symlinks to the canonical base bundle in
+`src/standard/app/`. They exist only so that `flwr run` from this tutorial
+can resolve `app.server_app` / `app.strategy` locally — FLIP's
+`bundle_flower_application` overlays the same base files at deploy time, so
+the upload flow is unaffected (see the table below).
 
 ## Running through FLIP (recommended)
 
@@ -78,7 +83,8 @@ bundle's `app/server_app.py` and root-level `pyproject.toml`. That means:
 | `app/loss_and_metrics.py` | uploaded             |
 | `app/__init__.py`         | uploaded             |
 | `app/config.json`         | uploaded — read by client_app.py |
-| `app/server_app.py`       | not shipped — base wins for any user-uploaded copy |
+| `app/server_app.py`       | symlink to `src/standard/app/server_app.py`; uploaded resolved-content but the base bundle's identical file wins after overlay |
+| `app/strategy.py`         | symlink to `src/standard/app/strategy.py`; same as above |
 | `pyproject.toml`          | not uploaded by the smoke (sits at tutorial root); base bundle's wins regardless |
 
 So `app/config.json` is the only knob worth changing per tutorial — the base
