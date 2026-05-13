@@ -50,22 +50,98 @@ can resolve `app.server_app` / `app.strategy` locally — FLIP's
 `bundle_flower_application` overlays the same base files at deploy time, so
 the upload flow is unaffected (see the table below).
 
-## Running through FLIP (recommended)
+## Running this tutorial
 
-From the FLIP repo root:
+> **Run this tutorial with the Docker Compose stack, not `flwr run` / the
+> Simulation Engine.** The compose stack is the supported path; the
+> simulation path is documented below only so you understand why we avoid it.
 
-```bash
-make up FL_BACKEND=flower    # bring up the Flower compose stack
-make e2e_smoke               # picks this tutorial automatically because FL_BACKEND=flower
-```
+### Recommended: Docker Compose
 
-`make e2e_smoke` reads its `MODEL_FILES_DIR` and `QUERY_FILE` from the
-`FL_BACKEND` value (see `flip-api/Makefile`) and points them at this
-tutorial. Override either to swap in a different cohort:
+From the repository root:
 
 ```bash
-make e2e_smoke QUERY_FILE=/abs/path/to/your_cohort.sql
+make build                # build the fl-base / superlink / supernode images
+make up                   # start fl-api, superlink, supernode-1, supernode-2
 ```
+
+Then submit the run against the `fl-api` control plane:
+
+```bash
+curl -X POST http://localhost:8000/submit_run/image_classification/xray_classification
+```
+
+(The route is `/submit_run/{app_folder}` resolved as a path under
+`/app/src/`, which is the bind-mounted `tutorials/` dir — nested folders
+work because the param is matched as a path. If your fl-api still pins
+`{app_folder}` as a single segment, either move this tutorial to the top
+level or update the route to `{app_folder:path}`.)
+
+The compose file (`deploy/compose.yml`) wires everything correctly:
+
+- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`, `MODEL_CHECKPOINTS_DIR`
+  are resolved from `.env.flwr.development` (read by Docker Compose as the
+  `${VAR}` substitutions in each service's `volumes:` block) and bind-mounted
+  into the SuperNode and SuperLink containers — one source of truth for paths.
+- Inside the containers the mounts always land at stable locations
+  (`/images`, `/dataframe_file`, `/app/runs`, `/app/model_checkpoints`), and
+  the `environment:` blocks point the app at those paths, so relative paths in
+  tutorial code resolve consistently regardless of your host layout.
+- The SuperLink's `--insecure` mode and health server are set by `command:`,
+  not by your shell — nothing to re-export between runs.
+
+The `DEV_DATAFRAME` CSV must expose chest-X-ray accession IDs with the same
+column shape `query.sql` returns from the trust mock OMOP DB (concept ids
+4215818 / 4196943 / 40481136). DICOMs land in `DEV_IMAGES_DIR` keyed by
+accession number — `flip.get_by_accession_number(..., resource_type=[ResourceType.DICOM])`
+reads them directly when `LOCAL_DEV=true`.
+
+### Not recommended: Flower Simulation Engine (`flwr run`)
+
+We deliberately do **not** document a `flwr run` invocation for this tutorial.
+Running it via the Simulation Engine is technically possible but brittle, for
+reasons specific to this project:
+
+1. **Long-lived `flower-superlink` caches its environment.** `flwr run`
+   submits jobs to an already-running `flower-superlink` daemon. Ray worker
+   subprocesses inherit the superlink's env, *not* the env you exported on the
+   `flwr run` command line — so changing `DEV_DATAFRAME=…` between runs has
+   no effect until you `pkill -f flower-superlink`.
+2. **ClientApp CWD is not your project directory.** `flwr run` installs a
+   snapshot of the app under `~/.flwr/apps/<publisher>.<name>.<version>.<hash>/`
+   and runs ClientApp subprocesses from there, so relative paths like
+   `../../data/...` resolve to `~/.flwr/data/...` and fail.
+3. **FLIP's `DevSettings` singleton is pinned at import time.**
+   `flip/constants/pt_constants.py` reads `FlipConstants.LOCAL_DEV` at
+   class-body time, which forces pydantic-settings to materialise the
+   singleton before any run starts. Once pinned, later `os.environ[...]`
+   writes don't propagate, so mid-run path overrides are a dead end.
+
+Under Docker Compose none of these bite: each container starts fresh, env
+vars are applied from `env_file`/`environment:` at container start, and CWDs
+are fixed by `working_dir:`.
+
+If you still want to experiment with `flwr run` locally you will have to
+(a) `pkill -f flower-superlink` before every run with new env, (b) use
+absolute paths (`$(git rev-parse --show-toplevel)/data/...`), and (c) accept
+that some FLIP-side behaviour driven by the import-time singleton will still
+reflect whatever env the superlink was born with. Don't do it for real work —
+use the compose stack above.
+
+### Running via the FLIP smoke (`make e2e_smoke`)
+
+End-to-end against a full FLIP stack (Central Hub + trusts) instead of the
+flip-fl-base-flower local compose:
+
+```bash
+# from the FLIP repo root
+make up FL_BACKEND=flower
+make e2e_smoke                                 # picks this tutorial because FL_BACKEND=flower
+make e2e_smoke QUERY_FILE=/abs/path/to/your.sql  # swap the cohort
+```
+
+`flip-api/Makefile` reads `FL_BACKEND` to point `MODEL_FILES_DIR` and
+`QUERY_FILE` at this tutorial.
 
 ## What goes through the upload
 
