@@ -105,8 +105,21 @@ ok=true
 check() {
     local label="$1" src="$2" dst="$3"
     local src_keys dst_keys missing extras missing_count extras_count
-    src_keys="$(list_suffixes "$src")"
-    dst_keys="$(list_suffixes "$dst")"
+    # `set -e` is disabled inside `$()` command substitutions, so a non-zero
+    # exit from `list_suffixes` (expired creds, throttling, etc.) would
+    # otherwise be silently swallowed, leaving the key var empty and
+    # tricking `comm -23` into a false "all source keys present" pass.
+    # Explicit `|| { … return; }` is the only guard that propagates.
+    src_keys="$(list_suffixes "$src")" || {
+        log_error "$label: failed to list source keys at $src"
+        ok=false
+        return
+    }
+    dst_keys="$(list_suffixes "$dst")" || {
+        log_error "$label: failed to list destination keys at $dst"
+        ok=false
+        return
+    }
     missing="$(comm -23 <(echo "$src_keys") <(echo "$dst_keys"))"
     extras="$(comm -13 <(echo "$src_keys") <(echo "$dst_keys"))"
     missing_count="$(printf '%s' "$missing" | grep -c . || true)"

@@ -72,9 +72,9 @@ export TF_VAR_AICENTRE_BUCKET_NAME=${AICENTRE_BUCKET_NAME}
 # from the env file. The variables are required (no default) so Terraform
 # would otherwise prompt mid-plan with a generic message that gives no hint
 # about where to set the value.
-$(if $(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME),,$(error 🪣 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
-$(if $(FLIP_FL_RESULTS_BUCKET_NAME),,$(error 🪣 FLIP_FL_RESULTS_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
-$(if $(FLIP_APP_BUNDLES_BUCKET_NAME),,$(error 🪣 FLIP_APP_BUNDLES_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
+$(if $(FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME),,$(error 🪶 FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
+$(if $(FLIP_FL_RESULTS_BUCKET_NAME),,$(error 🪶 FLIP_FL_RESULTS_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
+$(if $(FLIP_APP_BUNDLES_BUCKET_NAME),,$(error 🪶 FLIP_APP_BUNDLES_BUCKET_NAME must be set in $(MAIN_ENV_FILE)))
 export TF_VAR_flip_cognito_admin_email=aicentreflip@gmail.com
 export TF_VAR_flip_cognito_researcher_email=rafaelagd@gmail.com
 export TF_VAR_POSTGRES_DB=${POSTGRES_DB}
@@ -199,8 +199,9 @@ migrate-flip-bucket: ## One-time: sync legacy flip_bucket prefixes into the thre
 	## prefixes into them, (3) `make verify-flip-bucket-migration` parity-checks, (4) redeploy
 	## with the new env vars, (5) smoke-test, (6) after a 24-48h cooldown manually decommission
 	## the old bucket with:
-	##     terraform state rm aws_s3_bucket.flip_bucket   # `prevent_destroy = true` blocks normal destroys
 	##     aws s3 rb s3://$${FLIP_BUCKET_NAME} --force    # only after `make verify-flip-bucket-migration` is green
+	## Note: `terraform state rm` is NOT needed — the `removed { destroy = false }`
+	## blocks in services.tf already forgot the legacy bucket on the last apply.
 	##
 	## Safe to re-run: `aws s3 sync` re-copies any source object whose mtime/size differs
 	## from the destination, and skips matching ones. Per-object failures (KMS grant gaps,
