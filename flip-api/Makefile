@@ -94,8 +94,8 @@ delete_testing_projects:
 #     make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5"
 FL_BACKEND ?= flower
 ifeq ($(FL_BACKEND),flower)
-MODEL_FILES_DIR ?= ../../flip-fl-base-flower/tutorials/image_classification/xray_classification/app
-QUERY_FILE ?= ../../flip-fl-base-flower/tutorials/image_classification/xray_classification/query.sql
+MODEL_FILES_DIR ?= ../../flip-fl-base-flower/tutorials/xray_classification/app
+QUERY_FILE ?= ../../flip-fl-base-flower/tutorials/xray_classification/query.sql
 else
 MODEL_FILES_DIR ?= ../../flip-fl-base/tutorials/image_classification/xray_classification/app_files
 QUERY_FILE ?= $(MODEL_FILES_DIR)/../query.sql
