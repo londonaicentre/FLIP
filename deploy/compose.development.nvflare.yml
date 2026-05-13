@@ -61,7 +61,9 @@ services:
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-1/services/fl-server-net-1/transfer:/app/transfer
-      # Mount the AWS credentials (needed to upload model results to S3)
+      # Mount the AWS credentials (needed to upload model results to S3).
+      # The image runs as root with HOME=/root, so the mount lands at
+      # /root/.aws/ — the SDK's default lookup path for that user.
       - ~/.aws/config:/root/.aws/config:ro
       - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
     environment:
@@ -87,7 +89,9 @@ services:
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/local:/app/local
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/startup:/app/startup
       - ${FL_PROVISIONED_DIR}/net-2/services/fl-server-net-2/transfer:/app/transfer
-      # Mount the AWS credentials (needed to upload model results to S3)
+      # Mount the AWS credentials (needed to upload model results to S3).
+      # The image runs as root with HOME=/root, so the mount lands at
+      # /root/.aws/ — the SDK's default lookup path for that user.
       - ~/.aws/config:/root/.aws/config:ro
       - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
     environment:

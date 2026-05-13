@@ -71,9 +71,11 @@ services:
     container_name: fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
-      # Mount the AWS credentials (needed to upload model results to S3)
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+      # Mount the AWS credentials (needed to upload model results to S3).
+      # The image runs as `app` (uid 49999) with HOME=/app, so the mount
+      # lands at /app/.aws/ — the SDK's default lookup path for that user.
+      - ~/.aws/config:/app/.aws/config:ro
+      - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
     environment:
@@ -131,9 +133,11 @@ services:
     container_name: fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
-      # Mount the AWS credentials (needed to upload model results to S3)
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+      # Mount the AWS credentials (needed to upload model results to S3).
+      # The image runs as `app` (uid 49999) with HOME=/app, so the mount
+      # lands at /app/.aws/ — the SDK's default lookup path for that user.
+      - ~/.aws/config:/app/.aws/config:ro
+      - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
     environment:

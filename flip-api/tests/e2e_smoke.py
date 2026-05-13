@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import mimetypes
+import os
 import sys
 import tempfile
 import time
@@ -299,14 +300,26 @@ def create_model(client: requests.Session, headers: dict[str, str], project_id: 
     return model_id
 
 
+def _blacklisted_filenames() -> set[str]:
+    """Mirror flip-ui's BLACKLISTED_MODEL_FILES filter so the smoke doesn't upload
+    framework internals (server_app.py, strategy.py, flip.py, …) that the UI rejects."""
+    raw = os.environ.get("BLACKLISTED_MODEL_FILES", "")
+    return {name.strip() for name in raw.split(",") if name.strip()}
+
+
 def upload_files(
     client: requests.Session, headers: dict[str, str], model_id: str, files_dir: Path
 ) -> list[str]:
     if not files_dir.is_dir():
         raise SmokeFailure(f"--model-files-dir does not exist: {files_dir}")
-    paths = sorted(p for p in files_dir.iterdir() if p.is_file())
+    blacklist = _blacklisted_filenames()
+    all_paths = sorted(p for p in files_dir.iterdir() if p.is_file())
+    skipped = [p.name for p in all_paths if p.name in blacklist]
+    paths = [p for p in all_paths if p.name not in blacklist]
     if not paths:
         raise SmokeFailure(f"No files found under {files_dir}")
+    if skipped:
+        _log(f"⏭️  Skipping {len(skipped)} blacklisted file(s): {', '.join(skipped)}")
     _log(f"📤 Uploading {len(paths)} file(s) from {files_dir}")
     uploaded: list[str] = []
     for path in paths:
@@ -468,6 +481,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help=f"Project name (default: '{DEFAULT_PROJECT_NAME_PREFIX} <epoch>')",
     )
+    parser.add_argument(
+        "--project-id",
+        default=None,
+        help="Reuse an existing approved project: skip cohort submission, approval, and image-pull "
+        "wait; jump straight to model creation + upload + training. Lets you iterate on training "
+        "code without re-pulling images for every retry.",
+    )
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
     parser.add_argument(
         "--image-pull-threshold",
@@ -518,17 +538,26 @@ def main(argv: list[str] | None = None) -> int:
     results_dir = args.results_dir or Path(tempfile.mkdtemp(prefix="flip-e2e-results-"))
 
     try:
-        project_id, _query_id = create_project_with_query(client, headers, project_name, query)
-        trusts = stage_and_approve(client, headers, project_id)
+        if args.project_id:
+            project_id = args.project_id
+            _log(f"♻️  Reusing existing project_id={project_id} (skipping cohort + image pull)")
+            trusts = _ensure_ok(_get(client, "/trust/", headers), "list trusts").json()
+            if not trusts:
+                raise SmokeFailure("No trusts registered with the hub")
+            _log(f"  ✅ found {len(trusts)} trust(s): {[t['name'] for t in trusts]}")
+        else:
+            project_id, _query_id = create_project_with_query(client, headers, project_name, query)
+            trusts = stage_and_approve(client, headers, project_id)
         # Create the model and upload files before waiting for image pull. This
         # surfaces model-creation / upload errors immediately instead of after
         # 5–15 minutes of XNAT pulling, and the FL pipeline only consumes the
         # images at training time anyway.
         model_id = create_model(client, headers, project_id, args.model_name)
         upload_files(client, headers, model_id, args.model_files_dir)
-        wait_for_image_pull(
-            client, headers, project_id, args.image_pull_threshold, args.image_pull_timeout
-        )
+        if not args.project_id:
+            wait_for_image_pull(
+                client, headers, project_id, args.image_pull_threshold, args.image_pull_timeout
+            )
         initiate_training(client, headers, model_id, [t["name"] for t in trusts])
         wait_for_training_started(client, headers, model_id, args.training_start_timeout)
         final_status = wait_for_training_finished(
