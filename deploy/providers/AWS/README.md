@@ -547,52 +547,53 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
 | XNAT (medical imaging) ✅ | Trust EC2 |
 | Orthanc (DICOM server) ✅ | Trust EC2 |
 
+All trust → hub traffic is **outbound from the trust** (the hub never dials the trust). Arrows below
+trace the direction in which TCP connections are *initiated*.
+
 ```sh
-┌────────────────────────────────────────────────┐
-│                  Internet                       │
-└──────┬────────────────────────────┬────────────┘
-       │ HTTPS:443                  │ TCP:FL_SERVER_PORT
-       │                            │ (allow-listed to NAT
-       │                            │  Gateway public IP +
-       │                            │  on-prem Trust IP)
-┌──────▼───────────┐                │
-│   CloudFront      │ (UI from S3;  │
-│   + WAFv2 WebACL  │  /api/* →     │
-│                   │  ALB origin)  │
-└──────┬───────────┘                │
-       │ HTTPS:443                  │
-       │ (CF origin-facing          │
-       │  prefix list only)         │
-┌──────▼───────────┐    ┌───────────▼───────────┐
-│       ALB         │    │         NLB           │   (public subnets)
-│  ACM cert         │    │  TCP listener         │
-│  eu-west-2        │    │  FL_SERVER_PORT       │
-└──────┬───────────┘    └───────────┬───────────┘
-       │ /api/* → ip:8000           │ → ip:FL_SERVER_PORT
-┌──────▼────────────────────────────▼───────────┐
-│  ECS Fargate tasks (private subnets, awsvpc)   │
-│  flip-api    fl-api-net-1    fl-server-net-1   │
-│  Cloud Map private DNS: flip.local             │
-│  Egress: VPC interface endpoints + NAT Gateway │
-│  Shared state: EFS access points; RDS (private)│
-└────────────────────────────┬──────────────────┘
-                             │ polls (HTTPS via CloudFront)
-                             │
-            ┌────────────────┴────────────────┐
-            │                                  │
-    ┌───────▼──────┐                  ┌────────▼──────────────────┐
-    │  Trust EC2    │                  │  On-Prem Trust (optional)  │
-    │  (private     │                  │  (home/hospital network)   │
-    │   subnet,     │                  │                            │
-    │   SSM only)   │                  │                            │
-    │               │                  │                            │
-    │  trust-api    │                  │  trust-api                 │
-    │  imaging-api  │                  │  imaging-api               │
-    │  data-acc..   │                  │  data-access-api           │
-    │  XNAT         │                  │  fl-client                 │
-    │  Orthanc      │                  │                            │
-    │  fl-client    │                  │                            │
-    └───────────────┘                  └────────────────────────────┘
+        Users (browsers)                                            Trusts (outbound only)
+              │                                       ┌──────────────────────────┴──────────────────────────┐
+              │ HTTPS:443                             │ HTTPS:443                                            │ TCP:FL_SERVER_PORT
+              │                                       │ (poll the hub for tasks; egress via Trust EC2's      │ (FL training; egress via Trust
+              │                                       │  NAT Gateway, or via the on-prem network's egress)   │  EC2's NAT Gateway, or via the
+              │                                       │                                                      │  on-prem network's egress)
+              ▼                                       ▼                                                      ▼
+       ┌────────────────────────────────────────────────────────────┐                    ┌──────────────────────────────────┐
+       │  CloudFront + WAFv2 WebACL                                  │                    │              NLB                 │
+       │  - serves flip-ui static assets from S3                     │                    │  (public subnets, internet-      │
+       │  - forwards /api/* to the ALB origin over HTTPS-only        │                    │   facing; SG ingress allow-      │
+       └─────────────────────────────┬───────────────────────────────┘                    │   listed to NAT Gateway public   │
+                                     │ HTTPS:443                                          │   IP + local_trust_public_ip)   │
+                                     │ (only the CloudFront origin-facing                 │  TCP listener on FL_SERVER_PORT  │
+                                     │  managed prefix list is allowed                    └──────────────────┬───────────────┘
+                                     │  on the ALB SG)                                                       │
+                                     ▼                                                                       │
+       ┌─────────────────────────────────────────────────────────────┐                                       │
+       │  ALB (public subnets, eu-west-2 ACM cert)                   │                                       │
+       │  https-listener: default 404; /api/* → ecs-flip-api TG       │                                       │
+       └─────────────────────────────┬───────────────────────────────┘                                       │
+                                     │ /api/* → ip:8000                                  ip:FL_SERVER_PORT  │
+                                     ▼                                                                       ▼
+       ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+       │  ECS Fargate tasks (private subnets, awsvpc)                                                              │
+       │  flip-api          fl-api-net-1          fl-server-net-1                                                  │
+       │  Cloud Map private DNS: flip.local                                                                        │
+       │  Egress: VPC interface endpoints (Secrets Manager, SSM, Logs, ECR) + S3 gateway endpoint + NAT Gateway   │
+       │  Shared state: EFS access points (FL workspaces); RDS PostgreSQL (private subnets)                       │
+       └─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+                                       Trusts (HTTPS polling + FL client TCP, both outbound)
+                                       ▲                                                  ▲
+                                       │                                                  │
+          ┌─────────────────────────────┴─────┐                       ┌────────────────────┴───────────────────┐
+          │  Trust EC2 (AWS, private subnet,  │                       │  On-Prem Trust (optional, local network)│
+          │  SSM-only; egress via the FLIP    │                       │  Egress via the local network's own     │
+          │  VPC NAT Gateway)                 │                       │  internet path (no AWS NAT involved)    │
+          │                                   │                       │                                         │
+          │  trust-api      imaging-api       │                       │  trust-api      imaging-api             │
+          │  data-access-api   XNAT           │                       │  data-access-api   fl-client            │
+          │  Orthanc        fl-client         │                       │                                         │
+          └───────────────────────────────────┘                       └─────────────────────────────────────────┘
 ```
 
 ![AWS architecture](docs/AWS.png "AWS architecture")
