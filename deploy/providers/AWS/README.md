@@ -548,57 +548,57 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
 | Orthanc (DICOM server) ✅ | Trust EC2 |
 
 All trust → hub traffic is **outbound from the trust** (the hub never dials the trust). Arrows
-below trace the direction in which each TCP connection is *initiated*, which is the same as the
-direction of the request flow.
+in the diagram point in the direction in which each TCP connection is *initiated*, which is also
+the direction of the request flow.
 
 ```sh
-       Users (browsers)                            Trusts (Trust EC2 or on-prem)
-              │                                              │
-              │ HTTPS:443                                    │  HTTPS:443 — poll the hub for tasks
-              │                                              │  TCP:FL_SERVER_PORT — FL training
-              │                                              │
-              │                                  ┌───────────┴───────────┐
-              │                                  │                       │
-              ▼                                  ▼                       ▼
-   ┌──────────────────────────────────────────────────┐   ┌──────────────────────────────┐
-   │  CloudFront + WAFv2 WebACL                        │   │  NLB (public subnets)        │
-   │  - serves flip-ui static assets from S3           │   │  TCP listener on             │
-   │  - forwards /api/* to ALB origin (HTTPS-only)     │   │  FL_SERVER_PORT               │
-   └────────────────────────┬─────────────────────────┘   │  SG ingress allow-listed to: │
-                            │ HTTPS:443                    │   FLIP VPC NAT public IP +   │
-                            │ (CF origin-facing prefix     │   local_trust_public_ip      │
-                            │  list only — direct ALB      └──────────────┬───────────────┘
-                            │  access from the internet                    │
-                            │  is blocked)                                 │
-                            ▼                                              │
-   ┌──────────────────────────────────────────────────┐                    │
-   │  ALB (public subnets, eu-west-2 ACM cert)         │                    │
-   │  https-listener: default 404; /api/* → flip-api TG│                    │
-   └────────────────────────┬─────────────────────────┘                    │
-                            │ → ip:8000                                     │ → ip:FL_SERVER_PORT
-                            ▼                                               ▼
-   ┌──────────────────────────────────────────────────────────────────────────────────────┐
-   │  ECS Fargate tasks (private subnets, awsvpc)                                          │
-   │    flip-api      fl-api-net-1 (Cloud Map flip.local, no LB)      fl-server-net-1      │
-   │  Egress: VPC interface endpoints (Secrets Manager, SSM, Logs, ECR) + S3 gateway       │
-   │  endpoint + shared NAT Gateway                                                        │
-   │  Shared state: EFS access points (FL workspaces); RDS PostgreSQL (private subnets)    │
-   └──────────────────────────────────────────────────────────────────────────────────────┘
+                            Users (browsers)
+                                  │ HTTPS:443
+                                  ▼
+                  ┌─────────────────────────────────────────┐
+                  │  CloudFront + WAFv2 WebACL               │
+                  │  - serves flip-ui from S3                │
+                  │  - /api/* → ALB origin (HTTPS-only)      │
+                  └─────────────────────┬───────────────────┘
+                                        │ HTTPS:443
+                                        │ (CF origin-facing prefix list
+                                        │  only — direct ALB access from
+                                        │  the internet is blocked)
+                                        ▼
+                  ┌─────────────────────────────┐    ┌──────────────────────────────┐
+                  │  ALB (public subnets)        │    │  NLB (public subnets)        │
+                  │  eu-west-2 ACM cert          │    │  TCP listener on             │
+                  │  https-listener: default 404;│    │  FL_SERVER_PORT               │
+                  │  /api/* → flip-api TG        │    │  SG ingress allow-listed to: │
+                  │                              │    │   FLIP VPC NAT public IP +   │
+                  │                              │    │   local_trust_public_ip      │
+                  └──────────────┬──────────────┘    └──────────────┬───────────────┘
+                                 │ → ip:8000                         │ → ip:FL_SERVER_PORT
+                                 ▼                                   ▼
+                  ┌──────────────────────────────────────────────────────────────────┐
+                  │  ECS Fargate tasks (private subnets, awsvpc)                       │
+                  │    flip-api    fl-api-net-1 (Cloud Map flip.local)    fl-server-net-1│
+                  │  Egress: VPC interface + S3 gateway endpoints + shared NAT Gateway   │
+                  │  Shared state: EFS access points (FL workspaces); RDS (private)      │
+                  └──────────────────────────────────────────────────────────────────┘
 ```
 
-The "Trusts" node above is one of:
+Both trusts below initiate outbound to the hub on two paths (the hub never dials back):
+
+- `HTTPS:443 → CloudFront` — poll for tasks (and any `/api/*` calls)
+- `TCP:FL_SERVER_PORT → NLB` — FL client during training
 
 ```sh
-   ┌──────────────────────────────────────┐   ┌────────────────────────────────────────┐
-   │  Trust EC2 — AWS, private subnet      │   │  On-Prem Trust — optional, local        │
-   │  Egress: FLIP VPC NAT Gateway         │   │  Egress: local network's own internet   │
-   │  Inbound: SSM Session Manager only    │   │  path (not the FLIP VPC NAT Gateway)    │
-   │                                       │   │                                         │
-   │  Services (Docker Compose):           │   │  Services (Docker Compose):             │
-   │    trust-api   imaging-api   XNAT     │   │    trust-api   imaging-api              │
-   │    data-access-api   Orthanc          │   │    data-access-api   fl-client          │
-   │    fl-client                          │   │                                         │
-   └──────────────────────────────────────┘   └────────────────────────────────────────┘
+                  ┌─────────────────────────────┐    ┌──────────────────────────────┐
+                  │  Trust EC2 — AWS, private    │    │  On-Prem Trust — optional     │
+                  │  subnet, SSM-only inbound    │    │  Local network egress         │
+                  │  Egress: FLIP VPC NAT Gw     │    │  (not the FLIP VPC NAT Gw)    │
+                  │                              │    │                               │
+                  │  Services (Docker Compose):  │    │  Services (Docker Compose):   │
+                  │    trust-api   imaging-api   │    │    trust-api   imaging-api    │
+                  │    data-access-api   XNAT    │    │    data-access-api            │
+                  │    Orthanc   fl-client       │    │    fl-client                  │
+                  └─────────────────────────────┘    └──────────────────────────────┘
 ```
 
 ![AWS architecture](docs/AWS.png "AWS architecture")
