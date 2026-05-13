@@ -131,6 +131,15 @@ resource "aws_ecs_task_definition" "efs_provision" {
         aws s3 sync "$S3_BASE/fl-server-net-1/local/" /mnt/fl-server/local/
         aws s3 sync "$S3_BASE/fl-server-net-1/startup/" /mnt/fl-server/startup/
 
+        # `aws s3 sync` does not preserve POSIX execute bits — every file lands
+        # at mode 0644. NVFLARE's start.sh in startup/ then fails with
+        # `./sub_start.sh: Permission denied` on fl-server boot, crash-looping
+        # the container. Restore +x on the startup scripts and the `nvflare`
+        # CLI binary that the NVFLARE provisioner ships.
+        chmod +x /mnt/fl-api/startup/*.sh /mnt/fl-server/startup/*.sh 2>/dev/null || true
+        [ -f /mnt/fl-api/startup/nvflare ]    && chmod +x /mnt/fl-api/startup/nvflare    || true
+        [ -f /mnt/fl-server/startup/nvflare ] && chmod +x /mnt/fl-server/startup/nvflare || true
+
         echo "EFS provisioning complete."
         SCRIPT
       ]
