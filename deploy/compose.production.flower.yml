@@ -18,7 +18,7 @@ services:
 
   fl-api-net-1:
     container_name: flip-fl-api-net-1
-    image: ${DOCKER_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - /opt/flip/services/net-1/certificates:/certs:ro
     environment:
@@ -41,7 +41,7 @@ services:
 
   fl-server-net-1:
     container_name: fl-server-net-1
-    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       - /opt/flip/services/net-1/certificates:/certs:ro
     environment:
@@ -72,7 +72,7 @@ services:
   # One-shot service to register SuperNode public keys with the SuperLink
   register-supernode-keys-net-1:
     container_name: register-supernode-keys-net-1
-    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - FL_API_ADDRESS=http://flip-fl-api-net-1:8000
