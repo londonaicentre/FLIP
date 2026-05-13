@@ -1,1 +1,0 @@
-../../../../src/standard/app/strategy.py

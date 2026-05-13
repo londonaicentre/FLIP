@@ -40,8 +40,8 @@ xray_classification/
     ├── transforms.py          # MONAI X-ray transforms
     ├── models.py              # DenseNet121
     ├── loss_and_metrics.py    # BCE loss + per-lesion P/R/F1
-    ├── server_app.py          # symlink → ../../../../src/standard/app/server_app.py
-    └── strategy.py            # symlink → ../../../../src/standard/app/strategy.py
+    ├── server_app.py          # symlink → ../../../src/standard/app/server_app.py
+    └── strategy.py            # symlink → ../../../src/standard/app/strategy.py
 ```
 
 `server_app.py` and `strategy.py` are symlinks to the canonical base bundle in
@@ -68,14 +68,8 @@ make up                   # start fl-api, superlink, supernode-1, supernode-2
 Then submit the run against the `fl-api` control plane:
 
 ```bash
-curl -X POST http://localhost:8000/submit_run/image_classification/xray_classification
+curl -X POST http://localhost:8000/submit_run/xray_classification
 ```
-
-(The route is `/submit_run/{app_folder}` resolved as a path under
-`/app/src/`, which is the bind-mounted `tutorials/` dir — nested folders
-work because the param is matched as a path. If your fl-api still pins
-`{app_folder}` as a single segment, either move this tutorial to the top
-level or update the route to `{app_folder:path}`.)
 
 The compose file (`deploy/compose.yml`) wires everything correctly:
 
