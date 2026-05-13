@@ -12,16 +12,16 @@
 # limitations under the License.
 #
 
+# Exit on first error, undefined variable, or pipe failure.
+set -euo pipefail
 
-# This script configures the dcm2niix container service in XNAT
-# It is intended to be run after the XNAT container has been started
-# for the first time.
+# This script configures the dcm2niix container service in XNAT.
+# It is intended to be run after configure-xnat.sh (which changes the admin password).
 #
-# This needs that configure-xnat.sh has been run, otherwise it will fail
-# because the password of the admin user has not been changed yet.
-#
-# Note the rest of the environment variables are available from the file
-# - trust/xnat/.env
+# Required environment variables:
+#   XNAT_ADMIN_USER     - XNAT admin username
+#   XNAT_ADMIN_PASSWORD - XNAT admin password (must match what configure-xnat.sh set)
+#   DATA_PATH           - Host path for Docker path translation
 #
 
 # The below are fixed values for now
@@ -125,5 +125,26 @@ for SUB_ID in $SITE_SUB_IDS; do
     -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}"
 done
 
+# ----------------------------------------------------------------
+# VALIDATION
+# ----------------------------------------------------------------
+
+# Verify dcm2niix command was registered and enabled
 echo " "
-echo "XNAT configuration complete!"
+echo "Validating dcm2niix setup..."
+VALIDATION=$(curl -s -o /dev/null -w "%{http_code}" "$XNAT_URL/xapi/commands/$CMD_ID/wrappers/$dcm2niix_wrapper_name/enabled" \
+  -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}")
+if [ "$VALIDATION" != "200" ]; then
+  echo "ERROR: dcm2niix command enable check returned HTTP $VALIDATION (expected 200)"
+  exit 1
+fi
+
+# Verify event service is enabled
+EVENT_STATUS=$(curl -s "$XNAT_URL/xapi/events/prefs" -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" | jq -r '.enabled')
+if [ "$EVENT_STATUS" != "true" ]; then
+  echo "ERROR: Event service is not enabled (expected true, got $EVENT_STATUS)"
+  exit 1
+fi
+
+echo " "
+echo "✅ dcm2niix configuration complete and validated!"

@@ -17,7 +17,7 @@ import pytest
 from fastapi import HTTPException
 
 from flip_api.domain.interfaces.fl import IJobResponse
-from flip_api.fl_services.run_jobs import run_jobs
+from flip_api.fl_services.run_jobs import _recover_stale_busy_schedulers, run_jobs
 
 
 @pytest.fixture
@@ -89,3 +89,57 @@ def test_run_jobs_failure(mock_db, mock_check_for_available_net, mock_check_for_
             run_jobs(mock_db)
         assert exc_info.value.status_code == 500
         assert "start error" in exc_info.value.detail
+
+
+# ── _recover_stale_busy_schedulers tests ────────────────────────────────────
+
+
+def _make_mock_session(rowcount: int) -> MagicMock:
+    """Create a mocked Session whose db.execute() returns a result with the given rowcount."""
+    session = MagicMock(name="mock_session")
+    mock_result = MagicMock(name="mock_result")
+    mock_result.rowcount = rowcount
+    session.execute.return_value = mock_result
+    return session
+
+
+def test_recover_stale_busy_no_busy_rows(caplog):
+    """No BUSY rows → 0 returned, no db.commit() called."""
+    session = _make_mock_session(rowcount=0)
+
+    result = _recover_stale_busy_schedulers(session)
+
+    assert result == 0
+    session.commit.assert_not_called()
+
+
+def test_recover_stale_busy_job_id_none(caplog):
+    """BUSY + job_id=None → reset, commit called, returns 1."""
+    session = _make_mock_session(rowcount=1)
+
+    result = _recover_stale_busy_schedulers(session)
+
+    assert result == 1
+    session.commit.assert_called_once()
+    assert "Recovered 1 stale BUSY scheduler(s)" in caplog.text
+
+
+def test_recover_stale_busy_valid_job(caplog):
+    """BUSY + valid job exists → 0 returned (subquery finds the job), no commit."""
+    session = _make_mock_session(rowcount=0)
+
+    result = _recover_stale_busy_schedulers(session)
+
+    assert result == 0
+    session.commit.assert_not_called()
+
+
+def test_recover_stale_busy_deleted_job(caplog):
+    """BUSY + deleted job → reset, commit called, returns 2."""
+    session = _make_mock_session(rowcount=2)
+
+    result = _recover_stale_busy_schedulers(session)
+
+    assert result == 2
+    session.commit.assert_called_once()
+    assert "Recovered 2 stale BUSY scheduler(s)" in caplog.text

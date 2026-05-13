@@ -102,7 +102,55 @@ variable "INTERNAL_SERVICE_KEY" {
 }
 
 variable "docker_image_tag" {
-  description = "Container image tag for ECS task definitions. Empty default — deploys must pass an explicit tag (Git SHA preferred). 'latest' is intentionally not the default to avoid the mutable-tag pitfalls flagged in the v1 review."
+  description = "Docker image tag for flip-api and flip-ui"
+  type        = string
+  default     = ""
+}
+
+variable "flip_fl_image_tag" {
+  description = "Docker image tag for FL services (fl-api, fl-server, fl-client)"
+  type        = string
+  default     = ""
+}
+
+variable "docker_registry" {
+  description = "Docker image registry prefix (e.g. ghcr.io/londonaicentre/)"
+  type        = string
+  default     = "ghcr.io/londonaicentre/"
+}
+
+variable "fl_api_name" {
+  description = "FL API Docker image name (backend-specific: flare-fl-api or flower-fl-api)"
+  type        = string
+  default     = "flare-fl-api"
+}
+
+variable "fl_server_name" {
+  description = "FL server Docker image name (backend-specific: flare-fl-server or flower-fl-server)"
+  type        = string
+  default     = "flare-fl-server"
+}
+
+variable "fl_client_name" {
+  description = "FL client Docker image name (backend-specific: flare-fl-client or flower-fl-client)"
+  type        = string
+  default     = "flare-fl-client"
+}
+
+variable "fl_backend" {
+  description = "FL backend: nvflare or flower"
+  type        = string
+  default     = "nvflare"
+}
+
+variable "flare_kit_date" {
+  description = "Date stamp for the NVFLARE provisioned kit (e.g. 20260429), used to construct the S3 path for cert syncing"
+  type        = string
+  default     = ""
+}
+
+variable "flower_kit_date" {
+  description = "Date stamp for the Flower provisioned kit"
   type        = string
   default     = ""
 }
@@ -114,25 +162,36 @@ variable "MIN_CLIENTS" {
 }
 
 variable "enable_efs" {
-  description = "Enable EFS file system for FL task persistent storage. Gated to false until PR 2 adds ECS task definitions that mount EFS volumes — creating EFS without consumers is dead infra."
+  description = "Enable EFS file system for FL task persistent storage"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "enable_ecs_endpoints" {
-  description = "Enable VPC interface endpoints (SSM, Secrets, Logs, ECR) for ECS Fargate. Gated to false until PR 2 adds ECS services that consume them — existing EC2 traffic uses the NAT gateway. Unconditionally creating endpoints before PR 2 incurs ~$73/month idle cost."
+  description = "Enable VPC interface endpoints (SSM, Secrets, Logs, ECR) for ECS Fargate"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "enable_service_discovery" {
-  description = "Enable Cloud Map Service Discovery namespace. Gated to false until PR 2 adds ECS services that register — creating the namespace without registrants is dead infra."
+  description = "Enable Cloud Map Service Discovery namespace"
   type        = bool
-  default     = false
+  default     = true
 }
 
-variable "FLIP_BUCKET_NAME" {
-  type = string
+variable "FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME" {
+  description = "Globally-unique S3 bucket name for researcher-uploaded model files (browser presigned-PUT surface today; narrows to presigned POST once PR #438 lands). Required, no default — must be set per environment in the matching .env.*."
+  type        = string
+}
+
+variable "FLIP_FL_RESULTS_BUCKET_NAME" {
+  description = "Globally-unique S3 bucket name for FL training results (browser presigned-GET surface). Required, no default — must be set per environment in the matching .env.*."
+  type        = string
+}
+
+variable "FLIP_APP_BUNDLES_BUCKET_NAME" {
+  description = "Globally-unique S3 bucket name for FL app bundles (server-only; never browser-direct). Required, no default — must be set per environment in the matching .env.*."
+  type        = string
 }
 
 variable "AICENTRE_BUCKET_NAME" {
@@ -237,6 +296,35 @@ variable "XNAT_PORT" {
 variable "PACS_UI_PORT" {
   description = "Port for Orthanc PACS UI"
   type        = number
+}
+
+variable "TRUST_NAMES" {
+  description = "JSON-array string of registered trust names, e.g. [\"Trust_1\",\"Trust_2\"]. Consumed by flip-api to validate inbound trust API calls."
+  type        = string
+}
+
+variable "TRUST_API_KEY_HEADER" {
+  description = "HTTP header name carrying per-trust API keys on trust-to-hub calls. Compose default: Authorization."
+  type        = string
+  default     = "Authorization"
+}
+
+variable "INTERNAL_SERVICE_KEY_HEADER" {
+  description = "HTTP header name carrying the internal service key on fl-server-to-flip-api callbacks."
+  type        = string
+  default     = "X-Internal-Service-Key"
+}
+
+variable "FL_ADMIN_DIRECTORY" {
+  description = "Container path that fl-api looks at for NVFLARE admin secrets (local + startup subdirs)."
+  type        = string
+  default     = "/app/admin"
+}
+
+variable "ENFORCE_MFA" {
+  description = "Gate authenticated routes on TOTP enrolment. Defaults to true; flip-api Settings default also enforces this when unset."
+  type        = string
+  default     = "true"
 }
 
 variable "local_trust_public_ip" {

@@ -50,7 +50,7 @@ jobs:
         run: | # pragma: allowlist secret
           cp ../../.env.development.example ../../.env.development
           # Override sensitive values with GitHub secrets
-          echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=' }}" >> ../../.env.development  # pragma: allowlist secret
+          echo "AES_KEY_BASE64=${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnk=' }}" >> ../../.env.development  # pragma: allowlist secret
           echo "TRUST_API_KEY=${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}" >> ../../.env.development
           echo "DATA_ACCESS_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
           echo "OMOP_POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" >> ../../.env.development
