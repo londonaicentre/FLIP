@@ -91,6 +91,32 @@ spec:
                 sleep 3
               done
               echo "xnat-db is ready."
+{{- if and .Values.xnat.web.plugins.enabled }}
+        - name: download-plugins
+          image: "{{ .Values.xnat.web.plugins.image }}"
+          command:
+            - python3
+            - -c
+            - |
+              import urllib.request, os
+              plugins = [
+                  ("container-service-3.8.0-fat.jar", "{{ .Values.xnat.web.plugins.urls.container-service }}"),
+                  ("dicom-query-retrieve-2.3.1-xpl.jar", "{{ .Values.xnat.web.plugins.urls.dicom-query-retrieve }}"),
+                  ("batch-launch-0.9.0-xpl.jar", "{{ .Values.xnat.web.plugins.urls.batch-launch }}"),
+                  ("ohif-viewer-3.7.2.jar", "{{ .Values.xnat.web.plugins.urls.ohif-viewer }}"),
+              ]
+              os.makedirs("/plugins", exist_ok=True)
+              for name, url in plugins:
+                  dest = os.path.join("/plugins", name)
+                  print("Downloading " + name + "...")
+                  urllib.request.urlretrieve(url, dest)
+                  sz = os.path.getsize(dest)
+                  print("  Done: " + str(sz // 1024 // 1024) + " MB")
+              print("All plugins downloaded successfully!")
+          volumeMounts:
+            - name: plugins
+              mountPath: /plugins
+{{- end }}
       containers:
         - name: tomcat
           image: "{{ .Values.xnat.web.image.repository }}:{{ .Values.xnat.web.image.tag }}"

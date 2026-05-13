@@ -79,6 +79,116 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "200m"
+        - name: configure-xnat-web
+          image: alpine/curl:8.12.1
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              XNAT_URL="http://xnat-web:8080"
+              ADMIN_USER="{{ .Values.xnat.web.adminUser }}"
+              ADMIN_PASS="${XNAT_ADMIN_PASS}"
+              echo "Waiting for XNAT to be ready..."
+              for i in $(seq 1 60); do
+                if curl -sf -o /dev/null "${XNAT_URL}/xapi/siteConfig" 2>/dev/null; then
+                  echo "XNAT is ready!"
+                  break
+                fi
+                sleep 10
+              done
+
+              JSESSION=$(curl -sf -X POST "${XNAT_URL}/data/JSESSION" \
+                -u "${ADMIN_USER}:${ADMIN_PASS}" 2>/dev/null || echo "")
+              echo "JSESSIONID: ${JSESSION}"
+
+              if [ -z "$JSESSION" ]; then
+                echo "Failed to login to XNAT"
+                exit 1
+              fi
+
+              # Activate XNAT site
+              echo "Activating XNAT site..."
+              curl -sf -X POST "${XNAT_URL}/xapi/siteConfig" \
+                -H "Cookie: JSESSIONID=${JSESSION}" \
+                -H "Content-Type: application/json" \
+                -d '{"initialized": true}' || echo "Activation may have already been done"
+
+              # Assign roles to service account
+              SERVICE_USER="${XNAT_SERVICE_USER:-flipServiceAccount}"
+              echo "Assigning roles to ${SERVICE_USER}..."
+              curl -sf -X PUT "${XNAT_URL}/xapi/users/${SERVICE_USER}/groups/" \
+                -H "Cookie: JSESSIONID=${JSESSION}" \
+                -H "Content-Type: application/json" \
+                -d '["ALL_DATA_ADMIN"]' || true
+              curl -sf -X PUT "${XNAT_URL}/xapi/users/${SERVICE_USER}/roles/" \
+                -H "Cookie: JSESSIONID=${JSESSION}" \
+                -H "Content-Type: application/json" \
+                -d '["ContainerManager","DataManager","SiteUser","Administrator","Dqr","non_expiring"]' || true
+
+              # Register PACS
+              echo "Registering PACS..."
+              curl -sf -X POST "${XNAT_URL}/xapi/pacs" \
+                -H "Cookie: JSESSIONID=${JSESSION}" \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "aeTitle": "ORTHANC",
+                  "defaultQueryRetrievePacs": true,
+                  "defaultStoragePacs": true,
+                  "host": "orthanc",
+                  "label": "Orthanc PACS",
+                  "ormStrategySpringBeanId": "dicomOrmStrategy",
+                  "queryRetrievePort": 4242,
+                  "queryable": true,
+                  "storable": true,
+                  "supportsExtendedNegotiations": true
+                }' || echo "PACS may already be registered"
+
+              # Configure DQR settings
+              echo "Configuring DQR settings..."
+              curl -sf -X POST "${XNAT_URL}/xapi/dqr/settings" \
+                -H "Cookie: JSESSIONID=${JSESSION}" \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "pacsAvailabilityCheckFrequency": "1 minute",
+                  "dqrWaitToRetryRequestInSeconds": "300",
+                  "assumeSameSessionIfArrivedWithin": "30 minutes",
+                  "allowAllUsersToUseDqr": true,
+                  "dqrCallingAe": "XNAT",
+                  "notifyAdminOnImport": false,
+                  "allowAllProjectsToUseDqr": true,
+                  "leavePacsAuditTrail": false,
+                  "dqrMaxPacsRequestAttempts": "100"
+                }' || echo "DQR settings may already be configured"
+
+              # Configure PACS availability for all days
+              echo "Configuring PACS availability..."
+              for DAY in MONDAY TUESDAY WEDNESDAY THURSDAY FRIDAY SATURDAY SUNDAY; do
+                curl -sf -X POST "${XNAT_URL}/xapi/pacs/1/availability" \
+                  -H "Cookie: JSESSIONID=${JSESSION}" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"availabilityEnd\":\"24:00\",\"availabilityStart\":\"00:00\",\"availableNow\":true,\"dayOfWeek\":\"$DAY\",\"enabled\":true,\"pacsId\":1,\"threads\":4,\"utilizationPercent\":100}" || true
+              done
+
+              echo "XNAT web configuration complete."
+          env:
+            - name: XNAT_ADMIN_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-admin-password
+            - name: XNAT_SERVICE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-service-user
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
 ---
 # ConfigMap with helper scripts for XNAT configuration
 apiVersion: v1
@@ -96,10 +206,119 @@ data:
     # This script configures XNAT after initial deployment.
     # It can be run manually if the automated init job is disabled.
     set -euo pipefail
+
     XNAT_URL="${1:-http://xnat-web:8080}"
     ADMIN_USER="${2:-admin}"
     ADMIN_PASS="${3:-}"
+    SERVICE_USER="${4:-flipServiceAccount}"
+    SERVICE_PASS="${5:-}"
+    ORTHANC_HOST="${6:-orthanc}"
+    PACS_DICOM_PORT="${7:-4242}"
+
+    if [ -z "$ADMIN_PASS" ] || [ -z "$SERVICE_PASS" ]; then
+      echo "Usage: configure-xnat.sh <xnat_url> <admin_user> <admin_pass> [service_user] [service_pass] [orthanc_host] [pacs_port]"
+      exit 1
+    fi
+
     echo "Configuring XNAT at ${XNAT_URL}..."
-    echo "Placeholder — XNAT REST API calls would go here."
+
+    wait_for_xnat() {
+      echo "Waiting for XNAT to be available..."
+      for i in $(seq 1 120); do
+        if wget -q --spider "${XNAT_URL}/app/template/Login.vm" 2>/dev/null; then
+          echo "XNAT is up!"
+          return 0
+        fi
+        sleep 5
+      done
+      echo "XNAT did not become available within timeout"
+      return 1
+    }
+
+    wait_for_xnat
+
+    # Login and get JSESSIONID
+    login() {
+      local u="$1" p="$2"
+      wget -q -O /tmp/jsession.txt --post-data="" \
+        --header="Authorization: Basic $(printf '%s:%s' "$u" "$p" | base64)" \
+        "${XNAT_URL}/data/JSESSION" 2>/dev/null || true
+      cat /tmp/jsession.txt 2>/dev/null || echo ""
+    }
+
+    JSESSION=$(login "${ADMIN_USER}" "${ADMIN_PASS}")
+
+    if [ -z "$JSESSION" ]; then
+      echo "Trying initial admin password..."
+      JSESSION=$(login "${ADMIN_USER}" "${ADMIN_PASS}")
+      if [ -z "$JSESSION" ]; then
+        echo "Failed to authenticate with XNAT"
+        exit 1
+      fi
+    fi
+
+    COOKIE="Cookie: JSESSIONID=${JSESSION}"
+
+    # Activate XNAT site
+    echo "Activating XNAT site..."
+    wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
+      --post-data='{"initialized": true}' "${XNAT_URL}/xapi/siteConfig"
+
+    # Register PACS (Orthanc)
+    echo "Registering PACS..."
+    wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
+      --post-data="{
+        \"aeTitle\": \"ORTHANC\",
+        \"defaultQueryRetrievePacs\": true,
+        \"defaultStoragePacs\": true,
+        \"host\": \"${ORTHANC_HOST}\",
+        \"label\": \"Orthanc PACS\",
+        \"ormStrategySpringBeanId\": \"dicomOrmStrategy\",
+        \"queryRetrievePort\": ${PACS_DICOM_PORT},
+        \"queryable\": true,
+        \"storable\": true,
+        \"supportsExtendedNegotiations\": true
+      }" "${XNAT_URL}/xapi/pacs"
+
+    # Assign roles to service account
+    echo "Assigning roles to service account..."
+    wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
+      --post-data='["ALL_DATA_ADMIN"]' \
+      "${XNAT_URL}/xapi/users/${SERVICE_USER}/groups/"
+    wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
+      --post-data='["ContainerManager","DataManager","SiteUser","Administrator","Dqr","non_expiring"]' \
+      "${XNAT_URL}/xapi/users/${SERVICE_USER}/roles/"
+
+    # Configure DQR settings
+    echo "Configuring DQR settings..."
+    wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
+      --post-data='{
+        "pacsAvailabilityCheckFrequency": "1 minute",
+        "dqrWaitToRetryRequestInSeconds": "300",
+        "assumeSameSessionIfArrivedWithin": "30 minutes",
+        "allowAllUsersToUseDqr": true,
+        "dqrCallingAe": "XNAT",
+        "notifyAdminOnImport": false,
+        "allowAllProjectsToUseDqr": true,
+        "leavePacsAuditTrail": false,
+        "dqrMaxPacsRequestAttempts": "100"
+      }' "${XNAT_URL}/xapi/dqr/settings"
+
+    # Configure PACS availability for all days
+    echo "Configuring PACS availability..."
+    for DAY in MONDAY TUESDAY WEDNESDAY THURSDAY FRIDAY SATURDAY SUNDAY; do
+      wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
+        --post-data="{
+          \"availabilityEnd\": \"24:00\",
+          \"availabilityStart\": \"00:00\",
+          \"availableNow\": true,
+          \"dayOfWeek\": \"$DAY\",
+          \"enabled\": true,
+          \"pacsId\": 1,
+          \"threads\": 4,
+          \"utilizationPercent\": 100
+        }" "${XNAT_URL}/xapi/pacs/1/availability"
+    done
+
     echo "XNAT configuration complete."
 {{- end }}
