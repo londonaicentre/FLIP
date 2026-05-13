@@ -314,9 +314,21 @@ omopDb:
     user: postgres
     # password is supplied via secrets.data.omop-postgres-password
   initJob:
-    enabled: false
+    enabled: true
     s3Bucket: ""
-    s3Path: "omop-data/backups/latest.tar.gz"
+    # Archive file name. When empty, derived from trust name + dataVersion:
+    #   {trustName}_pgdata_{dataVersion}.tar.gz
+    # Override to point at a different archive (e.g. reuse Trust_2's data):
+    #   archiveName: "trust2_pgdata_20260129.tar.gz"
+    archiveName: ""
+    dataVersion: "20260129"
+    # AWS profile to use for S3 authentication (uses SSO cached credentials)
+    awsProfile: "default"
+    # Mount host's ~/.aws directory for SSO-based S3 authentication
+    # Enabled for local K8s clusters; disable for EKS (use IRSA instead)
+    hostAwsMount:
+      enabled: false
+      hostPath: "/home/rd24/.aws"
 
 # ---------------------------------------------------------------------------
 # orthanc — Mocked DICOM PACS server
@@ -362,7 +374,7 @@ orthanc:
 xnat:
   enabled: true
   initJob:
-    enabled: false
+    enabled: true
   web:
     enabled: true
     adminUser: "admin"

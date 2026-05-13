@@ -39,31 +39,48 @@ spec:
             - -c
             - |
               set -euo pipefail
+              # Skip if PostgreSQL data already exists
+              if [ -f /var/lib/postgresql/data/PG_VERSION ]; then
+                echo "PostgreSQL data directory is already populated. Skipping restore."
+                exit 0
+              fi
+              # Install tar (amazon/aws-cli image doesn't ship it)
+              microdnf install -y tar gzip 2>/dev/null || yum install -y tar gzip 2>/dev/null
               S3_BUCKET="{{ .Values.omopDb.initJob.s3Bucket }}"
-              S3_PATH="{{ .Values.omopDb.initJob.s3Path }}"
-              echo "Downloading OMOP data archive from s3://${S3_BUCKET}/${S3_PATH}..."
-              aws s3 cp "s3://${S3_BUCKET}/${S3_PATH}" /tmp/omop-data.tar.gz
+              DATA_VERSION="{{ .Values.omopDb.initJob.dataVersion }}"
+              TRUST_NAME="{{ .Values.trustName }}"
+              ARCHIVE_NAME="{{ .Values.omopDb.initJob.archiveName }}"
+              # If archiveName is not set, derive from trust name + data version
+              if [ -z "$ARCHIVE_NAME" ]; then
+                ARCHIVE_NAME="${TRUST_NAME}_pgdata_${DATA_VERSION}.tar.gz"
+              fi
+              ARCHIVE_URL="s3://${S3_BUCKET}/omop/${ARCHIVE_NAME}"
+              echo "Downloading OMOP data archive from ${ARCHIVE_URL}..."
+              aws s3 cp "${ARCHIVE_URL}" /tmp/omop-data.tar.gz
               echo "Extracting to /var/lib/postgresql/data..."
               tar xzf /tmp/omop-data.tar.gz -C /var/lib/postgresql/data
               echo "OMOP data restore complete."
           env:
             - name: AWS_DEFAULT_REGION
               value: {{ default "eu-west-2" .Values.awsRegion | quote }}
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: s3-access-key-id
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
-                  key: s3-secret-access-key
+            - name: AWS_PROFILE
+              value: {{ .Values.omopDb.initJob.awsProfile | quote }}
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+            - name: host-aws
+              mountPath: /root/.aws
+              readOnly: true
+            {{- end }}
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: data-{{ include "flip-trust.fullname" . }}-omop-db-0
+        {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+        - name: host-aws
+          hostPath:
+            path: {{ .Values.omopDb.initJob.hostAwsMount.hostPath | quote }}
+            type: Directory
+        {{- end }}
 {{- end }}

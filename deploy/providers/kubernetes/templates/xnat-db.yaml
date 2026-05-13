@@ -24,6 +24,40 @@ data:
   XNAT_DATASOURCE_USERNAME: {{ .Values.xnat.db.datasourceUsername | quote }}
 ---
 apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-db-init
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-db
+    app.kubernetes.io/part-of: init
+data:
+  01-create-service-account.sql: |
+    -- Create the flipServiceAccount user for XNAT API access
+    -- Runs on first database initialization (empty PVC).
+    -- PostgreSQL skips docker-entrypoint-initdb.d if data directory already exists.
+    DO $init$
+    DECLARE
+      next_id INTEGER;
+      user_exists BOOLEAN;
+    BEGIN
+      SELECT EXISTS(SELECT 1 FROM xdat_user WHERE login = 'flipServiceAccount') INTO user_exists;
+      IF NOT user_exists THEN
+        SELECT COALESCE(MAX(xdat_user_id), 0) + 1 INTO next_id FROM xdat_user;
+        INSERT INTO xnat.public.xdat_user (xdat_user_id, login, email, primary_password, firstname, lastname, enabled, verified)
+        VALUES (next_id, 'flipServiceAccount', 'flip@gstt.nhs.uk', '{bcrypt}$2a$10$3iLPGsSFFfNYyZbZqh6Wgu0JSaaltV8nIrp55pBoqfWDY36fmwaxC', 'FLIP', 'Service', 1, 1);
+        -- Assign roles
+        INSERT INTO xnat.public.xdat_r_xdat_role_type_assign_xdat_user (xdat_user_xdat_user_id, xdat_role_type_role_name, xdat_r_xdat_role_type_assign_xdat_user_id)
+        VALUES (next_id, 'Administrator', (SELECT COALESCE(MAX(xdat_r_xdat_role_type_assign_xdat_user_id), 0) + 1 FROM xnat.public.xdat_r_xdat_role_type_assign_xdat_user)),
+               (next_id, 'SiteUser', (SELECT COALESCE(MAX(xdat_r_xdat_role_type_assign_xdat_user_id), 0) + 2 FROM xnat.public.xdat_r_xdat_role_type_assign_xdat_user));
+        RAISE NOTICE 'Created flipServiceAccount user with id %', next_id;
+      ELSE
+        RAISE NOTICE 'flipServiceAccount user already exists, skipping.';
+      END IF;
+    END $init$;
+---
+apiVersion: v1
 kind: Service
 metadata:
   name: xnat-db
@@ -93,6 +127,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data
+            - name: init-scripts
+              mountPath: /docker-entrypoint-initdb.d
           resources:
             {{- toYaml .Values.xnat.db.resources | nindent 12 }}
           livenessProbe:
@@ -115,6 +151,11 @@ spec:
                 - xnat
             initialDelaySeconds: 5
             periodSeconds: 5
+      volumes:
+        - name: init-scripts
+          configMap:
+            name: {{ include "flip-trust.fullname" . }}-xnat-db-init
+            defaultMode: 0444
   {{- if .Values.xnat.db.persistence.enabled }}
   volumeClaimTemplates:
     - metadata:

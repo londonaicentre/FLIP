@@ -34,22 +34,44 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: configure-xnat
-          image: "{{ .Values.xnat.web.image.repository }}:{{ .Values.xnat.web.image.tag }}"
+          image: postgres:17-alpine
           command:
             - /bin/sh
             - -c
             - |
               set -euo pipefail
-              echo "Waiting for xnat-web to be ready..."
-              until nc -z xnat-web 8080; do
-                sleep 5
+              echo "Waiting for xnat-db to be ready..."
+              until pg_isready -h xnat-db -U xnat -d xnat 2>/dev/null; do
+                sleep 3
               done
-              echo "XNAT web is ready. Running configuration..."
-              # This is a placeholder for the XNAT configuration steps
-              # that are currently performed via docker exec in the Makefile.
-              # In production, these are typically handled by the XNAT image's
-              # own startup scripts.
-              echo "XNAT configuration complete."
+              echo "xnat-db is ready. Creating XNAT service account..."
+              psql -h xnat-db -U xnat -d xnat <<-EOSQL
+                DO \$init\$
+                DECLARE
+                  next_id INTEGER;
+                  user_exists BOOLEAN;
+                BEGIN
+                  SELECT EXISTS(SELECT 1 FROM xdat_user WHERE login = 'flipServiceAccount') INTO user_exists;
+                  IF NOT user_exists THEN
+                    SELECT COALESCE(MAX(xdat_user_id), 0) + 1 INTO next_id FROM xdat_user;
+                    INSERT INTO xdat_user (xdat_user_id, login, email, primary_password, firstname, lastname, enabled, verified)
+                    VALUES (next_id, 'flipServiceAccount', 'flip@gstt.nhs.uk', '{bcrypt}\$2a\$10\$3iLPGsSFFfNYyZbZqh6Wgu0JSaaltV8nIrp55pBoqfWDY36fmwaxC', 'FLIP', 'Service', 1, 1);
+                    INSERT INTO xdat_r_xdat_role_type_assign_xdat_user (xdat_user_xdat_user_id, xdat_role_type_role_name, xdat_r_xdat_role_type_assign_xdat_user_id)
+                    VALUES (next_id, 'Administrator', (SELECT COALESCE(MAX(xdat_r_xdat_role_type_assign_xdat_user_id), 0) + 1 FROM xdat_r_xdat_role_type_assign_xdat_user)),
+                           (next_id, 'SiteUser', (SELECT COALESCE(MAX(xdat_r_xdat_role_type_assign_xdat_user_id), 0) + 2 FROM xdat_r_xdat_role_type_assign_xdat_user));
+                    RAISE NOTICE 'Created flipServiceAccount user with id %', next_id;
+                  ELSE
+                    RAISE NOTICE 'flipServiceAccount user already exists, skipping.';
+                  END IF;
+                END \$init\$;
+              EOSQL
+              echo "XNAT service account configuration complete."
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-datasource-password
           resources:
             requests:
               memory: "256Mi"

@@ -32,6 +32,8 @@ ENV_VAR_MAP = {
     "S3_BUCKET_FLOWER": ("flClient.flower.kitFromS3.bucket", False),
     "S3_KIT_DATE": ("flClient.nvflare.kitFromS3.kitDate", False),
     "S3_KIT_DATE_FLOWER": ("flClient.flower.kitFromS3.kitDate", False),
+    "AICENTRE_BUCKET_NAME": ("omopDb.initJob.s3Bucket", False),
+    "OMOP_DATA_VERSION": ("omopDb.initJob.dataVersion", False),
 }
 
 SECRET_VAR_MAP = {

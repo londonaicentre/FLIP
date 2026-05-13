@@ -85,6 +85,34 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: omop-postgres-password
+            - name: DATA_ACCESS_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: data-access-postgres-password
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    # Wait for PostgreSQL to be ready
+                    until pg_isready -U {{ .Values.omopDb.credentials.user | quote }} -d {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }} 2>/dev/null; do
+                      sleep 1
+                    done
+                    # Create the data_analyst_reader role idempotently
+                    psql -U {{ .Values.omopDb.credentials.user | quote }} -d {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }} <<-EOSQL
+                      DO \$\$
+                      BEGIN
+                        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'data_analyst_reader') THEN
+                          CREATE ROLE data_analyst_reader WITH LOGIN PASSWORD '${DATA_ACCESS_POSTGRES_PASSWORD}';
+                        END IF;
+                      END
+                      \$\$;
+                      GRANT CONNECT ON DATABASE {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }} TO data_analyst_reader;
+                      GRANT pg_read_all_data TO data_analyst_reader;
+                    EOSQL
           volumeMounts:
             - name: data
               mountPath: /var/lib/postgresql/data

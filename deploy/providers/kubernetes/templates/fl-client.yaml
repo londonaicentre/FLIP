@@ -213,5 +213,13 @@ spec:
             medium: Memory
             sizeLimit: {{ .Values.flClient.shmSize }}
         - name: fl-client-kit
+{{- if .Values.flClient.nvflare.kitFromS3.enabled }}
           emptyDir: {}
+{{- else if .Values.flClient.kitHostPath }}
+          hostPath:
+            path: {{ .Values.flClient.kitHostPath | quote }}
+            type: Directory
+{{- else }}
+          emptyDir: {}
+{{- end }}
 {{- end }}
