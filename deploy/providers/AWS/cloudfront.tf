@@ -85,13 +85,16 @@ resource "aws_acm_certificate_validation" "flip_cloudfront" {
 #
 # CloudFront provisions an AWS-managed ENI in this VPC and forwards
 # /api/* requests to the ALB over HTTPS:443 privately. The ALB has no
-# public IP; its security group only allows ingress from var.vpc_cidr,
-# which is where the VPC origin ENI lives.
+# public IP; its security group accepts ingress from the AWS-managed
+# CloudFront-VPCOrigins-Service-SG only (see the data source and
+# aws_security_group_rule below).
 ############################
 
 resource "aws_cloudfront_vpc_origin" "flip_api" {
   vpc_origin_endpoint_config {
-    name                   = "flip-api-vpc-origin-${var.flip_alb_subdomain}"
+    # CloudFront VPC origin names accept only alphanumerics, dashes, and
+    # underscores — the subdomain contains dots, so replace them with dashes.
+    name                   = "flip-api-vpc-origin-${replace(var.flip_alb_subdomain, ".", "-")}"
     arn                    = module.alb.arn
     http_port              = 80
     https_port             = 443
@@ -102,6 +105,40 @@ resource "aws_cloudfront_vpc_origin" "flip_api" {
       quantity = 1
     }
   }
+}
+
+# CloudFront creates `CloudFront-VPCOrigins-Service-SG` automatically when the
+# first VPC origin is provisioned in this VPC. The data lookup depends on the
+# VPC origin so a fresh apply doesn't try to read the SG before it exists.
+#
+# Per AWS docs (Option 2 in
+# https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html),
+# scoping the ALB ingress to this SG is the documented and most-restrictive
+# pattern — it accepts traffic only from this account's CloudFront VPC origin
+# ENIs. A vpc_cidr-based rule does NOT work for VPC-origin traffic even
+# though the ENIs have IPs inside the VPC CIDR; AWS evaluates VPC-origin SG
+# checks against the service-managed SG (or the CloudFront managed prefix
+# list), not the ENI source IP.
+data "aws_security_group" "cloudfront_vpcorigins_service" {
+  name   = "CloudFront-VPCOrigins-Service-SG"
+  vpc_id = module.flip_vpc.vpc_id
+
+  depends_on = [aws_cloudfront_vpc_origin.flip_api]
+}
+
+# Adding this rule via a standalone resource (rather than inside the
+# alb_security_group module) avoids a dependency cycle: the ALB needs an SG to
+# exist before it can be created, the VPC origin needs the ALB, and the SG
+# lookup needs the VPC origin. Attaching the rule outside the module keeps the
+# chain linear.
+resource "aws_security_group_rule" "alb_ingress_https_from_cloudfront" {
+  description              = "HTTPS from the CloudFront-VPCOrigins-Service-SG (Option 2 in AWS VPC origins docs)"
+  type                     = "ingress"
+  from_port                = var.ALB_HTTPS_PORT
+  to_port                  = var.ALB_HTTPS_PORT
+  protocol                 = "tcp"
+  security_group_id        = module.alb_security_group.security_group.id
+  source_security_group_id = data.aws_security_group.cloudfront_vpcorigins_service.id
 }
 
 ############################

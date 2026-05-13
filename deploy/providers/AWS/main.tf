@@ -440,23 +440,23 @@ resource "aws_instance" "ec2_instance" {
 # no internet exposure and the prefix-list-based ingress rule of the old
 # public-ALB design is no longer needed.
 #
-# Only HTTPS (443) ingress is configured, scoped to the VPC CIDR. The
-# CloudFront VPC origin ENI lives inside this VPC and so its source IP falls
-# within var.vpc_cidr; nothing else in the VPC should ever HTTPS the ALB.
+# Ingress on 443 is added separately as `aws_security_group_rule.alb_ingress_https_from_cloudfront`
+# in cloudfront.tf, with source = the CloudFront-VPCOrigins-Service-SG that AWS
+# creates after the VPC origin is provisioned (AWS docs Option 2 in
+# https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html).
+# We learned the hard way that a vpc_cidr-based rule does NOT permit VPC-origin
+# traffic — AWS scopes VPC-origin SG checks to the service-managed SG (or the
+# CloudFront managed prefix list), not the ENI's source IP. The rule lives
+# outside this module so the chain (ALB SG → ALB → VPC origin → service-SG
+# data source → SG rule) doesn't form a cycle.
 # The HTTP listener still exists as a redirect-to-HTTPS belt-and-braces but
 # the SG denies inbound 80 by default.
 module "alb_security_group" {
-  source      = "./modules/secgroup"
-  name        = "alb-security-group"
-  vpc_id      = module.flip_vpc.vpc_id
-  description = "Security group for FLIP ALB"
-  ingress_rules = [
-    {
-      port        = var.ALB_HTTPS_PORT
-      description = "HTTPS traffic from the CloudFront VPC origin ENI (in-VPC only)"
-      cidr_blocks = [var.vpc_cidr]
-    }
-  ]
+  source        = "./modules/secgroup"
+  name          = "alb-security-group"
+  vpc_id        = module.flip_vpc.vpc_id
+  description   = "Security group for FLIP ALB"
+  ingress_rules = []
 }
 
 module "alb" {

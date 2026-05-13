@@ -23,6 +23,13 @@ include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
+# Derive backend-specific DOCKER_FL_{API,SERVER,CLIENT}_NAME and FL_PROVISIONED_DIR
+# from FL_BACKEND. The root Makefile and trust/Makefile already include this
+# after their .env* block; running `make plan/apply` directly from this directory
+# would otherwise leave the DOCKER_FL_* names empty and produce invalid ECS image
+# references like `ghcr.io/londonaicentre/:stag`.
+include ../../fl_backend.mk
+
 LOCK ?= true
 PRESERVE_VPC ?= true
 
