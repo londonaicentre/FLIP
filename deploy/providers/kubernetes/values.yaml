@@ -411,7 +411,7 @@ xnat:
       image: python:3.12-slim
       urls:
         container-service: "https://api.bitbucket.org/2.0/repositories/xnatdev/container-service/downloads/container-service-3.8.0-fat.jar"
-        dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-2.3.1-xpl.jar"
+        dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-2.3.2-xpl.jar"
         batch-launch: "https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar"
         ohif-viewer: "https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.7.2.jar"
     env:

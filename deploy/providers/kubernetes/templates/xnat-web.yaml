@@ -100,10 +100,10 @@ spec:
             - |
               import urllib.request, os
               plugins = [
-                  ("container-service-3.8.0-fat.jar", "{{ .Values.xnat.web.plugins.urls.container-service }}"),
-                  ("dicom-query-retrieve-2.3.1-xpl.jar", "{{ .Values.xnat.web.plugins.urls.dicom-query-retrieve }}"),
-                  ("batch-launch-0.9.0-xpl.jar", "{{ .Values.xnat.web.plugins.urls.batch-launch }}"),
-                  ("ohif-viewer-3.7.2.jar", "{{ .Values.xnat.web.plugins.urls.ohif-viewer }}"),
+                  ("container-service-3.8.0-fat.jar", {{ index .Values.xnat.web.plugins.urls "container-service" | quote }}),
+                  ("dicom-query-retrieve-2.3.2-xpl.jar", {{ index .Values.xnat.web.plugins.urls "dicom-query-retrieve" | quote }}),
+                  ("batch-launch-0.9.0-xpl.jar", {{ index .Values.xnat.web.plugins.urls "batch-launch" | quote }}),
+                  ("ohif-viewer-3.7.2.jar", {{ index .Values.xnat.web.plugins.urls "ohif-viewer" | quote }}),
               ]
               os.makedirs("/plugins", exist_ok=True)
               for name, url in plugins:
