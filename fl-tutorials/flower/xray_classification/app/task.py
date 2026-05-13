@@ -108,11 +108,11 @@ def validate_func(
 
             metrics["loss"].append(loss.item())
             probs = torch.sigmoid(logits)
-            for name in lesions.get_lesion_list():
-                precision, recall, f1 = compute_precision_recall_f1(probs, labels, name, lesions=lesions)
-                metrics["precision"][name].append(precision)
-                metrics["recall"][name].append(recall)
-                metrics["f1-score"][name].append(f1)
+            for lesion in lesions.items:
+                precision, recall, f1 = compute_precision_recall_f1(probs, labels, lesion.id)
+                metrics["precision"][lesion.lesion].append(precision)
+                metrics["recall"][lesion.lesion].append(recall)
+                metrics["f1-score"][lesion.lesion].append(f1)
 
             if i % 10 == 0:
                 log(INFO, f"Val batch {i + 1}/{len(val_loader)} - loss={loss.item():.4f}")
