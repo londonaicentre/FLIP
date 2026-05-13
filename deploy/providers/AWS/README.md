@@ -581,14 +581,12 @@ the direction of the request flow.
                   │  Egress: VPC interface + S3 gateway endpoints + shared NAT Gateway   │
                   │  Shared state: EFS access points (FL workspaces); RDS (private)      │
                   └──────────────────────────────────────────────────────────────────┘
-```
 
-Both trusts below initiate outbound to the hub on two paths (the hub never dials back):
+                  Both trusts below initiate outbound to the hub on two paths
+                  (the hub never dials back):
+                    • HTTPS:443 → CloudFront         — poll for tasks
+                    • TCP:FL_SERVER_PORT → NLB        — FL client during training
 
-- `HTTPS:443 → CloudFront` — poll for tasks (and any `/api/*` calls)
-- `TCP:FL_SERVER_PORT → NLB` — FL client during training
-
-```sh
                   ┌─────────────────────────────┐    ┌──────────────────────────────┐
                   │  Trust EC2 — AWS, private    │    │  On-Prem Trust — optional     │
                   │  subnet, SSM-only inbound    │    │  Local network egress         │
