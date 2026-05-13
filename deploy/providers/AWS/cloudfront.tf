@@ -23,7 +23,10 @@
 # forwards /api/* to the (internal) ALB via aws_cloudfront_vpc_origin —
 # CloudFront provisions an AWS-managed ENI inside our VPC and dials the
 # ALB privately. The ALB has no public IP and no internet-facing path:
-# its security group only accepts traffic from inside var.vpc_cidr.
+# its security group accepts ingress on 443 only from the AWS-managed
+# CloudFront-VPCOrigins-Service-SG (see aws_security_group_rule.alb_ingress_https_from_cloudfront
+# below) — Option 2 from
+# https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html.
 #
 # Origin TLS: CloudFront sets the Host header to var.flip_alb_subdomain
 # and the ALB's default listener cert (aws_acm_certificate.flip, see
