@@ -450,7 +450,7 @@ describe("authStore", () => {
             // helper had silently returned.
             expect(getCurrentUser).not.toHaveBeenCalled();
 
-            expect(consoleErrorSpy).toHaveBeenCalledWith(
+            expect(consoleWarnSpy).toHaveBeenCalledWith(
                 "waitForSessionTokens: forceRefresh threw:",
                 expect.objectContaining({ message: "Refresh token expired" })
             );

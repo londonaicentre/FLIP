@@ -66,21 +66,15 @@ class Http {
                     // so freshly-signed-in users don't hit a 401 on the
                     // very next request (e.g. getMfaStatus from hydrate).
                     //
-                    // Both fetchAuthSession calls are wrapped because the
-                    // bare call can transparently trigger an internal token
-                    // refresh, and that path crashes with
-                    // "Cannot read properties of undefined (reading 'payload')"
-                    // in @aws-amplify/auth's refreshAuthTokens.mjs when the
-                    // Cognito refresh-token response has no AccessToken
-                    // (refresh token expired / revoked / throttled) —
-                    // `decodeJWT(AuthenticationResult?.AccessToken ?? '')`
-                    // produces an object without `.payload` and the next
-                    // `accessToken.payload` access throws. Catching here
-                    // lets the request go out unauthenticated; the
-                    // response interceptor's 401 handler forces a clean
-                    // sign-out instead of an unhandled-promise console
-                    // error and a stuck page (observed on /connectionstatus
-                    // 2026-05-13).
+                    // fetchAuthSession can transparently trigger a token
+                    // refresh internally; that path throws "Cannot read
+                    // properties of undefined (reading 'payload')" in
+                    // @aws-amplify/auth's refreshAuthTokens.mjs when the
+                    // Cognito response has no AccessToken (refresh token
+                    // expired / revoked / throttled). Wrap both calls so
+                    // the request goes out unauthenticated and the
+                    // response interceptor's 401 handler takes over
+                    // instead of an unhandled rejection.
                     let token: string | undefined;
                     try {
                         let session = await fetchAuthSession();
@@ -90,10 +84,6 @@ class Http {
                             token = session.tokens?.accessToken?.toString();
                         }
                     } catch (e) {
-                        // Log the underlying Amplify error so DevTools
-                        // surfaces *why* (throttle, expired refresh token,
-                        // storage blocked, refreshAuthTokens bug) instead
-                        // of collapsing every cause to "signed out".
                         console.warn("fetchAuthSession failed:", e);
                     }
 

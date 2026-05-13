@@ -11,7 +11,8 @@
  * limitations under the License.
  */
 
-import { confirmResetPassword,
+import { type AuthSession,
+    confirmResetPassword,
     confirmSignIn,
     fetchAuthSession,
     fetchUserAttributes,
@@ -125,24 +126,19 @@ class MissingSessionTokensError extends Error {
 }
 
 const waitForSessionTokens = async (): Promise<void> => {
-    // Both calls are wrapped because the bare fetchAuthSession() can
-    // transparently trigger an internal token refresh, and that path
-    // crashes with "Cannot read properties of undefined (reading 'payload')"
-    // in @aws-amplify/auth's refreshAuthTokens.mjs when the Cognito refresh
-    // response has no AccessToken (refresh token expired / revoked /
-    // throttled). See the matching catch in services/api.ts for the
-    // full rationale.
-    let session: Awaited<ReturnType<typeof fetchAuthSession>> | undefined;
+    // The bare fetchAuthSession() needs a try/catch — see services/api.ts
+    // for the Amplify-internals rationale.
+    let session: AuthSession | undefined;
     try {
         session = await fetchAuthSession();
     } catch (e) {
-        console.error("waitForSessionTokens: initial fetch threw:", e);
+        console.warn("waitForSessionTokens: initial fetch threw:", e);
     }
     if (session?.tokens?.accessToken) return;
     try {
         session = await fetchAuthSession({ forceRefresh: true });
     } catch (e) {
-        console.error("waitForSessionTokens: forceRefresh threw:", e);
+        console.warn("waitForSessionTokens: forceRefresh threw:", e);
     }
     if (!session?.tokens?.accessToken) {
         // Log what Amplify *thinks* the session is so DevTools can
