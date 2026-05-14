@@ -22,10 +22,6 @@ class HealthResponse(BaseModel):
     status: str
 
 
-class RunRecord(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-
 class FlowerCommandResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
