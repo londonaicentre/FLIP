@@ -312,7 +312,7 @@ def submit_run(app_folder: str) -> str:
 
     # Override app config with FLIP parameters and user-provided overrides before submission
     # --run-config </path/to/config.toml> allows us to specify a config file that can override the defaults
-    config_toml_path = job_dir / "config.toml"
+    config_toml_path = job_dir / "app" / "config.toml"
 
     if config_toml_path.is_file():
         logger.info("Using config.toml overrides from %s for job submission.", job_dir)
