@@ -19,6 +19,7 @@ built on NVIDIA FLARE (NVFLARE).
 Main exports:
     - `FLIP`: Factory function that returns the appropriate FLIP implementation based on job type
     - `FLIPBase`: Abstract base class for FLIP implementations
+    - `ResultsUploadError`: Raised when uploading training results to S3 fails
 
 Example usage:
 
@@ -33,7 +34,8 @@ Example usage:
 
 from flip.core.base import FLIPBase
 from flip.core.factory import FLIP
+from flip.exceptions import ResultsUploadError
 
-__all__ = ["FLIP", "FLIPBase"]
+__all__ = ["FLIP", "FLIPBase", "ResultsUploadError"]
 
 __version__ = "0.1.7"

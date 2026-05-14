@@ -17,6 +17,7 @@ from nvflare.apis.event_type import EventType
 from nvflare.app_common.app_event_type import AppEventType
 
 from flip.constants import FlipEvents, ModelStatus
+from flip.exceptions import ResultsUploadError
 from flip.nvflare.components.flip_server_event_handler import ServerEventHandler
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
@@ -260,6 +261,29 @@ class TestServerEventHandler:
 
         assert handler.final_status == ModelStatus.ERROR
         flip.update_status.assert_called_with(model_id, ModelStatus.ERROR)
+
+    def test_handle_event_end_run_with_results_upload_error(self):
+        """Test handle_event with END_RUN when results upload specifically fails"""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        handler = ServerEventHandler(model_id=model_id, flip=flip)
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        json_generator = Mock(spec=ValidationJsonGenerator)
+        persist_cleanup = Mock(spec=PersistToS3AndCleanup)
+        persist_cleanup.execute.side_effect = ResultsUploadError("S3 upload failed")
+        engine.get_component.side_effect = lambda comp_id: (
+            json_generator if comp_id == "json_generator" else persist_cleanup
+        )
+
+        handler.handle_event(EventType.END_RUN, fl_ctx)
+
+        assert handler.final_status == ModelStatus.RESULTS_UPLOAD_FAILED
+        flip.update_status.assert_called_with(model_id, ModelStatus.RESULTS_UPLOAD_FAILED)
 
     def test_handle_event_training_finished(self):
         """Test handle_event with TRAINING_FINISHED event"""

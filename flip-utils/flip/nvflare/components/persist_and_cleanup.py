@@ -104,7 +104,7 @@ class PersistToS3AndCleanup(FLComponent):
             traceback.print_exc()
             error_msg = f"Exception in PersistToS3AndCleanup control_flow: {e}"
             self.log_exception(fl_ctx, error_msg)
-            raise Exception
+            raise
 
     def upload_results_to_s3_bucket(self, fl_ctx: FLContext):
         """
@@ -150,7 +150,7 @@ class PersistToS3AndCleanup(FLComponent):
             self.log_error(fl_ctx, "Upload to the s3 bucket failed. Attempting to cleanup")
             self.cleanup(fl_ctx)
             self.log_error(fl_ctx, str(e))
-            raise Exception(str(e))
+            raise
 
     def cleanup(self, fl_ctx: FLContext):
         """
