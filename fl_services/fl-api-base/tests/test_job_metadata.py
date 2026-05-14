@@ -31,6 +31,7 @@ from fl_api.utils.schemas import _NVFLARE_STATUS_MAP, JobMetadata, JobStatus, no
         ("FINISHED:ABANDONED", JobStatus.FAILED),
         ("running", JobStatus.RUNNING),
         ("  RUNNING  ", JobStatus.RUNNING),
+        ("", JobStatus.FAILED),
     ],
 )
 def test_normalize_status_maps_nvflare_runstatus(native, expected):
