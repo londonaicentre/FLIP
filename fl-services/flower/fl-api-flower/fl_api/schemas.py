@@ -11,8 +11,11 @@
 # limitations under the License.
 #
 
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from fl_api.utils.logger import logger
 
 
 class HealthResponse(BaseModel):
@@ -58,3 +61,54 @@ class UploadAppRequest(BaseModel):
     cohort_query: str
     trusts: list[str]
     bundle_urls: list[str]
+
+
+class JobStatus(StrEnum):
+    """Normalized FL-backend job lifecycle status — the shared job-metadata contract
+    (FLIP issue #490). Every FL-API adapter maps its native runtime status into one of
+    these values; flip-api's ``IJobMetaData`` consumes only these.
+    """
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    FINISHED = "FINISHED"
+    FAILED = "FAILED"
+    STOPPED = "STOPPED"
+
+
+class JobMetadata(BaseModel):
+    """A single item of ``GET /list_jobs`` — the shared job-metadata contract (FLIP issue #490)."""
+
+    job_id: str
+    status: JobStatus
+
+
+# Flower native status (`flwr list` / `flwr stop`) -> normalized contract status.
+# Note: `flwr list` reports terminal states as `finished:*`, while `flwr stop` reports
+# the bare form `stopped` — both are mapped here.
+_FLOWER_STATUS_MAP: dict[str, JobStatus] = {
+    "pending": JobStatus.PENDING,
+    "starting": JobStatus.PENDING,
+    "running": JobStatus.RUNNING,
+    "finished:completed": JobStatus.FINISHED,
+    "finished:failed": JobStatus.FAILED,
+    "finished:stopped": JobStatus.STOPPED,
+    "stopped": JobStatus.STOPPED,
+}
+
+
+def normalize_status(native_status: str) -> JobStatus:
+    """Map a Flower native run status to the normalized ``JobStatus`` contract value.
+
+    Args:
+        native_status (str): The raw status string from ``flwr list`` / ``flwr stop``.
+
+    Returns:
+        JobStatus: The normalized status. Unknown / unmapped statuses are logged and
+            treated as ``FAILED`` — never silently surfaced as an abortable ``RUNNING``.
+    """
+    normalized = _FLOWER_STATUS_MAP.get(native_status.strip().lower())
+    if normalized is None:
+        logger.warning("Unmapped Flower job status %r; treating as FAILED.", native_status)
+        return JobStatus.FAILED
+    return normalized
