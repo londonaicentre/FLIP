@@ -832,8 +832,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         session (Session): SQLModel session object
 
     Raises:
-        ValueError: If the FL server is not running, or if the job currently running on the
-            server does not correspond to ``model_id``, or if ``target`` is invalid.
+        ValueError: If the FL server is not running, or if ``target`` is invalid.
     """
     logger.debug(f"Checking if model {model_id} is currently running...")
 
