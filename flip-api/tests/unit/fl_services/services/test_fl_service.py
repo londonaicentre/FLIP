@@ -827,8 +827,8 @@ def test_extract_current_job_data_success(mock_http_get):
 
     # Mock backend job list response
     mock_http_get.return_value = [
-        {"job_id": "job123", "status": "RUNNING", "job_name": "myjob"},
-        {"job_id": "job999", "status": "FINISHED", "job_name": "oldjob"},
+        {"job_id": "job123", "status": "RUNNING"},
+        {"job_id": "job999", "status": "FINISHED"},
     ]
 
     result = extract_current_job_data(net_endpoint, fl_backend_job_id)
@@ -845,7 +845,7 @@ def test_extract_current_job_data_success(mock_http_get):
 def test_extract_current_job_data_not_found_returns_none(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
-    mock_http_get.return_value = [{"job_id": "other", "status": "RUNNING", "job_name": "otherjob"}]
+    mock_http_get.return_value = [{"job_id": "other", "status": "RUNNING"}]
     net_endpoint = "http://fl-api-endpoint"
     fl_backend_job_id = "missing-job"
 
@@ -860,8 +860,8 @@ def test_extract_current_job_data_multiple_found(mock_http_get):
     fl_backend_job_id = "duplicate-job"
 
     mock_http_get.return_value = [
-        {"job_id": "duplicate-job", "status": "RUNNING", "job_name": "duplicate-job"},
-        {"job_id": "duplicate-job", "status": "RUNNING", "job_name": "duplicate-job"},
+        {"job_id": "duplicate-job", "status": "RUNNING"},
+        {"job_id": "duplicate-job", "status": "RUNNING"},
     ]
 
     with pytest.raises(ValueError, match="Multiple running jobs found"):
@@ -887,7 +887,7 @@ def test_abort_model_training_success(
     mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
     mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
     mock_fetch_server_status.return_value = {"status": "stopped"}
-    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", job_name=str(model_id), status="RUNNING")
+    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
 
     request = MagicMock()
     request.scope = {"request_id": "req-id"}
