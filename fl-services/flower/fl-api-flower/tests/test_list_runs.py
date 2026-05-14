@@ -49,6 +49,15 @@ def test_list_jobs_alias_returns_same_shape(client, src_root, mock_flwr_run):
     assert response.json() == [{"job_id": "1", "status": "RUNNING"}]
 
 
+def test_list_runs_malformed_run_returns_500(client, src_root, mock_flwr_run):
+    # A run dict missing "run-id" must fail cleanly with a 500, not an opaque KeyError.
+    mock_flwr_run(stdout='{"success": true, "runs": [{"status": "running"}]}')
+
+    response = client.get("/list_runs")
+
+    assert response.status_code == 500
+
+
 @pytest.mark.parametrize(
     ("returncode", "stdout", "stderr"),
     [

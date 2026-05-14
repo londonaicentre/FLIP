@@ -203,13 +203,20 @@ def _parse_runs_payload(payload: dict[str, Any]) -> list[JobMetadata]:
 
     jobs: list[JobMetadata] = []
     for run in runs:
-        if isinstance(run, dict):
+        if not isinstance(run, dict):
+            continue
+        try:
             jobs.append(
                 JobMetadata(
                     job_id=str(run["run-id"]),
                     status=normalize_status(run["status"]),
                 )
             )
+        except KeyError as err:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Flower list response contains a run missing the {err} field.",
+            ) from err
     return jobs
 
 
