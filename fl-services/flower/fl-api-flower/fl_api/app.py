@@ -385,6 +385,8 @@ def _find_terminal_run(src_root: Path, run_id: str) -> JobMetadata | None:
             try:
                 metadata = JobMetadata(job_id=run_id, status=normalize_status(run["status"]))
             except KeyError:
+                # Unlike _parse_runs_payload (which raises), this is a best-effort idempotency
+                # probe: a malformed run means "can't confirm terminal" -> None -> 500 fallthrough.
                 return None
             if metadata.status in (JobStatus.FINISHED, JobStatus.FAILED, JobStatus.STOPPED):
                 return metadata
