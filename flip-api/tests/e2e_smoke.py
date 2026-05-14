@@ -37,6 +37,11 @@ Direct invocation:
 
 Run on a stack that already has trusts approved (`make up` plus the usual
 seeding) and non-empty XNAT data so image pull has something to do.
+
+Pass --abort-midway to verify the FL "stop training" path (GitHub issue #490)
+instead of running to completion: once training is live, the smoke POSTs
+/fl/stop/{model_id} twice and asserts both return HTTP 204 — the first aborts
+the running job, the second is an idempotent no-op.
 """
 from __future__ import annotations
 
@@ -424,6 +429,62 @@ def wait_for_training_finished(
     )
 
 
+def wait_for_training_running(
+    client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int
+) -> str:
+    """Block until the model reports TRAINING_STARTED — a genuinely live FL job.
+
+    ``wait_for_training_started`` returns on the first status past INITIATED, which
+    can be the transient PREPARED. The --abort-midway stop test wants a running job,
+    so poll on for TRAINING_STARTED specifically. If training races to RESULTS_UPLOADED
+    first, return that — stopping an already-finished job is still a valid idempotency
+    check, the caller just notes it.
+    """
+    _log(f"⏳ Waiting for model to reach TRAINING_STARTED (timeout {timeout_s}s)")
+    deadline = time.monotonic() + timeout_s
+    last_status = ""
+    poll_interval = 5
+    while time.monotonic() < deadline:
+        resp = _try_request(_post, client, f"/step/model/{model_id}", {}, headers)
+        if resp is None or resp.status_code >= 300:
+            time.sleep(poll_interval)
+            continue
+        status = resp.json().get("status", "")
+        if status != last_status:
+            _log(f"  📊 status={status}")
+            last_status = status
+        if status == ModelStatus.ERROR.value:
+            raise SmokeFailure("Model entered ERROR state before training started — check fl-server logs")
+        if status in (ModelStatus.TRAINING_STARTED.value, ModelStatus.RESULTS_UPLOADED.value):
+            return status
+        time.sleep(poll_interval)
+    raise SmokeFailure(
+        f"Model did not reach TRAINING_STARTED within {timeout_s}s (last status: {last_status or 'unknown'})."
+    )
+
+
+def stop_training(client: requests.Session, headers: dict[str, str], model_id: str, *, attempt: int) -> None:
+    """POST /fl/stop/{model_id} and assert a clean HTTP 204 — the #490 contract."""
+    _log(f"🛑 Stop attempt #{attempt}: POST /fl/stop/{model_id}")
+    resp = _post(client, f"/fl/stop/{model_id}", {}, headers)
+    if resp.status_code != 204:
+        raise SmokeFailure(f"stop attempt #{attempt} expected HTTP 204, got {resp.status_code}: {resp.text}")
+    _log(f"  ✅ stop #{attempt} returned 204")
+
+
+def assert_model_stopped(client: requests.Session, headers: dict[str, str], model_id: str) -> None:
+    """After a successful stop the model should report STOPPED.
+
+    There is no GET /model/{id}; /step/model/{id} is the codebase's canonical
+    "current model status" call (it is what every wait_for_* helper polls).
+    """
+    resp = _ensure_ok(_post(client, f"/step/model/{model_id}", {}, headers), "fetch model status after stop")
+    status = resp.json().get("status", "")
+    if status != ModelStatus.STOPPED.value:
+        raise SmokeFailure(f"expected model status STOPPED after stop, got {status!r}")
+    _log(f"  ✅ model status is {status}")
+
+
 def download_results(
     client: requests.Session, headers: dict[str, str], model_id: str, dest_dir: Path
 ) -> list[Path]:
@@ -514,6 +575,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Seconds to wait for the model to reach RESULTS_UPLOADED (default: %(default)s)",
     )
     parser.add_argument(
+        "--abort-midway",
+        action="store_true",
+        help="#490 stop-training check: once training is running, POST /fl/stop/{model_id} twice "
+        "(first aborts the live job, second is an idempotent no-op) instead of waiting for training "
+        "to finish + downloading results. Both stops must return HTTP 204.",
+    )
+    parser.add_argument(
         "--results-dir",
         type=Path,
         default=None,
@@ -534,8 +602,6 @@ def main(argv: list[str] | None = None) -> int:
     headers = authenticate()
     client = requests.Session()
     client.headers.update({"Content-Type": "application/json"})
-
-    results_dir = args.results_dir or Path(tempfile.mkdtemp(prefix="flip-e2e-results-"))
 
     try:
         if args.project_id:
@@ -560,10 +626,29 @@ def main(argv: list[str] | None = None) -> int:
             )
         initiate_training(client, headers, model_id, [t["name"] for t in trusts])
         wait_for_training_started(client, headers, model_id, args.training_start_timeout)
-        final_status = wait_for_training_finished(
-            client, headers, model_id, args.training_finish_timeout
-        )
-        downloaded = download_results(client, headers, model_id, results_dir)
+        if args.abort_midway:
+            # #490: exercise the FL "stop training" path instead of running to completion.
+            running_status = wait_for_training_running(
+                client, headers, model_id, args.training_start_timeout
+            )
+            if running_status == ModelStatus.RESULTS_UPLOADED.value:
+                _log("  ⚠️  training finished before the stop — both stops now exercise the "
+                     "idempotent (already-terminal) path only")
+            # Stop #1 aborts the running job; stop #2 is an idempotent no-op. Both must 204.
+            stop_training(client, headers, model_id, attempt=1)
+            assert_model_stopped(client, headers, model_id)
+            time.sleep(5)
+            stop_training(client, headers, model_id, attempt=2)
+            assert_model_stopped(client, headers, model_id)
+            final_status = ModelStatus.STOPPED.value
+            results_dir = None
+            downloaded = []
+        else:
+            results_dir = args.results_dir or Path(tempfile.mkdtemp(prefix="flip-e2e-results-"))
+            final_status = wait_for_training_finished(
+                client, headers, model_id, args.training_finish_timeout
+            )
+            downloaded = download_results(client, headers, model_id, results_dir)
     except SmokeFailure as exc:
         _log(f"\n❌ Smoke failed: {exc}")
         return 1
@@ -577,7 +662,10 @@ def main(argv: list[str] | None = None) -> int:
     _log(f"   project_id   = {project_id}")
     _log(f"   model_id     = {model_id}")
     _log(f"   final_status = {final_status}")
-    _log(f"   results_dir  = {results_dir} ({len(downloaded)} file(s))")
+    if args.abort_midway:
+        _log("   stop #1 (abort running job) + stop #2 (idempotent no-op) both returned 204")
+    else:
+        _log(f"   results_dir  = {results_dir} ({len(downloaded)} file(s))")
     _log("=" * 60)
     return 0
 
