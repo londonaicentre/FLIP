@@ -400,8 +400,10 @@ def abort_run(run_id: str) -> JobMetadata:
     result = _run_flwr_command(command, src_root, "stop")
 
     if result.returncode == 0:
-        payload = _parse_flwr_payload(result, "stop")
-        return JobMetadata(job_id=run_id, status=normalize_status(payload["status"]))
+        # A successful `flwr stop` means the run is stopped. `flwr stop --format json`
+        # emits {"success": true, "run-id": ...} with no status field, so the post-abort
+        # status is unconditionally STOPPED — same as fl-api-base's /abort_job.
+        return JobMetadata(job_id=run_id, status=JobStatus.STOPPED)
 
     # `flwr stop` failed: the run may already be terminal. Aborting an already-terminal
     # run must be idempotent — fall back to `flwr list` and return its terminal status.

@@ -13,12 +13,13 @@
 
 from fl_api.schemas import JobMetadata
 
+# `flwr stop --format json` emits {"success": true, "run-id": ...} on success — there is
+# no status field, so a returncode-0 stop maps to STOPPED unconditionally.
+_FLWR_STOP_OK = '{"success": true, "run-id": "9478652229627629048"}'
+
 
 def test_abort_run_success(client, src_root, mock_flwr_run):
-    mock_flwr_run(
-        returncode=0,
-        stdout='{"success": true, "run-id": "9478652229627629048", "status": "stopped"}',
-    )
+    mock_flwr_run(returncode=0, stdout=_FLWR_STOP_OK)
 
     response = client.delete("/abort_run/9478652229627629048")
 
@@ -28,10 +29,7 @@ def test_abort_run_success(client, src_root, mock_flwr_run):
 
 
 def test_abort_job_alias_returns_same_shape(client, src_root, mock_flwr_run):
-    mock_flwr_run(
-        returncode=0,
-        stdout='{"success": true, "run-id": "9478652229627629048", "status": "stopped"}',
-    )
+    mock_flwr_run(returncode=0, stdout=_FLWR_STOP_OK)
 
     response = client.delete("/abort_job/9478652229627629048")
 
