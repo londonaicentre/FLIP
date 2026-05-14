@@ -11,10 +11,12 @@
 #
 
 import time
-from enum import Enum, IntEnum
+from enum import Enum, IntEnum, StrEnum
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel
+
+from fl_api.utils.logger import logger
 
 
 class UploadAppRequest(BaseModel):
@@ -103,3 +105,56 @@ class IOverridableConfig(BaseModel):
     IGNORE_RESULT_ERROR: Optional[bool] = None
     AGGREGATOR: Optional[str] = None
     AGGREGATION_WEIGHTS: Optional[Dict[str, float]] = None
+
+
+class JobStatus(StrEnum):
+    """Normalized FL-backend job lifecycle status — the shared job-metadata contract
+    (FLIP issue #490). Every FL-API adapter maps its native runtime status into one of
+    these values; flip-api's ``IJobMetaData`` consumes only these.
+    """
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    FINISHED = "FINISHED"
+    FAILED = "FAILED"
+    STOPPED = "STOPPED"
+
+
+class JobMetadata(BaseModel):
+    """A single item of ``GET /list_jobs`` — the shared job-metadata contract (FLIP issue #490)."""
+
+    job_id: str
+    status: JobStatus
+
+
+# NVFLARE RunStatus (nvflare/apis/job_def.py) -> normalized contract status.
+_NVFLARE_STATUS_MAP: Dict[str, JobStatus] = {
+    "SUBMITTED": JobStatus.PENDING,
+    "APPROVED": JobStatus.PENDING,
+    "DISPATCHED": JobStatus.PENDING,
+    "RUNNING": JobStatus.RUNNING,
+    "FINISHED:COMPLETED": JobStatus.FINISHED,
+    "FINISHED:ABORTED": JobStatus.STOPPED,
+    "FINISHED:EXECUTION_EXCEPTION": JobStatus.FAILED,
+    "FINISHED:ABNORMAL": JobStatus.FAILED,
+    "FINISHED:CAN_NOT_SCHEDULE": JobStatus.FAILED,
+    "FINISHED:FAILED_TO_RUN": JobStatus.FAILED,
+    "FINISHED:ABANDONED": JobStatus.FAILED,
+}
+
+
+def normalize_status(native_status: str) -> JobStatus:
+    """Map an NVFLARE ``RunStatus`` string to the normalized ``JobStatus`` contract value.
+
+    Args:
+        native_status (str): The raw status string from ``session.list_jobs()``.
+
+    Returns:
+        JobStatus: The normalized status. Unknown / unmapped statuses are logged and
+            treated as ``FAILED`` — never silently surfaced as an abortable ``RUNNING``.
+    """
+    normalized = _NVFLARE_STATUS_MAP.get(native_status.strip().upper())
+    if normalized is None:
+        logger.warning("Unmapped NVFLARE job status %r; treating as FAILED.", native_status)
+        return JobStatus.FAILED
+    return normalized
