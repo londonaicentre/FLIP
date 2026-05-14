@@ -897,6 +897,36 @@ def test_abort_model_training_success(
     mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
 
 
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+def test_abort_model_training_idempotent_when_no_running_job(
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
+    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
+    mock_fetch_server_status.return_value = {"status": "stopped"}
+    mock_extract_current_job_data.return_value = None
+
+    request = MagicMock()
+    request.scope = {"request_id": "req-id"}
+    request.path_params = {"target": "server", "clients": None}
+
+    # No running job -> idempotent no-op: must not raise and must not call abort_job.
+    fl_service.abort_model_training(request, model_id, fake_session)
+    mock_abort.assert_not_called()
+
+
 def test_add_fl_job_creates_job(model_id, fake_session):
     clients = ["client1", "client2"]
     fl_service.add_fl_job(model_id, clients, fake_session)

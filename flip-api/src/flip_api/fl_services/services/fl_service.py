@@ -862,19 +862,14 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    # Extracting current job data from the server status
-    current_job_data = extract_current_job_data(net_endpoint, fl_backend_job_id)
-
-    # Current server job name (i.e. app_name) must match the model_id in order to abort
-    current_app_name = current_job_data.job_name
-
-    if current_app_name != str(model_id):
-        error_msg = (
-            f"Requested model to abort ({model_id=}) does not match the current model running on the server "
-            f"({current_app_name=})."
+    # If there is no running job for this model, it is already terminal — abort is an
+    # idempotent no-op.
+    if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
+        logger.info(
+            f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); "
+            f"already stopped — nothing to abort."
         )
-        logger.error(error_msg)
-        raise ValueError(error_msg)
+        return
 
     # Extracting target and clients from the request path parameters
     path_params = request.path_params
