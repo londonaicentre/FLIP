@@ -228,7 +228,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         flip.update_status(model_id, ModelStatus.RESULTS_UPLOADED)
     except Exception as e:
         log(INFO, "Failed to upload results to S3: %s", str(e))
-        flip.update_status(model_id, ModelStatus.RESULTS_UPLOAD_FAILED)
+        flip.update_status(model_id, ModelStatus.ERROR)
         return
 
     log(INFO, "\n✓ Evaluation complete. All outputs saved to %s", output_dir)
