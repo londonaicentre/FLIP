@@ -29,10 +29,11 @@ from fl_api.schemas import (
     FlowerCommandResponse,
     FlowerSubmitRunCommandResponse,
     HealthResponse,
+    JobMetadata,
     NodeRegistrationRequest,
-    RunRecord,
     ServerInfoModel,
     UploadAppRequest,
+    normalize_status,
 )
 from fl_api.utils.upload import upload_application
 
@@ -192,7 +193,7 @@ def _get_federation_nodes(src_root: Path) -> list[dict[str, Any]]:
     return nodes
 
 
-def _parse_runs_payload(payload: dict[str, Any]) -> list[RunRecord]:
+def _parse_runs_payload(payload: dict[str, Any]) -> list[JobMetadata]:
     runs = payload.get("runs")
     if not isinstance(runs, list):
         raise HTTPException(
@@ -200,11 +201,16 @@ def _parse_runs_payload(payload: dict[str, Any]) -> list[RunRecord]:
             detail="Flower list response does not contain a valid 'runs' list.",
         )
 
-    validated_runs: list[RunRecord] = []
+    jobs: list[JobMetadata] = []
     for run in runs:
         if isinstance(run, dict):
-            validated_runs.append(RunRecord.model_validate(run))
-    return validated_runs
+            jobs.append(
+                JobMetadata(
+                    job_id=str(run["run-id"]),
+                    status=normalize_status(run["status"]),
+                )
+            )
+    return jobs
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -292,9 +298,9 @@ def check_client_status(
     return result
 
 
-@app.get("/list_runs", status_code=status.HTTP_200_OK, response_model=list[RunRecord])
+@app.get("/list_runs", status_code=status.HTTP_200_OK, response_model=list[JobMetadata])
 @app.get("/list_jobs", include_in_schema=False)  # alias, hide from docs
-def list_runs() -> list[RunRecord]:
+def list_runs() -> list[JobMetadata]:
     src_root = _get_src_root()
     command = ["uvx", "flwr", "list", "local", "--format", "json"]
 
