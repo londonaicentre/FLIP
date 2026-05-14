@@ -28,7 +28,7 @@ from flip_api.domain.interfaces.fl import (
     JobRequiredFiles,
     JobTypes,
 )
-from flip_api.domain.schemas.status import FLTargets
+from flip_api.domain.schemas.status import FLJobStatus, FLTargets
 from flip_api.utils.encryption import encrypt
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
@@ -769,20 +769,21 @@ def get_bundle_urls(s3_path: str) -> list[str]:
         raise RuntimeError(error_msg)
 
 
-def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData:
+def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData | None:
     """
-    Extract the current job data from the FL server status response.
+    Extract the currently-running FL job matching ``fl_backend_job_id``.
 
     Args:
         net_endpoint (str): The endpoint of the FL API service.
         fl_backend_job_id (str): The FL job ID to look for.
 
     Returns:
-        IJobMetaData: The current job data if found.
+        IJobMetaData | None: The running job's metadata, or ``None`` if no running job
+            matches ``fl_backend_job_id`` (the job is already terminal or never started).
 
     Raises:
-        ValueError: If the FL server response is not a list, no running job matches
-            ``fl_backend_job_id``, or more than one running job shares the same ID.
+        ValueError: If the FL server response is not a list, or more than one running
+            job shares the same ID.
     """
     url = f"{net_endpoint}/list_jobs"
     current_job_data = http_get(url)
@@ -797,7 +798,7 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     current_job_data = [IJobMetaData.model_validate(j) for j in current_job_data]
 
     # Get the running jobs only
-    current_job_data = [j for j in current_job_data if j.status == "RUNNING"]
+    current_job_data = [j for j in current_job_data if j.status == FLJobStatus.RUNNING]
     logger.debug(f"Running jobs: {current_job_data}")
 
     # Filter the fl_backend_job_id
@@ -805,9 +806,11 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     logger.debug(f"Current job data for job ID {fl_backend_job_id}: {current_job_data}")
 
     if not current_job_data:
-        error_msg = f"Could not find job ID {fl_backend_job_id} on FL server {net_endpoint}."
-        logger.error(error_msg)
-        raise ValueError(error_msg)
+        logger.info(
+            f"No running job with ID {fl_backend_job_id} on FL server {net_endpoint}; "
+            f"it is already terminal or never started."
+        )
+        return None
 
     # assert that there is only 1 running job with the fl_backend_job_id
     # this should not happen, but just in case

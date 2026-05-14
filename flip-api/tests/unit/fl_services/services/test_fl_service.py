@@ -842,15 +842,14 @@ def test_extract_current_job_data_success(mock_http_get):
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
-def test_extract_current_job_data_not_found(mock_http_get):
+def test_extract_current_job_data_not_found_returns_none(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
     mock_http_get.return_value = [{"job_id": "other", "status": "RUNNING", "job_name": "otherjob"}]
     net_endpoint = "http://fl-api-endpoint"
     fl_backend_job_id = "missing-job"
 
-    with pytest.raises(ValueError, match=f"Could not find job ID {fl_backend_job_id}"):
-        extract_current_job_data(net_endpoint, fl_backend_job_id)
+    assert extract_current_job_data(net_endpoint, fl_backend_job_id) is None
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
