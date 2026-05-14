@@ -26,10 +26,10 @@ from grpc_health.v1.health_pb2_grpc import HealthStub
 
 from fl_api.schemas import (
     ClientInfoModel,
-    FlowerCommandResponse,
     FlowerSubmitRunCommandResponse,
     HealthResponse,
     JobMetadata,
+    JobStatus,
     NodeRegistrationRequest,
     ServerInfoModel,
     UploadAppRequest,
@@ -366,22 +366,50 @@ def submit_run(app_folder: str) -> str:
             _submission_in_progress = False
 
 
-@app.delete("/abort_run/{run_id}", status_code=status.HTTP_200_OK, response_model=FlowerCommandResponse)
+def _find_terminal_run(src_root: Path, run_id: str) -> JobMetadata | None:
+    """Return the run's JobMetadata if it exists and is already terminal, else None.
+
+    Used to make ``DELETE /abort_run`` idempotent: a failed ``flwr stop`` followed by a
+    ``flwr list`` showing the run in a terminal state is treated as a successful no-op.
+    """
+    list_command = ["uvx", "flwr", "list", "local", "--format", "json"]
+    list_result = _run_flwr_command(list_command, src_root, "list")
+    if list_result.returncode != 0:
+        return None
+    try:
+        payload = _extract_json_from_stdout(list_result.stdout)
+    except ValueError:
+        return None
+    for run in payload.get("runs", []):
+        if isinstance(run, dict) and str(run.get("run-id")) == run_id:
+            metadata = JobMetadata(job_id=run_id, status=normalize_status(run["status"]))
+            if metadata.status in (JobStatus.FINISHED, JobStatus.FAILED, JobStatus.STOPPED):
+                return metadata
+            return None
+    return None
+
+
+@app.delete("/abort_run/{run_id}", status_code=status.HTTP_200_OK, response_model=JobMetadata)
 @app.delete("/abort_job/{run_id}", include_in_schema=False)  # alias, hide from docs
-def abort_run(run_id: str) -> FlowerCommandResponse:
+def abort_run(run_id: str) -> JobMetadata:
     src_root = _get_src_root()
     command = ["uvx", "flwr", "stop", run_id, "local", "--format", "json"]
+    result = _run_flwr_command(command, src_root, "stop")
 
-    try:
-        result = _run_flwr_command(command, src_root, "stop")
-    except HTTPException as err:
-        raise HTTPException(
-            status_code=err.status_code,
-            detail=f"Failed to abort job {run_id}: {err.detail}",
-        ) from err
+    if result.returncode == 0:
+        payload = _parse_flwr_payload(result, "stop")
+        return JobMetadata(job_id=run_id, status=normalize_status(payload["status"]))
 
-    payload = _parse_flwr_payload(result, "stop")
-    return FlowerCommandResponse.model_validate(payload)
+    # `flwr stop` failed: the run may already be terminal. Aborting an already-terminal
+    # run must be idempotent — fall back to `flwr list` and return its terminal status.
+    terminal = _find_terminal_run(src_root, run_id)
+    if terminal is not None:
+        return terminal
+
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Failed to abort job {run_id}: {result.stderr.strip()}",
+    )
 
 
 @app.post("/upload_app/{model_id}", status_code=status.HTTP_200_OK)

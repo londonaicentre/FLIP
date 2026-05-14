@@ -49,13 +49,29 @@ def reset_node_mapping():
 
 @pytest.fixture
 def mock_flwr_run(monkeypatch):
-    def _mock(*, returncode=0, stdout="", stderr="", exception=None):
+    def _mock(*, returncode=0, stdout="", stderr="", exception=None, by_command=None):
         if exception is not None:
 
             def _raise(*_args, **_kwargs):
                 raise exception
 
             monkeypatch.setattr(app_module.subprocess, "run", _raise)
+            return
+
+        if by_command is not None:
+            # by_command: {flwr_subcommand: {"returncode": int, "stdout": str, "stderr": str}}
+            # e.g. {"stop": {...}, "list": {...}}. command is ["uvx", "flwr", "<subcommand>", ...].
+            def _dispatch(command, *_args, **_kwargs):
+                subcommand = command[2] if len(command) > 2 else ""
+                spec = by_command.get(subcommand, {})
+                return subprocess.CompletedProcess(
+                    args=command,
+                    returncode=spec.get("returncode", 0),
+                    stdout=spec.get("stdout", ""),
+                    stderr=spec.get("stderr", ""),
+                )
+
+            monkeypatch.setattr(app_module.subprocess, "run", _dispatch)
             return
 
         monkeypatch.setattr(

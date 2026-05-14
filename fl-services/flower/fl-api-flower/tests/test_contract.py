@@ -54,7 +54,7 @@ def test_docs_and_openapi_contract(client):
     assert client_status_schema["items"]["$ref"] == "#/components/schemas/ClientInfoModel"
     assert list_schema["items"]["$ref"] == "#/components/schemas/JobMetadata"
     assert submit_schema["type"] == "string"
-    assert abort_schema["$ref"] == "#/components/schemas/FlowerCommandResponse"
+    assert abort_schema["$ref"] == "#/components/schemas/JobMetadata"
 
 
 def test_health_success(client):
