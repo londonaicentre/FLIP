@@ -50,6 +50,7 @@ module "flip_model_files_uploads_bucket" {
   # so a POST-only CORS surface rejects the preflight from the running UI.
   cors_methods         = ["PUT"]
   cors_allowed_origins = ["https://${var.flip_alb_subdomain}"]
+  kms_key_arn          = aws_kms_key.flip_app_key.arn
 }
 
 module "flip_fl_results_bucket" {
@@ -57,12 +58,14 @@ module "flip_fl_results_bucket" {
   bucket_name          = var.FLIP_FL_RESULTS_BUCKET_NAME
   cors_methods         = ["GET"]
   cors_allowed_origins = ["https://${var.flip_alb_subdomain}"]
+  kms_key_arn          = aws_kms_key.flip_app_key.arn
 }
 
 module "flip_app_bundles_bucket" {
   source      = "./modules/flip_s3_bucket"
   bucket_name = var.FLIP_APP_BUNDLES_BUCKET_NAME
   # No CORS: flip-api is the only consumer and reaches the bucket via boto3.
+  kms_key_arn = aws_kms_key.flip_app_key.arn
 }
 
 ############################
@@ -89,7 +92,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "aicentre_bucket" 
 
   rule {
     apply_server_side_encryption_by_default {
-      sse_algorithm = "aws:kms"
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.flip_app_key.arn
     }
     bucket_key_enabled = true
   }
