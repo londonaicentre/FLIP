@@ -18,6 +18,7 @@ from nvflare.apis.shareable import Shareable
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 
 from flip.constants import PTConstants
+from flip.exceptions import ResultsUploadError
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 
 
@@ -237,8 +238,32 @@ class TestPersistToS3AndCleanup:
 
         flip.upload_results_to_s3.side_effect = Exception("Upload failed")
 
-        # Implementation catches and re-raises Exception() with no message
+        # Implementation catches, runs cleanup, then re-raises the original exception
         with pytest.raises(Exception, match="Upload failed"):
+            component.upload_results_to_s3_bucket(fl_ctx)
+
+        component.cleanup.assert_called_once()
+
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
+    def test_upload_results_preserves_results_upload_error(self, mock_constants):
+        """upload_results_to_s3_bucket should re-raise ResultsUploadError with its type intact."""
+        mock_constants.LOCAL_DEV = True
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+
+        flip = MagicMock()
+        component = PersistToS3AndCleanup(model_id=model_id, flip=flip)
+        component.log_info = MagicMock()
+        component.log_error = MagicMock()
+        component.cleanup = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        fl_ctx.get_engine.return_value.get_workspace.return_value.get_run_dir.return_value = "/mock/workspace/run"
+        fl_ctx.get_job_id.return_value = "job-123"
+
+        flip.upload_results_to_s3.side_effect = ResultsUploadError("S3 upload failed")
+
+        with pytest.raises(ResultsUploadError, match="S3 upload failed"):
             component.upload_results_to_s3_bucket(fl_ctx)
 
         component.cleanup.assert_called_once()

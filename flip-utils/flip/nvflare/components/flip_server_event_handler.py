@@ -17,6 +17,7 @@ from nvflare.app_common.app_event_type import AppEventType
 
 from flip import FLIP
 from flip.constants import FlipEvents, ModelStatus
+from flip.exceptions import ResultsUploadError
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
 from flip.utils import Utils
 
@@ -104,6 +105,8 @@ class ServerEventHandler(FLComponent):
 
                 if self.fatal_error:
                     self.final_status = ModelStatus.ERROR
+            except ResultsUploadError:
+                self.final_status = ModelStatus.RESULTS_UPLOAD_FAILED
             except Exception:
                 self.final_status = ModelStatus.ERROR
 
