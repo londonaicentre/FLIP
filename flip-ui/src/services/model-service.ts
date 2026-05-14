@@ -14,6 +14,7 @@
 
 
 
+import type { IStep } from "@/components/AiSteps/AiSteps.vue";
 import { TrustsResults } from "@/interfaces/cohort-query/types";
 import { FileInfo, FileTableRow } from "@/interfaces/model/types";
 import { _http, IPaginatedResponse } from "@/services/api";
@@ -100,6 +101,7 @@ export type ModelStatus =
     "PREPARED" |
     "TRAINING_STARTED" |
     "RESULTS_UPLOADED" |
+    "RESULTS_UPLOAD_FAILED" |
     "ERROR" |
     "STOPPED"
 
@@ -111,6 +113,9 @@ export enum ModelStatusEnum {
     "PREPARED",
     "TRAINING_STARTED",
     "RESULTS_UPLOADED",
+    // Appended last so the existing ordinal comparisons keep working: training
+    // finished but the results upload failed, so it sorts after RESULTS_UPLOADED.
+    "RESULTS_UPLOAD_FAILED",
 }
 
 const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
@@ -119,6 +124,7 @@ const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
     PREPARED: "Model Prepared",
     TRAINING_STARTED: "Training Started",
     RESULTS_UPLOADED: "Results Uploaded",
+    RESULTS_UPLOAD_FAILED: "Results Upload Failed",
     ERROR: "Error",
     STOPPED: "Stopped"
 };
@@ -130,7 +136,69 @@ export function modelStatusLabel(status: ModelStatus | undefined): string {
 
 /** True for terminal failure / cancellation states (drives the red-cross icon). */
 export function isModelStatusError(status: ModelStatus | undefined): boolean {
-    return status === "ERROR" || status === "STOPPED";
+    return status === "ERROR" || status === "STOPPED" || status === "RESULTS_UPLOAD_FAILED";
+}
+
+/**
+ * Maps a string model status (e.g. "PENDING") to its ModelStatusEnum ordinal.
+ * Unknown or undefined statuses fall back to ERROR, so a stale UI bundle that
+ * receives a newer status degrades gracefully instead of crashing.
+ */
+export function getStatusEnumValue(status: string | undefined): number {
+    if (status && status in ModelStatusEnum) {
+        return ModelStatusEnum[status as keyof typeof ModelStatusEnum];
+    }
+
+    return ModelStatusEnum.ERROR;
+}
+
+/**
+ * Builds the four-step lifecycle tracker (Created → Prepared → Training → Uploaded)
+ * shown on the model page, derived from the model's single status value.
+ *
+ * When training is stopped or errors, prior completed steps stay completed (✅)
+ * rather than showing 🚫. RESULTS_UPLOAD_FAILED means training finished but the
+ * post-training results upload failed, so "Training Started" stays completed and
+ * only "Results Uploaded" shows the error. See issue #29.
+ */
+export function buildModelSteps(status: ModelStatus | undefined): IStep[] {
+    const statusValue = getStatusEnumValue(status);
+    const isStopped = statusValue === ModelStatusEnum.STOPPED;
+    const isError = statusValue === ModelStatusEnum.ERROR;
+    const isUploadFailed = statusValue === ModelStatusEnum.RESULTS_UPLOAD_FAILED;
+
+    return [
+        {
+            id: "01",
+            name: "Model Created",
+            completed: true
+        },
+        {
+            id: "02",
+            name: "Model Prepared",
+            description: statusValue === ModelStatusEnum.INITIATED ? "Model Queued" : undefined,
+            inProgress: statusValue === ModelStatusEnum.INITIATED,
+            completed: statusValue >= ModelStatusEnum.PREPARED || isStopped || isError || isUploadFailed
+        },
+        {
+            id: "03",
+            name: "Training Started",
+            description:
+                (statusValue >= ModelStatusEnum.PREPARED && statusValue < ModelStatusEnum.RESULTS_UPLOADED)
+                    ? "In Progress" : undefined,
+            inProgress: statusValue >= ModelStatusEnum.PREPARED && !isStopped && !isError && !isUploadFailed,
+            completed: statusValue > ModelStatusEnum.TRAINING_STARTED || isUploadFailed,
+            error: isError,
+            stopped: isStopped
+        },
+        {
+            id: "04",
+            name: "Results Uploaded",
+            completed: statusValue === ModelStatusEnum.RESULTS_UPLOADED,
+            error: isError || isUploadFailed,
+            stopped: isStopped
+        }
+    ];
 }
 
 /**

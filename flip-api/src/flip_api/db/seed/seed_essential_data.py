@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from sqlalchemy import text
 from sqlmodel import Session, SQLModel
 
 from flip_api.db.database import engine
@@ -23,6 +24,20 @@ from flip_api.db.seed.roles import seed_roles
 from flip_api.db.seed.seed_logger import logger
 from flip_api.db.seed.site_config import seed_config
 from flip_api.db.seed.trusts import seed_trusts
+from flip_api.domain.schemas.status import ModelStatus
+
+
+def ensure_model_status_enum_values() -> None:
+    """Add any ModelStatus values missing from the database's native enum type.
+
+    ``SQLModel.metadata.create_all`` creates the ``modelstatus`` Postgres enum for a
+    fresh database but never alters an existing one, so a newly added ModelStatus
+    member must be appended explicitly here. ``ADD VALUE IF NOT EXISTS`` keeps this
+    idempotent for databases that already have every value.
+    """
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        for model_status in ModelStatus:
+            conn.execute(text(f"ALTER TYPE modelstatus ADD VALUE IF NOT EXISTS '{model_status.value}'"))
 
 
 def main() -> None:
@@ -34,6 +49,7 @@ def main() -> None:
     """
     logger.debug("Creating database tables...")
     SQLModel.metadata.create_all(engine)
+    ensure_model_status_enum_values()
     logger.debug("About to seed the database...")
 
     with Session(engine) as session:

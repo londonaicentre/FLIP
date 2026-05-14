@@ -89,7 +89,12 @@ def update_model_status(model_id: UUID, status: ModelStatus | None, session: Ses
 
     logger.info(f"The status of Model ID: {model_id} has been updated to {status}")
 
-    if status in [ModelStatus.ERROR, ModelStatus.STOPPED, ModelStatus.RESULTS_UPLOADED]:
+    if status in [
+        ModelStatus.ERROR,
+        ModelStatus.STOPPED,
+        ModelStatus.RESULTS_UPLOADED,
+        ModelStatus.RESULTS_UPLOAD_FAILED,
+    ]:
         fl_scheduler_service.update_fl_scheduler(model_id, session)
 
     return status

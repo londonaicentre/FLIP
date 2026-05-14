@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -72,6 +72,18 @@ def test_update_model_status_model_not_found():
     session.get.return_value = None
     result = update_model_status(uuid4(), ModelStatus.STOPPED, session)
     assert result is None
+
+
+def test_update_model_status_results_upload_failed_triggers_scheduler():
+    session = MagicMock()
+    model_id = uuid4()
+    session.get.return_value = MagicMock()
+
+    with patch("flip_api.model_services.services.model_service.fl_scheduler_service") as mock_scheduler:
+        result = update_model_status(model_id, ModelStatus.RESULTS_UPLOAD_FAILED, session)
+
+    assert result == ModelStatus.RESULTS_UPLOAD_FAILED
+    mock_scheduler.update_fl_scheduler.assert_called_once_with(model_id, session)
 
 
 def test_add_log_success():

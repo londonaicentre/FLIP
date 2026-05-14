@@ -67,6 +67,28 @@ class TestInvokeModelStatusUpdateEndpoint:
 
     @patch(MOCKED_ADD_LOG_PATH)
     @patch(MOCKED_UPDATE_STATUS_PATH)
+    def test_invoke_update_results_upload_failed_logs_specific_failure(
+        self,
+        mock_update: MagicMock,
+        mock_add_log: MagicMock,
+        client: TestClient,
+        model_id: UUID,
+        mock_db_session: MagicMock,
+    ):
+        mock_update.return_value = ModelStatus.RESULTS_UPLOAD_FAILED
+
+        response = client.put(f"/api/model/{model_id}/status/{ModelStatus.RESULTS_UPLOAD_FAILED.value}")
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_update.assert_called_once_with(model_id, ModelStatus.RESULTS_UPLOAD_FAILED, mock_db_session)
+        mock_add_log.assert_called_once()
+        log_call = mock_add_log.call_args
+        # add_log(model_id, log_message, db, success=...)
+        assert "upload" in log_call.args[1].lower()
+        assert log_call.kwargs["success"] is False
+
+    @patch(MOCKED_ADD_LOG_PATH)
+    @patch(MOCKED_UPDATE_STATUS_PATH)
     def test_invoke_update_success_no_log(
         self,
         mock_update: MagicMock,

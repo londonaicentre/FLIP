@@ -106,7 +106,7 @@ import ModelUpload from "@/partials/models/ModelUpload.vue";
 import Training from "@/partials/models/Training.vue";
 import { routeChange } from "@/router";
 import { resolveModelConfigState } from "@/services/file-service";
-import { DEFAULT_JOB_TYPE, editModel, fetchJobTypes, getModel, getRequiredFilesForJobType, type JobType, type JobTypesResponse, ModelStatusEnum } from "@/services/model-service";
+import { buildModelSteps, DEFAULT_JOB_TYPE, editModel, fetchJobTypes, getModel, getRequiredFilesForJobType, getStatusEnumValue, type JobType, type JobTypesResponse, ModelStatusEnum } from "@/services/model-service";
 import { useAuthStore, UserPermissions } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 import { useProjectStore } from "@/store/project";
@@ -195,57 +195,7 @@ watch(error, () => {
 });
 
 
-function getStatusEnumValue(status: string | undefined): number {
-    // Map string status (e.g. "PENDING") to ModelStatusEnum value
-    if (!status || !(status in ModelStatusEnum)) return ModelStatusEnum.ERROR;
-
-    // @ts-ignore
-    return ModelStatusEnum[status];
-}
-
-const steps = computed((): IStep[] => {
-    const statusValue = getStatusEnumValue(modelData.value?.status);
-    const isStopped = statusValue === ModelStatusEnum.STOPPED;
-    const isError = statusValue === ModelStatusEnum.ERROR;
-
-    // When training is stopped or errors, prior completed steps should
-    // remain marked as completed (✅) rather than showing 🚫.
-    // A stopped/errored model must have been at least PREPARED, so
-    // "Model Prepared" stays completed and only later steps show the
-    // stopped/error indicator.  See issue #29.
-    return [
-        {
-            id: "01",
-            name: "Model Created",
-            completed: true
-        },
-        {
-            id: "02",
-            name: "Model Prepared",
-            description: statusValue === ModelStatusEnum.INITIATED ? "Model Queued" : undefined,
-            inProgress: statusValue === ModelStatusEnum.INITIATED,
-            completed: statusValue >= ModelStatusEnum.PREPARED || isStopped || isError
-        },
-        {
-            id: "03",
-            name: "Training Started",
-            description:
-                (statusValue >= ModelStatusEnum.PREPARED && statusValue < ModelStatusEnum.RESULTS_UPLOADED)
-                    ? "In Progress" : undefined,
-            inProgress: statusValue >= ModelStatusEnum.PREPARED && !isStopped && !isError,
-            completed: statusValue > ModelStatusEnum.TRAINING_STARTED,
-            error: isError,
-            stopped: isStopped
-        },
-        {
-            id: "04",
-            name: "Results Uploaded",
-            completed: statusValue === ModelStatusEnum.RESULTS_UPLOADED,
-            error: isError,
-            stopped: isStopped
-        }
-    ];
-});
+const steps = computed((): IStep[] => buildModelSteps(modelData.value?.status));
 
 
 const readyToTrain = computed(() => {
