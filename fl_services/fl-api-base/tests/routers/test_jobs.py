@@ -30,7 +30,8 @@ def override_session(client):
     def abort_side_effect(job_id: str):
         if job_id not in existing_jobs:
             raise JobNotFound(f"Job {job_id} not found.")
-        return {"status": "success", "info": f"Job {job_id} aborted."}
+        # /abort_job ignores abort_job's return value (it builds JobMetadata directly).
+        return None
 
     def delete_side_effect(job_id: str):
         if job_id not in existing_jobs:
