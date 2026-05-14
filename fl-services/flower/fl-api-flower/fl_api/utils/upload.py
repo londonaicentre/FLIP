@@ -99,7 +99,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     # Part 2: optional config.toml file
     # among the uploaded files, there may be an override config.toml file
     # populate the config.toml file with the FLIP configuration parameters (model_id, project_id, cohort_query)
-    config_toml = job_dir / "config.toml"
+    config_toml = job_dir / "app" / "config.toml"
     if not config_toml.exists():
         # If config.toml is not found, we create a default empty one to add FLIP configuration
         logger.warning(f"config.toml not found at expected location: {config_toml}. Will create an empty one.")
