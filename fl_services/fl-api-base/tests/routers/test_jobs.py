@@ -107,9 +107,7 @@ def test_reset_errors_job_not_found(client):
 def test_abort_job_success(client):
     response = client.delete("/abort_job/1234")
     assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    assert data["status"] == "success"
-    assert "aborted" in data["info"]
+    assert response.json() == {"job_id": "1234", "status": "STOPPED"}
 
 
 def test_abort_job_not_found(client):

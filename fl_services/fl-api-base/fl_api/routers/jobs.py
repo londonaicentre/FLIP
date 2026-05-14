@@ -18,7 +18,7 @@ from nvflare.fuel.hci.client.fl_admin_api import TargetType
 
 from fl_api.core.dependencies import get_session
 from fl_api.utils.flip_session import FLIP_Session
-from fl_api.utils.schemas import JobMetadata, normalize_status
+from fl_api.utils.schemas import JobMetadata, JobStatus, normalize_status
 
 router = APIRouter()
 
@@ -182,19 +182,23 @@ def delete_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> dic
     return {"status": "success", "info": f"Job {job_id} deleted."}
 
 
-@router.delete("/abort_job/{job_id}", status_code=status.HTTP_200_OK)
-def abort_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> dict:
+@router.delete("/abort_job/{job_id}", status_code=status.HTTP_200_OK, response_model=JobMetadata)
+def abort_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> JobMetadata:
     """Aborts job with provided job_id.
+
+    NVFLARE's ``abort_job`` is natively idempotent for already-terminal jobs ("if the job
+    is already done, no effect"); a genuinely nonexistent ``job_id`` raises ``JobNotFound``,
+    handled as a 404 by the app-level exception handler.
 
     Args:
         job_id (str): job ID.
         session (FLIP_Session): FLIP session instance.
 
     Raises:
-        HTTPException: if the job is not found or if an error occurs during the abortion process.
+        HTTPException: 404 if the job id does not exist.
 
     Returns:
-        dict[str, str]: a dictionary containing the status and information about the job abortion operation.
+        JobMetadata: the aborted job as a normalized job-metadata contract item.
     """
     session.abort_job(job_id)
-    return {"status": "success", "info": f"Job {job_id} aborted."}
+    return JobMetadata(job_id=job_id, status=JobStatus.STOPPED)
