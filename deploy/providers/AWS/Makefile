@@ -82,13 +82,18 @@ export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
 export TF_VAR_TRUST_API_KEY_HASHES=${TRUST_API_KEY_HASHES}
 export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
 export TF_VAR_INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 # Fail fast with a useful message when these are missing — the variable is
 # `sensitive` with no default, so otherwise Terraform errors out mid-plan
 # with a generic "no value for required variable" that gives no hint about
 # where the value should come from.
 $(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-internal-service-key`))
 $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
+$(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
 export TF_VAR_MIN_CLIENTS=${MIN_CLIENTS}
+# Uncomment to enable ECS Exec on Fargate tasks for debugging:
+# export TF_VAR_ecs_exec_enabled=true
+
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
 export TF_VAR_flip_fl_image_tag=${DOCKER_FL_TAG}
 export TF_VAR_docker_registry=${DOCKER_REGISTRY}

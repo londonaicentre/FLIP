@@ -92,12 +92,22 @@ variable "docker_image_tag" {
   description = "Docker image tag for flip-api and flip-ui"
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.docker_image_tag != "latest"
+    error_message = "docker_image_tag must not be 'latest'. Use an explicit immutable tag."
+  }
 }
 
 variable "flip_fl_image_tag" {
   description = "Docker image tag for FL services (fl-api, fl-server, fl-client)"
   type        = string
   default     = ""
+
+  validation {
+    condition     = var.flip_fl_image_tag != "latest"
+    error_message = "flip_fl_image_tag must not be 'latest'. Use an explicit immutable tag."
+  }
 }
 
 variable "docker_registry" {
@@ -297,9 +307,8 @@ variable "TRUST_API_KEY_HEADER" {
 }
 
 variable "INTERNAL_SERVICE_KEY_HEADER" {
-  description = "HTTP header name carrying the internal service key on fl-server-to-flip-api callbacks."
+  description = "HTTP header name carrying the internal service key on fl-server-to-flip-api callbacks. Required — no default so every env file must set it explicitly."
   type        = string
-  default     = "X-Internal-Service-Key"
 }
 
 variable "FL_ADMIN_DIRECTORY" {
@@ -318,4 +327,10 @@ variable "local_trust_public_ip" {
   description = "Public IP of an on-premises Trust host. When non-empty, AWS security group rules are created to allow consolidated FL communication on port 8002 from this IP to the Central Hub."
   type        = string
   default     = ""
+}
+
+variable "ecs_exec_enabled" {
+  description = "Enable ECS Exec (execute-command) on Fargate tasks. Default false; set to true for debugging sessions via 'aws ecs execute-command'."
+  type        = bool
+  default     = false
 }

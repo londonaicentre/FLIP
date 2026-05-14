@@ -51,9 +51,4 @@ resource "aws_ssm_parameter" "flip_app_bundles_bucket" {
   value       = local.flip_app_bundles_bucket_uri
 }
 
-resource "aws_ssm_parameter" "internal_service_key_header" {
-  name        = "${local.ssm_prefix}/internal_service_key_header"
-  description = "HTTP header name for fl-server -> flip-api auth"
-  type        = "String"
-  value       = "X-Internal-Service-Key"
-}
+
