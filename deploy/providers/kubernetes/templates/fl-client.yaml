@@ -122,6 +122,11 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: s3-secret-access-key
+            - name: AWS_SESSION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: aws-session-token
           volumeMounts:
             - name: fl-client-kit
               mountPath: /opt/fl-client/kit
