@@ -784,6 +784,9 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     Raises:
         ValueError: If the FL server response is not a list, or more than one running
             job shares the same ID.
+        pydantic.ValidationError: If a returned item does not conform to ``IJobMetaData``
+            (e.g. an unknown status from a non-conforming FL-API adapter) — failing loudly
+            here is intentional.
     """
     url = f"{net_endpoint}/list_jobs"
     current_job_data = http_get(url)
