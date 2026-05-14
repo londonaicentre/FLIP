@@ -70,10 +70,15 @@ services:
   fl-server-net-1:
     container_name: fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    # Run as the host user (exported by the root Makefile) so the container can
+    # write a refreshed AWS SSO token back into the bind-mounted cache below.
+    # The :-1000 default matches the image's baked-in `app` uid.
+    user: "${FL_SERVER_UID:-1000}:${FL_SERVER_GID:-1000}"
     volumes:
       # Mount the AWS credentials (needed to upload model results to S3).
-      # The image runs as `app` (uid 49999) with HOME=/app, so the mount
-      # lands at /app/.aws/ — the SDK's default lookup path for that user.
+      # The `user:` override above runs the container as the host uid, so it
+      # can refresh the SSO token in place. HOME=/app (set below) keeps the
+      # mount on the AWS SDK's default ~/.aws lookup path.
       - ~/.aws/config:/app/.aws/config:ro
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
@@ -88,6 +93,12 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
+      # HOME=/app so botocore resolves ~/.aws to the mounted path even though
+      # the `user:` override runs as a uid with no /etc/passwd entry.
+      # WORKING_DIR points at a writable path — that uid can't create dirs
+      # under /app (owned by the image's `app` user).
+      - HOME=/app
+      - WORKING_DIR=/tmp/flip-runs
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -132,10 +143,15 @@ services:
   fl-server-net-2:
     container_name: fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    # Run as the host user (exported by the root Makefile) so the container can
+    # write a refreshed AWS SSO token back into the bind-mounted cache below.
+    # The :-1000 default matches the image's baked-in `app` uid.
+    user: "${FL_SERVER_UID:-1000}:${FL_SERVER_GID:-1000}"
     volumes:
       # Mount the AWS credentials (needed to upload model results to S3).
-      # The image runs as `app` (uid 49999) with HOME=/app, so the mount
-      # lands at /app/.aws/ — the SDK's default lookup path for that user.
+      # The `user:` override above runs the container as the host uid, so it
+      # can refresh the SSO token in place. HOME=/app (set below) keeps the
+      # mount on the AWS SDK's default ~/.aws lookup path.
       - ~/.aws/config:/app/.aws/config:ro
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
@@ -150,6 +166,12 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
+      # HOME=/app so botocore resolves ~/.aws to the mounted path even though
+      # the `user:` override runs as a uid with no /etc/passwd entry.
+      # WORKING_DIR points at a writable path — that uid can't create dirs
+      # under /app (owned by the image's `app` user).
+      - HOME=/app
+      - WORKING_DIR=/tmp/flip-runs
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt

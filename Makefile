@@ -60,6 +60,13 @@ get_service_type = $(word 2,$(subst :, ,$(filter $1:%,$(SERVICE_CONFIG))))
 # Function to get service display name
 get_service_name = $(subst -api,, $(subst flip-,central hub ,$(subst fl-,central FL ,$1)))
 
+# Run the dev fl-server containers as the host user so they can write the
+# refreshed AWS SSO token back into the bind-mounted ~/.aws/sso/cache. The
+# flower dev compose reads these via a `user:` override; its :-1000 default
+# covers invocations that don't go through this Makefile.
+export FL_SERVER_UID := $(shell id -u)
+export FL_SERVER_GID := $(shell id -g)
+
 export COMPOSE_BAKE=true
 DOCKER_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose.development.debug.override.yml
