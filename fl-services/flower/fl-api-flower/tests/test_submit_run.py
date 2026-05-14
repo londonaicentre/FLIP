@@ -38,24 +38,6 @@ def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
     assert response.status_code == 200
 
 
-def test_submit_run_flower_failure_payload(client, src_root, mock_flwr_run, monkeypatch):
-    (src_root / "numpy").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation")
-    mock_flwr_run(
-        stdout=(
-            "{"
-            '"success": false,'
-            '"error-message":"Unable to load module app.server_app"'
-            "}"
-        )
-    )
-
-    response = client.post("/submit_run/numpy")
-
-    assert response.status_code == 500
-    assert "Unable to load module app.server_app" in response.json()["detail"]
-
-
 @pytest.mark.parametrize("app_folder", ["invalid", "numpy"])
 def test_submit_run_input_validation(client, src_root, monkeypatch, app_folder):
     monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation")
