@@ -378,6 +378,10 @@ xnat:
   web:
     enabled: true
     adminUser: "admin"
+    # DICOM SCP (Service Class Provider) configuration
+    # XNAT listens as AE 'XNAT' on this port to receive C-STORE requests
+    dicomAet: XNAT
+    dicomPort: 8104
     image:
       repository: ghcr.io/londonaicentre/xnat-web
       tag: stag
@@ -572,3 +576,33 @@ networkPolicies:
       protocol: TCP
     - port: 443
       protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Imaging Import Worker (DQR bypass)
+#
+# Runs a Python-based worker that C-MOVEs studies directly from Orthanc to
+# XNAT, bypassing the buggy DQR plugin (PacsNotStorableException).
+#
+# Can run as a one-shot Job (default) or a CronJob (if a schedule is set).
+# ---------------------------------------------------------------------------
+imagingImportWorker:
+  enabled: false
+  runOnce: true
+  batchSize: 50
+  workerAet: FLIPIMPORT
+  pacsId: 1
+  logLevel: INFO
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  restartPolicy: Never
+  image:
+    repository: python
+    tag: "3.12-slim"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
