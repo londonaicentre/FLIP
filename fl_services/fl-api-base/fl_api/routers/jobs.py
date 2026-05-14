@@ -90,6 +90,8 @@ def list_jobs(
         name_prefix=name_prefix,
         reverse=reverse,
     )
+    # NVFLARE's list_jobs always includes job_id + status on every entry (verified against
+    # nvflare 2.7.1 job_cmds.py, both the summary and detailed paths) — bracket access is intentional.
     return [JobMetadata(job_id=str(job["job_id"]), status=normalize_status(job["status"])) for job in raw_jobs]
 
 
