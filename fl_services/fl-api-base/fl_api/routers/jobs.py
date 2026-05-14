@@ -18,6 +18,7 @@ from nvflare.fuel.hci.client.fl_admin_api import TargetType
 
 from fl_api.core.dependencies import get_session
 from fl_api.utils.flip_session import FLIP_Session
+from fl_api.utils.schemas import JobMetadata, normalize_status
 
 router = APIRouter()
 
@@ -55,7 +56,7 @@ def download_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> s
     return session.download_job_result(job_id)
 
 
-@router.get("/list_jobs", response_model=list[dict])
+@router.get("/list_jobs", response_model=list[JobMetadata])
 def list_jobs(
     detailed: bool = False,
     limit: Optional[int] = None,
@@ -63,9 +64,9 @@ def list_jobs(
     name_prefix: Union[str, None] = None,
     reverse: bool = False,
     session: FLIP_Session = Depends(get_session),
-) -> list[dict]:
+) -> list[JobMetadata]:
     """
-    Returns a list of available jobs on the server.
+    Returns a list of available jobs on the server, as the shared job-metadata contract.
 
     Args:
         detailed (bool, optional): whether extensive description is demanded. Defaults to False.
@@ -77,18 +78,19 @@ def list_jobs(
         session (FLIP_Session): FLIP session instance.
 
     Returns:
-        list[dict]: a list of job meta data.
+        list[JobMetadata]: the available jobs as normalized job-metadata contract items.
 
     Raises:
         HTTPException: if an error occurs while listing jobs.
     """
-    return session.list_jobs(
+    raw_jobs = session.list_jobs(
         detailed=detailed,
         limit=limit,
         id_prefix=id_prefix,
         name_prefix=name_prefix,
         reverse=reverse,
     )
+    return [JobMetadata(job_id=str(job["job_id"]), status=normalize_status(job["status"])) for job in raw_jobs]
 
 
 @router.post("/{job_id}/show_errors/{target_type}")
