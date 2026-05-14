@@ -28,6 +28,7 @@ from fl_api.schemas import JobMetadata, JobStatus, normalize_status
         ("stopped", JobStatus.STOPPED),
         ("RUNNING", JobStatus.RUNNING),
         ("  running  ", JobStatus.RUNNING),
+        ("", JobStatus.FAILED),
     ],
 )
 def test_normalize_status_maps_flower_statuses(native, expected):
