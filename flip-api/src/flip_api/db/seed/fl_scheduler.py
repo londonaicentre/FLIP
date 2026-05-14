@@ -15,8 +15,8 @@ from sqlmodel import Session, col, select
 
 from flip_api.db.database import engine
 from flip_api.db.models.main_models import FLNets, FLScheduler
+from flip_api.db.seed.seed_logger import logger
 from flip_api.domain.schemas.status import NetStatus
-from flip_api.utils.logger import logger
 
 
 def seed_fl_scheduler(session: Session, nets: list[FLNets]) -> list[FLScheduler]:
