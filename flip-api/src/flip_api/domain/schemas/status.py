@@ -70,6 +70,9 @@ class ModelStatus(Enum):
     PREPARED = "PREPARED"
     TRAINING_STARTED = "TRAINING_STARTED"
     RESULTS_UPLOADED = "RESULTS_UPLOADED"
+    # Training finished but the post-training results upload to S3 failed. Distinct
+    # from ERROR so the UI keeps "Training" complete and only flags the upload step.
+    RESULTS_UPLOAD_FAILED = "RESULTS_UPLOAD_FAILED"
 
 
 class NetStatus(Enum):

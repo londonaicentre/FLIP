@@ -174,6 +174,7 @@ const finished = computed(() => {
     return [
         ModelStatusEnum.ERROR,
         ModelStatusEnum.RESULTS_UPLOADED,
+        ModelStatusEnum.RESULTS_UPLOAD_FAILED,
         ModelStatusEnum.STOPPED
     ].includes(ModelStatusEnum[props.status]);
 });

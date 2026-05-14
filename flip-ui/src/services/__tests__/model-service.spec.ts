@@ -14,7 +14,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { clearJobTypesCache,
+import { buildModelSteps,
+    clearJobTypesCache,
     createModel,
     DEFAULT_JOB_TYPE,
     deleteModel,
@@ -30,6 +31,7 @@ import { clearJobTypesCache,
     getRequiredFilesForJobType,
     initialiseTraining,
     isValidJobType,
+    type ModelStatus,
     stopTraining,
     uploadModelFile } from "@/services/model-service";
 
@@ -434,6 +436,61 @@ describe("model-service", () => {
             const result = await getModelMetrics("/metrics/m-1");
 
             expect(result).toEqual(metrics);
+        });
+    });
+
+    describe("buildModelSteps", () => {
+        const stepByName = (status: ModelStatus | undefined, name: string) => {
+            const step = buildModelSteps(status).find(s => s.name === name);
+            if (!step) throw new Error(`step "${name}" not found`);
+
+            return step;
+        };
+
+        it("returns the four model lifecycle steps in order", () => {
+            expect(buildModelSteps("PENDING").map(s => s.name)).toEqual([
+                "Model Created",
+                "Model Prepared",
+                "Training",
+                "Results Uploaded"
+            ]);
+        });
+
+        it("RESULTS_UPLOADED marks every step completed", () => {
+            expect(buildModelSteps("RESULTS_UPLOADED").every(s => s.completed)).toBe(true);
+        });
+
+        it("ERROR flags Training as an error", () => {
+            // A genuine training failure should still surface on the Training milestone.
+            const step = stepByName("ERROR", "Training");
+            expect(step.error).toBe(true);
+            expect(step.completed).toBeFalsy();
+        });
+
+        it("RESULTS_UPLOAD_FAILED keeps Training completed (training did finish)", () => {
+            // The bug this fixes: an upload failure must not paint the Training
+            // milestone as failed, because training itself completed successfully.
+            const step = stepByName("RESULTS_UPLOAD_FAILED", "Training");
+            expect(step.completed).toBe(true);
+            expect(step.error).toBeFalsy();
+            expect(step.inProgress).toBeFalsy();
+        });
+
+        it("RESULTS_UPLOAD_FAILED flags Results Uploaded as the failed step", () => {
+            const step = stepByName("RESULTS_UPLOAD_FAILED", "Results Uploaded");
+            expect(step.error).toBe(true);
+            expect(step.completed).toBeFalsy();
+        });
+
+        it("RESULTS_UPLOAD_FAILED keeps Model Prepared completed", () => {
+            expect(stepByName("RESULTS_UPLOAD_FAILED", "Model Prepared").completed).toBe(true);
+        });
+
+        it("an unrecognised status degrades to error handling without throwing", () => {
+            // getStatusEnumValue maps anything unknown to ERROR so a stale UI bundle
+            // receiving a newer status degrades gracefully rather than crashing.
+            expect(() => buildModelSteps("NONSENSE" as ModelStatus)).not.toThrow();
+            expect(stepByName("NONSENSE" as ModelStatus, "Training").error).toBe(true);
         });
     });
 });
