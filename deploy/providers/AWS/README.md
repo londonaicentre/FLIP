@@ -599,7 +599,7 @@ the direction of the request flow.
                   └─────────────────────────────┘    └──────────────────────────────┘
 ```
 
-![AWS architecture](docs/AWS.png "AWS architecture")
+![AWS architecture](docs/AWS.drawio.png "AWS architecture")
 
 ### Central Hub Infrastructure
 
