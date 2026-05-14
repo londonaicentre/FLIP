@@ -95,10 +95,13 @@ services:
       - AWS_PROFILE=${AWS_PROFILE}
       # HOME=/app so botocore resolves ~/.aws to the mounted path even though
       # the `user:` override runs as a uid with no /etc/passwd entry.
-      # WORKING_DIR points at a writable path — that uid can't create dirs
-      # under /app (owned by the image's `app` user).
+      # WORKING_DIR and FLWR_HOME point at writable paths — the overridden
+      # uid can't create dirs under /app (still owned by the image's `app`
+      # user), and the Flower SuperLink writes its config / state DB under
+      # $HOME/.flwr by default.
       - HOME=/app
       - WORKING_DIR=/tmp/flip-runs
+      - FLWR_HOME=/tmp/flwr
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -168,10 +171,13 @@ services:
       - AWS_PROFILE=${AWS_PROFILE}
       # HOME=/app so botocore resolves ~/.aws to the mounted path even though
       # the `user:` override runs as a uid with no /etc/passwd entry.
-      # WORKING_DIR points at a writable path — that uid can't create dirs
-      # under /app (owned by the image's `app` user).
+      # WORKING_DIR and FLWR_HOME point at writable paths — the overridden
+      # uid can't create dirs under /app (still owned by the image's `app`
+      # user), and the Flower SuperLink writes its config / state DB under
+      # $HOME/.flwr by default.
       - HOME=/app
       - WORKING_DIR=/tmp/flip-runs
+      - FLWR_HOME=/tmp/flwr
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
