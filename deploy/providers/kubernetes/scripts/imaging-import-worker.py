@@ -4,7 +4,13 @@ FLIP Imaging Import Worker (DQR Bypass)
 
 Bypasses the XNAT DQR plugin (which throws PacsNotStorableException on the
 K8s trust) by directly performing C-MOVE operations from Orthanc (PACS) to
-XNAT over DICOM.
+XNAT over DICOM using DCMTK command-line tools.
+
+Why DCMTK instead of pynetdicom?
+  - pynetdicom's C-MOVE sends a request to Orthanc which Orthanc then aborts
+    (DUL service-user abort). The root cause is unknown — possibly a negotiation
+    issue between pynetdicom and the OFFIS DCMTK library embedded in Orthanc.
+  - DCMTK's movescu tool works perfectly and has been verified end-to-end.
 
 Designed to run as a Kubernetes Job (or one-off on the dcmtk pod).
 
@@ -12,8 +18,8 @@ Workflow:
   1. Connect to the xnat-db via service DNS (host=xnat-db, port=5432).
   2. Read all QUEUED entries from xhbm_queued_pacs_request.
   3. For each:
-     a. Use pynetdicom to C-FIND Orthanc for the accession number
-     b. Use pynetdicom to C-MOVE the study from Orthanc to XNAT
+     a. Use DCMTK findscu to C-FIND Orthanc for the accession number
+     b. Use DCMTK movescu to C-MOVE the study from Orthanc to XNAT
      c. Update the XNAT DB to reflect the outcome
 
 Environment variables:
@@ -37,19 +43,37 @@ Environment variables:
 
 import logging
 import os
+import re
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
 
 import psycopg2
 import psycopg2.extras
-from pydicom.dataset import Dataset
-from pydicom.uid import ExplicitVRLittleEndian
-from pynetdicom import AE, QueryRetrievePresentationContexts
-from pynetdicom.sop_class import (
-    PatientRootQueryRetrieveInformationModelFind,
-    PatientRootQueryRetrieveInformationModelMove,
-)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _extract_port(value: str, default: int = 5432) -> int:
+    """Extract port from either a plain integer string or a K8s-style
+    "tcp://host:port" URL injected by service environment variables."""
+    if value.startswith("tcp://"):
+        return int(value.rsplit(":", 1)[-1])
+    return int(value)
+
+
+def _extract_host(value: str, default: str = "localhost") -> str:
+    """Extract host from either a plain hostname or a K8s-style
+    "tcp://host:port" URL."""
+    if value.startswith("tcp://"):
+        return value.split("://", 1)[1].rsplit(":", 1)[0]
+    if value.startswith("http://"):
+        return value.split("://", 1)[1].rsplit(":", 1)[0]
+    return value
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -60,19 +84,19 @@ logger = logging.getLogger("imaging-import-worker")
 
 @dataclass
 class Config:
-    xnat_db_host: str = os.environ.get("XNAT_DB_HOST", "xnat-db")
-    xnat_db_port: int = int(os.environ.get("XNAT_DB_PORT", "5432"))
+    xnat_db_host: str = _extract_host(os.environ.get("XNAT_DB_HOST", "xnat-db"))
+    xnat_db_port: int = _extract_port(os.environ.get("XNAT_DB_PORT", "5432"))
     xnat_db_user: str = os.environ.get("XNAT_DB_USER", "xnat")
     xnat_db_password: str = os.environ.get("XNAT_DB_PASSWORD", "")
     xnat_db_name: str = os.environ.get("XNAT_DB_NAME", "xnat")
 
-    orthanc_host: str = os.environ.get("ORTHANC_HOST", "orthanc")
-    orthanc_port: int = int(os.environ.get("ORTHANC_PORT", "4242"))
+    orthanc_host: str = _extract_host(os.environ.get("ORTHANC_HOST", "orthanc"))
+    orthanc_port: int = _extract_port(os.environ.get("ORTHANC_PORT", "4242"))
     orthanc_aet: str = os.environ.get("ORTHANC_AET", "ORTHANC")
 
     xnat_aet: str = os.environ.get("XNAT_AET", "XNAT")
     xnat_dicom_host: str = os.environ.get("XNAT_DICOM_HOST", "xnat-web")
-    xnat_dicom_port: int = int(os.environ.get("XNAT_DICOM_PORT", "8104"))
+    xnat_dicom_port: int = _extract_port(os.environ.get("XNAT_DICOM_PORT", "8104"))
 
     worker_aet: str = os.environ.get("WORKER_AET", "FLIPIMPORT")
 
@@ -111,7 +135,7 @@ def fetch_queued_requests(conn, cfg: Config, batch_size: int | None = None) -> l
                FROM xhbm_queued_pacs_request
                WHERE status = 'QUEUED'
                  AND enabled = true
-                 AND disabled IS NULL
+                 AND (disabled IS NULL OR disabled = 'infinity' OR disabled = '1970-01-01 00:00:00')
                ORDER BY created ASC
                LIMIT %s
             """,
@@ -124,7 +148,6 @@ def fetch_queued_requests(conn, cfg: Config, batch_size: int | None = None) -> l
 def mark_request_completed(conn, request_id: int, study_uid: str | None = None):
     """Move a queued request to the executed_pacs_request table."""
     with conn.cursor() as cur:
-        # Copy the row from queued to executed
         cur.execute(
             """INSERT INTO xhbm_executed_pacs_request
                (created, accession_number, status, xnat_project, timestamp,
@@ -133,7 +156,7 @@ def mark_request_completed(conn, request_id: int, study_uid: str | None = None):
                 remapping_script, request_id, study_date, study_id,
                 study_instance_uid, username, executed_time)
                SELECT created, accession_number, 'COMPLETED', xnat_project, NOW(),
-                      'infinity', false, destination_ae_title, NULL,
+                      '1970-01-01 00:00:00', false, destination_ae_title, NULL,
                       pacs_id, patient_id, patient_name, priority, queued_time,
                       remapping_script, request_id, study_date, study_id,
                       %s, username, NOW()
@@ -142,7 +165,11 @@ def mark_request_completed(conn, request_id: int, study_uid: str | None = None):
             """,
             (study_uid or "", request_id),
         )
-        # Delete from queued
+        # Delete child rows first (xhbm_queued_pacs_request_series_ids)
+        cur.execute(
+            "DELETE FROM xhbm_queued_pacs_request_series_ids WHERE queued_pacs_request = %s",
+            (request_id,),
+        )
         cur.execute("DELETE FROM xhbm_queued_pacs_request WHERE id = %s", (request_id,))
     logger.info("Request %d marked as COMPLETED (study UID: %s)", request_id, study_uid or "N/A")
 
@@ -159,6 +186,7 @@ def mark_request_failed(conn, request_id: int, error_message: str):
 
 # ---------------------------------------------------------------------------
 # DICOM C-FIND — find study by accession number on Orthanc
+# Uses DCMTK findscu (verified working)
 # ---------------------------------------------------------------------------
 
 
@@ -167,130 +195,141 @@ def find_study_by_accession(cfg: Config, accession_number: str) -> str | None:
     Query Orthanc via C-FIND for the given accession number.
 
     Returns the StudyInstanceUID, or None if not found.
+    Uses DCMTK findscu.
     """
-    ae = AE(ae_title=cfg.worker_aet)
-    ae.requested_contexts = QueryRetrievePresentationContexts
-
-    # Build the C-FIND request
-    ds = Dataset()
-    ds.QueryRetrieveLevel = "STUDY"
-    ds.AccessionNumber = accession_number
-    ds.StudyInstanceUID = ""  # We want this in the response
-
-    logger.debug("C-FIND %s on %s:%d (AET: %s)", accession_number, cfg.orthanc_host, cfg.orthanc_port, cfg.orthanc_aet)
-
-    assoc = ae.associate(cfg.orthanc_host, cfg.orthanc_port, ae_title=cfg.orthanc_aet)
-    if not assoc.is_established:
-        logger.error("C-FIND association failed for %s: could not connect to Orthanc", accession_number)
-        return None
+    logger.debug(
+        "C-FIND %s on %s:%d (AET: %s)",
+        accession_number,
+        cfg.orthanc_host,
+        cfg.orthanc_port,
+        cfg.orthanc_aet,
+    )
 
     try:
-        responses = assoc.send_c_find(ds, PatientRootQueryRetrieveInformationModelFind)
-        for status, result_ds in responses:
-            if status and status.Status in (0xFF00, 0xFF01):
-                if result_ds and "StudyInstanceUID" in result_ds:
-                    uid = result_ds.StudyInstanceUID
-                    logger.info(
-                        "Found study %s for accession %s (patient: %s)",
-                        uid,
-                        accession_number,
-                        getattr(result_ds, "PatientName", "N/A"),
-                    )
-                    return uid
-        # No results or only PENDING
-        logger.info("C-FIND found no study for accession %s", accession_number)
+        result = subprocess.run(
+            [
+                "findscu",
+                "-aet", cfg.worker_aet,
+                "-aec", cfg.orthanc_aet,
+                "-k", "QueryRetrieveLevel=STUDY",
+                "-k", f"AccessionNumber={accession_number}",
+                "-k", "StudyInstanceUID=",
+                "-k", "PatientName=",
+                "-k", "StudyDescription=",
+                "-k", "StudyDate=",
+                cfg.orthanc_host,
+                str(cfg.orthanc_port),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("C-FIND timed out for %s", accession_number)
         return None
-    except Exception as e:
-        logger.error("C-FIND error for %s: %s", accession_number, e)
+    except FileNotFoundError:
+        logger.error("DCMTK findscu not found. Install dcmtk package.")
         return None
-    finally:
-        assoc.release()
+
+    output = result.stdout + result.stderr
+    if logger.isEnabledFor(logging.DEBUG):
+        # Show last 10 lines only (first lines are verbose)
+        lines = output.strip().split("\n")
+        last = "\n".join(lines[-10:]) if len(lines) > 10 else output
+        logger.debug("findscu output for %s:\n%s", accession_number, last)
+
+    # Parse the output for StudyInstanceUID
+    # DCMTK format: (0020,000d) UI [1.2.3.4.5...] # ... StudyInstanceUID
+    uid_match = re.search(r'\(0020,000d\)\s+UI\s+\[([^\]]+)\]', output)
+    if uid_match:
+        uid = uid_match.group(1).strip()
+        if uid:
+            logger.info("Found study %s for accession %s", uid, accession_number)
+            return uid
+
+    # Also check if any results were returned at all
+    if "RSP: pending" in output or "StudyInstanceUID" in output:
+        logger.info("C-FIND found no study for accession %s (query completed, no matches)", accession_number)
+    else:
+        logger.warning("C-FIND for %s returned no recognizable data", accession_number)
+
+    return None
 
 
 # ---------------------------------------------------------------------------
 # DICOM C-MOVE — transfer study from Orthanc to XNAT
+# Uses DCMTK movescu (verified working, unlike pynetdicom)
 # ---------------------------------------------------------------------------
 
 
 def move_study(cfg: Config, study_uid: str, accession_number: str) -> bool:
     """
-    C-MOVE a study from Orthanc to XNAT.
+    C-MOVE a study from Orthanc to XNAT using DCMTK movescu.
 
-    Args:
-        cfg: Configuration
-        study_uid: The StudyInstanceUID to move
-        accession_number: For logging
+    Command (verified working manually):
+      movescu -aec ORTHANC -aet FLIPIMPORT -aem XNAT orthanc 4242 \
+        -k "QueryRetrieveLevel=STUDY" \
+        -k "StudyInstanceUID=1.2.3.4.5..."
 
-    Returns:
-        True if the study was successfully C-MOVEd
+    Destination AE (XNAT) must be configured in Orthanc's DicomModalities.
     """
-    ae = AE(ae_title=cfg.worker_aet)
-    ae.requested_contexts = QueryRetrievePresentationContexts
-
-    ds = Dataset()
-    ds.QueryRetrieveLevel = "STUDY"
-    ds.StudyInstanceUID = study_uid
-
     logger.info(
-        "C-MOVE study %s (accession %s) from %s to %s (AET: %s) on %s:%d",
+        "C-MOVE study %s (accession %s) from %s to %s",
         study_uid,
         accession_number,
         cfg.orthanc_aet,
         cfg.xnat_aet,
-        cfg.xnat_aet,
-        cfg.orthanc_host,
-        cfg.orthanc_port,
     )
 
-    assoc = ae.associate(cfg.orthanc_host, cfg.orthanc_port, ae_title=cfg.orthanc_aet)
-    if not assoc.is_established:
-        logger.error("C-MOVE association failed for %s: could not connect to Orthanc", accession_number)
+    try:
+        result = subprocess.run(
+            [
+                "movescu",
+                "-aec", cfg.orthanc_aet,
+                "-aet", cfg.worker_aet,
+                "-aem", cfg.xnat_aet,
+                cfg.orthanc_host,
+                str(cfg.orthanc_port),
+                "-k", "QueryRetrieveLevel=STUDY",
+                "-k", f"StudyInstanceUID={study_uid}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,  # 5 minutes for large studies
+        )
+    except subprocess.TimeoutExpired:
+        logger.error("C-MOVE timed out for %s (study %s)", accession_number, study_uid)
+        return False
+    except FileNotFoundError:
+        logger.error("DCMTK movescu not found. Install dcmtk package.")
         return False
 
-    try:
-        responses = assoc.send_c_move(
-            ds,
-            cfg.xnat_aet,
-            PatientRootQueryRetrieveInformationModelMove,
+    output = result.stdout + result.stderr
+    if logger.isEnabledFor(logging.DEBUG):
+        lines = output.strip().split("\n")
+        last = "\n".join(lines[-5:]) if len(lines) > 5 else output
+        logger.debug("movescu output for %s:\n%s", accession_number, last)
+
+    if result.returncode == 0:
+        # Check for success indicators in the output
+        if "C-MOVE" in output and ("complete" in output.lower() or "success" in output.lower()):
+            logger.info("C-MOVE successful for %s (study %s)", accession_number, study_uid)
+            return True
+        elif "No such object" in output or "Failed" in output:
+            logger.error("C-MOVE failed for %s: study not found on Orthanc", accession_number)
+            return False
+        else:
+            # Exit code 0 with no error messages = success
+            logger.info("C-MOVE completed for %s (study %s)", accession_number, study_uid)
+            return True
+    else:
+        logger.error(
+            "C-MOVE failed for %s (exit code %d): %.300s",
+            accession_number,
+            result.returncode,
+            output or "(no output)",
         )
-        for status, result_ds in responses:
-            if status:
-                status_code = status.Status
-                if status_code == 0x0000:  # Success
-                    logger.info("C-MOVE successful for %s (study %s)", accession_number, study_uid)
-                    return True
-                elif status_code == 0xFF00:  # Pending — still transferring
-                    remaining = getattr(status, "NumberOfRemainingSubOperations", "?")
-                    completed = getattr(status, "NumberOfCompletedSubOperations", "?")
-                    logger.debug(
-                        "C-MOVE pending for %s: %s remaining, %s completed",
-                        accession_number,
-                        remaining,
-                        completed,
-                    )
-                elif status_code == 0xB000:  # Warning
-                    logger.warning("C-MOVE warning for %s (0x%04X)", accession_number, status_code)
-                    return True
-                else:
-                    logger.error(
-                        "C-MOVE failed for %s: status 0x%04X (%s)",
-                        accession_number,
-                        status_code,
-                        status.ErrorComment if hasattr(status, "ErrorComment") else "unknown",
-                    )
-                    return False
-            else:
-                # No status at all
-                logger.error("C-MOVE returned no status for %s", accession_number)
-                return False
-        # All responses were pending and the loop ended
-        logger.warning("C-MOVE for %s ended without final status — assuming complete", accession_number)
-        return True
-    except Exception as e:
-        logger.error("C-MOVE exception for %s: %s", accession_number, e)
         return False
-    finally:
-        assoc.release()
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +379,9 @@ def process_batch(cfg: Config) -> int:
             else:
                 mark_request_failed(conn, req_id, "C-MOVE failed")
 
+            # Small delay between moves to avoid overwhelming XNAT
+            time.sleep(0.5)
+
         logger.info("Batch complete: processed %d request(s).", len(requests))
         return len(requests)
 
@@ -368,10 +410,11 @@ def main():
 
     logger.info("Imaging Import Worker starting (RUN_ONCE=%s)", cfg.run_once)
     logger.info(
-        "PACS: %s@%s:%d → XNAT: %s@%s:%d",
+        "PACS: %s@%s:%d %s XNAT: %s@%s:%d",
         cfg.orthanc_aet,
         cfg.orthanc_host,
         cfg.orthanc_port,
+        "\u2192",
         cfg.xnat_aet,
         cfg.xnat_dicom_host,
         cfg.xnat_dicom_port,

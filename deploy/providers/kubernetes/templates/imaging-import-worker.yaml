@@ -22,8 +22,12 @@ spec:
           image: "{{ .Values.imagingImportWorker.image.repository }}:{{ .Values.imagingImportWorker.image.tag | default .Values.imageTag }}"
           imagePullPolicy: {{ .Values.imagingImportWorker.image.pullPolicy }}
           command:
-            - python3
-            - /opt/scripts/imaging-import-worker.py
+            - sh
+            - -c
+            - |
+              apk add --no-cache py3-pip dcmtk >/dev/null 2>&1 &&
+              pip install psycopg2-binary -q >/dev/null 2>&1 &&
+              python3 /opt/scripts/imaging-import-worker.py
           env:
             - name: XNAT_DB_HOST
               value: "{{ .Release.Name }}-flip-trust-xnat-db-0.xnat-db.{{ .Release.Namespace }}.svc.cluster.local"
