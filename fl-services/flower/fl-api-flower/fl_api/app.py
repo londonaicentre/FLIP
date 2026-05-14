@@ -382,7 +382,10 @@ def _find_terminal_run(src_root: Path, run_id: str) -> JobMetadata | None:
         return None
     for run in payload.get("runs", []):
         if isinstance(run, dict) and str(run.get("run-id")) == run_id:
-            metadata = JobMetadata(job_id=run_id, status=normalize_status(run["status"]))
+            try:
+                metadata = JobMetadata(job_id=run_id, status=normalize_status(run["status"]))
+            except KeyError:
+                return None
             if metadata.status in (JobStatus.FINISHED, JobStatus.FAILED, JobStatus.STOPPED):
                 return metadata
             return None

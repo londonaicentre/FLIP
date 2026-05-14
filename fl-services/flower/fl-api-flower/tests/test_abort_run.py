@@ -74,3 +74,21 @@ def test_abort_run_failure_when_run_not_terminal(client, src_root, mock_flwr_run
     response = client.delete("/abort_run/does-not-exist")
 
     assert response.status_code == 500
+
+
+def test_abort_run_failure_when_terminal_run_missing_status(client, src_root, mock_flwr_run):
+    # `flwr stop` fails and the matching run in `flwr list` is missing "status" -> the
+    # idempotency probe can't confirm terminality, so it falls through to a clean 500.
+    mock_flwr_run(
+        by_command={
+            "stop": {"returncode": 1, "stderr": "boom"},
+            "list": {
+                "returncode": 0,
+                "stdout": '{"success": true, "runs": [{"run-id": "9478652229627629048"}]}',
+            },
+        }
+    )
+
+    response = client.delete("/abort_run/9478652229627629048")
+
+    assert response.status_code == 500
