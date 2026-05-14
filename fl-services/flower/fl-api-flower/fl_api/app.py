@@ -340,6 +340,12 @@ def submit_run(app_folder: str) -> str:
 
         response_payload = _parse_flwr_payload(result, "submit")
         logger.info("Raw Flower submit response payload: %s", response_payload)
+        if response_payload.get("success") is False:
+            detail = response_payload.get("error-message") or response_payload.get("message") or response_payload
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Flower submit command failed: {detail}",
+            )
         resp = FlowerSubmitRunCommandResponse.model_validate(response_payload)
 
         logger.info(
