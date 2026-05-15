@@ -42,6 +42,16 @@ services:
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
       - AWS_REGION=${AWS_REGION}
       - BLACKLISTED_MODEL_FILES=${BLACKLISTED_MODEL_FILES}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     restart: unless-stopped
     networks:
       - default
@@ -123,6 +133,16 @@ services:
       - FL_BACKEND=${FL_BACKEND}
       - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
       - TRUST_NAMES=${TRUST_NAMES}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     restart: unless-stopped
     container_name: flip-api
 
@@ -134,6 +154,17 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+      - SETPCAP
     networks:
       - default
     container_name: flip-db
@@ -148,6 +179,16 @@ services:
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     networks:

@@ -227,6 +227,63 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 >
 > **Warning:** This path is an AWS-level escape hatch and is **not** audit-logged inside FLIP. Use it only for administrator self-recovery. For any user who is not currently locked out of FLIP itself, prefer the Admin UI flow so the reset is captured in the application logs.
 
+## Container Security Hardening
+
+All Docker containers in FLIP are hardened with the following measures:
+
+### Non-Root Users
+
+Each Dockerfile explicitly drops root privileges by running the application as a non-root user:
+
+| Service | User | Notes |
+|---------|------|-------|
+| flip-api | `app` (UID 49999) | Set in the flip-api Dockerfile |
+| flip-ui | `node` | Set in the flip-ui Dockerfile (non-root Vite dev server) |
+| orthanc | `orthanc` | Pre-existing in the base image (`orthancteam/orthanc`) |
+| xnat-web | `xnat` | Created in the XNAT Dockerfile (UID 1001) |
+| xnat-nginx | `nginx` | Pre-existing in the base image (`nginx`) |
+| xnat-db | `postgres` | Pre-existing in the base image (`postgres`) |
+| flip-db / omop-db | `postgres` | Pre-existing in the base image (`postgres`) |
+
+### Linux Capability Restrictions
+
+Every container drops **all** Linux capabilities (`cap_drop: [ALL]`) and only adds back what the service strictly requires:
+
+| Capability | Purpose |
+|------------|---------|
+| `CHOWN` | Change file ownership (needed by nearly all services) |
+| `DAC_OVERRIDE` | Bypass file permission checks |
+| `SETUID` / `SETGID` | Change UID/GID for subprocesses |
+| `NET_BIND_SERVICE` | Bind to network ports (including privileged ports < 1024) |
+| `NET_RAW` | Raw sockets (orthanc DICOM networking) |
+| `KILL` | Send signals to terminate processes cleanly (orthanc) |
+| `SETPCAP` | Manage capabilities internally (PostgreSQL only) |
+
+PostgreSQL services (`flip-db`, `omop-db`, `xnat-db`) additionally receive `SETPCAP` to support
+the database's internal capability management. Orthanc additionally receives `NET_RAW` for DICOM
+network communication and `KILL` for clean process termination.
+
+### No New Privileges
+
+Every container enforces `security_opt: [no-new-privileges:true]` to prevent privilege escalation
+via `setuid` binaries or `LD_PRELOAD` injection. This blocks scenarios where a compromised
+container process could escalate back to root even with restricted capabilities.
+
+### Verification
+
+To verify hardening on a running container:
+
+```bash
+# Check the running user (should NOT be root)
+docker exec <container> whoami
+
+# Check effective capabilities
+docker exec <container> cat /proc/1/status | grep CapEff
+
+# Confirm no-new-privileges is active
+docker inspect <container> --format '{{.HostConfig.SecurityOpt}}'
+```
+
 ## Service Authentication
 
 FLIP uses three separate authentication mechanisms for service-to-service communication. Generate all keys

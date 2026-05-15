@@ -25,6 +25,16 @@ services:
     ports:
       - "${FL_API_PORT}:8000"
       - "5679:5679"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/local:/app/admin/local
@@ -42,6 +52,16 @@ services:
     environment:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       - DEBUG=${DEBUG}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/local:/app/admin/local
@@ -76,6 +96,16 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     networks:
       - shared-net-1
     restart: unless-stopped
@@ -104,6 +134,16 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     networks:
       - shared-net-2
     restart: unless-stopped

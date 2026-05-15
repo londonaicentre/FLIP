@@ -17,3 +17,6 @@ COPY XNAT.sql /docker-entrypoint-initdb.d/
 
 # Set the correct permissions for the initialization script
 RUN chmod 644 /docker-entrypoint-initdb.d/XNAT.sql
+
+# Drop root privileges: the postgres user exists in the base image.
+USER postgres

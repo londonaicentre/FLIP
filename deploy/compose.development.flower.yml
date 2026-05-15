@@ -32,6 +32,16 @@ services:
       - "5679:5679"
     depends_on:
       - fl-server-net-1
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     networks:
       - default
       - shared-net-1
@@ -56,6 +66,16 @@ services:
       - FLOWER_SRC_ROOT=/app
     depends_on:
       - fl-server-net-2
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     networks:
       - default
       - shared-net-2
@@ -100,6 +120,16 @@ services:
       - 0.0.0.0:9097
     ports:
       - 9093:9093
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     networks:
       - shared-net-1
     restart: unless-stopped

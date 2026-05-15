@@ -23,6 +23,17 @@ services:
     restart: always
     ports:
       - "${OMOP_DB_PORT}:5432"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+      - SETPCAP
     environment:
       POSTGRES_USER: ${OMOP_POSTGRES_USER}
       POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
@@ -38,6 +49,18 @@ services:
     ports:
       # - "${PACS_DICOM_PORT}:4242"
       - "${PACS_UI_PORT}:8042"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+      - NET_RAW
+      - KILL
     volumes:
       - ${ORTHANC_STORAGE_DIR}:/var/lib/orthanc/db
     environment:
@@ -58,6 +81,16 @@ services:
       target: development
     # No ports here: trust 1 instance declares its own host port in its override file (compose_trust-1_override.yml) for 
     # debugging purposes
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     environment:
       XNAT_URL: ${XNAT_URL}
       XNAT_PORT: ${XNAT_PORT}
@@ -93,6 +126,16 @@ services:
       target: development
     # No ports here: trust 1 instance declares its own host port in its override file (compose_trust-1_override.yml) for 
     # debugging purposes
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     environment:
       OMOP_DB_SERVICE_NAME: ${OMOP_DB_SERVICE_NAME}
       DATA_ACCESS_POSTGRES_USER: ${DATA_ACCESS_POSTGRES_USER}
@@ -122,6 +165,16 @@ services:
       target: development
     # No ports here: trust 1 instance declares its own host port in its override file (compose_trust-1_override.yml) for 
     # debugging purposes
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     environment:
       # Dev-only override: the env-file value of CENTRAL_HUB_API_URL is the browser-facing
       # URL (host port 8080 published by flip-ui's nginx) and is unreachable from inside
@@ -157,6 +210,16 @@ services:
     command: -config.file=/etc/loki/loki-config.yml
     ports:
       - "${LOKI_PORT}:3100"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     volumes:
       - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
       - loki-data:/loki
@@ -167,6 +230,16 @@ services:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
       - /etc/alloy/config.alloy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     volumes:
       - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -177,6 +250,16 @@ services:
     image: grafana/grafana:11.5.0
     ports:
       - "${GRAFANA_PORT}:3000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
     volumes:

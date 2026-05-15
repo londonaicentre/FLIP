@@ -23,6 +23,17 @@ services:
     restart: always
     ports:
       - "${OMOP_DB_PORT}:5432"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+      - SETPCAP
     environment:
       POSTGRES_USER: ${OMOP_POSTGRES_USER}
       POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
@@ -36,6 +47,18 @@ services:
     ports:
       # - "${PACS_DICOM_PORT}:4242"
       - "${PACS_UI_PORT}:8042"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+      - NET_RAW
+      - KILL
     volumes:
       - ${ORTHANC_STORAGE_DIR}:/var/lib/orthanc/db
     environment:
@@ -53,6 +76,16 @@ services:
     command: ["uv", "run", "python", "-m", "uvicorn", "imaging_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "${IMAGING_API_PORT}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     environment:
       XNAT_URL: ${XNAT_URL}
       XNAT_PORT: ${XNAT_PORT}
@@ -77,6 +110,16 @@ services:
     image: ghcr.io/londonaicentre/data-access-api:${DOCKER_TAG}
     ports:
       - "${DATA_ACCESS_API_PORT}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     environment:
       OMOP_DB_SERVICE_NAME: ${OMOP_DB_SERVICE_NAME}
       DATA_ACCESS_POSTGRES_USER: ${DATA_ACCESS_POSTGRES_USER}
@@ -96,6 +139,16 @@ services:
     # Security group blocks all inbound — only reachable via SSM tunnel.
     ports:
       - "${TRUST_API_PORT}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     environment:
       CENTRAL_HUB_API_URL: ${CENTRAL_HUB_API_URL}
       DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
@@ -120,6 +173,16 @@ services:
     command: -config.file=/etc/loki/loki-config.yml
     ports:
       - "${LOKI_PORT}:3100"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     volumes:
       - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
       - ${LOKI_DATA_VOLUME:-/opt/flip/volumes/loki}:/loki
@@ -131,6 +194,16 @@ services:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
       - /etc/alloy/config.alloy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     volumes:
       - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -142,6 +215,16 @@ services:
     restart: always
     ports:
       - "${GRAFANA_PORT}:3000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
     volumes:

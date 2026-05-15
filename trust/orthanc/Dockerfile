@@ -13,3 +13,6 @@
 FROM orthancteam/orthanc:25.12.2
 
 ENV ORTHANC__DICOM_WEB='{"Enable":true,"Root":"/dicom-web/","EnableWado":true,"WadoRoot":"/wado","Ssl":false,"QidoCaseSensitive":true,"Host":"localhost","StudiesMetadata":"Full","SeriesMetadata":"Full"}'
+
+# Drop root privileges: the orthanc user (UID 1000) exists in the base image.
+USER orthanc
