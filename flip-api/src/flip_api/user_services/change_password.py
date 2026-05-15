@@ -34,6 +34,12 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(..., min_length=8)
 
 
+class RevokeTokenRequest(BaseModel):
+    """Request body for revoking a Cognito refresh token."""
+
+    refresh_token: str = Field(..., min_length=1)
+
+
 class ChangePasswordResponse(BaseModel):
     """Response body after a successful password change."""
 
@@ -98,6 +104,12 @@ def change_own_password(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Current password is incorrect.",
             ) from e
+        if error_code == "InvalidPasswordException":
+            logger.warning(f"Invalid new password for user {token_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The new password does not meet the requirements.",
+            ) from e
         logger.exception(f"Failed to change password for user {token_id}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -108,7 +120,7 @@ def change_own_password(
     # refresh token in the X-Refresh-Token header; if absent we
     # still succeed — Cognito's admin_user_global_sign_out is not
     # available to non-admin callers, and the frontend will call
-    # PUT /users/revoke/{refresh_token} separately.
+    # PUT /users/revoke separately.
     refresh_token = request.headers.get("X-Refresh-Token", "")
     if refresh_token:
         try:
@@ -124,7 +136,7 @@ def change_own_password(
 
 
 @router.put(
-    "/revoke/{refresh_token}",
+    "/revoke",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Revoke a refresh token",
     description=(
@@ -134,7 +146,7 @@ def change_own_password(
     ),
 )
 def revoke_own_token(
-    refresh_token: str,
+    body: RevokeTokenRequest,
     token_id: UUID = Depends(verify_token),
 ) -> None:
     """
@@ -144,10 +156,10 @@ def revoke_own_token(
     invalidate the session server-side.
 
     Args:
-        refresh_token: The Cognito refresh token to revoke.
+        body: Request body containing the Cognito refresh token to revoke.
         token_id: The authenticated user's UUID (from ``verify_token``).
 
     Raises:
         HTTPException: 500 if the Cognito revoke_token call fails.
     """
-    revoke_token(refresh_token, get_settings().AWS_COGNITO_APP_CLIENT_ID)
+    revoke_token(body.refresh_token, get_settings().AWS_COGNITO_APP_CLIENT_ID)

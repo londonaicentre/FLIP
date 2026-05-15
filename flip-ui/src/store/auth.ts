@@ -568,7 +568,7 @@ export const useAuthStore = defineStore("auth", {
             return response;
         },
 
-                async updatePassword(details: { currentPassword: string; newPassword: string }) {
+        async updatePassword(details: { currentPassword: string; newPassword: string }) {
             await updatePassword({
                 oldPassword: details.currentPassword,
                 newPassword: details.newPassword

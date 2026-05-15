@@ -109,7 +109,7 @@ export async function validateUser(email: string): Promise<IProjectUser> {
 }
 
 export async function revokeToken(refreshToken: string): Promise<void> {
-    await _http.put(`/users/revoke/${refreshToken}`);
+    await _http.put("/users/revoke", { refresh_token: refreshToken });
 }
 
 export async function resetUserMfa(userId: string): Promise<void> {

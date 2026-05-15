@@ -20,6 +20,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 
 from flip_api.user_services.change_password import (
     ChangePasswordRequest,
+    RevokeTokenRequest,
     change_own_password,
     revoke_own_token,
 )
@@ -54,7 +55,7 @@ def _make_client_error(code: str, message: str = "An error occurred") -> ClientE
             "Message": message,
         },
     }
-    return ClientError(error_response, "change_password")
+    return ClientError(error_response, "change_password")  # type: ignore[arg-type]
 
 
 class TestChangeOwnPassword:
@@ -209,14 +210,16 @@ class TestChangeOwnPassword:
                     token_id=token_id,
                 )
 
-            assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "does not meet the requirements" in exc_info.value.detail
 
 
 class TestRevokeOwnToken:
-    """Tests for PUT /users/revoke/{refresh_token}."""
+    """Tests for PUT /users/revoke."""
 
     def test_success_returns_204(self, token_id):
         """Valid refresh token → revoke_token called, no body returned."""
+        body = RevokeTokenRequest(refresh_token="test-refresh-token")
         with (
             patch("flip_api.user_services.change_password.revoke_token") as mock_revoke,
             patch("flip_api.user_services.change_password.verify_token") as mock_verify,
@@ -224,7 +227,7 @@ class TestRevokeOwnToken:
             mock_verify.return_value = token_id
 
             result = revoke_own_token(
-                refresh_token="test-refresh-token",
+                body=body,
                 token_id=token_id,
             )
 
@@ -233,6 +236,7 @@ class TestRevokeOwnToken:
 
     def test_cognito_failure_raises_500(self, token_id):
         """Invalid or expired token → revoke_token raises → 500 propagates."""
+        body = RevokeTokenRequest(refresh_token="bad-token")
         with (
             patch("flip_api.user_services.change_password.revoke_token") as mock_revoke,
             patch("flip_api.user_services.change_password.verify_token") as mock_verify,
@@ -245,7 +249,7 @@ class TestRevokeOwnToken:
 
             with pytest.raises(HTTPException) as exc_info:
                 revoke_own_token(
-                    refresh_token="bad-token",
+                    body=body,
                     token_id=token_id,
                 )
 
