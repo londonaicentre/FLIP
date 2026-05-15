@@ -67,6 +67,7 @@ from tests.integration.utils import admin_authentication
 DEFAULT_QUERY_FILE = Path(__file__).parent / "example_query.sql"
 DEFAULT_PROJECT_NAME_PREFIX = "Xrays E2E Smoke"
 DEFAULT_MODEL_NAME = "Xrays E2E Smoke Model"
+ABORT_MIDWAY_NAME_SUFFIX = " (abort-midway)"
 
 # Anything strictly past INITIATED. RESULTS_UPLOADED is included so a fast
 # finish short-circuits wait_for_training_finished cleanly on the first poll.
@@ -83,6 +84,26 @@ class SmokeFailure(RuntimeError):
 
 def _log(msg: str) -> None:
     print(msg, flush=True)
+
+
+def resolve_model_name(base_name: str, abort_midway: bool) -> str:
+    """Return ``base_name`` plus the abort-midway suffix when the flag is set.
+
+    The suffix lets the UI distinguish an abort-midway model from a full-train
+    model when the same project hosts both (the typical --project-id reuse flow).
+    Idempotent: a name that already ends with the suffix is returned unchanged.
+
+    Args:
+        base_name (str): The base model name (CLI default or --model-name override).
+        abort_midway (bool): Whether the smoke run will exercise the abort path.
+
+    Returns:
+        str: ``base_name`` with the abort suffix when ``abort_midway`` is true and
+        the suffix is not already present, otherwise ``base_name`` unchanged.
+    """
+    if not abort_midway or base_name.endswith(ABORT_MIDWAY_NAME_SUFFIX):
+        return base_name
+    return f"{base_name}{ABORT_MIDWAY_NAME_SUFFIX}"
 
 
 def _post(
@@ -619,7 +640,8 @@ def main(argv: list[str] | None = None) -> int:
         # surfaces model-creation / upload errors immediately instead of after
         # 5–15 minutes of XNAT pulling, and the FL pipeline only consumes the
         # images at training time anyway.
-        model_id = create_model(client, headers, project_id, args.model_name)
+        model_name = resolve_model_name(args.model_name, args.abort_midway)
+        model_id = create_model(client, headers, project_id, model_name)
         upload_files(client, headers, model_id, args.model_files_dir)
         # Always wait for image pull, including on --project-id reuse: a prior
         # run on this project may have left pulls in flight (aborted midway,
