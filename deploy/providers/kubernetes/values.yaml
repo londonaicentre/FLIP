@@ -226,10 +226,10 @@ dataAccessApi:
 # DICOM images
 # ---------------------------------------------------------------------------
 sharedImagesPvc:
-  enabled: true
+  enabled: false
   storageClassName: ""
   size: 100Gi
-  accessMode: ReadWriteMany
+  accessMode: ReadWriteOnce
 
 # ---------------------------------------------------------------------------
 # FL client — federated learning participant
