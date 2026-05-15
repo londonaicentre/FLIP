@@ -545,9 +545,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--project-id",
         default=None,
-        help="Reuse an existing approved project: skip cohort submission, approval, and image-pull "
-        "wait; jump straight to model creation + upload + training. Lets you iterate on training "
-        "code without re-pulling images for every retry.",
+        help="Reuse an existing approved project: skip cohort submission and approval; jump straight "
+        "to model creation + upload + training. Image-pull wait still runs (cheap when already at "
+        "100%, correct when a prior --abort-midway run left pulls in flight). Lets you iterate on "
+        "training code without re-creating the project for every retry.",
     )
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
     parser.add_argument(
@@ -606,7 +607,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.project_id:
             project_id = args.project_id
-            _log(f"♻️  Reusing existing project_id={project_id} (skipping cohort + image pull)")
+            _log(f"♻️  Reusing existing project_id={project_id} (skipping cohort + approval)")
             trusts = _ensure_ok(_get(client, "/trust/", headers), "list trusts").json()
             if not trusts:
                 raise SmokeFailure("No trusts registered with the hub")
@@ -620,10 +621,14 @@ def main(argv: list[str] | None = None) -> int:
         # images at training time anyway.
         model_id = create_model(client, headers, project_id, args.model_name)
         upload_files(client, headers, model_id, args.model_files_dir)
-        if not args.project_id:
-            wait_for_image_pull(
-                client, headers, project_id, args.image_pull_threshold, args.image_pull_timeout
-            )
+        # Always wait for image pull, including on --project-id reuse: a prior
+        # run on this project may have left pulls in flight (aborted midway,
+        # failed, or simply queued back-to-back before the first pull finished),
+        # in which case skipping the wait here would have wait_for_training_started
+        # sit blocked on the (still pulling) FL clients until it times out.
+        wait_for_image_pull(
+            client, headers, project_id, args.image_pull_threshold, args.image_pull_timeout
+        )
         initiate_training(client, headers, model_id, [t["name"] for t in trusts])
         wait_for_training_started(client, headers, model_id, args.training_start_timeout)
         if args.abort_midway:
