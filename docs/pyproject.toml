@@ -27,7 +27,7 @@ dependencies = [
     "sphinx-autoapi>=3.6.0",
     "sphinx-rtd-theme>=3.0.2",
     "sphinxcontrib-bibtex>=2.6.3",
-    "urllib3>=2.6.0",
+    "urllib3>=2.7.0",
 ]
 
 [project.scripts]
