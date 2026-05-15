@@ -239,12 +239,12 @@ describe("user-service", () => {
     });
 
     describe("revokeToken", () => {
-        it("PUTs to /users/revoke/{refreshToken}", async () => {
+        it("PUTs to /users/revoke with refresh_token in body", async () => {
             vi.mocked(_http.put).mockResolvedValue({ data: undefined } as never);
 
             await revokeToken("rt-abc");
 
-            expect(_http.put).toHaveBeenCalledWith("/users/revoke/rt-abc");
+            expect(_http.put).toHaveBeenCalledWith("/users/revoke", { refresh_token: "rt-abc" });
         });
     });
 
