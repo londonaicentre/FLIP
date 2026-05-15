@@ -1,17 +1,23 @@
-{{- if and .Values.xnat.enabled .Values.imagingImportWorker.enabled .Values.imagingImportWorker.runOnce }}
-apiVersion: batch/v1
-kind: Job
+{{- if and .Values.xnat.enabled .Values.imagingImportWorker.enabled (not .Values.imagingImportWorker.runOnce) }}
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: {{ include "flip-trust.fullname" . }}-imaging-import-worker
   labels:
     {{- include "flip-trust.labels" . | nindent 4 }}
     app.kubernetes.io/component: imaging-import-worker
 spec:
-  backoffLimit: {{ .Values.imagingImportWorker.backoffLimit | default 3 }}
-  ttlSecondsAfterFinished: {{ .Values.imagingImportWorker.ttlSecondsAfterFinished | default 86400 }}
+  replicas: {{ .Values.imagingImportWorker.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "flip-trust.fullname" . }}-imaging-import-worker
+      app.kubernetes.io/component: imaging-import-worker
   template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "flip-trust.fullname" . }}-imaging-import-worker
+        app.kubernetes.io/component: imaging-import-worker
     spec:
-      restartPolicy: {{ .Values.imagingImportWorker.restartPolicy | default "Never" }}
       serviceAccountName: default
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -58,9 +64,11 @@ spec:
             - name: WORKER_AET
               value: {{ .Values.imagingImportWorker.workerAet | default "FLIPIMPORT" | quote }}
             - name: RUN_ONCE
-              value: {{ .Values.imagingImportWorker.runOnce | default "true" | quote }}
+              value: "false"
             - name: BATCH_SIZE
               value: {{ .Values.imagingImportWorker.batchSize | default "50" | quote }}
+            - name: POLL_INTERVAL
+              value: {{ .Values.imagingImportWorker.pollInterval | default "60" | quote }}
             - name: PACS_ID
               value: {{ .Values.imagingImportWorker.pacsId | default "1" | quote }}
             - name: LOG_LEVEL

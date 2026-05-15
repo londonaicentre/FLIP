@@ -338,6 +338,10 @@ omopDb:
 # ---------------------------------------------------------------------------
 orthanc:
   enabled: true
+  host: orthanc
+  dicomHost: orthanc
+  dicomPort: 4242
+  dicomAet: ORTHANC
   external:
     host: ""
     port: 8042
@@ -370,6 +374,22 @@ orthanc:
     limits:
       memory: "1Gi"
       cpu: "500m"
+  initJob:
+    enabled: false
+    s3Bucket: ""
+    # Archive file name. When empty, derived from trust name + dataVersion:
+    #   {trustName}_orthanc_data_{dataVersion}.tar.gz
+    # Override to point at a different archive (e.g. reuse Trust_2's data):
+    #   archiveName: "trust2_orthanc_data_20260106.tar.gz"
+    archiveName: ""
+    dataVersion: "20260106"
+    # AWS profile to use for S3 authentication (uses SSO cached credentials)
+    awsProfile: "default"
+    # Mount host's ~/.aws directory for SSO-based S3 authentication
+    # Enabled for local K8s clusters; disable for EKS (use IRSA instead)
+    hostAwsMount:
+      enabled: false
+      hostPath: "/home/rd24/.aws"
 
 # ---------------------------------------------------------------------------
 # XNAT — Neuroimaging platform (multi-component)
@@ -590,14 +610,17 @@ networkPolicies:
 # ---------------------------------------------------------------------------
 imagingImportWorker:
   enabled: true
-  runOnce: true
+  runOnce: false
+  replicas: 1
   batchSize: 50
+  pollInterval: 60
   workerAet: FLIPIMPORT
   pacsId: 1
   logLevel: INFO
+  prearchivePollSecs: 10
   backoffLimit: 3
   ttlSecondsAfterFinished: 86400
-  restartPolicy: Never
+  restartPolicy: Always
   image:
     repository: python
     tag: "3.12-slim"
