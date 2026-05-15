@@ -50,6 +50,10 @@ spec:
       targetPort: tomcat
       protocol: TCP
       name: tomcat
+    - port: {{ .Values.xnat.web.dicomPort | default 8104 }}
+      targetPort: {{ .Values.xnat.web.dicomPort | default 8104 }}
+      protocol: TCP
+      name: dicom-scp
   selector:
     {{- include "flip-trust.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: xnat-web
@@ -172,6 +176,9 @@ spec:
             - name: data
               mountPath: /data/xnat/cache
               subPath: cache
+            - name: data
+              mountPath: /data/xnat/prearchive
+              subPath: prearchive
             - name: plugins
               mountPath: /data/xnat/home/plugins
           livenessProbe:

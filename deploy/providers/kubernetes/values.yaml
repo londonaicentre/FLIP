@@ -586,7 +586,7 @@ networkPolicies:
 # Can run as a one-shot Job (default) or a CronJob (if a schedule is set).
 # ---------------------------------------------------------------------------
 imagingImportWorker:
-  enabled: false
+  enabled: true
   runOnce: true
   batchSize: 50
   workerAet: FLIPIMPORT
@@ -596,8 +596,8 @@ imagingImportWorker:
   ttlSecondsAfterFinished: 86400
   restartPolicy: Never
   image:
-    repository: alpine
-    tag: "3.20"
+    repository: python
+    tag: "3.12-slim"
     pullPolicy: IfNotPresent
   resources:
     requests:

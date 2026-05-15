@@ -25,7 +25,8 @@ spec:
             - sh
             - -c
             - |
-              apk add --no-cache py3-pip dcmtk >/dev/null 2>&1 &&
+              apt-get update -qq >/dev/null 2>&1 &&
+              apt-get install -y -qq dcmtk >/dev/null 2>&1 &&
               pip install psycopg2-binary -q >/dev/null 2>&1 &&
               python3 /opt/scripts/imaging-import-worker.py
           env:
@@ -40,7 +41,7 @@ spec:
             - name: XNAT_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: flip-trust-secrets
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: xnat-datasource-password
             - name: ORTHANC_HOST
               value: {{ include "flip-trust.fullname" . }}-orthanc
@@ -64,10 +65,26 @@ spec:
               value: {{ .Values.imagingImportWorker.pacsId | default "1" | quote }}
             - name: LOG_LEVEL
               value: {{ .Values.imagingImportWorker.logLevel | default "INFO" | quote }}
+            - name: XNAT_URL
+              value: "http://{{ include "flip-trust.fullname" . }}-xnat-web:8080"
+            - name: XNAT_ADMIN_USER
+              value: {{ .Values.xnat.web.adminUser | quote }}
+            - name: XNAT_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-admin-password
+            - name: PREARCHIVE_PATH
+              value: {{ .Values.xnat.web.prearchivePath | default "/data/xnat/prearchive" | quote }}
+            - name: PREARCHIVE_POLL_SECS
+              value: {{ .Values.imagingImportWorker.prearchivePollSecs | default "10" | quote }}
           volumeMounts:
             - name: scripts
               mountPath: /opt/scripts
               readOnly: true
+            - name: xnat-data
+              mountPath: {{ .Values.xnat.web.prearchivePath | default "/data/xnat/prearchive" }}
+              subPath: prearchive
           resources:
             {{- toYaml .Values.imagingImportWorker.resources | nindent 12 }}
       volumes:
@@ -75,4 +92,7 @@ spec:
           configMap:
             name: {{ include "flip-trust.fullname" . }}-imaging-import-scripts
             defaultMode: 0555
+        - name: xnat-data
+          persistentVolumeClaim:
+            claimName: {{ include "flip-trust.fullname" . }}-xnat-web
 {{- end }}
