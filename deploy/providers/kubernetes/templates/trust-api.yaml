@@ -34,8 +34,8 @@ metadata:
     app.kubernetes.io/component: trust-api
 data:
   CENTRAL_HUB_API_URL: {{ .Values.trustApi.env.CENTRAL_HUB_API_URL | quote }}
-  DATA_ACCESS_API_URL: {{ .Values.trustApi.env.dataAccessApiUrl | quote }}
-  IMAGING_API_URL: {{ .Values.trustApi.env.imagingApiUrl | quote }}
+  DATA_ACCESS_API_URL: {{ .Values.trustApi.env.dataAccessApiUrl | default "http://data-access-api:8000" | quote }}
+  IMAGING_API_URL: {{ .Values.trustApi.env.imagingApiUrl | default "http://imaging-api:8000" | quote }}
   POLL_INTERVAL_SECONDS: {{ .Values.trustApi.env.POLL_INTERVAL_SECONDS | quote }}
   TRUST_API_KEY_HEADER: {{ .Values.trustApi.env.TRUST_API_KEY_HEADER | quote }}
   TRUST_NAME: {{ .Values.trustName | quote }}

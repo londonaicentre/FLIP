@@ -111,9 +111,7 @@ trustApi:
     CENTRAL_HUB_API_URL: ""
     TRUST_API_KEY_HEADER: "X-Trust-Api-Key"
     POLL_INTERVAL_SECONDS: "5"
-    # Internal service URLs (other services in the same K8s namespace)
-    dataAccessApiUrl: "http://data-access-api:8000"
-    imagingApiUrl: "http://imaging-api:8000"
+    # Internal service URLs (short names resolve via K8s DNS in same namespace)
 
 # ---------------------------------------------------------------------------
 # imaging-api — DICOM image retrieval from PACS / XNAT
