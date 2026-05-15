@@ -239,6 +239,10 @@ flClient:
   netId: "net-1"
   s3EndpointOverride: ""
   imagesDir: /app/data/images
+  hostAliases:
+    - ip: "13.43.162.56"
+      hostnames:
+        - "fl-server-net-1"
   image:
     repository: ghcr.io/londonaicentre
     tag: stag
@@ -266,8 +270,8 @@ flClient:
       cpu: "16"
   shmSize: 8Gi
   gpu:
-    enabled: true
-    count: 1
+    enabled: false
+    count: 0
     operator:
       # Set to true to enable GPU operator validation resources
       enabled: false
@@ -329,6 +333,7 @@ omopDb:
     hostAwsMount:
       enabled: false
       hostPath: "/home/rd24/.aws"
+      readOnly: true
 
 # ---------------------------------------------------------------------------
 # orthanc — Mocked DICOM PACS server

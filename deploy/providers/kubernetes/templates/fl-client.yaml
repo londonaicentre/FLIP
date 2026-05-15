@@ -73,6 +73,14 @@ spec:
       {{- end }}
     spec:
       enableServiceLinks: false
+      hostAliases:
+      {{- range .Values.flClient.hostAliases }}
+        - ip: {{ .ip | quote }}
+          hostnames:
+          {{- range .hostnames }}
+            - {{ . | quote }}
+          {{- end }}
+      {{- end }}
       serviceAccountName: {{ include "flip-trust.fullname" . }}-fl-client
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -132,6 +140,11 @@ spec:
               mountPath: /opt/fl-client/kit
             - name: images
               mountPath: {{ .Values.flClient.imagesDir }}
+{{- if .Values.flClient.hostAwsMount.enabled }}
+            - name: host-aws
+              mountPath: /root/.aws
+              readOnly: {{ .Values.flClient.hostAwsMount.readOnly }}
+{{- end }}
       {{- end }}
       containers:
         - name: fl-client
@@ -227,8 +240,10 @@ spec:
 {{- else }}
           emptyDir: {}
 {{- end }}
+{{- if .Values.flClient.hostAwsMount.enabled }}
         - name: host-aws
           hostPath:
-            path: {{ .Values.flClient.hostAwsPath | default "/root/.aws" | quote }}
-            type: DirectoryOrCreate
+            path: {{ .Values.flClient.hostAwsMount.hostPath | quote }}
+            type: Directory
+{{- end }}
 {{- end }}

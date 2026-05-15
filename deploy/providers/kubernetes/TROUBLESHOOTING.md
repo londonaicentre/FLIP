@@ -17,6 +17,16 @@ services, with a focus on the XNAT DICOM import pipeline.
 4. [Trust Registration and Heartbeat](#4-trust-registration-and-heartbeat)
 5. [XNAT HTTPS Issues](#5-xnat-https-issues)
 6. [Debug Scripts](#6-debug-scripts)
+7. [FL Client / FL Server Connection Issues](#7-fl-client--fl-server-connection-issues)
+   - [7.1 Network Policy Blocking Egress to Port 8002](#71-network-policy-blocking-egress-to-port-8002)
+   - [7.2 Certificate Key Usage BIT_INCORRECT](#72-certificate-key-usage-bitincorrect)
+   - [7.3 Missing SAN in Server Certificate](#73-missing-san-in-server-certificate)
+   - [7.4 Signature PSS Padding Mismatch](#74-signature-pss-padding-mismatch)
+   - [7.5 EFS File Permission Lost (sub_start.sh)](#75-efs-file-permission-lost-sub_startsh)
+   - [7.6 Entrypoint Background-Process Exit (start.sh)](#76-entrypoint-background-process-exit-startsh)
+   - [7.7 AWS Credentials Expired in K8s Secret](#77-aws-credentials-expired-in-k8s-secret)
+   - [7.8 EFS Sync Permission Issues (Root vs UID 1001)](#78-efs-sync-permission-issues-root-vs-uid-1001)
+   - [7.9 Container Image Pull from Private ECR](#79-container-image-pull-from-private-ecr)
 
 ---
 
@@ -413,6 +423,326 @@ machine and in `deploy/providers/kubernetes/scripts/`. Key scripts:
 
 ---
 
+## 7. FL Client / FL Server Connection Issues
+
+The fl-client runs in the K8s cluster and connects to the hub-side fl-server
+via gRPC over mTLS (port 8002) through an NLB (`fl.stag.flip.aicentre.co.uk`).
+
+### 7.1 Network Policy Blocking Egress to Port 8002
+
+**Symptom:** `Connection refused [Errno 111]` when the fl-client pod tries to
+connect to `fl-server-net-1:8002` or `fl.stag.flip.aicentre.co.uk:8002`.
+Other pods (e.g., `python:3.12-slim` test pod) can connect successfully.
+
+**Root Cause:** The `trust-release-flip-trust-egress` NetworkPolicy only allows
+egress on ports 53 (UDP/TCP), 80 (TCP), and 443 (TCP). Port 8002 is blocked.
+
+**Check:**
+```bash
+kubectl get networkpolicy -n flip-trust trust-release-flip-trust-egress -o yaml
+```
+
+Look for port 8002 in `spec.egress[0].ports`.
+
+**Fix (ad-hoc):**
+```bash
+kubectl patch networkpolicy -n flip-trust trust-release-flip-trust-egress --type='json' -p='[
+  {"op": "add", "path": "/spec/egress/0/ports/-", "value": {"port": 8002, "protocol": "TCP"}}
+]'
+```
+
+**Fix (permanent — Helm chart):** Add 8002 to `networkPolicies.egress.ports` in
+the values file:
+```yaml
+networkPolicies:
+  egress:
+    ports:
+      - port: 53
+        protocol: UDP
+      - port: 53
+        protocol: TCP
+      - port: 80
+        protocol: TCP
+      - port: 443
+        protocol: TCP
+      - port: 8002
+        protocol: TCP
+```
+
+### 7.2 Certificate Key Usage BIT_INCORRECT
+
+**Symptom:** fl-client pod logs show:
+```
+Handshake failed with error SSL_ERROR_SSL: error:1000012e:SSL
+routines:OPENSSL_internal:KEY_USAGE_BIT_INCORRECT: Invalid certificate
+verification context
+```
+
+gRPC channel is created but immediately closes with `Not Connected`.
+
+The TCP connection succeeds (NLB passes traffic through) but the TLS handshake
+fails on the client side due to the server certificate.
+
+**Root Cause:** The server certificate was re-generated with X509v3 Key Usage
+extensions (`keyEncipherment, dataEncipherment`) and Extended Key Usage
+(`TLS Web Server Authentication`). The original NVFLARE certificates have
+*no* Key Usage or Extended Key Usage extensions. OpenSSL's gRPC implementation
+rejects certificates with these restrictions during mTLS negotiation.
+
+**Check:**
+```bash
+openssl x509 -in /path/to/server.crt -noout -text | grep -A3 "X509v3 Key Usage"
+```
+
+If any Key Usage or Extended Key Usage lines appear, the cert needs regeneration.
+
+**Fix:** Regenerate the server certificate *without* key usage / extended key
+usage extensions. Only include `basicConstraints=CA:FALSE` and the
+`subjectAltName`:
+
+```bash
+cat > server_ext.cnf << 'EOF'
+[v3_req]
+basicConstraints = CA:FALSE
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = fl-server-net-1
+DNS.2 = fl.stag.flip.aicentre.co.uk
+EOF
+
+openssl req -new -key server.key -out server.csr -subj "/CN=fl-server-net-1/O=AICentre"
+openssl x509 -req -in server.csr -CA rootCA.pem -CAkey rootCA.key \
+  -CAcreateserial -out server.crt -days 3650 -sha256 \
+  -extfile server_ext.cnf -extensions v3_req
+```
+
+Verify no key usage lines in the output:
+```bash
+openssl x509 -in server.crt -noout -text | grep -E "Key Usage|Extended Key Usage"
+# Should produce no output
+```
+
+### 7.3 Missing SAN in Server Certificate
+
+**Symptom:** mTLS handshake fails. Server logs show no connection attempt
+events. Client logs may show generic SSL errors.
+
+**Root Cause:** The server certificate's Subject Alternative Name (SAN) only
+contained `DNS:fl-server-net-1` (the Docker service name). The fl-client
+connects via the NLB DNS name `fl.stag.flip.aicentre.co.uk`, which doesn't
+match the cert SAN. OpenSSL's certificate verification rejects the mismatch.
+
+**Check:**
+```bash
+openssl x509 -in server.crt -noout -ext subjectAltName
+```
+
+Expected both names to be present:
+```
+DNS:fl-server-net-1, DNS:fl.stag.flip.aicentre.co.uk
+```
+
+**Fix:** Add both SANs when regenerating the certificate (see §7.2 config above).
+
+The `hostAliases` in the fl-client deployment map `fl-server-net-1` to the
+NLB IPs, so clients resolve the hostname correctly but the server must present
+a cert that matches the hostname the client uses to connect.
+
+### 7.4 Signature PSS Padding Mismatch
+
+**Symptom:** fl-client connects to fl-server but the server logs show
+`Authenticator - re-challenge` in a loop without ever progressing to
+`verified server identity`. The client may show `Not Connected` after the
+handshake.
+
+**Root Cause:** The `signature.json` file in the NVFLARE participant kit
+contains signatures for all startup files (e.g., `server.crt`, `start.sh`).
+These are verified during the mTLS handshake. NVFLARE signs them using **PSS
+padding** with SHA-256 (`padding.PSS(mgf=MGF1(SHA256()), salt_length=MAX)`).
+If the signatures were re-generated using **PKCS1v15 padding** (the default),
+the verification fails silently and the connection drops.
+
+**Check:** The `nvflare.fuel.sec.security_content_service.SecurityContentService`
+uses `_content_padding()` which calls `padding.PSS(...)`. Tracing shows:
+```
+_verify_content() -> _content_padding() -> PSS(mgf=MGF1(SHA256()), salt_length=MAX)
+```
+
+**Fix:** Re-sign `signature.json` using PSS padding:
+```python
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes
+
+signature = base64.b64encode(
+    private_key.sign(
+        data=file_content,
+        padding=padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        ),
+        algorithm=hashes.SHA256(),
+    )
+).decode()
+```
+
+A Python helper script is available at:
+`deploy/providers/kubernetes/scripts/resign_signatures.py`
+
+### 7.5 EFS File Permission Lost (sub_start.sh)
+
+**Symptom:** fl-server container exits immediately (`START_STOP` status), even
+though the task starts and the NLB target registers as healthy momentarily.
+
+**Root Cause:** During EFS sync (S3 → EFS), the `sub_start.sh` script loses
+its execute permission (`chmod +x`). The entrypoint tries to `./sub_start.sh &
+&& wait` but exits because the file is not executable.
+
+**Check:**
+```bash
+aws s3 sync s3://.../cloud/@mnt/startup/ /tmp/check_efs/ 2>/dev/null
+ls -la /tmp/check_efs/sub_start.sh  # Should be -rwxr-xr-x, not -rw-r--r--
+```
+
+**Fix:**
+```yaml
+# Add postSync command in EFS sync task:
+command: [
+  "sh", "-c",
+  "aws s3 sync s3://.../startup/ /mnt/startup/ --delete --no-progress &&
+   chmod +x /mnt/startup/*.sh"
+]
+```
+
+On an already-synced EFS:
+```bash
+efs_mount_point=$(df | grep :/ | awk '{print $6}')
+chmod +x "$efs_mount_point"/startup/*.sh
+```
+
+### 7.6 Entrypoint Background-Process Exit (start.sh)
+
+**Symptom:** fl-server task starts, NLB target registers as healthy, then the
+container exits with code 0 almost immediately. The container logs show the
+server starting, then silence.
+
+**Root Cause:** The NVFLARE container's `start.sh` script backgrounds
+`sub_start.sh &` and then runs `wait`. When `start.sh` is *executed* (via
+`./start.sh`) instead of *sourced* (via `. ./start.sh` or `source start.sh`),
+the background job (`sub_start.sh`) becomes orphaned in a subshell. The
+`wait` in the parent shell sees no background jobs and returns immediately,
+causing the container to exit.
+
+**Fix (fl-server ECS task definition):** Override the entrypoint/command to
+source the script instead:
+```json
+"command": ["sh", "-c", ". ./start.sh && wait"]
+```
+
+**Fix (fl-client K8s deployment):** In the Helm chart's `fl-client.yaml`:
+```yaml
+command: ["/bin/sh", "-c", ". /opt/nvflare/startup/start.sh && wait"]
+```
+
+### 7.7 AWS Credentials Expired in K8s Secret
+
+**Symptom:** fl-client pod logs show `AccessDenied` when trying to download
+participant kit from S3. Trust's omop-db-init job also fails with S3 errors.
+
+**Root Cause:** The K8s Secret `aws-credentials` (mounted by init containers)
+contains stale AWS SSO credentials. SSO sessions expire after 12-24 hours.
+
+**Check:**
+```bash
+kubectl exec -n flip-trust <pod> -- aws sts get-caller-identity \
+  --profile flipstag 2>/dev/null || echo "Credentials expired"
+```
+
+**Fix:** Refresh credentials on the host and re-create the Secret:
+```bash
+aws sso login --profile flipstag
+
+# Re-create K8s secret with fresh credentials
+kubectl create secret generic aws-credentials \
+  -n flip-trust \
+  --from-file=$HOME/.aws/credentials \
+  --from-file=$HOME/.aws/config \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+Pod init containers must be restarted after secret update (delete pods to
+force re-init).
+
+### 7.8 EFS Sync Permission Issues (Root vs UID 1001)
+
+**Symptom:** Certs are present on the EFS when written via the root access
+point (`fsap-...`, UID 0), but the fl-server container (running as UID 1001)
+cannot read them, or the running server picks up stale old certs.
+
+**Root Cause:** EFS has multiple access points for the same filesystem path.
+The root AP (`fsap-02c45969fbdf3d9c1`, UID 0) and the fl-server AP
+(`fsap-0ffebc76dcf840674`, UID 1001) both point to the same
+`/fl-server-net-1/startup/` path, but files written via one AP are visible
+from the other. However, if the fl-server caches the directory listing at
+startup, a new EFS sync while the server is running won't take effect until
+the server is restarted.
+
+**Check:**
+```bash
+# Verify cert content through fl-server's access point
+TASK_ARN=$(aws ecs run-task --task-definition efs-sync:1 ...)
+aws ecs execute-command --task $TASK --container app \
+  --command "md5sum /opt/nvflare/startup/rootCA.pem"
+```
+
+**Fix:** Always force a new deployment after EFS cert sync:
+```bash
+aws ecs update-service --cluster flip-cluster --service fl-server-net-1 \
+  --force-new-deployment
+```
+
+### 7.9 Container Image Pull from Private ECR
+
+**Symptom:** Pod in `ErrImagePull` / `ImagePullBackOff` status. Fl-server ECS
+task fails with `CannotPullContainerError`.
+
+**Root Cause:** The NVFLARE container images are hosted in a private ECR
+repository (account `080369786334` in `eu-west-2`). The K8s cluster or ECS
+task execution role lacks permissions to pull from this repository.
+
+**Fix (K8s):** Create an `imagePullSecret` with ECR credentials:
+```bash
+# Generate ECR auth token
+ecr_password=$(aws ecr get-login-password --profile flipstag --region eu-west-2)
+kubectl create secret docker-registry ecr-cred \
+  --docker-server=080369786334.dkr.ecr.eu-west-2.amazonaws.com \
+  --docker-username=AWS \
+  --docker-password="$ecr_password" \
+  -n flip-trust
+```
+
+Then reference it in the Helm values:
+```yaml
+flClient:
+  imagePullSecrets:
+    - name: ecr-cred
+```
+
+**Fix (ECS):** Ensure the ECS task execution role has:
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "ecr:GetDownloadUrlForLayer",
+    "ecr:BatchGetImage",
+    "ecr:BatchCheckLayerAvailability"
+  ],
+  "Resource": "arn:aws:ecr:eu-west-2:080369786334:repository/*"
+}
+```
+
+---
+
 ## Quick Diagnostic Checklist
 
 When something is broken, run these in order:
@@ -444,4 +774,12 @@ helm list -n flip-trust
 
 # 7. Run import worker (if DQR is failing)
 python3 deploy/providers/kubernetes/scripts/imaging-import-worker.py
+
+# 8. FL client connectivity (if training isn't starting)
+FL_POD=$(kubectl get pods -n flip-trust -l app.kubernetes.io/component=fl-client -o jsonpath='{.items[0].metadata.name}')
+kubectl logs -n flip-trust "$FL_POD" --tail=15 | grep -E "Connected|challenge|Not.*Connect|KEY_USAGE|registered client|Got engine"
+
+# 9. Network policy check (if fl-client gets Connection Refused)
+kubectl get networkpolicy -n flip-trust trust-release-flip-trust-egress -o yaml | grep -q 8002 && \
+  echo "Port 8002 allowed" || echo "MISSING: Port 8002 in egress policy"
 ```
