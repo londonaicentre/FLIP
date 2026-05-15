@@ -298,11 +298,6 @@ variable "PACS_UI_PORT" {
   type        = number
 }
 
-variable "TRUST_NAMES" {
-  description = "JSON-array string of registered trust names, e.g. [\"Trust_1\",\"Trust_2\"]. Consumed by flip-api to validate inbound trust API calls."
-  type        = string
-}
-
 variable "TRUST_API_KEY_HEADER" {
   description = "HTTP header name carrying per-trust API keys on trust-to-hub calls. Compose default: Authorization."
   type        = string
