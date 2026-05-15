@@ -29,7 +29,6 @@ dependencies = [
     "sqlalchemy>=2.0.39",
     "sqlglot>=26.33.0",
     "starlette>=0.49.1",
-    "urllib3>=2.7.0",
 ]
 
 [dependency-groups]
@@ -48,6 +47,7 @@ dev = [
 [tool.uv]
 constraint-dependencies = [
     "python-dotenv>=1.2.2",  # GHSA: symlink-following file overwrite; transitive via pydantic-settings
+    "urllib3>=2.7.0",  # GHSA-qccp-gfcp-xxvc, GHSA-mf9v-mfxr-j63j; transitive via requests
 ]
 
 [tool.pytest.ini_options]
