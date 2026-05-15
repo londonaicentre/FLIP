@@ -550,6 +550,10 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
     # ship CSP as `Content-Security-Policy-Report-Only` below in
     # custom_headers_config until a release cycle confirms no false
     # positives, then move the body here and delete the custom header.
+    #
+    # Stage 1 of GHSA-vp94-g35p-29w8: unsafe-inline removed from style-src
+    # while staying in report-only. Stage 2 (enforcing) tracked in
+    # https://github.com/londonaicentre/FLIP/issues/417.
   }
 
   custom_headers_config {
@@ -564,12 +568,53 @@ resource "aws_cloudfront_response_headers_policy" "flip_ui_spa" {
         # the pool is moved to a different region.
         "connect-src 'self' https://cognito-idp.eu-west-2.amazonaws.com https://cognito-identity.eu-west-2.amazonaws.com;",
         "img-src 'self' data:;",
-        "style-src 'self' 'unsafe-inline';",
+        # unsafe-inline removed from style-src per GHSA-vp94-g35p-29w8:
+        # Vue+TailwindCSS generated CSS is bundled as static files, not
+        # inline styles. Dynamic style bindings were found to be replaceable
+        # with utility classes. If new violations surface during the
+        # report-only cycle, audit and fix at the source rather than relaxing.
+        "style-src 'self';",
         "script-src 'self';",
         "object-src 'none';",
         "frame-ancestors 'none';",
       ])
       override = true
+    }
+  }
+}
+
+############################
+# Response headers policy (/api/* responses)
+############################
+
+# Security headers for /api/* responses. Only includes headers that are
+# safe and beneficial for API JSON responses. CSP is intentionally
+# excluded — it belongs on the SPA (HTML) only, and applying it here
+# would leak CSP policy into every API response for no security benefit.
+resource "aws_cloudfront_response_headers_policy" "flip_api" {
+  name    = "flip-api-${replace(var.flip_alb_subdomain, "/[^a-zA-Z0-9]/", "-")}"
+  comment = "Security response headers for /api/* at ${var.flip_alb_subdomain}"
+
+  security_headers_config {
+    strict_transport_security {
+      access_control_max_age_sec = 31536000
+      include_subdomains         = true
+      preload                    = false
+      override                   = true
+    }
+
+    content_type_options {
+      override = true
+    }
+
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+
+    frame_options {
+      frame_option = "DENY"
+      override     = true
     }
   }
 }
@@ -620,14 +665,15 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   }
 
   ordered_cache_behavior {
-    path_pattern             = "/api/*"
-    target_origin_id         = "alb-api-origin"
-    viewer_protocol_policy   = "https-only"
-    allowed_methods          = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
-    cached_methods           = ["GET", "HEAD"]
-    compress                 = true
-    cache_policy_id          = local.cloudfront_policy_caching_disabled
-    origin_request_policy_id = aws_cloudfront_origin_request_policy.flip_api.id
+    path_pattern               = "/api/*"
+    target_origin_id           = "alb-api-origin"
+    viewer_protocol_policy     = "https-only"
+    allowed_methods            = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods             = ["GET", "HEAD"]
+    compress                   = true
+    cache_policy_id            = local.cloudfront_policy_caching_disabled
+    origin_request_policy_id   = aws_cloudfront_origin_request_policy.flip_api.id
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.flip_api.id
   }
 
   restrictions {

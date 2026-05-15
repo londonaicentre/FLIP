@@ -100,6 +100,7 @@ from flip_api.user_services import (
 )
 from flip_api.utils.cognito_helpers import get_cors_allowed_origins
 from flip_api.utils.rate_limiter import limiter
+from flip_api.utils.security_headers import SecurityHeadersMiddleware
 
 # Module-level holder for the CORS allowlist. Populated from Cognito at app startup (see
 # `lifespan`). CORSMiddleware stores this list by reference and reads it per-request via
@@ -161,6 +162,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Security headers — applies to ALL responses (API JSON, health, error pages).
+# CSP is only injected on text/html responses; the SPA primarily relies on
+# CloudFront edge CSP for HTML assets.
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 ROUTERS: tuple[APIRouter, ...] = (
