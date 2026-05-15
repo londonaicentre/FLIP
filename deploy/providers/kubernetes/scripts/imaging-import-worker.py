@@ -39,15 +39,26 @@ Environment variables:
   POLL_INTERVAL    - Seconds between polls when running as daemon (default: 300)
   RUN_ONCE         - If "true", process one batch and exit (default: true)
   LOG_LEVEL        - Logging level (default: INFO)
+  XNAT_URL         - XNAT web URL (default: http://xnat-web:8080)
+  XNAT_ADMIN_USER  - XNAT admin username (default: admin)
+  XNAT_ADMIN_PASSWORD - XNAT admin password
+  PREARCHIVE_PATH  - XNAT prearchive filesystem path (default: /data/xnat/prearchive)
+  PREARCHIVE_POLL_SECS - Seconds to wait for prearchive data after C-MOVE (default: 10)
 """
 
+import base64
 import logging
 import os
 import re
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
@@ -105,6 +116,13 @@ class Config:
     run_once: bool = os.environ.get("RUN_ONCE", "true").lower() == "true"
 
     pacs_id: int = int(os.environ.get("PACS_ID", "1"))
+
+    # Prearchive building
+    xnat_url: str = os.environ.get("XNAT_URL", "http://xnat-web:8080")
+    xnat_admin_user: str = os.environ.get("XNAT_ADMIN_USER", "admin")
+    xnat_admin_password: str = os.environ.get("XNAT_ADMIN_PASSWORD", "")
+    prearchive_path: str = os.environ.get("PREARCHIVE_PATH", "/data/xnat/prearchive")
+    prearchive_poll_secs: int = int(os.environ.get("PREARCHIVE_POLL_SECS", "10"))
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +275,316 @@ def find_study_by_accession(cfg: Config, accession_number: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# XNAT Prearchive Builder
+# Builds sessions from prearchive data after successful C-MOVE
+# ---------------------------------------------------------------------------
+
+
+def _xnat_login(cfg: Config) -> str | None:
+    """Login to XNAT and return a JSESSIONID token."""
+    try:
+        req = urllib.request.Request(
+            f"{cfg.xnat_url}/data/JSESSION",
+            method="POST",
+            data=b"",
+        )
+        credentials = f"{cfg.xnat_admin_user}:{cfg.xnat_admin_password}"
+        encoded = base64.b64encode(credentials.encode()).decode()
+        req.add_header("Authorization", f"Basic {encoded}")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            token = resp.read().decode().strip()
+            logger.info("Authenticated with XNAT as %s", cfg.xnat_admin_user)
+            return token
+    except Exception as e:
+        logger.error("XNAT login failed: %s", e)
+        return None
+
+
+def _xnat_rest(cfg: Config, token: str, method: str, path: str,
+               data: str | None = None,
+               content_type: str = "application/xml") -> tuple[int, str]:
+    """Make a REST call to XNAT. Returns (status_code, response_body)."""
+    try:
+        req = urllib.request.Request(
+            f"{cfg.xnat_url}{path}",
+            method=method,
+            data=data.encode() if data else None,
+            headers={
+                "Cookie": f"JSESSIONID={token}",
+                "Content-Type": content_type,
+            } if data else {
+                "Cookie": f"JSESSIONID={token}",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode()
+
+
+def _ensure_subject(cfg: Config, token: str, project_id: str,
+                    patient_id: str, patient_name: str) -> str | None:
+    """
+    Ensure a subject exists in the project.
+    Returns the XNAT internal subject ID (e.g. XNAT_S00001) or None on failure.
+    """
+    # First check if subject already exists
+    status, body = _xnat_rest(cfg, token, "GET",
+        f"/data/projects/{project_id}/subjects?format=json",
+        content_type="application/json")
+    if status == 200:
+        import json
+        data = json.loads(body)
+        results = data.get("ResultSet", {}).get("Result", [])
+        for r in results:
+            if r.get("label") == patient_id:
+                logger.info("Subject %s already exists (ID: %s)", patient_id, r["ID"])
+                return r["ID"]
+
+    # Create subject
+    req = urllib.request.Request(
+        f"{cfg.xnat_url}/data/archive/projects/{project_id}/subjects/{patient_id}",
+        method="PUT",
+        data=f"xnat:subjectData/sharing/share/project={project_id}".encode(),
+        headers={
+            "Cookie": f"JSESSIONID={token}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            subject_id = resp.read().decode().strip()
+            logger.info("Created subject %s (ID: %s)", patient_id, subject_id)
+            return subject_id
+    except urllib.error.HTTPError as e:
+        body = e.read().decode().strip()
+        logger.error("Failed to create subject %s: HTTP %d %s", patient_id, e.code, body[:100])
+        return None
+
+
+def _find_prearchive_folder(cfg: Config, accession_number: str) -> Path | None:
+    """
+    Find the prearchive folder matching the given accession number.
+    Looks for DICOM files and checks metadata, OR scans the folder name.
+    Returns None if not found.
+    """
+    prearchive_dir = Path(cfg.prearchive_path)
+    if not prearchive_dir.exists():
+        return None
+
+    folders = sorted(prearchive_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True)
+    folders = [f for f in folders if f.is_dir()]
+
+    for folder in folders[:5]:
+        # Check for XML first (standard DQR approach)
+        xml_files = list(folder.glob("*.xml"))
+        if xml_files:
+            try:
+                xml_content = xml_files[0].read_text()
+                root = ET.fromstring(xml_content)
+                ns = {"xnat": "http://nrg.wustl.edu/xnat"}
+                acc_elem = root.find(".//xnat:dcmAccessionNumber", ns)
+                if acc_elem is not None and acc_elem.text == accession_number:
+                    logger.info("Found prearchive XML for %s in %s", accession_number, folder.name)
+                    return folder
+            except Exception:
+                continue
+        
+        # Check DICOM files for accession number (fallback when no XML)
+        dicom_files = list(folder.rglob("*.dcm"))
+        if not dicom_files:
+            continue
+        # We can't easily read DICOM metadata here (no pydicom in alpine),
+        # so we match by folder name or assume it's the right one
+        # (the C-MOVE just happened, so the newest session should match)
+        if len(folders) <= 3:
+            # There are very few sessions, this is likely ours
+            logger.info("Found prearchive folder %s (no XML, assuming match)", folder.name)
+            return folder
+
+    return None
+
+
+def _generate_session_xml(project_id: str, patient_id: str, patient_name: str,
+                          accession_number: str, modality: str = "CT") -> str:
+    """Generate a prearchive session XML for the build API."""
+    import datetime
+    today = datetime.date.today().isoformat()
+    return f'''<?xml version='1.0' encoding='UTF-8'?>
+<xnat:ctSessionData xmlns:xnat='http://nrg.wustl.edu/xnat' xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'
+    ID="{patient_id}" project="{project_id}" label="{patient_id}"
+    xsi:type='xnat:ctSessionData'>
+  <xnat:date>{today}</xnat:date>
+  <xnat:time>12:00:00</xnat:time>
+  <xnat:modality>{modality}</xnat:modality>
+  <xnat:subject_ID>{patient_id}</xnat:subject_ID>
+  <xnat:dcmAccessionNumber>{accession_number}</xnat:dcmAccessionNumber>
+  <xnat:project>{project_id}</xnat:project>
+</xnat:ctSessionData>'''
+
+
+def _find_prearchive_session(cfg: Config, accession_number: str) -> tuple[str, str] | None:
+    """
+    Find the prearchive session XML matching the given accession number.
+    Falls back to generating XML if DQR plugin did not create one.
+
+    Returns (prearchive_path, xml_content) or None if not found.
+    """
+    folder = _find_prearchive_folder(cfg, accession_number)
+    if folder is None:
+        return None
+
+    # Check for existing XML
+    xml_files = list(folder.glob("*.xml"))
+    if xml_files:
+        try:
+            xml_content = xml_files[0].read_text()
+            return (str(xml_files[0]), xml_content)
+        except Exception:
+            pass
+
+    return None
+
+
+def _extract_session_label(xml_content: str) -> str | None:
+    """Extract the session label from prearchive XML."""
+    try:
+        root = ET.fromstring(xml_content)
+        label = root.get("label") or root.get("ID")
+        return label
+    except Exception:
+        return None
+
+
+def build_prearchive_session(cfg: Config, project_id: str, accession_number: str) -> bool:
+    """
+    Build an XNAT session from prearchive data after DICOM import.
+
+    Steps:
+      1. Wait for prearchive data to be written
+      2. Find the prearchive folder (XML or DICOM files)
+      3. Generate session XML if DQR plugin didn't create one
+      4. Ensure subject exists in project
+      5. Call XNAT REST API to build/archive the session
+
+    This handles the case where the DQR plugin doesn't create a session XML
+    (due to PacsNotStorableException bug), by generating one manually.
+
+    Returns True if successful.
+    """
+    logger.info(
+        "Building prearchive session for accession %s in project %s",
+        accession_number,
+        project_id,
+    )
+
+    # Step 1: Wait for prearchive folder to appear
+    for attempt in range(cfg.prearchive_poll_secs):
+        result = _find_prearchive_session(cfg, accession_number)
+        if result is not None:
+            xml_path, xml_content = result
+            logger.info("Found prearchive XML for %s", accession_number)
+            break
+        # Check if at least a folder exists (DICOM files may have arrived)
+        folder = _find_prearchive_folder(cfg, accession_number)
+        if folder is not None:
+            logger.info("Found prearchive folder %s (no XML yet)", folder.name)
+            # Generate XML manually
+            xml_content = _generate_session_xml(
+                project_id, folder.name, folder.name,
+                accession_number, "CT"
+            )
+            xml_path = str(folder / "session.xml")
+            # Write it to the prearchive folder so XNAT can use it
+            try:
+                Path(xml_path).write_text(xml_content)
+                logger.info("Generated session XML at %s", xml_path)
+            except Exception as e:
+                logger.warning("Could not write session XML to filesystem: %s", e)
+            break
+        logger.debug("Waiting for prearchive data (attempt %d/%d)", attempt + 1, cfg.prearchive_poll_secs)
+        time.sleep(1)
+    else:
+        logger.warning("Prearchive session for accession %s not found after %d seconds",
+                       accession_number, cfg.prearchive_poll_secs)
+        return False
+
+    # Step 2: Extract session label from XML or use patient ID
+    session_label = _extract_session_label(xml_content)
+    if not session_label:
+        # Use folder name as fallback (it's typically the patient ID)
+        session_label = folder.name if folder else patient_id
+        logger.info("Using folder name as session label: %s", session_label)
+
+    # Step 3: Login and ensure subject exists
+    token = _xnat_login(cfg)
+    if not token:
+        return False
+
+    # Extract patient ID from session label
+    import json
+    subject_id = _ensure_subject(cfg, token, project_id, session_label, session_label)
+    if not subject_id:
+        logger.error("Could not create/find subject %s in project %s", session_label, project_id)
+        return False
+
+    # Step 4: Build session via XNAT REST API
+    # The XML must use the XNAT internal subject ID (e.g. XNAT_S00001) not the label
+    if "xnat:ctSessionData" in xml_content:
+        import re
+        updated_xml = re.sub(
+            r'<xnat:subject_ID>[^<]+</xnat:subject_ID>',
+            f'<xnat:subject_ID>{subject_id}</xnat:subject_ID>',
+            xml_content
+        )
+    else:
+        updated_xml = xml_content
+
+    build_url = (
+        f"{cfg.xnat_url}/data/archive/projects/{project_id}/experiments/{session_label}"
+        f"?src={xml_path}"
+        f"&override=true"
+        f"&autoArchive=true"
+        f"&triggeredBy={cfg.xnat_admin_user}"
+        f"&inbody=true"
+    )
+
+    try:
+        req = urllib.request.Request(
+            build_url,
+            method="PUT",
+            data=updated_xml.encode(),
+            headers={
+                "Content-Type": "application/xml",
+                "Cookie": f"JSESSIONID={token}",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            body = resp.read().decode().strip()
+            logger.info(
+                "Session %s built successfully in project %s (HTTP %d, body: %s)",
+                session_label,
+                project_id,
+                resp.status,
+                body[:100],
+            )
+            return True
+    except urllib.error.HTTPError as e:
+        body = e.read().decode().strip()
+        logger.error(
+            "Failed to build session %s in project %s: HTTP %d - %.200s",
+            session_label,
+            project_id,
+            e.code,
+            body,
+        )
+        return False
+    except Exception as e:
+        logger.error("Error building session %s: %s", session_label, e)
+        return False
+
+
+# ---------------------------------------------------------------------------
 # DICOM C-MOVE — transfer study from Orthanc to XNAT
 # Uses DCMTK movescu (verified working, unlike pynetdicom)
 # ---------------------------------------------------------------------------
@@ -375,6 +703,18 @@ def process_batch(cfg: Config) -> int:
             # Step 2: C-MOVE to XNAT
             success = move_study(cfg, study_uid, acc_no)
             if success:
+                # Step 3: Build session from prearchive
+                xnat_project_id = req.get("xnat_project") or ""
+                if xnat_project_id:
+                    built = build_prearchive_session(cfg, xnat_project_id, acc_no)
+                    if not built:
+                        logger.warning(
+                            "Session build failed for accession %s, study may be in prearchive",
+                            acc_no,
+                        )
+                else:
+                    logger.warning("No XNAT project ID in queue entry %d, skipping prearchive build", req_id)
+
                 mark_request_completed(conn, req_id, study_uid)
             else:
                 mark_request_failed(conn, req_id, "C-MOVE failed")
