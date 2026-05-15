@@ -47,6 +47,6 @@ scheduler.add_job(
 )
 
 
-def start_scheduler():
+def start_scheduler() -> None:
     """Start the background scheduler to run periodic tasks."""
     scheduler.start()

@@ -56,10 +56,10 @@ ORTHANC_CMD=make -C ./orthanc
 DOCKER_COMPOSE_CMD=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f compose_trust.debug.override.yml
 
-# NOTE DOCKER_REGISTRY is set to empty when we use local FL images during development (e.g. flare-fl-server:dev). 
+# NOTE DOCKER_FL_REGISTRY is set to empty when we use local FL images during development (e.g. flare-fl-client:dev).
 # In that case, '--pull always' will error because docker won't be able to find the manifest for the dev image online,
-# so we need to remove the --pull always flag.
-ifneq ($(strip $(DOCKER_REGISTRY)),)
+# so we need to remove the --pull always flag. Non-FL images keep DOCKER_REGISTRY (always GHCR).
+ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
 PULL_ALWAYS_FLAG=--pull always
 else
 PULL_ALWAYS_FLAG=

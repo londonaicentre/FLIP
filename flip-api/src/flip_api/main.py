@@ -253,7 +253,7 @@ include_api_routers(app)
 
 # Root endpoint
 @app.get(API_PREFIX, response_model=dict[str, str])
-def root():
+def root() -> dict[str, str]:
     """Root endpoint to verify the API is running.
 
     Returns:
@@ -263,7 +263,7 @@ def root():
 
 
 @app.get(f"{API_PREFIX}/health", response_model=dict[str, str])
-def health_check():
+def health_check() -> dict[str, str]:
     """Health check endpoint to verify the API is running.
 
     Returns:
@@ -272,7 +272,7 @@ def health_check():
     return {"status": "ok", "message": "flip is running"}
 
 
-def main():
+def main() -> None:
     """Entry point for the application script"""
     uvicorn.run("flip_api.main:app", host="0.0.0.0", port=81, reload=True)
 

@@ -1,4 +1,15 @@
 #!/bin/bash
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
 # Import persistent AWS resources to Terraform state
 # Prevents replacement of pre-existing resources on subsequent applies
 
@@ -11,24 +22,91 @@ check_aws_profile
 
 log_info "Importing persistent resources..."
 
-# 1. FLIP S3 Bucket
+# 1. FLIP application S3 buckets
+#
+# The single legacy `flip_bucket` has been split into three purpose-built
+# buckets (model file uploads / FL results / app bundles). Imports below match the
+# `module.flip_*_bucket.aws_s3_bucket.this` addresses emitted by
+# modules/flip_s3_bucket. Each block is independent so a stack that already
+# created two of the three (e.g. mid-rollout) still picks up the missing one.
+#
+# `aws_s3_bucket_cors_configuration` and friends use `<bucket-name>` as their
+# import ID — same as the bare bucket — because every sub-resource is
+# bucket-keyed in S3.
 echo ""
-log_info "1️⃣  FLIP S3 Bucket..."
-BUCKET_NAME="${FLIP_BUCKET_NAME}"
-if [ -n "$BUCKET_NAME" ]; then
-    if aws_cmd s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
-        log_success "Found bucket: $BUCKET_NAME"
-        terraform import aws_s3_bucket.flip_bucket "$BUCKET_NAME" 2>/dev/null || log_success "FLIP S3 bucket (already in state)"
-        terraform import aws_s3_bucket_cors_configuration.flip_bucket_cors "$BUCKET_NAME" 2>/dev/null || log_success "FLIP S3 CORS"
-        terraform import aws_s3_object.app_destination_bucket "$BUCKET_NAME/app_destination_bucket/" 2>/dev/null || log_success "app_destination_bucket folder"
-        terraform import aws_s3_object.model_files "$BUCKET_NAME/model_files/" 2>/dev/null || log_success "model_files folder"
-        terraform import aws_s3_object.uploaded_federated_data "$BUCKET_NAME/uploaded_federated_data/" 2>/dev/null || log_success "uploaded_federated_data folder"
-    else
-        log_warn "Bucket $BUCKET_NAME does not exist in AWS"
+log_info "1️⃣  FLIP application S3 buckets..."
+# Snapshot of terraform state addresses, refreshed lazily inside the helper.
+# `terraform state list` is moderately expensive; we capture it once per
+# `import_flip_bucket` call so multiple sub-resource probes share the read.
+_tf_state_list=""
+
+_refresh_tf_state_list() {
+    _tf_state_list="$(terraform state list 2>/dev/null || true)"
+}
+
+# Probe state first, then import only on miss. Real `terraform import` errors
+# (wrong address, AWS permission denied, expired credentials, state-lock
+# contention) propagate via `set -e` — the previous `2>/dev/null || log_success`
+# pattern silently swallowed all of those and made the script's idempotent-import
+# contract a lie.
+_import_if_missing() {
+    local addr="$1"
+    local import_id="$2"
+    local description="$3"
+
+    if printf '%s\n' "$_tf_state_list" | grep -qxF "$addr"; then
+        log_success "$description already in state"
+        return
     fi
-else
-    log_warn "FLIP_BUCKET_NAME not set in environment"
-fi
+    log_info "Importing $description ..."
+    terraform import "$addr" "$import_id"
+    log_success "$description imported"
+}
+
+import_flip_bucket() {
+    # $1 = module label (e.g. flip_model_files_uploads_bucket)
+    # $2 = bucket name (from env)
+    # $3 = friendly description for logs
+    # $4 = "yes" if the module renders a CORS configuration (uploads + fl-results), else "no"
+    local module_label="$1"
+    local bucket_name="$2"
+    local description="$3"
+    local has_cors="$4"
+
+    if [ -z "$bucket_name" ]; then
+        log_warn "$description: environment variable not set, skipping import"
+        return
+    fi
+
+    # Distinguish "bucket does not exist" (404) from "I can't see it" (403).
+    # Without this, a permissions gap looks identical to a never-created bucket
+    # and the script would skip the import, after which `terraform apply` would
+    # try to create the existing bucket and fail on BucketAlreadyOwnedByYou.
+    local head_stderr
+    head_stderr="$(aws_cmd s3api head-bucket --bucket "$bucket_name" 2>&1 >/dev/null)" || {
+        if printf '%s' "$head_stderr" | grep -qE "Not Found|404"; then
+            log_warn "$description ($bucket_name): does not exist in AWS yet — Terraform will create it"
+            return
+        fi
+        log_error "$description ($bucket_name): head-bucket failed — fix this before re-running:"
+        printf '%s\n' "$head_stderr" >&2
+        return 1
+    }
+
+    log_success "$description: found $bucket_name"
+    _refresh_tf_state_list
+    _import_if_missing "module.${module_label}.aws_s3_bucket.this" "$bucket_name" "$description bucket"
+    _import_if_missing "module.${module_label}.aws_s3_bucket_public_access_block.this" "$bucket_name" "$description public access block"
+    _import_if_missing "module.${module_label}.aws_s3_bucket_server_side_encryption_configuration.this" "$bucket_name" "$description SSE config"
+    _import_if_missing "module.${module_label}.aws_s3_bucket_versioning.this" "$bucket_name" "$description versioning"
+    if [ "$has_cors" = "yes" ]; then
+        _import_if_missing "module.${module_label}.aws_s3_bucket_cors_configuration.this[0]" "$bucket_name" "$description CORS"
+    fi
+}
+
+import_flip_bucket flip_model_files_uploads_bucket "${FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME}" "Model file uploads" yes
+import_flip_bucket flip_fl_results_bucket "${FLIP_FL_RESULTS_BUCKET_NAME}" "FL results" yes
+import_flip_bucket flip_app_bundles_bucket "${FLIP_APP_BUNDLES_BUCKET_NAME}" "App bundles" no
 
 # 2. AI Centre S3 Bucket
 echo ""

@@ -167,10 +167,12 @@ body, .wy-body-for-nav,
     margin-bottom: 6px;
 }
 /* Default any interactive element in the search area to readable purple
-   so future additions (e.g. a language picker) don't fail contrast. */
+   so future additions (e.g. a language picker) don't fail contrast. The
+   !important is required to win against RTD's built-in white-text rule for
+   the version selector when it renders the <select> outside div.version. */
 .wy-side-nav-search select,
 .wy-side-nav-search button {
-    color: var(--flip-primary-400);
+    color: var(--flip-primary-400) !important;
 }
 .wy-side-nav-search > div.version,
 .wy-side-nav-search .wy-dropdown > a,
