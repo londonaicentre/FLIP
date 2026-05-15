@@ -87,14 +87,32 @@
                                 active ? 'bg-gray-100 dark:bg-gray-800' : 'text-gray-600 dark:text-gray-400',
                                 'group flex rounded-md items-center w-full px-3 py-2 text-sm transition font-semibold',
                             ]"
-                            data-test="change-password-btn"
-                            @click="changePassword"
+                            data-test="update-password-btn"
+                            @click="updatePassword"
                         >
                             <icon-ph-lock-duotone
                                 class="w-5 h-5 mr-3 text-gray-500 transition group-hover:text-gray-600 dark:group-hover:text-gray-400"
                                 aria-hidden="true"
                             />
-                            Change Password
+                            Update Password
+                        </button>
+                    </MenuItem>
+                </div>
+                <div class="px-1 py-1">
+                    <MenuItem v-slot="{ active }">
+                        <button
+                            :class="[
+                                active ? 'bg-gray-100 dark:bg-gray-800' : 'text-gray-600 dark:text-gray-400',
+                                'group flex rounded-md items-center w-full px-3 py-2 text-sm transition font-semibold',
+                            ]"
+                            data-test="change-password-btn"
+                            @click="changePassword"
+                        >
+                            <icon-ph-lock-key-open-duotone
+                                class="w-5 h-5 mr-3 text-gray-500 transition group-hover:text-gray-600 dark:group-hover:text-gray-400"
+                                aria-hidden="true"
+                            />
+                            Forgot Password?
                         </button>
                     </MenuItem>
                 </div>
@@ -147,6 +165,10 @@ const signOut = () => {
 
 const changePassword = () => {
     routeChange.changePassword(props.emailAddress);
+};
+
+const updatePassword = () => {
+    routeChange.updatePassword();
 };
 
 const appVersion = window.RELEASE_VERSION;

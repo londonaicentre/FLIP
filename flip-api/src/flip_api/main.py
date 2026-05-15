@@ -88,6 +88,7 @@ from flip_api.trusts_services import (
 )
 from flip_api.user_services import (
     access_request,
+    change_password,
     delete_user,
     get_user,
     get_users,
@@ -226,6 +227,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     update_trust_status.router,
     # User services
     access_request.router,
+    change_password.router,
     delete_user.router,
     get_user.router,
     get_users.router,

@@ -21,12 +21,13 @@ import { confirmResetPassword,
     signIn,
     signOut,
     updateMFAPreference,
+    updatePassword,
     verifyTOTPSetup } from "aws-amplify/auth";
 import { defineStore } from "pinia";
 
 import { IChangePassword } from "@/interfaces/auth/interfaces";
 import { routeChange } from "@/router";
-import { getMfaStatus, getUserPermissions } from "@/services/user-service";
+import { getMfaStatus, getUserPermissions, revokeToken } from "@/services/user-service";
 import { Snackbar } from "@/utils/snackbar";
 
 /**
@@ -565,6 +566,23 @@ export const useAuthStore = defineStore("auth", {
             });
 
             return response;
+        },
+
+                async updatePassword(details: { currentPassword: string; newPassword: string }) {
+            await updatePassword({
+                oldPassword: details.currentPassword,
+                newPassword: details.newPassword
+            });
+            try {
+                const session = await fetchAuthSession();
+                const refreshToken = session.tokens?.refreshToken?.toString();
+                if (refreshToken) {
+                    await revokeToken(refreshToken);
+                }
+            } catch (e) {
+                console.warn("Refresh token revocation after password change failed:", e);
+            }
+            await signOut({ global: true });
         },
 
         hasPermissions(permissions: UserPermissions[]) {

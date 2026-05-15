@@ -93,6 +93,9 @@ export const routeChange = {
     notAllowed: (): void => {
         router.push({ path: "/403" });
     },
+    updatePassword: (): void => {
+        router.push({ path: "/auth/update-password" });
+    },
     changePassword: (email: string): void => {
         router.push({
             name: "ChangePassword",
