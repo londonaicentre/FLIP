@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 from flip_api.config import get_settings
 from flip_api.db.database import engine
 from flip_api.db.models.main_models import FLNets
-from flip_api.utils.logger import logger
+from flip_api.db.seed.seed_logger import logger
 
 
 def seed_fl_nets(session: Session) -> list[FLNets]:
