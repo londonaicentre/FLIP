@@ -27,8 +27,9 @@ variable "description" {
 variable "ingress_rules" {
   # Exactly one source selector per rule: `cidr_blocks` OR
   # `source_security_group_id` OR `prefix_list_ids` OR neither (falls back to
-  # 0.0.0.0/0). Setting multiple is invalid AWS config — AWS rejects it, but
-  # this module does not validate it.
+  # 0.0.0.0/0). Setting multiple is rejected at plan time by the validation
+  # block below — AWS also rejects multi-source rules at apply, but failing
+  # at plan gives a focused error rather than an opaque AWS API failure.
   type = list(object({
     port                     = number
     description              = string
@@ -36,6 +37,17 @@ variable "ingress_rules" {
     source_security_group_id = optional(string)
     prefix_list_ids          = optional(list(string))
   }))
+
+  validation {
+    condition = alltrue([
+      for r in var.ingress_rules :
+      length([
+        for s in [r.cidr_blocks, r.source_security_group_id, r.prefix_list_ids] : s
+        if s != null
+      ]) <= 1
+    ])
+    error_message = "Each ingress rule must set at most one of cidr_blocks, source_security_group_id, prefix_list_ids (multi-source rules are invalid AWS config)."
+  }
 }
 
 variable "block_all_outbound" {
