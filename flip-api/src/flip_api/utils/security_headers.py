@@ -52,6 +52,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         """Apply security headers to every response.
 
+        Wraps ``call_next`` in try/except so that security headers are
+        injected even when the downstream handler raises an unhandled
+        exception.  On the exception path a minimal 500 fallback response
+        is returned with the same security headers — this is more secure
+        than re-raising and letting the framework's outermost error
+        middleware produce a bare response with no headers.
+
         Args:
             request: The incoming HTTP request.
             call_next: The next middleware or route handler in the chain.
@@ -59,7 +66,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         Returns:
             Response with security headers injected.
         """
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception:
+            response = Response(status_code=500)
         for header, value in self.SECURITY_HEADERS.items():
             response.headers[header] = value
         # CSP only applies to HTML responses — no-op for API JSON.

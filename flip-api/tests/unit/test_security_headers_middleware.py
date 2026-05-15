@@ -39,6 +39,31 @@ def test_security_headers_middleware_adds_all_headers():
     assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
 
 
+def test_security_headers_on_unhandled_exception():
+    """Verify security headers are present even on unhandled exceptions.
+
+    The middleware catches exceptions from ``call_next`` and returns a
+    500 fallback response with the same security headers attached.
+    """
+    app = FastAPI()
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    @app.get("/error")
+    async def error_route():
+        raise ValueError("simulated unhandled error")
+
+    client = TestClient(app)
+    response = client.get("/error")
+
+    assert response.status_code == 500
+    assert response.headers["strict-transport-security"] == \
+        "max-age=31536000; includeSubDomains"
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["referrer-policy"] == \
+        "strict-origin-when-cross-origin"
+
+
 def test_security_headers_no_csp_on_json_response():
     """Verify CSP is NOT added for JSON responses (the norm for APIs)."""
     app = FastAPI()
