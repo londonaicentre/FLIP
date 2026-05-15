@@ -1,0 +1,9 @@
+trustApi:
+  env:
+    CENTRAL_HUB_API_URL: "https://stag.flip.aicentre.co.uk/api"
+awsRegion: eu-west-2
+flBackend: nvflare
+uploadedFederatedDataBucket: "s3://${FLIP_BUCKET_NAME}/uploaded_federated_data"
+omopDb:
+  initJob:
+    s3Bucket: flipstag-aicentre
