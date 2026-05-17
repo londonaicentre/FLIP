@@ -10,10 +10,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Convert each Cypress-recorded mp4 under test/cypress/videos/docs/<bucket>/
-# into a GIF under docs/source/assets/<bucket>/. The mp4's parent-dir name
-# (admin, flip, …) maps to the destination subfolder. Spec filenames map 1:1
-# to GIF basenames (reset-mfa.spec.ts.mp4 → reset-mfa.gif).
+# Convert each Cypress-recorded mp4 under test/cypress/videos/ into a GIF under
+# docs/source/assets/<bucket>/, where <bucket> is the source spec's parent
+# directory name under test/cypress/docs/ (admin, flip, …). The mp4's location
+# isn't reliable for this — Cypress collapses common roots, so running only
+# flip/ specs produces flat `videos/<spec>.mp4` paths. Resolving the bucket by
+# looking the spec back up under test/cypress/docs/ keeps single-bucket runs
+# routing correctly. Spec filenames map 1:1 to GIF basenames
+# (reset-mfa.spec.ts.mp4 → reset-mfa.gif).
 
 set -euo pipefail
 
@@ -22,6 +26,7 @@ ui_dir="$(cd "${script_dir}/.." && pwd)"
 repo_root="$(cd "${ui_dir}/.." && pwd)"
 
 videos_root="${ui_dir}/test/cypress/videos"
+specs_root="${ui_dir}/test/cypress/docs"
 assets_root="${repo_root}/docs/source/assets"
 
 if [[ ! -d "${videos_root}" ]]; then
@@ -29,11 +34,6 @@ if [[ ! -d "${videos_root}" ]]; then
     exit 0
 fi
 
-# Cypress writes each video to {videosFolder}/{specRelativePath}.mp4, but the
-# exact prefix varies by version and common-root inference — find any mp4 under
-# the videos root and key off the filename. Demo specs are named to match the
-# target GIF (reset-mfa.spec.ts → reset-mfa.gif), so the basename carries
-# everything we need.
 mapfile -t videos < <(find "${videos_root}" -type f -name "*.mp4" | sort)
 if (( ${#videos[@]} == 0 )); then
     echo "No mp4 files under ${videos_root}; nothing to convert." >&2
@@ -42,15 +42,19 @@ fi
 
 for mp4 in "${videos[@]}"; do
     base="$(basename "${mp4}")"
-    bucket="$(basename "$(dirname "${mp4}")")"
+    # reset-mfa.spec.ts.mp4 → reset-mfa.spec.ts
+    spec_file="${base%.mp4}"
+    # reset-mfa.spec.ts → reset-mfa
+    name="${spec_file%.spec.ts}"
+    # Find the spec on disk under docs/<bucket>/, pick the bucket from its path.
+    spec_path="$(find "${specs_root}" -type f -name "${spec_file}" -print -quit)"
+    if [[ -z "${spec_path}" ]]; then
+        echo "  skipping ${base}: no matching spec under ${specs_root}/" >&2
+        continue
+    fi
+    bucket="$(basename "$(dirname "${spec_path}")")"
     out_dir="${assets_root}/${bucket}"
     mkdir -p "${out_dir}"
-    # reset-mfa.spec.ts.mp4 → reset-mfa
-    name="${base%.spec.ts.mp4}"
-    if [[ "${name}" == "${base}" ]]; then
-        # Fallback for unexpected naming — strip a single trailing extension.
-        name="${base%.mp4}"
-    fi
     out="${out_dir}/${name}.gif"
     echo "→ ${out}"
     # cypress.docs.config.ts forces Chrome to --window-size=1920,1200 so the
