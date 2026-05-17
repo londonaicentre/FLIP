@@ -111,6 +111,12 @@ def test_receive_cohort_query_statistics_error(
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.validate_query")
 def test_receive_cohort_query_too_few_records(mock_validate_query, mock_get_settings, mock_get_records):
+    """Below-threshold count is a privacy-suppressed normal response, not an error.
+
+    Returning 200 with an empty ``data`` list lets trust-api forward a 0-count
+    result back to the hub so the per-trust UI status leaves "running" and shows
+    0 instead of getting stuck.
+    """
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
 
     # Mock DataFrame with fewer records than threshold
@@ -119,8 +125,30 @@ def test_receive_cohort_query_too_few_records(mock_validate_query, mock_get_sett
 
     response = client.post("/cohort", json=sample_query_input, headers=AUTH_HEADERS)
 
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Query returned too few records: 3 (minimum required: 5)"
+    assert response.status_code == 200
+    body = response.json()
+    assert body["record_count"] == 0
+    assert body["data"] == []
+    assert body["query_id"] == sample_query_input["query_id"]
+    assert body["trust_id"] == sample_query_input["trust_id"]
+
+
+@patch("data_access_api.routers.cohort.get_records")
+@patch("data_access_api.routers.cohort.get_settings")
+@patch("data_access_api.routers.cohort.validate_query")
+def test_receive_cohort_query_zero_records(mock_validate_query, mock_get_settings, mock_get_records):
+    """A query that returns 0 rows is also a valid, privacy-suppressed response."""
+    mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
+
+    mock_df = pd.DataFrame({"col1": []})
+    mock_get_records.return_value = mock_df
+
+    response = client.post("/cohort", json=sample_query_input, headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["record_count"] == 0
+    assert body["data"] == []
 
 
 @patch("data_access_api.routers.cohort.get_records")

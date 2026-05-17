@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import json
 import uuid
 from unittest.mock import MagicMock
 from uuid import UUID
@@ -105,8 +106,42 @@ class TestPydanticModels:
         assert agg_res.name == "age_group"
 
     def test_aggregated_cohort_stats_creation(self):
-        stats = AggregatedCohortStats(record_count=100, trusts_results=[])
+        stats = AggregatedCohortStats(record_count=100, trusts_results=[], trust_record_counts={})
         assert stats.record_count == 100
+        assert stats.trust_record_counts == {}
+
+    def test_aggregated_cohort_stats_carries_per_trust_counts(self):
+        """trust_record_counts lets the UI distinguish "responded with 0"
+        from "never responded" — without it a privacy-suppressed 0-record
+        trust appears identical to a still-running one."""
+        stats = AggregatedCohortStats(
+            record_count=5,
+            trusts_results=[],
+            trust_record_counts={"trustA": 5, "trustB": 0},
+        )
+        assert stats.trust_record_counts == {"trustA": 5, "trustB": 0}
+
+    def test_aggregated_cohort_stats_carries_trust_errors(self):
+        stats = AggregatedCohortStats(
+            record_count=5,
+            trusts_results=[],
+            trust_record_counts={"trustA": 5},
+            trust_errors={"trustB": "Invalid SQL"},
+        )
+        assert stats.trust_errors == {"trustB": "Invalid SQL"}
+
+    def test_omop_cohort_results_accepts_error_field(self, sample_cohort_dict):
+        """Trusts must be able to report a failed cohort query so the hub can
+        track per-trust error state and the UI can show a red chip."""
+        sample_cohort_dict["record_count"] = 0
+        sample_cohort_dict["data"] = []
+        sample_cohort_dict["error"] = "Database connection failed"
+        payload = OmopCohortResults(**sample_cohort_dict)
+        assert payload.error == "Database connection failed"
+
+    def test_omop_cohort_results_error_defaults_to_none(self, sample_cohort_dict):
+        payload = OmopCohortResults(**sample_cohort_dict)
+        assert payload.error is None
 
     def test_fetched_aggregation_data_creation(self):
         fetched = FetchedAggregationData(trust_name=["Trust X"], trust_id=["idX"], data=['{"key": "value"}'])
@@ -198,6 +233,78 @@ class TestAggregateAndSaveResults:
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert "DB error on SELECT" in exc_info.value.detail
         mock_db_session.rollback.assert_called_once()
+
+    def test_aggregate_includes_per_trust_record_counts(
+        self, mock_db_session: MagicMock, query_id_for_agg: UUID
+    ):
+        """The saved QueryStats JSON must include ``trust_record_counts`` so the
+        UI can show "0" for trusts whose count was privacy-suppressed instead of
+        leaving them stuck on "running"."""
+        trust_a_id = uuid.uuid4()
+        trust_b_id = uuid.uuid4()
+        trust_c_id = uuid.uuid4()
+
+        trust_a_data = TrustSpecificData(
+            record_count=7, data=[OmopData(name="age", results=[Results(value="<50", count=7)])]
+        ).model_dump_json()
+        trust_b_data = TrustSpecificData(
+            record_count=4, data=[OmopData(name="age", results=[Results(value="<50", count=4)])]
+        ).model_dump_json()
+        trust_c_data = TrustSpecificData(record_count=0, data=[]).model_dump_json()
+
+        rows = [
+            ("Trust A", trust_a_id, trust_a_data),
+            ("Trust B", trust_b_id, trust_b_data),
+            ("Trust C", trust_c_id, trust_c_data),
+        ]
+
+        existing_stats_mock = MagicMock()
+        mock_db_session.exec.return_value.all.return_value = rows
+        mock_db_session.exec.return_value.first.return_value = existing_stats_mock
+
+        _aggregate_and_save_results(mock_db_session, query_id_for_agg)
+
+        saved = json.loads(existing_stats_mock.stats)
+        assert saved["record_count"] == 11
+        assert saved["trust_record_counts"] == {
+            str(trust_a_id): 7,
+            str(trust_b_id): 4,
+            str(trust_c_id): 0,
+        }
+
+    def test_aggregate_surfaces_trust_errors(
+        self, mock_db_session: MagicMock, query_id_for_agg: UUID
+    ):
+        """Errored trusts go into ``trust_errors`` (not ``trust_record_counts``)
+        so the UI can show a red "error" chip instead of "running"."""
+        trust_a_id = uuid.uuid4()
+        trust_b_id = uuid.uuid4()
+
+        trust_a_data = TrustSpecificData(
+            record_count=5,
+            data=[OmopData(name="age", results=[Results(value="<50", count=5)])],
+        ).model_dump_json()
+        trust_b_data = TrustSpecificData(
+            record_count=0, data=[], error="Database connection failed"
+        ).model_dump_json()
+
+        rows = [
+            ("Trust A", trust_a_id, trust_a_data),
+            ("Trust B", trust_b_id, trust_b_data),
+        ]
+
+        existing_stats_mock = MagicMock()
+        mock_db_session.exec.return_value.all.return_value = rows
+        mock_db_session.exec.return_value.first.return_value = existing_stats_mock
+
+        _aggregate_and_save_results(mock_db_session, query_id_for_agg)
+
+        saved = json.loads(existing_stats_mock.stats)
+        # Errored trust must not contribute to the aggregate record count and
+        # must not appear in trust_record_counts (otherwise UI would render "0").
+        assert saved["record_count"] == 5
+        assert saved["trust_record_counts"] == {str(trust_a_id): 5}
+        assert saved["trust_errors"] == {str(trust_b_id): "Database connection failed"}
 
 
 class TestReceiveCohortResultsEndpointAuth:

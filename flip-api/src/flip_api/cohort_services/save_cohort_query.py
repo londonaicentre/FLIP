@@ -73,7 +73,12 @@ def save_cohort_query(
             )
 
         # Create new query
-        new_query = Queries(name=cohort_query.name, query=cohort_query.query, project_id=cohort_query.project_id)
+        new_query = Queries(
+            name=cohort_query.name,
+            query=cohort_query.query,
+            project_id=cohort_query.project_id,
+            created_by=user_id,
+        )
 
         # Add and commit to get the ID
         db.add(new_query)

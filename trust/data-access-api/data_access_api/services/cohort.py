@@ -369,13 +369,16 @@ def make_other_category(results: list[dict], min_count: int = COHORT_QUERY_THRES
 
 
 def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: int) -> StatisticsResponse:
-    """
-    Returns aggregated statistics from the query results.
+    """Returns aggregated statistics from the query results.
 
     - Counts the number of records.
     - Aggregates the number of occurrences of each unique value per column.
 
-    If the number of records is less than the threshold, an empty response is returned.
+    Below-threshold counts are privacy-suppressed by returning a ``StatisticsResponse``
+    with ``record_count=0`` and empty ``data`` — the count itself is suppressed, not
+    just the per-field breakdown. This is intentional so the trust still has a normal
+    response to forward to the hub; raising HTTPException here previously caused
+    trust-api to skip the hub callback and leave the per-trust UI status stuck.
 
     Args:
         df (pd.DataFrame): Query results dataframe.
@@ -383,32 +386,31 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
         threshold (int): Minimum number of records required to return results.
 
     Returns:
-        StatisticsResponse: Contains the aggregated statistics.
-
-    Raises:
-        HTTPException: If the request cannot be processed.
+        StatisticsResponse: Contains the aggregated statistics, or a 0-count empty response
+        when below ``COHORT_QUERY_THRESHOLD``.
     """
     record_count = len(df)
 
-    # Create StatisticsResponse
+    if record_count < COHORT_QUERY_THRESHOLD:
+        logger.info(
+            f"Query returned insufficient results ({record_count} < {COHORT_QUERY_THRESHOLD});"
+            " returning privacy-suppressed 0-count response"
+        )
+        return StatisticsResponse(
+            query_id=query_input.query_id,
+            trust_id=query_input.trust_id,
+            record_count=0,
+            created=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
+            data=[],
+        )
+
     stats = StatisticsResponse(
         query_id=query_input.query_id,
         trust_id=query_input.trust_id,
         record_count=record_count,
         created=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
-        data=[],
+        data=[get_counts(df), get_null_counts(df)],
     )
-
-    if record_count < COHORT_QUERY_THRESHOLD:
-        logger.info(
-            f"Query returned insufficient results ({COHORT_QUERY_THRESHOLD}, {record_count})"
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=f"Query returned insufficient results ({COHORT_QUERY_THRESHOLD}, {record_count})",
-        )
-    stats.data = []
-    stats.data += [get_counts(df), get_null_counts(df)]
 
     if "person_id" in df.columns:
         logger.info("person_id column found in the query results; including age and sex distribution calculations.")

@@ -55,6 +55,7 @@ def _save_individual_result(db: Session, cohort_results: OmopCohortResults) -> N
     data_to_store = json.dumps({
         "record_count": cohort_results.record_count,
         "data": [d.model_dump() for d in cohort_results.data],
+        "error": cohort_results.error,
     })
 
     # Try to retrieve existing result
@@ -154,10 +155,23 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
             parsed_trust_data_list.append(TrustSpecificData(**json.loads(json_str_data)))
 
         # 3. Aggregate
-        total_record_count = sum(ptd.record_count for ptd in parsed_trust_data_list)
+        # Errored trusts don't contribute to record_count or field aggregates —
+        # they only populate trust_errors so the UI can show a red chip.
+        total_record_count = sum(ptd.record_count for ptd in parsed_trust_data_list if not ptd.error)
+
+        trust_record_counts: dict[str, int] = {}
+        trust_errors: dict[str, str] = {}
+        for i, ptd in enumerate(parsed_trust_data_list):
+            trust_id_str = fetched_data.trust_id[i]
+            if ptd.error:
+                trust_errors[trust_id_str] = ptd.error
+            else:
+                trust_record_counts[trust_id_str] = ptd.record_count
 
         all_field_names: set[str] = set()
         for trust_data_item in parsed_trust_data_list:
+            if trust_data_item.error:
+                continue
             if trust_data_item.data:
                 for datum in trust_data_item.data:
                     all_field_names.add(datum.name)
@@ -170,6 +184,8 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
             for field_name in sorted(list(all_field_names)):  # Sort for consistent output
                 current_field_trust_results: list[AggregatedTrustFieldResult] = []
                 for i, trust_specific_data_item in enumerate(parsed_trust_data_list):
+                    if trust_specific_data_item.error:
+                        continue
                     # Only include trusts that contributed to the record count for this field
                     if trust_specific_data_item.record_count > 0 and trust_specific_data_item.data:
                         matching_omop_datum = None
@@ -200,6 +216,8 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
         final_aggregated_stats = AggregatedCohortStats(
             record_count=total_record_count,
             trusts_results=aggregated_field_results,
+            trust_record_counts=trust_record_counts,
+            trust_errors=trust_errors,
         )
 
         # 4. Save aggregated stats
