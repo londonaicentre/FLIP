@@ -11,8 +11,9 @@
         "dev": "vite --host 0.0.0.0 --port 443 --mode development",
         "prebuild": "npm run check-build-flags && npm run generate-window-js",
         "build": "vue-tsc --noEmit && vite build",
-        "prebuild:deploy": "npm run check-build-flags && npm run generate-window-js",
+        "prebuild:deploy": "npm run check-build-flags",
         "build:deploy": "vite build",
+        "postbuild:deploy": "sh scripts/generate-window-js.sh > dist/js/window.js",
         "serve": "vite preview",
         "test:unit": "vitest run --silent --coverage",
         "lint": "npx eslint ./src/**/*.vue ./src/**/*.ts",
@@ -29,6 +30,7 @@
     "dependencies": {
         "echarts": "^5.2.2",
         "husky": "^9.1.7",
+        "jszip": "^3.10.1",
         "qrcode": "^1.5.4",
         "vue": "^3.2.16",
         "vue-router": "^4.0.11"
