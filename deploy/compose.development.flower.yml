@@ -21,12 +21,14 @@ services:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
+      - ${MODEL_CHECKPOINTS_DIR}/net-1:/app/model_checkpoints
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app
+      - MODEL_CHECKPOINTS_DIR=/app/model_checkpoints
     ports:
       - "${FL_API_PORT}:8000"
       - "5679:5679"
@@ -48,12 +50,14 @@ services:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
+      - ${MODEL_CHECKPOINTS_DIR}/net-2:/app/model_checkpoints
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-2:9093
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-2:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
       - FLOWER_SRC_ROOT=/app
+      - MODEL_CHECKPOINTS_DIR=/app/model_checkpoints
     depends_on:
       - fl-server-net-2
     networks:
@@ -78,6 +82,8 @@ services:
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
+      # Shared model checkpoints directory (evaluation apps load checkpoints from here)
+      - ${MODEL_CHECKPOINTS_DIR}/net-1:/app/model_checkpoints
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false
@@ -88,6 +94,7 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
+      - MODEL_CHECKPOINTS_DIR=/app/model_checkpoints
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -140,6 +147,8 @@ services:
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
+      # Shared model checkpoints directory (evaluation apps load checkpoints from here)
+      - ${MODEL_CHECKPOINTS_DIR}/net-2:/app/model_checkpoints
     environment:
       - NET_ID=net-2
       - LOCAL_DEV=false
@@ -148,6 +157,7 @@ services:
       - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
+      - MODEL_CHECKPOINTS_DIR=/app/model_checkpoints
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
     command:
