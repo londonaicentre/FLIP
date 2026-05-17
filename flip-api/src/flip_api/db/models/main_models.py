@@ -14,7 +14,6 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Column
 from sqlmodel import Field, Relationship, SQLModel
 
 from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction
@@ -52,6 +51,14 @@ class FLScheduler(SQLModel, table=True):
     net: Optional["FLNets"] = Relationship(back_populates="schedulers")
 
 
+class FLJobTrust(SQLModel, table=True):
+    """Many-to-many link between FLJob and Trust: the trusts selected for a training run."""
+
+    __tablename__ = "fl_job_trust"  # type: ignore
+    fl_job_id: UUID = Field(foreign_key="fl_job.id", primary_key=True)
+    trust_id: UUID = Field(foreign_key="trust.id", primary_key=True)
+
+
 class FLJob(SQLModel, table=True):
     __tablename__ = "fl_job"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
@@ -60,10 +67,10 @@ class FLJob(SQLModel, table=True):
     created: Annotated[datetime, Field(default_factory=datetime.utcnow)]
     started: datetime | None = Field(default=None)
     completed: datetime | None = Field(default=None)
-    clients: list[str] = Field(sa_column=Column(JSON), default=[])
     fl_backend_job_id: str | None = None
 
     scheduler: Optional["FLScheduler"] = Relationship(back_populates="job")
+    trusts: list["Trust"] = Relationship(link_model=FLJobTrust)
 
 
 class FLMetrics(SQLModel, table=True):
@@ -108,21 +115,25 @@ class ModelTrustIntersect(SQLModel, table=True):
     fl_client_endpoint: str | None = Field(default=None)
 
 
-class ModelsAudit(SQLModel, table=True):
+class ModelsAudit(SQLModel, table=True):  # noqa: E501
+    # `user_id` is nullable because audit rows from background status
+    # transitions (fl_scheduler) have no end-user context. Endpoint-driven
+    # transitions still record the caller.
     __tablename__ = "models_audit"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    model_id: UUID | None = Field(default=None, foreign_key="model.id")
+    model_id: UUID | None = Field(default=None, foreign_key="model.id", index=True)
     action: ModelAuditAction = Field()
-    user_id: UUID = Field()
+    user_id: UUID | None = Field(default=None)
     audit_date: Annotated[datetime, Field(default_factory=datetime.utcnow)]
 
 
 class ProjectTrustIntersect(SQLModel, table=True):
     __tablename__ = "project_trust_intersect"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    project_id: UUID | None = Field(default=None, foreign_key="projects.id")
-    trust_id: UUID | None = Field(default=None, foreign_key="trust.id")
+    project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
+    trust_id: UUID | None = Field(default=None, foreign_key="trust.id", index=True)
     approved: bool = Field()
+    approved_at: datetime | None = Field(default=None)
 
 
 class Projects(SQLModel, table=True):
@@ -140,7 +151,7 @@ class Projects(SQLModel, table=True):
 class ProjectsAudit(SQLModel, table=True):
     __tablename__ = "projects_audit"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    project_id: UUID | None = Field(default=None, foreign_key="projects.id")
+    project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
     action: ProjectAuditAction = Field()
     user_id: UUID = Field()
     audit_date: Annotated[datetime, Field(default_factory=datetime.utcnow)]

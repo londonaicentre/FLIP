@@ -31,9 +31,7 @@ _XML_FORBIDDEN_CHARS = ("<", ">", "&")
 
 def _reject_xml_control_chars(v: str) -> str:
     if any(c in v for c in _XML_FORBIDDEN_CHARS):
-        raise ValueError(
-            f"name must not contain XML control characters {_XML_FORBIDDEN_CHARS}"
-        )
+        raise ValueError(f"name must not contain XML control characters {_XML_FORBIDDEN_CHARS}")
     return v
 
 
@@ -43,6 +41,8 @@ class IProjectQuery(BaseModel):
     query: str = Field()
     trusts_queried: int | None = Field(default=None, alias="trustsQueried")
     total_cohort: int | None = Field(default=None, alias="totalCohort")
+    created: str | None = Field(default=None)
+    created_by: str | None = Field(default=None, alias="createdBy")
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -65,6 +65,18 @@ class IProjectResponse(BaseModel):
     )
 
 
+class IApprovedTrust(BaseModel):
+    id: UUID
+    name: str
+    code: str | None = None
+    approved: bool
+    approved_at: str | None = Field(default=None, alias="approvedAt")
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+
 # Base Pydantic Models (Interfaces)
 class IProject(BaseModel):  # Base for IProject to avoid repetition
     id: UUID = Field(default_factory=uuid4)
@@ -74,7 +86,18 @@ class IProject(BaseModel):  # Base for IProject to avoid repetition
     deleted: bool = Field(default=False)
     approved: bool | None = None
     creation_timestamp: str = Field(..., alias="creationtimestamp")  # This is a string to match the Vue.js handling
+    # Most-recent STAGE audit row's timestamp. Null if the project was never
+    # staged (i.e. it's still in UNSTAGED). String for the same Vue.js
+    # handling reason as creation_timestamp.
+    staged_at: str | None = Field(default=None, alias="stagedAt")
     status: ProjectStatus = Field(default=ProjectStatus.UNSTAGED)
+    # Participating trusts + most-recent cohort query. Optional so the list
+    # endpoint can omit them when batch-loading isn't worth it; the detail
+    # endpoint always populates both. Lives on IProject (not just IReturnedProject)
+    # so the projects-list UI can render trust chips + cohort sizes without a
+    # follow-up round-trip per row.
+    approved_trusts: list[IApprovedTrust] | None = Field(default=None, alias="approvedTrusts")
+    query: IProjectQuery | None = Field(default=None)
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,16 +105,8 @@ class IProject(BaseModel):  # Base for IProject to avoid repetition
     )
 
 
-class IApprovedTrust(BaseModel):
-    id: UUID
-    name: str
-    approved: bool
-
-
 class IReturnedProject(IProject):  # Extends IProject
     owner_email: EmailStr = Field(..., alias="ownerEmail")
-    approved_trusts: list[IApprovedTrust] | None = Field(default=None, alias="approvedTrusts")
-    query: IProjectQuery | None = Field(default=None)
     users: list[CognitoUser]
     model_config = ConfigDict(populate_by_name=True)
 

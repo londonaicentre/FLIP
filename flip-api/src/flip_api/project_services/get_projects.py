@@ -10,17 +10,28 @@
 # limitations under the License.
 #
 
+import json
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlmodel import Session, and_, desc, func, or_, select
+from sqlmodel import Session, and_, col, desc, func, or_, select
 
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import Projects, ProjectUserAccess
-from flip_api.db.models.user_models import PermissionRef
-from flip_api.domain.interfaces.project import IProject
+from flip_api.db.models.main_models import (
+    Projects,
+    ProjectsAudit,
+    ProjectUserAccess,
+    Queries,
+    QueryResult,
+    QueryStats,
+)
+from flip_api.db.models.user_models import PermissionRef, UserProfile
+from flip_api.domain.interfaces.project import IProject, IProjectQuery
+from flip_api.domain.schemas.actions import ProjectAuditAction
+from flip_api.project_services.services.project_services import get_trusts_approval_status_for_projects
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import (
     FilterInfo,
@@ -111,20 +122,148 @@ def get_projects_paginated_orm(
     project_results = session.exec(projects_query).all()
     total_records = session.exec(count_query).one_or_none() or 0
 
-    # Convert results to list of IProject
+    project_ids = [project.id for project in project_results]
+    trusts_by_project = get_trusts_approval_status_for_projects(project_ids, session)
+    queries_by_project = _load_latest_query_per_project(project_ids, session)
+    staged_at_by_project = _load_latest_audit_at_per_project(project_ids, ProjectAuditAction.STAGE, session)
+
     projects_response = [
         IProject(
             id=project.id,
             name=project.name,
             description=project.description,
             owner_id=project.owner_id,
-            creation_timestamp=project.creation_timestamp.isoformat(timespec="milliseconds"),
+            # `Z` suffix so the browser treats the naive UTC value as UTC.
+            creation_timestamp=project.creation_timestamp.isoformat(timespec="milliseconds") + "Z",
+            staged_at=staged_at_by_project.get(project.id),
             status=project.status,
+            approved_trusts=trusts_by_project.get(project.id, []),
+            query=queries_by_project.get(project.id),
         )  # type: ignore[call-arg]
         for project in project_results
     ]
 
     return IPagedResponse[IProject](data=projects_response, total_rows=total_records)
+
+
+def _load_latest_query_per_project(
+    project_ids: list[UUID],
+    session: Session,
+) -> dict[UUID, IProjectQuery]:
+    """Batch-load most-recent cohort query + cohort size for each project.
+
+    Avoids the N+1 cost of calling the per-project query loader on every row.
+    Three queries total: pick the latest Queries row per project, then batch the
+    trust counts and the cohort totals for the picked query IDs.
+
+    Args:
+        project_ids: Project IDs to load queries for.
+        session: Active SQLModel session.
+
+    Returns:
+        Mapping project_id → ``IProjectQuery`` for projects that have at least
+        one cohort query. Projects without one are omitted from the result.
+    """
+    if not project_ids:
+        return {}
+
+    # All queries for these projects, ordered so the latest per project sorts first.
+    # LEFT JOIN UserProfile so the response carries the runner's display name
+    # alongside the timestamp ("Last run … by R. Patel"); null for legacy rows.
+    queries_rows = session.exec(
+        select(  # type: ignore[call-overload]
+            Queries.id,
+            Queries.project_id,
+            Queries.name,
+            Queries.query,
+            Queries.created,
+            UserProfile.name,
+        )
+        .join(UserProfile, UserProfile.user_id == Queries.created_by, isouter=True)
+        .where(col(Queries.project_id).in_(project_ids))
+        .order_by(col(Queries.project_id), col(Queries.created).desc())
+    ).all()
+
+    latest_per_project: dict[UUID, tuple[UUID, str, str, datetime | None, str | None]] = {}
+    for qid, pid, qname, qsql, qcreated, qcreated_by in queries_rows:
+        if pid is not None and pid not in latest_per_project:
+            latest_per_project[pid] = (qid, qname, qsql, qcreated, qcreated_by)
+
+    if not latest_per_project:
+        return {}
+
+    query_ids = [qid for qid, _, _, _, _ in latest_per_project.values()]
+
+    trust_counts: dict[UUID, int] = {}
+    tc_rows = session.exec(
+        select(QueryResult.query_id, func.count(func.distinct(QueryResult.trust_id)))
+        .where(col(QueryResult.query_id).in_(query_ids))
+        .group_by(col(QueryResult.query_id))
+    ).all()
+    for qid, count in tc_rows:
+        if qid is not None:
+            trust_counts[qid] = int(count or 0)
+
+    total_cohort_by_query: dict[UUID, int] = {}
+    stats_rows = session.exec(
+        select(QueryStats.query_id, QueryStats.stats).where(col(QueryStats.query_id).in_(query_ids))
+    ).all()
+    for stats_qid, stats_json in stats_rows:
+        if stats_qid is None or not stats_json:
+            continue
+        try:
+            parsed = json.loads(stats_json)
+        except (ValueError, TypeError):
+            continue
+        # The detail endpoint accepts either key — keep the same fallback to
+        # avoid surprising shape divergence between list and detail responses.
+        total_cohort_by_query[stats_qid] = int(parsed.get("TotalCount") or parsed.get("record_count") or 0)
+
+    return {
+        pid: IProjectQuery(
+            id=qid,
+            name=qname,
+            query=qsql,
+            trusts_queried=trust_counts.get(qid, 0),
+            total_cohort=total_cohort_by_query.get(qid, 0),
+            # `Z` suffix so the browser parses as UTC (naive UTC column).
+            created=(qcreated.isoformat(timespec="milliseconds") + "Z") if qcreated else None,
+            created_by=qcreated_by or None,
+        )  # type: ignore[call-arg]
+        for pid, (qid, qname, qsql, qcreated, qcreated_by) in latest_per_project.items()
+    }
+
+
+def _load_latest_audit_at_per_project(
+    project_ids: list[UUID],
+    action: ProjectAuditAction,
+    session: Session,
+) -> dict[UUID, str]:
+    """Batch-load the most recent ``projects_audit`` timestamp per project for a given action.
+
+    One SQL round-trip — useful for surfacing stage transition dates (STAGE,
+    APPROVE, UNSTAGE, etc.) without paying the N+1 cost of per-project audit
+    lookups.
+    """
+    if not project_ids:
+        return {}
+
+    rows = session.exec(
+        select(ProjectsAudit.project_id, ProjectsAudit.audit_date)
+        .where(
+            col(ProjectsAudit.project_id).in_(project_ids),
+            col(ProjectsAudit.action) == action,
+        )
+        .order_by(col(ProjectsAudit.project_id), col(ProjectsAudit.audit_date).desc())
+    ).all()
+
+    latest: dict[UUID, str] = {}
+    for pid, audit_date in rows:
+        if pid is None or audit_date is None or pid in latest:
+            continue
+        latest[pid] = audit_date.isoformat(timespec="milliseconds")
+
+    return latest
 
 
 # [#114] ✅

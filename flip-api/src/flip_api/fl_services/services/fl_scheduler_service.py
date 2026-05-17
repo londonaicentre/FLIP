@@ -16,11 +16,12 @@ from uuid import UUID
 
 from sqlalchemy import Column
 from sqlalchemy.exc import SQLAlchemyError
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
 from flip_api.db.models.main_models import (
     FLJob,
+    FLKitSlot,
     FLNets,
     FLScheduler,
     Model,
@@ -44,7 +45,7 @@ from flip_api.fl_services.services.fl_service import (
     start_training,
     validate_client_availability,
 )
-from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trusts
+from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trust_ids
 from flip_api.utils.exceptions import DatabaseError, NotFoundError
 from flip_api.utils.logger import logger
 
@@ -227,6 +228,32 @@ def get_net_by_name(name: str, session: Session) -> INetDetails | None:
         raise DatabaseError("Database error while getting net by name") from e
 
 
+def get_slot_names_by_trust_ids(trust_ids: list[UUID], session: Session) -> dict[UUID, str]:
+    """Map each trust id to the slot_name of its bound FL kit slot.
+
+    The FL protocol identifies participants by the slot identity (the CN baked into the
+    kit's cert), which is independent of the trust's display name on the hub. Callers that
+    need to talk to / compare against an FL participant must look up the slot name rather
+    than using ``Trust.name`` — see ``SEED_NAME_OVERRIDES`` for why those can differ.
+
+    Args:
+        trust_ids (list[UUID]): Trust ids to resolve. Empty input → empty mapping.
+        session (Session): SQLModel session.
+
+    Returns:
+        dict[UUID, str]: ``trust_id → slot_name``. Trusts without an assigned slot are
+        absent from the result; callers should treat a miss as "no FL identity yet".
+    """
+    if not trust_ids:
+        return {}
+    rows = session.exec(
+        select(FLKitSlot.assigned_to_trust_id, FLKitSlot.slot_name).where(
+            col(FLKitSlot.assigned_to_trust_id).in_(trust_ids)
+        )
+    ).all()
+    return {trust_id: slot_name for trust_id, slot_name in rows if trust_id is not None}
+
+
 def get_nets(session: Session) -> list[INetDetails]:
     """
     Fetches all nets from the database.
@@ -337,9 +364,10 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         job.status = JobStatus.IN_PROGRESS
         job.started = datetime.utcnow()
 
+        job_trust_ids = [t.id for t in job.trusts]
         # Validate trusts
-        if not validate_trusts(job.model_id, job.clients, session):
-            raise Exception(f"[{', '.join(job.clients)}] contains invalid trusts")
+        if not validate_trust_ids(job.model_id, job_trust_ids, session):
+            raise Exception(f"Job {job.id} references trust ids not approved for model {job.model_id}")
 
         # Assign job to scheduler
         scheduler = session.get(FLScheduler, scheduler_id)
@@ -351,7 +379,7 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
 
         session.commit()
 
-        return IJobResponse(id=job.id, model_id=job.model_id, clients=job.clients)
+        return IJobResponse(id=job.id, model_id=job.model_id, trust_ids=job_trust_ids)
 
     except SQLAlchemyError as e:
         session.rollback()
@@ -360,14 +388,16 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         raise DatabaseError("Error checking for queued jobs") from e
 
 
-def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[str], session: Session) -> None:
+def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[UUID], session: Session) -> None:
     """
     Prepares and starts the training process for a given model.
 
     Args:
         model_id (UUID): The ID of the model to train.
         fl_job_id (UUID): The ID of the federated learning job.
-        clients (list[str]): The list of client IDs participating in the training.
+        trust_ids (list[UUID]): The trust ids participating in the training. Names are looked up
+            from the `trust` table here — at the FL backend boundary, which is the only place
+            the FL protocol's name-based addressing matters.
         session (Session): The database session.
 
     Returns:
@@ -404,7 +434,18 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
         if not net_details.endpoint:
             raise Exception("Failed to get the net endpoint")
 
-        validate_client_availability(clients, net_details.endpoint)
+        # Resolve FL kit slot names at the FL boundary. The FL protocol (NVFlare/Flower)
+        # identifies participants by the CN baked into the kit's cert at provisioning
+        # time — that's the slot name, NOT the trust's friendly hub-side name. Using
+        # Trust.name here would make validate_client_availability fail with
+        # "Clients unavailable: <friendly name>" because the FL server never saw it.
+        slot_names = list(
+            session.exec(
+                select(FLKitSlot.slot_name).where(col(FLKitSlot.assigned_to_trust_id).in_(trust_ids))
+            ).all()
+        )
+
+        validate_client_availability(slot_names, net_details.endpoint)
 
         # Get presigned URLs from the files in the destination bucket on S3
         bundle_urls = get_bundle_urls(dest_bucket_s3_path)
@@ -412,7 +453,7 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
         start_training(
             model_id=model_id,
             fl_job_id=fl_job_id,
-            clients=clients,
+            clients=slot_names,
             endpoint=net_details.endpoint,
             bundle_urls=bundle_urls,
             session=session,
@@ -425,7 +466,7 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
         error_message = str(e)
         logger.info(f"Error message: {error_message}")
         remove_job(fl_job_id, session)
-        add_log(model_id, error_message, session, False)
+        add_log(model_id, error_message, session, success=False)
         update_model_status(model_id, ModelStatus.ERROR, session)
 
         logger.debug("Reverted job and scheduler pickup")

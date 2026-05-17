@@ -13,11 +13,12 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from flip_api.auth.access_manager import can_modify_model
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
+from flip_api.db.models.main_models import Trust
 from flip_api.domain.interfaces.fl import IInitiateTrainingInputPayload
 from flip_api.domain.schemas.status import ModelStatus
 from flip_api.fl_services.services.fl_service import add_fl_job
@@ -63,15 +64,24 @@ def initiate_training(
             status_code=status.HTTP_403_FORBIDDEN, detail=f"User with ID: {user_id} is not allowed to modify this model"
         )
 
+    trusts = db.exec(select(Trust).where(col(Trust.name).in_(payload.trusts))).all()
+    known_names = {t.name for t in trusts}
+    missing = [name for name in payload.trusts if name not in known_names]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown trust(s): {missing}",
+        )
+
     try:
-        add_fl_job(model_id, payload.trusts, db)
+        add_fl_job(model_id, list(trusts), db)
 
         updated = update_model_status(model_id, ModelStatus.INITIATED, db)
         if not updated:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Model ID: {model_id} does not exist")
 
         add_log(model_id, "This model has been added to the queue.", db)
-        add_log(model_id, f"Selected trusts for training: {payload.trusts}", db)
+        add_log(model_id, f"Selected trusts for training: {', '.join(t.name for t in trusts)}", db)
 
     except HTTPException:
         raise  # re-raise known errors

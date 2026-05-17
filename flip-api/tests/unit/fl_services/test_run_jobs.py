@@ -39,7 +39,7 @@ def mock_check_for_available_net():
 @pytest.fixture
 def mock_check_for_queued_jobs():
     with patch("flip_api.fl_services.run_jobs.check_for_queued_jobs") as mock_check:
-        job = IJobResponse(id=uuid4(), model_id=uuid4(), clients=["client1"])
+        job = IJobResponse(id=uuid4(), model_id=uuid4(), trust_ids=[uuid4()])
         mock_check.return_value = job
         yield mock_check
 

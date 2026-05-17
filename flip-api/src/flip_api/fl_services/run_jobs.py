@@ -112,7 +112,7 @@ def run_jobs_core(db: Session) -> None:
             "model": job.model_id,
         })
 
-        prepare_and_start_training(job.model_id, job.id, job.clients, db)
+        prepare_and_start_training(job.model_id, job.id, job.trust_ids, db)
 
         logger.info({
             "message": "Training started successfully! 🚀",

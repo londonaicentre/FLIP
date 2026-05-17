@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from flip_api.domain.schemas.status import ClientStatus
 from flip_api.domain.schemas.types import TrimStr
@@ -64,9 +64,16 @@ class ISchedulerResponse(BaseModel):
 
 
 class IJobResponse(BaseModel):
+    """Internal handoff from `check_for_queued_jobs` to `prepare_and_start_training`.
+
+    Carries the trust ids that were attached to the FL job via the `fl_job_trust` link table;
+    `prepare_and_start_training` re-fetches the Trust rows from the DB before talking to the
+    FL backend, so we don't try to ferry ORM objects through a Pydantic schema.
+    """
+
     id: UUID  # FLJob table primary key
     model_id: UUID
-    clients: list[str]
+    trust_ids: list[UUID]
 
 
 class IJobMetaData(BaseModel):
@@ -85,7 +92,19 @@ class IRequiredTrainingInformation(BaseModel):
 
 
 class IInitiateTrainingInputPayload(BaseModel):
-    trusts: list[TrimStr]
+    """Request body for `POST /fl/initiate/{model_id}`.
+
+    The selected trusts are the FL participants for this training run. Names
+    are looked up against the `trust` table at request time — see
+    `initiate_training` for the existence check.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    trusts: list[TrimStr] = Field(
+        min_length=1,
+        description="Names of trusts to participate in training. Must be non-empty and unique.",
+    )
 
     @field_validator("trusts")
     @classmethod

@@ -24,7 +24,7 @@ from flip_api.domain.interfaces.fl import (
     IServerStatus,
 )
 from flip_api.domain.schemas.status import ClientStatus, ServerEngineStatus
-from flip_api.fl_services.services.fl_scheduler_service import get_nets
+from flip_api.fl_services.services.fl_scheduler_service import get_nets, get_slot_names_by_trust_ids
 from flip_api.fl_services.services.fl_service import fetch_client_status, fetch_server_status
 from flip_api.trusts_services.services.trust import get_trusts
 from flip_api.utils.logger import logger
@@ -105,24 +105,22 @@ def get_status_endpoint(
                 continue
 
             # For each net, we would like to know which Trusts are connected and their statuses.
+            # Match clients on the FL kit slot name (not Trust.name) — the FL net only ever
+            # sees the slot's CN, which is independent of the trust's hub-side display name
+            # (see SEED_NAME_OVERRIDES). The response still surfaces trust.name so the UI
+            # shows the friendly name.
             trusts = get_trusts(db)
+            slot_names_by_trust_id = get_slot_names_by_trust_ids([t.id for t in trusts], db)
             trust_client_statuses: list[IClientStatus] = []
             for trust in trusts:
-                connected_client_info = None
-
-                for client in clients:
-                    # TODO Trust name and FL client name should match ??
-                    if client.name == trust.name:
-                        connected_client_info = client
-                        break
-                else:
-                    logger.warning(f"Trust {trust.name} not found in client statuses")
+                slot_name = slot_names_by_trust_id.get(trust.id)
+                matched = next((c for c in clients if slot_name and c.name == slot_name), None)
+                if matched is None:
+                    logger.warning(f"Trust {trust.name} (slot={slot_name}) not found in client statuses")
                     trust_client_statuses.append(IClientStatus(name=trust.name, status=ClientStatus.NO_REPLY.value))
                     continue
-
-                # Log the trust and connected client information
-                logger.debug(f"Trust {trust} name: {trust.name}, connected client info: {connected_client_info}")
-                trust_client_statuses.append(connected_client_info)
+                logger.debug(f"Trust {trust.name} matched slot {slot_name} → status {matched.status}")
+                trust_client_statuses.append(IClientStatus(name=trust.name, status=matched.status))
 
             # Create net status response
             net_statuses.append(

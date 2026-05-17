@@ -15,7 +15,7 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-from flip_api.db.models.main_models import FLLogs, FLMetrics, Model, ModelTrustIntersect, Trust
+from flip_api.db.models.main_models import FLKitSlot, FLLogs, FLMetrics, Model, ModelTrustIntersect, Trust
 from flip_api.domain.interfaces.model import (
     IDetailedModelStatus,
     IModelAuditAction,
@@ -62,14 +62,28 @@ def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, sess
     logger.info(f"Output: {audit_response}")
 
 
-def update_model_status(model_id: UUID, status: ModelStatus | None, session: Session) -> ModelStatus | None:
+_STATUS_AUDIT_MAP: dict[ModelStatus, ModelAuditAction] = {
+    ModelStatus.PREPARED: ModelAuditAction.PREPARED,
+    ModelStatus.TRAINING_STARTED: ModelAuditAction.TRAINING_STARTED,
+    ModelStatus.RESULTS_UPLOADED: ModelAuditAction.RESULTS_UPLOADED,
+}
+
+
+def update_model_status(
+    model_id: UUID,
+    status: ModelStatus | None,
+    session: Session,
+    user_id: UUID | None = None,
+) -> ModelStatus | None:
     """
-    Update the status of a model
+    Update the status of a model.
 
     Args:
-        model_id (UUID): The ID of the model
-        status (ModelStatus | None): The new status to be set
-        session (Session): The database session
+        model_id (UUID): The ID of the model.
+        status (ModelStatus | None): The new status to be set.
+        session (Session): The database session.
+        user_id (UUID | None): Optional user who triggered the change; recorded on
+            the audit row when present. Background transitions pass None.
 
     Returns:
         ModelStatus | None: The updated status of the model, or None if the model does not exist.
@@ -84,10 +98,16 @@ def update_model_status(model_id: UUID, status: ModelStatus | None, session: Ses
     if not status:
         status = model.status
 
+    previous_status = model.status
     model.status = status
     session.commit()
 
     logger.info(f"The status of Model ID: {model_id} has been updated to {status}")
+
+    audit_action = _STATUS_AUDIT_MAP.get(status)
+    if audit_action and previous_status != status:
+        audit_model_action(model_id, audit_action, user_id, session)
+        session.commit()
 
     if status in [ModelStatus.ERROR, ModelStatus.STOPPED, ModelStatus.RESULTS_UPLOADED]:
         fl_scheduler_service.update_fl_scheduler(model_id, session)
@@ -266,6 +286,29 @@ def validate_trusts(model_id: UUID, trusts: list[str], session: Session) -> bool
     return True
 
 
+def validate_trust_ids(model_id: UUID, trust_ids: list[UUID], session: Session) -> bool:
+    """Validate that every trust id is associated with the model via ModelTrustIntersect.
+
+    Args:
+        model_id (UUID): The ID of the model.
+        trust_ids (list[UUID]): Trust ids to validate.
+        session (Session): The database session.
+
+    Returns:
+        bool: True if every id is associated with the model, False otherwise.
+    """
+    associated = set(
+        session.exec(
+            select(ModelTrustIntersect.trust_id).where(ModelTrustIntersect.model_id == model_id)
+        ).all()
+    )
+    missing = set(trust_ids) - associated
+    if missing:
+        logger.error(f"Trust ids not approved for model {model_id}: {missing}")
+        return False
+    return True
+
+
 def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
     """
     Get the metrics for a given model.
@@ -285,6 +328,18 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
         logger.warning("No metrics have been found")
         return []
 
+    # FLMetrics.trust carries the FL backend's participant identity, which is the
+    # FL kit *slot* name (e.g. "Trust_2") — that's what the cert CN / supernode key
+    # binds to. Resolve to the assigned trust's short `code` (e.g. "UCLH") for chart
+    # legends; falls back to the raw slot name if no code is set.
+    slot_to_code: dict[str, str] = {}
+    for slot_name, code in session.exec(
+        select(FLKitSlot.slot_name, Trust.code)
+        .join(Trust, Trust.id == FLKitSlot.assigned_to_trust_id)  # type: ignore[arg-type]
+    ).all():
+        if code:
+            slot_to_code[slot_name] = code
+
     # metrics_map: label -> IModelMetrics
     metrics_map: dict[str, IModelMetrics] = {}
 
@@ -296,10 +351,12 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
         # Get the list of series for this label
         metric = metrics_map[row.label]
 
+        series_label = slot_to_code.get(row.trust, row.trust)
+
         # Find or create the series for this trust
-        series = next((s for s in metric.metrics if s.seriesLabel == row.trust), None)
+        series = next((s for s in metric.metrics if s.seriesLabel == series_label), None)
         if not series:
-            series = IModelMetricsData(seriesLabel=row.trust, data=[])
+            series = IModelMetricsData(seriesLabel=series_label, data=[])
             metric.metrics.append(series)
 
         # Add the data point

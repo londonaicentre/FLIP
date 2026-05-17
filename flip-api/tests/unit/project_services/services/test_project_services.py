@@ -464,14 +464,17 @@ class TestGetApprovedTrustsForProject:
 
 
 class TestGetTrustsApprovalStatusForProject:
-    def test_get_trusts_approval_status_unpacks_three_columns(self, mock_db_session: MagicMock):
+    def test_get_trusts_approval_status_unpacks_six_columns(self, mock_db_session: MagicMock):
         project_id = uuid4()
         trust_a, trust_b, trust_c = uuid4(), uuid4(), uuid4()
+        approved_at_a = datetime(2026, 3, 19, 10, 30, 0)
         mock_results = [
-            (trust_a, "Trust A", True),
-            (trust_b, "Trust B", False),
+            # Now joined-and-grouped by project_id; first column is project_id.
+            (project_id, trust_a, "Trust A", "TA", True, approved_at_a),
+            (project_id, trust_b, "Trust B", "TB", False, None),
             # `approved` may come back as None for unstaged trusts; should normalise to False.
-            (trust_c, "Trust C", None),
+            # `code` and `approved_at` may be None on legacy rows.
+            (project_id, trust_c, "Trust C", None, None, None),
         ]
 
         mock_db_session.exec.return_value.all.return_value = mock_results
@@ -480,9 +483,11 @@ class TestGetTrustsApprovalStatusForProject:
 
         assert len(result) == 3
         assert all(isinstance(t, IApprovedTrust) for t in result)
-        assert (result[0].id, result[0].name, result[0].approved) == (trust_a, "Trust A", True)
-        assert (result[1].id, result[1].name, result[1].approved) == (trust_b, "Trust B", False)
-        assert (result[2].id, result[2].name, result[2].approved) == (trust_c, "Trust C", False)
+        assert (result[0].id, result[0].name, result[0].code, result[0].approved) == (trust_a, "Trust A", "TA", True)
+        assert result[0].approved_at == approved_at_a.isoformat(timespec="milliseconds")
+        assert (result[1].id, result[1].name, result[1].code, result[1].approved) == (trust_b, "Trust B", "TB", False)
+        assert result[1].approved_at is None
+        assert (result[2].id, result[2].name, result[2].code, result[2].approved) == (trust_c, "Trust C", None, False)
 
     def test_get_trusts_approval_status_empty(self, mock_db_session: MagicMock):
         project_id = uuid4()

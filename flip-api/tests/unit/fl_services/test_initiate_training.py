@@ -15,15 +15,26 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException, Request, status
+from pydantic import ValidationError
 
+from flip_api.db.models.main_models import Trust
 from flip_api.domain.interfaces.fl import IInitiateTrainingInputPayload
 from flip_api.fl_services.initiate_training import initiate_training
+
+
+def _trust(name: str) -> Trust:
+    """Build a Trust ORM row with a fixed id for deterministic test assertions."""
+    return Trust(id=uuid4(), name=name)
 
 
 @pytest.fixture
 def mock_db():
     with patch("flip_api.fl_services.run_jobs.get_session") as mock_get_session:
         mock_db = MagicMock()
+        # Default: the single trust name `client1` resolves to a Trust row. Tests that
+        # exercise other shapes (unknown trust, multiple trusts) override
+        # `mock_db.exec(...).all` themselves.
+        mock_db.exec.return_value.all.side_effect = lambda: [_trust("client1")]
         mock_get_session.return_value = mock_db
         yield mock_db
 
@@ -72,9 +83,34 @@ def test_initiate_training_success(
     payload = IInitiateTrainingInputPayload(trusts=["client1"])
     response = initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
     assert response is None  # Expecting no content response
+
     mock_add_fl_job.assert_called_once()
+    # add_fl_job must receive resolved Trust ORM rows, not the raw payload.trusts strings.
+    _, called_trusts, _ = mock_add_fl_job.call_args.args
+    assert all(isinstance(t, Trust) for t in called_trusts)
+    assert [t.name for t in called_trusts] == ["client1"]
+
     mock_update_model_status.assert_called_once()
     assert mock_add_log.call_count == 2
+    # Audit log uses names extracted from the Trust rows, not the raw payload.
+    second_log_msg = mock_add_log.call_args_list[1].args[1]
+    assert "client1" in second_log_msg
+
+
+def test_initiate_training_passes_full_trust_rows_to_add_fl_job(
+    model_id, fake_request, mock_db, mock_can_modify_model, mock_add_fl_job, mock_update_model_status, mock_add_log
+):
+    trust_1 = _trust("Trust_1")
+    trust_2 = _trust("Trust_2")
+    mock_db.exec.return_value.all.side_effect = lambda: [trust_1, trust_2]
+
+    payload = IInitiateTrainingInputPayload(trusts=["Trust_1", "Trust_2"])
+    initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
+
+    _, called_trusts, _ = mock_add_fl_job.call_args.args
+    # Same Trust instances the DB returned — endpoint must not project to names before
+    # handing off to internal services.
+    assert called_trusts == [trust_1, trust_2]
 
 
 def test_initiate_training_forbidden(model_id, fake_request, mock_db, mock_can_modify_model):
@@ -103,3 +139,38 @@ def test_initiate_training_failure(model_id, fake_request, mock_db, mock_can_mod
             initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert "Unexpected error" in exc_info.value.detail
+
+
+def test_initiate_training_rejects_unknown_trusts(
+    model_id, fake_request, mock_db, mock_can_modify_model, mock_add_fl_job
+):
+    mock_db.exec.return_value.all.side_effect = lambda: [_trust("client1")]
+    payload = IInitiateTrainingInputPayload(trusts=["client1", "ghost"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert "ghost" in exc_info.value.detail
+    mock_add_fl_job.assert_not_called()
+
+
+class TestIInitiateTrainingInputPayloadSchema:
+    def test_rejects_empty_trusts(self):
+        with pytest.raises(ValidationError) as exc_info:
+            IInitiateTrainingInputPayload(trusts=[])
+        assert "at least 1 item" in str(exc_info.value)
+
+    def test_rejects_duplicate_trusts(self):
+        with pytest.raises(ValidationError) as exc_info:
+            IInitiateTrainingInputPayload(trusts=["a", "a"])
+        assert "unique" in str(exc_info.value)
+
+    def test_rejects_unknown_fields(self):
+        with pytest.raises(ValidationError) as exc_info:
+            IInitiateTrainingInputPayload(trusts=["a"], extra_field="x")
+        assert "extra_field" in str(exc_info.value)
+
+    def test_accepts_valid_payload(self):
+        payload = IInitiateTrainingInputPayload(trusts=["Trust_1", "Trust_2"])
+        assert payload.trusts == ["Trust_1", "Trust_2"]

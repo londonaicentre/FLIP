@@ -11,7 +11,7 @@
 #
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -31,6 +31,7 @@ from flip_api.db.models.main_models import (
     Trust,
     XNATProjectStatus,
 )
+from flip_api.db.models.user_models import UserProfile
 from flip_api.domain.interfaces.project import (
     IApprovedTrust,
     IModelsInfoResponse,
@@ -350,29 +351,56 @@ def get_trusts_approval_status_for_project(project_id: UUID, session: Session) -
     # a LEFT JOIN from Trusts to ProjectTrustIntersect would be more appropriate.
     # The original query was an INNER JOIN, so it only returns trusts *present* in ProjectTrustIntersect
     # for that project.
-    stmt = (
-        select(
-            Trust.id,
-            Trust.name,
-            # SQLModel doesn't directly support COALESCE in select like this easily without raw SQL or complex
-            # expressions.
-            # It's often easier to fetch the boolean and handle None in Python or use a raw query for COALESCE.
-            ProjectTrustIntersect.approved,
-        )
-        .join(ProjectTrustIntersect, col(Trust.id) == ProjectTrustIntersect.trust_id)
-        .where(col(ProjectTrustIntersect.project_id) == project_id)
-    )
-    results = session.exec(stmt).all()
+    by_project = get_trusts_approval_status_for_projects([project_id], session)
+    results = by_project.get(project_id, [])
 
     if not results:
         logger.warn(f"No trusts found linked to project {project_id} in ProjectTrustIntersect.")
-        # Original TS code throws an error.
-        # raise ValueError(f"No trusts found linked to project {project_id}")
 
-    return [
-        IApprovedTrust(id=trust_id, name=trust_name, approved=approved if approved is not None else False)
-        for trust_id, trust_name, approved in results
-    ]
+    return results
+
+
+def get_trusts_approval_status_for_projects(
+    project_ids: list[UUID],
+    session: Session,
+) -> dict[UUID, list[IApprovedTrust]]:
+    """Batch variant of :func:`get_trusts_approval_status_for_project`.
+
+    Returns a single SQL round-trip's worth of approval rows grouped by project,
+    so callers paginating over many projects (the list endpoint) don't pay the
+    N+1 cost. Single-project callers get the same shape via a 1-element list.
+    """
+    if not project_ids:
+        return {}
+
+    rows = session.exec(
+        select(  # type: ignore[call-overload]
+            ProjectTrustIntersect.project_id,
+            Trust.id,
+            Trust.name,
+            Trust.code,
+            ProjectTrustIntersect.approved,
+            ProjectTrustIntersect.approved_at,
+        )
+        .join(Trust, col(Trust.id) == col(ProjectTrustIntersect.trust_id))
+        .where(col(ProjectTrustIntersect.project_id).in_(project_ids))
+    ).all()
+
+    by_project: dict[UUID, list[IApprovedTrust]] = {}
+    for project_id, trust_id, trust_name, trust_code, approved, approved_at in rows:
+        if project_id is None or trust_id is None:
+            continue
+        by_project.setdefault(project_id, []).append(
+            IApprovedTrust(
+                id=trust_id,
+                name=trust_name,
+                code=trust_code,
+                approved=approved if approved is not None else False,
+                approved_at=approved_at.isoformat(timespec="milliseconds") if approved_at else None,
+            )  # type: ignore[call-arg]
+        )
+
+    return by_project
 
 
 def get_project_models_service(
@@ -524,6 +552,7 @@ def approve_project(
             return False
 
         result.approved = True
+        result.approved_at = datetime.now(timezone.utc)
         db.add(result)  # Mark for update
 
     logger.info("Updated the trusts that have been selected for approval")
@@ -747,12 +776,24 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
             except (ValueError, TypeError) as e:
                 logger.warning(f"Failed to parse stats JSON for query {query.id}: {e}")
 
+        # Look up the runner's display name from UserProfile so the UI can show
+        # "Last run … by R. Patel" without a second round-trip. Null for legacy
+        # queries saved before created_by existed.
+        created_by_name: str | None = None
+        if query.created_by:
+            created_by_name = session.exec(
+                select(UserProfile.name).where(UserProfile.user_id == query.created_by)
+            ).first()
+
         query_data = IProjectQuery(
             id=query.id,
             name=query.name,
             query=query.query,
             trusts_queried=trust_count,
             total_cohort=total_cohort,
+            # `Z` suffix so the browser parses as UTC (naive UTC column).
+            created=(query.created.isoformat(timespec="milliseconds") + "Z") if query.created else None,
+            created_by=created_by_name or None,
         )  # type: ignore[call-arg]
 
     # Step 5: Construct response

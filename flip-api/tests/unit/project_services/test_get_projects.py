@@ -59,8 +59,22 @@ def test_get_projects_paginated_orm_some_results(user_id):
         status=ProjectStatus.APPROVED,
         creation_timestamp=datetime.utcnow(),
     )
-    session.exec.return_value.all.return_value = [project_1, project_2]
-    session.exec.return_value.one_or_none.return_value = 2
+    # get_projects_paginated_orm makes five session.exec calls when projects
+    # exist: projects → count → batch trusts (via shared helper) → batch
+    # latest-query-per-project → batch latest-STAGE-audit-per-project. The
+    # cohort loader skips its own trust-count/stats fetches when no queries
+    # exist, so a single empty result there short-circuits the rest.
+    projects_call = MagicMock()
+    projects_call.all.return_value = [project_1, project_2]
+    count_call = MagicMock()
+    count_call.one_or_none.return_value = 2
+    trusts_call = MagicMock()
+    trusts_call.all.return_value = []
+    queries_call = MagicMock()
+    queries_call.all.return_value = []
+    stage_audit_call = MagicMock()
+    stage_audit_call.all.return_value = []
+    session.exec.side_effect = [projects_call, count_call, trusts_call, queries_call, stage_audit_call]
 
     project_response = get_projects_paginated_orm(
         session=session,
