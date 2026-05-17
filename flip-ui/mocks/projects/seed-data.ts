@@ -438,14 +438,14 @@ export const ownerProjects: IPaginatedResponse<IProject> = {
 export const imagingProjectStatus: IImagingProjectStatus[] = [
     {
         trustId: "7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2",
-        trustName: "KCH",
+        trustName: "Trust_1",
         projectCreationCompleted: true,
         importStatus: {
-            successful: 41,
-            failed: 11,
-            processing: 22,
-            queued: 29,
-            queueFailed: 51
+            successful: 40,
+            failed: 1,
+            processing: 0,
+            queued: 0,
+            queueFailed: 0
         },
         reimportCount: 2
     },

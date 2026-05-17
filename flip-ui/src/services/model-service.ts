@@ -68,6 +68,10 @@ export interface IModelDashboard {
     status: ModelStatus;
     query: IModelDashboardQuery,
     files: FileInfo[];
+    creationTimestamp?: string | null;
+    preparedAt?: string | null;
+    trainingStartedAt?: string | null;
+    resultsUploadedAt?: string | null;
 }
 
 export interface IModelCreate {

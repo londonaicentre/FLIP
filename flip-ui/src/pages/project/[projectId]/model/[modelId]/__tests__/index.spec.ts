@@ -76,6 +76,7 @@ vi.mock("@/services/model-service", async (importOriginal) => {
 });
 
 const stubs = {
+    AiAlert: { template: "<div data-test='ai-alert' :data-variant='variant'><slot /></div>", props: ["variant"] },
     AiBreadcrumbs: { template: "<div />" },
     AiButton: { template: "<button><slot /></button>" },
     AiGuard: { template: "<div><slot /></div>" },
@@ -92,7 +93,10 @@ const stubs = {
     EditModelDrawer: { template: "<div />" }
 };
 
-function makeModel(files: { name: string; status: string }[]): IModelDashboard {
+function makeModel(
+    files: { name: string; status: string }[],
+    overrides: Partial<IModelDashboard> = {}
+): IModelDashboard {
     return {
         modelId: "test-model",
         projectId: "test-project",
@@ -100,7 +104,8 @@ function makeModel(files: { name: string; status: string }[]): IModelDashboard {
         modelDescription: "",
         status: "PENDING",
         query: { name: "", query: "", results: [] },
-        files: files as IModelDashboard["files"]
+        files: files as IModelDashboard["files"],
+        ...overrides
     };
 }
 
@@ -232,6 +237,45 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
         expect(resolveModelConfigStateMock.mock.calls.length).toBeGreaterThanOrEqual(1);
         const firstPhase3Call = resolveModelConfigStateMock.mock.calls[0];
         expect(firstPhase3Call?.[1]).toBe(FileUploadStatus.SCANNING);
+    });
+
+    it("shows a red error banner above the cards when training has errored", async () => {
+        resolveModelConfigStateMock.mockResolvedValue({
+            changed: true,
+            configStatus: FileUploadStatus.COMPLETED,
+            jobType: "standard",
+            requiredFiles: jobTypes.standard
+        });
+        mockSwrvData.value = makeModel(
+            [{ name: "config.json", status: FileUploadStatus.COMPLETED }],
+            { status: "ERROR" }
+        );
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        const banner = wrapper.find("[data-test='model-error-banner']");
+        expect(banner.exists()).toBe(true);
+        expect(banner.attributes("data-variant")).toBe("error");
+        expect(banner.text()).toContain("There has been an error while training this model.");
+    });
+
+    it("does not render the error banner for non-error statuses", async () => {
+        resolveModelConfigStateMock.mockResolvedValue({
+            changed: true,
+            configStatus: FileUploadStatus.COMPLETED,
+            jobType: "standard",
+            requiredFiles: jobTypes.standard
+        });
+        mockSwrvData.value = makeModel(
+            [{ name: "config.json", status: FileUploadStatus.COMPLETED }],
+            { status: "TRAINING_STARTED" }
+        );
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='model-error-banner']").exists()).toBe(false);
     });
 
     it("resets the tracked status when ModelUpload emits deleted-file", async () => {

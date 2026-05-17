@@ -319,15 +319,7 @@ describe("Project Page: Researcher & Owner [APPROVED]", () => {
         cy.getBySel("trust-name-df8f0069-ad2c-44a7-b082-10e84d453b24").should("exist");
         cy.getBySel("overview-project-creation").contains("2/3");
         cy.getBySel("overview-image-retrieval").contains("12");
-        cy.getBySel("filter-project-status").type("UCLH", { force: true });
-        cy.getBySel("trust-name-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2").should("not.exist");
-        cy.getBySel("trust-name-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585").should("not.exist");
-        cy.getBySel("trust-name-df8f0069-ad2c-44a7-b082-10e84d453b24").should("exist");
-        cy.getBySel("overview-project-creation").contains("2/3");
-        cy.getBySel("overview-image-retrieval").contains("12");
-
-        cy.getBySel("filter-project-status").clear().type("GARBAGE");
-        cy.getBySel("no-project-status-message").should("exist");
+        cy.getBySel("filter-project-status").should("not.exist");
     });
 
     it("Can't be edited", () => {

@@ -102,6 +102,7 @@ function mountProjectStatus(canLoad = true, ...maxOverride: [number | undefined]
     });
     const store = useSiteDetailsStore(pinia);
     store.maxReimportCount = maxReimportCount;
+
     return mount(ProjectStatus, {
         props: { canLoad },
         global: {
@@ -207,10 +208,31 @@ describe("ProjectStatus", () => {
             expect(wrapper.find("[data-test=failed-imports-trust-1]").text()).toBe("3");
         });
 
-        it("shows awaiting import status alert for completed trusts without importStatus", () => {
+        it("renders the empty-state import bar for every card so the footer pins to the bottom", () => {
+            // Cards used to short-circuit the bar when importStatus was absent,
+            // which left "Awaiting creation" floating mid-card next to a tall
+            // sibling in the grid. Bar is now always rendered, with the
+            // "— / no imports yet" branch covering both incomplete-creation
+            // and completed-but-no-imports trusts.
             const wrapper = mountProjectStatus(true);
 
-            expect(wrapper.find("[data-test=import-status-warning-trust-3]").exists()).toBe(true);
+            expect(wrapper.find("[data-test=import-bar-trust-1]").exists()).toBe(true);
+            expect(wrapper.find("[data-test=import-bar-trust-2]").exists()).toBe(true);
+            expect(wrapper.find("[data-test=import-bar-trust-3]").exists()).toBe(true);
+
+            const trust2Bar = wrapper.find("[data-test=import-bar-trust-2]");
+            expect(wrapper.find("[data-test=pct-retrieved-trust-2]").text()).toBe("—");
+            expect(trust2Bar.text()).toContain("no imports yet");
+
+            const trust3Bar = wrapper.find("[data-test=import-bar-trust-3]");
+            expect(wrapper.find("[data-test=pct-retrieved-trust-3]").text()).toBe("—");
+            expect(trust3Bar.text()).toContain("no imports yet");
+        });
+
+        it("no longer renders the separate awaiting-import-status alert", () => {
+            const wrapper = mountProjectStatus(true);
+
+            expect(wrapper.find("[data-test=import-status-warning-trust-3]").exists()).toBe(false);
         });
 
         it("displays reimport count when available and project is created", () => {
@@ -246,41 +268,18 @@ describe("ProjectStatus", () => {
         });
     });
 
-    describe("search/filter functionality", () => {
+    describe("trust list", () => {
         beforeEach(() => {
             mockSwrvData.value = mockTrustData;
         });
 
-        it("filters trusts by name when search input changes", async () => {
+        it("does not render a trust filter search", () => {
             const wrapper = mountProjectStatus(true);
-            const searchComponent = wrapper.findComponent({ name: "AiSearch" });
 
-            await searchComponent.vm.$emit("update:modelValue", "Alpha");
-            await wrapper.vm.$nextTick();
-
+            expect(wrapper.findComponent({ name: "AiSearch" }).exists()).toBe(false);
             expect(wrapper.find("[data-test=trust-name-trust-1]").exists()).toBe(true);
-            expect(wrapper.find("[data-test=trust-name-trust-2]").exists()).toBe(false);
-            expect(wrapper.find("[data-test=trust-name-trust-3]").exists()).toBe(false);
-        });
-
-        it("shows the awaiting message when all trusts are filtered out", async () => {
-            const wrapper = mountProjectStatus(true);
-            const searchComponent = wrapper.findComponent({ name: "AiSearch" });
-
-            await searchComponent.vm.$emit("update:modelValue", "NonExistentTrust");
-            await wrapper.vm.$nextTick();
-
-            expect(wrapper.find(ProjectStatusComponent.noProjectStatusMessage).exists()).toBe(true);
-        });
-
-        it("filter is case-insensitive", async () => {
-            const wrapper = mountProjectStatus(true);
-            const searchComponent = wrapper.findComponent({ name: "AiSearch" });
-
-            await searchComponent.vm.$emit("update:modelValue", "alpha");
-            await wrapper.vm.$nextTick();
-
-            expect(wrapper.find("[data-test=trust-name-trust-1]").exists()).toBe(true);
+            expect(wrapper.find("[data-test=trust-name-trust-2]").exists()).toBe(true);
+            expect(wrapper.find("[data-test=trust-name-trust-3]").exists()).toBe(true);
         });
     });
 
@@ -330,12 +329,17 @@ describe("ProjectStatus", () => {
             expect(wrapper.find("[data-test=import-status-warning-trust-2]").exists()).toBe(false);
         });
 
-        it("does not show import statistics grid for trusts without importStatus", () => {
+        it("shows zeroed legend counts for trusts without importStatus", () => {
+            // Empty-state bar still renders the legend so card heights stay
+            // consistent across the grid; counts read 0 across the board.
             const wrapper = mountProjectStatus(true);
 
-            // trust-2 and trust-3 have no importStatus, should not show stats
-            expect(wrapper.find("[data-test=successful-imports-trust-2]").exists()).toBe(false);
-            expect(wrapper.find("[data-test=successful-imports-trust-3]").exists()).toBe(false);
+            expect(wrapper.find("[data-test=successful-imports-trust-2]").text()).toBe("0");
+            expect(wrapper.find("[data-test=processing-imports-trust-2]").text()).toBe("0");
+            expect(wrapper.find("[data-test=queued-imports-trust-2]").text()).toBe("0");
+            expect(wrapper.find("[data-test=failed-imports-trust-2]").text()).toBe("0");
+
+            expect(wrapper.find("[data-test=successful-imports-trust-3]").text()).toBe("0");
         });
 
         it("does not show reimport section for trusts with incomplete creation", () => {

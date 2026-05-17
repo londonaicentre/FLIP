@@ -121,5 +121,6 @@ const trustsToSelect: ComputedRef<ITrustsToTrain[] | undefined> = computed(() =>
         .map(t =>
             ({ trustName: t.name })
         )
+        .sort((a, b) => a.trustName.localeCompare(b.trustName))
 );
 </script>

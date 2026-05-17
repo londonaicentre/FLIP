@@ -15,11 +15,16 @@
 
 
 import { _http, IPaginatedResponse } from "@/services/api";
+import type { IProjectUser } from "@/services/user-service";
+
+export type { IProjectUser };
 
 export interface IProjectTrust {
     name: string;
     id: string;
+    code?: string | null;
     approved: boolean;
+    approvedAt?: string | null;
 }
 
 export interface IProjectQuery {
@@ -28,6 +33,8 @@ export interface IProjectQuery {
     query: string;
     trustsQueried: number;
     totalCohort: number;
+    created?: string | null;
+    createdBy?: string | null;
 }
 
 export type ProjectStatus = "UNSTAGED" | "STAGED" | "APPROVED";
@@ -39,16 +46,11 @@ export type IProject = {
     ownerId: string;
     ownerEmail: string;
     creationtimestamp: string;
+    stagedAt?: string | null;
     query?: IProjectQuery;
     approvedTrusts?: IProjectTrust[];
     users: IProjectUser[]
     status: ProjectStatus
-}
-
-export interface IProjectUser {
-    id: string;
-    email: string;
-    isDisabled: boolean;
 }
 
 export interface IProjectCreate {
