@@ -4,6 +4,10 @@
 User Roles
 ###########
 
+.. note::
+
+   Roles are **exclusive**: each user holds exactly one of ``admin``, ``researcher`` or ``observer``. The ``admin`` role already includes every ``researcher`` capability, so administrators do not need additional role grants to perform researcher actions.
+
 .. list-table::
    :widths: 5 90
    :header-rows: 1

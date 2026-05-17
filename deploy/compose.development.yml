@@ -123,6 +123,7 @@ services:
       - FL_BACKEND=${FL_BACKEND}
       - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
       - TRUST_NAMES=${TRUST_NAMES}
+      - FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
     restart: unless-stopped
     container_name: flip-api
 

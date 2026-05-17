@@ -251,9 +251,9 @@ Docker Compose services
 
 The logging infrastructure is defined in the trust-level Docker Compose files:
 
-- ``trust/compose_trust.development.yml`` -- development overrides with
+- ``trust/deploy/compose_trust.development.yml`` -- development overrides with
   configurable ports
-- ``trust/compose_trust.production.yml`` -- production settings with persistent
+- ``trust/deploy/compose_trust.production.yml`` -- production settings with persistent
   volumes and automatic restart
 
 Three services are added:

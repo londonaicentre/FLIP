@@ -335,6 +335,11 @@ flip-fl-api/transfer/*/*
 .env.development
 .env.stag
 .env.production
+# Per-trust operator kits (one file per a-posteriori trust, e.g.
+# trust/.env.Trust_3). Issued by the hub admin via POST /admin/trusts; contains
+# plaintext TRUST_API_KEY and TRUST_INTERNAL_SERVICE_KEY. Never commit.
+trust/.env.Trust_*
+trust/.env.trust_*
 
 
 
@@ -353,7 +358,8 @@ plans/
 .secrets.baseline
 
 scripts/remove-env-from-history.sh
-
+design_handoff_full
+design_handoff_cohort_query
 SECURITY_INCIDENT.md
 
 *.jar
