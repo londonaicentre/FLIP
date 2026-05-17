@@ -122,9 +122,12 @@ For debugging or selective steps:
 
    make github-login
    make aws-login
-   make create-backend          # one-off bootstrap of the Terraform state bucket
+   make create-backend                          # one-off bootstrap of the Terraform state bucket
    make init
    make import-persistent
+   make generate-keys                           # trust API keys (idempotent)
+   make generate-internal-service-key           # fl-server → flip-api key
+   make generate-trust-internal-service-keys    # per-trust internal keys (idempotent)
    make plan
    make apply
    make ssh-config
@@ -141,8 +144,8 @@ The hub uses three separate authentication mechanisms (see :doc:`/sys-admin`
 for full details):
 
 - **Trust API keys** — per-trust plaintext key in ``TRUST_API_KEYS``; hub stores
-  only the SHA-256 hash in ``TRUST_API_KEY_HASHES``. Generated with
-  ``make generate-trust-api-keys``.
+  only the SHA-256 hash in ``TRUST_API_KEY_HASHES``. Generated from
+  ``deploy/providers/AWS`` with ``make generate-keys``.
 - **Internal service key** — single hub-internal key for fl-server → flip-api
   calls. Generated with ``make generate-internal-service-key``.
 - **Trust-internal service keys** — per-trust shared secret used inside each

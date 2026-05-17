@@ -168,7 +168,7 @@ def format_download_url(
     experiment_id_or_label: str,
     assessor_type: str = "scan",
     resource_type: str = "NIFTI",
-):
+) -> str:
     """
     Formats the XNAT API URL to download experiment scan images.
 

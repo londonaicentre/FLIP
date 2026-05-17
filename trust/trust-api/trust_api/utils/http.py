@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+from typing import Any
+
 import httpx
 from fastapi import HTTPException
 
@@ -25,7 +27,7 @@ async def make_request(
     headers: dict | None = None,
     timeout_seconds: float = 30.0,
     follow_redirects: bool = True,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """
     Utility function to help make HTTP requests to external APIs.
 
@@ -39,7 +41,7 @@ async def make_request(
         follow_redirects (bool): Whether to follow redirects
 
     Returns:
-        dict[str, str]: JSON response from the external API
+        dict[str, Any]: JSON response from the external API
 
     Raises:
         HTTPException: If there is an error during the request or if the response is not JSON
