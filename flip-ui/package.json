@@ -24,7 +24,9 @@
         "pretest:start": "npm run generate-window-js",
         "test:start": "vite --port 4173 --mode development",
         "test:ci": "start-server-and-test test:start http-get://localhost:4173 test:ui",
-        "test:ci:docker": "start-server-and-test test:start http-get://localhost:4173 test:ui:docker"
+        "test:ci:docker": "start-server-and-test test:start http-get://localhost:4173 test:ui:docker",
+        "docs:record": "start-server-and-test test:start http-get://localhost:4173 'cypress run --config-file cypress.docs.config.ts --browser chrome'",
+        "docs:gifs": "bash scripts/videos-to-gifs.sh"
     },
     "dependencies": {
         "echarts": "^5.2.2",

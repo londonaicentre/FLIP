@@ -447,3 +447,28 @@ make -C flip-api delete_testing_projects
 
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
 `Delete testing projects`.
+
+## Documentation GIFs
+
+The admin user-action GIFs under `docs/source/assets/admin/` (referenced from
+`docs/source/sys-admin/admin-project-and-user-management.rst`) are
+auto-regenerated on every push to `main` by
+`.github/workflows/regenerate_docs_gifs.yml`. The workflow records the demo
+Cypress specs under `flip-ui/test/cypress/docs/admin/` against a fully mocked
+backend, converts the resulting videos to GIFs with `ffmpeg`, and opens a PR
+against `develop` for human review.
+
+To regenerate locally:
+
+```bash
+cd flip-ui
+npm run docs:record   # records videos under test/cypress/videos/docs/admin/
+npm run docs:gifs     # ffmpeg → docs/source/assets/admin/*.gif (requires ffmpeg on PATH)
+```
+
+The demo specs reuse the functional suite's fixtures and `globalIntercepts`,
+and layer a CSS cursor overlay (`flip-ui/test/cypress/docs/support/demoCursor.ts`)
+on top so the recorded GIFs read as visible user actions. When adding a new
+admin-area UI flow that should be documented, add one demo spec under
+`flip-ui/test/cypress/docs/admin/<gif-basename>.spec.ts` — the filename maps
+1:1 to the output GIF name.
