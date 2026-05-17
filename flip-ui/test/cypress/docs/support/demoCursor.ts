@@ -22,7 +22,6 @@
 const CURSOR_ID = "cypress-demo-cursor";
 const STYLE_ID = `${CURSOR_ID}-style`;
 const MOVE_MS = 380;
-const POST_CLICK_MS = 400;
 const TYPE_DELAY_MS = 60;
 
 // Tip of the arrow is roughly at (6, 6) in the 28x28 SVG viewBox.
@@ -111,39 +110,47 @@ Cypress.on("window:load", (win: Window) => {
 // Demo specs never call .click(x, y) — only the no-arg or options-only form
 // after a `cy.get(...)` / `cy.getBySel(...)` parent. Keeping the signature
 // narrow side-steps the multi-overload typing dance documented by Cypress.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-Cypress.Commands.overwrite("click", (originalFn: any, subject: any, options?: any) => {
-    if (subject && (subject as JQuery<HTMLElement>).length) {
-        const $el = subject as JQuery<HTMLElement>;
-        const win = ($el[0].ownerDocument.defaultView ?? window) as Window;
-        const rect = $el[0].getBoundingClientRect();
-        moveCursorTo(win, rect.left + rect.width / 2, rect.top + rect.height / 2);
+//
+// Overriding `cy.click` / `cy.type` runs into Cypress 14's strict "callback
+// returned a promise" guard the moment we mix the cursor animation chain with
+// a returned originalFn chain. Custom child commands let the animation chain
+// off the subject and end with the native `.click()` / `.type()`, side-stepping
+// the override pattern entirely.
+
+Cypress.Commands.add(
+    "demoClick",
+    { prevSubject: "element" },
+    (subject: JQuery<HTMLElement>, options?: Partial<Cypress.ClickOptions>) => {
+        cy.wrap(subject, { log: false }).then(($el) => {
+            const win = ($el[0].ownerDocument.defaultView ?? window) as Window;
+            const rect = $el[0].getBoundingClientRect();
+            moveCursorTo(win, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        });
         cy.wait(MOVE_MS, { log: false });
-        cy.then(() => pulse(win));
+        cy.wrap(subject, { log: false }).then(($el) => {
+            const win = ($el[0].ownerDocument.defaultView ?? window) as Window;
+            pulse(win);
+        });
         cy.wait(120, { log: false });
+
+        return cy.wrap(subject, { log: false }).click(options);
     }
-    const result = originalFn(subject, options);
-    cy.wait(POST_CLICK_MS, { log: false });
+);
 
-    return result;
-});
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-Cypress.Commands.overwrite("type", (originalFn: any, subject: any, text: string, options?: any) => {
-    if (subject && (subject as JQuery<HTMLElement>).length) {
-        const $el = subject as JQuery<HTMLElement>;
-        const win = ($el[0].ownerDocument.defaultView ?? window) as Window;
-        const rect = $el[0].getBoundingClientRect();
-        moveCursorTo(win, rect.left + rect.width / 2, rect.top + rect.height / 2);
+Cypress.Commands.add(
+    "demoType",
+    { prevSubject: "element" },
+    (subject: JQuery<HTMLElement>, text: string, options?: Partial<Cypress.TypeOptions>) => {
+        cy.wrap(subject, { log: false }).then(($el) => {
+            const win = ($el[0].ownerDocument.defaultView ?? window) as Window;
+            const rect = $el[0].getBoundingClientRect();
+            moveCursorTo(win, rect.left + rect.width / 2, rect.top + rect.height / 2);
+        });
         cy.wait(MOVE_MS, { log: false });
-    }
-    const merged = {
-        delay: TYPE_DELAY_MS,
-        ...(options ?? {})
-    };
 
-    return originalFn(subject, text, merged);
-});
+        return cy.wrap(subject, { log: false }).type(text, { delay: TYPE_DELAY_MS, ...(options ?? {}) });
+    }
+);
 
 Cypress.Commands.add("demoPause", (ms = 600) => {
     cy.wait(ms, { log: false });
@@ -152,7 +159,9 @@ Cypress.Commands.add("demoPause", (ms = 600) => {
 declare global {
     // eslint-disable-next-line @typescript-eslint/no-namespace
     namespace Cypress {
-        interface Chainable {
+        interface Chainable<Subject = unknown> {
+            demoClick(options?: Partial<Cypress.ClickOptions>): Chainable<Subject>;
+            demoType(text: string, options?: Partial<Cypress.TypeOptions>): Chainable<Subject>;
             demoPause(ms?: number): Chainable<void>;
         }
     }

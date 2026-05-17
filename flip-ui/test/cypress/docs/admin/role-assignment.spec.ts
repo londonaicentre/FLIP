@@ -24,13 +24,13 @@ describe("docs: role assignment", () => {
         cy.visit("/admin/users");
         cy.demoPause();
 
-        cy.getBySel("user").contains("researcher.user@flip.com").click();
+        cy.getBySel("user").contains("researcher.user@flip.com").demoClick();
         cy.demoPause();
 
-        cy.getBySel("add-admin-btn").click();
+        cy.getBySel("add-admin-btn").demoClick();
         cy.demoPause();
 
-        cy.getBySel("save-user-btn").click();
+        cy.getBySel("save-user-btn").demoClick();
         cy.wait("@postRoles");
         cy.contains("The user's permissions have been updated").should("be.visible");
         cy.demoPause(1200);

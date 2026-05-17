@@ -26,10 +26,10 @@ describe("docs: site banner", () => {
         cy.visit("/admin/banner");
         cy.demoPause(800);
 
-        cy.contains("button", "Enable Site Banner").click();
+        cy.contains("button", "Enable Site Banner").demoClick();
         cy.demoPause();
 
-        cy.getBySel("confirm-modal-btn").click();
+        cy.getBySel("confirm-modal-btn").demoClick();
         cy.wait("@siteDetailsPut");
         cy.demoPause(1200);
     });

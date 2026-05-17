@@ -25,16 +25,16 @@ describe("docs: reset user MFA", () => {
         cy.visit("/admin/users");
         cy.demoPause();
 
-        cy.getBySel("user").contains("researcher.user@flip.com").click();
+        cy.getBySel("user").contains("researcher.user@flip.com").demoClick();
         cy.demoPause();
 
-        cy.getBySel("more-options-btn").click();
+        cy.getBySel("more-options-btn").demoClick();
         cy.demoPause();
 
-        cy.getBySel("reset-mfa-btn").click();
+        cy.getBySel("reset-mfa-btn").demoClick();
         cy.demoPause();
 
-        cy.getBySel("confirm-modal-btn").click();
+        cy.getBySel("confirm-modal-btn").demoClick();
         cy.wait("@mfaReset");
         cy.contains("The user's authenticator has been cleared").should("be.visible");
         cy.demoPause(1200);

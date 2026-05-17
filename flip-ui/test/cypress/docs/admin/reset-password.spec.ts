@@ -27,16 +27,16 @@ describe("docs: reset user password", () => {
         cy.visit("/admin/users");
         cy.demoPause();
 
-        cy.getBySel("user").contains("researcher.user@flip.com").click();
+        cy.getBySel("user").contains("researcher.user@flip.com").demoClick();
         cy.demoPause();
 
-        cy.getBySel("more-options-btn").click();
+        cy.getBySel("more-options-btn").demoClick();
         cy.demoPause();
 
-        cy.getBySel("reset-password-btn").click();
+        cy.getBySel("reset-password-btn").demoClick();
         cy.demoPause();
 
-        cy.getBySel("confirm-modal-btn").click();
+        cy.getBySel("confirm-modal-btn").demoClick();
         cy.wait("@passwordReset");
         cy.contains("The user's password has been reset").should("be.visible");
         cy.demoPause(1200);

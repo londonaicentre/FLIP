@@ -19,3 +19,27 @@ import "../../support/globalIntercepts";
 import "cypress-file-upload";
 import "cypress-localstorage-commands";
 import "./demoCursor";
+
+// Cypress 14 headless captures the whole runner window (command-log sidebar,
+// URL bar, AUT iframe) into the recorded mp4 rather than the AUT viewport only.
+// This injects CSS into the runner document to hide the command-log sidebar so
+// the AUT iframe takes most of the recording. The residual dark bezel + URL bar
+// strip get cropped in scripts/videos-to-gifs.sh before encoding to GIF.
+before(() => {
+    const top = window.parent;
+    if (!top || !top.document || top.document.getElementById("docs-aut-fullbleed")) {
+        return;
+    }
+    const style = top.document.createElement("style");
+    style.id = "docs-aut-fullbleed";
+    style.textContent = `
+        .reporter-wrap, .reporter, [data-cy="reporter"],
+        .specs-list-container, .specs-list,
+        [data-cy="runnable-header"], .runnable-header,
+        .toggle-specs-text, .reporter-running-row,
+        body > div.toggle-specs-text {
+            display: none !important;
+        }
+    `;
+    top.document.head.appendChild(style);
+});

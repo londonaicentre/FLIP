@@ -23,10 +23,10 @@ describe("docs: deployment mode", () => {
         cy.visit("/admin/deployments");
         cy.demoPause(800);
 
-        cy.contains("button", "Enable Deployment Mode").click();
+        cy.contains("button", "Enable Deployment Mode").demoClick();
         cy.demoPause();
 
-        cy.getBySel("confirm-modal-btn").click();
+        cy.getBySel("confirm-modal-btn").demoClick();
         cy.demoPause(1200);
     });
 });

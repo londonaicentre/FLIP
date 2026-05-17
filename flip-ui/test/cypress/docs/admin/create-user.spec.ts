@@ -26,17 +26,17 @@ describe("docs: create user", () => {
         cy.visit("/admin/users");
         cy.demoPause();
 
-        cy.getBySel("register-user-btn").click();
+        cy.getBySel("register-user-btn").demoClick();
         cy.demoPause();
 
-        cy.getBySel("email-field").type("new.researcher@kcl.ac.uk");
+        cy.getBySel("email-field").demoType("new.researcher@kcl.ac.uk");
         cy.demoPause();
 
-        cy.getBySel("chip-select").click();
-        cy.getBySel("chip-select-option").contains("Researcher").click();
+        cy.getBySel("chip-select").demoClick();
+        cy.getBySel("chip-select-option").contains("Researcher").demoClick();
         cy.demoPause();
 
-        cy.getBySel("register-user-confirm-btn").click();
+        cy.getBySel("register-user-confirm-btn").demoClick();
         cy.wait("@registerUser");
         cy.contains("The user has been registered successfully").should("be.visible");
         cy.demoPause(1200);

@@ -51,10 +51,16 @@ for mp4 in "${videos[@]}"; do
     fi
     out="${out_dir}/${name}.gif"
     echo "→ ${out}"
-    # 15 fps + lanczos downscale + per-clip palette keeps file sizes in the
+    # Cypress 14 headless captures the runner-chrome + AUT iframe at 1280x632
+    # (test/cypress/docs/support/index.ts hides the command-log sidebar). The
+    # AUT is rendered at 62% scale in the right portion of that frame; the crop
+    # below isolates that region. Coordinates are tied to viewport 1280x800 in
+    # cypress.docs.config.ts — if you change the viewport, re-eyeball with
+    # `ffmpeg -i <mp4> -vf 'select=eq(n,90)' -vframes 1 /tmp/probe.png`.
+    # 15 fps + lanczos upscale + per-clip palette keeps file sizes in the
     # 200 KB–1.5 MB envelope used by the existing hand-recorded GIFs.
     ffmpeg -y -hide_banner -loglevel error -i "${mp4}" \
-        -vf "fps=15,scale=1200:-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=full[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5" \
+        -vf "crop=780:540:470:60,fps=15,scale=1200:-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=full[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5" \
         "${out}"
 done
 

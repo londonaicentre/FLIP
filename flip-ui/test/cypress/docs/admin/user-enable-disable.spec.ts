@@ -27,25 +27,25 @@ describe("docs: enable / disable user", () => {
         cy.demoPause();
 
         // Disable an active user.
-        cy.getBySel("user").contains("researcher.user@flip.com").click();
+        cy.getBySel("user").contains("researcher.user@flip.com").demoClick();
         cy.demoPause();
-        cy.getBySel("more-options-btn").click();
+        cy.getBySel("more-options-btn").demoClick();
         cy.demoPause();
-        cy.getBySel("disable-user-btn").click();
+        cy.getBySel("disable-user-btn").demoClick();
         cy.demoPause();
-        cy.getBySel("confirm-modal-btn").click();
+        cy.getBySel("confirm-modal-btn").demoClick();
         cy.wait("@toggleUser");
         cy.contains("The user has been disabled").should("be.visible");
         cy.demoPause(900);
 
         // Re-enable the user that's already disabled in the fixture.
-        cy.getBySel("user").contains("disabled.user@flip.com").click();
+        cy.getBySel("user").contains("disabled.user@flip.com").demoClick();
         cy.demoPause();
-        cy.getBySel("more-options-btn").click();
+        cy.getBySel("more-options-btn").demoClick();
         cy.demoPause();
-        cy.getBySel("enable-user-btn").click();
+        cy.getBySel("enable-user-btn").demoClick();
         cy.demoPause();
-        cy.getBySel("confirm-modal-btn").click();
+        cy.getBySel("confirm-modal-btn").demoClick();
         cy.wait("@toggleUser");
         cy.contains("The user has been enabled").should("be.visible");
         cy.demoPause(1200);
