@@ -37,7 +37,7 @@ services:
     ports:
       - "5432"
     volumes:
-      - ./trust-api/tests/integration/fixtures/omop_seed.sql:/docker-entrypoint-initdb.d/omop_seed.sql:ro
+      - ../trust-api/tests/integration/fixtures/omop_seed.sql:/docker-entrypoint-initdb.d/omop_seed.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test_user -d test_omop_db"]
       interval: 1s
@@ -46,7 +46,7 @@ services:
 
   data-access-api-test:
     build:
-      context: ./data-access-api
+      context: ../data-access-api
       dockerfile: Dockerfile
       target: development
       args:
@@ -85,8 +85,8 @@ services:
     ports:
       - "8000"
     volumes:
-      - ./data-access-api/data_access_api:/app/data_access_api
-      - ./observability/log_config:/app/log_config:ro
+      - ../data-access-api/data_access_api:/app/data_access_api
+      - ../observability/log_config:/app/log_config:ro
     healthcheck:
       # Targets the canonical /health route (no trailing slash) so the check doesn't
       # depend on FastAPI's redirect_slashes default. urllib raises on non-2xx.

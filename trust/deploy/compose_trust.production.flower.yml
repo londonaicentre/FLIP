@@ -47,7 +47,7 @@ services:
       - --superlink
       - ${NLB_SUBDOMAIN}:${FL_SERVER_PORT}
       - --auth-supernode-private-key
-      - /keys/supernode_credentials_1
+      - /keys/supernode_credentials_${FL_KIT_SLOT_NUMBER}
       - --clientappio-api-address
       - ${SUPERNODE_1_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9094}
     shm_size: '8gb'

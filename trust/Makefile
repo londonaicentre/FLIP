@@ -31,8 +31,8 @@ endif
 
 include ../deploy/fl_backend.mk
 
-COMMON_COMPOSE_FILE := compose_trust.$(__DCKR_SUFFIX).yml
-FL_BACKEND_COMPOSE_FILE := compose_trust.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
+COMMON_COMPOSE_FILE := deploy/compose_trust.$(__DCKR_SUFFIX).yml
+FL_BACKEND_COMPOSE_FILE := deploy/compose_trust.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
 # Resolve FL_PROVISIONED_DIR (from .env) to an absolute path relative to the repo root.
 # Docker requires absolute paths for volume mounts; the .env value may be relative.
@@ -53,8 +53,11 @@ get_json_value = $(shell python3 ../flip-api/src/flip_api/scripts/env_utils.py '
 
 OMOP_DB_CMD=make -C ./omop-db
 ORTHANC_CMD=make -C ./orthanc
-DOCKER_COMPOSE_CMD=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f compose_trust.debug.override.yml
+# --project-directory . keeps relative paths inside the compose files (./trust-api,
+# ./observability/, ./omop-db/volumes/, …) resolving from trust/ even though the compose
+# files now live in trust/deploy/. Avoids having to rewrite every ./X to ../X.
+DOCKER_COMPOSE_CMD=docker compose --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.debug.override.yml
 
 # NOTE DOCKER_FL_REGISTRY is set to empty when we use local FL images during development (e.g. flare-fl-client:dev).
 # In that case, '--pull always' will error because docker won't be able to find the manifest for the dev image online,
@@ -80,10 +83,21 @@ TRUST_1_VARS = \
 	GRAFANA_PORT=${GRAFANA_PORT_TRUST_1} \
 	LOKI_PORT=${LOKI_PORT_TRUST_1} \
 	TRUST_NETWORK_NAME=${network1} \
-	TRUST_NAME=Trust_1 \
+	TRUST_NAME='(Mock) Guys and St Thomas NHS Trust' \
 	TRUST_NUMBER=1 \
 	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),Trust_1) \
-	TRUST_INTERNAL_SERVICE_KEY=$(call get_json_value,$(TRUST_INTERNAL_SERVICE_KEYS),Trust_1)
+	TRUST_INTERNAL_SERVICE_KEY=$(call get_json_value,$(TRUST_INTERNAL_SERVICE_KEYS),Trust_1) \
+	FL_KIT_SLOT=Trust_1 \
+	FL_KIT_SLOT_NUMBER=1
+# trust/.env.trust2 — when present (typically dropped in by the admin after
+# POST /admin/trusts), overrides TRUST_NAME, TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY,
+# FL_KIT_SLOT and FL_KIT_SLOT_NUMBER for the dev trust2 stack. Lets a joining trust
+# (arbitrary friendly name, kit slot from the pool) take over the trust2 host slot
+# without re-touching this Makefile. Falls back to the hard-coded "Trust_2" defaults
+# when no kit file is present (legacy dev convention).
+TRUST2_KIT_FILE := .env.trust2
+-include $(TRUST2_KIT_FILE)
+
 TRUST_2_VARS = \
 	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST2} \
 	OMOP_DB_PORT=${OMOP_DB_PORT_TRUST_2} \
@@ -98,10 +112,12 @@ TRUST_2_VARS = \
 	GRAFANA_PORT=${GRAFANA_PORT_TRUST_2} \
 	LOKI_PORT=${LOKI_PORT_TRUST_2} \
 	TRUST_NETWORK_NAME=${network2} \
-	TRUST_NAME=Trust_2 \
+	TRUST_NAME='$(or $(TRUST_NAME),Trust_2)' \
 	TRUST_NUMBER=2 \
-	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),Trust_2) \
-	TRUST_INTERNAL_SERVICE_KEY=$(call get_json_value,$(TRUST_INTERNAL_SERVICE_KEYS),Trust_2)
+	TRUST_API_KEY=$(or $(TRUST_API_KEY),$(call get_json_value,$(TRUST_API_KEYS),Trust_2)) \
+	TRUST_INTERNAL_SERVICE_KEY=$(or $(TRUST_INTERNAL_SERVICE_KEY),$(call get_json_value,$(TRUST_INTERNAL_SERVICE_KEYS),Trust_2)) \
+	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),Trust_2) \
+	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),2)
 
 # Host ports, bind paths, and the trust network are hardcoded here (not env
 # vars) so the local-trust stack can coexist with dev trust1/trust2 on one
@@ -118,6 +134,18 @@ TRUST_2_VARS = \
 # breaks xnat-nginx upstream resolution. To re-seed the local-trust Orthanc
 # on a dev laptop, copy from the matching trust dir once:
 #   cp -r trust/orthanc/orthanc-storage-2/ trust/orthanc/orthanc-storage-local/
+#
+# Per-trust kit file (trust/.env.<LOCAL_TRUST_NAME>, i.e. alongside this Makefile)
+# is the new sharable artifact the hub admin hands to a trust operator after
+# POST /admin/trusts. When present, its TRUST_API_KEY and TRUST_INTERNAL_SERVICE_KEY
+# take precedence over the JSON dicts in the main hub env file — which keeps
+# a-posteriori trusts out of `.env.development` (separation of concerns:
+# hub-dev state vs trust operator credentials). For the dev-seeded trusts
+# (Trust_1/Trust_2), no kit file exists and we fall back to the JSON lookup,
+# so existing flows are unchanged.
+LOCAL_TRUST_KIT_FILE := .env.$(LOCAL_TRUST_NAME)
+-include $(LOCAL_TRUST_KIT_FILE)
+
 LOCAL_TRUST_VARS = \
 	BASE_IMAGES_DOWNLOAD_DIR=./data/local/$(LOCAL_TRUST_NAME) \
 	OMOP_DB_PORT=5438 \
@@ -126,15 +154,50 @@ LOCAL_TRUST_VARS = \
 	GRAFANA_PORT=3002 \
 	LOKI_PORT=3102 \
 	TRUST_NETWORK_NAME=${network_local} \
-	TRUST_NAME=$(LOCAL_TRUST_NAME) \
+	TRUST_NAME='$(LOCAL_TRUST_NAME)' \
 	TRUST_NUMBER=$(subst Trust_,,$(LOCAL_TRUST_NAME)) \
-	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),$(LOCAL_TRUST_NAME)) \
-	TRUST_INTERNAL_SERVICE_KEY=$(call get_json_value,$(TRUST_INTERNAL_SERVICE_KEYS),$(LOCAL_TRUST_NAME)) \
+	TRUST_API_KEY=$(or $(TRUST_API_KEY),$(call get_json_value,$(TRUST_API_KEYS),$(LOCAL_TRUST_NAME))) \
+	TRUST_INTERNAL_SERVICE_KEY=$(or $(TRUST_INTERNAL_SERVICE_KEY),$(call get_json_value,$(TRUST_INTERNAL_SERVICE_KEYS),$(LOCAL_TRUST_NAME))) \
+	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),$(LOCAL_TRUST_NAME)) \
+	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),$(subst Trust_,,$(LOCAL_TRUST_NAME))) \
 	OMOP_DATA_DIR=./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data \
 	ORTHANC_STORAGE_DIR=./orthanc/orthanc-storage-local \
 	OBSERVABILITY_CONFIG_DIR=./observability \
 	LOKI_DATA_VOLUME=trust-local-loki-data \
 	GRAFANA_DATA_VOLUME=trust-local-grafana-data
+
+# Guard: refuse to bring a trust up if its OMOP DB data dir is empty or missing.
+# Docker would otherwise silently auto-create an empty bind mount on first start,
+# and the omop-db image's init scripts (which create the schema + read-only
+# data_analyst_reader role) only run when the data dir is empty AT THE POSTGRES
+# DATA LEVEL — a freshly-created host dir does NOT trigger init because Postgres
+# treats the missing PG_VERSION file as "broken", not "uninitialized". The
+# downstream symptom is cohort queries failing with "FATAL: password
+# authentication failed for user data_analyst_reader" hours later.
+#
+# Pass the resolved path (matching what the compose file will mount) as $1.
+define check_omop_data_dir
+	@dir="$(1)"; \
+	if [ ! -d "$$dir" ]; then \
+	    populated=0; \
+	else \
+	    links=$$(stat -c '%h' "$$dir" 2>/dev/null || echo 2); \
+	    if [ "$$links" -gt 2 ]; then populated=1; else populated=0; fi; \
+	fi; \
+	if [ "$$populated" -eq 0 ]; then \
+	    echo "❌ OMOP DB data dir is empty or missing: $$dir"; \
+	    echo "   The omop-db container would start with no schema and no"; \
+	    echo "   data_analyst_reader role — cohort queries would fail at runtime."; \
+	    echo ""; \
+	    echo "   Populate it first:"; \
+	    echo "       make -C trust update-omop-data"; \
+	    echo ""; \
+	    echo "   Or, for a joining trust whose friendly name doesn't match a"; \
+	    echo "   canonical data dir, point OMOP_DATA_DIR at an existing populated"; \
+	    echo "   path (e.g. OMOP_DATA_DIR=./omop-db/volumes/Trust_2/db_data)."; \
+	    exit 1; \
+	fi
+endef
 
 build:
 	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust1} build --no-cache
@@ -146,12 +209,13 @@ up-trust-1: update-omop-data update-orthanc-data
 	@echo "🚢 Starting Trust 1 services..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
+	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_1/db_data))
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST1}
-	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f compose_trust-1_override.yml -p ${trust1} up -d $(PULL_ALWAYS_FLAG)
+	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} up -d $(PULL_ALWAYS_FLAG)
 
 down-trust-1:
 	@echo "🛑 Stopping Trust 1 services..."
-	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -f compose_trust-1_override.yml -p ${trust1} down --remove-orphans
+	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} down --remove-orphans
 
 restart-trust-1: down-trust-1 up-trust-1
 
@@ -183,14 +247,15 @@ up-local-trust: create-networks-core create-networks-local-trust
 	@echo "🚢 Starting local Trust services (TRUST_NAME=$(LOCAL_TRUST_NAME))..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
+	$(call check_omop_data_dir,./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data)
 	mkdir -p ./data/local/$(LOCAL_TRUST_NAME)
 	$(LOCAL_TRUST_VARS) DEBUG=$(DEBUG) \
-		$(DOCKER_COMPOSE_CMD) -f compose_trust.local.yml -p $(trust_local) up -d --pull always
+		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(trust_local) up -d --pull always
 
 down-local-trust:
 	@echo "🛑 Stopping local Trust services..."
 	$(LOCAL_TRUST_VARS) \
-		$(DOCKER_COMPOSE_CMD) -f compose_trust.local.yml -p $(trust_local) down --remove-orphans
+		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(trust_local) down --remove-orphans
 
 # Uses --pull always to ensure the latest FL images and omop-db image are used
 # ensure omop and orthanc data are up to date before bringing up trust 2
@@ -198,6 +263,7 @@ up-trust-2: update-omop-data update-orthanc-data
 	@echo "🚢 Starting Trust 2 services..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
+	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_2/db_data))
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST2}
 	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d $(PULL_ALWAYS_FLAG)
 
@@ -275,7 +341,7 @@ debug-trust-api-off:
 
 
 # Trust-side integration tests (issue #369, B3). Each delegated target brings up
-# the shared trust/compose.test.yml stack via Testcontainers — run them serially
+# the shared trust/deploy/compose.test.yml stack via Testcontainers — run them serially
 # so the per-suite session fixtures don't fight over Docker resources.
 integration_test:
 	$(MAKE) -C data-access-api integration_test

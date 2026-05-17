@@ -44,5 +44,5 @@ orthanc/orthanc-storage-local
 xnat/plugins/*.jar
 
 # Image data folder
-data/trust-*/**/*.nii.gz
-data/trust-*/**/*.dcm
+data/**/*.dcm
+data/**/*.nii.gz

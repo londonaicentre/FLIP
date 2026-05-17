@@ -20,12 +20,14 @@ services:
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
-      # Provisioned Flower secrets (certificates, keys)
-      - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
-      - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
+      # Provisioned NVFLARE secrets (certificates, fed_client.json) — mounted from the
+      # FL kit slot assigned by the hub, NOT the trust's friendly name. The slot dir's
+      # fed_client.json baked-in CN is the identity the FL server sees on registration.
+      - ${FL_PROVISIONED_DIR}/net-1/services/${FL_KIT_SLOT}/local:/app/local
+      - ${FL_PROVISIONED_DIR}/net-1/services/${FL_KIT_SLOT}/startup:/app/startup
+      - ${FL_PROVISIONED_DIR}/net-1/services/${FL_KIT_SLOT}/transfer:/app/transfer
     environment:
       - NET_ID=net-1
-      - SUPERNODE_NAME=${TRUST_NAME}
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
       - LOCAL_DEV=false
@@ -41,15 +43,6 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
-    command:
-      - --root-certificates
-      - /certs/ca.crt
-      - --superlink
-      - fl-server-net-1:9092
-      - --auth-supernode-private-key
-      - /keys/supernode_credentials_${TRUST_NUMBER}
-      - --clientappio-api-address
-      - ${SUPERNODE_1_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9094}
     networks:
       - default
       - deploy_shared-net-1
@@ -61,12 +54,12 @@ services:
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
-      # Provisioned Flower secrets (certificates, keys)
-      - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
-      - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro
+      # Provisioned NVFLARE secrets (certificates, fed_client.json)
+      - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/local:/app/local
+      - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
+      - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/transfer:/app/transfer
     environment:
       - NET_ID=net-2
-      - SUPERNODE_NAME=${TRUST_NAME}
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
       - LOCAL_DEV=false
@@ -82,15 +75,6 @@ services:
       # This key is per-trust and never leaves the trust environment.
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
-    command:
-      - --root-certificates
-      - /certs/ca.crt
-      - --superlink
-      - fl-server-net-2:9092
-      - --auth-supernode-private-key
-      - /keys/supernode_credentials_${TRUST_NUMBER}
-      - --clientappio-api-address
-      - ${SUPERNODE_2_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9095}
     networks:
       - default
       - deploy_shared-net-2
