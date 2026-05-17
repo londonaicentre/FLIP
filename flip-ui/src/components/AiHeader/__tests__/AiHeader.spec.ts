@@ -19,14 +19,10 @@ import { vi } from "vitest";
 
 import AiHeader from "../AiHeader.vue";
 
-const HeaderTestIds = { Title: "[data-test='header-title']" };
-
 describe("AiHeader", () => {
-    test("Renders Component with correct props", () => {
-        const title = "Test Title";
-
+    test("Renders the top nav with required props", () => {
         const component = mount(AiHeader, {
-            props: { title },
+            props: { title: "Projects", currentPage: "/projects", isDark: false },
             global: {
                 stubs: ["router-link"],
                 plugins: [createTestingPinia({
@@ -36,7 +32,8 @@ describe("AiHeader", () => {
             }
         });
 
-        const titleElement = component.find(HeaderTestIds.Title);
-        expect(titleElement.text()).toEqual(title);
+        // The page now owns its own H1, so the header renders only the top nav
+        // (no visible title element).
+        expect(component.find("[data-test='top-nav']").exists()).toBe(true);
     });
 });

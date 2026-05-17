@@ -12,33 +12,35 @@
 -->
 
 ﻿<route lang="yaml">
-    name: Connection Status
+    name: Connection Status (FL nets)
 </route>
 
 <template>
     <div class="flex flex-col w-full h-full">
         <Transition name="fade" mode="out-in">
             <AiLoader v-if="!flStatus" class="py-8" />
-            <div v-else class="w-full p-4 xl:overflow-y-auto">
+            <div v-else class="w-full px-8 pt-8 pb-8 xl:overflow-y-auto">
                 <AiCard class="w-full space-y-2">
                     <div class="relative p-4 overflow-hidden transition">
                         <div
                             class="relative"
                         >
-                            <icon-ph-plugs-connected-duotone
-                                v-if="healthyPlatform"
-                                class="w-16 h-16 mb-8 transition text-green-600/70"
-                            />
-                            <icon-ph-plugs-duotone
-                                v-else
-                                class="w-16 h-16 mb-8 transition text-red-900/70 dark:text-red-400"
-                            />
-                            <h3 class="mt-2 text-3xl font-semibold font-heading">
-                                The platform is <span
-                                    class="font-black underline uppercase transition decoration-4 decoration-solid underline-offset-8"
-                                    :class="[healthyPlatform ? 'decoration-green-600/70' : 'decoration-red-900/70 dark:decoration-red-400']"
-                                >
-                                    {{ healthyPlatform ? 'Healthy' : 'Unhealthy' }}
+                            <h3 class="flex items-center gap-4 mt-2 text-3xl font-semibold font-heading">
+                                <icon-ph-plugs-connected-duotone
+                                    v-if="healthyPlatform"
+                                    class="w-10 h-10 transition text-green-600/70 shrink-0"
+                                />
+                                <icon-ph-plugs-duotone
+                                    v-else
+                                    class="w-10 h-10 transition text-red-900/70 dark:text-red-400 shrink-0"
+                                />
+                                <span>
+                                    The FL nets are <span
+                                        class="font-black underline uppercase transition decoration-4 decoration-solid underline-offset-8"
+                                        :class="[healthyPlatform ? 'decoration-green-600/70' : 'decoration-red-900/70 dark:decoration-red-400']"
+                                    >
+                                        {{ healthyPlatform ? 'Healthy' : 'Unhealthy' }}
+                                    </span>
                                 </span>
                             </h3>
                             <p class="max-w-2xl my-6 text-gray-500">
@@ -48,7 +50,7 @@
                             </p>
                         </div>
                     </div>
-                    <div class="relative p-4 space-y-2 bg-gray-200 dark:bg-gray-700 xl:columns-2 gap-x-2">
+                    <div class="relative p-4 space-y-2 xl:columns-2 gap-x-2">
                         <div
                             v-for="net in flStatus"
                             :key="net.name"
@@ -77,7 +79,7 @@
                                     class="h-full border-t border-gray-200 divide-y divide-gray-200 dark:border-gray-700 dark:divide-gray-700"
                                 >
                                     <li
-                                        v-for="(client, idx) in net.clients"
+                                        v-for="(client, idx) in sortedClients(net.clients)"
                                         :key="client.name"
                                         :data-test="`project-list-item-${idx}`"
                                     >
@@ -186,6 +188,9 @@ const hideDetails = () => {
 const offlineClients = (clients: IFLStatusClients[]) => {
     return clients.some(c => !c.online);
 };
+
+const sortedClients = (clients: IFLStatusClients[]): IFLStatusClients[] =>
+    [...(clients ?? [])].sort((a, b) => a.name.localeCompare(b.name));
 
 const formatBackend = (backend: "nvflare" | "flower") =>
     backend === "nvflare" ? "NVFlare" : "Flower";

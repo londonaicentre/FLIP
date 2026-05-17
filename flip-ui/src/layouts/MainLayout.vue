@@ -16,49 +16,40 @@
         <transition name="slidedown">
             <AiBanner v-if="details?.banner?.enabled" :message="details.banner.message" :link="details.banner.link" />
         </transition>
-        <div class="flex flex-row flex-1 h-full overflow-auto">
-            <!-- Sidebar -->
-            <div class="xl:w-[180px] w-[0px] transition-all shrink-0">
-                <AiMainNavigation :current-page="route.fullPath" :is-dark="isDark" />
-            </div>
+        <!-- Top nav -->
+        <AiHeader :title="route.name?.toString() ?? ''" :current-page="route.fullPath" :is-dark="isDark" @toggle-dark="toggleDark">
+            <AiUserDropdown
+                :is-dark="isDark"
+                :email-address="emailAddress"
+                :display-name="displayName"
+                :role="userRole"
+                @sign-out="signOut"
+                @toggle-dark-mode="toggleDark"
+            />
+        </AiHeader>
 
-            <!-- Main -->
-            <div class="flex flex-col w-full overflow-hidden grow">
-                <!-- TopBar -->
-                <AiHeader :title="route.name?.toString() ?? ''" :current-page="route.fullPath" :is-dark="isDark" @toggle-dark="toggleDark">
-                    <AiUserDropdown
-                        :is-dark="isDark"
-                        :email-address="emailAddress"
-                        :role="userRole"
-                        @sign-out="signOut"
-                        @toggle-dark-mode="toggleDark"
-                    />
-                </AiHeader>
+        <!-- Main Content (full-width — sidebar removed in favour of top nav) -->
+        <AiErrorAlert v-if="errorStore.hasError" />
 
-                <!-- Main Content -->
-                <AiErrorAlert v-if="errorStore.hasError" />
+        <main class="flex w-full overflow-auto grow focus:outline-none bg-body dark:bg-gray-800">
+            <router-view v-slot="{ Component }">
+                <DeploymentMode v-if="details.deploymentMode && !route.path.includes('/admin/')" />
 
-                <main class="flex w-0 min-w-full overflow-auto grow focus:outline-none bg-body dark:bg-gray-800">
-                    <router-view v-slot="{ Component }">
-                        <DeploymentMode v-if="details.deploymentMode && !route.path.includes('/admin/')" />
-
-                        <Transition v-else-if="isProjectPage" name="fade" mode="out-in">
-                            <AiLoader v-if="!hasProject" />
-                            <div v-else class="w-full h-full">
-                                <component :is="Component" class="w-full" @update-project="mutate" />
-                                <CreateModelModal
-                                    :open="modalsStore.createModelOpen"
-                                    @close-modal="modalsStore.toggleCreateModel"
-                                />
-                            </div>
-                        </Transition>
-                        <template v-else>
-                            <component :is="Component" />
-                        </template>
-                    </router-view>
-                </main>
-            </div>
-        </div>
+                <Transition v-else-if="isProjectPage" name="fade" mode="out-in">
+                    <AiLoader v-if="!hasProject" />
+                    <div v-else class="w-full h-full">
+                        <component :is="Component" class="w-full" @update-project="mutate" />
+                        <CreateModelModal
+                            :open="modalsStore.createModelOpen"
+                            @close-modal="modalsStore.toggleCreateModel"
+                        />
+                    </div>
+                </Transition>
+                <template v-else>
+                    <component :is="Component" />
+                </template>
+            </router-view>
+        </main>
     </div>
 </template>
 
@@ -73,11 +64,12 @@ import AiErrorAlert from "@/components/AiAlert/AiErrorAlert.vue";
 import AiBanner from "@/components/AiBanner/AiBanner.vue";
 import AiHeader from "@/components/AiHeader/AiHeader.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
-import AiMainNavigation from "@/components/AiMainNavigation/AiMainNavigation.vue";
 import AiUserDropdown from "@/components/AiUserDropdown/AiUserDropdown.vue";
+import { usePermissions } from "@/composables/usePermissions";
 import DeploymentMode from "@/pages/DeploymentMode.vue";
 import CreateModelModal from "@/partials/models/CreateModelModal.vue";
 import { getProject, IProject } from "@/services/project-service";
+import { validateUser } from "@/services/user-service";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 import { useModalsStore } from "@/store/modals";
@@ -99,9 +91,22 @@ const headerTitle = ref(route.name?.toString() ?? "");
 const pageRoute = ref(route.fullPath?.toString() ?? "");
 const emailAddress = authStore.user?.attributes?.email ?? "";
 
+const { data: currentUserProfile } = useSWRV(
+    () => emailAddress && `/users/${emailAddress}`,
+    () => validateUser(emailAddress),
+    {
+        dedupingInterval: 60_000,
+        revalidateOnFocus: false,
+        shouldRetryOnError: false
+    }
+);
+
+const displayName = computed(() => currentUserProfile.value?.name || emailAddress);
+
+const { isAdmin, canCreateProjects } = usePermissions();
 const userRole = computed(() => {
-    if (authStore.hasPermissions(["CanAccessAdminPanel"])) return "Admin";
-    if (authStore.hasPermissions(["CanManageProjects"])) return "Researcher";
+    if (isAdmin.value) return "Admin";
+    if (canCreateProjects.value) return "Researcher";
 
     return "Observer";
 });

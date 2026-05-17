@@ -36,7 +36,14 @@ export default function useNavigation(props: IMainNavigationProps | IAIHeaderPro
             canAccess: true
         },
         {
-            name: "Connection Status",
+            name: "Connection Status (Trusts)",
+            href: "/connectionstatustrusts",
+            current: props.currentPage === "/connectionstatustrusts",
+            icon: ConnectionIcon,
+            canAccess: true
+        },
+        {
+            name: "Connection Status (FL nets)",
             href: "/connectionstatus",
             current: props.currentPage === "/connectionstatus",
             icon: ConnectionIcon,

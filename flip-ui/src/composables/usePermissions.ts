@@ -1,0 +1,51 @@
+/*
+ * Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import { computed, ComputedRef } from "vue";
+
+import { useAuthStore } from "@/store/auth";
+
+/**
+ * Central role-based gates. Use these instead of inlining `hasPermissions(...)`
+ * calls so changes to the permission model (e.g. role → permission mapping)
+ * only need editing in one place.
+ *
+ * The Admin / Researcher / Observer split:
+ *   - Admin       — has `CanAccessAdminPanel` (every permission, by seed).
+ *   - Researcher  — has `CanCreateProjects` (no `CanManageProjects`; per-project
+ *                   access is enforced server-side on writes).
+ *   - Observer    — has neither.
+ */
+export function usePermissions(): {
+    isAdmin: ComputedRef<boolean>;
+    canCreateProjects: ComputedRef<boolean>;
+    /**
+     * True when the user has no project-write capability. Use this as the
+     * gate for any "create / edit / run / delete" UI control on a project,
+     * model, or cohort query. Researchers (owners or in `project.users`)
+     * are NOT observers — the backend per-project check stops them from
+     * acting on projects they don't own.
+     */
+    isObserver: ComputedRef<boolean>;
+} {
+    const authStore = useAuthStore();
+    const isAdmin = computed(() => authStore.hasPermissions(["CanAccessAdminPanel"]));
+    const canCreateProjects = computed(() => authStore.hasPermissions(["CanCreateProjects"]));
+    const isObserver = computed(() => !canCreateProjects.value);
+
+    return {
+        isAdmin,
+        canCreateProjects,
+        isObserver
+    };
+}

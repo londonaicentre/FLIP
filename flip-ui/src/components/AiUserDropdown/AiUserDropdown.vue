@@ -30,7 +30,7 @@
                             </div>
                             <span class="flex-col flex-1 hidden min-w-0 md:flex">
                                 <span class="font-semibold truncate select-none">
-                                    {{ emailAddress }}{{ role ? ` (${role})` : '' }}
+                                    {{ displayName }}{{ role ? ` (${role})` : '' }}
                                 </span>
                             </span>
                             <icon-heroicons-outline-selector
@@ -61,7 +61,7 @@
                     <p
                         class="text-sm font-semibold text-gray-700 dark:text-gray-400 truncate"
                     >
-                        {{ emailAddress }}{{ role ? ` (${role})` : '' }}
+                        {{ displayName }}{{ role ? ` (${role})` : '' }}
                     </p>
                 </div>
                 <div class="px-1 py-1">
@@ -126,20 +126,24 @@
 
 <script lang="ts" setup>
 import { Menu, MenuButton, MenuItem, MenuItems } from "@headlessui/vue";
+import { computed } from "vue";
 
 import { routeChange } from "@/router";
 
 interface IAiUserDropdownProps {
     emailAddress: string;
+    displayName?: string;
     isDark: boolean;
     role?: string;
 }
 
 const props = withDefaults(
-    defineProps<IAiUserDropdownProps>(), { emailAddress: "" }
+    defineProps<IAiUserDropdownProps>(), { emailAddress: "", displayName: "" }
 );
 
 const emit = defineEmits(["signOut", "toggleDarkMode"]);
+
+const displayName = computed(() => props.displayName || props.emailAddress);
 
 const signOut = () => {
     emit("signOut");
