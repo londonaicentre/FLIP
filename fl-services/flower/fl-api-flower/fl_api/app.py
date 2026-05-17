@@ -64,6 +64,14 @@ def _get_src_root() -> Path:
     return Path(os.getenv("FLOWER_SRC_ROOT", "/app/src"))
 
 
+def _get_upload_dir() -> Path:
+    return Path(os.getenv("UPLOAD_DIR", "/app/uploads"))
+
+
+def _get_checkpoints_dir() -> Path:
+    return Path(os.getenv("MODEL_CHECKPOINTS_DIR", "/app/model_checkpoints"))
+
+
 def _get_superlink_health_address() -> str:
     return os.getenv("SUPERLINK_HEALTH_ADDRESS", "").strip()
 
@@ -168,11 +176,17 @@ def _validate_app_folder(app_folder: str) -> Path:
     #         detail=(f"Invalid app folder '{app_folder}'. Allowed values: {sorted(allowed_job_folders)}"),
     #     )
 
+    # First try upload directory (for dynamically uploaded apps)
+    job_dir = _get_upload_dir() / app_folder
+    if job_dir.is_dir():
+        return job_dir
+
+    # Fall back to src root (for static tutorial apps)
     job_dir = _get_src_root() / app_folder
     if not job_dir.is_dir():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Job folder path does not exist: {job_dir}",
+            detail=f"Job folder path does not exist in uploads or tutorials: {app_folder}",
         )
 
     return job_dir
@@ -383,5 +397,6 @@ def upload_app(model_id: str, body: UploadAppRequest) -> dict[str, str]:
     Returns:
         dict[str, str]: A dictionary containing the status of the upload.
     """
-    upload_dir = _get_src_root()
-    return upload_application(model_id, body, upload_dir=upload_dir)
+    upload_dir = _get_upload_dir()
+    checkpoints_dir = _get_checkpoints_dir()
+    return upload_application(model_id, body, upload_dir=upload_dir, checkpoints_dir=checkpoints_dir)

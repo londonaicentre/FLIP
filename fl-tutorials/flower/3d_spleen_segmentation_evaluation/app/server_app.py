@@ -35,7 +35,7 @@ def parse_models_config(run_config: Dict) -> Dict:
 
     Flower flattens ``[tool.flwr.app.config.models.foo]`` into keys like
     ``"models.foo.checkpoint"`` and ``"models.foo.path"`` in run_config.
-    This function reconstructs the expected nested structure::
+    This function reconstructs the expected nested structure:
 
         {
             "foo": {"checkpoint": "...", "path": "..."}
@@ -139,11 +139,29 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         log(ERROR, msg)
         raise ValueError(msg)
 
-    checkpoints_dir = os.getenv("MODEL_CHECKPOINTS_DIR")
-    if not checkpoints_dir:
+    # ------------------------------------------------------------------
+    # Determine checkpoint directory.
+    #
+    # Checkpoints are stored under ``MODEL_CHECKPOINTS_DIR/<model_id>/`` by the
+    # FL API upload endpoint. ``MODEL_CHECKPOINTS_DIR`` is a shared volume
+    # mounted into the FL API, SuperLink and SuperNodes.
+    # ------------------------------------------------------------------
+    base_checkpoints_dir = os.getenv("MODEL_CHECKPOINTS_DIR")
+    if not base_checkpoints_dir:
         msg = "MODEL_CHECKPOINTS_DIR environment variable is not set"
         log(ERROR, msg)
         raise ValueError(msg)
+
+    # Prefer the per-model subdirectory (populated by the FL API on upload).
+    # Fall back to the base directory for dev/standalone where a single
+    # checkpoint file is dropped directly into MODEL_CHECKPOINTS_DIR.
+    per_model_dir = os.path.join(base_checkpoints_dir, model_id)
+    if os.path.isdir(per_model_dir):
+        checkpoints_dir = per_model_dir
+        log(INFO, f"Using per-model checkpoints directory: {checkpoints_dir}")
+    else:
+        checkpoints_dir = base_checkpoints_dir
+        log(INFO, f"Using MODEL_CHECKPOINTS_DIR from environment: {checkpoints_dir}")
 
     loaded_models: Dict[str, torch.nn.Module] = {}
     for model_name, model_cfg in models_config.items():

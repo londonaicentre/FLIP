@@ -128,12 +128,12 @@ def train(msg: Message, context: Context) -> Message:
         last_val = validate_func(model, val_loader, device, lesions)
         scheduler.step()
 
-        round_id = global_round * local_rounds + epoch + 1
-        per_epoch_metrics[f"train_loss.round_{round_id}"] = last_train["loss"]
-        per_epoch_metrics[f"val_loss.round_{round_id}"] = last_val["loss"]
+        # Use epoch_{N}_ format for per-epoch metrics (NEW format for handle_client_metrics)
+        per_epoch_metrics[f"epoch_{epoch}_train_loss"] = last_train["loss"]
+        per_epoch_metrics[f"epoch_{epoch}_val_loss"] = last_val["loss"]
         for name in lesions.get_lesion_list():
-            per_epoch_metrics[f"train_f1-{name}.round_{round_id}"] = last_train[f"f1-score-{name}"]
-            per_epoch_metrics[f"val_f1-{name}.round_{round_id}"] = last_val[f"f1-score-{name}"]
+            per_epoch_metrics[f"epoch_{epoch}_train_f1-{name}"] = last_train[f"f1-score-{name}"]
+            per_epoch_metrics[f"epoch_{epoch}_val_f1-{name}"] = last_val[f"f1-score-{name}"]
 
     metrics: dict[str, float] = {
         **_flatten_per_lesion(last_train, "train"),
@@ -144,7 +144,7 @@ def train(msg: Message, context: Context) -> Message:
     }
 
     model_record = ArrayRecord(model.state_dict())
-    site_config = ConfigRecord({"site": client_name})
+    site_config = ConfigRecord({"site": client_name, "local_epochs": local_rounds})
     metric_record = MetricRecord(metrics)
     content = RecordDict({"arrays": model_record, "metrics": metric_record, "config": site_config})
     return Message(content=content, reply_to=msg)

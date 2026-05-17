@@ -1,4 +1,5 @@
 import shutil
+from enum import Enum
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -7,6 +8,18 @@ from tomlkit import dumps, parse
 
 from fl_api.schemas import UploadAppRequest
 from fl_api.utils.logger import logger
+
+
+class CheckpointExtension(str, Enum):
+    """Allowed file extensions that are treated as model checkpoints and routed to the
+    shared checkpoints directory instead of the upload directory."""
+
+    PT = ".pt"
+    PTH = ".pth"
+
+    @classmethod
+    def values(cls) -> set[str]:
+        return {member.value for member in cls}
 
 
 def _key_after_model_id(url: str, model_id: str) -> Path:
@@ -30,7 +43,7 @@ def _key_after_model_id(url: str, model_id: str) -> Path:
 
 
 def upsert_flwr_run_config(config_path: Path, model_id: str, project_id: str, cohort_query: str) -> None:
-    """Update config.toml with the provided model_id, project_id and cohort_query."""
+    """Update config.toml with the provided model_id, project_id, and cohort_query."""
     doc = parse(config_path.read_text())
 
     # run config values must be top-level key/value pairs in config.toml
@@ -41,7 +54,14 @@ def upsert_flwr_run_config(config_path: Path, model_id: str, project_id: str, co
     config_path.write_text(dumps(doc))
 
 
-def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) -> dict[str, str]:
+def _is_checkpoint_file(relative_path: Path) -> bool:
+    """Return True if the file extension is in the checkpoint allowlist."""
+    return relative_path.suffix.lower() in CheckpointExtension.values()
+
+
+def upload_application(
+    model_id: str, body: UploadAppRequest, upload_dir: Path, checkpoints_dir: Path
+) -> dict[str, str]:
     """
     Handles the logic of uploading an application to the server. This involves downloading the files uploaded by the
     user to a specific location on the server, and then returning a success message.
@@ -51,6 +71,9 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         store the uploaded files.
         body (UploadAppRequest): The body of the upload request, containing details such as project_id, cohort_query.
         upload_dir (Path): The base directory on the server where uploaded applications should be stored.
+        checkpoints_dir (Path): The base directory where model checkpoint files (.pt, .pth) should be stored.
+            This is a separate volume shared between the FL API and the SuperLink (and SuperNodes) so that
+            evaluation apps can load checkpoints by model_id.
 
     Returns:
         dict[str, str]: A dictionary containing a success message and the location where the application was uploaded.
@@ -72,6 +95,15 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     # Then we create the job directory.
     job_dir.mkdir(parents=True, exist_ok=True)
 
+    # Per-model checkpoints directory shared with the SuperLink/SuperNodes.
+    # Checkpoint files (.pt, .pth) are routed here so they are not bundled into the
+    # Flower app sent to SuperNodes, but remain accessible to evaluation apps.
+    model_checkpoints_dir = checkpoints_dir / model_id
+    if model_checkpoints_dir.exists():
+        logger.warning(f"Model checkpoints directory {model_checkpoints_dir} already exists, removing it...")
+        shutil.rmtree(model_checkpoints_dir, ignore_errors=True)
+    model_checkpoints_dir.mkdir(parents=True, exist_ok=True)
+
     logger.info(f"Downloading {len(bundle_urls)} files into job directory: {job_dir}")
 
     for url in bundle_urls:
@@ -79,7 +111,13 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
 
         # Reconstruct structure under app_dir using the URL path after model_id
         relative_path = _key_after_model_id(url, model_id)  # e.g. app/config.toml
-        dest_path = job_dir / relative_path  # job_dir/app/config.toml
+
+        # Route checkpoint files to the shared checkpoints directory (flat layout: only filename)
+        if _is_checkpoint_file(relative_path):
+            dest_path = model_checkpoints_dir / relative_path.name
+            logger.info(f"Routing checkpoint file to shared checkpoints dir: {dest_path}")
+        else:
+            dest_path = job_dir / relative_path  # job_dir/app/config.toml
 
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
