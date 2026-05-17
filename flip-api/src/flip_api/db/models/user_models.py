@@ -74,6 +74,18 @@ class UserRole(SQLModel, table=True):
     role_id: UUID = Field(foreign_key="roles.id", primary_key=True)
 
 
+class UserProfile(SQLModel, table=True):
+    """DB-backed profile data for a Cognito user."""
+
+    __tablename__ = "user_profile"
+
+    user_id: UUID = Field(primary_key=True)
+    name: str = Field(default="", max_length=255)
+    organisation: str = Field(default="", max_length=255)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Role(SQLModel, table=True):
     """Role table."""
 

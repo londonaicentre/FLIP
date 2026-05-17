@@ -20,6 +20,7 @@ import { getMfaStatus,
     revokeToken,
     submitAccessRequest,
     updateUserDisabledState,
+    updateUserProfile,
     updateUserRoles,
     validateUser } from "@/services/user-service";
 import { Snackbar } from "@/utils/snackbar";
@@ -200,6 +201,8 @@ describe("user-service", () => {
         it("POSTs to /step/users with the payload", async () => {
             const dto = {
                 email: "new@example.test",
+                name: "New User",
+                organisation: "Example Org",
                 roles: ["r-1"]
             };
             vi.mocked(_http.post).mockResolvedValue({ data: dto } as never);
@@ -222,11 +225,25 @@ describe("user-service", () => {
         });
     });
 
+    describe("updateUserProfile", () => {
+        it("PUTs profile fields to /users/{userId}", async () => {
+            const profile = { name: "New Name", organisation: "New Org" };
+            vi.mocked(_http.put).mockResolvedValue({ data: profile } as never);
+
+            const result = await updateUserProfile("u-1", profile);
+
+            expect(_http.put).toHaveBeenCalledWith("/users/u-1", profile);
+            expect(result).toEqual(profile);
+        });
+    });
+
     describe("validateUser", () => {
         it("GETs /users/{email} and returns the resolved user", async () => {
             const user = {
                 id: "u-1",
                 email: "x@example.test",
+                name: "X User",
+                organisation: "Example Org",
                 isDisabled: false
             };
             vi.mocked(_http.get).mockResolvedValue({ data: user } as never);

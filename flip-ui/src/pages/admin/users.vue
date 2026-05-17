@@ -47,7 +47,7 @@
                                 <td class="border-gray-100 dark:border-gray-700 border-x-0">
                                     <div class="flex flex-row items-center">
                                         <div class="truncate">
-                                            {{ row.email }}
+                                            {{ formatUserListName(row) }}
                                         </div>
                                         <div class="flex items-center ml-auto">
                                             <AiLabel v-if="row.isDisabled" error text="Disabled" class="ml-4" />
@@ -75,9 +75,14 @@
             <div class="flex flex-col w-full overflow-hidden grow">
                 <template v-if="selectedUser">
                     <div class="flex items-center p-4 border-b border-gray-300 dark:border-gray-700">
-                        <h1 class="text-2xl font-semibold truncate font-heading grow">
-                            <span>{{ selectedUser.email }}</span>
-                        </h1>
+                        <div class="min-w-0 grow">
+                            <h1 class="text-2xl font-semibold truncate font-heading">
+                                <span>{{ selectedUser.name }}</span>
+                            </h1>
+                            <p class="text-sm text-gray-500 truncate dark:text-gray-400">
+                                {{ selectedUser.organisation }} · {{ selectedUser.email }}
+                            </p>
+                        </div>
                         <AiLabel v-if="selectedUser.isDisabled" error text="Disabled" class="mx-2" />
                         <AiButton
                             data-test="save-user-btn"
@@ -88,142 +93,119 @@
                         >
                             Save User
                         </AiButton>
-                        <PopoverGroup class="flex items-baseline ml-4 space-x-8">
-                            <Popover as="div" class="relative z-10 inline-block text-left">
-                                <PopoverButton>
-                                    <AiButton data-test="more-options-btn" light>
-                                        <icon-mdi-dots-horizontal />
-                                    </AiButton>
-                                </PopoverButton>
-                                <transition
-                                    enter-active-class="transition duration-100 ease-out"
-                                    enter-from-class="transform scale-95 opacity-0"
-                                    enter-to-class="transform scale-100 opacity-100"
-                                    leave-active-class="transition duration-75 ease-in"
-                                    leave-from-class="transform scale-100 opacity-100"
-                                    leave-to-class="transform scale-95 opacity-0"
-                                >
-                                    <PopoverPanel
-                                        class="absolute right-0 p-4 mt-2 origin-top-right bg-white rounded-md shadow-2xl dark:bg-gray-900 dark:ring-white/20 w-60 ring-1 ring-black ring-opacity-5 focus:outline-none"
-                                    >
-                                        <AiButton
-                                            data-test="reset-password-btn"
-                                            text-secondary
-                                            block
-                                            @click="dialogResetPassword = true;"
-                                        >
-                                            Reset Password
-                                        </AiButton>
-                                        <AiButton
-                                            data-test="reset-mfa-btn"
-                                            text-secondary
-                                            block
-                                            @click="dialogResetMfa = true;"
-                                        >
-                                            Reset MFA
-                                        </AiButton>
-                                        <AiButton
-                                            v-if="!selectedUser.isDisabled"
-                                            block
-                                            data-test="disable-user-btn"
-                                            text-secondary
-                                            @click="dialogDisable = true;"
-                                        >
-                                            Disable User
-                                        </AiButton>
-                                        <AiButton
-                                            v-if="selectedUser.isDisabled"
-                                            block
-                                            data-test="enable-user-btn"
-                                            text
-                                            @click="dialogEnable = true;"
-                                        >
-                                            Enable User
-                                        </AiButton>
-                                    </PopoverPanel>
-                                </transition>
-                            </Popover>
-                        </PopoverGroup>
                     </div>
-                    <div class="flex overflow-hidden grow">
-                        <div class="flex-1 overflow-y-auto">
-                            <VTable
-                                :data="allRoles?.roles.filter((availableRole) => selectedUser?.roles?.every((selectedRole) => selectedRole.rolename !== availableRole.rolename))"
-                                class="rounded-none ring-0"
-                            >
-                                <template #head>
-                                    <tr class="text-left">
-                                        <th>Available roles</th>
-                                        <th />
-                                    </tr>
-                                </template>
-                                <template #body="{ rows }">
-                                    <tr v-for="row in rows" :key="row.id">
-                                        <td class="border-gray-100 border-x-0">
-                                            <span class="w-auto break-words line-clamp-3">
-                                                {{ row.rolename }}
-                                            </span>
-                                            <span class="w-auto font-medium break-words line-clamp-3">
-                                                {{ row.roledescription }}
-                                            </span>
-                                        </td>
-                                        <td class="border-gray-100 dark:border-gray-700 border-x-0">
-                                            <AiButton
-                                                text
-                                                :data-test="`add-${(row.rolename || '').toLowerCase()}-btn`"
-                                                class="float-right"
-                                                @click="add(row)"
-                                            >
-                                                <icon-ic-baseline-plus />
-                                            </AiButton>
-                                        </td>
-                                    </tr>
-                                    <tr v-if="!rows.length">
-                                        <td colspan="2" class="text-center border-gray-100 dark:border-gray-700 border-x-0">
-                                            There are no available roles
-                                        </td>
-                                    </tr>
-                                    <tr v-else />
-                                </template>
-                            </VTable>
+                    <div class="flex flex-col overflow-y-auto grow">
+                        <div class="grid gap-4 p-4 border-b border-gray-100 md:grid-cols-3 dark:border-gray-700">
+                            <div>
+                                <label for="selected-user-name" class="block text-sm font-bold text-gray-700 dark:text-gray-400">
+                                    Name
+                                </label>
+                                <input
+                                    id="selected-user-name"
+                                    v-model="selectedUser.name"
+                                    data-test="selected-user-name-field"
+                                    class="block w-full mt-1 text-sm text-gray-700 transition duration-300 border-gray-300 rounded-md shadow-sm dark:text-gray-300 dark:bg-gray-700 dark:border-gray-700 focus:ring-1 focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400"
+                                    @input="markProfileDirty"
+                                >
+                            </div>
+                            <div>
+                                <label for="selected-user-organisation" class="block text-sm font-bold text-gray-700 dark:text-gray-400">
+                                    Organisation
+                                </label>
+                                <input
+                                    id="selected-user-organisation"
+                                    v-model="selectedUser.organisation"
+                                    data-test="selected-user-organisation-field"
+                                    class="block w-full mt-1 text-sm text-gray-700 transition duration-300 border-gray-300 rounded-md shadow-sm dark:text-gray-300 dark:bg-gray-700 dark:border-gray-700 focus:ring-1 focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400"
+                                    @input="markProfileDirty"
+                                >
+                            </div>
+                            <div>
+                                <div class="text-sm font-bold text-gray-700 dark:text-gray-400">
+                                    Email
+                                </div>
+                                <div data-test="selected-user-email" class="mt-2 text-sm text-gray-600 break-words dark:text-gray-300">
+                                    {{ selectedUser.email }}
+                                </div>
+                            </div>
                         </div>
-                        <div class="flex-1 overflow-y-auto">
-                            <VTable :data="selectedUser?.roles" class="border-l border-gray-100 rounded-none dark:border-gray-700 ring-0">
-                                <template #head>
-                                    <tr class="text-left">
-                                        <th>Selected Roles</th>
-                                        <th />
-                                    </tr>
-                                </template>
-                                <template #body="{ rows }">
-                                    <tr v-for="row in rows" :key="row.id">
-                                        <td class="border-gray-100 dark:border-gray-700 border-x-0">
-                                            <span class="w-auto break-words line-clamp-3">
-                                                {{ row.rolename }}
+                        <div class="border-b border-gray-100 dark:border-gray-700">
+                            <div class="p-4 space-y-3">
+                                <h2 class="text-sm font-bold text-gray-700 dark:text-gray-400">
+                                    Role
+                                </h2>
+                                <div class="space-y-2">
+                                    <label
+                                        v-for="role in allRoles?.roles ?? []"
+                                        :key="role.id"
+                                        class="flex items-start gap-3 p-3 border border-gray-200 rounded-md cursor-pointer dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-900"
+                                        :data-test="`select-${(role.rolename || '').toLowerCase()}-role`"
+                                    >
+                                        <input
+                                            type="radio"
+                                            name="selected-user-role"
+                                            class="mt-1 text-primary-600 border-gray-300 focus:ring-primary-500"
+                                            :value="role.id"
+                                            :checked="selectedRoleId === role.id"
+                                            @change="selectRole(role)"
+                                        >
+                                        <span class="min-w-0">
+                                            <span class="block text-sm font-semibold text-gray-900 dark:text-gray-100">
+                                                {{ role.rolename }}
                                             </span>
-                                            <span class="w-auto font-medium break-words line-clamp-3">
-                                                {{ row.roledescription }}
+                                            <span class="block text-sm text-gray-500 dark:text-gray-400">
+                                                {{ role.roledescription }}
                                             </span>
-                                        </td>
-                                        <td class="border-gray-100 dark:border-gray-700 border-x-0">
-                                            <AiButton
-                                                text
-                                                :data-test="`remove-${(row.rolename || '').toLowerCase()}-btn`"
-                                                class="float-right"
-                                                @click="remove(row)"
-                                            >
-                                                <icon-ic-baseline-minus />
-                                            </AiButton>
-                                        </td>
-                                    </tr>
-                                    <tr v-if="!rows.length">
-                                        <td colspan="2" class="text-center border-gray-100 dark:border-gray-700 border-x-0">
-                                            There are no selected roles
-                                        </td>
-                                    </tr>
-                                    <tr v-else />
-                                </template>
-                            </VTable>
+                                        </span>
+                                    </label>
+                                </div>
+                                <div v-if="!(allRoles?.roles?.length)" class="text-sm text-center text-gray-500 dark:text-gray-400">
+                                    There are no roles available
+                                </div>
+                            </div>
+                        </div>
+                        <div class="p-4">
+                            <div class="p-4 border border-red-300 rounded-md bg-red-50 dark:bg-red-950/30 dark:border-red-800">
+                                <h2 class="text-sm font-bold text-red-700 dark:text-red-300">
+                                    Danger Zone
+                                </h2>
+                                <div class="grid gap-2 mt-3 sm:grid-cols-2 lg:grid-cols-4">
+                                    <AiButton
+                                        data-test="reset-password-btn"
+                                        error
+                                        block
+                                        @click="dialogResetPassword = true;"
+                                    >
+                                        Reset Password
+                                    </AiButton>
+                                    <AiButton
+                                        data-test="reset-mfa-btn"
+                                        error
+                                        block
+                                        @click="dialogResetMfa = true;"
+                                    >
+                                        Reset MFA
+                                    </AiButton>
+                                    <AiButton
+                                        v-if="!selectedUser.isDisabled"
+                                        block
+                                        data-test="disable-user-btn"
+                                        error
+                                        @click="dialogDisable = true;"
+                                    >
+                                        Disable User
+                                    </AiButton>
+                                    <AiButton
+                                        v-if="selectedUser.isDisabled"
+                                        block
+                                        data-test="enable-user-btn"
+                                        error
+                                        @click="dialogEnable = true;"
+                                    >
+                                        Enable User
+                                    </AiButton>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </template>
@@ -277,12 +259,8 @@
 </template>
 
 <script setup lang="ts">
-import { Popover,
-    PopoverButton,
-    PopoverGroup,
-    PopoverPanel } from "@headlessui/vue";
 import useSWRV from "swrv";
-import { onBeforeMount, ref } from "vue";
+import { computed, onBeforeMount, ref } from "vue";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
@@ -297,6 +275,7 @@ import { getUsers,
     IUserDisabledStateDto,
     resetUserMfa,
     updateUserDisabledState,
+    updateUserProfile,
     updateUserRoles } from "@/services/user-service";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
@@ -304,7 +283,9 @@ import { canAccessRoute } from "@/utils/route-validator";
 import { Snackbar } from "@/utils/snackbar";
 
 interface IManagedUser extends IUser {
-    dirty: boolean
+    dirty: boolean,
+    profileDirty: boolean,
+    rolesDirty: boolean
 }
 
 const authStore = useAuthStore();
@@ -355,42 +336,57 @@ const setSelectedUser = (user: IManagedUser) => {
     selectedUser.value = {
         ...user,
         roles: user.roles ?? [], // Ensure it's not undefined
-        dirty: false
+        dirty: false,
+        profileDirty: false,
+        rolesDirty: false
     };
 };
 
-const add = (role: IRole) => {
+const formatUserListName = (user: IUser) => {
+    const name = user.name || user.email;
+    return user.organisation ? `${name} (${user.organisation})` : name;
+};
+
+const markProfileDirty = () => {
     if (selectedUser.value) {
         selectedUser.value.dirty = true;
-        selectedUser.value.roles.push(role);
+        selectedUser.value.profileDirty = true;
     }
 };
 
-const remove = (role: IRole) => {
-    if (selectedUser.value) {
-        if (selectedUser.value.roles.length > 1) {
-            selectedUser.value.dirty = true;
-            const index = selectedUser.value.roles.indexOf(role);
-            selectedUser.value.roles.splice(index, 1);
-        } else {
-            Snackbar.error({
-                text: "You need to have at least 1 role assigned to a user.",
-                title: "Error"
-            });
-        }
-    }
+const selectedRoleId = computed(() => selectedUser.value?.roles?.[0]?.id);
+
+const selectRole = (role: IRole) => {
+    if (!selectedUser.value || selectedRoleId.value === role.id) return;
+
+    selectedUser.value.roles = [role];
+    selectedUser.value.dirty = true;
+    selectedUser.value.rolesDirty = true;
 };
 
 const saveUser = async () => {
     if (!selectedUser.value) return;
     try {
-        await updateUserRoles(
-            selectedUser.value.id,
-            selectedUser.value.roles.map((role) => role.id)
-        );
+        if (selectedUser.value.profileDirty) {
+            await updateUserProfile(
+                selectedUser.value.id,
+                {
+                    name: selectedUser.value.name,
+                    organisation: selectedUser.value.organisation
+                }
+            );
+        }
+        if (selectedUser.value.rolesDirty) {
+            await updateUserRoles(
+                selectedUser.value.id,
+                selectedUser.value.roles[0] ? [selectedUser.value.roles[0].id] : []
+            );
+        }
         selectedUser.value.dirty = false;
+        selectedUser.value.profileDirty = false;
+        selectedUser.value.rolesDirty = false;
         Snackbar.success({
-            text: "The user's permissions have been updated.",
+            text: "The user has been updated.",
             title: "User updated"
         });
     } catch (e) {

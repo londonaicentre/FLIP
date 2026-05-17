@@ -28,7 +28,7 @@ from pydantic.networks import EmailStr
 from sqlmodel import Session, col, select
 
 from flip_api.config import get_settings
-from flip_api.db.models.user_models import Role, UserRole
+from flip_api.db.models.user_models import Role, UserProfile, UserRole
 from flip_api.domain.schemas.users import CognitoUser, Disabled, IRole, IUser
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import PagingInfo
@@ -296,6 +296,24 @@ def get_user_by_email_or_id(
     return users[0]
 
 
+def apply_user_profile(user: CognitoUser, session: Session) -> CognitoUser:
+    """Attach DB-backed profile fields to a Cognito user response."""
+    if not hasattr(session, "get"):
+        return user
+
+    profile = session.get(UserProfile, user.id)
+    if not profile:
+        return user
+
+    return CognitoUser(
+        id=user.id,
+        email=user.email,
+        name=profile.name,
+        organisation=profile.organisation,
+        is_disabled=user.is_disabled,
+    )  # type: ignore[call-arg]
+
+
 def get_username(user_id: str, user_pool_id: str) -> str:
     """
     Get a username from Cognito by user ID.
@@ -548,13 +566,15 @@ def get_user_role_data(
         list[IUser]: List of IUser objects with roles.
     """
     # Fetch roles for users
-    user_ids = [str(user.id) for user in users]
+    user_ids = [user.id for user in users]
     statement = (
         select(col(UserRole.user_id), Role)
         .join(Role, col(Role.id) == col(UserRole.role_id))
         .where(col(UserRole.user_id).in_(user_ids))
     )
     role_results = session.exec(statement).all()
+    profiles = session.exec(select(UserProfile).where(col(UserProfile.user_id).in_(user_ids))).all()
+    user_profiles_map = {str(profile.user_id): profile for profile in profiles}
 
     # Group roles by user_id
     user_roles_map: dict[str, list[IRole]] = defaultdict(list)
@@ -569,7 +589,14 @@ def get_user_role_data(
             )
 
     # Filter by email and apply pagination
-    filtered_users = [user for user in users if paging_info.search_str.lower() in user.email.lower()]
+    search_str = paging_info.search_str.lower()
+    filtered_users = [
+        user
+        for user in users
+        if search_str in user.email.lower()
+        or search_str in user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).name.lower()
+        or search_str in user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).organisation.lower()
+    ]
     sorted_users = sorted(filtered_users, key=lambda u: u.email)
     paged_users = sorted_users[paging_info.offset : paging_info.offset + paging_info.page_size]
 
@@ -578,6 +605,8 @@ def get_user_role_data(
         IUser(
             id=user.id,
             email=user.email,
+            name=user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).name,
+            organisation=user_profiles_map.get(str(user.id), UserProfile(user_id=user.id)).organisation,
             is_disabled=user.is_disabled,
             roles=user_roles_map.get(str(user.id), []),
         )  # type: ignore[call-arg]

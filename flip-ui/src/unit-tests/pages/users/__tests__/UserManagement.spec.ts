@@ -45,12 +45,14 @@ const mockResetUserMfa = vi.fn();
 const mockGetUsers = vi.fn();
 const mockGetRoles = vi.fn();
 const mockUpdateUserDisabledState = vi.fn();
+const mockUpdateUserProfile = vi.fn();
 const mockUpdateUserRoles = vi.fn();
 
 vi.mock("@/services/user-service", () => ({
     resetUserMfa: (...args: unknown[]) => mockResetUserMfa(...args),
     getUsers: (...args: unknown[]) => mockGetUsers(...args),
     updateUserDisabledState: (...args: unknown[]) => mockUpdateUserDisabledState(...args),
+    updateUserProfile: (...args: unknown[]) => mockUpdateUserProfile(...args),
     updateUserRoles: (...args: unknown[]) => mockUpdateUserRoles(...args)
 }));
 
@@ -91,6 +93,8 @@ vi.mock("@/utils/route-validator", () => ({
 const SAMPLE_USER = {
     id: "user-1",
     email: "user@example.com",
+    name: "User Example",
+    organisation: "Example Org",
     roles: [{ id: "role-1", rolename: "admin", roledescription: "Administrator" }],
     isDisabled: false
 };
@@ -145,6 +149,7 @@ describe("User Management", () => {
         mockGetUsers.mockReset();
         mockGetRoles.mockReset();
         mockUpdateUserDisabledState.mockReset();
+        mockUpdateUserProfile.mockReset();
         mockUpdateUserRoles.mockReset();
         mockRouteNotAllowed.mockReset();
         mockViewProjects.mockReset();
@@ -275,22 +280,21 @@ describe("User Management", () => {
     });
 
     describe("saveUser", () => {
-        // setSelectedUser in users.vue stores user.roles by reference, so
-        // clicking add-viewer mutates the underlying mock. Hand each test
-        // its own user so role mutations don't leak across tests.
+        // Hand each test its own user so role mutations don't leak across tests.
         function freshUser() {
             return {
                 id: "user-1",
                 email: "user@example.com",
+                name: "User Example",
+                organisation: "Example Org",
                 roles: [{ id: "role-1", rolename: "admin", roledescription: "Administrator" }],
                 isDisabled: false
             };
         }
 
-        // The "Available roles" panel renders from a separate useSWRV
-        // /roles call; needs its own flush after the user click before
-        // the add-viewer button exists.
-        async function mountAndAddViewerRole(): Promise<VueWrapper> {
+        // The role selector renders from a separate useSWRV /roles call;
+        // needs its own flush after the user click before the radio exists.
+        async function mountAndSelectViewerRole(): Promise<VueWrapper> {
             mockGetUsers.mockResolvedValue({
                 data: [freshUser()],
                 page: 1,
@@ -302,7 +306,7 @@ describe("User Management", () => {
             await wrapper.find("[data-test='user']").trigger("click");
             await flushPromises();
             await flushPromises();
-            await wrapper.find("[data-test='add-viewer-btn']").trigger("click");
+            await wrapper.find("[data-test='select-viewer-role'] input").setValue();
             return wrapper;
         }
 
@@ -316,15 +320,15 @@ describe("User Management", () => {
         test("calls updateUserRoles, clears dirty, and shows a success snackbar on success", async () => {
             mockUpdateUserRoles.mockResolvedValueOnce([]);
 
-            const wrapper = await mountAndAddViewerRole();
+            const wrapper = await mountAndSelectViewerRole();
             expect(saveButtonDisabled(wrapper)).toBe(false);
 
             await wrapper.find("[data-test='save-user-btn']").trigger("click");
             await flushPromises();
 
-            expect(mockUpdateUserRoles).toHaveBeenCalledWith("user-1", ["role-1", "role-2"]);
+            expect(mockUpdateUserRoles).toHaveBeenCalledWith("user-1", ["role-2"]);
             expect(mockSnackbarSuccess).toHaveBeenCalledWith({
-                text: "The user's permissions have been updated.",
+                text: "The user has been updated.",
                 title: "User updated"
             });
             expect(mockSnackbarError).not.toHaveBeenCalled();
@@ -334,11 +338,11 @@ describe("User Management", () => {
         test("shows an error snackbar and keeps dirty state when updateUserRoles rejects", async () => {
             mockUpdateUserRoles.mockRejectedValueOnce(new Error("API error"));
 
-            const wrapper = await mountAndAddViewerRole();
+            const wrapper = await mountAndSelectViewerRole();
             await wrapper.find("[data-test='save-user-btn']").trigger("click");
             await flushPromises();
 
-            expect(mockUpdateUserRoles).toHaveBeenCalledWith("user-1", ["role-1", "role-2"]);
+            expect(mockUpdateUserRoles).toHaveBeenCalledWith("user-1", ["role-2"]);
             expect(mockSnackbarError).toHaveBeenCalledWith({
                 text: "The user could not be updated, please try again.",
                 title: "Update failed"
