@@ -22,6 +22,7 @@ from flip_api.db.seed.role_permissions import seed_role_permissions
 from flip_api.db.seed.roles import seed_roles
 from flip_api.db.seed.seed_logger import logger
 from flip_api.db.seed.site_config import seed_config
+from flip_api.db.seed.fl_kit_slots import seed_fl_kit_slots
 from flip_api.db.seed.trusts import seed_trusts
 
 
@@ -49,6 +50,8 @@ def main() -> None:
             seed_main_users(session)
             logger.debug("Creating Trusts")
             trusts = seed_trusts(session)
+            logger.debug("Seeding FL kit slot pool")
+            seed_fl_kit_slots(session)
             logger.debug("Creating Banner")
             seed_banner(session)
             logger.debug("Seeding Site Config")

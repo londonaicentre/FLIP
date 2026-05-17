@@ -15,13 +15,14 @@ import hmac
 import json
 from uuid import UUID
 
-from fastapi import HTTPException, Security, status
+from fastapi import Depends, HTTPException, Security, status
 from fastapi.security.api_key import APIKeyHeader
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.config import get_settings
-from flip_api.db.models.main_models import Model, Projects, ProjectUserAccess, Queries
+from flip_api.db.database import get_session
+from flip_api.db.models.main_models import Model, Projects, ProjectUserAccess, Queries, Trust
 from flip_api.db.models.user_models import PermissionRef
 from flip_api.utils.get_secrets import get_secret
 from flip_api.utils.logger import logger
@@ -333,28 +334,52 @@ def verify_trust_identity(trust_name: str, authenticated_trust: str) -> None:
         )
 
 
-_trust_api_key_hashes_cache: dict[str, str] | None = None
+def _bootstrap_trust_hashes() -> dict[str, str]:
+    """Trust hashes from env (dev) or AWS Secrets Manager (prod).
 
-
-def _get_trust_api_key_hashes() -> dict[str, str]:
-    """Get trust API key hashes from env var (dev) or AWS Secrets Manager (prod).
-
-    Cached after first call — the hashes do not change during the lifetime of a process.
+    The bootstrap source is the original way trust keys reached the hub — still used as a
+    fallback for trusts that haven't been backfilled into the `trust` table yet (and as the
+    secrets-manager entry point in prod).
 
     Returns:
-        dict[str, str]: Mapping of trust names to SHA-256 hex digests of their API keys.
+        dict[str, str]: Mapping of trust names to SHA-256 hex digests.
     """
-    global _trust_api_key_hashes_cache  # noqa: PLW0603
-    if _trust_api_key_hashes_cache is not None:
-        return _trust_api_key_hashes_cache
-
     stt = get_settings()
     if stt.ENV == "production":
-        _trust_api_key_hashes_cache = json.loads(get_secret("trust_api_key_hashes"))
-    else:
-        _trust_api_key_hashes_cache = stt.TRUST_API_KEY_HASHES
+        return json.loads(get_secret("trust_api_key_hashes"))
+    return stt.TRUST_API_KEY_HASHES
 
-    return _trust_api_key_hashes_cache
+
+def _collect_trust_hashes(db: Session) -> dict[str, str]:
+    """All known trust → api-key-hash mappings.
+
+    DB rows (`trust.api_key_hash`) are authoritative — admin-created trusts and renames
+    land there. The env/Secrets-Manager bootstrap is a fallback for trusts the DB
+    doesn't yet know about.
+
+    **Iteration order matters.** `authenticate_trust` iterates the returned mapping and
+    returns the *first* name whose hash matches. DB entries are inserted first so that a
+    trust which was seeded under an env-style name (e.g. "Trust_1") and later renamed in
+    the DB (e.g. "(Mock) GSTT") resolves to the renamed value — env's old name is still
+    present (same hash) but is only reached if no DB entry matched.
+
+    Args:
+        db (Session): Database session for the per-request lookup.
+
+    Returns:
+        dict[str, str]: Merged trust name → hash mapping; DB names first, then env-only.
+    """
+    db_hashes: dict[str, str] = {
+        name: hash_
+        for name, hash_ in db.exec(
+            select(Trust.name, Trust.api_key_hash).where(col(Trust.api_key_hash).is_not(None))
+        ).all()
+    }
+    merged: dict[str, str] = dict(db_hashes)
+    for name, hash_ in _bootstrap_trust_hashes().items():
+        if name not in merged:
+            merged[name] = hash_
+    return merged
 
 
 INTERNAL_SERVICE_KEY_HEADER_NAME = get_settings().INTERNAL_SERVICE_KEY_HEADER
@@ -419,18 +444,22 @@ def authenticate_internal_service(api_key: str = Security(internal_key_header_sc
         )
 
 
-def authenticate_trust(api_key: str = Security(api_key_header_scheme)) -> str:
+def authenticate_trust(
+    api_key: str = Security(api_key_header_scheme),
+    db: Session = Depends(get_session),
+) -> str:
     """Authenticate a trust by its per-trust API key and return the trust name.
 
-    Each trust has a unique API key. The hub stores SHA-256 hashes of these keys
-    in TRUST_API_KEY_HASHES (env var in dev, AWS Secrets Manager in prod).
-    This dependency hashes the provided key, looks it up in the mapping, and
-    returns the authenticated trust name.
+    Each trust has a unique API key. The hub stores SHA-256 hashes in `trust.api_key_hash`
+    (authoritative; admin-managed) with env / Secrets-Manager hashes as a bootstrap
+    fallback. This dependency hashes the provided key and compares against the merged
+    set, returning the authenticated trust name.
 
-    Uses hmac.compare_digest for constant-time comparison to prevent timing attacks.
+    Uses hmac.compare_digest for constant-time comparison to prevent timing side-channels.
 
     Args:
         api_key (str): The API key extracted from the request header.
+        db (Session): DB session for the per-request hash lookup.
 
     Raises:
         HTTPException: 401 if the key is missing or does not match any trust.
@@ -447,7 +476,7 @@ def authenticate_trust(api_key: str = Security(api_key_header_scheme)) -> str:
         )
 
     provided_hash = hashlib.sha256(api_key.encode()).hexdigest()
-    trust_hashes = _get_trust_api_key_hashes()
+    trust_hashes = _collect_trust_hashes(db)
 
     # Iterate all entries with constant-time comparison to prevent timing side-channels.
     for trust_name, stored_hash in trust_hashes.items():

@@ -159,7 +159,11 @@ class Queries(SQLModel, table=True):
     name: str = Field()
     query: str = Field()
     created: Annotated[datetime, Field(default_factory=datetime.utcnow)]
-    project_id: UUID | None = Field(default=None, foreign_key="projects.id")
+    # FK to user_profile.user_id; nullable so historical rows (saved before this
+    # column existed) keep working — the "Last run by …" line just hides the
+    # author for those.
+    created_by: UUID | None = Field(default=None, index=True)
+    project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
 
 
 class QueryResult(SQLModel, table=True):
@@ -197,6 +201,37 @@ class Trust(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field()
     last_heartbeat: datetime | None = Field(default=None)
+    # Added for issue #506 — DB-backed trust registry. All nullable so existing
+    # rows seeded from TRUST_NAMES/TRUST_API_KEY_HASHES env vars remain valid;
+    # trusts created via POST /admin/trusts populate api_key_hash + created_at.
+    # `code` is the short display label (e.g. "GSTT"); `region` is the NHS
+    # region/geography (e.g. "London") — both per the design handoff
+    # (design_handoff_full/05_connection/README.md). Optional for back-compat.
+    code: str | None = Field(default=None)
+    region: str | None = Field(default=None)
+    api_key_hash: str | None = Field(default=None)
+    disabled_at: datetime | None = Field(default=None)
+    created_at: datetime | None = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class FLKitSlot(SQLModel, table=True):
+    """Pool of pre-provisioned FL participant kits the hub assigns to joining trusts.
+
+    Decouples the hub-side trust identity (``Trust.name``, arbitrary admin-chosen) from
+    the FL participant identity (the CN baked into the kit's cert at provisioning time).
+    Operators get matching ``services/<slot_name>/`` dirs on every net's workspace —
+    one global slot row covers all nets, so the assignment doesn't need a net_id column.
+
+    Lifecycle: rows are seeded from ``FL_KIT_SLOT_NAMES`` (one per pre-provisioned slot
+    in flip-fl-base). ``POST /admin/trusts`` claims the next ``assigned_to_trust_id IS
+    NULL`` row in the same transaction as the trust insert.
+    """
+
+    __tablename__ = "fl_kit_slot"  # type: ignore
+    slot_name: str = Field(primary_key=True)
+    slot_number: int = Field()
+    assigned_to_trust_id: UUID | None = Field(default=None, foreign_key="trust.id", index=True)
+    assigned_at: datetime | None = Field(default=None)
 
 
 class TrustTask(SQLModel, table=True):
