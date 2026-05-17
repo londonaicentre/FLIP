@@ -10,9 +10,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Convert each Cypress-recorded mp4 under test/cypress/videos/docs/admin/ into
-# a GIF in-place under docs/source/assets/admin/. Spec filenames map 1:1 to GIF
-# basenames (reset-mfa.spec.ts.mp4 → reset-mfa.gif).
+# Convert each Cypress-recorded mp4 under test/cypress/videos/docs/<bucket>/
+# into a GIF under docs/source/assets/<bucket>/. The mp4's parent-dir name
+# (admin, flip, …) maps to the destination subfolder. Spec filenames map 1:1
+# to GIF basenames (reset-mfa.spec.ts.mp4 → reset-mfa.gif).
 
 set -euo pipefail
 
@@ -21,7 +22,7 @@ ui_dir="$(cd "${script_dir}/.." && pwd)"
 repo_root="$(cd "${ui_dir}/.." && pwd)"
 
 videos_root="${ui_dir}/test/cypress/videos"
-out_dir="${repo_root}/docs/source/assets/admin"
+assets_root="${repo_root}/docs/source/assets"
 
 if [[ ! -d "${videos_root}" ]]; then
     echo "No videos directory at ${videos_root}; nothing to convert." >&2
@@ -39,10 +40,11 @@ if (( ${#videos[@]} == 0 )); then
     exit 0
 fi
 
-mkdir -p "${out_dir}"
-
 for mp4 in "${videos[@]}"; do
     base="$(basename "${mp4}")"
+    bucket="$(basename "$(dirname "${mp4}")")"
+    out_dir="${assets_root}/${bucket}"
+    mkdir -p "${out_dir}"
     # reset-mfa.spec.ts.mp4 → reset-mfa
     name="${base%.spec.ts.mp4}"
     if [[ "${name}" == "${base}" ]]; then
@@ -65,4 +67,4 @@ for mp4 in "${videos[@]}"; do
         "${out}"
 done
 
-echo "Converted ${#videos[@]} video(s) → ${out_dir}"
+echo "Converted ${#videos[@]} video(s) under ${assets_root}/"
