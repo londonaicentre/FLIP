@@ -30,7 +30,7 @@
                                         :to="`/project/${project.id}`"
                                         class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-400 dark:hover:text-primary-300"
                                     >
-                                        > {{ project.name }}
+                                        {{ project.name }}
                                     </router-link>
                                     <div class="flex items-center justify-between gap-4 mt-2">
                                         <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">

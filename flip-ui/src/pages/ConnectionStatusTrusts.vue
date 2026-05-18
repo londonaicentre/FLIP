@@ -122,7 +122,7 @@
                                     v-for="col in columns"
                                     :key="col.key ?? col.label"
                                     :data-test="col.key ? `sort-header-${col.key}` : undefined"
-                                    class="px-4 py-3 text-[11px] font-mono uppercase tracking-widest text-gray-500 font-medium select-none"
+                                    class="px-4 py-3 text-xs font-mono uppercase tracking-widest text-gray-500 font-medium select-none"
                                     :class="[
                                         col.align === 'right' ? 'text-right' : 'text-left',
                                         col.key ? 'cursor-pointer hover:text-gray-700 dark:hover:text-gray-300' : ''
@@ -151,7 +151,7 @@
                                     <div class="inline-flex items-center gap-2">
                                         <span class="inline-block w-2 h-2 rounded-full" :class="dotClass(t._state)" />
                                         <span
-                                            class="inline-block px-2 py-0.5 rounded text-[11px] font-medium"
+                                            class="inline-block px-2 py-0.5 rounded text-xs font-medium"
                                             :class="pillClass(t._state)"
                                         >
                                             {{ stateLabel(t._state) }}
@@ -160,29 +160,29 @@
                                 </td>
                                 <td class="px-4 py-4 align-middle">
                                     <div class="flex flex-col">
-                                        <span class="font-semibold font-heading text-sm text-gray-900 dark:text-gray-100">
+                                        <span class="font-semibold font-heading text-base text-gray-900 dark:text-gray-100">
                                             {{ t.code || t.name }}
                                         </span>
                                         <span
                                             v-if="t.code && t.code !== t.name"
-                                            class="font-mono text-[11px] text-gray-500 dark:text-gray-400 mt-0.5"
+                                            class="font-mono text-xs text-gray-500 dark:text-gray-400 mt-0.5"
                                             data-test="trust-name"
                                         >
                                             {{ t.name }}
                                         </span>
                                     </div>
                                 </td>
-                                <td class="px-4 py-4 align-middle text-sm text-gray-600 dark:text-gray-400">
+                                <td class="px-4 py-4 align-middle text-base text-gray-600 dark:text-gray-400">
                                     {{ t.region ?? "—" }}
                                 </td>
                                 <td
-                                    class="px-4 py-4 align-middle font-mono text-xs"
+                                    class="px-4 py-4 align-middle font-mono text-sm"
                                     :class="t._state === 'offline' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-400'"
                                     data-test="trust-heartbeat"
                                 >
                                     {{ heartbeatText(t.last_heartbeat) }}
                                 </td>
-                                <td class="px-4 py-4 align-middle text-right font-mono text-sm text-gray-900 dark:text-gray-100">
+                                <td class="px-4 py-4 align-middle text-right font-mono text-base text-gray-900 dark:text-gray-100">
                                     {{ t.project_count }}
                                 </td>
                                 <td class="px-4 py-4 align-middle" data-test="trust-uptime">

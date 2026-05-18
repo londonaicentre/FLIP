@@ -17,13 +17,8 @@
      keep passing the same IStep[] they pass to AiSteps elsewhere. -->
 
 <template>
-    <AiCard class="shrink-0">
-        <div class="px-3 py-2">
-            <div class="flex items-center justify-end mb-1.5">
-                <span class="text-[10px] font-mono uppercase tracking-widest text-gray-500 dark:text-gray-400">
-                    {{ completedCount }} of {{ steps.length }} stages complete
-                </span>
-            </div>
+    <div class="shrink-0">
+        <div class="px-3 py-0.5">
             <div
                 class="relative grid items-start px-2"
                 :style="{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }"
@@ -48,7 +43,7 @@
                     class="relative z-10 flex flex-col items-center text-center"
                 >
                     <div
-                        class="grid w-5 h-5 place-items-center rounded-full transition-all mb-1.5"
+                        class="grid w-5 h-5 place-items-center rounded-full transition-all mb-1"
                         :class="circleClass(idx)"
                     >
                         <icon-heroicons-outline-x
@@ -87,13 +82,12 @@
                 </div>
             </div>
         </div>
-    </AiCard>
+    </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
 
-import AiCard from "@/components/AiCard/AiCard.vue";
 import { IStep } from "@/components/AiSteps/AiSteps.vue";
 
 interface ILifecycleTrackProps {
