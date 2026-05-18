@@ -282,26 +282,17 @@ def edit_project_service(
 
 
 def get_project_query(project_from_db: IProjectResponse) -> IProjectQuery | None:
-    """
-    If the project has a query, try to return it if it is valid. Otherwise, return None.
+    """Return the project's cohort query if present, else None.
 
     Args:
         project_from_db (IProjectResponse): The project response object retrieved from the database, which may contain
         a query.
 
     Returns:
-        IProjectQuery | None: The project query if it exists and is valid, otherwise None.
+        IProjectQuery | None: The project query if it exists, otherwise None.
     """
-    logger.debug(project_from_db)
-    query = project_from_db.query
-
-    if query:
-        logger.debug(query)
-
-        if query.id:
-            return query
-
-        logger.warning("Unable to parse query. Assuming there isn't one.")
+    if project_from_db.query:
+        return project_from_db.query
 
     logger.warning("Project has no query associated with it. Returning empty.")
     return None

@@ -419,16 +419,6 @@ class TestGetProjectQuery:
 
         assert result is None
 
-    def test_returns_none_when_query_has_no_id(self):
-        query = MagicMock()
-        query.id = None
-        project = MagicMock(spec=IProjectResponse)
-        project.query = query
-
-        result = get_project_query(project)
-
-        assert result is None
-
 
 class TestGetApprovedTrustsForProject:
     def test_get_approved_trusts_for_project_success(self, mock_db_session: MagicMock):

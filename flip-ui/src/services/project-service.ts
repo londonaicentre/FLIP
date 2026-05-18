@@ -50,12 +50,13 @@ export type IProject = {
     description: string;
     ownerId: string;
     // Display name of the owner (from UserProfile). Optional because
-    // very old seeded users may have no profile row; UI falls back to
-    // the email-derived username then.
+    // the detail endpoint doesn't surface it (only the list endpoint
+    // does); UI falls back to the email-derived username.
     ownerName?: string | null;
     ownerEmail: string;
     // Total users with project access — includes the owner (auto-added
     // to ProjectUserAccess on creation), so the UI doesn't need to +1.
+    // Optional for the same reason as ownerName.
     userCount?: number;
     creationtimestamp: string;
     stagedAt?: string | null;

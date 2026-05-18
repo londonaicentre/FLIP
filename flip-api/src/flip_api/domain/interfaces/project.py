@@ -88,10 +88,11 @@ class IProject(BaseModel):  # Base for IProject to avoid repetition
     name: str = Field(default="")
     description: str = Field(default="")
     owner_id: UUID = Field(..., alias="ownerId")
-    # Display name of the owner — populated from UserProfile by the list +
-    # detail endpoints so cards/rows can show "Owned by …" without a
-    # follow-up round-trip per project. Null only if the owner has no
-    # UserProfile row (very old seeded users).
+    # Display name of the owner — populated from UserProfile by the list
+    # endpoint so cards/rows can show "Owned by …" without a follow-up
+    # round-trip per project. Null only if the owner has no UserProfile row
+    # (very old seeded users). The detail endpoint returns `IProjectResponse`
+    # instead of this base class and does not surface this field.
     owner_name: str | None = Field(default=None, alias="ownerName")
     # Total users with project access — includes the owner, who's auto-added
     # to ProjectUserAccess on project creation (so the UI doesn't need to +1).

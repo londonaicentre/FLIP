@@ -69,7 +69,7 @@ export const projectDataPage1: IProject[] = [
             name: "A Stroke Test Query",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]
         },
         users: [],
         status: "APPROVED"
@@ -88,7 +88,7 @@ export const projectDataPage1: IProject[] = [
             name: "A Stroke Pathway Query",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]
         },
         status: "UNSTAGED"
     },
@@ -105,7 +105,7 @@ export const projectDataPage1: IProject[] = [
             name: "A Stroke Pathway Query",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]
         },
         users: [],
         status: "APPROVED"
@@ -124,7 +124,7 @@ export const projectDataPage1: IProject[] = [
             name: "A Stroke Test Query",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]
         },
         status: "APPROVED"
     },
@@ -141,7 +141,7 @@ export const projectDataPage1: IProject[] = [
             name: "A Severe Covid Deterioration query",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]
         },
         users: [
             {
@@ -199,7 +199,7 @@ export const projectDataPage1: IProject[] = [
             name: "A Lung Biopsy Surgery Query",
             query: "SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table ",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]
         },
         users: [],
         status: "UNSTAGED"
@@ -217,7 +217,7 @@ export const projectDataPage1: IProject[] = [
             name: "A Query For Another Heart Disease Project",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]
         },
         users: [],
         status: "APPROVED"
@@ -247,7 +247,7 @@ export const projectDataPage1: IProject[] = [
             name: "A Stroke Test Query",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]
         },
         status: "STAGED"
     },
