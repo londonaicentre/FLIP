@@ -15,10 +15,17 @@
 //
 // TrainingMetrics is mounted in partials/models/Training.vue under
 // `v-if="getStatus !== ModelStatusEnum.PENDING"`, so the model fixture must
-// land at a post-PENDING status (UPLOAD_COMPLETED here). The widget fetches
-// GET /model/{id}/metrics; no bundled fixture covers it, so the spec inlines
-// a two-chart IModelMetricData[] payload that AiMetricsChart renders into
-// <canvas> elements.
+// land at a post-PENDING status. We patch it to RESULTS_UPLOADED so the
+// AiSteps panel at the top of the page paints every stage as completed
+// rather than falling through to the ERROR icon — getStatusEnumValue maps
+// any string that is not a member of ModelStatusEnum (e.g. the bundled
+// fixture's "UPLOAD_COMPLETED" placeholder) to ModelStatusEnum.ERROR, which
+// would otherwise render "Training Started" / "Results Uploaded" with the
+// red-cross icon.
+//
+// The widget fetches GET /model/{id}/metrics; no bundled fixture covers it,
+// so the spec inlines a two-chart IModelMetricData[] payload that
+// AiMetricsChart renders into <canvas> elements.
 
 const PROJECT_ID = "6fcbdd40-3675-45c9-899e-1a005e5245ba";
 const MODEL_ID = "6292d9ec-e821-4e4a-814e-3a315a4cb95e";
@@ -68,7 +75,10 @@ describe("docs: training metrics", () => {
     it("shows the per-round metrics charts for a finished model", () => {
         cy.login();
         cy.intercept("GET", "/projects/*", { fixture: "project/getApprovedProject" });
-        cy.intercept("POST", `/step/model/${MODEL_ID}`, { fixture: "model/getModelPostTraining" }).as("getModel");
+        cy.fixture("model/getModelPostTraining").then((model) => {
+            model.status = "RESULTS_UPLOADED";
+            cy.intercept("POST", `/step/model/${MODEL_ID}`, { body: model }).as("getModel");
+        });
         cy.intercept("GET", `/model/${MODEL_ID}/logs`, []);
         cy.intercept("GET", "/model/job-types", { body: { standard: ["trainer.py", "validator.py", "models.py", "config.json"] } });
         cy.intercept("GET", `/model/${MODEL_ID}/metrics`, { body: METRICS }).as("getMetrics");
