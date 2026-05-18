@@ -18,7 +18,7 @@ services:
 
   fl-api-net-1:
     container_name: flip-fl-api-net-1
-    image: ${DOCKER_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
     environment:
@@ -45,7 +45,7 @@ services:
 
   fl-api-net-2:
     container_name: flip-fl-api-net-2
-    image: ${DOCKER_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
     environment:
@@ -69,11 +69,13 @@ services:
 
   fl-server-net-1:
     container_name: fl-server-net-1
-    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
-      # Mount the AWS credentials (needed to upload model results to S3)
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+      # Mount the AWS credentials (needed to upload model results to S3).
+      # The image runs as `app` (uid 49999) with HOME=/app, so the mount
+      # lands at /app/.aws/ — the SDK's default lookup path for that user.
+      - ~/.aws/config:/app/.aws/config:ro
+      - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
     environment:
@@ -107,7 +109,7 @@ services:
   register-supernode-keys-net-1:
     container_name: register-supernode-keys-net-1
     # It doesn't really matter if we use FL server or FL base image here since register-supernode-keys.sh is in both
-    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - FL_API_ADDRESS=http://flip-fl-api-net-1:8000
@@ -115,7 +117,9 @@ services:
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
-      - ${FL_PROVISIONED_DIR}/../register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
+      # Dev-overlay: edits to the sibling-repo script apply without a rebuild.
+      # Same script is baked into the image, so removal still works.
+      - ${FL_PROVISIONED_DIR}/../fl_services/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-1:
@@ -127,11 +131,13 @@ services:
 
   fl-server-net-2:
     container_name: fl-server-net-2
-    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
-      # Mount the AWS credentials (needed to upload model results to S3)
-      - ~/.aws/config:/root/.aws/config:ro
-      - ~/.aws/sso/cache:/root/.aws/sso/cache:rw
+      # Mount the AWS credentials (needed to upload model results to S3).
+      # The image runs as `app` (uid 49999) with HOME=/app, so the mount
+      # lands at /app/.aws/ — the SDK's default lookup path for that user.
+      - ~/.aws/config:/app/.aws/config:ro
+      - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
     environment:
@@ -163,7 +169,7 @@ services:
   register-supernode-keys-net-2:
     container_name: register-supernode-keys-net-2
     # It doesn't really matter if we use FL server or FL base image here since register-supernode-keys.sh is in both
-    image: ${DOCKER_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-2:9093
       - FL_API_ADDRESS=http://flip-fl-api-net-2:8000
@@ -171,6 +177,8 @@ services:
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro
+      # See net-1 above — symmetric dev-overlay.
+      - ${FL_PROVISIONED_DIR}/../fl_services/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-2:
