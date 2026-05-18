@@ -15,13 +15,14 @@
 //
 // TrainingMetrics is mounted in partials/models/Training.vue under
 // `v-if="getStatus !== ModelStatusEnum.PENDING"`, so the model fixture must
-// land at a post-PENDING status. We patch it to RESULTS_UPLOADED so the
-// AiSteps panel at the top of the page paints every stage as completed
-// rather than falling through to the ERROR icon — getStatusEnumValue maps
-// any string that is not a member of ModelStatusEnum (e.g. the bundled
-// fixture's "UPLOAD_COMPLETED" placeholder) to ModelStatusEnum.ERROR, which
-// would otherwise render "Training Started" / "Results Uploaded" with the
-// red-cross icon.
+// land at a post-PENDING status. We patch it to TRAINING_STARTED so the
+// AiSteps panel reads as a mid-training run (Model Created / Model Prepared
+// completed, Training Started in progress, Results Uploaded not yet
+// reached), matching the streaming-metrics framing of the GIF. The bundled
+// fixture's "UPLOAD_COMPLETED" placeholder is not a member of
+// ModelStatusEnum, so getStatusEnumValue would otherwise fall through to
+// ModelStatusEnum.ERROR and paint both "Training Started" and "Results
+// Uploaded" with the red-cross icon.
 //
 // The widget fetches GET /model/{id}/metrics; no bundled fixture covers it,
 // so the spec inlines a two-chart IModelMetricData[] payload that
@@ -76,7 +77,7 @@ describe("docs: training metrics", () => {
         cy.login();
         cy.intercept("GET", "/projects/*", { fixture: "project/getApprovedProject" });
         cy.fixture("model/getModelPostTraining").then((model) => {
-            model.status = "RESULTS_UPLOADED";
+            model.status = "TRAINING_STARTED";
             cy.intercept("POST", `/step/model/${MODEL_ID}`, { body: model }).as("getModel");
         });
         cy.intercept("GET", `/model/${MODEL_ID}/logs`, []);
