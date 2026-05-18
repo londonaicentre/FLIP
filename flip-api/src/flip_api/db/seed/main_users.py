@@ -155,7 +155,9 @@ def seed_main_users(session: Session) -> None:
     _ensure_user_and_role_resilient(ADMIN_EMAIL_3, RoleRef.ADMIN, session, *MAIN_USER_PROFILES[ADMIN_EMAIL_3])
 
     # Ensure the Researcher role grant.
-    _ensure_user_and_role_resilient(RESEARCHER_EMAIL, RoleRef.RESEARCHER, session, *MAIN_USER_PROFILES[RESEARCHER_EMAIL])
+    _ensure_user_and_role_resilient(
+        RESEARCHER_EMAIL, RoleRef.RESEARCHER, session, *MAIN_USER_PROFILES[RESEARCHER_EMAIL]
+    )
 
     # Ensure the Observer role grant.
     _ensure_user_and_role_resilient(OBSERVER_EMAIL, RoleRef.OBSERVER, session, *MAIN_USER_PROFILES[OBSERVER_EMAIL])

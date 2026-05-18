@@ -80,11 +80,22 @@ async def _send_heartbeat(client: httpx.AsyncClient) -> None:
         client: HTTP client for making requests.
     """
     try:
-        await client.post(
+        response = await client.post(
             f"{CENTRAL_HUB_API_URL}/trust/{TRUST_NAME}/heartbeat",
             headers=_auth_headers(),
         )
-        logger.debug("Heartbeat sent successfully")
+        # httpx only raises on transport errors — auth/identity rejections
+        # (401/403/404) come back as a successful HTTP response. Without
+        # this check the trust silently never updates ``trust.last_heartbeat``
+        # on the hub and gets reported "offline" in Connection Status while
+        # actually polling normally.
+        if response.is_success:
+            logger.debug("Heartbeat sent successfully")
+        else:
+            logger.error(
+                f"Heartbeat rejected by hub: HTTP {response.status_code} — "
+                f"{response.text[:200]}"
+            )
     except Exception as e:
         logger.error(f"Error sending heartbeat: {e}")
 

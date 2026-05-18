@@ -53,8 +53,8 @@ def admin_create_trust(
 
     Raises:
         HTTPException: 403 if the caller lacks ``CAN_ACCESS_ADMIN_PANEL``;
-            400 if the name is empty; 409 if a trust with the given name exists;
-            500 on database error.
+            400 if the name is empty; 409 if a trust with the given name exists,
+            or if no FL kit slot is available to bind; 500 on database error.
     """
     if not has_permissions(token_id, [PermissionRef.CAN_ACCESS_ADMIN_PANEL], db):
         logger.error(f"User {token_id} attempted to create a trust without admin permission")
@@ -81,7 +81,11 @@ def admin_create_trust(
         )
 
     api_key, api_key_hash = generate_trust_key()
-    internal_key, _internal_hash = generate_trust_key()
+    # The internal-service key is per-trust and lives only on the trust side
+    # (protects imaging-api / data-access-api from sibling containers). The hub
+    # never validates it, so the hash is intentionally discarded — only the
+    # plaintext is returned to the admin, once.
+    internal_key, _ = generate_trust_key()
 
     trust = Trust(
         name=name,

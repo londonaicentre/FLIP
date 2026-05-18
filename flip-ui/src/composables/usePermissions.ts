@@ -32,9 +32,9 @@ export function usePermissions(): {
     /**
      * True when the user has no project-write capability. Use this as the
      * gate for any "create / edit / run / delete" UI control on a project,
-     * model, or cohort query. Researchers (owners or in `project.users`)
-     * are NOT observers — the backend per-project check stops them from
-     * acting on projects they don't own.
+     * model, or cohort query. Researchers always return `false` here —
+     * per-project write authority is enforced server-side based on
+     * project ownership / membership.
      */
     isObserver: ComputedRef<boolean>;
 } {

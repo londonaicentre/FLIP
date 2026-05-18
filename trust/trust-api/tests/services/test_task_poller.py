@@ -89,6 +89,7 @@ async def test_poll_for_tasks_non_200():
 async def test_send_heartbeat_success():
     """Should POST to the heartbeat endpoint."""
     mock_client = AsyncMock()
+    mock_client.post.return_value = MagicMock(is_success=True)
 
     await _send_heartbeat(mock_client)
 
@@ -99,12 +100,32 @@ async def test_send_heartbeat_success():
 
 @pytest.mark.asyncio
 async def test_send_heartbeat_error():
-    """Should not raise on error."""
+    """Should not raise on transport error."""
     mock_client = AsyncMock()
     mock_client.post.side_effect = Exception("Network error")
 
     # Should not raise
     await _send_heartbeat(mock_client)
+
+
+@pytest.mark.asyncio
+async def test_send_heartbeat_logs_non_2xx_response(caplog):
+    """A 401/403/404 from the hub must surface as an error in the trust log.
+    httpx only raises on transport errors — without an explicit status check
+    the trust silently believes the heartbeat landed while the hub never
+    updates last_heartbeat, so Connection Status reports the trust 'offline'
+    while it polls normally."""
+    mock_client = AsyncMock()
+    mock_client.post.return_value = MagicMock(
+        is_success=False,
+        status_code=401,
+        text="Invalid API key",
+    )
+
+    with caplog.at_level("ERROR"):
+        await _send_heartbeat(mock_client)
+
+    assert any("Heartbeat rejected" in r.message and "401" in r.message for r in caplog.records)
 
 
 # ---- _report_task_result ----
