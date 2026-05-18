@@ -51,16 +51,17 @@ for mp4 in "${videos[@]}"; do
     fi
     out="${out_dir}/${name}.gif"
     echo "→ ${out}"
-    # Cypress 14 headless captures the runner-chrome + AUT iframe at 1280x632
-    # (test/cypress/docs/support/index.ts hides the command-log sidebar). The
-    # AUT is rendered at 62% scale in the right portion of that frame; the crop
-    # below isolates that region. Coordinates are tied to viewport 1280x800 in
-    # cypress.docs.config.ts — if you change the viewport, re-eyeball with
-    # `ffmpeg -i <mp4> -vf 'select=eq(n,90)' -vframes 1 /tmp/probe.png`.
-    # 15 fps + lanczos upscale + per-clip palette keeps file sizes in the
-    # 200 KB–1.5 MB envelope used by the existing hand-recorded GIFs.
+    # cypress.docs.config.ts forces Chrome to --window-size=1920,1200 so the
+    # AUT iframe gets enough room to render 1:1 at viewport size (1280x800)
+    # inside the captured 1920x1112 frame, sitting at offset (540, 80). The
+    # crop below isolates exactly that region; ffmpeg then does a clean
+    # downsample to 1200px wide instead of upsampling a 780-wide slice.
+    # If you change either the window-size or viewport, re-eyeball with
+    # `ffmpeg -i <mp4> -vf "select='eq(n,40)'" -vframes 1 /tmp/probe.png`.
+    # 15 fps + lanczos downsample + per-clip palette keeps file sizes in the
+    # 200 KB–4 MB envelope used by the existing GIFs.
     ffmpeg -y -hide_banner -loglevel error -i "${mp4}" \
-        -vf "crop=780:540:470:60,fps=15,scale=1200:-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=full[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5" \
+        -vf "crop=1280:800:540:80,fps=15,scale=1200:-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=full[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5" \
         "${out}"
 done
 

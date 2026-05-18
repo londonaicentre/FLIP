@@ -47,7 +47,24 @@ export default defineConfig({
     },
     e2e: {
         setupNodeEvents(on, config) {
-            return require("./test/cypress/plugins/index.ts").default(on, config);
+            const result = require("./test/cypress/plugins/index.ts").default(on, config);
+            // Headless Chrome's default window is 1280x720, which forces the AUT
+            // iframe to render at ~62% scale (780px wide) inside the captured
+            // frame — every GIF then has to be upscaled in ffmpeg, smearing text.
+            // Bump the Chrome window so the AUT iframe gets enough room to render
+            // 1:1 at viewport size; ffmpeg in scripts/videos-to-gifs.sh now does
+            // a clean downsample to 1200px instead of an upsample.
+            on("before:browser:launch", (browser, launchOptions) => {
+                if (browser.family === "chromium") {
+                    const sized = launchOptions.args.filter(
+                        (arg) => !arg.startsWith("--window-size=")
+                    );
+                    sized.push("--window-size=1920,1200");
+                    launchOptions.args = sized;
+                }
+                return launchOptions;
+            });
+            return result;
         },
         baseUrl: "http://localhost:4173",
         specPattern: "test/cypress/docs/**/*.spec.ts",
