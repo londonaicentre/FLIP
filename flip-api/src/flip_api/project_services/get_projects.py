@@ -95,13 +95,16 @@ def get_projects_paginated_orm(
         )
         base_conditions.append(user_access_condition)
 
-    # Main query for projects with pagination
+    # Main query for projects with pagination. The UserProfile LEFT JOIN
+    # pulls the owner's display name in the same round-trip — same pattern
+    # used in _load_latest_query_per_project for Queries.created_by.
     projects_query = (
-        select(Projects)
+        select(Projects, UserProfile.name)  # type: ignore[call-overload]
         .outerjoin(
             ProjectUserAccess,
             and_(ProjectUserAccess.project_id == Projects.id, ProjectUserAccess.user_id == user_id),
         )
+        .outerjoin(UserProfile, UserProfile.user_id == Projects.owner_id)  # type: ignore[arg-type]
         .where(and_(*base_conditions))
         .order_by(desc(Projects.creation_timestamp))
         .limit(page_size)
@@ -119,15 +122,13 @@ def get_projects_paginated_orm(
     )
 
     # Execute queries
-    project_results = session.exec(projects_query).all()
+    project_rows = session.exec(projects_query).all()
     total_records = session.exec(count_query).one_or_none() or 0
 
-    project_ids = [project.id for project in project_results]
-    owner_ids = list({project.owner_id for project in project_results})
+    project_ids = [project.id for project, _ in project_rows]
     trusts_by_project = get_trusts_approval_status_for_projects(project_ids, session)
     queries_by_project = _load_latest_query_per_project(project_ids, session)
     staged_at_by_project = _load_latest_audit_at_per_project(project_ids, ProjectAuditAction.STAGE, session)
-    owner_name_by_id = _load_owner_names(owner_ids, session)
     user_count_by_project = _load_user_counts(project_ids, session)
 
     projects_response = [
@@ -136,7 +137,7 @@ def get_projects_paginated_orm(
             name=project.name,
             description=project.description,
             owner_id=project.owner_id,
-            owner_name=owner_name_by_id.get(project.owner_id),
+            owner_name=owner_name or None,
             user_count=user_count_by_project.get(project.id, 0),
             # `Z` suffix so the browser treats the naive UTC value as UTC.
             creation_timestamp=project.creation_timestamp.isoformat(timespec="milliseconds") + "Z",
@@ -145,7 +146,7 @@ def get_projects_paginated_orm(
             approved_trusts=trusts_by_project.get(project.id, []),
             query=queries_by_project.get(project.id),
         )  # type: ignore[call-arg]
-        for project in project_results
+        for project, owner_name in project_rows
     ]
 
     return IPagedResponse[IProject](data=projects_response, total_rows=total_records)
@@ -275,23 +276,12 @@ def _load_latest_audit_at_per_project(
     return latest
 
 
-def _load_owner_names(owner_ids: list[UUID], session: Session) -> dict[UUID, str]:
-    """One SELECT against UserProfile, keyed by user_id, for the N owners
-    on the page. Missing rows (old seeded users without a profile) just
-    fall through to ``None`` at the call site."""
-    if not owner_ids:
-        return {}
-
-    rows = session.exec(
-        select(UserProfile.user_id, UserProfile.name).where(col(UserProfile.user_id).in_(owner_ids))
-    ).all()
-
-    return {uid: name for uid, name in rows if uid is not None and name}
-
-
 def _load_user_counts(project_ids: list[UUID], session: Session) -> dict[UUID, int]:
-    """Per-project user count from ProjectUserAccess. The owner is added on
-    project creation, so this count includes them."""
+    """Per-project user count.
+
+    The owner is auto-added to ``ProjectUserAccess`` on project creation, so
+    this count includes them and the UI doesn't need to ``+1``.
+    """
     if not project_ids:
         return {}
 

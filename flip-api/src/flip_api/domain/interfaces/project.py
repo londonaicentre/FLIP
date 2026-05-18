@@ -93,10 +93,8 @@ class IProject(BaseModel):  # Base for IProject to avoid repetition
     # follow-up round-trip per project. Null only if the owner has no
     # UserProfile row (very old seeded users).
     owner_name: str | None = Field(default=None, alias="ownerName")
-    # Total users with access to the project (includes the owner — they're
-    # auto-added to ProjectUserAccess on creation). Same rationale as
-    # owner_name: surface it on the list so the UI doesn't have to load
-    # the full Cognito user list per row.
+    # Total users with project access — includes the owner, who's auto-added
+    # to ProjectUserAccess on project creation (so the UI doesn't need to +1).
     user_count: int = Field(default=0, alias="userCount")
     deleted: bool = Field(default=False)
     approved: bool | None = None

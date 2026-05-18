@@ -618,12 +618,11 @@ class TestGetProject:
         stats_json = '{"TotalCount": 100}'
         mock_stats = QueryStats(id=uuid4(), query_id=query_id, stats=stats_json)
 
-        # Chain of .exec() returns. Step 3 swapped from `.first()`-returning
-        # a count to `.all()`-returning the trust id list; the rest are
-        # unchanged.
+        # Queries SELECT now LEFT-joins UserProfile so it returns a tuple
+        # (Queries, name); the separate UserProfile lookup is gone.
         mock_db_session.exec.side_effect = [
             MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
-            MagicMock(first=MagicMock(return_value=mock_query)),  # select(Queries)
+            MagicMock(first=MagicMock(return_value=(mock_query, "Alex Triay"))),  # Queries ⋈ UserProfile
             MagicMock(all=MagicMock(return_value=mock_trust_ids)),  # select(distinct(QueryResult.trust_id))
             MagicMock(first=MagicMock(return_value=mock_stats)),  # select(QueryStats)
         ]
@@ -635,6 +634,7 @@ class TestGetProject:
         assert isinstance(result.query, IProjectQuery)
         assert result.query.queried_trust_ids == mock_trust_ids
         assert result.query.total_cohort == 100
+        assert result.query.created_by == "Alex Triay"
 
     def test_get_project_not_found(self, mock_db_session: MagicMock):
         project_id = uuid4()
@@ -657,8 +657,8 @@ class TestGetProject:
         )
 
         mock_db_session.exec.side_effect = [
-            MagicMock(first=MagicMock(return_value=mock_project)),  # first exec().first()
-            MagicMock(first=MagicMock(return_value=[])),  # second exec().first() for query
+            MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
+            MagicMock(first=MagicMock(return_value=None)),  # Queries ⋈ UserProfile — no row
         ]
 
         result = get_project(project_id, mock_db_session)
@@ -681,10 +681,9 @@ class TestGetProject:
         mock_query = Queries(id=query_id, name="Query X", query="bad sql", project_id=project_id, created=None)
         mock_stats = QueryStats(id=uuid4(), query_id=query_id, stats="{not-valid-json")
 
-        # Chain of .exec() returns. Trust id lookup uses .all() now.
         mock_db_session.exec.side_effect = [
             MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
-            MagicMock(first=MagicMock(return_value=mock_query)),  # select(Queries)
+            MagicMock(first=MagicMock(return_value=(mock_query, None))),  # Queries ⋈ UserProfile
             MagicMock(all=MagicMock(return_value=[uuid4(), uuid4()])),  # select(distinct(QueryResult.trust_id))
             MagicMock(first=MagicMock(return_value=mock_stats)),  # select(QueryStats)
         ]

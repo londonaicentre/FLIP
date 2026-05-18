@@ -123,6 +123,7 @@ import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import { usePermissions } from "@/composables/usePermissions";
 import { ITrustResponse } from "@/services/trust-service";
 import { useTrustStore } from "@/store/trusts";
+import { filterByQueriedTrustIds } from "@/utils/cohort/query";
 
 interface IProjectStagingProps {
     staging: boolean;
@@ -154,17 +155,8 @@ const trustStore = useTrustStore();
 
 watch([trustStore, () => props.queriedTrustIds], () => {
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
-    const queriedTrustIds = props.queriedTrustIds;
-    // When the parent hasn't loaded the project yet, `queriedTrustIds` is
-    // undefined — fall through to the unfiltered list so the loader/empty
-    // state still renders correctly. Once the project lands, an empty array
-    // means "the query returned no trusts", which legitimately hides every
-    // toggle.
-    const filtered = queriedTrustIds === undefined
-        ? trusts
-        : trusts.filter((trust) => queriedTrustIds.includes(trust.id));
 
-    trustsToStage.value = filtered
+    trustsToStage.value = filterByQueriedTrustIds(trusts, props.queriedTrustIds)
         .map((trust) => ({
             ...trust,
             staged: false

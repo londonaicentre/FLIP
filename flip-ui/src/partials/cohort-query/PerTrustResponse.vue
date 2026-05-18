@@ -95,6 +95,7 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import { getOMOPResults, IResults } from "@/services/cohort-query-service";
 import { useProjectStore } from "@/store/project";
 import { useTrustStore } from "@/store/trusts";
+import { filterByQueriedTrustIds } from "@/utils/cohort/query";
 
 interface IProps {
     submitting?: boolean;
@@ -172,16 +173,15 @@ const rows = computed<IRow[]>(() => {
     const errors = perTrustErrors.value;
     const hasResults = Object.keys(counts).length > 0 || Object.keys(errors).length > 0;
 
-    // Once the query has finished, restrict the row list to the trusts that
-    // actually participated. Without this, a trust that joined the platform
-    // after the query ran would render as "running" forever (it's in the
-    // global trust list but has no QueryResult, so it appears in neither
-    // `counts` nor `errors`). During the initial submission (`submitting`)
-    // we keep the full live list so the user sees the fan-out animate.
-    const queriedTrustIds = projectStore.project?.query?.queriedTrustIds;
-    const visibleTrusts = !props.submitting && queriedTrustIds && queriedTrustIds.length
-        ? trusts.filter((t) => queriedTrustIds.includes(t.id))
-        : trusts;
+    // While the user is mid-submit, the fan-out targets the live trust list
+    // so we render every one of them as "running". Once the query has
+    // finished we restrict to the trusts that actually participated —
+    // otherwise a trust that joined the platform after the query ran would
+    // sit in "running" forever (it's in the global list but absent from
+    // both `counts` and `errors`).
+    const visibleTrusts = props.submitting
+        ? trusts
+        : filterByQueriedTrustIds(trusts, projectStore.project?.query?.queriedTrustIds);
 
     return visibleTrusts
         .map((t) => {

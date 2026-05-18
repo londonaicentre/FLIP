@@ -55,8 +55,7 @@ export type IProject = {
     ownerName?: string | null;
     ownerEmail: string;
     // Total users with project access — includes the owner (auto-added
-    // to ProjectUserAccess on creation). Surfaced by the list endpoint so
-    // cards can render "N users" without a per-row Cognito round-trip.
+    // to ProjectUserAccess on creation), so the UI doesn't need to +1.
     userCount?: number;
     creationtimestamp: string;
     stagedAt?: string | null;

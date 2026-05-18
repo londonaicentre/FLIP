@@ -750,17 +750,24 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
 
     logger.debug(f"Project found: {project}")
 
-    # Step 2: Fetch most recent query (by created timestamp)
-    query = session.exec(
-        select(Queries).where(Queries.project_id == project.id).order_by(col(Queries.created).desc()).limit(1)
+    # Step 2: Most recent query + the runner's display name in one round-trip
+    # (same UserProfile LEFT JOIN pattern used in the list endpoint's batch
+    # loader). created_by_name is null for legacy queries saved before the
+    # created_by column existed.
+    query_row = session.exec(
+        select(Queries, UserProfile.name)  # type: ignore[call-overload]
+        .outerjoin(UserProfile, UserProfile.user_id == Queries.created_by)  # type: ignore[arg-type]
+        .where(Queries.project_id == project.id)
+        .order_by(col(Queries.created).desc())
+        .limit(1)
     ).first()
 
     query_data = None
-    if query:
-        # Step 3: Distinct trust IDs that returned a QueryResult — the staging
+    if query_row:
+        query, created_by_name = query_row
+        # Step 3: distinct trust IDs that returned a QueryResult — the staging
         # UI filters its selector against this set and callers derive the
-        # "trusts queried" count from ``len(...)``, so there's nothing else
-        # to compute.
+        # "trusts queried" count from ``len(...)``.
         queried_trust_ids = [
             tid
             for tid in session.exec(
@@ -769,7 +776,7 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
             if tid is not None
         ]
 
-        # Step 4: Get total cohort size from QueryStats (as JSON)
+        # Step 4: total cohort size from QueryStats (stored as JSON).
         stats_entry = session.exec(select(QueryStats).where(QueryStats.query_id == query.id)).first()
 
         total_cohort = 0
@@ -779,15 +786,6 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
                 total_cohort = int(stats_json.get("TotalCount") or stats_json.get("record_count") or 0)
             except (ValueError, TypeError) as e:
                 logger.warning(f"Failed to parse stats JSON for query {query.id}: {e}")
-
-        # Look up the runner's display name from UserProfile so the UI can show
-        # "Last run … by R. Patel" without a second round-trip. Null for legacy
-        # queries saved before created_by existed.
-        created_by_name: str | None = None
-        if query.created_by:
-            created_by_name = session.exec(
-                select(UserProfile.name).where(UserProfile.user_id == query.created_by)
-            ).first()
 
         query_data = IProjectQuery(
             id=query.id,
