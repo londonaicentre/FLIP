@@ -38,10 +38,7 @@ const trustNew = {
     code: "TN"
 };
 
-function mountStaging(
-    queriedTrustIds: string[] | undefined,
-    erroredTrustIds: string[] | undefined = undefined,
-) {
+function mountStaging(stageableTrustIds: string[] | undefined) {
     const pinia = createTestingPinia({
         createSpy: vi.fn,
         stubActions: false
@@ -50,8 +47,7 @@ function mountStaging(
         props: {
             hasQuery: true,
             staging: false,
-            queriedTrustIds,
-            erroredTrustIds
+            stageableTrustIds
         },
         global: { plugins: [pinia] }
     });
@@ -62,12 +58,15 @@ function mountStaging(
     return wrapper;
 }
 
-describe("ProjectStaging — queriedTrustIds gating", () => {
+describe("ProjectStaging — stageableTrustIds gating", () => {
     beforeEach(() => {
         vi.restoreAllMocks();
     });
 
-    it("hides trusts that did not participate in the cohort query", async () => {
+    it("only renders trusts in the stageable set (responded successfully)", async () => {
+        // Stageable = trusts that responded without error. Late-joiners,
+        // never-responded, and errored trusts are all excluded by the
+        // parent before the prop is passed.
         const wrapper = mountStaging([trustA.id, trustB.id]);
         await flushPromises();
 
@@ -76,7 +75,7 @@ describe("ProjectStaging — queriedTrustIds gating", () => {
         expect(wrapper.find(`[data-test="${trustNew.name}-selector"]`).exists()).toBe(false);
     });
 
-    it("shows every trust when queriedTrustIds is undefined (parent still loading)", async () => {
+    it("shows every trust when stageableTrustIds is undefined (parent still loading)", async () => {
         const wrapper = mountStaging(undefined);
         await flushPromises();
 
@@ -85,10 +84,10 @@ describe("ProjectStaging — queriedTrustIds gating", () => {
         expect(wrapper.find(`[data-test="${trustNew.name}-selector"]`).exists()).toBe(true);
     });
 
-    it("hides errored trusts even though they responded to the cohort query", async () => {
-        // trustB responded but with an error — must not appear as a staging
-        // toggle because the cohort count is unusable.
-        const wrapper = mountStaging([trustA.id, trustB.id], [trustB.id]);
+    it("hides a trust the parent excluded (errored or never-responded)", async () => {
+        // The parent computes `respondedTrustIds − erroredTrustIds`. From the
+        // component's POV both cases look the same: missing from the prop.
+        const wrapper = mountStaging([trustA.id]);
         await flushPromises();
 
         expect(wrapper.find(`[data-test="${trustA.name}-selector"]`).exists()).toBe(true);

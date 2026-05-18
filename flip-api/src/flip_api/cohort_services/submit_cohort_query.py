@@ -164,6 +164,7 @@ def submit_cohort_query(
                 task = TrustTask(
                     trust_id=trust.id,
                     task_type=TaskType.COHORT_QUERY,
+                    query_id=cohort_query.query_id,
                     payload=json.dumps(task_payload.model_dump(mode="json")),
                 )
                 db.add(task)

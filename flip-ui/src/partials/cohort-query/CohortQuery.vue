@@ -137,7 +137,13 @@ const runCohortQuery = async (v: unknown) => {
         if (response && response.trust.every(r => r.statusCode >= 200 && r.statusCode < 300)) {
             queryId.value = response.queryId;
 
-            hasResults();
+            // Ask the parent to reload the project. formSubmitting stays
+            // true here — the watch below flips it false once the project
+            // store carries the just-submitted query. Otherwise PerTrustResponse
+            // would briefly see submitting=false + project.query=null and
+            // render its "no query" empty state, flashing the trust rows out
+            // and back in.
+            emits("UpdateProject");
 
             Snackbar.show({
                 type: "success",
@@ -146,8 +152,6 @@ const runCohortQuery = async (v: unknown) => {
                 actionText: "View Project",
                 action: () => router.push({ path: `/project/${project.value?.id}` })
             });
-
-            formSubmitting.value = false;
 
             return;
         }
@@ -171,10 +175,17 @@ const runCohortQuery = async (v: unknown) => {
     }
 };
 
-const hasResults = () => {
-    formSubmitting.value = false;
-    emits("UpdateProject");
-};
+// Spans the submit + the parent's project reload — only complete when the
+// project store carries the just-submitted query. Belt-and-braces: a stale
+// queryId watch would never fire, but the user can navigate away.
+watch(
+    () => projectStore.project?.query?.id,
+    (qid) => {
+        if (qid && qid === queryId.value && formSubmitting.value) {
+            formSubmitting.value = false;
+        }
+    }
+);
 
 const queryLocked = computed(() => project?.value?.status !== "UNSTAGED");
 

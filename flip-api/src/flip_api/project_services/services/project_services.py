@@ -30,6 +30,7 @@ from flip_api.db.models.main_models import (
     QueryResult,
     QueryStats,
     Trust,
+    TrustTask,
     XNATProjectStatus,
 )
 from flip_api.db.models.user_models import UserProfile
@@ -48,6 +49,7 @@ from flip_api.domain.schemas.projects import (
 )
 from flip_api.domain.schemas.status import (
     ProjectStatus,
+    TaskStatus,
     XNATImageStatus,
 )
 from flip_api.model_services.services.model_service import delete_models
@@ -90,12 +92,60 @@ def _collect_errored_trust_ids(
     return errored
 
 
-def _legacy_responded_trust_ids(
+def _load_task_status_trust_ids(
+    query_id: UUID,
+    session: Session,
+) -> tuple[list[UUID], list[UUID]]:
+    """Per-trust task state for this query: (pending, cancelled).
+
+    PENDING — queued on the hub, trust hasn't polled yet → "queued" chip.
+    CANCELLED — hub gave up on the trust (project approved without it) →
+    "skipped" chip. Done in one round-trip.
+
+    Args:
+        query_id (UUID): The cohort query ID to look up tasks for.
+        session (Session): SQLModel session.
+
+    Returns:
+        tuple[list[UUID], list[UUID]]: ``(pending_trust_ids, cancelled_trust_ids)``.
+    """
+    rows = session.exec(
+        select(TrustTask.trust_id, TrustTask.status)
+        .where(
+            TrustTask.query_id == query_id,
+            col(TrustTask.status).in_([TaskStatus.PENDING, TaskStatus.CANCELLED]),
+        )
+    ).all()
+    pending: list[UUID] = []
+    cancelled: list[UUID] = []
+    seen_pending: set[UUID] = set()
+    seen_cancelled: set[UUID] = set()
+    for tid, status in rows:
+        if tid is None:
+            continue
+        if status == TaskStatus.PENDING and tid not in seen_pending:
+            seen_pending.add(tid)
+            pending.append(tid)
+        elif status == TaskStatus.CANCELLED and tid not in seen_cancelled:
+            seen_cancelled.add(tid)
+            cancelled.append(tid)
+
+    return pending, cancelled
+
+
+def _distinct_responded_trust_ids(
     rows: Sequence[tuple[UUID | None, str | None]],
 ) -> list[UUID]:
-    """Distinct trust IDs that posted a QueryResult — used as a fallback for
-    queries saved before ``Queries.queried_trust_ids`` was tracked at submit
-    time. New queries persist the dispatched set directly on the row.
+    """Distinct trust IDs that posted any QueryResult row, in input order.
+
+    Two consumers:
+
+    1. The staging guard — a trust must be in this set (and not in
+       ``errored_trust_ids``) to be stageable, otherwise we'd commit the
+       project to data we never received.
+    2. Legacy fallback for ``queried_trust_ids`` — for queries saved
+       before ``Queries.queried_trust_ids`` was tracked at submit time,
+       the loader uses this as the dispatched set too.
 
     Args:
         rows (Sequence[tuple[UUID | None, str | None]]): ``(trust_id, data_json)`` pairs from QueryResult.
@@ -606,6 +656,31 @@ def approve_project(
 
     logger.info("Updated the trusts that have been selected for approval")
 
+    # Cancel any orphan PENDING cohort-query tasks: the project is moving
+    # on without these trusts (likely because they never replied), so
+    # there's no point making them run the query when they next poll. We
+    # only touch PENDING — IN_PROGRESS tasks are left to complete since
+    # there's no protocol to abort a running task at the trust.
+    latest_query = db.exec(
+        select(Queries).where(Queries.project_id == project_id).order_by(col(Queries.created).desc()).limit(1)
+    ).first()
+    if latest_query is not None:
+        cancelled = db.exec(
+            select(TrustTask).where(
+                TrustTask.query_id == latest_query.id,
+                TrustTask.status == TaskStatus.PENDING,
+            )
+        ).all()
+        for task in cancelled:
+            task.status = TaskStatus.CANCELLED
+            task.updated_at = datetime.now(timezone.utc)
+            db.add(task)
+        if cancelled:
+            logger.info(
+                f"Cancelled {len(cancelled)} orphan PENDING cohort-query tasks for query "
+                f"{latest_query.id} on project {project_id} approval."
+            )
+
     update_project_status(
         project_id=project_id,
         new_status=ProjectStatus.APPROVED,
@@ -821,10 +896,12 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
             select(QueryResult.trust_id, QueryResult.data).where(QueryResult.query_id == query.id)
         ).all()
         errored_trust_ids = _collect_errored_trust_ids(result_rows, query_id=query.id)
+        responded_trust_ids = _distinct_responded_trust_ids(result_rows)
+        pending_trust_ids, cancelled_trust_ids = _load_task_status_trust_ids(query.id, session)
         queried_trust_ids = (
             list(query.queried_trust_ids)
             if query.queried_trust_ids is not None
-            else _legacy_responded_trust_ids(result_rows)
+            else responded_trust_ids
         )
 
         # Step 4: total cohort size from QueryStats (stored as JSON).
@@ -843,6 +920,9 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
             name=query.name,
             query=query.query,
             queried_trust_ids=queried_trust_ids,
+            pending_trust_ids=pending_trust_ids,
+            cancelled_trust_ids=cancelled_trust_ids,
+            responded_trust_ids=responded_trust_ids,
             errored_trust_ids=errored_trust_ids,
             total_cohort=total_cohort,
             # `Z` suffix so the browser parses as UTC (naive UTC column).

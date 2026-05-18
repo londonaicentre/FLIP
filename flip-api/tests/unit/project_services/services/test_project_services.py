@@ -305,6 +305,52 @@ class TestApproveProject:
         assert result is False
         mock_db_session.rollback.assert_called_once()
 
+    def test_approve_project_cancels_orphan_pending_tasks(
+        self, mock_db_session: MagicMock, sample_project: Projects, sample_trust_ids: list[UUID]
+    ):
+        """A trust the project is approved *without* (because it never
+        responded) shouldn't keep an orphan PENDING task sitting in the
+        queue. Approval flips those tasks to CANCELLED so the trust
+        skips them on its next poll."""
+        from flip_api.domain.schemas.status import TaskStatus
+
+        project_approval = IProjectApproval(project_id=sample_project.id, trust_ids=sample_trust_ids)
+        user_id = uuid4()
+        mock_db_session.get.return_value = sample_project
+
+        # Mock the trust-intersect lookup + latest_query + orphan tasks chain.
+        # one_or_none() drives the per-trust approval loop; .first() and .all()
+        # drive the new cancel block.
+        mock_intersect = MagicMock()
+        latest_query = MagicMock(id=uuid4())
+        orphan_a = MagicMock(status=TaskStatus.PENDING)
+        orphan_b = MagicMock(status=TaskStatus.PENDING)
+
+        approval_exec = MagicMock()
+        approval_exec.one_or_none.return_value = mock_intersect
+        latest_query_exec = MagicMock()
+        latest_query_exec.first.return_value = latest_query
+        orphan_exec = MagicMock()
+        orphan_exec.all.return_value = [orphan_a, orphan_b]
+
+        # Per-trust approval calls fire first (one per sample trust), then
+        # the latest-query lookup, then the orphan PENDING fetch.
+        mock_db_session.exec.side_effect = (
+            [approval_exec] * len(sample_trust_ids)
+            + [latest_query_exec, orphan_exec]
+        )
+
+        with (
+            patch(f"{MOCK_SERVICE_PATH}.update_project_status"),
+            patch(f"{MOCK_SERVICE_PATH}.audit_project_action"),
+        ):
+            assert approve_project(mock_db_session, project_approval, user_id) is True
+
+        assert orphan_a.status == TaskStatus.CANCELLED
+        assert orphan_b.status == TaskStatus.CANCELLED
+        assert orphan_a.updated_at is not None
+        assert orphan_b.updated_at is not None
+
 
 class TestStageProjectService:
     def test_stage_project_service_success(
@@ -616,12 +662,19 @@ class TestGetProject:
         stats_json = '{"TotalCount": 100}'
         mock_stats = QueryStats(id=uuid4(), query_id=query_id, stats=stats_json)
 
-        # Queries SELECT now LEFT-joins UserProfile so it returns a tuple
-        # (Queries, name); the separate UserProfile lookup is gone.
+        # Mock chain in order: Projects, Queries ⋈ UserProfile,
+        # QueryResult.trust_id+.data, TrustTask (PENDING+CANCELLED), QueryStats.
+        trust_pending = uuid4()
+        trust_cancelled = uuid4()
+        from flip_api.domain.schemas.status import TaskStatus
         mock_db_session.exec.side_effect = [
             MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
             MagicMock(first=MagicMock(return_value=(mock_query, "Alex Triay"))),  # Queries ⋈ UserProfile
             MagicMock(all=MagicMock(return_value=result_rows)),  # select(QueryResult.trust_id, .data)
+            MagicMock(all=MagicMock(return_value=[
+                (trust_pending, TaskStatus.PENDING),
+                (trust_cancelled, TaskStatus.CANCELLED),
+            ])),  # select(TrustTask.trust_id, .status) PENDING+CANCELLED
             MagicMock(first=MagicMock(return_value=mock_stats)),  # select(QueryStats)
         ]
 
@@ -632,6 +685,8 @@ class TestGetProject:
         assert isinstance(result.query, IProjectQuery)
         assert result.query.queried_trust_ids == [trust_ok_1, trust_ok_2, trust_errored]
         assert result.query.errored_trust_ids == [trust_errored]
+        assert result.query.pending_trust_ids == [trust_pending]
+        assert result.query.cancelled_trust_ids == [trust_cancelled]
         assert result.query.total_cohort == 100
         assert result.query.created_by == "Alex Triay"
 
@@ -687,6 +742,7 @@ class TestGetProject:
                 (uuid4(), '{"record_count": 1, "data": [], "error": null}'),
                 (uuid4(), '{"record_count": 2, "data": [], "error": null}'),
             ])),  # select(QueryResult.trust_id, .data)
+            MagicMock(all=MagicMock(return_value=[])),  # select(TrustTask.trust_id, .status) PENDING+CANCELLED
             MagicMock(first=MagicMock(return_value=mock_stats)),  # select(QueryStats)
         ]
 

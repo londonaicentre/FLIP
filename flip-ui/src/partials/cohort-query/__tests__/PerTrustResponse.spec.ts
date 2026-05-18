@@ -177,7 +177,10 @@ describe("PerTrustResponse", () => {
         expect(t2.text()).toContain("running");
     });
 
-    it("shows every trust as running while submitting, regardless of cached results", async () => {
+    it("shows every trust as queued while submitting, regardless of cached results", async () => {
+        // Mid-submit the hub hasn't queued the TrustTasks yet — showing a
+        // pink "running" pulse would lie. "queued" is the right state until
+        // the POST returns and pendingTrustIds populates for real.
         const data = {
             recordCount: 7,
             trustsResults: [],
@@ -195,7 +198,9 @@ describe("PerTrustResponse", () => {
         await flushPromises();
 
         for (const trust of TRUSTS) {
-            expect(rowFor(wrapper, trust.code as string)!.text()).toContain("running");
+            const row = rowFor(wrapper, trust.code as string)!;
+            expect(row.text()).toContain("queued");
+            expect(row.text()).not.toContain("running");
         }
     });
 
@@ -284,9 +289,10 @@ describe("PerTrustResponse", () => {
         expect(rowFor(wrapper, "T3")).toBeUndefined();
     });
 
-    it("still shows every trust during the initial submission, even with queriedTrustIds set", async () => {
-        // While the user is mid-submit, the fan-out targets the live trust list
-        // — including trust-3 — so the in-flight UI should mirror that.
+    it("renders every trust as queued during the initial submission", async () => {
+        // While the user is mid-submit, the fan-out targets the live trust
+        // list — including trust-3 — so the in-flight UI shows them all as
+        // "queued" (the hub is about to create the TrustTasks).
         swrvMock.value = null;
         const wrapper = mount(PerTrustResponse, {
             props: { submitting: true },
@@ -315,8 +321,100 @@ describe("PerTrustResponse", () => {
         await flushPromises();
 
         for (const trust of TRUSTS) {
-            expect(rowFor(wrapper, trust.code as string)!.text()).toContain("running");
+            const row = rowFor(wrapper, trust.code as string)!;
+            expect(row.text()).toContain("queued");
+            expect(row.text()).not.toContain("running");
         }
+    });
+
+    it("renders the 'skipped' chip for a trust whose task was cancelled", async () => {
+        // Project was approved without trust-2; the hub cancelled trust-2's
+        // PENDING task. The per-trust panel renders "skipped" — the operator
+        // can see the trust was dispatched but the work was abandoned.
+        const data = {
+            recordCount: 5,
+            trustsResults: [],
+            trustRecordCounts: { "trust-1": 5 }
+        };
+        swrvMock.value = data;
+        const wrapper = mount(PerTrustResponse, {
+            props: { submitting: false },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false,
+                    initialState: {
+                        trust: { trusts: TRUSTS },
+                        project: {
+                            project: {
+                                id: "p-1",
+                                status: "APPROVED",
+                                query: {
+                                    id: "q-1",
+                                    queriedTrustIds: ["trust-1", "trust-2"],
+                                    pendingTrustIds: [],
+                                    cancelledTrustIds: ["trust-2"],
+                                    respondedTrustIds: ["trust-1"],
+                                    erroredTrustIds: []
+                                }
+                            }
+                        }
+                    }
+                })],
+                stubs
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        expect(rowFor(wrapper, "T1")!.text()).toContain("5");
+        expect(rowFor(wrapper, "T2")!.text()).toContain("skipped");
+        expect(rowFor(wrapper, "T2")!.text()).not.toContain("running");
+        expect(rowFor(wrapper, "T2")!.text()).not.toContain("queued");
+    });
+
+    it("renders the 'queued' chip for a trust whose TrustTask is still PENDING", async () => {
+        // Distinct from 'running': the task is queued at the hub but the
+        // trust hasn't polled for it yet, so it's not even being processed.
+        const data = {
+            recordCount: 0,
+            trustsResults: [],
+            trustRecordCounts: {}
+        };
+        swrvMock.value = data;
+        const wrapper = mount(PerTrustResponse, {
+            props: { submitting: false },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false,
+                    initialState: {
+                        trust: { trusts: TRUSTS },
+                        project: {
+                            project: {
+                                id: "p-1",
+                                status: "UNSTAGED",
+                                query: {
+                                    id: "q-1",
+                                    queriedTrustIds: ["trust-1", "trust-2"],
+                                    pendingTrustIds: ["trust-2"],
+                                    respondedTrustIds: [],
+                                    erroredTrustIds: []
+                                }
+                            }
+                        }
+                    }
+                })],
+                stubs
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        // trust-1: pending=false → running chip; trust-2: pending=true → queued chip
+        expect(rowFor(wrapper, "T1")!.text()).toContain("running");
+        expect(rowFor(wrapper, "T2")!.text()).toContain("queued");
+        expect(rowFor(wrapper, "T2")!.text()).not.toContain("running");
     });
 
     it("shows a dispatched-but-never-responded trust as 'running'", async () => {

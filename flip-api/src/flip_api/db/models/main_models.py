@@ -264,6 +264,12 @@ class TrustTask(SQLModel, table=True):
     trust_id: UUID = Field(foreign_key="trust.id", index=True)
     task_type: TaskType = Field()
     payload: str = Field()  # JSON-serialized task data
+    # The query this task belongs to, when the task type is COHORT_QUERY.
+    # Lets the cohort-results UI distinguish "task still queued, trust hasn't
+    # polled yet" (PENDING) from "trust is processing" (IN_PROGRESS) without
+    # JSON-searching the payload. Nullable + no FK — other task types don't
+    # belong to a query, and tasks created before this column existed have NULL.
+    query_id: UUID | None = Field(default=None, index=True)
     status: TaskStatus = Field(default=TaskStatus.PENDING)
     result: str | None = Field(default=None)  # JSON-serialized result data
     needs_post_processing: bool = Field(default=False)

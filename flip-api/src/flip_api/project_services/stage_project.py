@@ -111,11 +111,15 @@ def stage_project_endpoint(
         f"Project {project_id} has query with {len(project_data.query.queried_trust_ids)} trusts queried."
     )
 
-    # Trusts that joined the platform after the cohort query was submitted have
-    # no QueryResult for it, so the user has no cohort count for them. Reject
-    # staging requests that include any such trust — the UI already filters its
-    # selector by `queriedTrustIds`, this guards direct API callers.
+    # Three guards, each catching a distinct way an operator could end up
+    # staging on a trust they don't have data for. The UI already filters
+    # the selector — these guard direct API callers.
     queried_trust_ids = set(project_data.query.queried_trust_ids)
+    responded_trust_ids = set(project_data.query.responded_trust_ids)
+    errored_trust_ids = set(project_data.query.errored_trust_ids)
+
+    # (1) Late-joiners: trust joined the platform after the query was
+    # dispatched, so it isn't in the queried set at all.
     unqueried_trust_ids = [tid for tid in payload.trusts if tid not in queried_trust_ids]
     if unqueried_trust_ids:
         raise HTTPException(
@@ -126,10 +130,20 @@ def stage_project_endpoint(
             ),
         )
 
-    # Also reject trusts whose cohort query returned an error — we have no
-    # usable count for them so staging would commit the project to data we
-    # never received. Same defence-in-depth as the un-queried check above.
-    errored_trust_ids = set(project_data.query.errored_trust_ids)
+    # (2) Never-responded: trust was dispatched but the hub holds no
+    # QueryResult — no cohort count, so the project would be committed to
+    # data we never received.
+    unresponded_trust_ids = [tid for tid in payload.trusts if tid not in responded_trust_ids]
+    if unresponded_trust_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Trusts {unresponded_trust_ids} have not returned cohort query results for project "
+                f"{project_id} and cannot be staged."
+            ),
+        )
+
+    # (3) Errored: trust replied, but with an error blob — no usable count.
     failed_trust_ids = [tid for tid in payload.trusts if tid in errored_trust_ids]
     if failed_trust_ids:
         raise HTTPException(

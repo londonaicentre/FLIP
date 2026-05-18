@@ -38,9 +38,13 @@
                         class="inline-block w-2 h-2 rounded-full"
                         :class="row.errored
                             ? 'bg-red-600'
-                            : row.running
-                                ? 'bg-[#e51170] cq-pulse'
-                                : 'bg-emerald-500'"
+                            : row.cancelled
+                                ? 'bg-gray-300 dark:bg-gray-600'
+                                : row.pending
+                                    ? 'bg-gray-400'
+                                    : row.running
+                                        ? 'bg-[#e51170] cq-pulse'
+                                        : 'bg-emerald-500'"
                     />
                     <span class="font-mono text-xs font-semibold text-gray-700 dark:text-gray-200">
                         {{ row.code }}
@@ -66,6 +70,22 @@
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-white rounded-full" />
                         error
+                    </span>
+                    <span
+                        v-else-if="row.cancelled"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-gray-500 dark:text-gray-400 rounded-full bg-gray-100 dark:bg-gray-800"
+                        title="Project was approved without this trust; query task cancelled"
+                    >
+                        <span class="inline-block w-1.5 h-1.5 bg-gray-400 rounded-full" />
+                        skipped
+                    </span>
+                    <span
+                        v-else-if="row.pending"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-gray-700 dark:text-gray-200 rounded-full bg-gray-200 dark:bg-gray-700"
+                        title="Queued at the hub; trust hasn't polled for it yet"
+                    >
+                        <span class="inline-block w-1.5 h-1.5 bg-gray-500 rounded-full" />
+                        queued
                     </span>
                     <span
                         v-else-if="row.running"
@@ -162,6 +182,8 @@ interface IRow {
     code: string;
     name: string;
     count: number;
+    pending: boolean;
+    cancelled: boolean;
     running: boolean;
     errored: boolean;
     error: string | null;
@@ -194,23 +216,34 @@ const rows = computed<IRow[]>(() => {
     // erroredTrustIds is sourced from QueryResult.data on the project, so it
     // catches errored trusts even when the QueryStats aggregator's
     // trustErrors map is empty (timing window after the error post and
-    // before re-aggregation lands).
+    // before re-aggregation lands). pendingTrustIds and cancelledTrustIds
+    // come from TrustTask state (PENDING / CANCELLED respectively).
     const erroredSet = new Set(projectStore.project?.query?.erroredTrustIds ?? []);
+    const pendingSet = new Set(projectStore.project?.query?.pendingTrustIds ?? []);
+    const cancelledSet = new Set(projectStore.project?.query?.cancelledTrustIds ?? []);
 
     return visibleTrusts
         .map((t) => {
             const errored = !props.submitting && (t.id in errors || erroredSet.has(t.id));
             const responded = !props.submitting && t.id in counts;
-            // While submitting (just hit Run) every trust is in-flight.
-            // Once results land, a dispatched trust is "running" only until
-            // it appears in either map.
-            const running = props.submitting || (!responded && !errored);
+            // Precedence: errored > responded > cancelled > queued > running.
+            // Mid-submit we treat every trust as "queued" — the hub is about
+            // to queue the TrustTask, so showing the pink "running" pulse
+            // before the task even exists would be misleading. Once results
+            // start landing this naturally transitions to running/responded.
+            const cancelled = !props.submitting && !responded && !errored && cancelledSet.has(t.id);
+            const pending = !errored && !responded && !cancelled && (
+                props.submitting || pendingSet.has(t.id)
+            );
+            const running = !errored && !responded && !cancelled && !pending;
 
             return {
                 id: t.id,
                 code: t.code || t.name,
                 name: t.name,
                 count: counts[t.id] ?? 0,
+                pending,
+                cancelled,
                 running,
                 errored,
                 error: errored ? (errors[t.id] || null) : null
@@ -219,8 +252,12 @@ const rows = computed<IRow[]>(() => {
         .sort((a, b) => a.code.localeCompare(b.code));
 });
 
-const anyRunning = computed(() => rows.value.some(r => r.running));
-const completedCount = computed(() => rows.value.filter(r => !r.running).length);
+// "Returned" = the trust has a result (success or error) or was skipped.
+// Pending + running are in-flight states.
+const anyRunning = computed(() => rows.value.some(r => r.pending || r.running));
+const completedCount = computed(() =>
+    rows.value.filter(r => !r.pending && !r.running).length
+);
 const emptyMessage = computed(() => projectStore.project?.query
     ? "No participating trusts."
     : "Submit a query to see per-trust responses."

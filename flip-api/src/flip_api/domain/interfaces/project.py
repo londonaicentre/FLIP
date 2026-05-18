@@ -45,10 +45,26 @@ class IProjectQuery(BaseModel):
     # as an error chip or a "running" pulse — instead of vanishing.
     # ``len(queried_trust_ids)`` is the "trusts queried" count.
     queried_trust_ids: list[UUID] = Field(default_factory=list, alias="queriedTrustIds")
-    # Subset of ``queried_trust_ids`` whose response carried a non-null
-    # ``error`` in the QueryResult data blob. Excluded from the set of
-    # trusts the operator may stage against — we have no usable cohort
-    # count for them, so staging would commit to data we never received.
+    # Subset of ``queried_trust_ids`` whose ``TrustTask`` is still PENDING
+    # — the trust hasn't polled the hub for it yet. UI renders these with
+    # a "queued" chip instead of "running" so the operator can tell the
+    # difference between "we sent it, awaiting pickup" and "trust is
+    # actively processing".
+    pending_trust_ids: list[UUID] = Field(default_factory=list, alias="pendingTrustIds")
+    # Subset of ``queried_trust_ids`` whose ``TrustTask`` was cancelled
+    # (typically because the project was approved without them). UI shows
+    # these as a greyed-out "skipped" chip — they were dispatched but the
+    # work was abandoned before they could pick it up.
+    cancelled_trust_ids: list[UUID] = Field(default_factory=list, alias="cancelledTrustIds")
+    # Subset of ``queried_trust_ids`` that posted any QueryResult row
+    # (successful or errored). The staging guard requires this — a trust
+    # that was dispatched but never replied has no cohort count and so
+    # must not be stage-eligible. Combined with ``errored_trust_ids``,
+    # the stageable set is ``responded - errored``.
+    responded_trust_ids: list[UUID] = Field(default_factory=list, alias="respondedTrustIds")
+    # Subset of ``responded_trust_ids`` whose data blob carried a
+    # non-null ``error``. Excluded from staging — even though we got a
+    # reply, we have no usable cohort count.
     errored_trust_ids: list[UUID] = Field(default_factory=list, alias="erroredTrustIds")
     total_cohort: int | None = Field(default=None, alias="totalCohort")
     created: str | None = Field(default=None)

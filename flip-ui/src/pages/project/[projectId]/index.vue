@@ -90,8 +90,7 @@
                         <template v-if="isProjectUnstaged()">
                             <ProjectStaging
                                 :has-query="!!project.query"
-                                :queried-trust-ids="project.query?.queriedTrustIds"
-                                :errored-trust-ids="project.query?.erroredTrustIds"
+                                :stageable-trust-ids="stageableTrustIds"
                                 :project-staged="isProjectStaged()"
                                 :staging="stagingProject"
                                 @staged="stageProject"
@@ -233,6 +232,18 @@ const { isObserver, canCreateProjects } = usePermissions();
 
 const projectApproved = computed(() => {
     return project?.value?.status === "APPROVED";
+});
+
+// Stageable = trusts that responded successfully. Excludes late-joiners
+// (not dispatched), never-responded (dispatched but no QueryResult), and
+// errored (responded with an error blob). Mirrors the server-side guard
+// in stage_project.py.
+const stageableTrustIds = computed<string[] | undefined>(() => {
+    const q = project?.value?.query;
+    if (!q) return undefined;
+    const errored = new Set(q.erroredTrustIds ?? []);
+
+    return (q.respondedTrustIds ?? []).filter((id) => !errored.has(id));
 });
 
 const isOwnerOrHasAccess = () => {

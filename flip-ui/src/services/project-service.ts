@@ -33,11 +33,20 @@ export interface IProjectQuery {
     query: string;
     // Trust IDs the query was dispatched to at submit time. PerTrustResponse
     // uses this as the visibility set so trusts that errored or never
-    // responded stay on screen (red chip / running pulse). Callers that want
-    // a "how many trusts ran this?" count take `.length`.
+    // responded stay on screen (sent / running / red chip). Callers that
+    // want a "how many trusts ran this?" count take `.length`.
     queriedTrustIds: string[];
-    // Subset of `queriedTrustIds` whose response carried an error — staging
-    // additionally excludes these because we have no usable cohort count.
+    // Subset of `queriedTrustIds` whose TrustTask is still PENDING — trust
+    // hasn't polled yet. UI shows a "queued" chip instead of "running".
+    pendingTrustIds: string[];
+    // Subset of `queriedTrustIds` whose TrustTask was cancelled (project
+    // approved without them). UI shows a "skipped" chip.
+    cancelledTrustIds: string[];
+    // Subset of `queriedTrustIds` that posted any QueryResult row (success
+    // or error). Stageable = `respondedTrustIds − erroredTrustIds`.
+    respondedTrustIds: string[];
+    // Subset of `respondedTrustIds` whose response carried an error.
+    // Staging additionally excludes these — we have no usable cohort count.
     erroredTrustIds: string[];
     totalCohort: number;
     created?: string | null;

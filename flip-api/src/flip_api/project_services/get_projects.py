@@ -27,13 +27,15 @@ from flip_api.db.models.main_models import (
     Queries,
     QueryResult,
     QueryStats,
+    TrustTask,
 )
 from flip_api.db.models.user_models import PermissionRef, UserProfile
 from flip_api.domain.interfaces.project import IProject, IProjectQuery
 from flip_api.domain.schemas.actions import ProjectAuditAction
+from flip_api.domain.schemas.status import TaskStatus
 from flip_api.project_services.services.project_services import (
     _collect_errored_trust_ids,
-    _legacy_responded_trust_ids,
+    _distinct_responded_trust_ids,
     get_trusts_approval_status_for_projects,
 )
 from flip_api.utils.logger import logger
@@ -207,11 +209,10 @@ def _load_latest_query_per_project(
 
     query_ids = [qid for qid, _, _, _, _, _ in latest_per_project.values()]
 
-    # QueryResult rows give us the errored subset + (for legacy queries with
-    # no persisted ``queried_trust_ids``) the fallback queried set. Volume is
-    # bounded (queries-in-page × trusts).
+    # QueryResult rows give us the responded set + errored carve-out per
+    # query. Volume is bounded (queries-in-page × trusts).
     errored_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
-    legacy_responded_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
+    responded_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
     rows_by_query: dict[UUID, list[tuple[UUID | None, str | None]]] = {qid: [] for qid in query_ids}
     pair_rows = session.exec(
         select(QueryResult.query_id, QueryResult.trust_id, QueryResult.data)
@@ -223,7 +224,32 @@ def _load_latest_query_per_project(
         rows_by_query.setdefault(qid, []).append((tid, data))
     for qid, rows in rows_by_query.items():
         errored_trust_ids_by_query[qid] = _collect_errored_trust_ids(rows, query_id=qid)
-        legacy_responded_by_query[qid] = _legacy_responded_trust_ids(rows)
+        responded_trust_ids_by_query[qid] = _distinct_responded_trust_ids(rows)
+
+    # Trust task state per query, split by status:
+    #   PENDING   → "queued" chip (queued at hub, trust hasn't polled)
+    #   CANCELLED → "skipped" chip (project approved without the trust)
+    # Once a trust polls, PENDING moves to IN_PROGRESS and drops out of
+    # both sets.
+    pending_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
+    cancelled_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
+    task_rows = session.exec(
+        select(TrustTask.query_id, TrustTask.trust_id, TrustTask.status)
+        .where(
+            col(TrustTask.query_id).in_(query_ids),
+            col(TrustTask.status).in_([TaskStatus.PENDING, TaskStatus.CANCELLED]),
+        )
+    ).all()
+    for qid, tid, task_status in task_rows:
+        if qid is None or tid is None:
+            continue
+        bucket = (
+            pending_trust_ids_by_query
+            if task_status == TaskStatus.PENDING
+            else cancelled_trust_ids_by_query
+        )
+        if tid not in bucket.setdefault(qid, []):
+            bucket[qid].append(tid)
 
     total_cohort_by_query: dict[UUID, int] = {}
     stats_rows = session.exec(
@@ -248,8 +274,11 @@ def _load_latest_query_per_project(
             queried_trust_ids=(
                 list(persisted_queried)
                 if persisted_queried is not None
-                else legacy_responded_by_query.get(qid, [])
+                else responded_trust_ids_by_query.get(qid, [])
             ),
+            pending_trust_ids=pending_trust_ids_by_query.get(qid, []),
+            cancelled_trust_ids=cancelled_trust_ids_by_query.get(qid, []),
+            responded_trust_ids=responded_trust_ids_by_query.get(qid, []),
             errored_trust_ids=errored_trust_ids_by_query.get(qid, []),
             total_cohort=total_cohort_by_query.get(qid, 0),
             # `Z` suffix so the browser parses as UTC (naive UTC column).

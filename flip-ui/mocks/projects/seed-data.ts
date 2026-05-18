@@ -70,7 +70,10 @@ export const projectDataPage1: IProject[] = [
             query: "Some query > 3000",
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
-            erroredTrustIds: []
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         users: [],
         status: "APPROVED"
@@ -90,7 +93,10 @@ export const projectDataPage1: IProject[] = [
             query: "Some query > 3000",
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
-            erroredTrustIds: []
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         status: "UNSTAGED"
     },
@@ -108,7 +114,10 @@ export const projectDataPage1: IProject[] = [
             query: "Some query > 3000",
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
-            erroredTrustIds: []
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         users: [],
         status: "APPROVED"
@@ -128,7 +137,10 @@ export const projectDataPage1: IProject[] = [
             query: "Some query > 3000",
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
-            erroredTrustIds: []
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         status: "APPROVED"
     },
@@ -146,7 +158,10 @@ export const projectDataPage1: IProject[] = [
             query: "Some query > 3000",
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
-            erroredTrustIds: []
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         users: [
             {
@@ -205,7 +220,10 @@ export const projectDataPage1: IProject[] = [
             query: "SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table ",
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
-            erroredTrustIds: []
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         users: [],
         status: "UNSTAGED"
@@ -224,7 +242,10 @@ export const projectDataPage1: IProject[] = [
             query: "Some query > 3000",
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
-            erroredTrustIds: []
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         users: [],
         status: "APPROVED"
@@ -255,7 +276,10 @@ export const projectDataPage1: IProject[] = [
             query: "Some query > 3000",
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
-            erroredTrustIds: []
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         status: "STAGED"
     },

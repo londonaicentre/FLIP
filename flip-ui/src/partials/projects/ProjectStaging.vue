@@ -128,14 +128,12 @@ import { filterByQueriedTrustIds } from "@/utils/cohort/query";
 interface IProjectStagingProps {
     staging: boolean;
     hasQuery: boolean;
-    // Trust IDs that participated in the project's cohort query. The staging
-    // selector is intersected with this list so trusts that joined the
-    // platform *after* the query was submitted aren't offered — we have no
-    // cohort count for them, so staging against them would be blind.
-    queriedTrustIds?: string[];
-    // Subset of queriedTrustIds whose response carried an error. Excluded
-    // from the selector even though they did respond — no usable count.
-    erroredTrustIds?: string[];
+    // Trust IDs that posted a successful (non-errored) QueryResult. Stage
+    // selector is intersected with this — late-joiners, never-responded,
+    // and errored trusts are all excluded because we have no usable cohort
+    // count for them. Computed by the parent as
+    // `respondedTrustIds − erroredTrustIds`.
+    stageableTrustIds?: string[];
 }
 
 interface IFormValue {
@@ -156,14 +154,10 @@ const loadingTrusts = ref<boolean>(true);
 const trustsToStage = ref<ITrustToStage[]>();
 const trustStore = useTrustStore();
 
-watch([trustStore, () => props.queriedTrustIds, () => props.erroredTrustIds], () => {
+watch([trustStore, () => props.stageableTrustIds], () => {
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
-    // Successful = queried minus errored. Falls through to queriedTrustIds
-    // when erroredTrustIds is undefined (parent still loading the project).
-    const errored = new Set(props.erroredTrustIds ?? []);
-    const stageable = props.queriedTrustIds?.filter((id) => !errored.has(id));
 
-    trustsToStage.value = filterByQueriedTrustIds(trusts, stageable)
+    trustsToStage.value = filterByQueriedTrustIds(trusts, props.stageableTrustIds)
         .map((trust) => ({
             ...trust,
             staged: false

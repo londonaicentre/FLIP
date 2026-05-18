@@ -71,10 +71,9 @@ def mock_project_data():
     mock_project = MagicMock()
     mock_project.status = ProjectStatus.UNSTAGED.value
     mock_project.query = MagicMock()
-    # Default to a superset of the standard payload — both the staging gate
-    # and the subset check read from this list (callers derive "how many
-    # trusts ran the query" via ``len(...)``).
+    # Default: both trusts in the standard payload have responded successfully.
     mock_project.query.queried_trust_ids = [_TRUST_A, _TRUST_B]
+    mock_project.query.responded_trust_ids = [_TRUST_A, _TRUST_B]
     mock_project.query.errored_trust_ids = []
     return mock_project
 
@@ -232,6 +231,7 @@ def test_stage_project_rejects_trust_not_in_cohort_query(
     mock_project_data.status = ProjectStatus.UNSTAGED.value
     mock_project_data.query = MagicMock()
     mock_project_data.query.queried_trust_ids = [_TRUST_A, _TRUST_B]
+    mock_project_data.query.responded_trust_ids = [_TRUST_A, _TRUST_B]
     mock_project_data.query.errored_trust_ids = []
 
     payload = StageProjectRequest(trusts=[_TRUST_A, _TRUST_NEW]).model_dump(mode="json")
@@ -262,6 +262,7 @@ def test_stage_project_rejects_errored_trust(
     mock_project_data.status = ProjectStatus.UNSTAGED.value
     mock_project_data.query = MagicMock()
     mock_project_data.query.queried_trust_ids = [_TRUST_A, _TRUST_B]
+    mock_project_data.query.responded_trust_ids = [_TRUST_A, _TRUST_B]
     mock_project_data.query.errored_trust_ids = [_TRUST_B]  # errored
 
     payload = StageProjectRequest(trusts=[_TRUST_A, _TRUST_B]).model_dump(mode="json")
@@ -276,6 +277,39 @@ def test_stage_project_rejects_errored_trust(
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert str(_TRUST_B) in response.json()["detail"]
     assert "error" in response.json()["detail"].lower()
+    mock_stage.assert_not_called()
+
+
+def test_stage_project_rejects_never_responded_trust(
+    app_fixture, client, test_user_id, test_project_id
+):
+    """A trust that was dispatched but never posted a QueryResult has no
+    cohort count. Staging against it must 400 — otherwise the project
+    commits to data we never received."""
+    mock_session = MagicMock()
+    app_fixture.dependency_overrides[get_session] = lambda: mock_session
+    app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
+
+    mock_project_data = MagicMock()
+    mock_project_data.status = ProjectStatus.UNSTAGED.value
+    mock_project_data.query = MagicMock()
+    # Both trusts dispatched; only A responded.
+    mock_project_data.query.queried_trust_ids = [_TRUST_A, _TRUST_B]
+    mock_project_data.query.responded_trust_ids = [_TRUST_A]
+    mock_project_data.query.errored_trust_ids = []
+
+    payload = StageProjectRequest(trusts=[_TRUST_A, _TRUST_B]).model_dump(mode="json")
+
+    with (
+        patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
+        patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.stage_project.stage_project_service") as mock_stage,
+    ):
+        response = client.post(f"/api/projects/{test_project_id}/stage", json=payload)
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert str(_TRUST_B) in response.json()["detail"]
+    assert "have not returned cohort query results" in response.json()["detail"]
     mock_stage.assert_not_called()
 
 

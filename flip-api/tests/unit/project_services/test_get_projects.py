@@ -140,6 +140,10 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
         (query_id, trust_a, '{"record_count": 7, "data": [], "error": null}'),
         (query_id, trust_b, '{"record_count": 0, "data": [], "error": "OMOP timeout"}'),
     ]
+    pending_rows_call = MagicMock()
+    # (query_id, trust_id, status) — never-responded trust's task is PENDING.
+    from flip_api.domain.schemas.status import TaskStatus
+    pending_rows_call.all.return_value = [(query_id, trust_never_responded, TaskStatus.PENDING)]
     stats_call = MagicMock()
     stats_call.all.return_value = []
     stage_audit_call = MagicMock()
@@ -152,6 +156,7 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
         trusts_call,
         queries_call,
         pair_rows_call,
+        pending_rows_call,
         stats_call,
         stage_audit_call,
         user_counts_call,
@@ -170,6 +175,7 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
     # queried_trust_ids is the dispatched set — includes the never-responded one.
     assert set(project_response.query.queried_trust_ids) == {trust_a, trust_b, trust_never_responded}
     assert project_response.query.errored_trust_ids == [trust_b]
+    assert project_response.query.pending_trust_ids == [trust_never_responded]
     assert project_response.owner_name == "Alex Triay"
     assert project_response.user_count == 3
 
