@@ -298,7 +298,7 @@ def get_project_query(project_from_db: IProjectResponse) -> IProjectQuery | None
     if query:
         logger.debug(query)
 
-        if query.id and query.trusts_queried is not None:
+        if query.id:
             return query
 
         logger.warning("Unable to parse query. Assuming there isn't one.")
@@ -757,13 +757,17 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
 
     query_data = None
     if query:
-        # Step 3: Count distinct trusts in QueryResult
-        trust_count = (
-            session.exec(
-                select(func.count(func.distinct(QueryResult.trust_id))).where(QueryResult.query_id == query.id)
-            ).first()
-            or 0
-        )
+        # Step 3: Distinct trust IDs that returned a QueryResult — the staging
+        # UI filters its selector against this set and callers derive the
+        # "trusts queried" count from ``len(...)``, so there's nothing else
+        # to compute.
+        queried_trust_ids = [
+            tid
+            for tid in session.exec(
+                select(func.distinct(QueryResult.trust_id)).where(QueryResult.query_id == query.id)
+            ).all()
+            if tid is not None
+        ]
 
         # Step 4: Get total cohort size from QueryStats (as JSON)
         stats_entry = session.exec(select(QueryStats).where(QueryStats.query_id == query.id)).first()
@@ -789,7 +793,7 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
             id=query.id,
             name=query.name,
             query=query.query,
-            trusts_queried=trust_count,
+            queried_trust_ids=queried_trust_ids,
             total_cohort=total_cohort,
             # `Z` suffix so the browser parses as UTC (naive UTC column).
             created=(query.created.isoformat(timespec="milliseconds") + "Z") if query.created else None,

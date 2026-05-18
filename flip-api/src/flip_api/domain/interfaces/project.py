@@ -39,7 +39,12 @@ class IProjectQuery(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     name: str = Field()
     query: str = Field()
-    trusts_queried: int | None = Field(default=None, alias="trustsQueried")
+    # Frozen list of trust IDs that participated in this query (returned a
+    # QueryResult row). Single source of truth for both "which trusts ran
+    # this?" (the staging UI + endpoint filter against it so a trust that
+    # joined later isn't offered as selectable) and "how many ran it?"
+    # (callers take ``len(queried_trust_ids)``).
+    queried_trust_ids: list[UUID] = Field(default_factory=list, alias="queriedTrustIds")
     total_cohort: int | None = Field(default=None, alias="totalCohort")
     created: str | None = Field(default=None)
     created_by: str | None = Field(default=None, alias="createdBy")

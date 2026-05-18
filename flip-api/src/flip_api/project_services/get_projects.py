@@ -194,15 +194,19 @@ def _load_latest_query_per_project(
 
     query_ids = [qid for qid, _, _, _, _ in latest_per_project.values()]
 
-    trust_counts: dict[UUID, int] = {}
-    tc_rows = session.exec(
-        select(QueryResult.query_id, func.count(func.distinct(QueryResult.trust_id)))
+    # Fetch the distinct (query_id, trust_id) pairs once and group in Python.
+    # Volume is bounded (queries-in-page × trusts) — fine. Callers that need a
+    # "how many trusts ran this?" count derive it from ``len(...)``.
+    queried_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
+    pair_rows = session.exec(
+        select(QueryResult.query_id, QueryResult.trust_id)
         .where(col(QueryResult.query_id).in_(query_ids))
-        .group_by(col(QueryResult.query_id))
+        .distinct()
     ).all()
-    for qid, count in tc_rows:
-        if qid is not None:
-            trust_counts[qid] = int(count or 0)
+    for qid, tid in pair_rows:
+        if qid is None or tid is None:
+            continue
+        queried_trust_ids_by_query.setdefault(qid, []).append(tid)
 
     total_cohort_by_query: dict[UUID, int] = {}
     stats_rows = session.exec(
@@ -224,7 +228,7 @@ def _load_latest_query_per_project(
             id=qid,
             name=qname,
             query=qsql,
-            trusts_queried=trust_counts.get(qid, 0),
+            queried_trust_ids=queried_trust_ids_by_query.get(qid, []),
             total_cohort=total_cohort_by_query.get(qid, 0),
             # `Z` suffix so the browser parses as UTC (naive UTC column).
             created=(qcreated.isoformat(timespec="milliseconds") + "Z") if qcreated else None,

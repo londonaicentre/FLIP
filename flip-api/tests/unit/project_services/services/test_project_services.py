@@ -388,9 +388,11 @@ class TestUnstageProjectService:
 
 
 class TestGetProjectQuery:
-    def test_returns_query_when_trusts_queried_is_zero(self):
-        """trusts_queried=0 should still return the query (not be treated as falsy)."""
-        query = IProjectQuery(id=uuid4(), name="Q", query="SELECT *", trusts_queried=0, total_cohort=0)
+    def test_returns_query_when_no_trusts_have_responded(self):
+        """An empty queried_trust_ids should still return the query — the
+        helper is only filtering out half-formed records (no id), not gating
+        on trust responses."""
+        query = IProjectQuery(id=uuid4(), name="Q", query="SELECT *", queried_trust_ids=[], total_cohort=0)
         project = MagicMock(spec=IProjectResponse)
         project.query = query
 
@@ -398,8 +400,10 @@ class TestGetProjectQuery:
 
         assert result is query
 
-    def test_returns_query_when_trusts_queried_is_positive(self):
-        query = IProjectQuery(id=uuid4(), name="Q", query="SELECT *", trusts_queried=3, total_cohort=100)
+    def test_returns_query_when_trusts_have_responded(self):
+        query = IProjectQuery(
+            id=uuid4(), name="Q", query="SELECT *", queried_trust_ids=[uuid4(), uuid4(), uuid4()], total_cohort=100
+        )
         project = MagicMock(spec=IProjectResponse)
         project.query = query
 
@@ -418,18 +422,6 @@ class TestGetProjectQuery:
     def test_returns_none_when_query_has_no_id(self):
         query = MagicMock()
         query.id = None
-        query.trusts_queried = 3
-        project = MagicMock(spec=IProjectResponse)
-        project.query = query
-
-        result = get_project_query(project)
-
-        assert result is None
-
-    def test_returns_none_when_trusts_queried_is_none(self):
-        query = MagicMock()
-        query.id = uuid4()
-        query.trusts_queried = None
         project = MagicMock(spec=IProjectResponse)
         project.query = query
 
@@ -620,18 +612,20 @@ class TestGetProject:
         )
         # Step 2: Mock query
         mock_query = Queries(id=query_id, name="Test Query", query="SELECT *", project_id=project_id, created=None)
-        # Step 3: Mock trust count
-        mock_trust_count = 2
+        # Step 3: Mock queried trust IDs (count is derived from len())
+        mock_trust_ids = [uuid4(), uuid4()]
         # Step 4: Mock stats JSON
         stats_json = '{"TotalCount": 100}'
         mock_stats = QueryStats(id=uuid4(), query_id=query_id, stats=stats_json)
 
-        # Chain of .exec().first() returns:
+        # Chain of .exec() returns. Step 3 swapped from `.first()`-returning
+        # a count to `.all()`-returning the trust id list; the rest are
+        # unchanged.
         mock_db_session.exec.side_effect = [
-            MagicMock(first=MagicMock(return_value=mock_project)),  # first exec().first()
-            MagicMock(first=MagicMock(return_value=mock_query)),  # second exec().first()
-            MagicMock(first=MagicMock(return_value=2)),  # third exec().first()
-            MagicMock(first=MagicMock(return_value=mock_stats)),  # fourth exec().first()
+            MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
+            MagicMock(first=MagicMock(return_value=mock_query)),  # select(Queries)
+            MagicMock(all=MagicMock(return_value=mock_trust_ids)),  # select(distinct(QueryResult.trust_id))
+            MagicMock(first=MagicMock(return_value=mock_stats)),  # select(QueryStats)
         ]
 
         result = get_project(project_id, mock_db_session)
@@ -639,7 +633,7 @@ class TestGetProject:
         assert isinstance(result, IProjectResponse)
         assert result.id == project_id
         assert isinstance(result.query, IProjectQuery)
-        assert result.query.trusts_queried == mock_trust_count
+        assert result.query.queried_trust_ids == mock_trust_ids
         assert result.query.total_cohort == 100
 
     def test_get_project_not_found(self, mock_db_session: MagicMock):
@@ -687,12 +681,12 @@ class TestGetProject:
         mock_query = Queries(id=query_id, name="Query X", query="bad sql", project_id=project_id, created=None)
         mock_stats = QueryStats(id=uuid4(), query_id=query_id, stats="{not-valid-json")
 
-        # Chain of .exec().first() returns:
+        # Chain of .exec() returns. Trust id lookup uses .all() now.
         mock_db_session.exec.side_effect = [
-            MagicMock(first=MagicMock(return_value=mock_project)),  # first exec().first()
-            MagicMock(first=MagicMock(return_value=mock_query)),  # second exec().first()
-            MagicMock(first=MagicMock(return_value=2)),  # third exec().first()
-            MagicMock(first=MagicMock(return_value=mock_stats)),  # fourth exec().first()
+            MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
+            MagicMock(first=MagicMock(return_value=mock_query)),  # select(Queries)
+            MagicMock(all=MagicMock(return_value=[uuid4(), uuid4()])),  # select(distinct(QueryResult.trust_id))
+            MagicMock(first=MagicMock(return_value=mock_stats)),  # select(QueryStats)
         ]
 
         result = get_project(project_id, mock_db_session)

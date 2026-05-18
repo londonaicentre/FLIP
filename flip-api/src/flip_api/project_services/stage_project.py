@@ -95,10 +95,9 @@ def stage_project_endpoint(
             detail=f"Project with ID: {project_id} is not '{ProjectStatus.UNSTAGED}' and cannot be staged.",
         )
 
-    # Check for query and trustsQueried (assuming ProjectResponseSchema has a nested query object)
-    # The original TS code checks `query?.trustsQueried`.
-    # This implies that if `query` is null/undefined OR `trustsQueried` is null/undefined/0, it's an error.
-    if not project_data.query or project_data.query.trusts_queried is None or project_data.query.trusts_queried <= 0:
+    # Staging needs a cohort query that produced at least one trust result —
+    # without that, there's nothing to stage against.
+    if not project_data.query or not project_data.query.queried_trust_ids:
         error_msg = (
             f"Project with ID: {project_id} does not have a valid cohort query with trusts queried and cannot"
             " be staged."
@@ -108,7 +107,24 @@ def stage_project_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error_msg,
         )
-    logger.debug(f"Project {project_id} has query with {project_data.query.trusts_queried} trusts queried.")
+    logger.debug(
+        f"Project {project_id} has query with {len(project_data.query.queried_trust_ids)} trusts queried."
+    )
+
+    # Trusts that joined the platform after the cohort query was submitted have
+    # no QueryResult for it, so the user has no cohort count for them. Reject
+    # staging requests that include any such trust — the UI already filters its
+    # selector by `queriedTrustIds`, this guards direct API callers.
+    queried_trust_ids = set(project_data.query.queried_trust_ids)
+    unqueried_trust_ids = [tid for tid in payload.trusts if tid not in queried_trust_ids]
+    if unqueried_trust_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Trusts {unqueried_trust_ids} were not part of the cohort query for project {project_id} "
+                "and cannot be staged."
+            ),
+        )
 
     try:
         stage_project_service(

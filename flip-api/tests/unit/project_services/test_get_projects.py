@@ -87,6 +87,67 @@ def test_get_projects_paginated_orm_some_results(user_id):
     assert project_response.total_rows == 2
 
 
+def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
+    """Regression: a project with a cohort query should surface the trust ids
+    that responded (queried_trust_ids) alongside the count. Earlier loader
+    used `func.distinct(QueryResult.trust_id)` next to `query_id` in the SELECT,
+    which Postgres rejects — broke the whole projects list when any query
+    existed."""
+    session = MagicMock(spec=Session)
+
+    project_id = uuid.uuid4()
+    query_id = uuid.uuid4()
+    trust_a = uuid.uuid4()
+    trust_b = uuid.uuid4()
+
+    project = Projects(
+        id=project_id,
+        name="P",
+        description="d",
+        owner_id=user_id,
+        status=ProjectStatus.APPROVED,
+        creation_timestamp=datetime.utcnow(),
+    )
+
+    projects_call = MagicMock()
+    projects_call.all.return_value = [project]
+    count_call = MagicMock()
+    count_call.one_or_none.return_value = 1
+    trusts_call = MagicMock()
+    trusts_call.all.return_value = []
+    queries_call = MagicMock()
+    # Tuple shape matches the actual SELECT in _load_latest_queries_for_projects:
+    # (Queries.id, Queries.project_id, Queries.name, Queries.query, Queries.created, UserProfile.name)
+    queries_call.all.return_value = [(query_id, project_id, "Q", "SELECT 1", datetime.utcnow(), None)]
+    pair_rows_call = MagicMock()
+    pair_rows_call.all.return_value = [(query_id, trust_a), (query_id, trust_b)]
+    stats_call = MagicMock()
+    stats_call.all.return_value = []
+    stage_audit_call = MagicMock()
+    stage_audit_call.all.return_value = []
+    session.exec.side_effect = [
+        projects_call,
+        count_call,
+        trusts_call,
+        queries_call,
+        pair_rows_call,
+        stats_call,
+        stage_audit_call,
+    ]
+
+    response = get_projects_paginated_orm(
+        session=session,
+        user_id=user_id,
+        paging_details=paging_details,
+        filter_details=get_filter_details(),
+    )
+
+    assert len(response.data) == 1
+    project_response = response.data[0]
+    assert project_response.query is not None
+    assert set(project_response.query.queried_trust_ids) == {trust_a, trust_b}
+
+
 @patch("flip_api.project_services.get_projects.get_projects_paginated_orm")
 @patch("flip_api.project_services.get_projects.has_permissions")
 def test_get_projects_endpoint_researcher_filters_by_user_id(

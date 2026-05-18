@@ -172,7 +172,18 @@ const rows = computed<IRow[]>(() => {
     const errors = perTrustErrors.value;
     const hasResults = Object.keys(counts).length > 0 || Object.keys(errors).length > 0;
 
-    return trusts
+    // Once the query has finished, restrict the row list to the trusts that
+    // actually participated. Without this, a trust that joined the platform
+    // after the query ran would render as "running" forever (it's in the
+    // global trust list but has no QueryResult, so it appears in neither
+    // `counts` nor `errors`). During the initial submission (`submitting`)
+    // we keep the full live list so the user sees the fan-out animate.
+    const queriedTrustIds = projectStore.project?.query?.queriedTrustIds;
+    const visibleTrusts = !props.submitting && queriedTrustIds && queriedTrustIds.length
+        ? trusts.filter((t) => queriedTrustIds.includes(t.id))
+        : trusts;
+
+    return visibleTrusts
         .map((t) => {
             const errored = !props.submitting && t.id in errors;
             const responded = !props.submitting && t.id in counts;

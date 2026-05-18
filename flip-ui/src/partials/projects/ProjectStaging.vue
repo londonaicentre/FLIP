@@ -127,6 +127,11 @@ import { useTrustStore } from "@/store/trusts";
 interface IProjectStagingProps {
     staging: boolean;
     hasQuery: boolean;
+    // Trust IDs that participated in the project's cohort query. The staging
+    // selector is intersected with this list so trusts that joined the
+    // platform *after* the query was submitted aren't offered — we have no
+    // cohort count for them, so staging against them would be blind.
+    queriedTrustIds?: string[];
 }
 
 interface IFormValue {
@@ -137,7 +142,7 @@ interface ITrustToStage extends ITrustResponse {
     staged: boolean;
 }
 
-defineProps<IProjectStagingProps>();
+const props = defineProps<IProjectStagingProps>();
 
 const emits = defineEmits(["staged"]);
 
@@ -147,10 +152,19 @@ const loadingTrusts = ref<boolean>(true);
 const trustsToStage = ref<ITrustToStage[]>();
 const trustStore = useTrustStore();
 
-watch(trustStore, () => {
+watch([trustStore, () => props.queriedTrustIds], () => {
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
+    const queriedTrustIds = props.queriedTrustIds;
+    // When the parent hasn't loaded the project yet, `queriedTrustIds` is
+    // undefined — fall through to the unfiltered list so the loader/empty
+    // state still renders correctly. Once the project lands, an empty array
+    // means "the query returned no trusts", which legitimately hides every
+    // toggle.
+    const filtered = queriedTrustIds === undefined
+        ? trusts
+        : trusts.filter((trust) => queriedTrustIds.includes(trust.id));
 
-    trustsToStage.value = trusts
+    trustsToStage.value = filtered
         .map((trust) => ({
             ...trust,
             staged: false

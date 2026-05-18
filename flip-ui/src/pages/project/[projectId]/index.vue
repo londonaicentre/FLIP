@@ -90,6 +90,7 @@
                         <template v-if="isProjectUnstaged()">
                             <ProjectStaging
                                 :has-query="!!project.query"
+                                :queried-trust-ids="project.query?.queriedTrustIds"
                                 :project-staged="isProjectStaged()"
                                 :staging="stagingProject"
                                 @staged="stageProject"

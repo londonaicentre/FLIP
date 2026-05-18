@@ -166,7 +166,7 @@ def wait_for_trusts_queried(
 ) -> int:
     """Block until the project's query has been answered by ≥1 trust.
 
-    `/projects/{id}/stage` rejects a project whose query.trustsQueried is 0,
+    `/projects/{id}/stage` rejects a project whose query.queriedTrustIds is empty,
     and the trust query is dispatched async by `/cohort/submit/`. Without this
     poll the smoke races the submission and fails at staging.
     """
@@ -179,9 +179,9 @@ def wait_for_trusts_queried(
             time.sleep(5)
             continue
         query = resp.json().get("query") or {}
-        count = int(query.get("trustsQueried") or 0)
+        count = len(query.get("queriedTrustIds") or [])
         if count != last_count:
-            _log(f"  📊 trustsQueried={count}")
+            _log(f"  📊 queriedTrustIds count={count}")
             last_count = count
         if count > 0:
             return count

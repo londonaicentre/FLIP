@@ -240,6 +240,85 @@ describe("PerTrustResponse", () => {
         expect(t3.text()).toContain("running");
     });
 
+    it("hides trusts that joined after the cohort query ran (not in queriedTrustIds)", async () => {
+        // trust-1 + trust-2 participated in the original query; trust-3 joined
+        // the platform afterwards. Once the query has finished (submitting=false)
+        // trust-3 must not render as "running" — it never received the query.
+        const data = {
+            recordCount: 12,
+            trustsResults: [],
+            trustRecordCounts: {
+                "trust-1": 7,
+                "trust-2": 5
+            }
+        };
+        swrvMock.value = data;
+        const wrapper = mount(PerTrustResponse, {
+            props: { submitting: false },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false,
+                    initialState: {
+                        trust: { trusts: TRUSTS },
+                        project: {
+                            project: {
+                                id: "p-1",
+                                status: "UNSTAGED",
+                                query: {
+                                    id: "q-1",
+                                    queriedTrustIds: ["trust-1", "trust-2"]
+                                }
+                            }
+                        }
+                    }
+                })],
+                stubs
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        expect(rowFor(wrapper, "T1")!.text()).toContain("7");
+        expect(rowFor(wrapper, "T2")!.text()).toContain("5");
+        expect(rowFor(wrapper, "T3")).toBeUndefined();
+    });
+
+    it("still shows every trust during the initial submission, even with queriedTrustIds set", async () => {
+        // While the user is mid-submit, the fan-out targets the live trust list
+        // — including trust-3 — so the in-flight UI should mirror that.
+        swrvMock.value = null;
+        const wrapper = mount(PerTrustResponse, {
+            props: { submitting: true },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false,
+                    initialState: {
+                        trust: { trusts: TRUSTS },
+                        project: {
+                            project: {
+                                id: "p-1",
+                                status: "UNSTAGED",
+                                query: {
+                                    id: "q-1",
+                                    queriedTrustIds: ["trust-1", "trust-2"]
+                                }
+                            }
+                        }
+                    }
+                })],
+                stubs
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        for (const trust of TRUSTS) {
+            expect(rowFor(wrapper, trust.code as string)!.text()).toContain("running");
+        }
+    });
+
     it("prefers error over running when a trust both errored and is missing from counts", async () => {
         const data = {
             recordCount: 0,

@@ -31,7 +31,12 @@ export interface IProjectQuery {
     id: string;
     name: string;
     query: string;
-    trustsQueried: number;
+    // Frozen list of trust IDs that returned a result for this query. Used by
+    // ProjectStaging to hide trusts that joined after the query was run — we
+    // have no cohort count for them, so the user shouldn't be able to stage
+    // against them. Callers that want a "how many trusts ran this?" count
+    // take `.length`.
+    queriedTrustIds: string[];
     totalCohort: number;
     created?: string | null;
     createdBy?: string | null;

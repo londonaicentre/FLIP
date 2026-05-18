@@ -59,7 +59,7 @@
                                     Trusts Queried
                                 </dt>
                                 <dd class="pl-8 font-semibold truncate dark:text-gray-400" data-test="model-dashboard-cohort-trusts-queried">
-                                    {{ queryDetails?.trustsQueried }}
+                                    {{ queryDetails?.queriedTrustIds?.length ?? 0 }}
                                 </dd>
                             </div>
                         </dl>
