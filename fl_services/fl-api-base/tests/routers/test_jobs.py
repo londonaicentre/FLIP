@@ -30,7 +30,8 @@ def override_session(client):
     def abort_side_effect(job_id: str):
         if job_id not in existing_jobs:
             raise JobNotFound(f"Job {job_id} not found.")
-        return {"status": "success", "info": f"Job {job_id} aborted."}
+        # /abort_job ignores abort_job's return value (it builds JobMetadata directly).
+        return None
 
     def delete_side_effect(job_id: str):
         if job_id not in existing_jobs:
@@ -43,10 +44,10 @@ def override_session(client):
         return None
 
     def list_jobs_side_effect(detailed=False, limit=None, id_prefix=None, name_prefix=None, reverse=False):
-        # mimic realistic output
+        # mimic realistic NVFLARE output: keys are job_id/job_name, status values are RunStatus strings
         jobs = [
-            {"id": "1234", "name": "training_round_1", "status": "completed"},
-            {"id": "5678", "name": "training_round_2", "status": "running"},
+            {"job_id": "1234", "job_name": "training_round_1", "status": "FINISHED:COMPLETED"},
+            {"job_id": "5678", "job_name": "training_round_2", "status": "RUNNING"},
         ]
         if limit:
             jobs = jobs[:limit]
@@ -68,9 +69,10 @@ def test_list_jobs_success(client):
 
     jobs = response.json()
     assert isinstance(jobs, list)
-    assert len(jobs) == 2
-    assert all("id" in job for job in jobs)
-    assert all("status" in job for job in jobs)
+    assert jobs == [
+        {"job_id": "1234", "status": "FINISHED"},
+        {"job_id": "5678", "status": "RUNNING"},
+    ]
 
 
 def test_list_jobs_with_limit(client):
@@ -79,7 +81,7 @@ def test_list_jobs_with_limit(client):
 
     jobs = response.json()
     assert len(jobs) == 1
-    assert jobs[0]["id"] == "1234"
+    assert jobs[0]["job_id"] == "1234"
 
 
 def test_list_jobs_internal_error(client, override_session):
@@ -106,9 +108,7 @@ def test_reset_errors_job_not_found(client):
 def test_abort_job_success(client):
     response = client.delete("/abort_job/1234")
     assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    assert data["status"] == "success"
-    assert "aborted" in data["info"]
+    assert response.json() == {"job_id": "1234", "status": "STOPPED"}
 
 
 def test_abort_job_not_found(client):

@@ -18,6 +18,7 @@ from nvflare.fuel.hci.client.fl_admin_api import TargetType
 
 from fl_api.core.dependencies import get_session
 from fl_api.utils.flip_session import FLIP_Session
+from fl_api.utils.schemas import JobMetadata, JobStatus, normalize_status
 
 router = APIRouter()
 
@@ -55,7 +56,7 @@ def download_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> s
     return session.download_job_result(job_id)
 
 
-@router.get("/list_jobs", response_model=list[dict])
+@router.get("/list_jobs", response_model=list[JobMetadata])
 def list_jobs(
     detailed: bool = False,
     limit: Optional[int] = None,
@@ -63,9 +64,9 @@ def list_jobs(
     name_prefix: Union[str, None] = None,
     reverse: bool = False,
     session: FLIP_Session = Depends(get_session),
-) -> list[dict]:
+) -> list[JobMetadata]:
     """
-    Returns a list of available jobs on the server.
+    Returns a list of available jobs on the server, as the shared job-metadata contract.
 
     Args:
         detailed (bool, optional): whether extensive description is demanded. Defaults to False.
@@ -77,18 +78,21 @@ def list_jobs(
         session (FLIP_Session): FLIP session instance.
 
     Returns:
-        list[dict]: a list of job meta data.
+        list[JobMetadata]: the available jobs as normalized job-metadata contract items.
 
     Raises:
         HTTPException: if an error occurs while listing jobs.
     """
-    return session.list_jobs(
+    raw_jobs = session.list_jobs(
         detailed=detailed,
         limit=limit,
         id_prefix=id_prefix,
         name_prefix=name_prefix,
         reverse=reverse,
     )
+    # NVFLARE's list_jobs always includes job_id + status on every entry (verified against
+    # nvflare 2.7.1 job_cmds.py, both the summary and detailed paths) — bracket access is intentional.
+    return [JobMetadata(job_id=str(job["job_id"]), status=normalize_status(job["status"])) for job in raw_jobs]
 
 
 @router.post("/{job_id}/show_errors/{target_type}")
@@ -180,19 +184,23 @@ def delete_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> dic
     return {"status": "success", "info": f"Job {job_id} deleted."}
 
 
-@router.delete("/abort_job/{job_id}", status_code=status.HTTP_200_OK)
-def abort_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> dict:
+@router.delete("/abort_job/{job_id}", status_code=status.HTTP_200_OK, response_model=JobMetadata)
+def abort_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> JobMetadata:
     """Aborts job with provided job_id.
+
+    NVFLARE's ``abort_job`` is natively idempotent for already-terminal jobs ("if the job
+    is already done, no effect"); a genuinely nonexistent ``job_id`` raises ``JobNotFound``,
+    handled as a 404 by the app-level exception handler.
 
     Args:
         job_id (str): job ID.
         session (FLIP_Session): FLIP session instance.
 
     Raises:
-        HTTPException: if the job is not found or if an error occurs during the abortion process.
+        HTTPException: 404 if the job id does not exist.
 
     Returns:
-        dict[str, str]: a dictionary containing the status and information about the job abortion operation.
+        JobMetadata: the aborted job as a normalized job-metadata contract item.
     """
     session.abort_job(job_id)
-    return {"status": "success", "info": f"Job {job_id} aborted."}
+    return JobMetadata(job_id=job_id, status=JobStatus.STOPPED)
