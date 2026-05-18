@@ -287,7 +287,7 @@
 
                         <div class="flex justify-between items-center pt-2 mt-auto border-t border-gray-100 dark:border-gray-800 text-xs text-gray-500 dark:text-gray-400">
                             <span class="truncate max-w-[60%]">{{ ownerLabel(project) }}</span>
-                            <span>{{ project.users?.length ?? 0 }} users</span>
+                            <span>{{ userCountLabel(project) }}</span>
                         </div>
                     </router-link>
                 </div>
@@ -505,11 +505,24 @@ const cohortSize = (project: IProject): number | null => {
 };
 
 const ownerLabel = (project: IProject): string => {
+    // Prefer the proper display name (UserProfile.name surfaced by the
+    // backend). Fall back to the email-derived username so projects whose
+    // owner has no UserProfile row still get something readable.
+    if (project.ownerName) return project.ownerName;
     const email = project.ownerEmail ?? "";
     if (!email) return "—";
     const at = email.indexOf("@");
 
     return at > 0 ? email.slice(0, at) : email;
+};
+
+const userCountLabel = (project: IProject): string => {
+    // Backend (list endpoint) populates userCount from ProjectUserAccess,
+    // which includes the owner. Detail-only payloads still expose `users`,
+    // so fall back to its length so per-project pages don't show 0.
+    const count = project.userCount ?? project.users?.length ?? 0;
+
+    return `${count} ${count === 1 ? "user" : "users"}`;
 };
 
 // IProject has no `lastUpdated` — fall back to creation timestamp as a

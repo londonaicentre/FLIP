@@ -49,7 +49,15 @@ export type IProject = {
     name: string;
     description: string;
     ownerId: string;
+    // Display name of the owner (from UserProfile). Optional because
+    // very old seeded users may have no profile row; UI falls back to
+    // the email-derived username then.
+    ownerName?: string | null;
     ownerEmail: string;
+    // Total users with project access — includes the owner (auto-added
+    // to ProjectUserAccess on creation). Surfaced by the list endpoint so
+    // cards can render "N users" without a per-row Cognito round-trip.
+    userCount?: number;
     creationtimestamp: string;
     stagedAt?: string | null;
     query?: IProjectQuery;

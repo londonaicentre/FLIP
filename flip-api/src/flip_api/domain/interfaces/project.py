@@ -88,6 +88,16 @@ class IProject(BaseModel):  # Base for IProject to avoid repetition
     name: str = Field(default="")
     description: str = Field(default="")
     owner_id: UUID = Field(..., alias="ownerId")
+    # Display name of the owner — populated from UserProfile by the list +
+    # detail endpoints so cards/rows can show "Owned by …" without a
+    # follow-up round-trip per project. Null only if the owner has no
+    # UserProfile row (very old seeded users).
+    owner_name: str | None = Field(default=None, alias="ownerName")
+    # Total users with access to the project (includes the owner — they're
+    # auto-added to ProjectUserAccess on creation). Same rationale as
+    # owner_name: surface it on the list so the UI doesn't have to load
+    # the full Cognito user list per row.
+    user_count: int = Field(default=0, alias="userCount")
     deleted: bool = Field(default=False)
     approved: bool | None = None
     creation_timestamp: str = Field(..., alias="creationtimestamp")  # This is a string to match the Vue.js handling

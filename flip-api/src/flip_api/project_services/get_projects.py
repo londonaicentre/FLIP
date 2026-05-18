@@ -123,9 +123,12 @@ def get_projects_paginated_orm(
     total_records = session.exec(count_query).one_or_none() or 0
 
     project_ids = [project.id for project in project_results]
+    owner_ids = list({project.owner_id for project in project_results})
     trusts_by_project = get_trusts_approval_status_for_projects(project_ids, session)
     queries_by_project = _load_latest_query_per_project(project_ids, session)
     staged_at_by_project = _load_latest_audit_at_per_project(project_ids, ProjectAuditAction.STAGE, session)
+    owner_name_by_id = _load_owner_names(owner_ids, session)
+    user_count_by_project = _load_user_counts(project_ids, session)
 
     projects_response = [
         IProject(
@@ -133,6 +136,8 @@ def get_projects_paginated_orm(
             name=project.name,
             description=project.description,
             owner_id=project.owner_id,
+            owner_name=owner_name_by_id.get(project.owner_id),
+            user_count=user_count_by_project.get(project.id, 0),
             # `Z` suffix so the browser treats the naive UTC value as UTC.
             creation_timestamp=project.creation_timestamp.isoformat(timespec="milliseconds") + "Z",
             staged_at=staged_at_by_project.get(project.id),
@@ -268,6 +273,35 @@ def _load_latest_audit_at_per_project(
         latest[pid] = audit_date.isoformat(timespec="milliseconds")
 
     return latest
+
+
+def _load_owner_names(owner_ids: list[UUID], session: Session) -> dict[UUID, str]:
+    """One SELECT against UserProfile, keyed by user_id, for the N owners
+    on the page. Missing rows (old seeded users without a profile) just
+    fall through to ``None`` at the call site."""
+    if not owner_ids:
+        return {}
+
+    rows = session.exec(
+        select(UserProfile.user_id, UserProfile.name).where(col(UserProfile.user_id).in_(owner_ids))
+    ).all()
+
+    return {uid: name for uid, name in rows if uid is not None and name}
+
+
+def _load_user_counts(project_ids: list[UUID], session: Session) -> dict[UUID, int]:
+    """Per-project user count from ProjectUserAccess. The owner is added on
+    project creation, so this count includes them."""
+    if not project_ids:
+        return {}
+
+    rows = session.exec(
+        select(ProjectUserAccess.project_id, func.count(col(ProjectUserAccess.user_id)))
+        .where(col(ProjectUserAccess.project_id).in_(project_ids))
+        .group_by(col(ProjectUserAccess.project_id))
+    ).all()
+
+    return {pid: int(count or 0) for pid, count in rows if pid is not None}
 
 
 # [#114] ✅

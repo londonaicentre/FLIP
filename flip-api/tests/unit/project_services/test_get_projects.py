@@ -59,11 +59,12 @@ def test_get_projects_paginated_orm_some_results(user_id):
         status=ProjectStatus.APPROVED,
         creation_timestamp=datetime.utcnow(),
     )
-    # get_projects_paginated_orm makes five session.exec calls when projects
+    # get_projects_paginated_orm makes seven session.exec calls when projects
     # exist: projects → count → batch trusts (via shared helper) → batch
-    # latest-query-per-project → batch latest-STAGE-audit-per-project. The
-    # cohort loader skips its own trust-count/stats fetches when no queries
-    # exist, so a single empty result there short-circuits the rest.
+    # latest-query-per-project → batch latest-STAGE-audit-per-project → batch
+    # owner names → batch user counts. The cohort loader skips its own
+    # trust-count/stats fetches when no queries exist, so a single empty
+    # result there short-circuits the rest.
     projects_call = MagicMock()
     projects_call.all.return_value = [project_1, project_2]
     count_call = MagicMock()
@@ -74,7 +75,19 @@ def test_get_projects_paginated_orm_some_results(user_id):
     queries_call.all.return_value = []
     stage_audit_call = MagicMock()
     stage_audit_call.all.return_value = []
-    session.exec.side_effect = [projects_call, count_call, trusts_call, queries_call, stage_audit_call]
+    owner_names_call = MagicMock()
+    owner_names_call.all.return_value = [(user_id, "Project Owner")]
+    user_counts_call = MagicMock()
+    user_counts_call.all.return_value = []
+    session.exec.side_effect = [
+        projects_call,
+        count_call,
+        trusts_call,
+        queries_call,
+        stage_audit_call,
+        owner_names_call,
+        user_counts_call,
+    ]
 
     project_response = get_projects_paginated_orm(
         session=session,
@@ -125,6 +138,10 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
     stats_call.all.return_value = []
     stage_audit_call = MagicMock()
     stage_audit_call.all.return_value = []
+    owner_names_call = MagicMock()
+    owner_names_call.all.return_value = [(user_id, "Alex Triay")]
+    user_counts_call = MagicMock()
+    user_counts_call.all.return_value = [(project_id, 3)]
     session.exec.side_effect = [
         projects_call,
         count_call,
@@ -133,6 +150,8 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
         pair_rows_call,
         stats_call,
         stage_audit_call,
+        owner_names_call,
+        user_counts_call,
     ]
 
     response = get_projects_paginated_orm(
@@ -146,6 +165,8 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
     project_response = response.data[0]
     assert project_response.query is not None
     assert set(project_response.query.queried_trust_ids) == {trust_a, trust_b}
+    assert project_response.owner_name == "Alex Triay"
+    assert project_response.user_count == 3
 
 
 @patch("flip_api.project_services.get_projects.get_projects_paginated_orm")
