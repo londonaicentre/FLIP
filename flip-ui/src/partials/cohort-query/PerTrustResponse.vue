@@ -26,7 +26,7 @@
                 v-if="!rows.length"
                 class="px-4 py-6 text-sm text-center text-gray-500 dark:text-gray-400"
             >
-                No participating trusts.
+                {{ emptyMessage }}
             </div>
             <div
                 v-for="row in rows"
@@ -171,26 +171,40 @@ const rows = computed<IRow[]>(() => {
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
     const counts = perTrustCounts.value;
     const errors = perTrustErrors.value;
-    const hasResults = Object.keys(counts).length > 0 || Object.keys(errors).length > 0;
 
-    // While the user is mid-submit, the fan-out targets the live trust list
-    // so we render every one of them as "running". Once the query has
-    // finished we restrict to the trusts that actually participated —
-    // otherwise a trust that joined the platform after the query ran would
-    // sit in "running" forever (it's in the global list but absent from
-    // both `counts` and `errors`).
-    const visibleTrusts = props.submitting
-        ? trusts
-        : filterByQueriedTrustIds(trusts, projectStore.project?.query?.queriedTrustIds);
+    // Three cases:
+    // 1. Mid-submit: fan-out targets the live trust list — render every
+    //    trust as "running" so the user sees the fan-out animate.
+    // 2. No query exists yet: nothing to show. Without this branch the
+    //    panel would render every current trust as "running" forever,
+    //    because the filter helper's undefined-passthrough returns them
+    //    all and none have counts/errors.
+    // 3. Query exists: filter to the trusts the query was dispatched to.
+    //    Trusts that never responded stay visible as "running"; errored
+    //    trusts get a red chip; later-joining trusts are excluded.
+    let visibleTrusts: typeof trusts;
+    if (props.submitting) {
+        visibleTrusts = trusts;
+    } else if (!projectStore.project?.query) {
+        visibleTrusts = [];
+    } else {
+        visibleTrusts = filterByQueriedTrustIds(trusts, projectStore.project.query.queriedTrustIds);
+    }
+
+    // erroredTrustIds is sourced from QueryResult.data on the project, so it
+    // catches errored trusts even when the QueryStats aggregator's
+    // trustErrors map is empty (timing window after the error post and
+    // before re-aggregation lands).
+    const erroredSet = new Set(projectStore.project?.query?.erroredTrustIds ?? []);
 
     return visibleTrusts
         .map((t) => {
-            const errored = !props.submitting && t.id in errors;
+            const errored = !props.submitting && (t.id in errors || erroredSet.has(t.id));
             const responded = !props.submitting && t.id in counts;
-            // While submitting (just hit Run) or before any per-trust signal
-            // lands, every trust is in-flight. Once a trust shows up in either
-            // map it leaves "running" — successfully (count) or as "error".
-            const running = props.submitting || (!hasResults) || (!responded && !errored);
+            // While submitting (just hit Run) every trust is in-flight.
+            // Once results land, a dispatched trust is "running" only until
+            // it appears in either map.
+            const running = props.submitting || (!responded && !errored);
 
             return {
                 id: t.id,
@@ -207,6 +221,10 @@ const rows = computed<IRow[]>(() => {
 
 const anyRunning = computed(() => rows.value.some(r => r.running));
 const completedCount = computed(() => rows.value.filter(r => !r.running).length);
+const emptyMessage = computed(() => projectStore.project?.query
+    ? "No participating trusts."
+    : "Submit a query to see per-trust responses."
+);
 </script>
 
 <style scoped>

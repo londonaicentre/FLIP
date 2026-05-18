@@ -39,12 +39,17 @@ class IProjectQuery(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     name: str = Field()
     query: str = Field()
-    # Frozen list of trust IDs that participated in this query (returned a
-    # QueryResult row). Single source of truth for both "which trusts ran
-    # this?" (the staging UI + endpoint filter against it so a trust that
-    # joined later isn't offered as selectable) and "how many ran it?"
-    # (callers take ``len(queried_trust_ids)``).
+    # Trust IDs the query was dispatched to at submit time. Drives the
+    # per-trust panel's visibility set: a trust that errored or never
+    # responded (offline, hub rejected its error report) stays visible —
+    # as an error chip or a "running" pulse — instead of vanishing.
+    # ``len(queried_trust_ids)`` is the "trusts queried" count.
     queried_trust_ids: list[UUID] = Field(default_factory=list, alias="queriedTrustIds")
+    # Subset of ``queried_trust_ids`` whose response carried a non-null
+    # ``error`` in the QueryResult data blob. Excluded from the set of
+    # trusts the operator may stage against — we have no usable cohort
+    # count for them, so staging would commit to data we never received.
+    errored_trust_ids: list[UUID] = Field(default_factory=list, alias="erroredTrustIds")
     total_cohort: int | None = Field(default=None, alias="totalCohort")
     created: str | None = Field(default=None)
     created_by: str | None = Field(default=None, alias="createdBy")

@@ -602,8 +602,16 @@ class TestGetProject:
         )
         # Step 2: Mock query
         mock_query = Queries(id=query_id, name="Test Query", query="SELECT *", project_id=project_id, created=None)
-        # Step 3: Mock queried trust IDs (count is derived from len())
-        mock_trust_ids = [uuid4(), uuid4()]
+        # Step 3: Mock (trust_id, data) pairs — successful + errored — so the
+        # loader's queried/errored split is exercised end-to-end.
+        trust_ok_1 = uuid4()
+        trust_ok_2 = uuid4()
+        trust_errored = uuid4()
+        result_rows = [
+            (trust_ok_1, '{"record_count": 10, "data": [], "error": null}'),
+            (trust_ok_2, '{"record_count": 5, "data": [], "error": null}'),
+            (trust_errored, '{"record_count": 0, "data": [], "error": "OMOP timeout"}'),
+        ]
         # Step 4: Mock stats JSON
         stats_json = '{"TotalCount": 100}'
         mock_stats = QueryStats(id=uuid4(), query_id=query_id, stats=stats_json)
@@ -613,7 +621,7 @@ class TestGetProject:
         mock_db_session.exec.side_effect = [
             MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
             MagicMock(first=MagicMock(return_value=(mock_query, "Alex Triay"))),  # Queries ⋈ UserProfile
-            MagicMock(all=MagicMock(return_value=mock_trust_ids)),  # select(distinct(QueryResult.trust_id))
+            MagicMock(all=MagicMock(return_value=result_rows)),  # select(QueryResult.trust_id, .data)
             MagicMock(first=MagicMock(return_value=mock_stats)),  # select(QueryStats)
         ]
 
@@ -622,7 +630,8 @@ class TestGetProject:
         assert isinstance(result, IProjectResponse)
         assert result.id == project_id
         assert isinstance(result.query, IProjectQuery)
-        assert result.query.queried_trust_ids == mock_trust_ids
+        assert result.query.queried_trust_ids == [trust_ok_1, trust_ok_2, trust_errored]
+        assert result.query.errored_trust_ids == [trust_errored]
         assert result.query.total_cohort == 100
         assert result.query.created_by == "Alex Triay"
 
@@ -674,7 +683,10 @@ class TestGetProject:
         mock_db_session.exec.side_effect = [
             MagicMock(first=MagicMock(return_value=mock_project)),  # select(Projects)
             MagicMock(first=MagicMock(return_value=(mock_query, None))),  # Queries ⋈ UserProfile
-            MagicMock(all=MagicMock(return_value=[uuid4(), uuid4()])),  # select(distinct(QueryResult.trust_id))
+            MagicMock(all=MagicMock(return_value=[
+                (uuid4(), '{"record_count": 1, "data": [], "error": null}'),
+                (uuid4(), '{"record_count": 2, "data": [], "error": null}'),
+            ])),  # select(QueryResult.trust_id, .data)
             MagicMock(first=MagicMock(return_value=mock_stats)),  # select(QueryStats)
         ]
 

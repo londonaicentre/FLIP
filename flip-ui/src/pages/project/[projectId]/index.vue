@@ -91,6 +91,7 @@
                             <ProjectStaging
                                 :has-query="!!project.query"
                                 :queried-trust-ids="project.query?.queriedTrustIds"
+                                :errored-trust-ids="project.query?.erroredTrustIds"
                                 :project-staged="isProjectStaged()"
                                 :staging="stagingProject"
                                 @staged="stageProject"

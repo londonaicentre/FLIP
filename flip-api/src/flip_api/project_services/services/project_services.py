@@ -11,6 +11,7 @@
 #
 
 import json
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -53,6 +54,63 @@ from flip_api.model_services.services.model_service import delete_models
 from flip_api.project_services.utils.audit_helper import audit_project_action
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
+
+
+def _collect_errored_trust_ids(
+    rows: Sequence[tuple[UUID | None, str | None]],
+    *,
+    query_id: UUID,
+) -> list[UUID]:
+    """Extract trust IDs whose QueryResult data carries a non-null ``error``.
+
+    A row that fails to parse at all also counts as errored — better to mark
+    the trust red than silently swallow a corrupt response.
+
+    Args:
+        rows (Sequence[tuple[UUID | None, str | None]]): ``(trust_id, data_json)`` pairs from QueryResult.
+        query_id (UUID): The query the rows belong to — used for logging only.
+
+    Returns:
+        list[UUID]: Errored trust IDs (subset of those that responded).
+    """
+    errored: list[UUID] = []
+    seen: set[UUID] = set()
+    for tid, data_str in rows:
+        if tid is None or tid in seen:
+            continue
+        seen.add(tid)
+        try:
+            data = json.loads(data_str) if data_str else {}
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Malformed QueryResult.data for query {query_id}, trust {tid}: {e}")
+            errored.append(tid)
+            continue
+        if data.get("error"):
+            errored.append(tid)
+    return errored
+
+
+def _legacy_responded_trust_ids(
+    rows: Sequence[tuple[UUID | None, str | None]],
+) -> list[UUID]:
+    """Distinct trust IDs that posted a QueryResult — used as a fallback for
+    queries saved before ``Queries.queried_trust_ids`` was tracked at submit
+    time. New queries persist the dispatched set directly on the row.
+
+    Args:
+        rows (Sequence[tuple[UUID | None, str | None]]): ``(trust_id, data_json)`` pairs from QueryResult.
+
+    Returns:
+        list[UUID]: Distinct responded trust IDs preserving row order.
+    """
+    seen: set[UUID] = set()
+    out: list[UUID] = []
+    for tid, _ in rows:
+        if tid is None or tid in seen:
+            continue
+        seen.add(tid)
+        out.append(tid)
+    return out
 
 
 def update_project_user_access(project_id: UUID, user_ids: list[UUID], session: Session) -> None:
@@ -756,16 +814,18 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
     query_data = None
     if query_row:
         query, created_by_name = query_row
-        # Step 3: distinct trust IDs that returned a QueryResult — the staging
-        # UI filters its selector against this set and callers derive the
-        # "trusts queried" count from ``len(...)``.
-        queried_trust_ids = [
-            tid
-            for tid in session.exec(
-                select(func.distinct(QueryResult.trust_id)).where(QueryResult.query_id == query.id)
-            ).all()
-            if tid is not None
-        ]
+        # Step 3: per-trust QueryResult rows — drive the "errored" carve-out
+        # for staging, and (only for legacy queries with no persisted
+        # ``queried_trust_ids``) the fallback queried set.
+        result_rows = session.exec(
+            select(QueryResult.trust_id, QueryResult.data).where(QueryResult.query_id == query.id)
+        ).all()
+        errored_trust_ids = _collect_errored_trust_ids(result_rows, query_id=query.id)
+        queried_trust_ids = (
+            list(query.queried_trust_ids)
+            if query.queried_trust_ids is not None
+            else _legacy_responded_trust_ids(result_rows)
+        )
 
         # Step 4: total cohort size from QueryStats (stored as JSON).
         stats_entry = session.exec(select(QueryStats).where(QueryStats.query_id == query.id)).first()
@@ -783,6 +843,7 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
             name=query.name,
             query=query.query,
             queried_trust_ids=queried_trust_ids,
+            errored_trust_ids=errored_trust_ids,
             total_cohort=total_cohort,
             # `Z` suffix so the browser parses as UTC (naive UTC column).
             created=(query.created.isoformat(timespec="milliseconds") + "Z") if query.created else None,

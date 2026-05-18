@@ -319,6 +319,125 @@ describe("PerTrustResponse", () => {
         }
     });
 
+    it("shows a dispatched-but-never-responded trust as 'running'", async () => {
+        // trust-3 was dispatched but never posted a result (offline, hub
+        // rejected its error report, etc). Must stay visible with the
+        // running pulse rather than vanish.
+        const data = {
+            recordCount: 7,
+            trustsResults: [],
+            trustRecordCounts: { "trust-1": 7 }
+        };
+        swrvMock.value = data;
+        const wrapper = mount(PerTrustResponse, {
+            props: { submitting: false },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false,
+                    initialState: {
+                        trust: { trusts: TRUSTS },
+                        project: {
+                            project: {
+                                id: "p-1",
+                                status: "UNSTAGED",
+                                query: {
+                                    id: "q-1",
+                                    queriedTrustIds: ["trust-1", "trust-3"],
+                                    erroredTrustIds: []
+                                }
+                            }
+                        }
+                    }
+                })],
+                stubs
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        const t1 = rowFor(wrapper, "T1")!;
+        const t3 = rowFor(wrapper, "T3")!;
+        expect(t1.text()).toContain("7");
+        expect(t3.text()).toContain("running");
+    });
+
+    it("classifies an errored trust via project.query.erroredTrustIds even when the QueryStats trustErrors map is empty", async () => {
+        // Simulates the timing window where the trust posted an error and
+        // the QueryResult.data captured it, but the QueryStats aggregator
+        // hasn't re-run yet so trustErrors is empty.
+        const data = {
+            recordCount: 0,
+            trustsResults: [],
+            trustRecordCounts: {},
+            trustErrors: {}  // empty — aggregator hasn't re-run
+        };
+        swrvMock.value = data;
+        const wrapper = mount(PerTrustResponse, {
+            props: { submitting: false },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false,
+                    initialState: {
+                        trust: { trusts: TRUSTS },
+                        project: {
+                            project: {
+                                id: "p-1",
+                                status: "UNSTAGED",
+                                query: {
+                                    id: "q-1",
+                                    queriedTrustIds: ["trust-2"],
+                                    erroredTrustIds: ["trust-2"]
+                                }
+                            }
+                        }
+                    }
+                })],
+                stubs
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        const t2 = rowFor(wrapper, "T2")!;
+        expect(t2.text()).toContain("error");
+        expect(t2.text()).not.toContain("running");
+    });
+
+    it("shows the submit-a-query empty state when no query exists yet", async () => {
+        // Project has no query — without an explicit branch the panel would
+        // render every current trust as "running" (filter helper passes
+        // undefined through to the whole list, no counts/errors land).
+        swrvMock.value = null;
+        const wrapper = mount(PerTrustResponse, {
+            props: { submitting: false },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false,
+                    initialState: {
+                        trust: { trusts: TRUSTS },
+                        project: {
+                            project: {
+                                id: "p-1",
+                                status: "UNSTAGED"
+                            }
+                        }
+                    }
+                })],
+                stubs
+            }
+        });
+        await nextTick();
+        await flushPromises();
+
+        for (const trust of TRUSTS) {
+            expect(rowFor(wrapper, trust.code as string)).toBeUndefined();
+        }
+        expect(wrapper.text()).toContain("Submit a query to see per-trust responses");
+    });
+
     it("prefers error over running when a trust both errored and is missing from counts", async () => {
         const data = {
             recordCount: 0,

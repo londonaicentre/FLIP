@@ -38,7 +38,10 @@ const trustNew = {
     code: "TN"
 };
 
-function mountStaging(queriedTrustIds: string[] | undefined) {
+function mountStaging(
+    queriedTrustIds: string[] | undefined,
+    erroredTrustIds: string[] | undefined = undefined,
+) {
     const pinia = createTestingPinia({
         createSpy: vi.fn,
         stubActions: false
@@ -47,7 +50,8 @@ function mountStaging(queriedTrustIds: string[] | undefined) {
         props: {
             hasQuery: true,
             staging: false,
-            queriedTrustIds
+            queriedTrustIds,
+            erroredTrustIds
         },
         global: { plugins: [pinia] }
     });
@@ -79,5 +83,15 @@ describe("ProjectStaging — queriedTrustIds gating", () => {
         expect(wrapper.find(`[data-test="${trustA.name}-selector"]`).exists()).toBe(true);
         expect(wrapper.find(`[data-test="${trustB.name}-selector"]`).exists()).toBe(true);
         expect(wrapper.find(`[data-test="${trustNew.name}-selector"]`).exists()).toBe(true);
+    });
+
+    it("hides errored trusts even though they responded to the cohort query", async () => {
+        // trustB responded but with an error — must not appear as a staging
+        // toggle because the cohort count is unusable.
+        const wrapper = mountStaging([trustA.id, trustB.id], [trustB.id]);
+        await flushPromises();
+
+        expect(wrapper.find(`[data-test="${trustA.name}-selector"]`).exists()).toBe(true);
+        expect(wrapper.find(`[data-test="${trustB.name}-selector"]`).exists()).toBe(false);
     });
 });

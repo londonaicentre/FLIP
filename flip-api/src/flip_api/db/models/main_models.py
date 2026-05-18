@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
+from sqlalchemy import Column
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, Relationship, SQLModel
 
 from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction
@@ -115,7 +118,7 @@ class ModelTrustIntersect(SQLModel, table=True):
     fl_client_endpoint: str | None = Field(default=None)
 
 
-class ModelsAudit(SQLModel, table=True):  # noqa: E501
+class ModelsAudit(SQLModel, table=True):
     # `user_id` is nullable because audit rows from background status
     # transitions (fl_scheduler) have no end-user context. Endpoint-driven
     # transitions still record the caller.
@@ -175,6 +178,16 @@ class Queries(SQLModel, table=True):
     # author for those.
     created_by: UUID | None = Field(default=None, index=True)
     project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
+    # Trust UUIDs the query was dispatched to at submit time. Canonical
+    # "queried trusts" set — includes trusts that later errored or never
+    # responded, so the per-trust UI can still render them (as error chips
+    # or "running" respectively). Nullable for queries saved before this
+    # column existed; loaders fall back to deriving the set from
+    # QueryResult rows for those.
+    queried_trust_ids: list[UUID] | None = Field(
+        default=None,
+        sa_column=Column("queried_trust_ids", ARRAY(PG_UUID(as_uuid=True)), nullable=True),
+    )
 
 
 class QueryResult(SQLModel, table=True):

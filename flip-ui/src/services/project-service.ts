@@ -31,12 +31,14 @@ export interface IProjectQuery {
     id: string;
     name: string;
     query: string;
-    // Frozen list of trust IDs that returned a result for this query. Used by
-    // ProjectStaging to hide trusts that joined after the query was run — we
-    // have no cohort count for them, so the user shouldn't be able to stage
-    // against them. Callers that want a "how many trusts ran this?" count
-    // take `.length`.
+    // Trust IDs the query was dispatched to at submit time. PerTrustResponse
+    // uses this as the visibility set so trusts that errored or never
+    // responded stay on screen (red chip / running pulse). Callers that want
+    // a "how many trusts ran this?" count take `.length`.
     queriedTrustIds: string[];
+    // Subset of `queriedTrustIds` whose response carried an error — staging
+    // additionally excludes these because we have no usable cohort count.
+    erroredTrustIds: string[];
     totalCohort: number;
     created?: string | null;
     createdBy?: string | null;

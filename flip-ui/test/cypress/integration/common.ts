@@ -67,7 +67,8 @@ export const validProjectWithQuery = {
         name: "Some test query",
         query: "Some Query > 3000",
         totalCohort: 32567,
-        queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]
+        queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            erroredTrustIds: []
     }
 };
 

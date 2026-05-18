@@ -23,7 +23,7 @@ from sqlmodel import Session, select
 from flip_api.auth.access_manager import can_modify_project
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import Trust, TrustTask
+from flip_api.db.models.main_models import Queries, Trust, TrustTask
 from flip_api.domain.schemas.cohort import (
     SubmitCohortQuery,
     SubmitCohortQueryBody,
@@ -144,6 +144,7 @@ def submit_cohort_query(
         logger.info(f"Trusts found: {len(trusts)}")
 
         result: list[TrustDetails] = []
+        queried_trust_ids: list[UUID] = []
 
         # Encrypt project_id before sending to trusts
         encrypted_project_id = encrypt(str(cohort_query.project_id))
@@ -166,6 +167,7 @@ def submit_cohort_query(
                     payload=json.dumps(task_payload.model_dump(mode="json")),
                 )
                 db.add(task)
+                queried_trust_ids.append(trust.id)
 
                 result.append(
                     TrustDetails(
@@ -182,6 +184,14 @@ def submit_cohort_query(
                 result.append(TrustDetails(name=trust.name, statusCode=500, message=str(e)))
 
             logger.info(f"Trust: {trust.name} processed")
+
+        # Persist the queried set on the Queries row so the per-trust UI
+        # can surface trusts that never responded — without this, a trust that
+        # was sent the query but failed to post any result (offline, hub
+        # rejected the error report) would silently vanish from the panel.
+        query_row = db.exec(select(Queries).where(Queries.id == cohort_query.query_id)).first()
+        if query_row is not None:
+            query_row.queried_trust_ids = queried_trust_ids
 
         db.commit()
 

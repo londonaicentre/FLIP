@@ -126,6 +126,20 @@ def stage_project_endpoint(
             ),
         )
 
+    # Also reject trusts whose cohort query returned an error — we have no
+    # usable count for them so staging would commit the project to data we
+    # never received. Same defence-in-depth as the un-queried check above.
+    errored_trust_ids = set(project_data.query.errored_trust_ids)
+    failed_trust_ids = [tid for tid in payload.trusts if tid in errored_trust_ids]
+    if failed_trust_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Trusts {failed_trust_ids} returned an error for the cohort query for project "
+                f"{project_id} and cannot be staged."
+            ),
+        )
+
     try:
         stage_project_service(
             project_id=project_id,

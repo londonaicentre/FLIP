@@ -126,10 +126,20 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
     trusts_call.all.return_value = []
     queries_call = MagicMock()
     # Tuple shape matches the actual SELECT in _load_latest_queries_for_projects:
-    # (Queries.id, Queries.project_id, Queries.name, Queries.query, Queries.created, UserProfile.name)
-    queries_call.all.return_value = [(query_id, project_id, "Q", "SELECT 1", datetime.utcnow(), None)]
+    # (Queries.id, project_id, name, query, created, UserProfile.name, queried_trust_ids)
+    # `queried_trust_ids` is the persisted dispatched set — drives PerTrustResponse visibility.
+    trust_never_responded = uuid.uuid4()
+    queries_call.all.return_value = [(
+        query_id, project_id, "Q", "SELECT 1", datetime.utcnow(), None,
+        [trust_a, trust_b, trust_never_responded],
+    )]
     pair_rows_call = MagicMock()
-    pair_rows_call.all.return_value = [(query_id, trust_a), (query_id, trust_b)]
+    # (query_id, trust_id, data) — trust_b errored, trust_a succeeded, the
+    # never-responded one has no QueryResult row.
+    pair_rows_call.all.return_value = [
+        (query_id, trust_a, '{"record_count": 7, "data": [], "error": null}'),
+        (query_id, trust_b, '{"record_count": 0, "data": [], "error": "OMOP timeout"}'),
+    ]
     stats_call = MagicMock()
     stats_call.all.return_value = []
     stage_audit_call = MagicMock()
@@ -157,7 +167,9 @@ def test_get_projects_paginated_orm_populates_queried_trust_ids(user_id):
     assert len(response.data) == 1
     project_response = response.data[0]
     assert project_response.query is not None
-    assert set(project_response.query.queried_trust_ids) == {trust_a, trust_b}
+    # queried_trust_ids is the dispatched set — includes the never-responded one.
+    assert set(project_response.query.queried_trust_ids) == {trust_a, trust_b, trust_never_responded}
+    assert project_response.query.errored_trust_ids == [trust_b]
     assert project_response.owner_name == "Alex Triay"
     assert project_response.user_count == 3
 

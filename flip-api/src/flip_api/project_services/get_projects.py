@@ -31,7 +31,11 @@ from flip_api.db.models.main_models import (
 from flip_api.db.models.user_models import PermissionRef, UserProfile
 from flip_api.domain.interfaces.project import IProject, IProjectQuery
 from flip_api.domain.schemas.actions import ProjectAuditAction
-from flip_api.project_services.services.project_services import get_trusts_approval_status_for_projects
+from flip_api.project_services.services.project_services import (
+    _collect_errored_trust_ids,
+    _legacy_responded_trust_ids,
+    get_trusts_approval_status_for_projects,
+)
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import (
     FilterInfo,
@@ -184,35 +188,42 @@ def _load_latest_query_per_project(
             Queries.query,
             Queries.created,
             UserProfile.name,
+            Queries.queried_trust_ids,
         )
         .join(UserProfile, UserProfile.user_id == Queries.created_by, isouter=True)
         .where(col(Queries.project_id).in_(project_ids))
         .order_by(col(Queries.project_id), col(Queries.created).desc())
     ).all()
 
-    latest_per_project: dict[UUID, tuple[UUID, str, str, datetime | None, str | None]] = {}
-    for qid, pid, qname, qsql, qcreated, qcreated_by in queries_rows:
+    latest_per_project: dict[
+        UUID, tuple[UUID, str, str, datetime | None, str | None, list[UUID] | None]
+    ] = {}
+    for qid, pid, qname, qsql, qcreated, qcreated_by, persisted_queried in queries_rows:
         if pid is not None and pid not in latest_per_project:
-            latest_per_project[pid] = (qid, qname, qsql, qcreated, qcreated_by)
+            latest_per_project[pid] = (qid, qname, qsql, qcreated, qcreated_by, persisted_queried)
 
     if not latest_per_project:
         return {}
 
-    query_ids = [qid for qid, _, _, _, _ in latest_per_project.values()]
+    query_ids = [qid for qid, _, _, _, _, _ in latest_per_project.values()]
 
-    # Fetch the distinct (query_id, trust_id) pairs once and group in Python.
-    # Volume is bounded (queries-in-page × trusts) — fine. Callers that need a
-    # "how many trusts ran this?" count derive it from ``len(...)``.
-    queried_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
+    # QueryResult rows give us the errored subset + (for legacy queries with
+    # no persisted ``queried_trust_ids``) the fallback queried set. Volume is
+    # bounded (queries-in-page × trusts).
+    errored_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
+    legacy_responded_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
+    rows_by_query: dict[UUID, list[tuple[UUID | None, str | None]]] = {qid: [] for qid in query_ids}
     pair_rows = session.exec(
-        select(QueryResult.query_id, QueryResult.trust_id)
+        select(QueryResult.query_id, QueryResult.trust_id, QueryResult.data)
         .where(col(QueryResult.query_id).in_(query_ids))
-        .distinct()
     ).all()
-    for qid, tid in pair_rows:
-        if qid is None or tid is None:
+    for qid, tid, data in pair_rows:
+        if qid is None:
             continue
-        queried_trust_ids_by_query.setdefault(qid, []).append(tid)
+        rows_by_query.setdefault(qid, []).append((tid, data))
+    for qid, rows in rows_by_query.items():
+        errored_trust_ids_by_query[qid] = _collect_errored_trust_ids(rows, query_id=qid)
+        legacy_responded_by_query[qid] = _legacy_responded_trust_ids(rows)
 
     total_cohort_by_query: dict[UUID, int] = {}
     stats_rows = session.exec(
@@ -234,13 +245,18 @@ def _load_latest_query_per_project(
             id=qid,
             name=qname,
             query=qsql,
-            queried_trust_ids=queried_trust_ids_by_query.get(qid, []),
+            queried_trust_ids=(
+                list(persisted_queried)
+                if persisted_queried is not None
+                else legacy_responded_by_query.get(qid, [])
+            ),
+            errored_trust_ids=errored_trust_ids_by_query.get(qid, []),
             total_cohort=total_cohort_by_query.get(qid, 0),
             # `Z` suffix so the browser parses as UTC (naive UTC column).
             created=(qcreated.isoformat(timespec="milliseconds") + "Z") if qcreated else None,
             created_by=qcreated_by or None,
         )  # type: ignore[call-arg]
-        for pid, (qid, qname, qsql, qcreated, qcreated_by) in latest_per_project.items()
+        for pid, (qid, qname, qsql, qcreated, qcreated_by, persisted_queried) in latest_per_project.items()
     }
 
 
