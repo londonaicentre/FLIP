@@ -390,6 +390,77 @@ The new branch should be based on the latest `develop` branch.
 1. Reviewer and contributor may have discussions back and forth until all comments are addressed.
 1. Wait for the pull request to be merged.
 
+## Cutting a release
+
+Releases are cut from `main`. The version is set in the root `pyproject.toml`, and merging to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which reads that version, creates a `v<MAJOR.MINOR.PATCH>` git tag, and publishes a GitHub Release with auto-generated notes. On the same merge, the per-service `.github/workflows/docker_build_*.yml` workflows rebuild every service and push the `:prod` image tag (alongside `:<sha>`) to GHCR. There is no separate release-publishing step beyond merging to `main`.
+
+### Versioning
+
+FLIP follows [Semantic Versioning](https://semver.org/). The version in the **root** [`pyproject.toml`](pyproject.toml) is the FLIP release version — it is what `release.yml` reads to create the git tag.
+
+Each service has its own version string:
+
+- [`flip-api/pyproject.toml`](flip-api/pyproject.toml)
+- [`flip-ui/package.json`](flip-ui/package.json)
+- [`trust/trust-api/pyproject.toml`](trust/trust-api/pyproject.toml)
+- [`trust/imaging-api/pyproject.toml`](trust/imaging-api/pyproject.toml)
+- [`trust/data-access-api/pyproject.toml`](trust/data-access-api/pyproject.toml)
+
+These are **independent**. Bump a service's version only when *that service* has user-visible changes, applying SemVer to the service alone. Services are not aligned with the root version on every release — a release where only `flip-ui` changed bumps the root and `flip-ui/package.json`, and nothing else. Per-service versions are informational today (deployments select images by branch via `:prod` / `:stag` tags, not by version string), but keeping them honest makes them useful for audit and changelog scope.
+
+### Pre-release checklist
+
+Before opening the release PR from `develop` to `main`:
+
+- `develop` is green in [CI](https://github.com/londonaicentre/FLIP/actions).
+- All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.
+- Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file (`flip-api/pyproject.toml`, `flip-ui/package.json`, `trust/*/pyproject.toml`) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
+- Run `make unit_test` and `make integration_test` locally.
+
+### Cutting the release
+
+1. From a branch off `develop`, commit the version bumps above and open a PR targeting `develop` with title `Release v<X.Y.Z>`.
+1. Once that merges and CI is green, open a PR from `develop` to `main`.
+1. On merge to `main`:
+   - [`release.yml`](.github/workflows/release.yml) creates the `v<X.Y.Z>` git tag and publishes the GitHub Release with auto-generated notes.
+   - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
+1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that the `:prod` tags on `flip-api`, `trust-api`, `imaging-api`, and `data-access-api` were updated by the latest build.
+
+### Release notes
+
+There is no `CHANGELOG.md` — the GitHub Releases page is the changelog. Release notes are generated automatically from PR titles and labels via [`.github/release.yml`](.github/release.yml). To curate the notes for a release, ensure each PR going into `develop` has the right label before it is merged.
+
+### Deploying the release
+
+Once the `:prod` images are in GHCR, deploy with:
+
+```bash
+cd deploy/providers/AWS
+make full-deploy PROD=true
+```
+
+See [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md) for full deployment instructions. For staging, no release tag is required: merging to `develop` publishes `:stag` images automatically, and `make full-deploy PROD=stag` rolls them out.
+
+### Hotfixes
+
+For an urgent fix on `main` without pulling in unrelated `develop` work:
+
+1. Branch from `main`, apply the fix, bump the patch version in the root `pyproject.toml` (and any affected service).
+1. Open a PR targeting `main`. On merge, the same automation kicks in — `release.yml` tags `v<X.Y.Z+1>` and `docker_build_*.yml` rebuilds `:prod`.
+1. Forward-port the fix to `develop` so the next regular release includes it.
+
+### Testing a release candidate before merge to main
+
+Branch builds **do not** auto-publish to GHCR. To deploy a release-candidate branch for testing, manually trigger the relevant build workflows first:
+
+```bash
+gh workflow run docker_build_flip_api.yml --ref <branch-name>
+gh workflow run docker_build_trust_trust_api.yml --ref <branch-name>
+# ...one per service whose image you want to test
+```
+
+Wait for green completion, then point your `.env` file's `DOCKER_TAG` at the sanitized branch name (the per-service workflows publish a `:<branch>` tag on every push).
+
 ## Adding a new service
 
 To extend the platform with a new service, add a definition to the appropriate Docker Compose file:
