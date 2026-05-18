@@ -389,14 +389,27 @@ def _ensure_subject(cfg: Config, token: str, project_id: str,
                 logger.info("Subject %s already exists (ID: %s)", patient_id, r["ID"])
                 return r["ID"]
 
-    # Create subject
+    # Create subject using XML
+    xml = f'''<?xml version='1.0' encoding='UTF-8'?>
+<xnat:subjectData xmlns:xnat='http://nrg.wustl.edu/xnat'
+    xmlns:xsi='http://www.w3.org/2001/XMLSchema-instance'
+    xsi:type='xnat:subjectData'>
+  <xnat:label>{patient_id}</xnat:label>
+  <xnat:project>{project_id}</xnat:project>
+  <xnat:sharing>
+    <xnat:share>
+      <xnat:project>{project_id}</xnat:project>
+    </xnat:share>
+  </xnat:sharing>
+</xnat:subjectData>'''
+
     req = urllib.request.Request(
         f"{cfg.xnat_url}/data/archive/projects/{project_id}/subjects/{patient_id}",
         method="PUT",
-        data=f"xnat:subjectData/sharing/share/project={project_id}".encode(),
+        data=xml.encode(),
         headers={
             "Cookie": f"JSESSIONID={token}",
-            "Content-Type": "application/x-www-form-urlencoded",
+            "Content-Type": "application/xml",
         },
     )
     try:

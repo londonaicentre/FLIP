@@ -209,15 +209,33 @@ spec:
           resources:
             {{- toYaml .Values.flClient.resources | nindent 12 }}
           livenessProbe:
+{{- if .Values.flClient.probes.liveness.exec }}
+            exec:
+              command:
+{{ toYaml .Values.flClient.probes.liveness.exec.command | indent 16 }}
+{{- else }}
             tcpSocket:
               port: {{ .Values.flClient.probes.liveness.port }}
+{{- end }}
             initialDelaySeconds: {{ .Values.flClient.probes.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.flClient.probes.liveness.periodSeconds }}
+{{- if .Values.flClient.probes.liveness.failureThreshold }}
+            failureThreshold: {{ .Values.flClient.probes.liveness.failureThreshold }}
+{{- end }}
           readinessProbe:
+{{- if .Values.flClient.probes.readiness.exec }}
+            exec:
+              command:
+{{ toYaml .Values.flClient.probes.readiness.exec.command | indent 16 }}
+{{- else }}
             tcpSocket:
               port: {{ .Values.flClient.probes.readiness.port }}
+{{- end }}
             initialDelaySeconds: {{ .Values.flClient.probes.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.flClient.probes.readiness.periodSeconds }}
+{{- if .Values.flClient.probes.readiness.failureThreshold }}
+            failureThreshold: {{ .Values.flClient.probes.readiness.failureThreshold }}
+{{- end }}
       volumes:
         - name: images
 {{- if .Values.sharedImagesPvc.enabled }}
