@@ -24,7 +24,7 @@ class XnatTokenFactory:
     Factory class for retrieving and caching XNAT authentication tokens.
     """
 
-    def __init__(self, url: str, username: str, password: str, expiry_hours: int = 24):
+    def __init__(self, url: str, username: str, password: str, expiry_hours: int = 24) -> None:
         self.url = url
         self.username = username
         self.password = password
@@ -35,9 +35,6 @@ class XnatTokenFactory:
         """
         Retrieves a new XNAT authentication token if expired or not set.
         Caches the token for reuse.
-
-        Args:
-            None
 
         Returns:
             str: A valid XNAT session token.

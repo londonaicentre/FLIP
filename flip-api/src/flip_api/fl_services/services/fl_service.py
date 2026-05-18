@@ -138,7 +138,7 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        IServerStatus: The server status.
+        IServerStatus | None: The server status, or None if the FL API did not respond.
     """
     url = f"{endpoint}/check_server_status"
     logger.debug(f"Checking server status at '{url}'")

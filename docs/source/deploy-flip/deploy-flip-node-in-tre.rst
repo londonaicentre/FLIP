@@ -176,6 +176,10 @@ Key environment variables (set via ``.env`` or Docker secrets):
      - Per-trust authentication header used on every outbound request.
    * - ``AES_KEY_BASE64``
      - Symmetric key shared with the hub; used to decrypt task payloads.
+   * - ``TRUST_INTERNAL_SERVICE_KEY``
+     - Per-trust shared secret used inside the trust for calls between
+       trust-api / imaging-api / fl-client and imaging-api /
+       data-access-api. Never leaves the trust environment.
    * - ``POLL_INTERVAL_SECONDS``
      - Polling period in seconds (default: ``5``).
 

@@ -619,7 +619,7 @@ the direction of the request flow.
 - **EFS**: Shared file systems and access points used by the FL services for workspace volumes (configs, certs, transfer dir). Mount targets live in the **private subnets**.
 - **Cloud Map (Service Discovery)**: Private DNS namespace `flip.local` used for ECS task-to-task resolution (e.g. `fl-api-net-1.flip.local`).
 - **VPC endpoints**: Interface endpoints (Secrets Manager, SSM, CloudWatch Logs, ECR API + DKR) in the **private subnets** plus an S3 gateway endpoint. Allow Fargate tasks to reach AWS APIs without traversing the NAT Gateway.
-- **RDS**: PostgreSQL 15 managed database (EOL: October 2027), in the **private subnets**. Subnet group + security group ingress restricted to the Central Hub EC2 SG and the `flip-api` ECS task SG.
+- **RDS**: PostgreSQL 17 managed database (Terraform default, see `var.postgres_version`), in the **private subnets**. Subnet group + security group ingress restricted to the Central Hub EC2 SG and the `flip-api` ECS task SG.
 - **CloudWatch**: Logging and monitoring for ECS tasks, both EC2 instances, the WAFv2 ACL, and VPC endpoints.
 - **Secrets Manager**: Secure storage for API secrets and database credentials (`FLIP_API` secret).
 - **SSM Parameter Store**: Configuration values read by ECS tasks at startup — bucket URIs, internal service URL, internal-service-key header name.
