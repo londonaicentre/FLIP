@@ -1,0 +1,12 @@
+# Configuration for evaluation app
+# Models section defines which checkpoints to load
+# The "path" field refers to the model architecture defined in models.py
+# The "checkpoint" field is the filename of the .pt file being uploaded
+
+[models.monai_spleen_unet]
+checkpoint = "model.pt"
+path = "unet"
+# Metrics specification for evaluation
+# Define metric names and their expected types ("float" or "int" only - native numeric types)
+[metrics]
+mean_dice = "float"
