@@ -51,19 +51,27 @@ clientapp = "app.client_app:app"
 
 # Custom config values accessible via `context.run_config`
 [tool.flwr.app.config]
-num-server-rounds = 3 # Equivalent to global_rounds
-local-epochs = 1      # Equivalent to local_rounds
+num-server-rounds = 1 # Evaluation only needs 1 round
+local-epochs = 1      # Number of evaluation rounds per model
 learning-rate = 1e-4
-val-split = 0.3
-test-split = 0.3
 batch-size = 2
 # Model configuration
-spatial-dims = 3 # This is currently unused but can be passed to get_model()
+spatial-dims = 3
+num-classes = 2
 # FLIP configuration - needs to be set here so it can be overridden by flwr run command
 # See https://flower.ai/docs/framework/ref-api-cli.html#flwr-run for more details
 flip-model-id = "uuid"
 flip-project-id = "uuid"
 flip-cohort-query = "*"
+
+# Metrics specification for evaluation (can be overridden via config.toml)
+# Define metric names and their expected types ("float" or "int" only - native numeric types)
+[tool.flwr.app.config.metrics]
+# Placeholder - actual metrics should be defined in config.toml during upload
+
+# Model definitions (can be overridden via config.toml)
+[tool.flwr.app.config.models]
+# Placeholder - actual models should be defined in config.toml during upload
 
 # Linter
 [tool.ruff]
