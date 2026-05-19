@@ -99,9 +99,12 @@ up: check-aws-access generate-internal-service-key create-networks _ensure-model
 
 # Ensure model_checkpoints directory exists with proper permissions before starting containers
 # to avoid Docker creating it as root which prevents the fl-api container (runs as app user) from writing
+# Only needed for Flower backend
 _ensure-model-checkpoints-dir:
-	@mkdir -p model_checkpoints/net-1 model_checkpoints/net-2
-	@chmod 777 model_checkpoints model_checkpoints/net-1 model_checkpoints/net-2
+	@if [ "$(FL_BACKEND)" = "flower" ]; then \
+		mkdir -p model_checkpoints/net-1 model_checkpoints/net-2; \
+		chmod 777 model_checkpoints model_checkpoints/net-1 model_checkpoints/net-2; \
+	fi
 
 # Minimal $(MAKE) up
 up-no-trust: generate-internal-service-key create-networks _ensure-model-checkpoints-dir
