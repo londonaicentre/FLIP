@@ -168,15 +168,17 @@ restart: down up
 
 # Restart only FL services (APIs, servers, and clients in trusts)
 # NOTE: This target does NOT use --pull to ensure locally built images (from flip-fl-base-flower) are used
-# NOTE: Client keys must be re-registered before starting clients
+# NOTE: Client keys must be re-registered before starting clients (Flower only)
 restart-fl:
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
 	@echo "🔄 Step 2: Restarting FL APIs and servers..."
 	${DOCKER_COMMAND} up -d --force-recreate --no-deps fl-api-net-1 fl-api-net-2 fl-server-net-1 fl-server-net-2
-	@echo "🔄 Step 3: Registering new client keys with FL servers..."
-	${DOCKER_COMMAND} up --force-recreate register-supernode-keys-net-1 register-supernode-keys-net-2
+	@if [ "$(FL_BACKEND)" = "flower" ]; then \
+		echo "🔄 Step 3: Registering new client keys with FL servers (Flower only)..."; \
+		${DOCKER_COMMAND} up --force-recreate register-supernode-keys-net-1 register-supernode-keys-net-2; \
+	fi
 	@echo "🔄 Step 4: Starting new FL clients..."
 	$(MAKE) -C trust up-fl-clients
 	@echo "✅ FL services restarted successfully!"
