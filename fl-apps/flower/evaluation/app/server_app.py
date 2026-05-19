@@ -15,6 +15,7 @@
 
 import json
 import os
+import shutil
 from logging import ERROR, INFO
 from pathlib import Path
 from typing import Dict, Type
@@ -251,3 +252,16 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
 
     log(INFO, "\n✓ Evaluation complete. All outputs saved to %s", output_dir)
     log(INFO, "  - Results JSON: evaluation_results.json")
+
+    # Clean up model checkpoints directory if it exists
+    # In production, flip-job-dir is typically /app/model_checkpoints/{model_id}
+    if checkpoints_dir and Path(checkpoints_dir).exists():
+        # Only delete if the path contains the model_id (safety check)
+        if model_id in str(checkpoints_dir):
+            try:
+                shutil.rmtree(checkpoints_dir)
+                log(INFO, "✓ Cleaned up checkpoints directory: %s", checkpoints_dir)
+            except Exception as e:
+                log(INFO, "Warning: Failed to clean up checkpoints directory %s: %s", checkpoints_dir, str(e))
+        else:
+            log(INFO, "Skipping cleanup: checkpoints directory %s does not contain model_id", checkpoints_dir)
