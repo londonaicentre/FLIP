@@ -13,7 +13,7 @@
 
 import pytest
 
-from fl_api.schemas import RunRecord
+from fl_api.schemas import JobMetadata
 
 
 def test_list_runs_success(client, src_root, mock_flwr_run):
@@ -32,9 +32,30 @@ def test_list_runs_success(client, src_root, mock_flwr_run):
     response = client.get("/list_runs")
 
     assert response.status_code == 200
-    assert len(response.json()) == 2
-    for run in response.json():
-        RunRecord.model_validate(run)
+    body = response.json()
+    assert len(body) == 2
+    for item in body:
+        JobMetadata.model_validate(item)
+    assert body[0] == {"job_id": "9478652229627629048", "status": "FINISHED"}
+    assert body[1] == {"job_id": "2528745119497052892", "status": "RUNNING"}
+
+
+def test_list_jobs_alias_returns_same_shape(client, src_root, mock_flwr_run):
+    mock_flwr_run(stdout='{"success": true, "runs": [{"run-id":"1","fab-name":"x","status":"running"}]}')
+
+    response = client.get("/list_jobs")
+
+    assert response.status_code == 200
+    assert response.json() == [{"job_id": "1", "status": "RUNNING"}]
+
+
+def test_list_runs_malformed_run_returns_500(client, src_root, mock_flwr_run):
+    # A run dict missing "run-id" must fail cleanly with a 500, not an opaque KeyError.
+    mock_flwr_run(stdout='{"success": true, "runs": [{"status": "running"}]}')
+
+    response = client.get("/list_runs")
+
+    assert response.status_code == 500
 
 
 @pytest.mark.parametrize(
