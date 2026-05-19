@@ -439,6 +439,10 @@ def authenticate_internal_service(api_key: str = Security(internal_key_header_sc
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Internal service auth not configured.",
         )
+    # SHA-256 is appropriate here: the input is a 256-bit random token from `secrets.token_urlsafe(32)`,
+    # not a user-chosen password. Slow KDFs (bcrypt/argon2) only defend against low-entropy inputs; against
+    # 256-bit random keys they provide no security benefit. CodeQL flags this as `py/weak-sensitive-data-hashing`
+    # but the rule targets password hashing — false positive for API-key storage. See generate_internal_service_key.py.
     provided_hash = hashlib.sha256(api_key.encode()).hexdigest()
     if not hmac.compare_digest(provided_hash, expected_hash):
         logger.warning("Internal service authentication failed: invalid key.")
@@ -479,6 +483,10 @@ def authenticate_trust(
             headers={"WWW-Authenticate": "ApiKey"},
         )
 
+    # SHA-256 is appropriate here: API keys are 256-bit random tokens from `secrets.token_urlsafe(32)`,
+    # not user-chosen passwords (see generate_trust_key.py). Slow KDFs (bcrypt/argon2) only defend
+    # against low-entropy inputs. CodeQL flags this as `py/weak-sensitive-data-hashing` but the rule
+    # targets password hashing — false positive for API-key storage.
     provided_hash = hashlib.sha256(api_key.encode()).hexdigest()
     trust_hashes = _collect_trust_hashes(db)
 
