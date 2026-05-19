@@ -99,12 +99,12 @@ def upsert_flwr_run_config(
     pyproject_doc = parse(pyproject_path.read_text())
 
     if (
-        "tool" in pyproject_doc
-        and "flwr" in pyproject_doc["tool"]
-        and "app" in pyproject_doc["tool"]["flwr"]
-        and "config" in pyproject_doc["tool"]["flwr"]["app"]
+        "tool" in pyproject_doc  # type: ignore[operator]
+        and "flwr" in pyproject_doc["tool"]  # type: ignore[operator,index]
+        and "app" in pyproject_doc["tool"]["flwr"]  # type: ignore[operator,index]
+        and "config" in pyproject_doc["tool"]["flwr"]["app"]  # type: ignore[operator,index]
     ):
-        config_section = pyproject_doc["tool"]["flwr"]["app"]["config"]
+        config_section = pyproject_doc["tool"]["flwr"]["app"]["config"]  # type: ignore[index]
 
         # Merge user sections (models, metrics, etc.)
         for section_name, section_content in user_sections.items():
@@ -118,7 +118,7 @@ def upsert_flwr_run_config(
                     new_section[key] = nested_table
                 else:
                     new_section[key] = value
-            config_section[section_name] = new_section
+            config_section[section_name] = new_section  # type: ignore[index]
             logger.info(f"Merged [{section_name}] into pyproject.toml [tool.flwr.app.config.{section_name}]")
 
         # Write updated pyproject.toml
@@ -255,7 +255,7 @@ def upload_application(
         # Check if config.toml has models section (simplified format: [models] not [tool.flwr.app.config.models])
         # Flower automatically treats this as [tool.flwr.app.config.models] when using --run-config
         config_doc = parse(config_toml.read_text())
-        has_models = "models" in config_doc and len(config_doc["models"]) > 0
+        has_models = "models" in config_doc and len(config_doc["models"]) > 0  # type: ignore[arg-type]
 
         if not has_models:
             logger.error("Evaluation app config.toml missing [models] section")
