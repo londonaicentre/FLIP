@@ -358,8 +358,7 @@ plans/
 .secrets.baseline
 
 scripts/remove-env-from-history.sh
-design_handoff_full
-design_handoff_cohort_query
+
 SECURITY_INCIDENT.md
 
 *.jar
