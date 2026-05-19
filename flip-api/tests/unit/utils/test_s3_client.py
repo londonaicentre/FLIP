@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from botocore.exceptions import ClientError
 
-from flip_api.utils.s3_client import S3Client
+from flip_api.utils.s3_client import _MULTIPART_OVERHEAD_BUFFER_BYTES, S3Client
 
 
 @pytest.fixture
@@ -40,6 +40,10 @@ def test_get_put_presigned_post_passes_size_cap_into_conditions(s3_client_with_m
     """The size cap must reach S3 as an explicit ``content-length-range``
     condition. Without this condition the policy is functionally identical
     to the unconstrained ``put_object`` URL we replaced.
+
+    The cap sent to S3 is ``max_bytes + _MULTIPART_OVERHEAD_BUFFER_BYTES``
+    because S3 measures the whole encoded request body, not just the file
+    part.
     """
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.generate_presigned_post.return_value = {
@@ -58,7 +62,8 @@ def test_get_put_presigned_post_passes_size_cap_into_conditions(s3_client_with_m
     assert kwargs["Bucket"] == "example"
     assert kwargs["Key"] == "uploads/123/weights.bin"
     assert kwargs["ExpiresIn"] == 600
-    assert ["content-length-range", 0, 2048] in kwargs["Conditions"]
+    expected_cap = 2048 + _MULTIPART_OVERHEAD_BUFFER_BYTES
+    assert ["content-length-range", 0, expected_cap] in kwargs["Conditions"]
     assert {"Content-Type": "application/octet-stream"} in kwargs["Conditions"]
     assert kwargs["Fields"]["Content-Type"] == "application/octet-stream"
 
@@ -80,7 +85,8 @@ def test_get_put_presigned_post_without_content_type_keeps_size_cap(s3_client_wi
     )
 
     kwargs = boto_instance.generate_presigned_post.call_args.kwargs
-    assert ["content-length-range", 0, 4096] in kwargs["Conditions"]
+    expected_cap = 4096 + _MULTIPART_OVERHEAD_BUFFER_BYTES
+    assert ["content-length-range", 0, expected_cap] in kwargs["Conditions"]
     # No Content-Type lock when the caller didn't supply one.
     assert all(
         not (isinstance(c, dict) and "Content-Type" in c) for c in kwargs["Conditions"]

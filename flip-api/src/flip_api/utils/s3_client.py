@@ -20,6 +20,17 @@ from botocore.exceptions import ClientError, EndpointConnectionError
 from flip_api.config import get_settings
 from flip_api.utils.logger import logger
 
+# S3's ``content-length-range`` policy condition caps the **total HTTP body**
+# size (file bytes + multipart framing: boundary strings, the key /
+# Content-Type / policy / x-amz-signature form fields, and the file part's
+# own Content-Disposition header — typically ~500B to a few KB). Without
+# this buffer, a file at exactly the size cap would be rejected at the S3
+# edge because the encoded request is unavoidably larger. 16 KB is well
+# above any realistic multipart overhead and is 0.015% of the 100 MB
+# default cap — negligible storage-cost slack in exchange for a clean
+# "file bytes <= MAX_MODEL_FILE_BYTES" semantic the UI guard mirrors.
+_MULTIPART_OVERHEAD_BUFFER_BYTES = 16 * 1024
+
 
 def parse_s3_path(s3_path: str) -> tuple[str, str]:
     """
@@ -87,7 +98,10 @@ class S3Client:
 
         Args:
             s3_path: Full S3 path (e.g., s3://bucket-name/key).
-            max_bytes: Hard cap on uploaded body size (bytes).
+            max_bytes: Hard cap on the **file** size in bytes. The condition
+                actually sent to S3 is ``max_bytes + _MULTIPART_OVERHEAD_BUFFER_BYTES``
+                because S3 measures the whole encoded request body, not just
+                the file part — see the module-level comment for why.
             content_type: If provided, the policy locks Content-Type to this
                 exact value. If ``None``, any Content-Type is accepted but
                 the size cap still applies.
@@ -103,7 +117,8 @@ class S3Client:
         try:
             bucket, key = parse_s3_path(s3_path)
 
-            conditions: list[Any] = [["content-length-range", 0, max_bytes]]
+            request_body_cap = max_bytes + _MULTIPART_OVERHEAD_BUFFER_BYTES
+            conditions: list[Any] = [["content-length-range", 0, request_body_cap]]
             fields: dict[str, str] = {}
             if content_type is not None:
                 conditions.append({"Content-Type": content_type})

@@ -54,7 +54,13 @@ class ScannedFileInput(BaseModel):
 
 
 class UploadFileBody(BaseModel):
-    """Model for file upload request body."""
+    """Model for file upload request body.
+
+    Field names are camelCase rather than snake_case because they map
+    directly to the case-sensitive form-field names in the multipart
+    upload (e.g. S3's ``Content-Type`` form field), and to stay
+    consistent with the existing ``fileName`` boundary.
+    """
 
     fileName: str = Field(..., description="Name of the file to upload")
     contentType: str | None = Field(

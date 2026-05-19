@@ -195,6 +195,8 @@ def test_post_presigned_url_policy_carries_size_cap_and_content_type_lock(
     import base64
     import json as _json
 
+    from flip_api.utils.s3_client import _MULTIPART_OVERHEAD_BUFFER_BYTES
+
     user_id = admin_user(session)
     _, model_id = _seed_project_and_model(session, user_id)
     override_verify_token_as(user_id)
@@ -207,12 +209,16 @@ def test_post_presigned_url_policy_carries_size_cap_and_content_type_lock(
     )
     assert response.status_code == 200, response.text
     policy_response = response.json()
+    # The endpoint surfaces the raw file-size cap so the UI guard mirrors it.
     assert policy_response["maxBytes"] == 64
     assert policy_response["fields"]["Content-Type"] == "application/octet-stream"
 
     decoded = _json.loads(base64.b64decode(policy_response["fields"]["policy"]))
     conditions = decoded["conditions"]
-    assert ["content-length-range", 0, 64] in conditions
+    # S3 sees ``max_bytes + buffer`` because content-length-range checks the
+    # whole encoded request body (multipart framing), not just the file part.
+    expected_cap = 64 + _MULTIPART_OVERHEAD_BUFFER_BYTES
+    assert ["content-length-range", 0, expected_cap] in conditions
     assert any(
         isinstance(c, dict) and c.get("Content-Type") == "application/octet-stream"
         for c in conditions
