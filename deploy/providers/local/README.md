@@ -192,10 +192,13 @@ uv run ansible-galaxy install -r deploy/providers/local/requirements.yml
 
 ### Dynamic Public IP
 
-The NLB security group allowlists the trust's public IP for FL traffic. If the public IP changes (common with residential broadband), update it:
+The NLB security group allowlists every on-prem trust's public IP for FL traffic via the `LOCAL_TRUST_PUBLIC_IPS` JSON dict in `.env.<env>` (one rule per entry). If a trust's public IP changes (common with residential broadband), update that trust's value in the dict and re-apply:
 
 ```bash
-TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply
+# .env.stag / .env.production:
+# LOCAL_TRUST_PUBLIC_IPS='{"UCLH":"<new-ip>","KCH":"5.6.7.8"}'
+
+make -C deploy/providers/AWS plan apply
 ```
 
 ## Troubleshooting

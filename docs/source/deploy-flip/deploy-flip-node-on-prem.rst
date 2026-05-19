@@ -215,11 +215,15 @@ The trust host must be able to make outbound connections to:
 - The FL Server endpoint over gRPC or HTTP (configurable port; e.g. 8002).
 
 If the trust's public IP changes (common with residential broadband), update
-the NLB security group:
+the trust's entry in ``LOCAL_TRUST_PUBLIC_IPS`` in ``.env.<env>`` (the JSON
+dict that holds every on-prem trust's IP) and re-apply:
 
 .. code-block:: shell
 
-   TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply
+   # .env.stag / .env.production:
+   # LOCAL_TRUST_PUBLIC_IPS='{"UCLH":"<new-ip>","KCH":"5.6.7.8"}'
+
+   make -C deploy/providers/AWS plan apply
 
 ***************
 Troubleshooting

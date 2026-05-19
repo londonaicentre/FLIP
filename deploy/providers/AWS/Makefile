@@ -118,6 +118,11 @@ export TF_VAR_VPC_NAME=${VPC_NAME}
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
 export TF_VAR_SES_VERIFIED_EMAIL=${SES_VERIFIED_EMAIL}
 export TF_VAR_flip_alb_subdomain=${ALB_SUBDOMAIN}
+# On-prem trust NLB allow-list. Stored in the env file as a JSON dict
+# (LOCAL_TRUST_PUBLIC_IPS='{"UCLH":"1.2.3.4","KCH":"5.6.7.8"}') so every plain
+# `make plan/apply` recreates the full set; `add-local-trust` merges its own
+# entry over this at apply time. Default to empty so unset envs validate.
+export TF_VAR_local_trust_public_ips=$(if $(LOCAL_TRUST_PUBLIC_IPS),$(LOCAL_TRUST_PUBLIC_IPS),{})
 export TF_VAR_flip_nlb_subdomain=${NLB_SUBDOMAIN}
 export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
 # flip-api / fl-* env vars consumed by ECS task definitions (locals.tf).
@@ -514,11 +519,20 @@ else
 	  echo "✅ $(LOCAL_TRUST_NAME) Flower kit deployed"
 endif
 	@echo "🔐 Updating AWS security group rules..."
-	@TF_VAR_local_trust_public_ip=$(LOCAL_TRUST_IP) terraform plan \
-		-target=aws_security_group_rule.local_trust_fl_server_nlb \
-		-out=local-trust.tfplan
-	@TF_VAR_local_trust_public_ip=$(LOCAL_TRUST_IP) terraform apply local-trust.tfplan
+	@# Merge {LOCAL_TRUST_NAME: LOCAL_TRUST_IP} into the env-file map so this
+	@# apply adds (not replaces) the rule set. The operator is still responsible
+	@# for persisting the new entry into LOCAL_TRUST_PUBLIC_IPS in $(MAIN_ENV_FILE)
+	@# afterwards — otherwise the next plain `make apply` drops the rule.
+	@MERGED_IPS=$$(python3 -c 'import json,sys; d=json.loads(sys.argv[1] or "{}"); d[sys.argv[2]]=sys.argv[3]; print(json.dumps(d, separators=(",",":")))' "$$TF_VAR_local_trust_public_ips" "$(LOCAL_TRUST_NAME)" "$(LOCAL_TRUST_IP)") && \
+	  TF_VAR_local_trust_public_ips="$$MERGED_IPS" terraform plan \
+	    -target='aws_security_group_rule.local_trust_fl_server_nlb' \
+	    -out=local-trust.tfplan && \
+	  TF_VAR_local_trust_public_ips="$$MERGED_IPS" terraform apply local-trust.tfplan
 	@rm -f local-trust.tfplan
+	@echo ""
+	@echo "⚠️  Persist the new IP into $(MAIN_ENV_FILE):"
+	@echo "   LOCAL_TRUST_PUBLIC_IPS='<merged JSON dict including \"$(LOCAL_TRUST_NAME)\":\"$(LOCAL_TRUST_IP)\">'"
+	@echo "   …otherwise the next plain 'make apply' will drop the rule."
 	@echo ""
 	@echo "✅ On-premises Trust host provisioned!"
 	@echo ""

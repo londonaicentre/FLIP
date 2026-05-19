@@ -660,22 +660,23 @@ resource "aws_lb_listener_rule" "api_routing" {
 }
 
 ############################
-# On-Premises Trust (optional)
-# Activated by setting local_trust_public_ip in the env file or via
-# TF_VAR_local_trust_public_ip when running `make add-local-trust`.
+# On-Premises Trusts (optional)
+# Activated by setting local_trust_public_ips in the env file (LOCAL_TRUST_PUBLIC_IPS
+# JSON dict) or via TF_VAR_local_trust_public_ips when running `make add-local-trust`.
 ############################
 
-# Allow the local (on-prem) trust FL client to reach the FL server via the NLB.
-# Without this rule the NLB security group drops the connection before it reaches the EC2.
+# Allow each on-prem trust FL client to reach the FL server via the NLB. One rule
+# per trust so a CIDR rotation for trust A doesn't churn trust B's rule, and so
+# the AWS console shows the owning trust in the description.
 resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
-  count             = var.local_trust_public_ip != "" ? 1 : 0
+  for_each          = var.local_trust_public_ips
   type              = "ingress"
   from_port         = var.FL_SERVER_PORT
   to_port           = var.FL_SERVER_PORT
   protocol          = "tcp"
-  cidr_blocks       = ["${var.local_trust_public_ip}/32"]
+  cidr_blocks       = ["${each.value}/32"]
   security_group_id = module.fl_server_nlb.security_group_id
-  description       = "FL Server/Admin NLB from on-prem Trust"
+  description       = "FL Server/Admin NLB from on-prem Trust ${each.key}"
 }
 
 # Outputs

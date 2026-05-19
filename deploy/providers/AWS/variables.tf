@@ -321,8 +321,22 @@ variable "ENFORCE_MFA" {
   default     = ""
 }
 
-variable "local_trust_public_ip" {
-  description = "Public IP of an on-premises Trust host. When non-empty, AWS security group rules are created to allow consolidated FL communication on port 8002 from this IP to the Central Hub."
-  type        = string
-  default     = ""
+variable "local_trust_public_ips" {
+  description = <<-EOT
+    Map of trust name → public IP for on-premises Trust hosts. One NLB ingress
+    rule (FL_SERVER_PORT/tcp, single-host /32) is created per entry, with the
+    trust name carried into the rule description so the AWS console / audit log
+    shows which trust owns which CIDR. Set in .env.stag / .env.production as a
+    JSON dict — `make add-local-trust` merges new entries into this map at
+    apply time.
+  EOT
+  type        = map(string)
+  default     = {}
+
+  validation {
+    # IPv4-only — we allow-list single hosts on a public NLB SG; CIDR ranges or
+    # IPv6 would silently widen the rule beyond what the operator typed.
+    condition     = alltrue([for ip in values(var.local_trust_public_ips) : can(regex("^([0-9]{1,3}\\.){3}[0-9]{1,3}$", ip))])
+    error_message = "Every value in local_trust_public_ips must be a bare IPv4 address (no CIDR suffix)."
+  }
 }
