@@ -49,7 +49,7 @@ make aws-login                                # AWS SSO login
 - **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1)
 - **EC2**: Trust host (t3.xlarge, private subnet, SSM-only access)
 - **RDS**: PostgreSQL in private subnets
-- **ALB**: HTTPS termination for UI + API (ACM cert)
+- **ALB**: Internal (`internal = true`, private subnets); HTTPS termination for `/api/*` reached via CloudFront VPC origin (no public IP)
 - **NLB**: gRPC for FL server traffic
 - **CloudFront + S3**: flip-ui static hosting
 - **Secrets Manager**: `FLIP_API` secret (AES key, DB password, key hashes)

@@ -24,13 +24,17 @@ creating the trust containers, and similarly they will be updated locally when t
 make update-omop-data
 ```
 
-Start the database container using:
+The OMOP database container is normally started as part of a full trust stack from the repository root:
 
 ```sh
-make up-test-omop-trust1
+make up-trusts                # both trusts
+make -C trust up-trust-1      # Trust_1 only
+make -C trust up-trust-2      # Trust_2 only
 ```
 
-This should not run any initialization scripts as the data volume already contains a populated database.
+For database-only debugging (without the rest of the trust stack), `make -C trust/omop-db up-test-omop-trust1` will start just the Trust_1 OMOP container.
+
+Bringing the container up should not run any initialization scripts — the data volume already contains a populated database.
 
 ## Further Reading
 

@@ -104,8 +104,8 @@ jobs:
         run: uv run mypy . --ignore-missing-imports
 
       - name: Validate compose file
-        working-directory: ./trust
-        run: docker compose -f deploy/compose.test.yml config --quiet
+        working-directory: ./trust/deploy
+        run: docker compose -f compose.test.yml config --quiet
 
       - name: Pre-pull base images
         run: |
@@ -113,10 +113,10 @@ jobs:
           docker pull --quiet python:3.12-slim-bookworm
 
       - name: Build compose stack (data-access-api image)
-        working-directory: ./trust
+        working-directory: ./trust/deploy
         # Built up-front so build failures aren't bundled into the test run; the
         # subsequent test step can then start the stack from a hot cache.
-        run: docker compose -f deploy/compose.test.yml build
+        run: docker compose -f compose.test.yml build
 
       - name: Run pytest integration suite
         env:
@@ -126,13 +126,13 @@ jobs:
 
       - name: Show data-access-api container logs on failure
         if: failure()
-        working-directory: ./trust
+        working-directory: ./trust/deploy
         run: |
           echo "::group::data-access-api-test logs"
-          docker compose -f deploy/compose.test.yml logs data-access-api-test || true
+          docker compose -f compose.test.yml logs data-access-api-test || true
           echo "::endgroup::"
           echo "::group::omop-db-test logs"
-          docker compose -f deploy/compose.test.yml logs omop-db-test || true
+          docker compose -f compose.test.yml logs omop-db-test || true
           echo "::endgroup::"
 
       - name: Upload integration coverage to Codecov
