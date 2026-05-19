@@ -77,13 +77,21 @@ locals {
     "net-1" = "http://${local.service_discovery_names.fl_api}:${local.api_container_port}"
   })
 
+  # ENFORCE_MFA is merged into flip_api env only when explicitly set by the
+  # operator (see `var.ENFORCE_MFA` description). Unset → omitted entirely so
+  # flip-api's Pydantic Settings default (`ENFORCE_MFA = True`, see
+  # `flip-api/src/flip_api/config.py:91`) anchors the secure value. This
+  # matches the design recorded in CLAUDE.md: "the Settings default (`true`)
+  # is the canonical secure anchor". Set ENFORCE_MFA=false in `.env.stag` to
+  # disable MFA for stag-only testing (per TROUBLESHOOTING.md §4.3).
+  enforce_mfa_env = var.ENFORCE_MFA == "" ? {} : { ENFORCE_MFA = var.ENFORCE_MFA }
+
   # Env vars per service. Mirrors compose.production.yml +
   # compose.production.nvflare.yml. ECS task definitions in ecs_tasks.tf read
   # these so the deploy-time and runtime view are kept in sync.
   ecs_task_env = {
-    flip_api = {
+    flip_api = merge(local.enforce_mfa_env, {
       ENV                            = "production"
-      ENFORCE_MFA                    = var.ENFORCE_MFA
       AWS_REGION                     = var.AWS_REGION
       AWS_COGNITO_USER_POOL_ID       = module.cognito.user_pool_id
       AWS_COGNITO_APP_CLIENT_ID      = module.cognito.app_client_id
@@ -103,7 +111,7 @@ locals {
       NET_ENDPOINTS                  = local.net_endpoints_json
       FL_BACKEND                     = var.fl_backend
       TRUST_NAMES                    = var.TRUST_NAMES
-    }
+    })
     fl_server = {
       LOCAL_DEV                      = "false"
       NET_ID                         = "net-1"
