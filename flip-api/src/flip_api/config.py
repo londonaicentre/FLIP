@@ -127,6 +127,31 @@ class Settings(BaseSettings):
             return v.upper()
         return v
 
+    @field_validator("MAX_MODEL_FILE_BYTES", mode="before")
+    @classmethod
+    def coerce_empty_max_model_file_bytes(cls, v: object) -> object:
+        """Treat empty-string MAX_MODEL_FILE_BYTES as the default 100 MiB.
+
+        GitHub Actions environments inject empty-string env vars for every
+        var that isn't explicitly set in the environment scope; Pydantic
+        treats that as a real override and rejects it against ``int``.
+        Same shape as ``coerce_empty_env`` / ``coerce_empty_mfa``.
+        """
+        if v is None or v == "":
+            return 100 * 1024 * 1024
+        return v
+
+    @field_validator("PRE_SIGNED_URL_EXPIRATION_SECONDS", mode="before")
+    @classmethod
+    def coerce_empty_pre_signed_url_expiration(cls, v: object) -> object:
+        """Treat empty-string PRE_SIGNED_URL_EXPIRATION_SECONDS as the default 3600s.
+
+        Same rationale as ``coerce_empty_max_model_file_bytes``.
+        """
+        if v is None or v == "":
+            return 3600
+        return v
+
     # Trust task queue settings
     HEARTBEAT_TIMEOUT_SECONDS: int = 30  # How long since last heartbeat before a trust is considered offline
     TASK_STALE_TIMEOUT_MINUTES: int = 30  # Tasks older than this in IN_PROGRESS are considered stale
