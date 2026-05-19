@@ -43,10 +43,6 @@
                     </div>
                 </label>
                 <div class="sm:col-span-2">
-                    <AiButton light block class="mb-4" @click="toggleConnectionStatus">
-                        <icon-ph-plug-duotone class="mr-2" />
-                        View connection status
-                    </AiButton>
                     <div class="flow-root">
                         <div>
                             <dl class="divide-y divide-gray-200 dark:divide-gray-700">
@@ -82,18 +78,12 @@
             </div>
         </div>
     </div>
-    <AiModal :dialog="showConnectionStatus" @close-modal="toggleConnectionStatus">
-        <ConnectionStatus />
-    </AiModal>
 </template>
 
 <script setup lang="ts">
-import { computed, ComputedRef, ref } from "vue";
+import { computed, ComputedRef } from "vue";
 
-import AiButton from "@/components/AiButton/AiButton.vue";
-import AiModal from "@/components/AiModal/AiModal.vue";
 import AiSwitch from "@/components/AiSwitch/AiSwitch.vue";
-import ConnectionStatus from "@/pages/ConnectionStatus.vue";
 import { useProjectStore } from "@/store/project";
 
 interface ITrainingOptionsProps {
@@ -108,13 +98,7 @@ defineProps<ITrainingOptionsProps>();
 
 const projectStore = useProjectStore();
 
-const showConnectionStatus = ref(false);
-
 const approvedTrusts = projectStore.project?.approvedTrusts;
-
-const toggleConnectionStatus = () => {
-    showConnectionStatus.value = !showConnectionStatus.value;
-};
 
 const trustsToSelect: ComputedRef<ITrustsToTrain[] | undefined> = computed(() =>
     approvedTrusts?.filter(t => t.approved)

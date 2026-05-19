@@ -16,11 +16,11 @@ import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
-import { IFLStatus } from "@/services/fl-service";
+import { IAdminTrust } from "@/services/admin-trusts-service";
 
 import ConnectionStatus from "../ConnectionStatus.vue";
 
-const mockSwrvData = ref<IFLStatus[] | undefined>(undefined);
+const mockSwrvData = ref<IAdminTrust[] | undefined>(undefined);
 
 vi.mock("swrv", () => ({
     default: () => ({
@@ -31,67 +31,120 @@ vi.mock("swrv", () => ({
 }));
 
 const stubs = {
-    Transition: { template: "<div><slot /></div>" },
     AiCard: { template: "<div><slot /></div>" },
-    AiCommand: { template: "<div><slot /></div>" },
-    AiAlert: { template: "<div />" },
-    AiLoader: { template: "<div />" },
     AiButton: { template: "<button><slot /></button>" },
-    "icon-ph-check-circle-duotone": { template: "<span />" },
-    "icon-ph-x-circle-duotone": { template: "<span />" },
-    "icon-ph-archive-duotone": { template: "<span />" }
+    AiLoader: { template: "<div />" },
+    AddTrustModal: { template: "<div />" },
+    TrustKitModal: { template: "<div />" },
+    // Stubbed: the shared swrv mock returns trust fixtures, which the partial
+    // (which expects IFLStatus shape) would otherwise misinterpret.
+    FLNetsCard: { template: "<div />" },
+    "icon-ph-list-bullets-duotone": { template: "<span />" },
+    "icon-ph-share-network-duotone": { template: "<span />" }
 };
 
-function mountConnectionStatus() {
+const now = Date.now();
+const seconds = (n: number) => new Date(now - n * 1000).toISOString();
+
+const fixture: IAdminTrust[] = [
+    {
+        id: "t1",
+        name: "Zebra NHS Trust",
+        code: "ZNT",
+        region: "London",
+        created_at: null,
+        disabled_at: null,
+        last_heartbeat: seconds(10),
+        project_count: 1
+    },
+    {
+        id: "t2",
+        name: "Acme NHS Trust",
+        code: "ANT",
+        region: "South West",
+        created_at: null,
+        disabled_at: null,
+        last_heartbeat: null,
+        project_count: 7
+    },
+    {
+        id: "t3",
+        name: "Maple NHS Trust",
+        code: "MNT",
+        region: "North East",
+        created_at: null,
+        disabled_at: null,
+        last_heartbeat: seconds(120),
+        project_count: 3
+    }
+];
+
+function mountPage() {
     return mount(ConnectionStatus, {
         global: {
-            plugins: [createTestingPinia({ createSpy: vi.fn, stubActions: false })],
-            stubs,
-            directives: { highlightjs: () => {} }
+            plugins: [createTestingPinia({
+                createSpy: vi.fn,
+                stubActions: false
+            })],
+            stubs
         }
     });
 }
+
+const codesInOrder = (wrapper: ReturnType<typeof mountPage>): string[] =>
+    wrapper.findAll("[data-test='trust-row']").map(r => {
+        const heading = r.find("td:nth-child(2) span.font-semibold");
+
+        return heading.text();
+    });
 
 beforeEach(() => {
     mockSwrvData.value = undefined;
 });
 
 describe("ConnectionStatus", () => {
-    it("mounts without errors", () => {
-        const wrapper = mountConnectionStatus();
-        expect(wrapper.exists()).toBe(true);
+    it("defaults to alphabetical sort by trust name", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
     });
 
-    it("renders nvflare backend as 'NVFlare' next to the NET title", () => {
-        mockSwrvData.value = [
-            { name: "net-1", fl_backend: "nvflare", clients: [] }
-        ];
-        const wrapper = mountConnectionStatus();
-        const titles = wrapper.findAll("h3");
-        const net1Title = titles.find(h => h.text().includes("net-1"));
-        expect(net1Title).toBeDefined();
-        expect(net1Title!.text()).toContain("(NVFlare)");
+    it("toggles to descending on a second click of the same column", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        const trustHeader = wrapper.find("[data-test='sort-header-name']");
+        await trustHeader.trigger("click");
+        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
+        await trustHeader.trigger("click");
+        expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
     });
 
-    it("renders flower backend as 'Flower' next to the NET title", () => {
-        mockSwrvData.value = [
-            { name: "net-2", fl_backend: "flower", clients: [] }
-        ];
-        const wrapper = mountConnectionStatus();
-        const titles = wrapper.findAll("h3");
-        const net2Title = titles.find(h => h.text().includes("net-2"));
-        expect(net2Title).toBeDefined();
-        expect(net2Title!.text()).toContain("(Flower)");
+    it("sorts by severity (offline first) when the Status header is clicked", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.find("[data-test='sort-header-severity']").trigger("click");
+        // Acme has no heartbeat → offline; Maple is degraded (2 min old); Zebra is online.
+        expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
     });
 
-    it("omits parentheses when fl_backend is absent", () => {
-        mockSwrvData.value = [
-            { name: "net-1", clients: [] }
-        ];
-        const wrapper = mountConnectionStatus();
-        const titles = wrapper.findAll("h3");
-        const net1Title = titles.find(h => h.text().includes("net-1"));
-        expect(net1Title).toBeDefined();
-        expect(net1Title!.text()).not.toContain("(");
+    it("sorts by project count, ascending then descending, on the Projects header", async () => {
+        // Fixture project counts: Zebra=1, Maple=3, Acme=7
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        const projectsHeader = wrapper.find("[data-test='sort-header-projects']");
+        await projectsHeader.trigger("click");
+        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
+        await projectsHeader.trigger("click");
+        expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
+    });
+
+    it("shows an up arrow on the active ascending column and a down arrow on descending", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        const nameHeader = wrapper.find("[data-test='sort-header-name']");
+        expect(nameHeader.text()).toContain("↑");
+        await nameHeader.trigger("click");
+        expect(nameHeader.text()).toContain("↓");
     });
 });
