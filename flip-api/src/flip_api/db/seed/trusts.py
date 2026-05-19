@@ -63,7 +63,10 @@ def seed_trusts(session: Session) -> list[dict[str, str]]:
 
     # Trust names to seed — in production these could come from config or secrets
     trust_names: list[str] = stt.TRUST_NAMES
-    env_hashes: dict[str, str] = stt.TRUST_API_KEY_HASHES or {}
+    # TRUST_API_KEY_HASHES lives only on DevSettings (prod uses Secrets
+    # Manager); fall back to {} when not present so this seed is a no-op
+    # in environments without the env var.
+    env_hashes: dict[str, str] = getattr(stt, "TRUST_API_KEY_HASHES", None) or {}
 
     for trust_name in trust_names:
         override = SEED_NAME_OVERRIDES.get(trust_name)

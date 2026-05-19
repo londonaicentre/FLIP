@@ -59,7 +59,7 @@ describe("EditModelDrawer delete-confirmation slot", () => {
 
         const html = wrapper.html();
 
-        expect(html).toContain("Training for this model will also be stopped");
+        expect(html).toContain("Training for this model will be stopped");
         expect(html).toContain("Your username will be recorded against this action");
         expect(html).toContain("To delete this model, enter");
     });

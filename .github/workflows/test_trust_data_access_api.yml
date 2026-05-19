@@ -17,7 +17,7 @@ on:
     branches: [main, develop]
     paths:
       - "trust/data-access-api/**"
-      - "trust/compose.test.yml"
+      - "trust/deploy/compose.test.yml"
       - "trust/trust-api/tests/integration/fixtures/**"
       - "trust/observability/**"
       - ".github/workflows/test_trust_data_access_api.yml"
@@ -62,7 +62,7 @@ jobs:
 
   data-access-api-integration:
     # Drives the data-access-api ``/cohort`` endpoints against a real seeded Postgres
-    # via the shared trust/compose.test.yml stack. Catches SQL-template / OMOP-schema
+    # via the shared trust/deploy/compose.test.yml stack. Catches SQL-template / OMOP-schema
     # / auth regressions that the mocked unit suite cannot. See issue #369 (B3).
     #
     # Steps are split out (not bundled into ``make integration_test``) so a
@@ -100,7 +100,7 @@ jobs:
 
       - name: Validate compose file
         working-directory: ./trust
-        run: docker compose -f compose.test.yml config --quiet
+        run: docker compose -f deploy/compose.test.yml config --quiet
 
       - name: Pre-pull base images
         run: |
@@ -109,7 +109,7 @@ jobs:
 
       - name: Build compose stack (data-access-api image)
         working-directory: ./trust
-        run: docker compose -f compose.test.yml build
+        run: docker compose -f deploy/compose.test.yml build
 
       - name: Run pytest integration suite
         env:
@@ -121,10 +121,10 @@ jobs:
         working-directory: ./trust
         run: |
           echo "::group::data-access-api-test logs"
-          docker compose -f compose.test.yml logs data-access-api-test || true
+          docker compose -f deploy/compose.test.yml logs data-access-api-test || true
           echo "::endgroup::"
           echo "::group::omop-db-test logs"
-          docker compose -f compose.test.yml logs omop-db-test || true
+          docker compose -f deploy/compose.test.yml logs omop-db-test || true
           echo "::endgroup::"
 
       - name: Upload integration coverage to Codecov

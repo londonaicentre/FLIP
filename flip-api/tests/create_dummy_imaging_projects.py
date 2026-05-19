@@ -24,8 +24,8 @@ the spleen query mirrors `tutorials/image_segmentation/3d_spleen_segmentation/qu
 import requests
 
 from tests.debug_prelaunch_task import (
-    add_project_query,
     AUTH_TOKEN,
+    add_project_query,
     create_unstaged_project,
     submit_query_to_trusts,
 )

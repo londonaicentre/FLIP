@@ -369,11 +369,15 @@ def _collect_trust_hashes(db: Session) -> dict[str, str]:
     Returns:
         dict[str, str]: Merged trust name → hash mapping; DB names first, then env-only.
     """
+    # ``col(api_key_hash).is_not(None)`` filters at runtime but doesn't narrow
+    # the static type of api_key_hash from ``str | None`` → ``str``, so guard
+    # explicitly in the comprehension to keep mypy happy.
     db_hashes: dict[str, str] = {
         name: hash_
         for name, hash_ in db.exec(
             select(Trust.name, Trust.api_key_hash).where(col(Trust.api_key_hash).is_not(None))
         ).all()
+        if hash_ is not None
     }
     merged: dict[str, str] = dict(db_hashes)
     for name, hash_ in _bootstrap_trust_hashes().items():

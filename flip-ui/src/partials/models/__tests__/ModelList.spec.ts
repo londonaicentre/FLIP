@@ -57,7 +57,7 @@ function mountModelList() {
                                 username: "u",
                                 userId: "id",
                                 attributes: { sub: "s", email: "u@e.com" },
-                                permissions: ["CanManageProjects"]
+                                permissions: ["CanCreateProjects"]
                             },
                             signInStep: "DONE",
                             mfaEnabled: true,

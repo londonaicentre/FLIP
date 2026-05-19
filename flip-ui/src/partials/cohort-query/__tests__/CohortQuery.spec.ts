@@ -17,6 +17,8 @@ import { reactive } from "vue";
 
 import { IProject } from "@/services/project-service";
 
+import CohortQueryPageWrapper from "@/pages/project/[projectId]/cohort-query/index.vue";
+
 import CohortQuery from "../CohortQuery.vue";
 import { CohortQueryPage } from "./selectors";
 
@@ -111,7 +113,7 @@ function mountCohortQuery(options: {
     project?: IProject;
     permissions?: string[];
 } = {}) {
-    const { project, permissions = ["CanManageProjects"] } = options;
+    const { project, permissions = ["CanCreateProjects"] } = options;
 
     return mount(CohortQuery, {
         global: {
@@ -135,6 +137,42 @@ function mountCohortQuery(options: {
                 }
             })],
             stubs
+        }
+    });
+}
+
+// Page-wrapper mount — used for tests that exercise markup the page owns
+// (description copy, "Run on all trusts" button) rather than the partial.
+function mountCohortQueryPage(options: {
+    project?: IProject;
+    permissions?: string[];
+} = {}) {
+    const { project, permissions = ["CanCreateProjects"] } = options;
+    const pageStubs = {
+        ...stubs,
+        CohortQuery: { template: "<div data-test='cohort-query-partial-stub' />" },
+        "router-link": { template: "<a><slot /></a>" }
+    };
+
+    return mount(CohortQueryPageWrapper, {
+        global: {
+            plugins: [createTestingPinia({
+                createSpy: vi.fn,
+                stubActions: false,
+                initialState: {
+                    auth: {
+                        user: {
+                            username: "testuser",
+                            userId: "1",
+                            attributes: { sub: "1", email: "test@example.com" },
+                            permissions
+                        },
+                        signInStep: "DONE"
+                    },
+                    project: { project }
+                }
+            })],
+            stubs: pageStubs
         }
     });
 }
@@ -167,19 +205,18 @@ describe("CohortQuery", () => {
         });
     });
 
-    describe("info alert messaging", () => {
+    // The header copy + run button live on the page wrapper, not the partial.
+    describe("page wrapper header copy + run button", () => {
         it("shows editable query message when project is UNSTAGED", () => {
-            const wrapper = mountCohortQuery({ project: unstagedProject });
-            const alert = wrapper.findComponent({ name: "AiAlert" });
+            const wrapper = mountCohortQueryPage({ project: unstagedProject });
 
-            expect(alert.props("text")).toContain("This query will be sent to all participating Trusts");
+            expect(wrapper.text()).toContain("Edit the OMOP query");
         });
 
         it("shows locked query message when project is STAGED", () => {
-            const wrapper = mountCohortQuery({ project: stagedProjectWithQuery });
-            const alert = wrapper.findComponent({ name: "AiAlert" });
+            const wrapper = mountCohortQueryPage({ project: stagedProjectWithQuery });
 
-            expect(alert.props("text")).toContain("locked and can not be edited");
+            expect(wrapper.text()).toContain("locked and can not be edited");
         });
     });
 
@@ -211,27 +248,28 @@ describe("CohortQuery", () => {
         it("does not set readonly when project is UNSTAGED and user has permissions", () => {
             const wrapper = mountCohortQuery({
                 project: unstagedProject,
-                permissions: ["CanManageProjects"]
+                permissions: ["CanCreateProjects"]
             });
             const codeTextArea = wrapper.findComponent({ name: "AiCodeTextArea" });
 
             expect(codeTextArea.props("inputProps")).toEqual({ readonly: false });
         });
 
-        it("shows the button when project is UNSTAGED and user is not observer", () => {
-            const wrapper = mountCohortQuery({ project: unstagedProject });
+        // Run button lives on the page wrapper, not the partial.
+        it("shows the run button when project is UNSTAGED and user is not observer", () => {
+            const wrapper = mountCohortQueryPage({ project: unstagedProject });
 
             expect(wrapper.find(CohortQueryPage.runCohortQueryButton).exists()).toBe(true);
         });
 
-        it("hides the button when project is STAGED (locked)", () => {
-            const wrapper = mountCohortQuery({ project: stagedProjectWithQuery });
+        it("hides the run button when project is STAGED (locked)", () => {
+            const wrapper = mountCohortQueryPage({ project: stagedProjectWithQuery });
 
             expect(wrapper.find(CohortQueryPage.runCohortQueryButton).exists()).toBe(false);
         });
 
-        it("hides the button when user is observer", () => {
-            const wrapper = mountCohortQuery({
+        it("hides the run button when user is observer", () => {
+            const wrapper = mountCohortQueryPage({
                 project: unstagedProject,
                 permissions: []
             });

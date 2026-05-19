@@ -49,9 +49,15 @@ def test_seed_main_users_calls_ensure_user_and_role(mock_logger, mock_ensure_use
 
     assert mock_ensure_user_and_role.call_count == 5
 
-    mock_ensure_user_and_role.assert_any_call(ADMIN_EMAIL_1, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_1])
-    mock_ensure_user_and_role.assert_any_call(ADMIN_EMAIL_2, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_2])
-    mock_ensure_user_and_role.assert_any_call(ADMIN_EMAIL_3, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_3])
+    mock_ensure_user_and_role.assert_any_call(
+        ADMIN_EMAIL_1, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_1]
+    )
+    mock_ensure_user_and_role.assert_any_call(
+        ADMIN_EMAIL_2, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_2]
+    )
+    mock_ensure_user_and_role.assert_any_call(
+        ADMIN_EMAIL_3, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_3]
+    )
     mock_ensure_user_and_role.assert_any_call(
         RESEARCHER_EMAIL, RoleRef.RESEARCHER, mock_session, *MAIN_USER_PROFILES[RESEARCHER_EMAIL]
     )

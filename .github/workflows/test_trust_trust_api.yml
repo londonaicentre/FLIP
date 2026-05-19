@@ -17,7 +17,7 @@ on:
     branches: [main, develop]
     paths:
       - "trust/trust-api/**"
-      - "trust/compose.test.yml"
+      - "trust/deploy/compose.test.yml"
       - "trust/data-access-api/**"
       - "trust/observability/**"
       - ".github/workflows/test_trust_trust_api.yml"
@@ -105,7 +105,7 @@ jobs:
 
       - name: Validate compose file
         working-directory: ./trust
-        run: docker compose -f compose.test.yml config --quiet
+        run: docker compose -f deploy/compose.test.yml config --quiet
 
       - name: Pre-pull base images
         run: |
@@ -116,7 +116,7 @@ jobs:
         working-directory: ./trust
         # Built up-front so build failures aren't bundled into the test run; the
         # subsequent test step can then start the stack from a hot cache.
-        run: docker compose -f compose.test.yml build
+        run: docker compose -f deploy/compose.test.yml build
 
       - name: Run pytest integration suite
         env:
@@ -129,10 +129,10 @@ jobs:
         working-directory: ./trust
         run: |
           echo "::group::data-access-api-test logs"
-          docker compose -f compose.test.yml logs data-access-api-test || true
+          docker compose -f deploy/compose.test.yml logs data-access-api-test || true
           echo "::endgroup::"
           echo "::group::omop-db-test logs"
-          docker compose -f compose.test.yml logs omop-db-test || true
+          docker compose -f deploy/compose.test.yml logs omop-db-test || true
           echo "::endgroup::"
 
       - name: Upload integration coverage to Codecov

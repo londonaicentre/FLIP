@@ -172,8 +172,8 @@ describe("MainLayout", () => {
             expect(dropdown.props("role")).toBe("Admin");
         });
 
-        it("returns Researcher when user has CanManageProjects but not CanAccessAdminPanel", () => {
-            const wrapper = mountMainLayout({ permissions: ["CanManageProjects"] });
+        it("returns Researcher when user has CanCreateProjects but not CanAccessAdminPanel", () => {
+            const wrapper = mountMainLayout({ permissions: ["CanCreateProjects"] });
             const dropdown = wrapper.findComponent("[data-test='user-dropdown']");
 
             expect(dropdown.props("role")).toBe("Researcher");
