@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.abspath("../../trust/trust-api"))
 
 # -- Project information -----------------------------------------------------
 project = "FLIP"
-copyright = "2025, The London AI Centre for Value-Based Healthcare"
+copyright = "2026, The London AI Centre for Value-Based Healthcare"
 author = "The London AI Centre for Value-Based Healthcare"
 
 # The full version of the documentation, including alpha/beta/rc tags

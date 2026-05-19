@@ -42,6 +42,15 @@ endif
 DOCKER_TAG ?= stag
 export DOCKER_TAG
 
+# XNAT images often lag the rest of the stack — branch builds for trust-api /
+# imaging-api / data-access-api / orthanc are cheap (small images, fast builds)
+# but the XNAT images are large and slow to rebuild for ad-hoc branches.
+# XNAT_TAG lets a deploy pin the XNAT layer at a known-good tag (e.g. stag)
+# while the rest of the stack runs a feature-branch tag via DOCKER_TAG.
+# Defaults to DOCKER_TAG so existing single-tag deploys are unchanged.
+XNAT_TAG ?= ${DOCKER_TAG}
+export XNAT_TAG
+
 project1 = xnat1
 project2 = xnat2
 project_local = xnat-local
@@ -203,8 +212,8 @@ xnat-configure:
 		echo "  Waiting for container..."; sleep 5; elapsed=$$((elapsed + 5)); \
 	done
 	CONTAINER=$$(docker ps --filter "name=$(XNAT_PROJECT)_xnat-web" -q); \
-	docker exec $$CONTAINER bash -c 'cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"'; \
-	docker exec $$CONTAINER bash -c 'cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
+	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"'; \
+	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
 
 xnat-configure-trust-1:
 	$(MAKE) xnat-configure XNAT_PROJECT=${project1}

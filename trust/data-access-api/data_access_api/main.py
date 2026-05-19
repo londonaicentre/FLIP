@@ -15,15 +15,23 @@ from log_config import LoggingMiddleware
 
 # Ensure structured logging is configured on import
 import data_access_api.utils.logger  # noqa: F401
+from data_access_api.config import get_settings
 from data_access_api.routers.cohort import router as cohort_router
 from data_access_api.routers.health import router as health_router
+
+# Disable Swagger / OpenAPI / ReDoc in production. Data-access-api executes SQL
+# against OMOP under a service account; leaking its route + schema map to anyone
+# who reaches the port (e.g. via a misconfigured SSM port-forward) is a free
+# recon win.
+_docs_enabled = get_settings().ENV != "production"
 
 app = FastAPI(
     title="Data Access API",
     description="An API to interact with Trust OMOP database",
     version="0.1.0",
-    docs_url="/docs",  # Swagger UI
-    redoc_url="/redoc",  # ReDoc UI
+    docs_url="/docs" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
 )
 
 app.add_middleware(LoggingMiddleware)

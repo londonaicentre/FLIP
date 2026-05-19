@@ -91,7 +91,10 @@ jobs:
           echo "Generated tags: ${TAGS}"
 
       - name: Log in to GitHub Container Registry
-        run: echo ${{ secrets.GITHUB_TOKEN }} | docker login $REGISTRY -u ${{ github.actor }} --password-stdin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+        run: echo "$GH_TOKEN" | docker login $REGISTRY -u "$GH_ACTOR" --password-stdin
 
       - name: Copy shared logging library into build context
         run: cp -r ../observability/log_config ./log_config

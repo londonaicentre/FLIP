@@ -57,7 +57,7 @@ def reimport_imaging_project_studies(db: Session) -> None:
     return
 
 
-def reimport_imaging_project_studies_scheduled_task():
+def reimport_imaging_project_studies_scheduled_task() -> None:
     """
     Scheduled task to reimport imaging project studies.
     This function is called by the scheduler.

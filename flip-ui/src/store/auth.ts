@@ -114,7 +114,7 @@ const buildUserWithPermissions = async (
 // Pause until either the tokens appear or a forceRefresh produces
 // them, so callers can assume `hydrate()` sees a real session.
 //
-// Throws if no idToken can be obtained — the caller's catch handler
+// Throws if no accessToken can be obtained — the caller's catch handler
 // can then surface a real error to the user instead of silently
 // proceeding to hydrate which will 401.
 class MissingSessionTokensError extends Error {
@@ -126,19 +126,19 @@ class MissingSessionTokensError extends Error {
 
 const waitForSessionTokens = async (): Promise<void> => {
     let session = await fetchAuthSession();
-    if (session.tokens?.idToken) return;
+    if (session.tokens?.accessToken) return;
     try {
         session = await fetchAuthSession({ forceRefresh: true });
     } catch (e) {
         console.error("waitForSessionTokens: forceRefresh threw:", e);
     }
-    if (!session.tokens?.idToken) {
+    if (!session.tokens?.accessToken) {
         // Log what Amplify *thinks* the session is so DevTools can
         // distinguish "no session at all" (bad storage / misconfigured
         // client) from "session exists but tokens are empty"
         // (token-refresh issue), then throw so the caller surfaces it.
         console.warn(
-            "waitForSessionTokens: no idToken after forceRefresh",
+            "waitForSessionTokens: no accessToken after forceRefresh",
             {
                 userSub: session.userSub,
                 hasCredentials: !!session.credentials
@@ -242,15 +242,17 @@ export const useAuthStore = defineStore("auth", {
             this.mfaRequired = null;
             this.pendingUsername = details.username;
 
-            // Force USER_PASSWORD_AUTH — Amplify v6 defaults to SRP,
-            // but the app client (see deploy/providers/AWS/services.tf
-            // comment) is configured for USER_PASSWORD_AUTH. SRP on the
-            // same client can 400 at InitiateAuth if the browser's SRP_A
-            // handshake disagrees with the pool's curve config.
+            // USER_SRP_AUTH so the browser sends an SRP proof rather
+            // than the plaintext password — any TLS terminator, WAF, or
+            // proxy that captures request bodies on the InitiateAuth
+            // call cannot recover credentials. Amplify v6's default is
+            // SRP; we set authFlowType explicitly to make the choice
+            // visible at the call site rather than implicit in the
+            // Amplify default.
             const credentials = {
                 username: details.username,
                 password: details.password,
-                options: { authFlowType: "USER_PASSWORD_AUTH" as const }
+                options: { authFlowType: "USER_SRP_AUTH" as const }
             };
             // Amplify throws UserAlreadyAuthenticatedException when storage
             // already holds tokens — e.g. credentials typed at /login while
@@ -360,6 +362,15 @@ export const useAuthStore = defineStore("auth", {
                 console.error("Failed to hydrate user post-TOTP-challenge:", e);
                 this.signInStep = "DONE";
                 this.mfaEnabled = null;
+                // Surface the partial-success state. Without this, the user
+                // sees a clean form submission and assumes sign-in worked,
+                // while every subsequent API call will 401 until the router
+                // guard re-fetches MFA status on the next navigation.
+                Snackbar.show({
+                    type: "warning",
+                    title: "Sign-in needs another step",
+                    text: "We couldn't finish loading your account. Please retry the page or sign in again."
+                });
             }
         },
 
@@ -484,8 +495,17 @@ export const useAuthStore = defineStore("auth", {
             }
         },
 
-        async signOut() {
+        // `viaInterceptor=true` is set by the api.ts 401 handler. In that
+        // path the interceptor already shows its own "Not Authorised"
+        // snackbar, so we suppress sign-out feedback to avoid stacking
+        // notifications. User-initiated sign-out (from MainLayout) leaves
+        // it false: NotAuthorizedException then surfaces an info-level
+        // notice so a session that was force-revoked remotely (e.g. by an
+        // admin via MFA reset) doesn't disappear silently.
+        async signOut(opts: { viaInterceptor?: boolean } = {}) {
+            const { viaInterceptor = false } = opts;
             let serverSideSignOutFailed = false;
+            let sessionAlreadyEnded = false;
             try {
                 // global:true calls Cognito's GlobalSignOut, which invalidates
                 // all tokens (including the refresh token) for this user session.
@@ -497,11 +517,15 @@ export const useAuthStore = defineStore("auth", {
                 // anything with access to where it was stored (XSS
                 // payload, hostile extension), so warn the user — except
                 // when the failure is just "tokens were already invalid"
-                // (NotAuthorizedException), which is the expected case
-                // when sign-out is triggered from the 401 interceptor.
+                // (NotAuthorizedException). For interceptor-driven sign-
+                // out that case stays silent; for user-clicked sign-out
+                // we still want to inform them rather than silently mask
+                // a remote revocation.
                 console.error("Sign out error:", error);
                 const name = (error as { name?: string }).name;
-                if (name !== "NotAuthorizedException") {
+                if (name === "NotAuthorizedException") {
+                    sessionAlreadyEnded = true;
+                } else {
                     serverSideSignOutFailed = true;
                 }
             }
@@ -513,6 +537,12 @@ export const useAuthStore = defineStore("auth", {
                 Snackbar.error({
                     title: "Sign-out incomplete",
                     text: "We couldn't fully end your session on the server. Please close all browser windows for this site."
+                });
+            } else if (sessionAlreadyEnded && !viaInterceptor) {
+                Snackbar.show({
+                    type: "info",
+                    title: "Session already ended",
+                    text: "Your session had already ended (it may have been revoked elsewhere). You've been signed out."
                 });
             }
         },

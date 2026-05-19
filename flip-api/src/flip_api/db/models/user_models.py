@@ -62,24 +62,16 @@ class RoleRef(Enum):
 
 
 class UserRole(SQLModel, table=True):
-    """User role mapping table."""
+    """User role mapping table.
+
+    ``user_id`` holds a Cognito ``sub`` UUID. There is intentionally no FK to
+    a local users table — Cognito is the source of truth for user identity.
+    """
 
     __tablename__ = "user_role"
 
-    user_id: UUID = Field(foreign_key="users.id", primary_key=True)
+    user_id: UUID = Field(primary_key=True)
     role_id: UUID = Field(foreign_key="roles.id", primary_key=True)
-
-
-class User(SQLModel, table=True):
-    """User table."""
-
-    __tablename__ = "users"
-
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-    email: str = Field(unique=True)
-    enabled: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class Role(SQLModel, table=True):

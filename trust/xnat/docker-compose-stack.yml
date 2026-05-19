@@ -9,7 +9,7 @@
 # version: '3.7'
 services:
   xnat-web:
-    image: ${DOCKER_REGISTRY}xnat-web:${DOCKER_TAG}
+    image: ${DOCKER_REGISTRY}xnat-web:${XNAT_TAG}
     deploy:
       replicas: 1
       restart_policy:
@@ -32,7 +32,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   xnat-db:
-    image: ${DOCKER_REGISTRY}xnat-db:${DOCKER_TAG}
+    image: ${DOCKER_REGISTRY}xnat-db:${XNAT_TAG}
     deploy:
       replicas: 1
       restart_policy:
@@ -47,7 +47,7 @@ services:
       - XNAT_DATASOURCE_PASSWORD=${XNAT_DATASOURCE_PASSWORD}
 
   xnat-nginx:
-    image: ${DOCKER_REGISTRY}xnat-nginx:${DOCKER_TAG}
+    image: ${DOCKER_REGISTRY}xnat-nginx:${XNAT_TAG}
     deploy:
       replicas: 1
       restart_policy:

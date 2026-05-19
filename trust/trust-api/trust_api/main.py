@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from log_config import LoggingMiddleware
 
+from trust_api.config import get_settings
 from trust_api.routers.health import router as health_router
 from trust_api.services.task_poller import run_poller
 from trust_api.utils.logger import logger
@@ -40,12 +41,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Trust API shutting down")
 
 
+# Disable Swagger / OpenAPI / ReDoc in production. Trust services live on a
+# Docker-internal network with no inbound ports, but a misconfigured SSM
+# port-forward or compose host binding can briefly surface them to a host
+# interface — keep the schema unreachable as defence-in-depth.
+_docs_enabled = get_settings().ENV != "production"
+
 app = FastAPI(
     title="Trust API",
     description="The entrypoint for the trust. Polls the central hub for tasks and processes them locally.",
     version="0.2.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
     lifespan=lifespan,
 )
 

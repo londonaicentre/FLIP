@@ -19,11 +19,18 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
   }
 }
 
 provider "aws" {
   region = var.AWS_REGION
+}
+
+provider "null" {
 }
 
 ############################
@@ -110,6 +117,16 @@ module "rds_security_group" {
     }
   ]
   block_all_outbound = true
+}
+
+resource "aws_security_group_rule" "rds_ingress_ecs_flip_api" {
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  description              = "PostgreSQL from ECS flip-api"
+  source_security_group_id = aws_security_group.ecs_flip_api.id
+  security_group_id        = module.rds_security_group.security_group.id
 }
 
 ############################
@@ -211,9 +228,20 @@ resource "aws_iam_role_policy" "ec2_secret" {
 }
 
 # Scoped S3 access — limited to FLIP application buckets only.
-# - flip_bucket: model files / FL results / FL app destination (flip-api).
+# - flip-model-files-uploads / flip-fl-results / flip-app-bundles: the three
+#   buckets that replaced the previous single flip_bucket (model file uploads,
+#   FL results,
+#   FL app bundles). flip-api on EC2 uses the instance role for boto3 creds
+#   (see compose.production.yml — AWS_PROFILE is commented out in prod with
+#   the explicit note "credentials are retrieved from the instance role"), so
+#   this grant must cover every application bucket flip-api touches.
 # - aicentre_bucket: FL participant kits, fetched via `aws s3 cp` during
 #   Ansible provisioning on the Central Hub host.
+#
+# Once flip-api is migrated to an ECS Fargate task (PR 2), its IAM identity
+# becomes the task role in iam_ecs.tf and these three new-bucket grants can
+# be dropped from the EC2 role, leaving only the aicentre_bucket grant
+# (consumed by Ansible) here.
 resource "aws_iam_role_policy" "s3_access" {
   name = "flip-s3-scoped"
   role = module.ec2_role.iam_role_name
@@ -222,8 +250,10 @@ resource "aws_iam_role_policy" "s3_access" {
     Version = "2012-10-17"
     Statement = [{
       Effect = "Allow"
+      # See iam_ecs.tf for the rationale on dropping `s3:CopyObject` — it's
+      # not a real IAM action and AWS server-side copy already rolls up under
+      # the GetObject (source) + PutObject (destination) grants below.
       Action = [
-        "s3:CopyObject",
         "s3:DeleteObject",
         "s3:GetBucketLocation",
         "s3:GetObject",
@@ -232,8 +262,12 @@ resource "aws_iam_role_policy" "s3_access" {
         "s3:PutObject",
       ]
       Resource = [
-        aws_s3_bucket.flip_bucket.arn,
-        "${aws_s3_bucket.flip_bucket.arn}/*",
+        module.flip_model_files_uploads_bucket.bucket_arn,
+        "${module.flip_model_files_uploads_bucket.bucket_arn}/*",
+        module.flip_fl_results_bucket.bucket_arn,
+        "${module.flip_fl_results_bucket.bucket_arn}/*",
+        module.flip_app_bundles_bucket.bucket_arn,
+        "${module.flip_app_bundles_bucket.bucket_arn}/*",
         aws_s3_bucket.aicentre_bucket.arn,
         "${aws_s3_bucket.aicentre_bucket.arn}/*",
       ]
@@ -473,44 +507,14 @@ module "alb" {
         protocol    = "HTTPS"
         status_code = "HTTP_301"
       }
-    },
-    "api-listener" = {
-      port     = var.API_PORT
-      protocol = "HTTP"
-      forward = {
-        target_group_key = "ec2-instance-api"
-      }
-    },
-    "fl-api-listener" = {
-      port     = var.FL_API_PORT
-      protocol = "HTTP"
-      forward = {
-        target_group_key = "ec2-instance-fl-api"
-      }
     }
   }
 
-  # UI is served from S3 + CloudFront; no ec2-instance-ui target group.
-  target_groups = {
-    ec2-instance-api = {
-      port      = var.API_PORT
-      protocol  = "HTTP"
-      target_id = aws_instance.ec2_instance.id
-
-      health_check = {
-        enabled  = true
-        protocol = "HTTP"
-        path     = "/api/health"
-        port     = "traffic-port"
-        matcher  = "200"
-      }
-    },
-    ec2-instance-fl-api = {
-      port      = var.FL_API_PORT
-      protocol  = "HTTP"
-      target_id = aws_instance.ec2_instance.id
-    }
-  }
+  # No EC2-instance target groups — the EC2 host no longer runs application
+  # containers (they run on ECS Fargate). Legacy `api-listener` and
+  # `fl-api-listener` listeners were removed in PR #452 review; the ALB
+  # only routes the https-listener /api/* path to the ECS target group.
+  target_groups = {}
 }
 
 # Network Load Balancer for FL server TCP/TLS pass-through
@@ -545,33 +549,25 @@ module "fl_server_nlb" {
     }
   }
 
+  # Listener forwards directly to the ECS Fargate TG defined as a standalone
+  # aws_lb_target_group below. We bypass the module's target_groups map
+  # because that map only supports target_type=instance bound to an EC2 id;
+  # Fargate awsvpc requires target_type=ip with no pre-registered targets.
   listeners = {
     "fl-server-tcp-listener" = {
       port     = var.FL_SERVER_PORT
       protocol = "TCP"
       forward = {
-        target_group_key = "ec2-instance-fl-server-tcp"
+        target_group_arn = aws_lb_target_group.ecs_fl_server_tcp.arn
       }
     }
   }
 
-  target_groups = {
-    ec2-instance-fl-server-tcp = {
-      port        = var.FL_SERVER_PORT
-      protocol    = "TCP"
-      target_type = "instance"
-      target_id   = aws_instance.ec2_instance.id
-
-      health_check = {
-        enabled             = true
-        protocol            = "TCP"
-        port                = "traffic-port"
-        healthy_threshold   = 3
-        unhealthy_threshold = 3
-        interval            = 30
-      }
-    }
-  }
+  # No module-managed target groups - the ECS TG is the standalone resource
+  # below. Leaving the legacy `ec2-instance-fl-server-tcp` definition would
+  # keep the EC2 instance attached as an unhealthy target and contradict the
+  # post-cutover state.
+  target_groups = {}
 }
 
 data "aws_route53_zone" "subdomain" {
@@ -593,6 +589,32 @@ resource "aws_route53_record" "alb" {
   }
 }
 
+# Target group for the fl-server-net-1 ECS Fargate service. Registered by
+# the ECS service via the load_balancer block in ecs_services.tf - we never
+# attach instance/IP targets here. target_type=ip is required for awsvpc
+# Fargate tasks. NLB protocol must be TCP - HTTP/2 gRPC framing is opaque
+# to the NLB and forwarded as-is.
+resource "aws_lb_target_group" "ecs_fl_server_tcp" {
+  name        = "ecs-fl-server-tcp"
+  port        = var.FL_SERVER_PORT
+  protocol    = "TCP"
+  target_type = "ip"
+  vpc_id      = module.flip_vpc.vpc_id
+
+  health_check {
+    enabled             = true
+    protocol            = "TCP"
+    port                = "traffic-port"
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+    interval            = 30
+  }
+
+  # Match flip-api TG (30s) - long deregistration on rolling deploys would
+  # block training-round handshakes against a draining task.
+  deregistration_delay = 30
+}
+
 resource "aws_route53_record" "fl_server_nlb" {
   zone_id = data.aws_route53_zone.subdomain.zone_id
   name    = var.flip_nlb_subdomain
@@ -605,14 +627,43 @@ resource "aws_route53_record" "fl_server_nlb" {
   }
 }
 
-# Listener rule for path-based routing to the API namespace
+# Target group for the flip-api ECS Fargate service. Registered by the ECS
+# service itself via the load_balancer block in ecs_services.tf - we never
+# attach instance/IP targets here from terraform. target_type=ip is required
+# for awsvpc Fargate tasks (each task gets an ENI; the IP is what ECS
+# registers, not an instance id).
+resource "aws_lb_target_group" "ecs_flip_api" {
+  name        = "ecs-flip-api"
+  port        = local.api_container_port
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = module.flip_vpc.vpc_id
+
+  health_check {
+    enabled  = true
+    protocol = "HTTP"
+    path     = "/api/health"
+    port     = "traffic-port"
+    matcher  = "200"
+  }
+
+  # ECS rolling deploys briefly need both old + new tasks present; a long
+  # deregistration delay would stretch every cutover. 30s is enough for
+  # in-flight requests to drain without holding rollouts hostage.
+  deregistration_delay = 30
+}
+
+# Listener rule for path-based routing to the API namespace. Forwards /api/*
+# to the ECS Fargate target group above. The legacy `ec2-instance-api`
+# target group on the EC2 host is kept in module.alb for state continuity
+# but no longer wired to a listener rule.
 resource "aws_lb_listener_rule" "api_routing" {
   listener_arn = module.alb.listeners["https-listener"].arn
   priority     = 98
 
   action {
     type             = "forward"
-    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+    target_group_arn = aws_lb_target_group.ecs_flip_api.arn
   }
 
   condition {

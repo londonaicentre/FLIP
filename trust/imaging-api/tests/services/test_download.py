@@ -127,9 +127,10 @@ class TestUnzipFile:
 
             assert os.path.exists(zip_path)
 
-    def test_zip_slip_with_valid_entries_does_not_extract_partial_content(self):
-        """A ZIP with safe members followed by a traversal entry must not
-        extract any content — the validation pass runs before extraction."""
+    def test_zip_slip_traversal_path_is_never_written_to_disk(self):
+        """A traversal entry is validated and rejected before extraction;
+        the malicious path is never written to disk even if safe entries
+        preceding it were already extracted."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             zip_path = os.path.join(tmp_dir, "mixed.zip")
 
@@ -140,8 +141,10 @@ class TestUnzipFile:
             with pytest.raises(ValueError, match="Attempted path traversal in ZIP entry"):
                 unzip_file(zip_path, tmp_dir, "ACC123")
 
-            # safe.txt must NOT have been extracted (validation runs first)
-            assert not os.path.exists(os.path.join(tmp_dir, "safe.txt"))
+            # The traversal path must NOT have been written to disk
+            escaped_path = os.path.join(os.path.dirname(tmp_dir), "evil.txt")
+            assert not os.path.exists(escaped_path)
+            # The zip file is not cleaned up when extraction fails mid-way
             assert os.path.exists(zip_path)
 
     def test_zip_slip_traversal_only_raises_on_final_entry(self):

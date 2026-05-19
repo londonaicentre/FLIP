@@ -82,9 +82,23 @@ services:
       # Settings.ENFORCE_MFA defaults to True elsewhere. Flip to `true`
       # here (and `make restart`) to test the MFA flow end-to-end locally.
       - ENFORCE_MFA=false
+      # Settings.LOG_LEVEL defaults to INFO so unknown environments emit
+      # at INFO. Local dev defaults to DEBUG when LOG_LEVEL is unset
+      # (override via LOG_LEVEL in .env.development) so debug-level
+      # diagnostics are still visible during development.
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
       - DEBUG=${DEBUG}
       - AWS_PROFILE=${AWS_PROFILE}
       - AWS_REGION=${AWS_REGION}
+      # Force boto3 to mint presigned URLs against the regional S3 endpoint
+      # (e.g. s3.eu-west-2.amazonaws.com) instead of the legacy global one
+      # (s3.amazonaws.com). DNS for a freshly created bucket in a non-us-east-1
+      # region can take up to ~24h to propagate on the global endpoint — see
+      # the matching note in compose.production.yml for the FLIP#24 incident
+      # that surfaced this. Regional endpoints never have this lag and are
+      # AWS's recommended path for non-us-east-1 buckets anyway.
+      # See compose.production.yml for the `:?` rationale (load-bearing guard).
+      - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
       - POSTGRES_USER=${POSTGRES_USER}

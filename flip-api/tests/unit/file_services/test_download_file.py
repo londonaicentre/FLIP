@@ -19,9 +19,13 @@ import pytest
 from fastapi import status
 from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
+from fastapi.testclient import TestClient
 
+from flip_api.auth.dependencies import verify_token
 from flip_api.config import Settings
+from flip_api.db.database import get_session
 from flip_api.file_services.download_file import download_file
+from flip_api.main import app
 
 bucket = "s3://test-secure-bucket"
 
@@ -159,7 +163,7 @@ def test_download_file_s3_error(
 
     # Verify the status code is 500 (Internal Server Error)
     assert excinfo.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Error downloading" in str(excinfo.value.detail)
+    assert excinfo.value.detail == "Error downloading file"
 
 
 def test_download_file_general_exception(
@@ -176,3 +180,38 @@ def test_download_file_general_exception(
     # Verify the status code is 500 (Internal Server Error)
     assert excinfo.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Internal server error" in str(excinfo.value.detail)
+
+
+@pytest.mark.parametrize(
+    "bad_file_name",
+    [
+        # ``..`` (literal) is collapsed by HTTP-client URL normalisation
+        # before the request is sent, so it never reaches the validator;
+        # the percent-encoded forms below are the real attack shape.
+        "..%2Fescape.bin",
+        "subdir%2Ffile.bin",
+        "subdir%5Cfile.bin",
+        "file%00.bin",
+    ],
+)
+def test_download_file_route_rejects_path_traversal_file_name(bad_file_name):
+    """Path-param validator must short-circuit before any DB or S3 access.
+
+    Without the ``SafeFileName`` annotation a request like
+    ``/files/model/<id>/..%2F..%2Fmodels%2Ffoo`` would percent-decode
+    inside the segment and let the route concatenate ``../../models/foo``
+    into ``s3_path``, escaping the ``{model_id}/`` prefix.
+    """
+    user_id = uuid.uuid4()
+    mock_session = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_session
+    app.dependency_overrides[verify_token] = lambda: user_id
+    try:
+        with patch("flip_api.file_services.download_file.S3Client") as mock_s3_cls:
+            response = TestClient(app).get(f"/api/files/model/{uuid.uuid4()}/{bad_file_name}")
+        # Accept either 422 (validator rejects) or 404 (Starlette routing rejects
+        # the raw segment); the contract is that no S3 call happens.
+        assert response.status_code in (status.HTTP_404_NOT_FOUND, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        mock_s3_cls.assert_not_called()
+    finally:
+        app.dependency_overrides.clear()

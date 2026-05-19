@@ -49,7 +49,7 @@ from flip_api.utils.exceptions import DatabaseError, NotFoundError
 from flip_api.utils.logger import logger
 
 
-def remove_job(job_id: UUID, session: Session):
+def remove_job(job_id: UUID, session: Session) -> None:
     """
     Sets the job status to DELETED and clears the started timestamp.
 
@@ -84,7 +84,7 @@ def remove_job(job_id: UUID, session: Session):
         raise DatabaseError("Error reverting job pickup") from e
 
 
-def remove_job_from_queue(model_id: UUID, session: Session):
+def remove_job_from_queue(model_id: UUID, session: Session) -> None:
     """
     Sets the job status to DELETED for all jobs associated with the given model ID.
 
@@ -120,7 +120,7 @@ def remove_job_from_queue(model_id: UUID, session: Session):
         raise DatabaseError("Error removing job from queue") from e
 
 
-def revert_scheduler_pickup(scheduler_id: UUID, session: Session):
+def revert_scheduler_pickup(scheduler_id: UUID, session: Session) -> None:
     """
     Sets the scheduler status to AVAILABLE and clears the job_id.
 
@@ -360,7 +360,7 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         raise DatabaseError("Error checking for queued jobs") from e
 
 
-def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[str], session: Session):
+def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[str], session: Session) -> None:
     """
     Prepares and starts the training process for a given model.
 
@@ -475,7 +475,7 @@ def get_required_training_details(model_id: UUID, session: Session) -> IRequired
         raise DatabaseError("Error getting required training details") from e
 
 
-def update_fl_scheduler(model_id: UUID, session: Session):
+def update_fl_scheduler(model_id: UUID, session: Session) -> None:
     """
     Updates the FL job status to COMPLETED and sets the associated scheduler status to AVAILABLE.
 

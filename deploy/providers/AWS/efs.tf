@@ -44,8 +44,7 @@ resource "aws_efs_file_system" "flip_fl" {
 #
 # Empty-by-design in PR 1. PR 2 adds standalone aws_security_group_rule
 # resources allowing ingress 2049 from the ecs_fl_api and ecs_fl_server SGs
-# (which PR 2 also creates). Until then, the file system is unreachable —
-# which is the intended state during PR 1.
+# (which PR 2 also creates).
 #
 # No egress rule by design: EFS mount targets terminate NFS traffic at the
 # ENI and never initiate outbound connections, so denying egress costs
@@ -128,4 +127,30 @@ resource "aws_efs_access_point" "flip_fl" {
   tags = {
     Name = "flip-fl-${each.key}"
   }
+}
+
+############################
+# SG ingress: NFS from ECS tasks
+############################
+
+resource "aws_security_group_rule" "efs_ingress_ecs_fl_api" {
+  count                    = var.enable_efs ? 1 : 0
+  type                     = "ingress"
+  description              = "NFS from ecs_fl_api tasks"
+  from_port                = 2049
+  to_port                  = 2049
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.efs_mount_target.id
+  source_security_group_id = aws_security_group.ecs_fl_api.id
+}
+
+resource "aws_security_group_rule" "efs_ingress_ecs_fl_server" {
+  count                    = var.enable_efs ? 1 : 0
+  type                     = "ingress"
+  description              = "NFS from ecs_fl_server tasks"
+  from_port                = 2049
+  to_port                  = 2049
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.efs_mount_target.id
+  source_security_group_id = aws_security_group.ecs_fl_server.id
 }

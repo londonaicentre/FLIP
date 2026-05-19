@@ -44,4 +44,11 @@ DOCKER_FL_CLIENT_NAME := flower-supernode
 FL_PROVISIONED_DIR    := ../flip-fl-base-flower/certs
 endif
 
-export DOCKER_FL_API_NAME DOCKER_FL_SERVER_NAME DOCKER_FL_CLIENT_NAME FL_PROVISIONED_DIR
+# DOCKER_FL_REGISTRY decouples the FL images' registry from DOCKER_REGISTRY so
+# you can iterate on locally-built FL images (DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev)
+# without flipping the rest of the stack to local images. Defaults to whatever
+# DOCKER_REGISTRY is — use `?=` so an explicit unset on the CLI (`make up
+# DOCKER_FL_REGISTRY=`) wins.
+DOCKER_FL_REGISTRY ?= $(DOCKER_REGISTRY)
+
+export DOCKER_FL_API_NAME DOCKER_FL_SERVER_NAME DOCKER_FL_CLIENT_NAME FL_PROVISIONED_DIR DOCKER_FL_REGISTRY

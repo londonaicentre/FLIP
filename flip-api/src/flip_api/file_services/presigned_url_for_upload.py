@@ -22,7 +22,7 @@ from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Model, Projects
 from flip_api.domain.schemas.file import PresignedUploadResponse, UploadFileBody
 from flip_api.utils.logger import logger
-from flip_api.utils.s3_client import S3Client
+from flip_api.utils.s3_client import S3Client, hash_s3_key, parse_s3_path
 
 router = APIRouter(prefix="/files", tags=["file_services"])
 
@@ -85,6 +85,8 @@ def get_presigned_url_for_upload(
 
         settings = get_settings()
         s3_path = f"{settings.UPLOADED_MODEL_FILES_BUCKET}/{model_id}/{body.fileName}"
+        bucket, key = parse_s3_path(s3_path)
+        key_hash = hash_s3_key(key)
 
         s3 = S3Client()
         try:
@@ -94,24 +96,36 @@ def get_presigned_url_for_upload(
                 content_type=body.contentType,
                 expiration=settings.PRE_SIGNED_URL_EXPIRATION_SECONDS,
             )
-            logger.info(f"Generated pre-signed POST policy for {s3_path}")
+            logger.info(
+                f"Generated pre-signed POST policy bucket={bucket} "
+                f"key_hash={key_hash} model_id={model_id}"
+            )
             return PresignedUploadResponse(
                 url=policy["url"],
                 fields=policy.get("fields", {}),
                 maxBytes=settings.MAX_MODEL_FILE_BYTES,
             )
         except Exception as e:
-            error_msg = f"Could not create a pre-signed POST policy for {s3_path}. Error: {str(e)}"
-            logger.error(error_msg)
+            # Drop ``exc_info`` entirely: the formatter would otherwise emit
+            # ``str(e)`` via the traceback, and a future exception type that
+            # embeds the URL in its message would leak through that channel.
+            # Log structured context plus the exception class name only.
+            logger.error(
+                f"Could not create a pre-signed POST policy for bucket={bucket} "
+                f"key_hash={key_hash} error_type={type(e).__name__}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=error_msg,
+                detail="Could not create a pre-signed URL",
             )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Unhandled error: {str(e)}")
+        logger.error(
+            f"Unhandled error in get_presigned_url_for_upload "
+            f"model_id={model_id} error_type={type(e).__name__}"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",

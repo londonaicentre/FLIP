@@ -712,8 +712,24 @@ class TestGetCognitoUsers:
 
     @pytest.fixture
     def mock_boto3_client(self):
-        """Mock boto3 client for Cognito operations."""
+        """Mock boto3 client for Cognito operations.
+
+        The production code uses ``client.get_paginator("list_users").paginate(...)``
+        rather than ``client.list_users(...)`` directly, so wire the mock paginator
+        to delegate back to ``list_users``. That keeps the existing per-test
+        ``mock_client.list_users.return_value = ...`` / ``side_effect = ...`` /
+        ``assert_called_once_with(...)`` assertions working unchanged while still
+        exercising the paginator code path.
+        """
         with patch("flip_api.utils.cognito_helpers.boto3.client") as mock_client:
+            client_instance = mock_client.return_value
+
+            def _fake_paginate(**params):
+                # Single-page default. Tests that need multiple pages can
+                # override .paginate.side_effect or .return_value directly.
+                return [client_instance.list_users(**params)]
+
+            client_instance.get_paginator.return_value.paginate.side_effect = _fake_paginate
             yield mock_client
 
     @pytest.fixture
@@ -787,8 +803,9 @@ class TestGetCognitoUsers:
         expected_params = {"UserPoolId": "test-pool-id"}
         mock_client_instance.list_users.assert_called_once_with(**expected_params)
 
-        # Verify logging
-        mock_logger.debug.assert_called_with(f"Cognito list users params: {expected_params}")
+        # Verify logging — pool ID only, never the full params dict (a
+        # ``Filter`` value can carry an email or other PII).
+        mock_logger.debug.assert_called_with("Listing Cognito users in pool test-pool-id")
 
     def test_custom_params_with_existing_user_pool_id(
         self, mock_boto3_client, mock_get_settings, sample_cognito_response, mock_logger
@@ -987,8 +1004,63 @@ class TestGetCognitoUsers:
         assert exc_info.value.detail == "Failed to get Cognito users"
         assert str(client_error) not in exc_info.value.detail
 
-        # Verify logging
-        mock_logger.exception.assert_called_with("Error getting Cognito users")
+        # Log line must include page index + collected count so an operator can tell
+        # whether pagination was throttled mid-walk vs. failed on page 1.
+        mock_logger.exception.assert_called_once()
+        log_msg = mock_logger.exception.call_args.args[0]
+        assert "page=" in log_msg
+        assert "collected=" in log_msg
+
+    def test_client_error_mid_pagination_logs_page_index(
+        self, mock_boto3_client, mock_get_settings, mock_logger
+    ):
+        """A ClientError on page 3 of 10 must log page=3 and collected count.
+
+        Without this, operators investigating a list_users 500 cannot tell whether
+        the failure was throttling partway through (retry-friendly) or a hard failure
+        on page 1 (config / permissions). The current generic "Error getting Cognito
+        users" log buries that signal.
+        """
+        # Three pages: page 1 returns one user, page 2 returns one user, page 3 raises.
+        mock_client_instance = mock_boto3_client.return_value
+        page_1 = {
+            "Users": [
+                {
+                    "Username": "u1@example.com",
+                    "Attributes": [{"Name": "sub", "Value": str(user1)}],
+                    "Enabled": True,
+                }
+            ]
+        }
+        page_2 = {
+            "Users": [
+                {
+                    "Username": "u2@example.com",
+                    "Attributes": [{"Name": "sub", "Value": str(user2)}],
+                    "Enabled": True,
+                }
+            ]
+        }
+
+        def _paginate_three(**_params):
+            yield page_1
+            yield page_2
+            raise ClientError(
+                error_response={"Error": {"Code": "TooManyRequestsException", "Message": "Throttled"}},
+                operation_name="ListUsers",
+            )
+
+        mock_client_instance.get_paginator.return_value.paginate.side_effect = _paginate_three
+
+        with pytest.raises(HTTPException):
+            get_cognito_users()
+
+        mock_logger.exception.assert_called_once()
+        log_msg = mock_logger.exception.call_args.args[0]
+        # page=3 because the third yield raised before producing items.
+        assert "page=3" in log_msg
+        # Two users were already accumulated when the failure hit.
+        assert "collected=2" in log_msg
 
     def test_various_client_errors(self, mock_boto3_client, mock_get_settings, mock_logger):
         """Test handling of various ClientError types."""
@@ -1181,6 +1253,44 @@ class TestGetCognitoUsers:
         expected_params = {"UserPoolId": "test-pool-id"}
         mock_client_instance.list_users.assert_called_once_with(**expected_params)
         assert len(result) == 2
+
+    def test_paginator_consumes_all_pages(self, mock_boto3_client, mock_get_settings, mock_logger):
+        """Multi-page pools must be fully consumed.
+
+        Cognito ListUsers returns up to 60 users per page; without paginator
+        iteration the admin "list users" endpoint and the XNAT-onboarding
+        lookup would silently miss users on page 2+. Override the default
+        single-page ``paginate.side_effect`` and assert every page is read.
+        """
+        page_1 = {
+            "Users": [
+                {
+                    "Username": "page1user@example.com",
+                    "Attributes": [{"Name": "sub", "Value": str(user1)}],
+                    "Enabled": True,
+                }
+            ]
+        }
+        page_2 = {
+            "Users": [
+                {
+                    "Username": "page2user@example.com",
+                    "Attributes": [{"Name": "sub", "Value": str(user2)}],
+                    "Enabled": True,
+                }
+            ]
+        }
+
+        mock_client_instance = mock_boto3_client.return_value
+        # Drop the default fixture wiring; return both pages directly.
+        mock_client_instance.get_paginator.return_value.paginate.side_effect = None
+        mock_client_instance.get_paginator.return_value.paginate.return_value = [page_1, page_2]
+
+        result = get_cognito_users()
+
+        assert len(result) == 2
+        assert {u.id for u in result} == {user1, user2}
+        mock_client_instance.get_paginator.assert_called_once_with("list_users")
 
 
 class TestOriginFromUrl:
@@ -1502,6 +1612,29 @@ class TestGetUsername:
                 f"Multiple users found for ID {user1}, returning the first one"
             )
 
+    @pytest.mark.parametrize(
+        "bad_user_id",
+        [
+            'not-a-uuid" or sub = "*',  # filter-injection payload
+            "",
+            "123",
+            "abc-def",
+        ],
+    )
+    def test_rejects_non_uuid_user_id(self, bad_user_id):
+        """Refuse to interpolate a non-UUID into the Cognito filter — the
+        unsafe f-string would otherwise let a caller smuggle additional
+        clauses into the ListUsers request."""
+        with patch("flip_api.utils.cognito_helpers.get_cognito_users") as mock_list:
+            from flip_api.utils.cognito_helpers import get_username
+
+            with pytest.raises(HTTPException) as exc_info:
+                get_username(bad_user_id, USER_POOL_ID)
+
+            assert exc_info.value.status_code == HTTP_400_BAD_REQUEST
+            assert exc_info.value.detail == "Invalid user ID format"
+            mock_list.assert_not_called()
+
 
 class TestUpdateUser:
     """Cover update_user — it's a pre-existing helper but the PR refactored
@@ -1685,3 +1818,70 @@ class TestGetUserByEmailOrId:
         # Same instance, not a re-wrapped one — verifies the `raise` (no `from`).
         assert exc_info.value is inner
         mock_logger.exception.assert_called_with("SKIPPING COGNITO USER LISTING")
+
+    @pytest.mark.parametrize(
+        "bad_email",
+        [
+            'a@b.com" or email = "*',  # break out of the quoted value
+            'foo"@bar.com',  # double-quote inside the local part
+            '"a\\b"@example.com',  # backslash-escaped local part
+            "no-at-sign",
+            "user@",
+            "@example.com",
+            "spaces in@email.com",
+        ],
+    )
+    def test_rejects_malformed_or_injecting_email(self, bad_email):
+        """The function must validate email format itself, even when the
+        caller forgets — a `"` in the value is what enables the Cognito
+        ListUsers filter-injection payload. Reject before sending."""
+        with patch("flip_api.utils.cognito_helpers.get_cognito_users") as mock_list:
+            with pytest.raises(HTTPException) as exc_info:
+                get_user_by_email_or_id(USER_POOL_ID, email=bad_email)
+
+            assert exc_info.value.status_code == HTTP_400_BAD_REQUEST
+            assert exc_info.value.detail == "Invalid email address format"
+            mock_list.assert_not_called()
+
+    def test_safe_email_is_passed_to_filter(self):
+        """A well-formed email should produce the expected filter expression
+        and reach Cognito unmodified (modulo email_validator's normalisation)."""
+        with patch("flip_api.utils.cognito_helpers.get_cognito_users") as mock_list:
+            mock_list.return_value = [CognitoUserFactory(email="user@example.com")]
+
+            get_user_by_email_or_id(USER_POOL_ID, email="user@example.com")
+
+            params = mock_list.call_args.args[0]
+            assert params["Filter"] == 'email = "user@example.com"'
+            assert params["Limit"] == 1
+            assert params["UserPoolId"] == USER_POOL_ID
+
+    def test_explicit_quote_guard_fires_if_email_validator_relaxes(self):
+        """The explicit `"`/`\\` rejection in `_safe_email_for_cognito_filter`
+        is belt-and-braces against a future Pydantic update relaxing
+        ``EmailStr``. Bypass the validator with a mock to confirm the inner
+        guard still catches an unsafe value."""
+        unsafe = 'a@b.com" or email = "*'
+        with patch(
+            "flip_api.utils.cognito_helpers._EMAIL_VALIDATOR.validate_python",
+            return_value=unsafe,
+        ):
+            with patch("flip_api.utils.cognito_helpers.get_cognito_users") as mock_list:
+                with pytest.raises(HTTPException) as exc_info:
+                    get_user_by_email_or_id(USER_POOL_ID, email=unsafe)
+
+                assert exc_info.value.status_code == HTTP_400_BAD_REQUEST
+                assert exc_info.value.detail == "Invalid email address format"
+                mock_list.assert_not_called()
+
+    def test_uuid_branch_uses_canonical_form(self):
+        """A UUID-typed user_id must produce the canonical hex+hyphen form;
+        the resulting filter expression contains no characters that could
+        break out of the quoted value."""
+        with patch("flip_api.utils.cognito_helpers.get_cognito_users") as mock_list:
+            mock_list.return_value = [CognitoUserFactory(id=user1)]
+
+            get_user_by_email_or_id(USER_POOL_ID, user_id=user1)
+
+            params = mock_list.call_args.args[0]
+            assert params["Filter"] == f'sub = "{user1}"'

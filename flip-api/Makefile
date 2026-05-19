@@ -78,6 +78,31 @@ create_testing_projects:
 delete_testing_projects:
 	@echo "🔢 Removing projects created for debugging..."
 	env DB_HOST=localhost uv run python -m tests.debug_post_debug_task
+# End-to-end smoke against a running `make up` stack: creates a project, gets
+# it approved, uploads model files, waits for image pull, kicks off training,
+# waits for results, downloads them. Intended for PR sanity checks — replaces
+# the manual UI clickthrough.
+#
+# Defaults pick the chest-xray tutorial that matches FL_BACKEND so the same
+# `make e2e_smoke` invocation works against either stack. The Flower tutorial
+# is in flip-fl-base-flower; the NVFLARE one in flip-fl-base. Both reuse the
+# same query.sql against the trust mock OMOP data. Default backend matches
+# deploy/fl_backend.mk (flower). Override either path explicitly:
+#     make e2e_smoke MODEL_FILES_DIR=/path/to/app_files
+#     make e2e_smoke QUERY_FILE=/path/to/your_cohort.sql
+# Anything else passed via EXTRA_ARGS goes straight to the script:
+#     make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5"
+FL_BACKEND ?= flower
+ifeq ($(FL_BACKEND),flower)
+MODEL_FILES_DIR ?= ../../flip-fl-base-flower/tutorials/xray_classification/app
+QUERY_FILE ?= ../../flip-fl-base-flower/tutorials/xray_classification/query.sql
+else
+MODEL_FILES_DIR ?= ../../flip-fl-base/tutorials/image_classification/xray_classification/app_files
+QUERY_FILE ?= $(MODEL_FILES_DIR)/../query.sql
+endif
+e2e_smoke:
+	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."
+	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir $(MODEL_FILES_DIR) --query-file $(QUERY_FILE) $(EXTRA_ARGS)
 generate-trust-key:
 	uv run python -m flip_api.scripts.generate_trust_key --trust-name $(TRUST_NAME)
 generate-trust-api-keys:

@@ -18,12 +18,58 @@ from sqlmodel import Session
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.user_models import PermissionRef, User
+from flip_api.db.models.user_models import PermissionRef, UsersAudit
 from flip_api.domain.interfaces.user import IRegisterUser, IUserResponse
-from flip_api.utils.cognito_helpers import create_cognito_user, get_all_roles, get_user_pool_id, validate_roles
+from flip_api.utils.cognito_helpers import (
+    create_cognito_user,
+    delete_cognito_user,
+    get_all_roles,
+    get_user_pool_id,
+    validate_roles,
+)
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/users", tags=["user_services"])
+
+
+def _rollback_cognito_on_audit_failure(email: str, user_pool_id: str, original_err: Exception) -> None:
+    """Delete the just-created Cognito user after a failed audit-row write.
+
+    The audit commit owns the failure path; this helper just attempts the
+    Cognito-side rollback and translates a rollback failure into the more
+    explicit "manual cleanup required" 500. Callers handle the post-rollback
+    "Please try again" 500 themselves so the success-path 500 stays at the
+    main call site.
+
+    Mirrors the ``_rollback_after_role_failure`` pattern in
+    ``register_user_step_function`` so the two rollback shapes look the same.
+
+    Args:
+        email: Email of the Cognito user to delete (the username).
+        user_pool_id: Cognito user pool ID.
+        original_err: The audit-write exception, chained as ``__cause__`` if
+            this helper raises so the operator sees the original trigger.
+
+    Raises:
+        HTTPException: 500 with a "manual cleanup required" detail iff the
+            ``delete_cognito_user`` call itself fails. A successful rollback
+            returns cleanly; the caller then raises the "Please try again"
+            500.
+    """
+    try:
+        delete_cognito_user(email, user_pool_id)
+    except Exception:
+        logger.exception(
+            f"Failed to roll back Cognito user {email} after audit-write failure; "
+            f"manual cleanup required."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "Failed to register user; rollback also failed. "
+                "Manual cleanup of the Cognito user required."
+            ),
+        ) from original_err
 
 
 # TODO [#114] This endpoint was not defined in the old repo, it was run from the step function 'registerUser'.
@@ -37,20 +83,24 @@ def register_user(
     """
     Register a new user in Cognito.
 
-    Note this function does not assign the roles to the user.
+    Cognito is the source of truth for user identity; we do not mirror users
+    in a local table. Role assignment is a separate step (handled by
+    ``/api/step/users``). This endpoint writes a ``UsersAudit`` row keyed by
+    the new Cognito sub on success.
 
     Args:
-        user_data: User data to register
-        request: FastAPI request object
-        db: Database session
-        token_id: ID of authenticated user
+        user_data (IRegisterUser): The user data to register (email + roles).
+        request (Request): The FastAPI request object.
+        db (Session): The database session.
+        token_id (UUID): ID of the authenticated user making the request.
 
     Returns:
-        Created user data with ID
+        IUserResponse: Created user data including the new Cognito sub.
 
     Raises:
-        HTTPException: If the user does not have permission to register a user, if the email is already registered, or
-        if there is an error registering the user in Cognito or the database.
+        HTTPException: If the user does not have permission to register a
+        user, if the email is already registered, or if Cognito rejects the
+        create.
     """
     try:
         # Check permissions
@@ -70,36 +120,36 @@ def register_user(
         # Create user in Cognito
         user_id = create_cognito_user(user_data.email, user_pool_id)
 
-        # Create user object
-        user = User(
-            id=user_id,
-            email=user_data.email,
-            enabled=True,
-        )
+        # Audit the registration. Cognito is the source of truth for the
+        # user identity itself; UsersAudit captures the actor + timestamp
+        # for forensic purposes.
         try:
-            db.add(user)
+            db.add(UsersAudit(action="Registered user", user_id=user_id, modified_by_user_id=token_id))
             db.commit()
-            db.refresh(user)
-        except Exception as e:
+        except Exception as audit_err:
             db.rollback()
-            logger.error(f"Error creating user in database: {str(e)}")
+            logger.exception(f"Error writing audit row for new user {user_data.email}")
+            # Cognito accepted the user before the audit-row write failed.
+            # Roll the Cognito side back so the next retry doesn't hit
+            # UsernameExistsException; the helper raises its own 500 (with a
+            # distinct detail) if the rollback itself fails, otherwise we
+            # fall through to the retryable "Please try again" 500.
+            _rollback_cognito_on_audit_failure(user_data.email, user_pool_id, audit_err)
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail=f"User with email {user_data.email} already exists."
-            )
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to register user. Please try again.",
+            ) from audit_err
 
-        # Return response
-        response = IUserResponse(
+        return IUserResponse(
             email=user_data.email,
             roles=user_data.roles,
             user_id=user_id,
         )  # type: ignore[call-arg]
 
-        return response
-
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error registering user: {str(e)}")
+        logger.exception("Error registering user")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}"
-        )
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error"
+        ) from e
