@@ -187,33 +187,37 @@ def create_project_with_query(
     return project_id, query_id
 
 
-def wait_for_trusts_queried(
+def wait_for_trusts_responded(
     client: requests.Session, headers: dict[str, str], project_id: str, timeout_s: int = 120
 ) -> int:
-    """Block until the project's query has been answered by ≥1 trust.
+    """Block until every queried trust has posted a cohort result.
 
-    `/projects/{id}/stage` rejects a project whose query.queriedTrustIds is empty,
-    and the trust query is dispatched async by `/cohort/submit/`. Without this
-    poll the smoke races the submission and fails at staging.
+    `/cohort/submit/` dispatches the query asynchronously: the hub records the
+    dispatched trusts in `query.queriedTrustIds` immediately, but each trust
+    only posts its result a few poll-cycles later (it polls the hub, runs the
+    OMOP query, then POSTs `/cohort/results`). `/projects/{id}/stage` rejects a
+    project whose staged trusts are not in `query.respondedTrustIds`, so the
+    smoke must wait for the results to land — not merely for the dispatch.
     """
-    _log(f"⏳ Waiting for trusts to answer the cohort query (timeout {timeout_s}s)")
+    _log(f"⏳ Waiting for trusts to return cohort results (timeout {timeout_s}s)")
     deadline = time.monotonic() + timeout_s
-    last_count = -1
+    last = (-1, -1)
     while time.monotonic() < deadline:
         resp = _try_request(_get, client, f"/projects/{project_id}", headers)
         if resp is None or resp.status_code >= 300:
             time.sleep(5)
             continue
         query = resp.json().get("query") or {}
-        count = len(query.get("queriedTrustIds") or [])
-        if count != last_count:
-            _log(f"  📊 queriedTrustIds count={count}")
-            last_count = count
-        if count > 0:
-            return count
+        queried = len(query.get("queriedTrustIds") or [])
+        responded = len(query.get("respondedTrustIds") or [])
+        if (queried, responded) != last:
+            _log(f"  📊 queriedTrustIds={queried}  respondedTrustIds={responded}")
+            last = (queried, responded)
+        if queried > 0 and responded >= queried:
+            return responded
         time.sleep(5)
     raise SmokeFailure(
-        f"No trust answered the cohort query within {timeout_s}s. "
+        f"Not all queried trusts returned cohort results within {timeout_s}s. "
         "Check trust-api / data-access-api logs for query failures."
     )
 
@@ -225,7 +229,7 @@ def stage_and_approve(client: requests.Session, headers: dict[str, str], project
         raise SmokeFailure("No trusts registered with the hub — start the trust services and seed first")
     _log(f"  ✅ found {len(trusts)} trust(s): {[t['name'] for t in trusts]}")
 
-    wait_for_trusts_queried(client, headers, project_id)
+    wait_for_trusts_responded(client, headers, project_id)
 
     trust_ids = [t["id"] for t in trusts]
     _log("📋 Staging project")
