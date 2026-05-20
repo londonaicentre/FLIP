@@ -215,12 +215,12 @@ down: down-trust-1 down-trust-2
 # Each dev trust project (trust1, trust2) runs a client per FL net, hence both net-1 and net-2.
 up-fl-clients:
 	@echo "🚢 Starting FL clients..."
-	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f compose_trust-1_override.yml -p ${trust1} up -d --no-deps $(PULL_ALWAYS_FLAG) fl-client-net-1 fl-client-net-2
+	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} up -d --no-deps $(PULL_ALWAYS_FLAG) fl-client-net-1 fl-client-net-2
 	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d --no-deps $(PULL_ALWAYS_FLAG) fl-client-net-1 fl-client-net-2
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."
-	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -f compose_trust-1_override.yml -p ${trust1} rm -fs fl-client-net-1 fl-client-net-2
+	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} rm -fs fl-client-net-1 fl-client-net-2
 	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} rm -fs fl-client-net-1 fl-client-net-2
 
 update-omop-data:
