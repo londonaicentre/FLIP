@@ -82,7 +82,7 @@ class TestReceiveCohortResultsEndpoint:
         seeded = session.exec(select(Trust).where(Trust.name == "Trust_1")).first()
         assert seeded is not None, "Trust_1 must be present (seeded once per session)"
 
-        query_row = Queries(name="cohort-endpoint-roundtrip", query="SELECT 1")
+        query_row = Queries(name="cohort-endpoint-roundtrip", query="SELECT 1", created_by=uuid.uuid4())
         session.add(query_row)
         session.commit()
         session.refresh(query_row)

@@ -173,20 +173,18 @@ class Queries(SQLModel, table=True):
     name: str = Field()
     query: str = Field()
     created: Annotated[datetime, Field(default_factory=datetime.utcnow)]
-    # FK to user_profile.user_id; nullable so historical rows (saved before this
-    # column existed) keep working — the "Last run by …" line just hides the
-    # author for those.
-    created_by: UUID | None = Field(default=None, index=True)
+    # Logical FK to user_profile.user_id (not a DB-level FK). Set from the
+    # authenticated caller on every cohort-query insert.
+    created_by: UUID = Field(index=True)
     project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
     # Trust UUIDs the query was dispatched to at submit time. Canonical
     # "queried trusts" set — includes trusts that later errored or never
     # responded, so the per-trust UI can still render them (as error chips
-    # or "running" respectively). Nullable for queries saved before this
-    # column existed; loaders fall back to deriving the set from
-    # QueryResult rows for those.
-    queried_trust_ids: list[UUID] | None = Field(
-        default=None,
-        sa_column=Column("queried_trust_ids", ARRAY(PG_UUID(as_uuid=True)), nullable=True),
+    # or "running" respectively). Empty list until the query is submitted;
+    # submit_cohort_query overwrites it with the dispatched set.
+    queried_trust_ids: list[UUID] = Field(
+        default_factory=list,
+        sa_column=Column("queried_trust_ids", ARRAY(PG_UUID(as_uuid=True)), nullable=False),
     )
 
 
@@ -225,17 +223,19 @@ class Trust(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field()
     last_heartbeat: datetime | None = Field(default=None)
-    # Added for issue #506 — DB-backed trust registry. All nullable so existing
-    # rows seeded from TRUST_NAMES/TRUST_API_KEY_HASHES env vars remain valid;
-    # trusts created via POST /admin/trusts populate api_key_hash + created_at.
-    # `code` is the short display label (e.g. "GSTT"); `region` is the NHS
-    # region/geography (e.g. "London") — both per the design handoff
-    # (design_handoff_full/05_connection/README.md). Optional for back-compat.
+    # Added for issue #506 — DB-backed trust registry. `code` is the short display
+    # label (e.g. "GSTT"); `region` is the NHS region/geography (e.g. "London").
+    # Both stay nullable because they are optional on the POST /admin/trusts flow.
+    # `api_key_hash` is nullable because env-seeded trusts get no hash when
+    # TRUST_API_KEY_HASHES has no entry for them (e.g. prod, where hashes live in
+    # Secrets Manager and the seed sees an empty dict). `disabled_at` is NULL while
+    # the trust is active — it is a soft-delete marker. `created_at` is always set
+    # (default factory on seed inserts, explicit on POST /admin/trusts).
     code: str | None = Field(default=None)
     region: str | None = Field(default=None)
     api_key_hash: str | None = Field(default=None)
     disabled_at: datetime | None = Field(default=None)
-    created_at: datetime | None = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class FLKitSlot(SQLModel, table=True):

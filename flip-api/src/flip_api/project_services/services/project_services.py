@@ -143,9 +143,7 @@ def _distinct_responded_trust_ids(
     1. The staging guard — a trust must be in this set (and not in
        ``errored_trust_ids``) to be stageable, otherwise we'd commit the
        project to data we never received.
-    2. Legacy fallback for ``queried_trust_ids`` — for queries saved
-       before ``Queries.queried_trust_ids`` was tracked at submit time,
-       the loader uses this as the dispatched set too.
+    2. The ``responded_trust_ids`` field surfaced to the per-trust UI.
 
     Args:
         rows (Sequence[tuple[UUID | None, str | None]]): ``(trust_id, data_json)`` pairs from QueryResult.
@@ -876,8 +874,7 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
 
     # Step 2: Most recent query + the runner's display name in one round-trip
     # (same UserProfile LEFT JOIN pattern used in the list endpoint's batch
-    # loader). created_by_name is null for legacy queries saved before the
-    # created_by column existed.
+    # loader). created_by_name is null when the runner has no UserProfile row.
     query_row = session.exec(
         select(Queries, UserProfile.name)  # type: ignore[call-overload]
         .outerjoin(UserProfile, UserProfile.user_id == Queries.created_by)  # type: ignore[arg-type]
@@ -890,19 +887,14 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
     if query_row:
         query, created_by_name = query_row
         # Step 3: per-trust QueryResult rows — drive the "errored" carve-out
-        # for staging, and (only for legacy queries with no persisted
-        # ``queried_trust_ids``) the fallback queried set.
+        # for staging and the responded set.
         result_rows = session.exec(
             select(QueryResult.trust_id, QueryResult.data).where(QueryResult.query_id == query.id)
         ).all()
         errored_trust_ids = _collect_errored_trust_ids(result_rows, query_id=query.id)
         responded_trust_ids = _distinct_responded_trust_ids(result_rows)
         pending_trust_ids, cancelled_trust_ids = _load_task_status_trust_ids(query.id, session)
-        queried_trust_ids = (
-            list(query.queried_trust_ids)
-            if query.queried_trust_ids is not None
-            else responded_trust_ids
-        )
+        queried_trust_ids = list(query.queried_trust_ids)
 
         # Step 4: total cohort size from QueryStats (stored as JSON).
         stats_entry = session.exec(select(QueryStats).where(QueryStats.query_id == query.id)).first()

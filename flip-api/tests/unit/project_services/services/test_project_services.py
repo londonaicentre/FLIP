@@ -593,7 +593,10 @@ class TestGetReimportQueries:
         ch_project_id = uuid4()
         trust_id = uuid4()
 
-        query = Queries(id=uuid4(), name="Test Query", query="SELECT *", project_id=ch_project_id, created=None)
+        query = Queries(
+            id=uuid4(), name="Test Query", query="SELECT *", project_id=ch_project_id,
+            created=None, created_by=uuid4(),
+        )
         xnat_project_status = XNATProjectStatus(
             id=uuid4(),
             xnat_project_id=uuid4(),
@@ -646,13 +649,17 @@ class TestGetProject:
             description="desc",
             status="UNSTAGED",
         )
-        # Step 2: Mock query
-        mock_query = Queries(id=query_id, name="Test Query", query="SELECT *", project_id=project_id, created=None)
-        # Step 3: Mock (trust_id, data) pairs — successful + errored — so the
-        # loader's queried/errored split is exercised end-to-end.
+        # Step 2: Mock query — queried_trust_ids is the persisted dispatched set.
         trust_ok_1 = uuid4()
         trust_ok_2 = uuid4()
         trust_errored = uuid4()
+        mock_query = Queries(
+            id=query_id, name="Test Query", query="SELECT *", project_id=project_id,
+            created=None, created_by=uuid4(),
+            queried_trust_ids=[trust_ok_1, trust_ok_2, trust_errored],
+        )
+        # Step 3: Mock (trust_id, data) pairs — successful + errored — so the
+        # loader's queried/errored split is exercised end-to-end.
         result_rows = [
             (trust_ok_1, '{"record_count": 10, "data": [], "error": null}'),
             (trust_ok_2, '{"record_count": 5, "data": [], "error": null}'),
@@ -732,7 +739,10 @@ class TestGetProject:
             description="desc",
             status="UNSTAGED",
         )
-        mock_query = Queries(id=query_id, name="Query X", query="bad sql", project_id=project_id, created=None)
+        mock_query = Queries(
+            id=query_id, name="Query X", query="bad sql", project_id=project_id,
+            created=None, created_by=uuid4(),
+        )
         mock_stats = QueryStats(id=uuid4(), query_id=query_id, stats="{not-valid-json")
 
         mock_db_session.exec.side_effect = [

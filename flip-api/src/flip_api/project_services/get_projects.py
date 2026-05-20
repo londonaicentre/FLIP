@@ -181,7 +181,8 @@ def _load_latest_query_per_project(
 
     # All queries for these projects, ordered so the latest per project sorts first.
     # LEFT JOIN UserProfile so the response carries the runner's display name
-    # alongside the timestamp ("Last run … by R. Patel"); null for legacy rows.
+    # alongside the timestamp ("Last run … by R. Patel"); the name is null when the
+    # runner has no UserProfile row.
     queries_rows = session.exec(
         select(  # type: ignore[call-overload]
             Queries.id,
@@ -198,7 +199,7 @@ def _load_latest_query_per_project(
     ).all()
 
     latest_per_project: dict[
-        UUID, tuple[UUID, str, str, datetime | None, str | None, list[UUID] | None]
+        UUID, tuple[UUID, str, str, datetime | None, str | None, list[UUID]]
     ] = {}
     for qid, pid, qname, qsql, qcreated, qcreated_by, persisted_queried in queries_rows:
         if pid is not None and pid not in latest_per_project:
@@ -271,11 +272,7 @@ def _load_latest_query_per_project(
             id=qid,
             name=qname,
             query=qsql,
-            queried_trust_ids=(
-                list(persisted_queried)
-                if persisted_queried is not None
-                else responded_trust_ids_by_query.get(qid, [])
-            ),
+            queried_trust_ids=list(persisted_queried),
             pending_trust_ids=pending_trust_ids_by_query.get(qid, []),
             cancelled_trust_ids=cancelled_trust_ids_by_query.get(qid, []),
             responded_trust_ids=responded_trust_ids_by_query.get(qid, []),
