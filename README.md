@@ -202,13 +202,12 @@ docker compose -f deploy/compose.development.yml run --rm < service name >
 
 The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for federated learning. FLARE requires provisioned certificates and configuration files that are generated in the separate repository [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) (see that repository for instructions on how to provision the workspace).
 
-1. **Path Resolution**: While `.env.development` defines `FL_PROVISIONED_DIR` as a relative path (`../flip-fl-base/workspace`), the Makefile automatically converts this to an absolute path using:
+1. **Path Resolution**: `FL_PROVISIONED_DIR` is derived from the `FL_BACKEND` selection inside [`deploy/fl_backend.mk`](deploy/fl_backend.mk) (no longer set in `.env.development`):
 
-   ```makefile
-   override FL_PROVISIONED_DIR := $(shell realpath $(dir $(lastword $(MAKEFILE_LIST)))/../flip-fl-base/workspace)
-   ```
+   - `FL_BACKEND=flower` → `../flip-fl-base-flower/certs`
+   - `FL_BACKEND=nvflare` → `../flip-fl-base/workspace`
 
-   This ensures Docker volume mounts work correctly (Docker requires absolute paths) while maintaining portability across different machines.
+   The Makefile then converts the relative value to an absolute path so Docker volume mounts work correctly. You can override the resolved path at the command line for a one-off, e.g. `make up FL_PROVISIONED_DIR=/tmp/my-workspace`.
 
 2. **Why This Matters**: Docker Compose cannot resolve relative paths for volume mounts, so the absolute path conversion is essential for FL services to access their provisioned certificates and configuration files.
 

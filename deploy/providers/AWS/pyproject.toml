@@ -24,7 +24,7 @@ dependencies = [
     "click>=8.0.0",
     "cryptography>=46.0.5",
     "requests>=2.33.0",
-    "urllib3>=2.6.0",
+    "urllib3>=2.7.0",
 ]
 
 [build-system]

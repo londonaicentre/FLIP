@@ -318,9 +318,16 @@ variable "FL_ADMIN_DIRECTORY" {
 }
 
 variable "ENFORCE_MFA" {
-  description = "Gate authenticated routes on TOTP enrolment. Defaults to true; flip-api Settings default also enforces this when unset."
+  description = <<-EOT
+    Gate authenticated routes on TOTP enrolment. Leave unset for the secure
+    default — flip-api's Pydantic Settings anchors `ENFORCE_MFA = True` when
+    the env var is absent from the container. Set explicitly (typically
+    `false` in `.env.stag`) only to override for testing. Empty string is
+    treated as unset and the variable is omitted from the ECS task env so
+    the Settings default applies.
+  EOT
   type        = string
-  default     = "true"
+  default     = ""
 }
 
 variable "local_trust_public_ip" {

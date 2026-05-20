@@ -15,11 +15,11 @@ from sqlmodel import Session, select
 
 from flip_api.config import get_settings
 from flip_api.db.models.user_models import RoleRef, UserRole
+from flip_api.db.seed.seed_logger import logger
 from flip_api.utils.cognito_helpers import (
     get_user_by_email_or_id,
 )
 from flip_api.utils.constants import ADMIN_EMAIL_1, ADMIN_EMAIL_2, ADMIN_EMAIL_3, OBSERVER_EMAIL, RESEARCHER_EMAIL
-from flip_api.utils.logger import logger
 
 
 def ensure_user_and_role(email: str, role_ref: RoleRef, session: Session) -> None:

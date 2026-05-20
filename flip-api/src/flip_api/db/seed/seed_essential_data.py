@@ -20,9 +20,9 @@ from flip_api.db.seed.main_users import seed_main_users
 from flip_api.db.seed.permissions import seed_permissions
 from flip_api.db.seed.role_permissions import seed_role_permissions
 from flip_api.db.seed.roles import seed_roles
+from flip_api.db.seed.seed_logger import logger
 from flip_api.db.seed.site_config import seed_config
 from flip_api.db.seed.trusts import seed_trusts
-from flip_api.utils.logger import logger
 
 
 def main() -> None:

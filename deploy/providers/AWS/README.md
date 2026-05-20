@@ -40,23 +40,37 @@ In both models, trusts poll the Central Hub for tasks over HTTPS — all communi
 
 Your AWS IAM role/user needs the following permissions for provisioning infrastructure:
 
-- **SSM**: `ssm:GetParameter` for fetching AMI IDs
-- **EC2**: Full access (VPC, instances, security groups, key pairs, Elastic IPs)
+- **SSM**: `ssm:GetParameter` for fetching AMI IDs; `ssm:PutParameter` / `ssm:GetParameter` on the Parameter Store entries consumed by ECS tasks
+- **EC2 / VPC**: Full access (VPC, instances, security groups, key pairs, Elastic IPs, NAT gateway, interface + gateway VPC endpoints)
 - **RDS**: `rds:CreateDBSubnetGroup`, `rds:CreateDBParameterGroup`, `rds:CreateDBInstance`
-- **CloudWatch Logs**: `logs:*`
+- **CloudWatch Logs**: `logs:*` (ECS task logs and WAF logs both land here)
 - **Secrets Manager**: Full access for storing database credentials and API secrets
-- **IAM**: Create and manage roles for EC2 instances
-- **Application Load Balancer**: Create and manage ALBs
+- **IAM**: Create and manage roles for EC2 instances and ECS task execution / task roles
+- **Application + Network Load Balancers**: Create and manage both the ALB (HTTPS API traffic) and the NLB (FL server TCP/gRPC traffic)
+- **ECS / Fargate**: `ecs:*` (cluster, task definitions, services); ECR pull for ECS task images
+- **EFS**: `elasticfilesystem:*` for the shared workspace volumes mounted into FL Fargate tasks
+- **CloudFront + WAFv2**: Create and manage the UI distribution and the WebACL attached to it
+- **ACM**: Issue / import certificates in both `eu-west-2` (ALB origin) and `us-east-1` (CloudFront viewer)
+- **Route53**: Manage A-records for the canonical subdomain (CloudFront alias) and the FL-server NLB
+- **Service Discovery (Cloud Map)**: Create the private DNS namespace used for ECS task-to-task resolution
 - **SES**: Manage email templates (optional for email functionality)
 
 Managed policies that cover these requirements:
 
 - `AmazonEC2FullAccess`
+- `AmazonECS_FullAccess`
 - `AmazonRDSFullAccess`
+- `AmazonElasticFileSystemFullAccess`
 - `CloudWatchLogsFullAccess`
 - `SecretsManagerReadWrite`
 - `IAMFullAccess`
-- `ElasticLoadBalancingFullAccess`
+- `ElasticLoadBalancingFullAccess` (covers ALB and NLB)
+- `CloudFrontFullAccess`
+- `AWSWAFFullAccess`
+- `AWSCertificateManagerFullAccess`
+- `AmazonRoute53FullAccess`
+- `AWSCloudMapFullAccess`
+- `AmazonSSMFullAccess`
 - `AmazonSESFullAccess` (optional)
 
 **Note**: The deployed EC2 instances use separate, scoped IAM roles following the principle of least privilege:
@@ -87,9 +101,9 @@ This command executes the following steps in order:
 6. **`apply`**: Apply infrastructure changes
 7. **`update-env`**: Refresh the root environment file with Terraform outputs
 8. **`ssh-config`**: Update `~/.ssh/config` with EC2 instance IPs
-9. **`ansible-init`**: Configure EC2 instances with Docker, CloudWatch, and FL assets
-10. **`deploy-centralhub`**: Deploy Central Hub services via Docker Compose
-11. **`deploy-trust`**: Deploy Trust services via Docker Compose
+9. **`ansible-init`**: Configure EC2 instances with Docker, CloudWatch, and FL assets (Trust EC2 only — the Central Hub no longer runs application containers on its EC2 host)
+10. **`deploy-centralhub`**: Force-redeploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) and sync the UI to S3 + invalidate CloudFront
+11. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
 12. **`status`**: Run comprehensive health checks
 
 ### flip-ui on S3 + CloudFront
@@ -296,28 +310,36 @@ See [`dev/README.md`](./dev/README.md) for the one-time `terraform import` workf
 
 ```
 deploy/providers/AWS/
-├── main.tf / services.tf       # prod + stag stack root (VPC, RDS, Cognito, SES, EC2)
-├── ecs.tf                      # ECS cluster + capacity providers (Central Hub migration foundation)
-├── efs.tf                      # EFS file systems for shared workspace volumes
+├── main.tf                     # VPC, IGW, NAT, subnets, RDS, Secrets, ALB, NLB, Route53, Central Hub + Trust EC2
+├── services.tf                 # Cognito + SES (delegated to modules), S3 buckets, IAM bindings
+├── ecs.tf                      # ECS cluster + Fargate capacity providers
+├── ecs_services.tf             # ECS Fargate services: flip-api, fl-api-net-1, fl-server-net-1
+├── ecs_tasks.tf                # ECS task definitions for the Central Hub services
+├── ecs_efs_provision.tf        # Bootstrapping job that seeds the EFS volumes
+├── ecs_sg.tf                   # ECS task security groups (per-service)
+├── efs.tf                      # EFS file systems + access points for shared FL workspace volumes
 ├── iam_ecs.tf                  # IAM execution + task roles for ECS Fargate tasks
-├── parameter_store.tf          # SSM Parameter Store entries consumed by ECS tasks
-├── service_discovery.tf        # Cloud Map private DNS namespace for ECS services
-├── vpc_endpoints.tf            # Interface endpoints (ECR, Secrets Manager, SSM, etc.)
+├── parameter_store.tf          # SSM Parameter Store entries consumed by ECS tasks (bucket URIs, internal URL, etc.)
+├── service_discovery.tf        # Cloud Map private DNS namespace (flip.local) for ECS task-to-task resolution
+├── vpc_endpoints.tf            # Interface endpoints (Secrets Manager, SSM, CloudWatch Logs, ECR API + DKR) + S3 gateway endpoint
 ├── dhcp.tf                     # VPC DHCP option set
 ├── locals.tf                   # Shared locals
-├── cloudfront.tf               # CloudFront distribution for flip-ui
-├── certificate.tf              # ACM certificates (ALB + CloudFront)
+├── cloudfront.tf               # CloudFront distribution for flip-ui + attached WAFv2 WebACL
+├── certificate.tf              # ACM certificates (ALB in eu-west-2, CloudFront viewer in us-east-1)
 ├── modules/
 │   ├── cognito/                # shared: pool, domain, client, seed users
 │   ├── ses/                    # shared: sender identity, transactional templates
 │   ├── secgroup/               # shared: security-group wrapper
-│   └── trust_ec2/              # prod/stag only
+│   ├── flip_s3_bucket/         # shared: opinionated FLIP application S3 bucket
+│   └── trust_ec2/              # prod/stag only: Trust EC2 host
 └── dev/                        # dev-account root (calls cognito + ses modules)
 ```
 
-The ECS / EFS / parameter store files are the **foundation** for the Central Hub migration from EC2 +
-docker-compose to ECS Fargate. The cluster, IAM, and networking are provisioned today; task definitions
-and services land in subsequent PRs.
+The Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) run on **ECS
+Fargate** today. The `aws_instance.ec2_instance` Central Hub EC2 still exists in the stack but no
+longer fronts user traffic — the ALB's `target_groups` is empty for instance targets, and both the
+ALB's `/api/*` rule and the NLB's FL-server listener forward to ECS Fargate `target_type=ip` target
+groups (`aws_lb_target_group.ecs_flip_api`, `aws_lb_target_group.ecs_fl_server_tcp`).
 
 The Cognito and SES resources used to live at the root of the prod/stag stack. `services.tf` and `main.tf` ship `moved` blocks that re-anchor the old root addresses onto the new `module.cognito.*` / `module.ses.*` paths, so any state still on the old layout self-heals on the next plan — no manual `terraform state mv` needed. `scripts/import-resources.sh` already targets the module addresses, so a fresh import lands in the right place too.
 
@@ -333,10 +355,15 @@ make destroy
 
 - Trust EC2 instance
 - Central Hub EC2 instance
-- Application Load Balancer
+- ECS Fargate cluster, services, task definitions, and EFS file systems
+- Application Load Balancer (ALB) and Network Load Balancer (NLB)
+- CloudFront distribution + WAFv2 WebACL
+- Cloud Map private DNS namespace
+- VPC interface + gateway endpoints
 - RDS database (in `stag` only — `prod` is protected, see [RDS lifecycle](#rds-lifecycle-stag-vs-prod))
 - VPC, subnets, security groups, NAT gateway
-- IAM roles and policies
+- IAM roles and policies (EC2 + ECS execution/task roles)
+- SSM Parameter Store entries
 - Elastic IPs
 
 **What gets preserved:**
@@ -411,7 +438,7 @@ This prints a list of URLs you can paste into your browser:
 | data-access-api swagger | `http://localhost:8010/docs` | Data access API documentation |
 | Grafana | `http://localhost:3000` | Observability dashboards |
 
-Press Ctrl+C to stop all forwards. The Central Hub UI and API are accessed directly via the public ALB domain (e.g. `https://app.flip.aicentre.co.uk`) — no port forwarding needed.
+Press Ctrl+C to stop all forwards. The Central Hub UI and API are accessed via the CloudFront distribution at the canonical subdomain (e.g. `https://app.flip.aicentre.co.uk`) — no port forwarding needed. The ALB is internal (private subnets, no public IP); CloudFront reaches it through a VPC origin.
 
 ## Hybrid Deployment: Adding an On-Premises Trust
 
@@ -485,12 +512,14 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
 
 1. **flip-ui (Frontend)**: Served as static assets from an S3 bucket behind CloudFront at the canonical subdomain. See the [flip-ui on S3 + CloudFront](#flip-ui-on-s3--cloudfront) section.
 
-2. **Central Hub EC2**: Hosts the main application services (but **not** the UI — that lives in CloudFront)
-   - flip-api (Backend API)
-   - fl-api-net-1 (Federated Learning API for Network 1)
-   - fl-server-net-1 (Federated Learning Server for Network 1)
+2. **Central Hub application services (ECS Fargate, private subnets)**: The hub's application containers run as ECS Fargate tasks, not on EC2.
+   - `flip-api` (Backend API) — fronted by the ALB on `/api/*`
+   - `fl-api-net-1` (Federated Learning API for Network 1) — internal-only, reachable via Cloud Map `flip.local`
+   - `fl-server-net-1` (Federated Learning Server for Network 1) — fronted by the NLB for FL client TCP traffic
 
-3. **Trust EC2** (cloud model): Hosts trust-related services (automatically provisioned)
+3. **Central Hub EC2** (`aws_instance.ec2_instance`, t3.medium, **private subnet**): Vestigial bastion / Ansible bootstrap host. **No longer runs application containers** — the ALB target_groups map carries no instance targets, and no listener rule points at it. Access is via SSM Session Manager only.
+
+4. **Trust EC2** (cloud model, t3.xlarge, **private subnet**): Hosts trust-related services (automatically provisioned)
    - trust-api (polls hub for tasks)
    - imaging-api
    - data-access-api
@@ -499,77 +528,119 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
    - Orthanc (DICOM server)
    - OMOP database
 
-4. **On-Premises Trust** (hybrid model, optional): Same trust services running on a local host
+5. **On-Premises Trust** (hybrid model, optional): Same trust services running on a local host
    - Provisioned via [`deploy/providers/local/`](../local/README.md)
    - Polls the Central Hub over the internet via HTTPS (outbound only)
 
-| Application Component |
-| ---------------------- |
-| **Central Hub (S3 + CloudFront)** |
-| FLIP UI ✅ |
-| **Central Hub (EC2)** |
-| FLIP API ✅ |
-| FL API ✅ |
-| FL Server ✅ |
-| **Trust Services** |
-| Trust API ✅ |
-| Imaging API ✅ |
-| Data Access API ✅ |
-| XNAT (medical imaging) ✅ |
-| Orthanc (DICOM server) ✅ |
+| Application Component | Runtime |
+| --------------------- | ------- |
+| **Central Hub (S3 + CloudFront)** | |
+| FLIP UI ✅ | S3 + CloudFront (WAFv2 attached) |
+| **Central Hub (ECS Fargate, private subnets)** | |
+| FLIP API ✅ | Fargate task behind ALB |
+| FL API ✅ | Fargate task, Cloud Map internal |
+| FL Server ✅ | Fargate task behind NLB |
+| **Trust Services (Docker Compose on Trust EC2, private subnet)** | |
+| Trust API ✅ | Trust EC2 |
+| Imaging API ✅ | Trust EC2 |
+| Data Access API ✅ | Trust EC2 |
+| XNAT (medical imaging) ✅ | Trust EC2 |
+| Orthanc (DICOM server) ✅ | Trust EC2 |
+
+All trust → hub traffic is **outbound from the trust** (the hub never dials the trust). Arrows
+in the diagram point in the direction in which each TCP connection is *initiated*, which is also
+the direction of the request flow.
 
 ```sh
-┌─────────────────┐
-│    Internet      │
-└────────┬────────┘
-         │
-    ┌────▼────────────────┐
-    │    CloudFront         │ (UI from S3; /api/* → ALB)
-    └────┬────────────────┘
-         │   /api/*
-    ┌────▼────┐
-    │   ALB    │ (HTTPS, ACM cert)
-    └────┬────┘
-         │
-    ┌────▼──────────────────────┐
-    │  Central Hub EC2          │
-    │  - flip-api               │
-    │  - fl-api                 │
-    │  - fl-server              │
-    └──────▲───────────▲────────┘
-           │           │
-     polls │           │ polls
-    (HTTPS)│           │(HTTPS)
-           │           │
-    ┌──────┴─────┐  ┌──┴──────────────────────┐
-    │ Trust EC2  │  │ On-Prem Trust (optional) │
-    │ (AWS)      │  │ (home/hospital network)  │
-    │            │  │                          │
-    │ trust-api  │  │ trust-api                │
-    │ imaging-api│  │ imaging-api              │
-    │ data-acc.. │  │ data-access-api          │
-    │ XNAT       │  │ fl-client                │
-    │ Orthanc    │  │                          │
-    │ fl-client  │  │                          │
-    └────────────┘  └──────────────────────────┘
+                            Users (browsers)
+                                  │ HTTPS:443
+                                  ▼
+                  ┌─────────────────────────────────────────┐
+                  │  CloudFront + WAFv2 WebACL               │
+                  │  - serves flip-ui from S3                │
+                  │  - /api/* → ALB origin (HTTPS-only)      │
+                  └─────────────────────┬───────────────────┘
+                                        │ HTTPS:443 via CloudFront VPC origin
+                                        │ (AWS-managed ENI in our VPC; ALB SG
+                                        │  accepts only the CloudFront-VPCOrigins
+                                        │  -Service-SG, so the ALB has no
+                                        │  internet-reachable path)
+                                        ▼
+                  ┌─────────────────────────────┐    ┌──────────────────────────────┐
+                  │  ALB (private subnets,       │    │  NLB (public subnets)        │
+                  │       internal=true)         │    │  TCP listener on             │
+                  │  eu-west-2 ACM cert          │    │  FL_SERVER_PORT               │
+                  │  https-listener: default 404;│    │  SG ingress allow-listed to: │
+                  │  /api/* → flip-api TG        │    │   FLIP VPC NAT public IP +   │
+                  │                              │    │   local_trust_public_ip      │
+                  └──────────────┬──────────────┘    └──────────────┬───────────────┘
+                                 │ → ip:8000                         │ → ip:FL_SERVER_PORT
+                                 ▼                                   ▼
+                  ┌──────────────────────────────────────────────────────────────────┐
+                  │  ECS Fargate tasks (private subnets, awsvpc)                       │
+                  │    flip-api    fl-api-net-1 (Cloud Map flip.local)    fl-server-net-1│
+                  │  Egress: VPC interface + S3 gateway endpoints + shared NAT Gateway   │
+                  │  Shared state: EFS access points (FL workspaces); RDS (private)      │
+                  └──────────────────────────────────────────────────────────────────┘
+
+                  Both trusts below initiate outbound to the hub on two paths
+                  (the hub never dials back):
+                    • HTTPS:443 → CloudFront         — poll for tasks
+                    • TCP:FL_SERVER_PORT → NLB        — FL client during training
+
+                  ┌─────────────────────────────┐    ┌──────────────────────────────┐
+                  │  Trust EC2 — AWS, private    │    │  On-Prem Trust — optional     │
+                  │  subnet, SSM-only inbound    │    │  Local network egress         │
+                  │  Egress: FLIP VPC NAT Gw     │    │  (not the FLIP VPC NAT Gw)    │
+                  │                              │    │                               │
+                  │  Services (Docker Compose):  │    │  Services (Docker Compose):   │
+                  │    trust-api   imaging-api   │    │    trust-api   imaging-api    │
+                  │    data-access-api   XNAT    │    │    data-access-api            │
+                  │    Orthanc   fl-client       │    │    fl-client                  │
+                  └─────────────────────────────┘    └──────────────────────────────┘
 ```
 
-![AWS architecture](docs/AWS.png "AWS architecture")
+![AWS architecture](docs/AWS.drawio.png "AWS architecture")
 
 ### Central Hub Infrastructure
 
-- **VPC**: Custom VPC with public/private subnets
-- **Central Hub EC2**: Single t3.medium instance in a **private subnet**, running Docker containers (UI, API, FL services)
+- **VPC**: Custom VPC (`10.0.0.0/16` by default) across 2 AZs, with public + private subnets and a single shared NAT Gateway
+- **ECS Fargate cluster**: Runs the Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) as awsvpc tasks in **private subnets**. Task definitions, services, and per-service security groups live in `ecs*.tf` and `iam_ecs.tf`.
+- **Central Hub EC2**: t3.medium instance in a **private subnet**. Used today as the SSM-accessible bastion / Ansible bootstrap host — application workloads run on ECS Fargate, not on this instance.
 - **Trust EC2**: Separate t3.xlarge instance in a **private subnet**, running Trust services via Docker Compose
   - Deployed using custom Terraform module (`modules/trust_ec2`)
   - Automatic Docker and Docker Compose installation via user_data
   - Automatic Docker network creation for inter-service communication
   - No inbound ports open — access via SSM (`ssh flip-trust`) and SSM port forwarding for XNAT/Orthanc debugging (`make forward-trust`)
-- **ALB**: Application Load Balancer for traffic routing
-- **RDS**: PostgreSQL 15 managed database (EOL: October 2027)
-- **CloudWatch**: Logging and monitoring for both EC2 instances
-- **Secrets Manager**: Secure storage for API secrets and database credentials
-- **S3 Backend**: Remote state storage with environment-specific buckets
+- **ALB (Application Load Balancer)**: HTTPS-only entrypoint for API traffic. **Internal** (`internal = true`), lives in the **private subnets** — it has no public IP and no internet-facing path. CloudFront reaches it via an `aws_cloudfront_vpc_origin` (AWS-managed ENI in this VPC). The ALB security group accepts HTTPS:443 only from the AWS-managed `CloudFront-VPCOrigins-Service-SG` (Option 2 in the AWS VPC origins docs — the documented most-restrictive pattern; a `vpc_cidr` rule would not work because AWS evaluates VPC-origin SG checks against the service-managed SG, not the ENI source IP). The `https-listener` returns 404 by default and routes `/api/*` to the `ecs-flip-api` target group (`target_type=ip`, port 8000). The legacy `http-redirect` listener on port 80 exists as a belt-and-braces fallback only — its SG has no port-80 ingress, so it is unreachable externally.
+- **NLB (Network Load Balancer)**: TCP pass-through entrypoint for FL server traffic. Lives in the **public subnets**. Listens on `FL_SERVER_PORT` and forwards to the `ecs-fl-server-tcp` target group (`target_type=ip`) so the `fl-server-net-1` Fargate task receives the connection. The NLB security group ingress is allow-listed: NAT Gateway public IP (so the AWS-resident Trust EC2 can reach the FL server) plus any `local_trust_public_ip` set in the env file (so an on-prem trust can reach it). HTTP/2 gRPC framing is opaque to the NLB and forwarded as-is.
+- **CloudFront + WAFv2**: Edge distribution that serves the `flip-ui` static site from S3 and forwards `/api/*` to the internal ALB via an `aws_cloudfront_vpc_origin` (HTTPS-only). A WAFv2 WebACL is attached to the distribution for L7 protection; WAF logs are shipped to CloudWatch Logs.
+- **ACM**: Two certificates — one in `eu-west-2` for the ALB, one in `us-east-1` for the CloudFront viewer.
+- **Route53**: `A` alias records for the canonical subdomain (→ CloudFront) and for the FL-server NLB.
+- **EFS**: Shared file systems and access points used by the FL services for workspace volumes (configs, certs, transfer dir). Mount targets live in the **private subnets**.
+- **Cloud Map (Service Discovery)**: Private DNS namespace `flip.local` used for ECS task-to-task resolution (e.g. `fl-api-net-1.flip.local`).
+- **VPC endpoints**: Interface endpoints (Secrets Manager, SSM, CloudWatch Logs, ECR API + DKR) in the **private subnets** plus an S3 gateway endpoint. Allow Fargate tasks to reach AWS APIs without traversing the NAT Gateway.
+- **RDS**: PostgreSQL 17 managed database (Terraform default, see `var.postgres_version`), in the **private subnets**. Subnet group + security group ingress restricted to the Central Hub EC2 SG and the `flip-api` ECS task SG.
+- **CloudWatch**: Logging and monitoring for ECS tasks, both EC2 instances, the WAFv2 ACL, and VPC endpoints.
+- **Secrets Manager**: Secure storage for API secrets and database credentials (`FLIP_API` secret).
+- **SSM Parameter Store**: Configuration values read by ECS tasks at startup — bucket URIs, internal service URL, internal-service-key header name.
+- **S3 Backend**: Remote state storage with environment-specific buckets, DynamoDB lock table.
+
+### Subnet placement at a glance
+
+| Resource | Subnet | Notes |
+| --- | --- | --- |
+| Internet Gateway | (attached to VPC) | Route target for public subnets |
+| NAT Gateway | **Public** | Single shared NAT for all private-subnet egress |
+| ALB | **Private** (`internal = true`) | Reached only via the CloudFront VPC origin ENI; SG accepts 443 only from `CloudFront-VPCOrigins-Service-SG` |
+| NLB | **Public** | Security group ingress allow-listed to NAT public IP + on-prem Trust IP |
+| Central Hub EC2 (`aws_instance.ec2_instance`) | **Private** | No app workloads; SSM-only |
+| Trust EC2 (`module.trust_ec2`) | **Private** | No inbound ports; SSM-only |
+| ECS Fargate tasks (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) | **Private** | `assign_public_ip = false`, awsvpc ENIs |
+| RDS (PostgreSQL) | **Private** | DB subnet group spans both private subnets |
+| EFS mount targets | **Private** | One per AZ |
+| VPC interface endpoints (Secrets Manager, SSM, Logs, ECR API/DKR) | **Private** | One ENI per AZ |
+| S3 gateway endpoint | (routes attached to private route tables) | No ENI |
 
 ### Trust Infrastructure
 
@@ -589,16 +660,21 @@ Trust services can run on AWS EC2 or on-premises. Both models use the same Docke
 
 ### Port configuration
 
-| Port | Service | Status | Purpose |
-| ------ | --------- | --------- | --------- |
-| **22** | SSH | 🔴 **CLOSED** | Not exposed — remote access is via SSM Session Manager tunnel (see below) |
-| **80** | HTTP | 🟢 **OPEN** | ALB traffic |
-| **443** | HTTPS | 🟢 **OPEN** | ALB HTTPS entrypoint |
-| **3000** | FLIP UI | 🟢 **OPEN** | Frontend application |
-| **8080** | FLIP API | 🟢 **OPEN** | Backend API |
-| **8000** | FL API | 🟢 **OPEN** | Federated learning API |
-| **8002** | FL Server/Admin | 🟡 **CONDITIONAL** | Consolidated FL server/admin traffic (open to trust IPs only) |
-| | | | Trust API: no inbound port needed (trusts poll the hub outbound) |
+Ingress at the load balancers (not at any EC2 SG — both EC2 hosts are in private subnets with no inbound rules from the internet). The NLB is the only load balancer reachable directly from the internet; the ALB is internal and only reachable via the CloudFront VPC origin:
+
+| Port | Load balancer | Status | Source allow-list | Purpose |
+| ---- | ------------- | ------ | ----------------- | ------- |
+| **22** | — | 🔴 **CLOSED everywhere** | n/a | SSH never exposed — remote access is via SSM Session Manager tunnel |
+| **443** | ALB (internal) | 🟢 **OPEN to VPC origin only** | `CloudFront-VPCOrigins-Service-SG` | `/api/*` HTTPS traffic from CloudFront via the VPC origin ENI. Not reachable from the internet (ALB has no public IP). Default action returns 404. |
+| **80** | ALB (internal) | 🟡 **DEFINED, UNREACHABLE** | (no ingress rule) | Legacy HTTP→HTTPS redirect listener. SG has no port-80 ingress and the ALB has no public IP anyway; CloudFront already redirects HTTP→HTTPS at the edge and dials the origin HTTPS-only. |
+| **`FL_SERVER_PORT`** | NLB | 🟡 **CONDITIONAL** | NAT Gateway public IP + `local_trust_public_ip` if set | TCP/gRPC pass-through to the `fl-server-net-1` Fargate task |
+
+Ports referenced internally only (no internet-facing ingress; reached only from inside the VPC or from the load balancers):
+
+- **8000** — `flip-api` ECS task port (ALB target group target port). Not exposed externally.
+- **`FL_API_PORT`** — `fl-api-net-1` ECS task port. Cloud Map internal only; no LB and no external ingress.
+- **5432** — RDS PostgreSQL. Reachable only from the Central Hub EC2 SG and the `flip-api` ECS task SG.
+- **Trust API** — no inbound port needed; trusts poll the hub outbound.
 
 ### Remote Access via SSM Session Manager
 
@@ -680,7 +756,7 @@ Both aliases resolve through the SSM tunnel — no public IP or open port 22 is 
 | `[ERROR] SessionManagerPlugin is not installed` | Session manager plugin is missing or outdated | Upgrade plugin: `brew upgrade session-manager-plugin` or download latest version |
 | `InvalidInstanceID.NotFound` | SSH attempts to connect but fails | Verify instance exists: `terraform output Ec2InstanceId` and `terraform output TrustEc2InstanceId` |
 | `AccessDeniedException` | `aws ssm start-session` returns access denied | Check EC2 instance IAM role has `ssm:StartSession` and `ec2messages:*` permissions (Terraform should have created this) |
-| `Connection timeout` (hanging) | SSM tunnel hangs without error | Check security group allows NLB ingress from NAT Gateway (port 8000-8005); verify instances are running: `aws ec2 describe-instances` |
+| `Connection timeout` (hanging) | SSM tunnel hangs without error | Check NLB security group allows ingress on `FL_SERVER_PORT` from the NAT Gateway public IP (and from `local_trust_public_ip` if a hybrid trust is configured); verify instances are running: `aws ec2 describe-instances` |
 | `Unable to connect to SSM endpoint` | Connection fails immediately | Verify AWS_REGION matches deployment region: `echo $AWS_REGION` should match `eu-west-2` (or your region) |
 | `Bad ProxyCommand` in ~/.ssh/config | SSH config syntax error | Re-generate config: `make ssh-config` and verify it looks like the example above |
 
