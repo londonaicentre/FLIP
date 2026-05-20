@@ -86,7 +86,7 @@ build:
 
 # Run all services
 # Uses --pull always to ensure the latest FL images are used
-up: check-aws-access generate-internal-service-key create-networks _ensure-model-checkpoints-dir
+up: check-aws-access generate-internal-service-key create-networks
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -97,17 +97,8 @@ up: check-aws-access generate-internal-service-key create-networks _ensure-model
 	$(MAKE) -C trust/xnat up
 	@echo "✅ All services started successfully!"
 
-# Ensure model_checkpoints directory exists with proper permissions before starting containers
-# to avoid Docker creating it as root which prevents the fl-api container (runs as app user) from writing
-# Only needed for Flower backend
-_ensure-model-checkpoints-dir:
-	@if [ "$(FL_BACKEND)" = "flower" ]; then \
-		mkdir -p model_checkpoints/net-1 model_checkpoints/net-2; \
-		chmod 777 model_checkpoints model_checkpoints/net-1 model_checkpoints/net-2; \
-	fi
-
 # Minimal $(MAKE) up
-up-no-trust: generate-internal-service-key create-networks _ensure-model-checkpoints-dir
+up-no-trust: generate-internal-service-key create-networks
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
@@ -120,7 +111,7 @@ up-trusts: create-networks
 	@echo "✅ Trust services started successfully!"
 
 # Uses --pull always to ensure the latest FL images and 'stag'/'prod' version are used
-up-centralhub-ec2: create-networks-centralhub _ensure-model-checkpoints-dir
+up-centralhub-ec2: create-networks-centralhub
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting central hub API services..."
@@ -149,7 +140,7 @@ up-local-trust: create-networks
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-local PROD=$(PROD)
 	@echo "✅ Local Trust services started successfully!"
 
-central-hub: create-networks-centralhub _ensure-model-checkpoints-dir
+central-hub: create-networks-centralhub
 	$(MAKE) -C flip-api up
 
 # Stop all containers
