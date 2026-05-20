@@ -54,5 +54,8 @@ terraform.rc
 
 # End of https://www.toptal.com/developers/gitignore/api/terraform
 
+# Terraform build artifacts (Lambda zip, etc.)
+**/.terraform-build/
+
 .env
 .venv/
