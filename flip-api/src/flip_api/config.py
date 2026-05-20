@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
     TRUST_NAMES: list[str]
+    # Per-environment display names for seeded trusts: maps the env-slot name (e.g.
+    # "Trust_1") to the friendly name persisted as Trust.name. Slots not listed keep
+    # their env-slot name. Read by seed_trusts and trust/Makefile, so the display name
+    # lives only in the env file — never hardcoded in code or a Makefile.
+    TRUST_DISPLAY_NAMES: dict[str, str] = {}
     # FL kit slot pool names — pre-provisioned in flip-fl-base (workspace/net-N/services/<slot>).
     # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
     # free slot regardless of the trust's friendly name. Defaults to [] so existing dev

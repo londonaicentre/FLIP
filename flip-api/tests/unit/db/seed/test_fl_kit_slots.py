@@ -38,7 +38,9 @@ class TestSlotNumberDerivation:
 
 @patch("flip_api.db.seed.fl_kit_slots.get_settings")
 def test_seed_inserts_new_slots(mock_get_settings, mock_session):
-    mock_get_settings.return_value = SimpleNamespace(FL_KIT_SLOT_NAMES=["Trust_1", "Trust_2"])
+    mock_get_settings.return_value = SimpleNamespace(
+        FL_KIT_SLOT_NAMES=["Trust_1", "Trust_2"], TRUST_DISPLAY_NAMES={}
+    )
     # Phase 1: both slot lookups return None (new); phase 2: backfill query returns []
     # (no slots to assign).
     mock_session.exec.side_effect = [
@@ -60,7 +62,9 @@ def test_seed_inserts_new_slots(mock_get_settings, mock_session):
 
 @patch("flip_api.db.seed.fl_kit_slots.get_settings")
 def test_seed_skips_existing_slots(mock_get_settings, mock_session):
-    mock_get_settings.return_value = SimpleNamespace(FL_KIT_SLOT_NAMES=["Trust_1"])
+    mock_get_settings.return_value = SimpleNamespace(
+        FL_KIT_SLOT_NAMES=["Trust_1"], TRUST_DISPLAY_NAMES={}
+    )
     existing = FLKitSlot(slot_name="Trust_1", slot_number=1)
     mock_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=existing)),
@@ -75,7 +79,9 @@ def test_seed_skips_existing_slots(mock_get_settings, mock_session):
 @patch("flip_api.db.seed.fl_kit_slots.get_settings")
 def test_seed_backfills_slot_to_matching_named_trust(mock_get_settings, mock_session):
     """A seeded trust whose name matches a slot_name gets that slot bound to it."""
-    mock_get_settings.return_value = SimpleNamespace(FL_KIT_SLOT_NAMES=["Trust_1"])
+    mock_get_settings.return_value = SimpleNamespace(
+        FL_KIT_SLOT_NAMES=["Trust_1"], TRUST_DISPLAY_NAMES={}
+    )
     existing_slot = FLKitSlot(slot_name="Trust_1", slot_number=1)
     matching_trust = Trust(id=uuid4(), name="Trust_1")
 
@@ -91,8 +97,29 @@ def test_seed_backfills_slot_to_matching_named_trust(mock_get_settings, mock_ses
 
 
 @patch("flip_api.db.seed.fl_kit_slots.get_settings")
+def test_seed_backfills_slot_to_display_named_trust(mock_get_settings, mock_session):
+    """A slot resolves through TRUST_DISPLAY_NAMES to the trust's persisted display name."""
+    mock_get_settings.return_value = SimpleNamespace(
+        FL_KIT_SLOT_NAMES=["Trust_1"],
+        TRUST_DISPLAY_NAMES={"Trust_1": "Open Trust (EC2)"},
+    )
+    existing_slot = FLKitSlot(slot_name="Trust_1", slot_number=1)
+    matching_trust = Trust(id=uuid4(), name="Open Trust (EC2)")
+
+    mock_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=existing_slot)),  # slot already exists
+        MagicMock(all=MagicMock(return_value=[existing_slot])),  # unassigned-slots query
+        MagicMock(first=MagicMock(return_value=matching_trust)),  # trust-by-display-name lookup
+    ]
+
+    seed_fl_kit_slots(mock_session)
+
+    assert existing_slot.assigned_to_trust_id == matching_trust.id
+
+
+@patch("flip_api.db.seed.fl_kit_slots.get_settings")
 def test_seed_empty_pool_is_noop(mock_get_settings, mock_session):
-    mock_get_settings.return_value = SimpleNamespace(FL_KIT_SLOT_NAMES=[])
+    mock_get_settings.return_value = SimpleNamespace(FL_KIT_SLOT_NAMES=[], TRUST_DISPLAY_NAMES={})
 
     seed_fl_kit_slots(mock_session)
 

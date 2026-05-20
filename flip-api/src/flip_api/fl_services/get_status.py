@@ -107,7 +107,7 @@ def get_status_endpoint(
             # For each net, we would like to know which Trusts are connected and their statuses.
             # Match clients on the FL kit slot name (not Trust.name) — the FL net only ever
             # sees the slot's CN, which is independent of the trust's hub-side display name
-            # (see SEED_NAME_OVERRIDES). The response still surfaces trust.name so the UI
+            # (see TRUST_DISPLAY_NAMES). The response still surfaces trust.name so the UI
             # shows the friendly name.
             trusts = get_trusts(db)
             slot_names_by_trust_id = get_slot_names_by_trust_ids([t.id for t in trusts], db)

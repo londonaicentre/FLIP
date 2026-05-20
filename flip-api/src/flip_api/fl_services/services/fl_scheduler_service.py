@@ -234,7 +234,7 @@ def get_slot_names_by_trust_ids(trust_ids: list[UUID], session: Session) -> dict
     The FL protocol identifies participants by the slot identity (the CN baked into the
     kit's cert), which is independent of the trust's display name on the hub. Callers that
     need to talk to / compare against an FL participant must look up the slot name rather
-    than using ``Trust.name`` — see ``SEED_NAME_OVERRIDES`` for why those can differ.
+    than using ``Trust.name`` — see ``TRUST_DISPLAY_NAMES`` for why those can differ.
 
     Args:
         trust_ids (list[UUID]): Trust ids to resolve. Empty input → empty mapping.
