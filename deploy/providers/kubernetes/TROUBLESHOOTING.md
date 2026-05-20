@@ -27,6 +27,7 @@ services, with a focus on the XNAT DICOM import pipeline.
    - [7.7 AWS Credentials Expired in K8s Secret](#77-aws-credentials-expired-in-k8s-secret)
    - [7.8 EFS Sync Permission Issues (Root vs UID 1001)](#78-efs-sync-permission-issues-root-vs-uid-1001)
    - [7.9 Container Image Pull from Private ECR](#79-container-image-pull-from-private-ecr)
+   - [7.10 gRPC Async Connect Fails on Kernel 7 (Ubuntu 26.04)](#710-grpc-async-connect-fails-on-kernel-7-ubuntu-2604)
 
 ---
 
@@ -740,6 +741,73 @@ flClient:
   "Resource": "arn:aws:ecr:eu-west-2:080369786334:repository/*"
 }
 ```
+
+### 7.10 gRPC Async Connect Fails on Kernel 7 (Ubuntu 26.04)
+
+**Symptom:** fl-client pod crash-loops with no NVFlare registration output.
+The pod logs end at `STARTING CLIENT...` with no further output. After
+~60 seconds the faulthandler shows the main thread stuck at
+`while not sp_established: sleep(1.0)` and the overseer thread is blocked.
+The fl-server never sees the client register.
+
+**Root Cause:** The gRPC C-core's async TCP connect mechanism fails on
+kernel 7.0.0 (Ubuntu 26.04). Python's synchronous `socket.connect()` +
+`select.poll()` work perfectly, but the C-core's internal pollset / event-engine
+cannot complete the three-way handshake asynchronously. Even connecting to
+`127.0.0.1` fails.
+
+Versions tested:
+
+| grpcio | Behaviour |
+|--------|-----------|
+| 1.76.0 (container default) | Async connect stuck in CONNECTING or TRANSIENT_FAILURE |
+| 1.78.0 wheel | Segfault (core dump) on import |
+| 1.80.0 wheel | Segfault (core dump) on import |
+
+**Fix:** Force NVFlare to use the **asyncio-based gRPC driver**
+(`aio_grpc_driver`) instead of the default synchronous one. The aio driver
+uses `grpc.aio.secure_channel` / `grpc.aio.insecure_channel`, which rely on
+Python's asyncio event loop for async connect — this works on kernel 7.0.
+
+The fix requires two changes:
+
+1. **Change the transport scheme** from `grpc` to `agrpc` in the participant
+   kit's `fed_client.json`. `agrpc` is a drop-in replacement — it speaks the
+   same gRPC wire protocol over HTTP/2, so the fl-server does not need any
+   changes.
+
+2. **Do NOT change `sp_end_point`** in the `overseer_agent` section. The
+   `FederatedClientBase.set_sp()` method only creates the cellnet connector
+   (which triggers the gRPC connection) when `server != location`. If the SP
+   endpoint is rewritten to match the server target, the cell is never
+   created and the client never registers.
+
+**Required kit files:** The following files must be present in the startup
+kit (e.g., `/opt/flip/k8s-fl-client-kits/Trust_K8s/startup/`):
+
+| File | Purpose |
+|------|---------|
+| `run_client.py` | Wrapper that modifies `fed_client.json` scheme to `agrpc`, then `exec`s `client_train.py`. Preserves the backup for restore on exit. |
+| `patch.py` | Patches `grpc.ssl_channel_credentials` to inject correct client certs and bypasses NVFlare's `_check_secure_content` signature validation (needed because `fed_client.json` was manually edited). |
+| `sitecustomize.py` | Auto-loaded at Python startup. Applies the same patches for worker subprocesses. Also sets `GRPC_POLL_STRATEGY=epoll1`. |
+
+**Successful registration log:**
+```
+2026-05-20 09:53:00,157 - Authenticator - INFO - verified server identity 'fl.stag.flip.aicentre.co.uk'
+2026-05-20 09:53:00,204 - Authenticator - INFO - Verified received token and signature successfully
+2026-05-20 09:53:00,204 - FederatedClient - INFO - Successfully registered client:Trust_K8s for project net-1.
+```
+
+**What was tried (and failed):**
+
+| Approach | Result |
+|----------|--------|
+| grpcio 1.78.0 / 1.80.0 wheel replacement | Segfault on kernel 7.0 |
+| TCP proxy (blocking TLS to NLB, gRPC to localhost) | Proxy works but gRPC can't async-connect even to `127.0.0.1` |
+| Unix Domain Sockets (`unix:/tmp/sock`) | Same async connect failure |
+| `GRPC_POLL_STRATEGY` (`epoll1`, `poll`, `none`, `poll_cv2`) | None work |
+| `GRPC_DNS_RESOLVER=native` | No improvement |
+| `channel.channel_ready()` explicit wait | Works locally, but **not needed** — the `agrpc` scheme alone suffices |
 
 ---
 
