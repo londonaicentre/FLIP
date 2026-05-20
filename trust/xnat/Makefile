@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up deploy down clean xnat-shell xnat-war-download xnat-plugins-download \
+.PHONY: build up deploy down xnat-stack-down clean xnat-shell xnat-war-download xnat-plugins-download \
 	xnat-reset xnat-configure xnat-configure-trust-1 xnat-configure-trust-2 xnat-configure-local \
 	create-network-trust-1 create-network-trust-2 create-network-trust-local \
 	up-xnat-1 up-xnat-2 up-xnat-local \
@@ -102,7 +102,13 @@ build:
 		nginx/
 	@echo "✅ XNAT Docker images built successfully!"
 
-up: xnat-reset up-xnat-1 up-xnat-2
+# `up` runs `down` before `xnat-reset`: `xnat-reset` does `sudo rm -rf` on the
+# bind-mounted host data dirs, and if a stack is still running its xnat-web
+# container keeps the deleted directory inode mounted — every archive write
+# then fails ("Source ... does not exist") and DICOM import silently breaks.
+# `down` removes the stacks and blocks until their containers are actually
+# gone, so the directories are safe to delete by the time `xnat-reset` runs.
+up: down xnat-reset up-xnat-1 up-xnat-2
 
 up-xnat-1: create-network-trust-1
 	XNAT_PATH=${XNAT_PATH} \
@@ -133,16 +139,35 @@ up-xnat-local: create-network-trust-local
 	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} ${project_local}
 	$(MAKE) xnat-configure-local
 
+# Remove a single XNAT Swarm stack and BLOCK until all its containers have
+# stopped. `docker stack rm` is asynchronous; callers that then delete the
+# stack's bind-mounted host directories (see `xnat-reset`) must wait for the
+# containers to release those mounts first.
+# Usage: $(MAKE) xnat-stack-down STACK=<stack-name>
+xnat-stack-down:
+	@[ -n "$(STACK)" ] || (echo "❌ STACK is required"; exit 1)
+	@echo "🧹 Removing XNAT stack $(STACK) if present..."
+	@docker stack rm $(STACK) 2>/dev/null || true
+	@elapsed=0; \
+	while [ -n "$$(docker ps -aq --filter label=com.docker.stack.namespace=$(STACK) 2>/dev/null)" ]; do \
+		if [ $$elapsed -ge 120 ]; then \
+			echo "❌ ERROR: $(STACK) containers still running after 120s"; exit 1; \
+		fi; \
+		echo "⏳ Waiting for $(STACK) containers to stop ($${elapsed}s)..."; \
+		sleep 2; elapsed=$$((elapsed + 2)); \
+	done
+	@echo "✅ $(STACK) fully removed."
+
 down-xnat-1:
-	docker stack rm ${project1}
+	$(MAKE) xnat-stack-down STACK=${project1}
 
 down-xnat-2:
-	docker stack rm ${project2}
+	$(MAKE) xnat-stack-down STACK=${project2}
 
 down: down-xnat-1 down-xnat-2
 
 down-xnat-local:
-	docker stack rm ${project_local}
+	$(MAKE) xnat-stack-down STACK=${project_local}
 
 # Stop and clean up images
 clean: down
