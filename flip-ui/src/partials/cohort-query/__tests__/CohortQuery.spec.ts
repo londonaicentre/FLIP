@@ -94,6 +94,10 @@ const stagedProjectWithQuery: IProject = {
         name: "Test Query",
         query: "SELECT * FROM patients",
         queriedTrustIds: ["trust-1", "trust-2"],
+        pendingTrustIds: [],
+        cancelledTrustIds: [],
+        respondedTrustIds: [],
+        erroredTrustIds: [],
         totalCohort: 100
     }
 };
@@ -105,6 +109,10 @@ const unstagedProjectWithQuery: IProject = {
         name: "Test Query",
         query: "SELECT * FROM patients",
         queriedTrustIds: ["trust-1", "trust-2"],
+        pendingTrustIds: [],
+        cancelledTrustIds: [],
+        respondedTrustIds: [],
+        erroredTrustIds: [],
         totalCohort: 100
     }
 };

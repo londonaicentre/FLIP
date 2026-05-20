@@ -103,7 +103,7 @@ import { array, lazy, object, string } from "yup";
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
 import { IInitTraining, initialiseTraining,
-    JobTypes,
+    JobType,
     ModelStatus,
     ModelStatusEnum } from "@/services/model-service";
 import { Snackbar } from "@/utils/snackbar";
@@ -118,7 +118,7 @@ interface ITrainingProps {
     allFilesUploaded: boolean;
     requiredFiles: string[];
     uploadedFileNames: string[];
-    jobType: JobTypes;
+    jobType: JobType;
     flBackendLabel?: string;
 }
 

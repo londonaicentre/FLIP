@@ -80,9 +80,9 @@ vi.mock("@/services/file-service", () => ({
     downloadModelFile: (...args: unknown[]) => mockDownloadModelFile(...args)
 }));
 
-// JobTypes is imported by ModelUpload only as a type annotation; the
+// JobType is imported by ModelUpload only as a type annotation; the
 // value itself is never read at runtime but the module needs to resolve.
-vi.mock("@/services/model-service", () => ({ JobTypes: {} }));
+vi.mock("@/services/model-service", () => ({ JobType: {} }));
 
 const mockSnackbarSuccess = vi.fn();
 const mockSnackbarError = vi.fn();
@@ -122,7 +122,7 @@ const baseProps = {
     canUpload: true,
     modelId: "model-under-test",
     requiredFiles: [],
-    jobType: "standard" as unknown as Record<string, unknown>
+    jobType: "standard"
 };
 
 function mountModelUpload(

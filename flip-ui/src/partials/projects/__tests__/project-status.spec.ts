@@ -91,7 +91,7 @@ const mockTrustData: IImagingProjectStatus[] = [
 // Separate signature so "pass undefined explicitly" actually reaches the
 // store mutation — using a default-parameter value would swallow an
 // explicit `undefined` and reinstate the 5.
-function mountProjectStatus(canLoad = true, ...maxOverride: [number | undefined]?) {
+function mountProjectStatus(canLoad = true, ...maxOverride: [] | [number | undefined]) {
     const maxReimportCount = maxOverride.length ? maxOverride[0] : 5;
     // Seed the siteDetailsStore with the cap the component reads from,
     // mirroring what /site/details populates at runtime. Tests default to

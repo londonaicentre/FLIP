@@ -167,40 +167,56 @@ export const projectDataPage1: IProject[] = [
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 1",
+                organisation: "Example Trust",
                 isDisabled: false
             },
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 2",
+                organisation: "Example Trust",
                 isDisabled: false
             },
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 3",
+                organisation: "Example Trust",
                 isDisabled: false
             }, {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 4",
+                organisation: "Example Trust",
                 isDisabled: false
             },
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 5",
+                organisation: "Example Trust",
                 isDisabled: false
             },
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 6",
+                organisation: "Example Trust",
                 isDisabled: false
             },
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 7",
+                organisation: "Example Trust",
                 isDisabled: false
             },
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 8",
+                organisation: "Example Trust",
                 isDisabled: false
             }
         ],

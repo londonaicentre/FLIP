@@ -314,7 +314,9 @@ describe("User Management", () => {
         // underlying DOM element, so read the prop off the component
         // directly to verify the dirty-flag → disabled binding.
         function saveButtonDisabled(wrapper: VueWrapper): boolean {
-            return wrapper.findComponent("[data-test='save-user-btn']").props("disabled") as boolean;
+            const btn = wrapper.findComponent("[data-test='save-user-btn']") as VueWrapper;
+
+            return (btn.props() as Record<string, unknown>).disabled as boolean;
         }
 
         test("calls updateUserRoles, clears dirty, and shows a success snackbar on success", async () => {

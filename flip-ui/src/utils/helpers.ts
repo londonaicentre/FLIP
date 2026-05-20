@@ -91,9 +91,9 @@ export const getRandomId = (): string => crypto.randomUUID();
 
 
 export const getInitials = (name: string): string => {
-    const rgx = new RegExp(/(\p{L}{1})\p{L}+/, "gu");
+    const rgx = /(\p{L}{1})\p{L}+/gu;
 
-    const initials = [...name.matchAll(rgx)] || [];
+    const initials = [...name.matchAll(rgx)];
 
     const firstInitial = initials.shift()?.[1] ?? "";
     const lastInitial = initials.pop()?.[1] ?? "";

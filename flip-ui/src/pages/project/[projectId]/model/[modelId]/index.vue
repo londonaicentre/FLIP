@@ -54,7 +54,7 @@
                             primary
                             data-test="initiate-training-btn"
                             :disabled="!readyToTrain"
-                            :loading="trainingRef?.isSubmitting?.value ?? false"
+                            :loading="trainingRef?.isSubmitting ?? false"
                             @click="trainingRef?.initiateTraining()"
                         >
                             Initiate Training

@@ -332,7 +332,7 @@ const updateUserList = (newPageNumber: number) => {
     pageNumber.value = newPageNumber;
 };
 
-const setSelectedUser = (user: IManagedUser) => {
+const setSelectedUser = (user: IUser) => {
     selectedUser.value = {
         ...user,
         roles: user.roles ?? [], // Ensure it's not undefined

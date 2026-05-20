@@ -17,6 +17,7 @@ import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
 import Training from "@/partials/models/Training.vue";
+import { ModelStatus } from "@/services/model-service";
 
 vi.mock("vue-router", async (importOriginal) => {
     const actual = await importOriginal<typeof import("vue-router")>();
@@ -45,7 +46,7 @@ const actionsMenuStub = { template: "<div data-test=\"training-actions-menu\" />
 
 interface MountOpts {
     permissions?: string[];
-    status?: string;
+    status?: ModelStatus;
     allFilesUploaded?: boolean;
     requiredFiles?: string[];
     uploadedFileNames?: string[];

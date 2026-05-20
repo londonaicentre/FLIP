@@ -159,25 +159,25 @@
                                                 <span class="font-mono text-[11px] text-gray-500 dark:text-gray-400">
                                                     {{ rowTotal(project) === 0
                                                         ? "no imports yet"
-                                                        : `${project.importStatus.successful} / ${rowTotal(project)}` }}
+                                                        : `${project.importStatus?.successful ?? 0} / ${rowTotal(project)}` }}
                                                 </span>
                                             </div>
                                             <div class="flex h-2 rounded-full overflow-hidden bg-gray-100 dark:bg-gray-700">
                                                 <template v-if="rowTotal(project) > 0">
                                                     <div
-                                                        v-if="(project.importStatus.successful ?? 0) > 0"
+                                                        v-if="(project.importStatus?.successful ?? 0) > 0"
                                                         class="bg-emerald-500 transition-all"
-                                                        :style="{ width: `${((project.importStatus.successful ?? 0) / rowTotal(project)) * 100}%` }"
+                                                        :style="{ width: `${((project.importStatus?.successful ?? 0) / rowTotal(project)) * 100}%` }"
                                                     />
                                                     <div
-                                                        v-if="(project.importStatus.processing ?? 0) > 0"
+                                                        v-if="(project.importStatus?.processing ?? 0) > 0"
                                                         class="bg-sky-500 transition-all"
-                                                        :style="{ width: `${((project.importStatus.processing ?? 0) / rowTotal(project)) * 100}%` }"
+                                                        :style="{ width: `${((project.importStatus?.processing ?? 0) / rowTotal(project)) * 100}%` }"
                                                     />
                                                     <div
-                                                        v-if="(project.importStatus.queued ?? 0) > 0"
+                                                        v-if="(project.importStatus?.queued ?? 0) > 0"
                                                         class="bg-gray-400 transition-all"
-                                                        :style="{ width: `${((project.importStatus.queued ?? 0) / rowTotal(project)) * 100}%` }"
+                                                        :style="{ width: `${((project.importStatus?.queued ?? 0) / rowTotal(project)) * 100}%` }"
                                                     />
                                                     <div
                                                         v-if="rowFailed(project) > 0"

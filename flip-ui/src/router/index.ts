@@ -96,7 +96,6 @@ export const routeChange = {
     changePassword: (email: string): void => {
         router.push({
             name: "ChangePassword",
-            path: "/auth/change-password",
             params: { email }
         });
     },
@@ -110,10 +109,7 @@ export const routeChange = {
         router.push({ path: "/auth/mfa-verify" });
     },
     accessRequest: (): void => {
-        router.push({
-            name: "AccessRequest",
-            path: "/auth/access-request"
-        });
+        router.push({ path: "/auth/access-request" });
     },
     back: (): void => {
         router.back();
