@@ -47,11 +47,20 @@ for mp4 in "${videos[@]}"; do
     # reset-mfa.spec.ts → reset-mfa
     name="${spec_file%.spec.ts}"
     # Find the spec on disk under docs/<bucket>/, pick the bucket from its path.
-    spec_path="$(find "${specs_root}" -type f -name "${spec_file}" -print -quit)"
-    if [[ -z "${spec_path}" ]]; then
+    # A spec basename must be unique across buckets — otherwise the bucket the
+    # GIF routes to would depend on find's traversal order. Fail loud instead.
+    mapfile -t spec_matches < <(find "${specs_root}" -type f -name "${spec_file}" | sort)
+    if (( ${#spec_matches[@]} == 0 )); then
         echo "  skipping ${base}: no matching spec under ${specs_root}/" >&2
         continue
     fi
+    if (( ${#spec_matches[@]} > 1 )); then
+        echo "  error: ${spec_file} matches multiple specs under ${specs_root}/:" >&2
+        printf '    %s\n' "${spec_matches[@]}" >&2
+        echo "  spec basenames must be unique across buckets — rename one." >&2
+        exit 1
+    fi
+    spec_path="${spec_matches[0]}"
     bucket="$(basename "$(dirname "${spec_path}")")"
     out_dir="${assets_root}/${bucket}"
     mkdir -p "${out_dir}"

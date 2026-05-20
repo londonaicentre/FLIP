@@ -9,12 +9,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Re-record the admin user-action GIFs whenever the admin UI changes on main,
-# then open a PR against develop with the regenerated assets. Functional CI
+# Re-record the UI user-action GIFs whenever the UI changes on main, then open
+# a PR against develop with the regenerated assets. Functional CI
 # (test_flip_ui.yml) is untouched — video stays off there so the 6-shard PR
 # pipeline isn't slowed down.
 #
-# See flip-ui/test/cypress/docs/admin/ for the demo specs and
+# See flip-ui/test/cypress/docs/ for the demo specs and
 # flip-ui/scripts/videos-to-gifs.sh for the ffmpeg conversion.
 
 name: Regenerate docs GIFs
@@ -96,15 +96,15 @@ jobs:
             docs/source/assets/admin/*.gif
             docs/source/assets/flip/*.gif
           commit-message: |
-            docs: regenerate admin user-action GIFs
+            docs: regenerate UI user-action GIFs
 
             Auto-regenerated from main by .github/workflows/regenerate_docs_gifs.yml.
 
             Signed-off-by: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
-          title: "docs: regenerate admin user-action GIFs"
+          title: "docs: regenerate UI user-action GIFs"
           body: |
             Auto-regenerated from `main` @ ${{ github.sha }} by `.github/workflows/regenerate_docs_gifs.yml`.
 
-            Review the rendered GIFs under `docs/source/assets/admin/` before merging.
+            Review the rendered GIFs under `docs/source/assets/` before merging.
           signoff: true
           delete-branch: true
