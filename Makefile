@@ -12,7 +12,8 @@
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access up-local-trust generate-internal-service-key register-deploy-trusts integration_test
+		check-aws-access up-local-trust generate-internal-service-key \
+		register-trust-1 register-trust-2 register-trusts _wait-for-hub integration_test
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -92,7 +93,7 @@ up: check-aws-access generate-internal-service-key create-networks
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
 	@echo "🔑 Registering trusts and writing kit files..."
-	$(MAKE) register-deploy-trusts
+	$(MAKE) register-trusts
 	@echo "🚢 Starting trust services..."
 	$(MAKE) -C trust up
 	@echo "🚢 Starting XNAT services..."
@@ -107,7 +108,7 @@ up-no-trust: generate-internal-service-key create-networks
 
 up-trusts: create-networks
 	@echo "🔑 Registering trusts and writing kit files (hub must already be up)..."
-	$(MAKE) register-deploy-trusts
+	$(MAKE) register-trusts
 	@echo "🚢 Starting Trust services..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust up
 	@echo "🚢 Starting XNAT services..."
@@ -283,14 +284,10 @@ e2e_smoke:
 generate-internal-service-key:
 	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
 
-# Register the trusts listed in DEPLOY_TRUSTS on the locally-running hub and
-# write their kit files into trust/.env.<slot>. Idempotent: trusts that already
-# exist are skipped and their kit files are left untouched.
-#
-# Waits for flip-api to answer first: its entrypoint seeds the DB — including
-# the FL kit-slot pool that register_trust claims from — *before* the API comes
-# up, so a healthy /api/health is a safe "seed done" signal.
-register-deploy-trusts:
+# Poll flip-api /api/health before registering. The entrypoint seeds the DB —
+# including the FL kit-slot pool that register_trust claims from — *before* the
+# API answers, so a healthy /api/health is a safe "seed complete" signal.
+_wait-for-hub:
 	@echo "⏳ Waiting for the hub (flip-api) to be ready on :$(API_PORT)..."
 	@for i in $$(seq 1 90); do \
 	  if curl -sf "http://localhost:$(API_PORT)/api/health" >/dev/null 2>&1; then \
@@ -299,9 +296,25 @@ register-deploy-trusts:
 	  if [ $$i -eq 90 ]; then echo "❌ flip-api not ready after 180s — is the hub up?"; exit 1; fi; \
 	  sleep 2; \
 	done
-	@echo "🔑 Registering DEPLOY_TRUSTS on the local hub..."
-	@$(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_deploy_trusts \
+
+# Register one trust on the running hub (idempotent — a trust whose name already
+# exists is skipped, its kit file left untouched) and write/refresh its kit file
+# under trust/.env.<slot>. TRUST_<n>_* come from the env file; the hub is never
+# told the list. register-trusts runs both in order so trust 1 claims the first
+# free FL kit slot, trust 2 the next.
+register-trust-1: _wait-for-hub
+	@echo "🔑 Registering trust 1 ($(TRUST_1_NAME))..."
+	@$(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust \
+		--name "$(TRUST_1_NAME)" $(if $(TRUST_1_CODE),--code "$(TRUST_1_CODE)") $(if $(TRUST_1_REGION),--region "$(TRUST_1_REGION)") \
 		| bash scripts/distribute-trust-kits.sh
+
+register-trust-2: _wait-for-hub
+	@echo "🔑 Registering trust 2 ($(TRUST_2_NAME))..."
+	@$(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust \
+		--name "$(TRUST_2_NAME)" $(if $(TRUST_2_CODE),--code "$(TRUST_2_CODE)") $(if $(TRUST_2_REGION),--region "$(TRUST_2_REGION)") \
+		| bash scripts/distribute-trust-kits.sh
+
+register-trusts: register-trust-1 register-trust-2
 
 check-aws-access:
 	@echo "🔎 Checking AWS CLI access..."

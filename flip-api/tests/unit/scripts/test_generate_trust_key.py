@@ -11,7 +11,6 @@
 #
 
 import hashlib
-from unittest.mock import patch
 
 from flip_api.scripts.generate_trust_key import generate_trust_key
 
@@ -38,24 +37,3 @@ class TestGenerateTrustKey:
         key1, _ = generate_trust_key()
         key2, _ = generate_trust_key()
         assert key1 != key2
-
-
-class TestGenerateTrustKeyMain:
-    def test_main_prints_key_info(self, capsys):
-        """main() should print the trust name, key, and hash."""
-        with (
-            patch("sys.argv", ["generate_trust_key", "--trust-name", "Trust_CLI"]),
-            patch(
-                "flip_api.scripts.generate_trust_key.generate_trust_key",
-                return_value=("test-key-abc", "test-hash-def"),
-            ) as mock_gen,
-        ):
-            from flip_api.scripts.generate_trust_key import main
-
-            main()
-
-        mock_gen.assert_called_once_with()
-        captured = capsys.readouterr()
-        assert "Trust_CLI" in captured.out
-        assert "test-key-abc" in captured.out
-        assert "test-hash-def" in captured.out

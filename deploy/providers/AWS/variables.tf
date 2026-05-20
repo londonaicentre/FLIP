@@ -290,12 +290,6 @@ variable "PACS_UI_PORT" {
   type        = number
 }
 
-variable "DEPLOY_TRUSTS" {
-  description = "JSON-array string of trusts the deploy registers via `register-deploy-trusts`. Each entry is {name, code?, region?}. Consumed by flip-api's register_deploy_trusts CLI."
-  type        = string
-  default     = "[]"
-}
-
 variable "TRUST_API_KEY_HEADER" {
   description = "HTTP header name carrying per-trust API keys on trust-to-hub calls. Compose default: Authorization."
   type        = string

@@ -203,7 +203,7 @@ resource "aws_iam_role" "ecs_fl_api_task" {
 # minimal: read its INTERNAL_SERVICE_KEY from the FLIP_API secret (so it can
 # call back to flip-api on /api/model/{id}/status) and write training results
 # to the dedicated flip-fl-results bucket. Crucially, it has NO access to
-# AES_KEY_BASE64, TRUST_API_KEY_HASHES, the model-files-uploads or app-bundles
+# AES_KEY_BASE64, the model-files-uploads or app-bundles
 # buckets, or any flip-api-only data. The secret is shared today (single
 # FLIP_API secret) so the execution role's GetSecretValue covers fetch; the
 # task role here only needs to expose ListSecretVersionIds for runtime

@@ -127,7 +127,6 @@ export TF_VAR_FLIP_UI_BUCKET_NAME=${FLIP_UI_BUCKET_NAME}
 # flip-api / fl-* env vars consumed by ECS task definitions (locals.tf).
 # These mirror compose.production.yml so the running container sees the same
 # values whether it runs on EC2+compose or ECS Fargate.
-export TF_VAR_DEPLOY_TRUSTS=${DEPLOY_TRUSTS}
 export TF_VAR_TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
 export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 export TF_VAR_FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
@@ -591,17 +590,17 @@ generate-internal-service-key: ## Generate a new internal service key (fl-server
 	@echo "🔑 Generating internal service key..."
 	@$(MAKE) -C ../../../flip-api generate-internal-service-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))
 
-.PHONY: register-deploy-trusts
-register-deploy-trusts: ## Register trusts from DEPLOY_TRUSTS on the hub and distribute kit files
-	## Idempotent: each entry in DEPLOY_TRUSTS that doesn't already exist on the hub is created
-	## via register_trust (mints API + internal-service keys, claims an FL kit slot). The plaintext
-	## kit JSON for each new registration is captured from the hub's CloudWatch log stream and
-	## written to a per-trust kit file on the destination host (see DEPLOY_TRUST_HOSTS):
-	##   - "ec2"   → scp to /opt/flip/.env.<slot> on the trust EC2 via the flip-trust SSM context
+.PHONY: register-trusts
+register-trusts: ## Register the TRUST_<n>_* trusts on the hub and distribute kit files
+	## Idempotent: for each TRUST_<n>_* in the env file, a one-off ECS task runs register_trust
+	## (mints API + internal-service keys, claims an FL kit slot) unless the trust already exists.
+	## The plaintext kit JSON is captured from the hub's CloudWatch log stream and written to a
+	## per-trust kit file on the destination host (TRUST_<n>_HOST):
+	##   - "ec2"   → scp to /opt/flip/trust/.env.<slot> on the trust EC2 via the flip-trust SSM context
 	##   - "local" → write ../../../trust/.env.<slot> in the working tree
 	## Pre-existing trusts produce no kit output (their hosts retain the original kit), so
 	## re-running is safe.
-	@bash scripts/register-deploy-trusts.sh
+	@bash scripts/register-trusts.sh
 
 .PHONY: full-deploy
 full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trust + Central Hub
@@ -612,9 +611,9 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure SSH aliases and provision EC2s with Docker
 	## 6. deploy-centralhub: bring up the Central Hub (seeds run, fl_kit_slot pool is populated)
-	## 7. register-deploy-trusts: hub-side registration of every DEPLOY_TRUSTS entry and kit distribution
+	## 7. register-trusts: register every TRUST_<n>_* trust on the hub and distribute kit files
 	## 8. deploy-trust + status: bring up cloud Trust container stack and verify
-full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-deploy-trusts deploy-trust status
+full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
 
 .PHONY: full-deploy-with-local-trust
 full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem local trust (requires LOCAL_TRUST_IP=<public-ip>)
@@ -626,12 +625,12 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 4. update-env: refresh .env.{PROD} with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure SSH aliases, provision EC2s with Docker + FL kit
 	## 6. deploy-centralhub: bring up the Central Hub
-	## 7. register-deploy-trusts: hub-side registration and kit distribution
+	## 7. register-trusts: register the TRUST_<n>_* trusts on the hub and distribute kit files
 	## 8. deploy-trust + add-local-trust + status: bring up cloud + local trust hosts and verify
 	## NOTE: After this completes you must manually:
 	##   - Start local trust stack: cd ../../../trust && env PROD=$(PROD) make up-local-trust
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-with-local-trust LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
-full-deploy-with-local-trust: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-deploy-trusts deploy-trust add-local-trust status
+full-deploy-with-local-trust: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust add-local-trust status
 
 .PHONY: full-deploy-hybrid
 full-deploy-hybrid: ## Full hybrid deployment including local trust provisioning + hub redeploy (honours PROD)

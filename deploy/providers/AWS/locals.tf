@@ -110,7 +110,6 @@ locals {
       FL_APP_DESTINATION_BUCKET      = local.fl_app_destination_uri
       NET_ENDPOINTS                  = local.net_endpoints_json
       FL_BACKEND                     = var.fl_backend
-      DEPLOY_TRUSTS                  = var.DEPLOY_TRUSTS
     })
     fl_server = {
       LOCAL_DEV                      = "false"

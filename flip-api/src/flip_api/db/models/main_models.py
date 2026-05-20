@@ -223,14 +223,14 @@ class Trust(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field()
     last_heartbeat: datetime | None = Field(default=None)
-    # Added for issue #506 — DB-backed trust registry. `code` is the short display
-    # label (e.g. "GSTT"); `region` is the NHS region/geography (e.g. "London").
-    # Both stay nullable because they are optional on the POST /admin/trusts flow.
-    # `api_key_hash` is nullable because env-seeded trusts get no hash when
-    # TRUST_API_KEY_HASHES has no entry for them (e.g. prod, where hashes live in
-    # Secrets Manager and the seed sees an empty dict). `disabled_at` is NULL while
-    # the trust is active — it is a soft-delete marker. `created_at` is always set
-    # (default factory on seed inserts, explicit on POST /admin/trusts).
+    # Added for issue #506 — the `trust` table is the sole trust registry.
+    # `code` is the short display label (e.g. "GSTT"); `region` is the NHS
+    # region/geography (e.g. "London"). Both stay nullable because they are
+    # optional inputs to register_trust. `api_key_hash` is nullable only so a
+    # row can briefly exist mid-insert; every registered trust has it set —
+    # register_trust mints the key and stores its SHA-256 here. `disabled_at`
+    # is NULL while the trust is active — it is a soft-delete marker.
+    # `created_at` is always set (register_trust stamps it).
     code: str | None = Field(default=None)
     region: str | None = Field(default=None)
     api_key_hash: str | None = Field(default=None)
