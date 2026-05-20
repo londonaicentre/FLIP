@@ -10,7 +10,9 @@
 # limitations under the License.
 #
 
-.PHONY: build dev prod clean stop up down up-trust-1 up-trust-2 down-trust-1 down-trust-2 up-local-trust down-local-trust create-networks create-networks-local-trust remove-networks recreate-networks tests update-omop-data update-orthanc-data integration_test
+.PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
+	up-local-trust down-local-trust create-networks create-networks-local-trust remove-networks \
+	recreate-networks tests update-omop-data update-orthanc-data integration_test
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=../.env.production
@@ -42,11 +44,7 @@ ifeq ($(patsubst /%,,$(FL_PROVISIONED_DIR)),$(FL_PROVISIONED_DIR))
 override FL_PROVISIONED_DIR := $(abspath $(MAKEFILE_DIR)/../$(FL_PROVISIONED_DIR))
 endif
 
-network1 = deploy_trust-network-1
-network2 = deploy_trust-network-2
 network_local = deploy_trust-network-local
-trust1 = trust1
-trust2 = trust2
 trust_local = trust-local
 
 OMOP_DB_CMD=make -C ./omop-db
@@ -66,59 +64,50 @@ else
 PULL_ALWAYS_FLAG=
 endif
 
-# Per-trust kit file (trust/.env.Trust_1) — the only source for TRUST_API_KEY,
-# TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER and the optional
-# EXPECTED_TRUST_ID self-check. Dropped in by `make register-deploy-trusts`
-# after the hub registers the trust. The Makefile only carries host-local
-# profile (ports, dirs, network) so two dev trust stacks can coexist on one host.
-TRUST1_KIT_FILE := .env.Trust_1
--include $(TRUST1_KIT_FILE)
+# ── Per-trust deployment ──────────────────────────────────────────────────
+# A trust stack is selected by KIT — the kit-file name under trust/.env.<KIT>
+# (the FL kit slot name, e.g. Trust_1). trust/.env.<KIT> carries that trust's
+# host-local profile (ports, bind dirs) and kit credentials (TRUST_API_KEY,
+# TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID);
+# `make register-deploy-trusts` writes it, trust/.env.<KIT>.example is the
+# template. KIT has no default so up-local-trust (which selects its own kit
+# via LOCAL_TRUST_NAME) never double-includes — pass KIT=<name> explicitly.
+#
+# The defaults in TRUST_VARS are the Trust_1 port allocation: a single-trust
+# host (EC2 / on-prem) needs no port entries in its kit file, while a second
+# dev stack overrides them via its kit file so two trusts coexist on one host.
+KIT_FILE := .env.$(KIT)
+-include $(KIT_FILE)
 
-TRUST_1_VARS = \
-	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST1} \
-	OMOP_DB_PORT=${OMOP_DB_PORT_TRUST_1} \
-	PACS_UI_PORT=${PACS_UI_PORT_TRUST_1} \
-	ORTHANC_STORAGE_DIR=${ORTHANC_STORAGE_DIR_TRUST_1} \
+# Numeric suffix of the kit (Trust_1 -> 1) — drives the per-trust overlay
+# network and compose project name, preserving the deploy_trust-network-N scheme.
+TRUST_NUM := $(subst Trust_,,$(KIT))
+TRUST_PROJECT := trust$(TRUST_NUM)
+# Dev only: expose this trust's APIs on the host. The override binds a single
+# fixed host-port set, so only one dev trust can claim it — Trust_1 by
+# convention, matching the old up-trust-1.
+TRUST_OVERRIDE := $(if $(filter Trust_1,$(KIT)),-f deploy/compose_trust-1_override.yml,)
+
+TRUST_VARS = \
+	BASE_IMAGES_DOWNLOAD_DIR=$(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT)) \
+	OMOP_DB_PORT=$(or $(OMOP_DB_PORT),5434) \
+	PACS_UI_PORT=$(or $(PACS_UI_PORT),8042) \
+	ORTHANC_STORAGE_DIR=$(or $(ORTHANC_STORAGE_DIR),./orthanc/orthanc-storage) \
 	ORTHANC_USERNAME=${ORTHANC_USERNAME} \
 	ORTHANC_PASSWORD=${ORTHANC_PASSWORD} \
-	XNAT_PORT=${XNAT_PORT_TRUST_1} \
+	XNAT_PORT=$(or $(XNAT_PORT),8104) \
 	DATA_ACCESS_API_PORT=${DATA_ACCESS_API_PORT} \
-	TRUST_DEBUG_PORT=${TRUST_DEBUG_PORT_TRUST_1} \
-	IMAGING_DEBUG_PORT=${IMAGING_DEBUG_PORT_TRUST_1} \
-	DATA_ACCESS_DEBUG_PORT=${DATA_ACCESS_DEBUG_PORT_TRUST_1} \
-	GRAFANA_PORT=${GRAFANA_PORT_TRUST_1} \
-	LOKI_PORT=${LOKI_PORT_TRUST_1} \
-	TRUST_NETWORK_NAME=${network1} \
-	TRUST_NUMBER=1 \
+	TRUST_DEBUG_PORT=$(or $(TRUST_DEBUG_PORT),5682) \
+	IMAGING_DEBUG_PORT=$(or $(IMAGING_DEBUG_PORT),5681) \
+	DATA_ACCESS_DEBUG_PORT=$(or $(DATA_ACCESS_DEBUG_PORT),5680) \
+	GRAFANA_PORT=$(or $(GRAFANA_PORT),3000) \
+	LOKI_PORT=$(or $(LOKI_PORT),3100) \
+	TRUST_NETWORK_NAME=deploy_trust-network-$(TRUST_NUM) \
+	TRUST_NUMBER=$(TRUST_NUM) \
 	TRUST_API_KEY=$(TRUST_API_KEY) \
 	TRUST_INTERNAL_SERVICE_KEY=$(TRUST_INTERNAL_SERVICE_KEY) \
-	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),Trust_1) \
-	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),1) \
-	EXPECTED_TRUST_ID=$(EXPECTED_TRUST_ID)
-# trust/.env.Trust_2 — same convention as Trust_1 above. Dropped in by
-# `register-deploy-trusts` after the hub mints the kit.
-TRUST2_KIT_FILE := .env.Trust_2
--include $(TRUST2_KIT_FILE)
-
-TRUST_2_VARS = \
-	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST2} \
-	OMOP_DB_PORT=${OMOP_DB_PORT_TRUST_2} \
-	PACS_UI_PORT=${PACS_UI_PORT_TRUST_2} \
-	ORTHANC_STORAGE_DIR=${ORTHANC_STORAGE_DIR_TRUST_2} \
-	ORTHANC_USERNAME=${ORTHANC_USERNAME} \
-	ORTHANC_PASSWORD=${ORTHANC_PASSWORD} \
-	XNAT_PORT=${XNAT_PORT_TRUST_2} \
-	TRUST_DEBUG_PORT=${TRUST_DEBUG_PORT_TRUST_2} \
-	IMAGING_DEBUG_PORT=${IMAGING_DEBUG_PORT_TRUST_2} \
-	DATA_ACCESS_DEBUG_PORT=${DATA_ACCESS_DEBUG_PORT_TRUST_2} \
-	GRAFANA_PORT=${GRAFANA_PORT_TRUST_2} \
-	LOKI_PORT=${LOKI_PORT_TRUST_2} \
-	TRUST_NETWORK_NAME=${network2} \
-	TRUST_NUMBER=2 \
-	TRUST_API_KEY=$(TRUST_API_KEY) \
-	TRUST_INTERNAL_SERVICE_KEY=$(TRUST_INTERNAL_SERVICE_KEY) \
-	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),Trust_2) \
-	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),2) \
+	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),$(KIT)) \
+	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),$(TRUST_NUM)) \
 	EXPECTED_TRUST_ID=$(EXPECTED_TRUST_ID)
 
 # Host ports, bind paths, and the trust network are hardcoded here (not env
@@ -126,10 +115,10 @@ TRUST_2_VARS = \
 # laptop without colliding, and so stag/prod hosts (AWS trust EC2 or on-prem
 # via `make add-local-trust`) don't need any _LOCAL_TRUST entries in their
 # env files or AWS Secrets Manager. Port numbers / dir names are arbitrary —
-# picked to be non-overlapping with the _TRUST_1/_TRUST_2 allocations.
+# picked to be non-overlapping with the Trust_1/Trust_2 allocations.
 #
 # ORTHANC_STORAGE_DIR gets a dedicated `orthanc-storage-local` path rather
-# than reusing whichever TRUST_$(N) dir matches LOCAL_TRUST_NAME. Sharing the
+# than reusing whichever trust dir matches LOCAL_TRUST_NAME. Sharing the
 # dir saves the gigabytes of seeded DICOM data, but two Orthanc containers
 # cannot open the same SQLite index — the second crash-loops on `database is
 # locked` and the trust network loses its `orthanc` alias, which in turn
@@ -138,10 +127,8 @@ TRUST_2_VARS = \
 #   cp -r trust/orthanc/orthanc-storage-2/ trust/orthanc/orthanc-storage-local/
 #
 # Per-trust kit file (trust/.env.<LOCAL_TRUST_NAME>) — same schema as the
-# Trust_1 / Trust_2 cases above: TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY,
-# FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, optional EXPECTED_TRUST_ID. Dropped in by
-# the deploy's `register-deploy-trusts` step (prod) or by the operator after
-# `POST /admin/trusts` (dev).
+# KIT-selected kit above. Dropped in by the deploy's `register-deploy-trusts`
+# step or by the operator after `POST /admin/trusts`.
 LOCAL_TRUST_KIT_FILE := .env.$(LOCAL_TRUST_NAME)
 -include $(LOCAL_TRUST_KIT_FILE)
 
@@ -198,52 +185,63 @@ define check_omop_data_dir
 	fi
 endef
 
+# Guard: a KIT-selected target needs trust/.env.<KIT> to exist.
+define require_kit
+	@if [ -z "$(KIT)" ]; then \
+	    echo "❌ KIT is required. Usage: make $@ KIT=<name>  (e.g. KIT=Trust_1)"; exit 1; \
+	fi; \
+	if [ ! -f "$(KIT_FILE)" ]; then \
+	    echo "❌ Kit file trust/$(KIT_FILE) not found."; \
+	    echo "   Copy trust/$(KIT_FILE).example to trust/$(KIT_FILE), then run"; \
+	    echo "   'make register-deploy-trusts' (from the repo root) to fill in the credentials."; \
+	    exit 1; \
+	fi
+endef
+
 build:
-	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust1} build --no-cache
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} build
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
 
-# Uses --pull always to ensure the latest FL images and omop-db image are used
-# ensure omop and orthanc data are up to date before bringing up trust 1
-up-trust-1: update-omop-data update-orthanc-data
-	@echo "🚢 Starting Trust 1 services..."
+# Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
+# trust/.env.<KIT> for that trust's ports / dirs / credentials.
+up-trust: update-omop-data update-orthanc-data create-networks
+	$(require_kit)
+	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_1/db_data))
-	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST1}
-	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} up -d $(PULL_ALWAYS_FLAG)
+	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(KIT)/db_data))
+	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(PULL_ALWAYS_FLAG)
 
-down-trust-1:
-	@echo "🛑 Stopping Trust 1 services..."
-	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} down --remove-orphans
+down-trust:
+	$(require_kit)
+	@echo "🛑 Stopping Trust services (KIT=$(KIT))..."
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
 
-restart-trust-1: down-trust-1 up-trust-1
+restart-trust: down-trust up-trust
 
-# Uses --pull always to ensure the latest FL images, 'stag' or 'prod' version, and omop-db images are used
-up-trust-1-ec2:
-# omop data will be downloaded onto the ec2 instance as part of deploy/providers/AWS/site.yml, so no need to do it here
-# NOTE eventually if we get AWSCLI on the ec2 instance by default then we could run update-omop-data here too.
-	@echo "🚢 Starting Trust 1 services..."
+# EC2 variant — no host-port override, --pull always. Networks and OMOP data
+# are provisioned on the instance by deploy/providers/AWS/site.yml, so the
+# update-omop-data / create-networks prerequisites are intentionally omitted.
+up-trust-ec2:
+	$(require_kit)
+	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p ${trust1} up -d --pull always
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 
-down-trust-1-ec2:
-	@echo "🛑 Stopping Trust 1 services..."
-	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust1} down --remove-orphans
+down-trust-ec2:
+	$(require_kit)
+	@echo "🛑 Stopping Trust services on EC2 (KIT=$(KIT))..."
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) down --remove-orphans
 
 # LOCAL_TRUST_NAME controls which FL participant kit the FL client mounts.
-# Local (on-prem) trusts default to the Trust_2 kit; EC2 trusts use Trust_1.
 # LOCAL_TRUST_NAME is defined in deploy/providers/AWS/Makefile and threaded
-# through the root Makefile.
-#
-# Both recipes below use $(LOCAL_TRUST_VARS) so they stay in sync — see the
-# block near the top of this file for why each env-var has a _LOCAL_TRUST
-# variant (dev-laptop coexistence with `make up`) and why unset values fall
-# back to the Trust_1 defaults (single-host stag/prod deploys).
+# through the root Makefile. The local-trust stack uses an isolated port set
+# and the trust-local project/network so it can coexist with dev trust1/trust2.
 up-local-trust: create-networks-core create-networks-local-trust
-	## Starts local trust compose stack with TRUST_NAME=$(LOCAL_TRUST_NAME).
+	## Starts local trust compose stack with LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME).
 	## Uses project name 'trust-local' to avoid collisions with dev trust1/trust2.
-	@echo "🚢 Starting local Trust services (TRUST_NAME=$(LOCAL_TRUST_NAME))..."
+	@echo "🚢 Starting local Trust services (LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME))..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(call check_omop_data_dir,./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data)
@@ -256,25 +254,15 @@ down-local-trust:
 	$(LOCAL_TRUST_VARS) \
 		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(trust_local) down --remove-orphans
 
-# Uses --pull always to ensure the latest FL images and omop-db image are used
-# ensure omop and orthanc data are up to date before bringing up trust 2
-up-trust-2: update-omop-data update-orthanc-data
-	@echo "🚢 Starting Trust 2 services..."
-	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
-	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_2/db_data))
-	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST2}
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d $(PULL_ALWAYS_FLAG)
+# Dev convenience: bring up both standard trust stacks. Each is a separate
+# sub-make so its `-include trust/.env.<KIT>` loads only that trust's kit.
+up: create-networks
+	$(MAKE) up-trust KIT=Trust_1
+	$(MAKE) up-trust KIT=Trust_2
 
-down-trust-2:
-	@echo "🛑 Stopping Trust 2 services..."
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} down --remove-orphans
-
-restart-trust-2: down-trust-2 up-trust-2
-
-up: create-networks up-trust-1 up-trust-2
-
-down: down-trust-1 down-trust-2
+down:
+	$(MAKE) down-trust KIT=Trust_1
+	$(MAKE) down-trust KIT=Trust_2
 
 update-omop-data:
 	$(OMOP_DB_CMD) update-omop-data
@@ -321,22 +309,29 @@ remove-networks:
 recreate-networks: remove-networks create-networks
 	@echo "✅ All trust networks recreated with swarm support!"
 
+# Debug targets operate on the Trust_1 stack. They recurse so the sub-make's
+# `-include trust/.env.Trust_1` loads that kit (the -include is parse-time, so
+# KIT must be set at make-invocation, not as a target-local variable).
 debug:
-	$(MAKE) DEBUG=true restart-trust-1
+	$(MAKE) DEBUG=true restart-trust KIT=Trust_1
 debug-off:
-	$(MAKE) DEBUG=false restart-trust-1
+	$(MAKE) DEBUG=false restart-trust KIT=Trust_1
 debug-data-access-api:
-	DEBUG=true $(TRUST_1_VARS) ${DEBUG_OVERRIDE_COMPOSE_COMMAND} -p ${trust1} up --remove-orphans -d data-access-api
+	$(MAKE) _debug-service KIT=Trust_1 DEBUG=true SVC=data-access-api
 debug-imaging-api:
-	DEBUG=true $(TRUST_1_VARS) ${DEBUG_OVERRIDE_COMPOSE_COMMAND} -p ${trust1} up --remove-orphans -d imaging-api
+	$(MAKE) _debug-service KIT=Trust_1 DEBUG=true SVC=imaging-api
 debug-trust-api:
-	DEBUG=true $(TRUST_1_VARS) ${DEBUG_OVERRIDE_COMPOSE_COMMAND} -p ${trust1} up --remove-orphans -d trust-api
+	$(MAKE) _debug-service KIT=Trust_1 DEBUG=true SVC=trust-api
 debug-data-access-api-off:
-	DEBUG=false $(TRUST_1_VARS) ${DEBUG_OVERRIDE_COMPOSE_COMMAND} -p ${trust1} up --remove-orphans -d data-access-api
+	$(MAKE) _debug-service KIT=Trust_1 DEBUG=false SVC=data-access-api
 debug-imaging-api-off:
-	DEBUG=false $(TRUST_1_VARS) ${DEBUG_OVERRIDE_COMPOSE_COMMAND} -p ${trust1} up --remove-orphans -d imaging-api
+	$(MAKE) _debug-service KIT=Trust_1 DEBUG=false SVC=imaging-api
 debug-trust-api-off:
-	DEBUG=false $(TRUST_1_VARS) ${DEBUG_OVERRIDE_COMPOSE_COMMAND} -p ${trust1} up --remove-orphans -d trust-api
+	$(MAKE) _debug-service KIT=Trust_1 DEBUG=false SVC=trust-api
+
+# Internal helper — brings one service up under the debug compose override.
+_debug-service:
+	DEBUG=$(DEBUG) $(TRUST_VARS) ${DEBUG_OVERRIDE_COMPOSE_COMMAND} -p $(TRUST_PROJECT) up --remove-orphans -d $(SVC)
 
 
 # Trust-side integration tests (issue #369, B3). Each delegated target brings up
@@ -345,4 +340,3 @@ debug-trust-api-off:
 integration_test:
 	$(MAKE) -C data-access-api integration_test
 	$(MAKE) -C trust-api integration_test
-
