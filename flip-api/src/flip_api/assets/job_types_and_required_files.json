@@ -1,10 +1,24 @@
 {
+  "diffusion_model": [
+    "trainer.py",
+    "validator.py",
+    "config.json",
+    "models.py"
+  ],
   "evaluation": [
-    "client_app.py",
+    "config.json",
+    "evaluator.py"
+  ],
+  "fed_opt": [
+    "trainer.py",
+    "validator.py",
+    "config.json",
     "models.py"
   ],
   "standard": [
-    "client_app.py",
+    "trainer.py",
+    "validator.py",
+    "config.json",
     "models.py"
   ]
 }
