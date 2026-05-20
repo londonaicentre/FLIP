@@ -72,11 +72,6 @@ variable "AES_KEY_BASE64" {
   type = string
 }
 
-variable "TRUST_API_KEY_HASHES" {
-  description = "JSON string mapping trust names to SHA-256 hashes of their API keys"
-  type        = string
-}
-
 variable "INTERNAL_SERVICE_KEY_HASH" {
   description = "SHA-256 hash of the internal service key used for fl-server-to-hub auth"
   type        = string
@@ -295,9 +290,10 @@ variable "PACS_UI_PORT" {
   type        = number
 }
 
-variable "TRUST_NAMES" {
-  description = "JSON-array string of registered trust names, e.g. [\"Trust_1\",\"Trust_2\"]. Consumed by flip-api to validate inbound trust API calls."
+variable "DEPLOY_TRUSTS" {
+  description = "JSON-array string of trusts the deploy registers via `register-deploy-trusts`. Each entry is {name, code?, region?}. Consumed by flip-api's register_deploy_trusts CLI."
   type        = string
+  default     = "[]"
 }
 
 variable "TRUST_API_KEY_HEADER" {

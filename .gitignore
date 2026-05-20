@@ -336,9 +336,12 @@ flip-fl-api/transfer/*/*
 .env.stag
 .env.production
 # Per-trust operator kits (one file per a-posteriori trust, e.g.
-# trust/.env.Trust_3). Issued by the hub admin via POST /admin/trusts; contains
-# plaintext TRUST_API_KEY and TRUST_INTERNAL_SERVICE_KEY. Never commit.
+# trust/.env.Trust_3). Issued by the hub admin via POST /admin/trusts or written
+# by `make register-deploy-trusts`; contains plaintext TRUST_API_KEY and
+# TRUST_INTERNAL_SERVICE_KEY. Never commit. `.example` files (the schema
+# templates) are explicitly tracked.
 trust/.env.Trust_*
+!trust/.env.Trust_*.example
 trust/.env.trust_*
 
 

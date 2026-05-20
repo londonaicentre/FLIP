@@ -49,8 +49,6 @@ trust1 = trust1
 trust2 = trust2
 trust_local = trust-local
 
-get_json_value = $(shell python3 ../flip-api/src/flip_api/scripts/env_utils.py '$(1)' $(2))
-
 OMOP_DB_CMD=make -C ./omop-db
 ORTHANC_CMD=make -C ./orthanc
 # --project-directory . keeps relative paths inside the compose files (./trust-api,
@@ -68,6 +66,14 @@ else
 PULL_ALWAYS_FLAG=
 endif
 
+# Per-trust kit file (trust/.env.Trust_1) — the only source for TRUST_API_KEY,
+# TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER and the optional
+# EXPECTED_TRUST_ID self-check. Dropped in by `make register-deploy-trusts`
+# after the hub registers the trust. The Makefile only carries host-local
+# profile (ports, dirs, network) so two dev trust stacks can coexist on one host.
+TRUST1_KIT_FILE := .env.Trust_1
+-include $(TRUST1_KIT_FILE)
+
 TRUST_1_VARS = \
 	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST1} \
 	OMOP_DB_PORT=${OMOP_DB_PORT_TRUST_1} \
@@ -83,19 +89,15 @@ TRUST_1_VARS = \
 	GRAFANA_PORT=${GRAFANA_PORT_TRUST_1} \
 	LOKI_PORT=${LOKI_PORT_TRUST_1} \
 	TRUST_NETWORK_NAME=${network1} \
-	TRUST_NAME='(Mock) Guys and St Thomas NHS Trust' \
 	TRUST_NUMBER=1 \
-	TRUST_API_KEY=$(call get_json_value,$(TRUST_API_KEYS),Trust_1) \
-	TRUST_INTERNAL_SERVICE_KEY=$(call get_json_value,$(TRUST_INTERNAL_SERVICE_KEYS),Trust_1) \
-	FL_KIT_SLOT=Trust_1 \
-	FL_KIT_SLOT_NUMBER=1
-# trust/.env.trust2 — when present (typically dropped in by the admin after
-# POST /admin/trusts), overrides TRUST_NAME, TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY,
-# FL_KIT_SLOT and FL_KIT_SLOT_NUMBER for the dev trust2 stack. Lets a joining trust
-# (arbitrary friendly name, kit slot from the pool) take over the trust2 host slot
-# without re-touching this Makefile. Falls back to the hard-coded "Trust_2" defaults
-# when no kit file is present (legacy dev convention).
-TRUST2_KIT_FILE := .env.trust2
+	TRUST_API_KEY=$(TRUST_API_KEY) \
+	TRUST_INTERNAL_SERVICE_KEY=$(TRUST_INTERNAL_SERVICE_KEY) \
+	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),Trust_1) \
+	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),1) \
+	EXPECTED_TRUST_ID=$(EXPECTED_TRUST_ID)
+# trust/.env.Trust_2 — same convention as Trust_1 above. Dropped in by
+# `register-deploy-trusts` after the hub mints the kit.
+TRUST2_KIT_FILE := .env.Trust_2
 -include $(TRUST2_KIT_FILE)
 
 TRUST_2_VARS = \
@@ -112,12 +114,12 @@ TRUST_2_VARS = \
 	GRAFANA_PORT=${GRAFANA_PORT_TRUST_2} \
 	LOKI_PORT=${LOKI_PORT_TRUST_2} \
 	TRUST_NETWORK_NAME=${network2} \
-	TRUST_NAME='$(or $(TRUST_NAME),Trust_2)' \
 	TRUST_NUMBER=2 \
-	TRUST_API_KEY=$(or $(TRUST_API_KEY),$(call get_json_value,$(TRUST_API_KEYS),Trust_2)) \
-	TRUST_INTERNAL_SERVICE_KEY=$(or $(TRUST_INTERNAL_SERVICE_KEY),$(call get_json_value,$(TRUST_INTERNAL_SERVICE_KEYS),Trust_2)) \
+	TRUST_API_KEY=$(TRUST_API_KEY) \
+	TRUST_INTERNAL_SERVICE_KEY=$(TRUST_INTERNAL_SERVICE_KEY) \
 	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),Trust_2) \
-	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),2)
+	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),2) \
+	EXPECTED_TRUST_ID=$(EXPECTED_TRUST_ID)
 
 # Host ports, bind paths, and the trust network are hardcoded here (not env
 # vars) so the local-trust stack can coexist with dev trust1/trust2 on one
@@ -135,14 +137,11 @@ TRUST_2_VARS = \
 # on a dev laptop, copy from the matching trust dir once:
 #   cp -r trust/orthanc/orthanc-storage-2/ trust/orthanc/orthanc-storage-local/
 #
-# Per-trust kit file (trust/.env.<LOCAL_TRUST_NAME>, i.e. alongside this Makefile)
-# is the new sharable artifact the hub admin hands to a trust operator after
-# POST /admin/trusts. When present, its TRUST_API_KEY and TRUST_INTERNAL_SERVICE_KEY
-# take precedence over the JSON dicts in the main hub env file — which keeps
-# a-posteriori trusts out of `.env.development` (separation of concerns:
-# hub-dev state vs trust operator credentials). For the dev-seeded trusts
-# (Trust_1/Trust_2), no kit file exists and we fall back to the JSON lookup,
-# so existing flows are unchanged.
+# Per-trust kit file (trust/.env.<LOCAL_TRUST_NAME>) — same schema as the
+# Trust_1 / Trust_2 cases above: TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY,
+# FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, optional EXPECTED_TRUST_ID. Dropped in by
+# the deploy's `register-deploy-trusts` step (prod) or by the operator after
+# `POST /admin/trusts` (dev).
 LOCAL_TRUST_KIT_FILE := .env.$(LOCAL_TRUST_NAME)
 -include $(LOCAL_TRUST_KIT_FILE)
 
@@ -154,12 +153,12 @@ LOCAL_TRUST_VARS = \
 	GRAFANA_PORT=3002 \
 	LOKI_PORT=3102 \
 	TRUST_NETWORK_NAME=${network_local} \
-	TRUST_NAME='$(LOCAL_TRUST_NAME)' \
 	TRUST_NUMBER=$(subst Trust_,,$(LOCAL_TRUST_NAME)) \
-	TRUST_API_KEY=$(or $(TRUST_API_KEY),$(call get_json_value,$(TRUST_API_KEYS),$(LOCAL_TRUST_NAME))) \
-	TRUST_INTERNAL_SERVICE_KEY=$(or $(TRUST_INTERNAL_SERVICE_KEY),$(call get_json_value,$(TRUST_INTERNAL_SERVICE_KEYS),$(LOCAL_TRUST_NAME))) \
+	TRUST_API_KEY=$(TRUST_API_KEY) \
+	TRUST_INTERNAL_SERVICE_KEY=$(TRUST_INTERNAL_SERVICE_KEY) \
 	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),$(LOCAL_TRUST_NAME)) \
 	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),$(subst Trust_,,$(LOCAL_TRUST_NAME))) \
+	EXPECTED_TRUST_ID=$(EXPECTED_TRUST_ID) \
 	OMOP_DATA_DIR=./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data \
 	ORTHANC_STORAGE_DIR=./orthanc/orthanc-storage-local \
 	OBSERVABILITY_CONFIG_DIR=./observability \

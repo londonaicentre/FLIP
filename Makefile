@@ -12,8 +12,7 @@
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access up-local-trust generate-trust-api-keys generate-internal-service-key \
-		generate-trust-internal-service-keys integration_test
+		check-aws-access up-local-trust generate-internal-service-key register-deploy-trusts integration_test
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -277,14 +276,17 @@ integration_test:
 e2e_smoke:
 	$(MAKE) -C flip-api e2e_smoke $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(MODEL_FILES_DIR),MODEL_FILES_DIR=$(MODEL_FILES_DIR)) $(if $(QUERY_FILE),QUERY_FILE=$(QUERY_FILE)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
-generate-trust-api-keys:
-	$(MAKE) -C flip-api generate-trust-api-keys $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE))
-
 generate-internal-service-key:
 	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
 
-generate-trust-internal-service-keys:
-	$(MAKE) -C flip-api generate-trust-internal-service-keys $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
+# Register the trusts listed in DEPLOY_TRUSTS on the locally-running hub and
+# write their kit files into trust/.env.<slot>. Idempotent: trusts that already
+# exist are skipped and their kit files are left untouched. Requires the hub
+# (flip-api) to be up — e.g. `make central-hub` or `make up` first.
+register-deploy-trusts:
+	@echo "🔑 Registering DEPLOY_TRUSTS on the local hub..."
+	@$(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_deploy_trusts \
+		| bash scripts/distribute-trust-kits.sh
 
 check-aws-access:
 	@echo "🔎 Checking AWS CLI access..."
