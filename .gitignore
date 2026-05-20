@@ -368,3 +368,12 @@ deploy/providers/AWS/email_previews/
 deploy/providers/AWS/dev/.terraform.lock.hcl
 
 .claude/scheduled_tasks.lock
+
+# Orthanc storage directories (all instances)
+trust/orthanc/orthanc-storage
+trust/orthanc/orthanc-storage-2
+trust/orthanc/orthanc/orthanc-storage
+trust/orthanc/orthanc/orthanc-storage-2
+
+# Federated learning runtime directories (at repo root, same pattern as flip-fl-base-flower)
+model_checkpoints/
