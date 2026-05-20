@@ -81,7 +81,12 @@ class Settings(BaseSettings):
 
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
-    TRUST_NAMES: list[str]
+    # Trusts the deploy expects to be registered. Read by ``register_deploy_trusts``
+    # (CLI) at deploy time: each entry is ``{name, code?, region?}``; the CLI calls
+    # ``register_trust`` idempotently and emits new kits on stdout for the deploy
+    # to distribute to trust hosts. Empty default so dev envs without a list are
+    # a no-op.
+    DEPLOY_TRUSTS: list[dict] = []
     # FL kit slot pool names — pre-provisioned in flip-fl-base (workspace/net-N/services/<slot>).
     # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
     # free slot regardless of the trust's friendly name. Defaults to [] so existing dev
@@ -178,7 +183,6 @@ class DevSettings(Settings):
 
     AES_KEY_BASE64: str  # in dev, get AES key from env variable
 
-    TRUST_API_KEY_HASHES: dict[str, str]  # in dev, get API key hashes for each trust from env variable
     INTERNAL_SERVICE_KEY_HASH: str  # in dev, get internal service auth key hash from env variable
 
 

@@ -263,7 +263,7 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
 def receive_cohort_results_endpoint(
     cohort_results: OmopCohortResults,
     db: Session = Depends(get_session),
-    authenticated_trust: str = Depends(authenticate_trust),
+    authenticated_trust: Trust = Depends(authenticate_trust),
 ) -> dict[str, str]:
     """
     Receives cohort query results from a single trust, saves them,
@@ -272,7 +272,7 @@ def receive_cohort_results_endpoint(
     Args:
         cohort_results (OmopCohortResults): The cohort results sent by the trust.
         db (Session): Database session.
-        authenticated_trust (str): Authenticated trust name (validated by dependency).
+        authenticated_trust (Trust): Trust resolved from the API key by the dependency.
 
     Returns:
         dict[str, str]: A message indicating successful processing of cohort results.
@@ -280,13 +280,13 @@ def receive_cohort_results_endpoint(
     Raises:
         HTTPException: If there is an error during processing, saving individual results, or aggregating results.
     """
-    # Verify the authenticated trust owns this result
-    trust = db.exec(select(Trust).where(Trust.name == authenticated_trust)).first()
-    if not trust or trust.id != cohort_results.trust_id:
+    # Verify the authenticated trust owns this result — the payload's trust_id
+    # must match the trust the API key resolved to.
+    if authenticated_trust.id != cohort_results.trust_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                f"Trust '{authenticated_trust}' is not authorised to submit results "
+                f"Trust '{authenticated_trust.name}' is not authorised to submit results "
                 f"for trust_id {cohort_results.trust_id}"
             ),
         )

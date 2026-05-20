@@ -12,12 +12,11 @@
 
 import hashlib
 import hmac
-import json
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Security, status
 from fastapi.security.api_key import APIKeyHeader
-from sqlmodel import Session, col, select
+from sqlmodel import Session, select
 
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.config import get_settings
@@ -317,75 +316,6 @@ API_KEY_HEADER_NAME = get_settings().TRUST_API_KEY_HEADER
 api_key_header_scheme = APIKeyHeader(name=API_KEY_HEADER_NAME, auto_error=False)
 
 
-def verify_trust_identity(trust_name: str, authenticated_trust: str) -> None:
-    """Verify the authenticated trust matches the expected trust name.
-
-    Args:
-        trust_name (str): The trust name from the URL path.
-        authenticated_trust (str): The trust name from API key authentication.
-
-    Raises:
-        HTTPException: 403 if the names do not match.
-    """
-    if authenticated_trust != trust_name:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Trust '{authenticated_trust}' is not authorised to act as '{trust_name}'",
-        )
-
-
-def _bootstrap_trust_hashes() -> dict[str, str]:
-    """Trust hashes from env (dev) or AWS Secrets Manager (prod).
-
-    The bootstrap source is the original way trust keys reached the hub — still used as a
-    fallback for trusts that haven't been backfilled into the `trust` table yet (and as the
-    secrets-manager entry point in prod).
-
-    Returns:
-        dict[str, str]: Mapping of trust names to SHA-256 hex digests.
-    """
-    stt = get_settings()
-    if stt.ENV == "production":
-        return json.loads(get_secret("trust_api_key_hashes"))
-    return stt.TRUST_API_KEY_HASHES
-
-
-def _collect_trust_hashes(db: Session) -> dict[str, str]:
-    """All known trust → api-key-hash mappings.
-
-    DB rows (`trust.api_key_hash`) are authoritative — admin-created trusts and renames
-    land there. The env/Secrets-Manager bootstrap is a fallback for trusts the DB
-    doesn't yet know about.
-
-    **Iteration order matters.** `authenticate_trust` iterates the returned mapping and
-    returns the *first* name whose hash matches. DB entries are inserted first so that a
-    trust which was seeded under an env-style name (e.g. "Trust_1") and later renamed in
-    the DB (e.g. "(Mock) GSTT") resolves to the renamed value — env's old name is still
-    present (same hash) but is only reached if no DB entry matched.
-
-    Args:
-        db (Session): Database session for the per-request lookup.
-
-    Returns:
-        dict[str, str]: Merged trust name → hash mapping; DB names first, then env-only.
-    """
-    # ``col(api_key_hash).is_not(None)`` filters at runtime but doesn't narrow
-    # the static type of api_key_hash from ``str | None`` → ``str``, so guard
-    # explicitly in the comprehension to keep mypy happy.
-    db_hashes: dict[str, str] = {
-        name: hash_
-        for name, hash_ in db.exec(
-            select(Trust.name, Trust.api_key_hash).where(col(Trust.api_key_hash).is_not(None))
-        ).all()
-        if hash_ is not None
-    }
-    merged: dict[str, str] = dict(db_hashes)
-    for name, hash_ in _bootstrap_trust_hashes().items():
-        if name not in merged:
-            merged[name] = hash_
-    return merged
-
-
 INTERNAL_SERVICE_KEY_HEADER_NAME = get_settings().INTERNAL_SERVICE_KEY_HEADER
 internal_key_header_scheme = APIKeyHeader(name=INTERNAL_SERVICE_KEY_HEADER_NAME, auto_error=False)
 
@@ -455,25 +385,28 @@ def authenticate_internal_service(api_key: str = Security(internal_key_header_sc
 def authenticate_trust(
     api_key: str = Security(api_key_header_scheme),
     db: Session = Depends(get_session),
-) -> str:
-    """Authenticate a trust by its per-trust API key and return the trust name.
+) -> Trust:
+    """Authenticate a trust by its per-trust API key and return the resolved row.
 
-    Each trust has a unique API key. The hub stores SHA-256 hashes in `trust.api_key_hash`
-    (authoritative; admin-managed) with env / Secrets-Manager hashes as a bootstrap
-    fallback. This dependency hashes the provided key and compares against the merged
-    set, returning the authenticated trust name.
+    The ``trust`` DB table is the sole registry: each row carries an ``api_key_hash``
+    set when the trust is registered (admin UI or deploy-time CLI). This dependency
+    hashes the provided key and walks every trust row whose ``api_key_hash`` is set,
+    returning the matching ``Trust`` row. Identity (the row's ``id`` and ``name``)
+    is then available to handlers without re-querying.
 
-    Uses hmac.compare_digest for constant-time comparison to prevent timing side-channels.
+    Constant-time comparison (``hmac.compare_digest``) on every candidate prevents
+    timing side-channels (would otherwise leak which trust the key belongs to via
+    early-exit timing).
 
     Args:
         api_key (str): The API key extracted from the request header.
         db (Session): DB session for the per-request hash lookup.
 
+    Returns:
+        Trust: The authenticated trust row.
+
     Raises:
         HTTPException: 401 if the key is missing or does not match any trust.
-
-    Returns:
-        str: The name of the authenticated trust (e.g. "Trust_1").
     """
     if not api_key:
         logger.warning("Trust authentication failed: API key missing from request.")
@@ -483,18 +416,26 @@ def authenticate_trust(
             headers={"WWW-Authenticate": "ApiKey"},
         )
 
-    # SHA-256 is appropriate here: API keys are 256-bit random tokens from `secrets.token_urlsafe(32)`,
-    # not user-chosen passwords (see generate_trust_key.py). Slow KDFs (bcrypt/argon2) only defend
-    # against low-entropy inputs. CodeQL flags this as `py/weak-sensitive-data-hashing` but the rule
-    # targets password hashing — false positive for API-key storage.
+    # SHA-256 is appropriate here: API keys are 256-bit random tokens from
+    # `secrets.token_urlsafe(32)` (see generate_trust_key.py), not user-chosen
+    # passwords. Slow KDFs (bcrypt/argon2) only defend against low-entropy inputs.
+    # CodeQL flags this as `py/weak-sensitive-data-hashing` but the rule targets
+    # password hashing — false positive for API-key storage.
     provided_hash = hashlib.sha256(api_key.encode()).hexdigest()
-    trust_hashes = _collect_trust_hashes(db)
+    candidates = db.exec(select(Trust).where(Trust.api_key_hash.is_not(None))).all()  # type: ignore[union-attr]
 
-    # Iterate all entries with constant-time comparison to prevent timing side-channels.
-    for trust_name, stored_hash in trust_hashes.items():
-        if hmac.compare_digest(provided_hash, stored_hash):
-            logger.debug("Trust authenticated successfully.")
-            return trust_name
+    matched: Trust | None = None
+    for candidate in candidates:
+        # Walk every candidate (not short-circuit) so the comparison time does
+        # not depend on which trust matched.
+        if candidate.api_key_hash is not None and hmac.compare_digest(
+            provided_hash, candidate.api_key_hash
+        ):
+            matched = candidate
+
+    if matched is not None:
+        logger.debug("Trust authenticated successfully.")
+        return matched
 
     logger.warning("Trust authentication failed: no matching trust for provided key")
     raise HTTPException(

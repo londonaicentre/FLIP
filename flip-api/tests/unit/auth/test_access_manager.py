@@ -18,9 +18,7 @@ import pytest
 from fastapi import HTTPException, status
 from sqlmodel import Session
 
-# Module to be tested
 from flip_api.auth.access_manager import (
-    _collect_trust_hashes,
     _get_internal_service_key_hash,
     authenticate_internal_service,
     authenticate_trust,
@@ -28,8 +26,8 @@ from flip_api.auth.access_manager import (
     can_contribute_to_project,
     can_modify_model,
     can_modify_project,
-    verify_trust_identity,
 )
+from flip_api.db.models.main_models import Trust
 
 VALID_TEST_KEY = "test_secret_key_12345_valid"
 VALID_TEST_KEY_HASH = hashlib.sha256(VALID_TEST_KEY.encode()).hexdigest()
@@ -49,110 +47,84 @@ PATCH_INTERNAL_KEY_HASH = "flip_api.auth.access_manager._get_internal_service_ke
 PATCH_INTERNAL_KEY_HASH_CACHE = "flip_api.auth.access_manager._internal_service_key_hash_cache"
 
 
-def _db_with_trust_rows(rows: list[tuple[str, str | None]]) -> MagicMock:
-    """Build a Session mock whose `exec(...).all()` returns the given (name, hash) tuples.
+def _db_with_trust_rows(rows: list[Trust]) -> MagicMock:
+    """Build a Session mock whose ``exec(...).all()`` returns the given Trust rows.
 
-    Only rows with a non-null hash are returned — mirrors the WHERE clause in
-    `_collect_trust_hashes`.
+    Mirrors ``authenticate_trust``'s query — ``select(Trust).where(api_key_hash IS NOT NULL)``.
     """
-    non_null = [r for r in rows if r[1] is not None]
     db = MagicMock(spec=Session)
-    db.exec.return_value.all.return_value = non_null
+    db.exec.return_value.all.return_value = [t for t in rows if t.api_key_hash is not None]
     return db
 
 
-@pytest.fixture
-def mocked_env_settings():
-    """Env / Secrets-Manager bootstrap hashes (the only source pre-migration)."""
-    mock = MagicMock()
-    mock.TRUST_API_KEY_HASHES = {TRUST_NAME: VALID_TEST_KEY_HASH}
-    with patch(PATCH_GET_SETTINGS, return_value=mock):
-        yield mock
-
-
-@pytest.fixture
-def mocked_env_settings_empty():
-    mock = MagicMock()
-    mock.TRUST_API_KEY_HASHES = {}
-    with patch(PATCH_GET_SETTINGS, return_value=mock):
-        yield mock
-
-
 class TestAuthenticateTrust:
-    def test_valid_api_key_via_env_returns_trust_name(self, mocked_env_settings):
-        """Pre-migration trusts (hash only in env) still authenticate."""
-        db = _db_with_trust_rows([])
-        assert authenticate_trust(api_key=VALID_TEST_KEY, db=db) == TRUST_NAME
+    def test_valid_api_key_returns_trust_row(self):
+        """The dependency returns the resolved Trust row (id + name + everything)."""
+        trust = Trust(id=uuid4(), name=TRUST_NAME, api_key_hash=VALID_TEST_KEY_HASH)
+        db = _db_with_trust_rows([trust])
 
-    def test_valid_api_key_via_db_returns_trust_name(self, mocked_env_settings_empty):
-        """Admin-created trusts (hash only in DB) authenticate without env entry."""
-        db = _db_with_trust_rows([("Trust_DB", VALID_TEST_KEY_HASH)])
-        assert authenticate_trust(api_key=VALID_TEST_KEY, db=db) == "Trust_DB"
+        result = authenticate_trust(api_key=VALID_TEST_KEY, db=db)
 
-    def test_db_hash_takes_precedence_over_env(self, mocked_env_settings):
-        """If the same trust name appears in both, the DB hash wins (key rotation)."""
-        rotated_key = "rotated_key_after_admin_action"
-        rotated_hash = hashlib.sha256(rotated_key.encode()).hexdigest()
-        db = _db_with_trust_rows([(TRUST_NAME, rotated_hash)])
+        assert result is trust
+        assert result.name == TRUST_NAME
 
-        # Old (env) key is now rejected.
-        with pytest.raises(HTTPException):
-            authenticate_trust(api_key=VALID_TEST_KEY, db=db)
-
-        # Rotated (DB) key authenticates.
-        assert authenticate_trust(api_key=rotated_key, db=db) == TRUST_NAME
-
-    def test_invalid_api_key_returns_401(self, mocked_env_settings):
-        db = _db_with_trust_rows([])
+    def test_invalid_api_key_returns_401(self):
+        db = _db_with_trust_rows(
+            [Trust(id=uuid4(), name=TRUST_NAME, api_key_hash=VALID_TEST_KEY_HASH)]
+        )
         with pytest.raises(HTTPException) as exc_info:
             authenticate_trust(api_key=WRONG_TEST_KEY, db=db)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc_info.value.detail == "Invalid API Key."
 
-    def test_missing_api_key_returns_401(self, mocked_env_settings):
+    def test_missing_api_key_returns_401(self):
         db = _db_with_trust_rows([])
         with pytest.raises(HTTPException) as exc_info:
             authenticate_trust(api_key=None, db=db)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc_info.value.detail == "Not authenticated: API key is missing."
 
-    def test_empty_api_key_returns_401(self, mocked_env_settings):
+    def test_empty_api_key_returns_401(self):
         db = _db_with_trust_rows([])
         with pytest.raises(HTTPException) as exc_info:
             authenticate_trust(api_key="", db=db)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc_info.value.detail == "Not authenticated: API key is missing."
 
-    def test_no_trust_keys_configured_anywhere_returns_401(self, mocked_env_settings_empty):
+    def test_no_trust_rows_returns_401(self):
+        """A fresh hub with no registered trusts rejects every key."""
         db = _db_with_trust_rows([])
         with pytest.raises(HTTPException) as exc_info:
             authenticate_trust(api_key=VALID_TEST_KEY, db=db)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_collect_trust_hashes_merges_sources(self):
-        """Helper sanity-check: env + DB merge, DB wins on conflict."""
-        env_hash = hashlib.sha256(b"env_key").hexdigest()
-        db_hash = hashlib.sha256(b"db_key").hexdigest()
-        other_db_hash = hashlib.sha256(b"other_db_key").hexdigest()
-        mock = MagicMock()
-        mock.TRUST_API_KEY_HASHES = {"A": env_hash, "B": env_hash}
-        with patch(PATCH_GET_SETTINGS, return_value=mock):
-            db = _db_with_trust_rows([("B", db_hash), ("C", other_db_hash)])
-            merged = _collect_trust_hashes(db)
-        assert merged == {"A": env_hash, "B": db_hash, "C": other_db_hash}
+    def test_arbitrary_display_name_resolves_through_key(self):
+        """A trust with spaces and parens in its name authenticates by key alone."""
+        named_trust = Trust(
+            id=uuid4(),
+            name="(Mock) Guys and St Thomas NHS Trust",
+            api_key_hash=VALID_TEST_KEY_HASH,
+        )
+        db = _db_with_trust_rows([named_trust])
 
-    def test_renamed_trust_returns_db_name_not_env_name(self):
-        """When a trust is renamed in the DB (same hash, different name vs env), auth must
-        return the DB name — the renamed identity is what the trust container sends in
-        its heartbeat path-param, and verify_trust_identity compares the two.
+        result = authenticate_trust(api_key=VALID_TEST_KEY, db=db)
+
+        assert result.name == "(Mock) Guys and St Thomas NHS Trust"
+
+    def test_walks_all_candidates_to_avoid_timing_side_channel(self):
+        """The implementation must not short-circuit on first non-match — every candidate
+        is checked so total comparison time is independent of which trust matched.
         """
-        # Trust container holds VALID_TEST_KEY. Env still has it under the original
-        # "Trust_1" name; DB has it under the renamed "(Mock) GSTT".
-        mock = MagicMock()
-        mock.TRUST_API_KEY_HASHES = {TRUST_NAME: VALID_TEST_KEY_HASH}
-        with patch(PATCH_GET_SETTINGS, return_value=mock):
-            db = _db_with_trust_rows([("(Mock) GSTT", VALID_TEST_KEY_HASH)])
-            assert authenticate_trust(api_key=VALID_TEST_KEY, db=db) == "(Mock) GSTT"
+        trusts = [
+            Trust(id=uuid4(), name=f"T_{i}", api_key_hash=hashlib.sha256(f"k{i}".encode()).hexdigest())
+            for i in range(5)
+        ]
+        trusts.append(Trust(id=uuid4(), name="match", api_key_hash=VALID_TEST_KEY_HASH))
+        db = _db_with_trust_rows(trusts)
+
+        result = authenticate_trust(api_key=VALID_TEST_KEY, db=db)
+
+        assert result.name == "match"
 
 
 class TestAuthenticateInternalService:
@@ -563,45 +535,6 @@ class TestCanModifyModel:
             result = can_modify_model(user_id, model_id, db)
 
         assert result is False
-
-
-class TestVerifyTrustIdentity:
-    def test_matching_trust_names_succeeds(self):
-        """No exception when authenticated trust matches the URL trust name."""
-        verify_trust_identity("Trust_1", "Trust_1")
-
-    def test_mismatched_trust_names_raises_403(self):
-        """Should raise 403 when authenticated trust does not match the expected name."""
-        with pytest.raises(HTTPException) as exc_info:
-            verify_trust_identity("Trust_1", "Trust_2")
-        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-        assert "Trust_2" in exc_info.value.detail
-        assert "Trust_1" in exc_info.value.detail
-
-
-class TestBootstrapTrustHashes:
-    def test_dev_returns_hashes_from_settings(self):
-        """In dev, the bootstrap returns hashes from TRUST_API_KEY_HASHES."""
-        from flip_api.auth.access_manager import _bootstrap_trust_hashes
-
-        expected = {"Trust_1": "abc123"}
-        mock = MagicMock()
-        mock.ENV = "development"
-        mock.TRUST_API_KEY_HASHES = expected
-        with patch(PATCH_GET_SETTINGS, return_value=mock):
-            assert _bootstrap_trust_hashes() == expected
-
-    def test_production_retrieves_from_secrets_manager(self):
-        """In production, the bootstrap loads hashes from AWS Secrets Manager."""
-        from flip_api.auth.access_manager import _bootstrap_trust_hashes
-
-        mock = MagicMock()
-        mock.ENV = "production"
-        with (
-            patch(PATCH_GET_SETTINGS, return_value=mock),
-            patch("flip_api.auth.access_manager.get_secret", return_value='{"Trust_1": "hash1"}'),
-        ):
-            assert _bootstrap_trust_hashes() == {"Trust_1": "hash1"}
 
 
 class TestGetInternalServiceKeyHash:

@@ -69,8 +69,8 @@ def get_net_status(
             raise HTTPException(status_code=502, detail=error_message)
 
         # Match by FL kit slot name — the FL net never sees Trust.name. See the equivalent
-        # comment in get_status.py for the rationale (SEED_NAME_OVERRIDES can rename a trust
-        # without changing its slot identity).
+        # comment in get_status.py for the rationale (an admin-chosen display name is
+        # independent of the slot identity).
         trusts = get_trusts(db)
         slot_names_by_trust_id = get_slot_names_by_trust_ids([t.id for t in trusts], db)
         trust_client_statuses: list[IClientStatus] = []

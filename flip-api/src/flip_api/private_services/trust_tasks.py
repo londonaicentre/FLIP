@@ -10,13 +10,22 @@
 # limitations under the License.
 #
 
+"""Trust ↔ hub private endpoints.
+
+**Identity is the API key.** ``Depends(authenticate_trust)`` returns the resolved
+``Trust`` row directly; routes use ``trust.id`` for joins and ``trust.name`` for
+logs without an extra DB lookup. The trust-api never has to know its own name —
+the hub tells it via the response body, and the trust-api self-checks against an
+opt-in ``EXPECTED_TRUST_ID`` from its kit file.
+"""
+
 from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from sqlmodel import Session, col, select
 
-from flip_api.auth.access_manager import authenticate_trust, verify_trust_identity
+from flip_api.auth.access_manager import authenticate_trust
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust, TrustTask
 from flip_api.domain.schemas.private import TaskResultInput, TrustTaskResponse
@@ -32,85 +41,53 @@ router = APIRouter(tags=["private_services"])
 PENDING_TASKS_LIMIT = 50
 
 
-def _get_trust_by_name(trust_name: str, db: Session) -> Trust:
-    """Look up a trust by name, raising 404 if not found.
+def _trust_identity(trust: Trust) -> dict[str, str]:
+    """The identity block embedded in trust-facing response bodies.
+
+    Lets the trust-api log which trust the hub resolved it as, and verify
+    that resolution against an opt-in ``EXPECTED_TRUST_ID`` from the kit file.
+    """
+    return {"trust_id": str(trust.id), "trust_name": trust.name}
+
+
+# ---------------------------------------------------------------------------
+# Core handlers (key-only protocol). Each route function below is a thin
+# wrapper that calls one of these so the deprecated `{trust_name}` shims share
+# exactly the same code path.
+# ---------------------------------------------------------------------------
+
+
+def _get_pending_tasks(trust: Trust, db: Session) -> dict[str, object]:
+    """Return up to ``PENDING_TASKS_LIMIT`` pending tasks for ``trust``, marking them in-progress.
 
     Args:
-        trust_name (str): Name of the trust to look up.
+        trust (Trust): The authenticated trust.
         db (Session): Database session.
 
     Returns:
-        Trust: The trust object.
+        dict[str, object]: ``{trust_id, trust_name, tasks: [TrustTaskResponse, ...]}``.
 
     Raises:
-        HTTPException: 404 if the trust is not found.
+        HTTPException: 500 on any DB error.
     """
-    trust = db.exec(select(Trust).where(Trust.name == trust_name)).first()
-    if not trust:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Trust '{trust_name}' not found",
-        )
-    return trust
-
-
-@router.get(
-    "/tasks/{trust_name}/pending",
-    summary="Get pending tasks for a trust",
-    status_code=status.HTTP_200_OK,
-    response_model=list[TrustTaskResponse],
-)
-@limiter.limit("12/minute")
-def get_pending_tasks(
-    request: Request,
-    trust_name: str,
-    db: Session = Depends(get_session),
-    authenticated_trust: str = Depends(authenticate_trust),
-) -> list[TrustTaskResponse]:
-    """
-    Returns pending tasks for the specified trust and marks them as in_progress.
-
-    This endpoint is polled by trusts to pick up work dispatched by the central hub.
-
-    Args:
-        request (Request): The FastAPI request, used by the rate limiter.
-        trust_name (str): The trust polling for tasks, taken from the URL path.
-        db (Session): Database session, provided by dependency injection.
-        authenticated_trust (str): The trust name resolved from the API key, provided by
-            dependency injection.
-
-    Returns:
-        list[TrustTaskResponse]: Pending tasks (up to ``PENDING_TASKS_LIMIT``), now marked
-        ``IN_PROGRESS``, with payloads encrypted for transport.
-
-    Raises:
-        HTTPException: 403 if the authenticated trust doesn't match ``trust_name``, 404 if the
-            trust is not registered, 500 on any other error.
-    """
-    verify_trust_identity(trust_name, authenticated_trust)
-    logger.debug(f"Trust '{trust_name}' polling for pending tasks")
-
+    logger.debug(f"Trust '{trust.name}' polling for pending tasks")
     try:
-        trust = _get_trust_by_name(trust_name, db)
-
-        # NOTE: This query does not use row-level locking (e.g. with_for_update(skip_locked=True))
-        # because each trust is assumed to run a single poller replica. If multiple replicas poll
-        # concurrently, add .with_for_update(skip_locked=True) to prevent duplicate task execution.
-        statement = (
+        # NOTE: no row-level locking — each trust is assumed to run a single poller replica.
+        # If multiple replicas poll concurrently, add .with_for_update(skip_locked=True).
+        tasks = db.exec(
             select(TrustTask)
             .where(TrustTask.trust_id == trust.id)
             .where(TrustTask.status == TaskStatus.PENDING)
             .order_by(col(TrustTask.created_at))
             .limit(PENDING_TASKS_LIMIT)
-        )
-        tasks = db.exec(statement).all()
+        ).all()
 
         if not tasks:
-            logger.debug(f"No pending tasks for trust '{trust_name}'")
-            return []
+            logger.debug(f"No pending tasks for trust '{trust.name}'")
+            return {**_trust_identity(trust), "tasks": []}
 
         now = datetime.now(timezone.utc)
-        response = []
+        response: list[TrustTaskResponse] = []
         for task in tasks:
             task.status = TaskStatus.IN_PROGRESS
             task.updated_at = now
@@ -122,82 +99,56 @@ def get_pending_tasks(
                     created_at=task.created_at,
                 )
             )
-
         db.commit()
-        logger.info(f"Dispatched {len(response)} tasks to trust '{trust_name}'")
-        return response
-
+        logger.info(f"Dispatched {len(response)} tasks to trust '{trust.name}'")
+        return {**_trust_identity(trust), "tasks": response}
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Error fetching pending tasks for trust '{trust_name}': {e}")
+        logger.error(f"Error fetching pending tasks for trust '{trust.name}': {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
         )
 
 
-@router.post(
-    "/tasks/{trust_name}/{task_id}/result",
-    summary="Submit task result",
-    status_code=status.HTTP_200_OK,
-    response_model=dict[str, str],
-)
-@limiter.limit("60/minute")
-def submit_task_result(
-    request: Request,
-    trust_name: str,
-    task_id: UUID,
-    task_result: TaskResultInput = Body(...),
-    db: Session = Depends(get_session),
-    authenticated_trust: str = Depends(authenticate_trust),
-) -> dict[str, str]:
-    """
-    Receives the result of a completed task from a trust.
-
-    The trust_name path parameter is verified against the authenticated trust identity
-    to prevent one trust from submitting results for another trust's tasks.
+def _submit_task_result(
+    trust: Trust, task_id: UUID, task_result: TaskResultInput, db: Session
+) -> dict[str, object]:
+    """Record the outcome of a task that this trust owns.
 
     Args:
-        request (Request): The FastAPI request, used by the rate limiter.
-        trust_name (str): The trust submitting the result, taken from the URL path.
-        task_id (UUID): The ID of the task whose result is being submitted.
-        task_result (TaskResultInput): The task outcome reported by the trust.
-        db (Session): Database session, provided by dependency injection.
-        authenticated_trust (str): The trust name resolved from the API key, provided by
-            dependency injection.
+        trust (Trust): The authenticated trust.
+        task_id (UUID): The task whose result is being submitted.
+        task_result (TaskResultInput): The reported outcome.
+        db (Session): Database session.
 
     Returns:
-        dict[str, str]: ``{"message": "Task <id> result recorded"}`` on success.
+        dict[str, object]: ``{trust_id, trust_name, message}``.
 
     Raises:
-        HTTPException: 403 if the authenticated trust doesn't match ``trust_name`` or the task
-            belongs to a different trust; 404 if the trust or task is not found; 409 if the task
-            is not currently ``IN_PROGRESS``; 500 on any other error.
+        HTTPException: 404 if the task is missing, 403 if it belongs to a
+            different trust, 409 if it is not currently ``IN_PROGRESS``, 500 on
+            any other error.
     """
-    verify_trust_identity(trust_name, authenticated_trust)
-    logger.info(f"Received result for task {task_id} from trust '{trust_name}'")
-
+    logger.info(f"Received result for task {task_id} from trust '{trust.name}'")
     try:
-        trust = _get_trust_by_name(trust_name, db)
-
         task = db.exec(select(TrustTask).where(TrustTask.id == task_id)).first()
-        if not task:
+        if task is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Task {task_id} not found",
             )
-
         if task.trust_id != trust.id:
             logger.warning(
-                f"Trust '{trust_name}' attempted to submit result for task {task_id} which belongs to a different trust"
+                f"Trust '{trust.name}' attempted to submit result for task {task_id} "
+                "which belongs to a different trust"
             )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Task {task_id} does not belong to trust '{trust_name}'",
+                detail=f"Task {task_id} does not belong to trust '{trust.name}'",
             )
-
         if task.status != TaskStatus.IN_PROGRESS:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -212,7 +163,7 @@ def submit_task_result(
         task.needs_post_processing = needs_post_processing
         db.commit()
 
-        # Post-process successful imaging project creation (persist status + send credential emails)
+        # Post-process successful imaging project creation (persist status + send credential emails).
         if needs_post_processing:
             try:
                 handle_imaging_task_completed(task, db)
@@ -225,8 +176,7 @@ def submit_task_result(
                 )
 
         logger.info(f"Task {task_id} marked as {task.status}")
-        return {"message": f"Task {task_id} result recorded"}
-
+        return {**_trust_identity(trust), "message": f"Task {task_id} result recorded"}
     except HTTPException:
         raise
     except Exception as e:
@@ -238,54 +188,111 @@ def submit_task_result(
         )
 
 
-@router.post(
-    "/trust/{trust_name}/heartbeat",
-    summary="Trust heartbeat",
-    status_code=status.HTTP_200_OK,
-    response_model=dict[str, str],
-)
-@limiter.limit("12/minute")
-def trust_heartbeat(
-    request: Request,
-    trust_name: str,
-    db: Session = Depends(get_session),
-    authenticated_trust: str = Depends(authenticate_trust),
-) -> dict[str, str]:
-    """
-    Receives a heartbeat from a trust, updating its last_heartbeat timestamp.
-
-    This replaces the hub-initiated health check with a trust-initiated heartbeat.
+def _record_heartbeat(trust: Trust, db: Session) -> dict[str, object]:
+    """Stamp the trust row with the current UTC time.
 
     Args:
-        request (Request): The FastAPI request, used by the rate limiter.
-        trust_name (str): The trust sending the heartbeat, taken from the URL path.
-        db (Session): Database session, provided by dependency injection.
-        authenticated_trust (str): The trust name resolved from the API key, provided by
-            dependency injection.
+        trust (Trust): The authenticated trust.
+        db (Session): Database session.
 
     Returns:
-        dict[str, str]: ``{"message": "Heartbeat recorded"}`` on success.
+        dict[str, object]: ``{trust_id, trust_name, message}``.
 
     Raises:
-        HTTPException: 403 if the authenticated trust doesn't match ``trust_name``, 404 if the
-            trust is not registered, 500 on any other error.
+        HTTPException: 500 on any error.
     """
-    verify_trust_identity(trust_name, authenticated_trust)
-    logger.debug(f"Heartbeat received from trust '{trust_name}'")
-
+    logger.debug(f"Heartbeat received from trust '{trust.name}'")
     try:
-        trust = _get_trust_by_name(trust_name, db)
         trust.last_heartbeat = datetime.now(timezone.utc)
         db.commit()
-
-        return {"message": "Heartbeat recorded"}
-
-    except HTTPException:
-        raise
+        return {**_trust_identity(trust), "message": "Heartbeat recorded"}
     except Exception as e:
         db.rollback()
-        logger.error(f"Error recording heartbeat for trust '{trust_name}': {e}")
+        logger.error(f"Error recording heartbeat for trust '{trust.name}': {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
         )
+
+
+# ---------------------------------------------------------------------------
+# Canonical routes — no `{trust_name}` segment. Identity is the API key.
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/tasks/pending",
+    summary="Get pending tasks for the authenticated trust",
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("12/minute")
+def get_pending_tasks(
+    request: Request,
+    db: Session = Depends(get_session),
+    authenticated_trust: Trust = Depends(authenticate_trust),
+) -> dict[str, object]:
+    """Poll for queued tasks for the authenticated trust.
+
+    Args:
+        request (Request): The FastAPI request, used by the rate limiter.
+        db (Session): Database session.
+        authenticated_trust (Trust): The trust resolved from the API key.
+
+    Returns:
+        dict[str, object]: ``{trust_id, trust_name, tasks: [...]}``. ``tasks`` is
+        bounded by ``PENDING_TASKS_LIMIT``; each task's payload is encrypted for
+        transport.
+    """
+    return _get_pending_tasks(authenticated_trust, db)
+
+
+@router.post(
+    "/tasks/{task_id}/result",
+    summary="Submit task result",
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("60/minute")
+def submit_task_result(
+    request: Request,
+    task_id: UUID,
+    task_result: TaskResultInput = Body(...),
+    db: Session = Depends(get_session),
+    authenticated_trust: Trust = Depends(authenticate_trust),
+) -> dict[str, object]:
+    """Submit the result of a previously-dispatched task.
+
+    Args:
+        request (Request): The FastAPI request, used by the rate limiter.
+        task_id (UUID): The task whose result is being submitted.
+        task_result (TaskResultInput): The reported outcome.
+        db (Session): Database session.
+        authenticated_trust (Trust): The trust resolved from the API key.
+
+    Returns:
+        dict[str, object]: ``{trust_id, trust_name, message}``.
+    """
+    return _submit_task_result(authenticated_trust, task_id, task_result, db)
+
+
+@router.post(
+    "/trust/heartbeat",
+    summary="Trust heartbeat",
+    status_code=status.HTTP_200_OK,
+)
+@limiter.limit("12/minute")
+def trust_heartbeat(
+    request: Request,
+    db: Session = Depends(get_session),
+    authenticated_trust: Trust = Depends(authenticate_trust),
+) -> dict[str, object]:
+    """Record a heartbeat for the authenticated trust.
+
+    Args:
+        request (Request): The FastAPI request, used by the rate limiter.
+        db (Session): Database session.
+        authenticated_trust (Trust): The trust resolved from the API key.
+
+    Returns:
+        dict[str, object]: ``{trust_id, trust_name, message}``.
+    """
+    return _record_heartbeat(authenticated_trust, db)

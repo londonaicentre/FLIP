@@ -23,7 +23,6 @@ from flip_api.db.seed.role_permissions import seed_role_permissions
 from flip_api.db.seed.roles import seed_roles
 from flip_api.db.seed.seed_logger import logger
 from flip_api.db.seed.site_config import seed_config
-from flip_api.db.seed.trusts import seed_trusts
 
 
 def main() -> None:
@@ -48,8 +47,9 @@ def main() -> None:
             seed_role_permissions(session)
             logger.debug("Creating Users")
             seed_main_users(session)
-            logger.debug("Creating Trusts")
-            trusts = seed_trusts(session)
+            # Trust registration is intentionally NOT seeded here — the deploy invokes
+            # ``register_deploy_trusts`` (CLI) so plaintext keys can be captured and
+            # distributed to trust hosts as kit files. See plan for the deploy flow.
             logger.debug("Seeding FL kit slot pool")
             seed_fl_kit_slots(session)
             logger.debug("Creating Banner")
@@ -65,7 +65,6 @@ def main() -> None:
             logger.debug({
                 "roles": roles,
                 "permissions": permissions,
-                "trusts": trusts,
                 "fl_nets": fl_nets,
                 "fl_scheduler": fl_scheduler,
             })
