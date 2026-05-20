@@ -17,27 +17,37 @@ training, wait for training to finish, download the FL results. Hits the same
 flip-api endpoints the UI does, so it covers the API + trust + FL integration
 paths without the fragility of UI selectors.
 
-The defaults are pinned to the xray classification tutorial in flip-fl-base
-(sibling repo to FLIP/): `--model-files-dir` points at its `app_files/`, and
-`make e2e_smoke` wires `--query-file` to its `query.sql` (used as-is). Other
-cohorts / tutorials work fine via `--model-files-dir` and `--query-file`.
+Backend-agnostic: the script uploads whatever files are in `--model-files-dir`,
+and the FL framework (Flower vs NVFLARE) is decided server-side by `FL_BACKEND`
+in flip-api's bundling code. `make e2e_smoke` picks the chest-xray tutorial
+that matches FL_BACKEND — the Flower tutorial lives in flip-fl-base-flower,
+the NVFLARE one in flip-fl-base. Both reuse the same `query.sql` against the
+trust mock OMOP data. Override either path with `--model-files-dir` and
+`--query-file`.
 
 Usage (preferred):
-    make e2e_smoke
+    make e2e_smoke                    # picks Flower tutorial (default)
+    FL_BACKEND=nvflare make e2e_smoke # picks NVFLARE tutorial
 
 Direct invocation:
     cd flip-api
     uv run python -m tests.e2e_smoke \\
-        --model-files-dir ../../flip-fl-base/tutorials/image_classification/xray_classification/app_files \\
-        --query-file /path/to/cohort.sql
+        --model-files-dir ../../flip-fl-base-flower/tutorials/xray_classification/app \\
+        --query-file ../../flip-fl-base-flower/tutorials/xray_classification/query.sql
 
 Run on a stack that already has trusts approved (`make up` plus the usual
 seeding) and non-empty XNAT data so image pull has something to do.
+
+Pass --abort-midway to verify the FL "stop training" path (GitHub issue #490)
+instead of running to completion: once training is live, the smoke POSTs
+/fl/stop/{model_id} twice and asserts both return HTTP 204 — the first aborts
+the running job, the second is an idempotent no-op.
 """
 from __future__ import annotations
 
 import argparse
 import mimetypes
+import os
 import sys
 import tempfile
 import time
@@ -57,6 +67,7 @@ from tests.integration.utils import admin_authentication
 DEFAULT_QUERY_FILE = Path(__file__).parent / "example_query.sql"
 DEFAULT_PROJECT_NAME_PREFIX = "Xrays E2E Smoke"
 DEFAULT_MODEL_NAME = "Xrays E2E Smoke Model"
+ABORT_MIDWAY_NAME_SUFFIX = " (abort-midway)"
 
 # Anything strictly past INITIATED. RESULTS_UPLOADED is included so a fast
 # finish short-circuits wait_for_training_finished cleanly on the first poll.
@@ -73,6 +84,26 @@ class SmokeFailure(RuntimeError):
 
 def _log(msg: str) -> None:
     print(msg, flush=True)
+
+
+def resolve_model_name(base_name: str, abort_midway: bool) -> str:
+    """Return ``base_name`` plus the abort-midway suffix when the flag is set.
+
+    The suffix lets the UI distinguish an abort-midway model from a full-train
+    model when the same project hosts both (the typical --project-id reuse flow).
+    Idempotent: a name that already ends with the suffix is returned unchanged.
+
+    Args:
+        base_name (str): The base model name (CLI default or --model-name override).
+        abort_midway (bool): Whether the smoke run will exercise the abort path.
+
+    Returns:
+        str: ``base_name`` with the abort suffix when ``abort_midway`` is true and
+        the suffix is not already present, otherwise ``base_name`` unchanged.
+    """
+    if not abort_midway or base_name.endswith(ABORT_MIDWAY_NAME_SUFFIX):
+        return base_name
+    return f"{base_name}{ABORT_MIDWAY_NAME_SUFFIX}"
 
 
 def _post(
@@ -295,14 +326,26 @@ def create_model(client: requests.Session, headers: dict[str, str], project_id: 
     return model_id
 
 
+def _blacklisted_filenames() -> set[str]:
+    """Mirror flip-ui's BLACKLISTED_MODEL_FILES filter so the smoke doesn't upload
+    framework internals (server_app.py, strategy.py, flip.py, …) that the UI rejects."""
+    raw = os.environ.get("BLACKLISTED_MODEL_FILES", "")
+    return {name.strip() for name in raw.split(",") if name.strip()}
+
+
 def upload_files(
     client: requests.Session, headers: dict[str, str], model_id: str, files_dir: Path
 ) -> list[str]:
     if not files_dir.is_dir():
         raise SmokeFailure(f"--model-files-dir does not exist: {files_dir}")
-    paths = sorted(p for p in files_dir.iterdir() if p.is_file())
+    blacklist = _blacklisted_filenames()
+    all_paths = sorted(p for p in files_dir.iterdir() if p.is_file())
+    skipped = [p.name for p in all_paths if p.name in blacklist]
+    paths = [p for p in all_paths if p.name not in blacklist]
     if not paths:
         raise SmokeFailure(f"No files found under {files_dir}")
+    if skipped:
+        _log(f"⏭️  Skipping {len(skipped)} blacklisted file(s): {', '.join(skipped)}")
     _log(f"📤 Uploading {len(paths)} file(s) from {files_dir}")
     uploaded: list[str] = []
     for path in paths:
@@ -316,13 +359,20 @@ def upload_files(
             ),
             f"presigned URL for {path.name}",
         )
-        upload_url = presigned_resp.json()
-        # S3 presigned PUTs do not accept the flip-api auth header.
+        policy = presigned_resp.json()
+        # Presigned POST policy: every signed field must be appended verbatim
+        # and `file` must come last. S3 does not accept the flip-api auth
+        # header on this request.
         with path.open("rb") as fh:
-            put_resp = requests.put(upload_url, data=fh, timeout=120)
-        if put_resp.status_code >= 300:
-            raise SmokeFailure(f"S3 upload failed for {path.name}: HTTP {put_resp.status_code}")
-        # The presigned PUT only puts bytes in S3 — the DB row is written by
+            post_resp = requests.post(
+                policy["url"],
+                data=policy["fields"],
+                files={"file": (path.name, fh, content_type)},
+                timeout=120,
+            )
+        if post_resp.status_code >= 300:
+            raise SmokeFailure(f"S3 upload failed for {path.name}: HTTP {post_resp.status_code}")
+        # The presigned POST only puts bytes in S3 — the DB row is written by
         # /files/process-scanned-file, which is the SNS-driven webhook the
         # antivirus scanner calls in prod. The UI invokes it directly after a
         # 3s grace, so the file shows up in the model dashboard. Without this
@@ -407,6 +457,62 @@ def wait_for_training_finished(
     )
 
 
+def wait_for_training_running(
+    client: requests.Session, headers: dict[str, str], model_id: str, timeout_s: int
+) -> str:
+    """Block until the model reports TRAINING_STARTED — a genuinely live FL job.
+
+    ``wait_for_training_started`` returns on the first status past INITIATED, which
+    can be the transient PREPARED. The --abort-midway stop test wants a running job,
+    so poll on for TRAINING_STARTED specifically. If training races to RESULTS_UPLOADED
+    first, return that — stopping an already-finished job is still a valid idempotency
+    check, the caller just notes it.
+    """
+    _log(f"⏳ Waiting for model to reach TRAINING_STARTED (timeout {timeout_s}s)")
+    deadline = time.monotonic() + timeout_s
+    last_status = ""
+    poll_interval = 5
+    while time.monotonic() < deadline:
+        resp = _try_request(_post, client, f"/step/model/{model_id}", {}, headers)
+        if resp is None or resp.status_code >= 300:
+            time.sleep(poll_interval)
+            continue
+        status = resp.json().get("status", "")
+        if status != last_status:
+            _log(f"  📊 status={status}")
+            last_status = status
+        if status == ModelStatus.ERROR.value:
+            raise SmokeFailure("Model entered ERROR state before training started — check fl-server logs")
+        if status in (ModelStatus.TRAINING_STARTED.value, ModelStatus.RESULTS_UPLOADED.value):
+            return status
+        time.sleep(poll_interval)
+    raise SmokeFailure(
+        f"Model did not reach TRAINING_STARTED within {timeout_s}s (last status: {last_status or 'unknown'})."
+    )
+
+
+def stop_training(client: requests.Session, headers: dict[str, str], model_id: str, *, attempt: int) -> None:
+    """POST /fl/stop/{model_id} and assert a clean HTTP 204 — the #490 contract."""
+    _log(f"🛑 Stop attempt #{attempt}: POST /fl/stop/{model_id}")
+    resp = _post(client, f"/fl/stop/{model_id}", {}, headers)
+    if resp.status_code != 204:
+        raise SmokeFailure(f"stop attempt #{attempt} expected HTTP 204, got {resp.status_code}: {resp.text}")
+    _log(f"  ✅ stop #{attempt} returned 204")
+
+
+def assert_model_stopped(client: requests.Session, headers: dict[str, str], model_id: str) -> None:
+    """After a successful stop the model should report STOPPED.
+
+    There is no GET /model/{id}; /step/model/{id} is the codebase's canonical
+    "current model status" call (it is what every wait_for_* helper polls).
+    """
+    resp = _ensure_ok(_post(client, f"/step/model/{model_id}", {}, headers), "fetch model status after stop")
+    status = resp.json().get("status", "")
+    if status != ModelStatus.STOPPED.value:
+        raise SmokeFailure(f"expected model status STOPPED after stop, got {status!r}")
+    _log(f"  ✅ model status is {status}")
+
+
 def download_results(
     client: requests.Session, headers: dict[str, str], model_id: str, dest_dir: Path
 ) -> list[Path]:
@@ -449,9 +555,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--model-files-dir",
         type=Path,
         required=True,
-        help="Directory whose files are uploaded to the model. "
-        "For the xray classification tutorial: "
-        "../../flip-fl-base/tutorials/image_classification/xray_classification/app_files",
+        help="Directory whose files are uploaded to the model. Flower: "
+        "../../flip-fl-base-flower/tutorials/xray_classification/app. "
+        "NVFLARE: ../../flip-fl-base/tutorials/image_classification/xray_classification/app_files.",
     )
     parser.add_argument(
         "--query-file",
@@ -463,6 +569,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--project-name",
         default=None,
         help=f"Project name (default: '{DEFAULT_PROJECT_NAME_PREFIX} <epoch>')",
+    )
+    parser.add_argument(
+        "--project-id",
+        default=None,
+        help="Reuse an existing approved project: skip cohort submission and approval; jump straight "
+        "to model creation + upload + training. Image-pull wait still runs (cheap when already at "
+        "100%, correct when a prior --abort-midway run left pulls in flight). Lets you iterate on "
+        "training code without re-creating the project for every retry.",
     )
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
     parser.add_argument(
@@ -490,6 +604,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Seconds to wait for the model to reach RESULTS_UPLOADED (default: %(default)s)",
     )
     parser.add_argument(
+        "--abort-midway",
+        action="store_true",
+        help="#490 stop-training check: once training is running, POST /fl/stop/{model_id} twice "
+        "(first aborts the live job, second is an idempotent no-op) instead of waiting for training "
+        "to finish + downloading results. Both stops must return HTTP 204.",
+    )
+    parser.add_argument(
         "--results-dir",
         type=Path,
         default=None,
@@ -511,26 +632,57 @@ def main(argv: list[str] | None = None) -> int:
     client = requests.Session()
     client.headers.update({"Content-Type": "application/json"})
 
-    results_dir = args.results_dir or Path(tempfile.mkdtemp(prefix="flip-e2e-results-"))
-
     try:
-        project_id, _query_id = create_project_with_query(client, headers, project_name, query)
-        trusts = stage_and_approve(client, headers, project_id)
+        if args.project_id:
+            project_id = args.project_id
+            _log(f"♻️  Reusing existing project_id={project_id} (skipping cohort + approval)")
+            trusts = _ensure_ok(_get(client, "/trust/", headers), "list trusts").json()
+            if not trusts:
+                raise SmokeFailure("No trusts registered with the hub")
+            _log(f"  ✅ found {len(trusts)} trust(s): {[t['name'] for t in trusts]}")
+        else:
+            project_id, _query_id = create_project_with_query(client, headers, project_name, query)
+            trusts = stage_and_approve(client, headers, project_id)
         # Create the model and upload files before waiting for image pull. This
         # surfaces model-creation / upload errors immediately instead of after
         # 5–15 minutes of XNAT pulling, and the FL pipeline only consumes the
         # images at training time anyway.
-        model_id = create_model(client, headers, project_id, args.model_name)
+        model_name = resolve_model_name(args.model_name, args.abort_midway)
+        model_id = create_model(client, headers, project_id, model_name)
         upload_files(client, headers, model_id, args.model_files_dir)
+        # Always wait for image pull, including on --project-id reuse: a prior
+        # run on this project may have left pulls in flight (aborted midway,
+        # failed, or simply queued back-to-back before the first pull finished),
+        # in which case skipping the wait here would have wait_for_training_started
+        # sit blocked on the (still pulling) FL clients until it times out.
         wait_for_image_pull(
             client, headers, project_id, args.image_pull_threshold, args.image_pull_timeout
         )
         initiate_training(client, headers, model_id, [t["name"] for t in trusts])
         wait_for_training_started(client, headers, model_id, args.training_start_timeout)
-        final_status = wait_for_training_finished(
-            client, headers, model_id, args.training_finish_timeout
-        )
-        downloaded = download_results(client, headers, model_id, results_dir)
+        if args.abort_midway:
+            # #490: exercise the FL "stop training" path instead of running to completion.
+            running_status = wait_for_training_running(
+                client, headers, model_id, args.training_start_timeout
+            )
+            if running_status == ModelStatus.RESULTS_UPLOADED.value:
+                _log("  ⚠️  training finished before the stop — both stops now exercise the "
+                     "idempotent (already-terminal) path only")
+            # Stop #1 aborts the running job; stop #2 is an idempotent no-op. Both must 204.
+            stop_training(client, headers, model_id, attempt=1)
+            assert_model_stopped(client, headers, model_id)
+            time.sleep(5)
+            stop_training(client, headers, model_id, attempt=2)
+            assert_model_stopped(client, headers, model_id)
+            final_status = ModelStatus.STOPPED.value
+            results_dir = None
+            downloaded = []
+        else:
+            results_dir = args.results_dir or Path(tempfile.mkdtemp(prefix="flip-e2e-results-"))
+            final_status = wait_for_training_finished(
+                client, headers, model_id, args.training_finish_timeout
+            )
+            downloaded = download_results(client, headers, model_id, results_dir)
     except SmokeFailure as exc:
         _log(f"\n❌ Smoke failed: {exc}")
         return 1
@@ -544,7 +696,10 @@ def main(argv: list[str] | None = None) -> int:
     _log(f"   project_id   = {project_id}")
     _log(f"   model_id     = {model_id}")
     _log(f"   final_status = {final_status}")
-    _log(f"   results_dir  = {results_dir} ({len(downloaded)} file(s))")
+    if args.abort_midway:
+        _log("   stop #1 (abort running job) + stop #2 (idempotent no-op) both returned 204")
+    else:
+        _log(f"   results_dir  = {results_dir} ({len(downloaded)} file(s))")
     _log("=" * 60)
     return 0
 

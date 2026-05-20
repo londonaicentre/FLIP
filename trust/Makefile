@@ -31,8 +31,8 @@ endif
 
 include ../deploy/fl_backend.mk
 
-COMMON_COMPOSE_FILE := compose_trust.$(__DCKR_SUFFIX).yml
-FL_BACKEND_COMPOSE_FILE := compose_trust.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
+COMMON_COMPOSE_FILE := deploy/compose_trust.$(__DCKR_SUFFIX).yml
+FL_BACKEND_COMPOSE_FILE := deploy/compose_trust.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
 # Resolve FL_PROVISIONED_DIR (from .env) to an absolute path relative to the repo root.
 # Docker requires absolute paths for volume mounts; the .env value may be relative.
@@ -53,13 +53,16 @@ get_json_value = $(shell python3 ../flip-api/src/flip_api/scripts/env_utils.py '
 
 OMOP_DB_CMD=make -C ./omop-db
 ORTHANC_CMD=make -C ./orthanc
-DOCKER_COMPOSE_CMD=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f compose_trust.debug.override.yml
+# --project-directory . keeps relative paths inside the compose files (./trust-api,
+# ./observability/, ./omop-db/volumes/, …) resolving from trust/ even though the compose
+# files now live in trust/deploy/. Avoids having to rewrite every ./X to ../X.
+DOCKER_COMPOSE_CMD=docker compose --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.debug.override.yml
 
-# NOTE DOCKER_REGISTRY is set to empty when we use local FL images during development (e.g. flare-fl-server:dev). 
+# NOTE DOCKER_FL_REGISTRY is set to empty when we use local FL images during development (e.g. flare-fl-client:dev).
 # In that case, '--pull always' will error because docker won't be able to find the manifest for the dev image online,
-# so we need to remove the --pull always flag.
-ifneq ($(strip $(DOCKER_REGISTRY)),)
+# so we need to remove the --pull always flag. Non-FL images keep DOCKER_REGISTRY (always GHCR).
+ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
 PULL_ALWAYS_FLAG=--pull always
 else
 PULL_ALWAYS_FLAG=
@@ -147,11 +150,11 @@ up-trust-1: update-omop-data update-orthanc-data
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST1}
-	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f compose_trust-1_override.yml -p ${trust1} up -d $(PULL_ALWAYS_FLAG)
+	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} up -d $(PULL_ALWAYS_FLAG)
 
 down-trust-1:
 	@echo "🛑 Stopping Trust 1 services..."
-	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -f compose_trust-1_override.yml -p ${trust1} down --remove-orphans
+	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} down --remove-orphans
 
 restart-trust-1: down-trust-1 up-trust-1
 
@@ -185,12 +188,12 @@ up-local-trust: create-networks-core create-networks-local-trust
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	mkdir -p ./data/local/$(LOCAL_TRUST_NAME)
 	$(LOCAL_TRUST_VARS) DEBUG=$(DEBUG) \
-		$(DOCKER_COMPOSE_CMD) -f compose_trust.local.yml -p $(trust_local) up -d --pull always
+		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(trust_local) up -d --pull always
 
 down-local-trust:
 	@echo "🛑 Stopping local Trust services..."
 	$(LOCAL_TRUST_VARS) \
-		$(DOCKER_COMPOSE_CMD) -f compose_trust.local.yml -p $(trust_local) down --remove-orphans
+		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(trust_local) down --remove-orphans
 
 # Uses --pull always to ensure the latest FL images and omop-db image are used
 # ensure omop and orthanc data are up to date before bringing up trust 2
@@ -275,7 +278,7 @@ debug-trust-api-off:
 
 
 # Trust-side integration tests (issue #369, B3). Each delegated target brings up
-# the shared trust/compose.test.yml stack via Testcontainers — run them serially
+# the shared trust/deploy/compose.test.yml stack via Testcontainers — run them serially
 # so the per-suite session fixtures don't fight over Docker resources.
 integration_test:
 	$(MAKE) -C data-access-api integration_test

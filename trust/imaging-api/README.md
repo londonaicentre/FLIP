@@ -50,8 +50,7 @@ It requires both [XNAT](../xnat/) and [Orthanc](../orthanc/) to be running.
 
 Download and unzip a XNAT dataset to a local folder.
 
-```bash
-net_id: net-1
+```json
 {
   "encrypted_central_hub_project_id": "string",
   "accession_id": "string"

@@ -98,8 +98,9 @@ The relevant setting is:
      - Description
    * - ``LOG_LEVEL``
      - ``INFO``
-     - Python log level applied uniformly to all trust services. Set to
-       ``DEBUG`` in development, ``INFO`` in staging/production.
+     - Python log level applied uniformly to all trust services. The Pydantic
+       ``Settings`` default is ``INFO``; the example ``.env.development``
+       overrides this to ``DEBUG`` for local development.
 
 This is set via environment variables or ``.env.*`` files and read through
 each service's Pydantic ``Settings`` class.
@@ -234,8 +235,10 @@ override.
      - Description
    * - ``TRUST_LOG_LEVEL``
      - All APIs (mapped to ``LOG_LEVEL`` inside each container)
-     - Sets the Python log level uniformly across all trust services.
-       Defaults to ``DEBUG`` in development, ``INFO`` in staging/production.
+     - Sets the Python log level uniformly across all trust services. The
+       Pydantic ``Settings`` default is ``INFO``; the example
+       ``.env.development`` sets ``TRUST_LOG_LEVEL=DEBUG`` for local
+       development.
    * - ``GRAFANA_PORT``
      - Grafana
      - Host port for the Grafana UI (default ``3000``)
@@ -251,9 +254,9 @@ Docker Compose services
 
 The logging infrastructure is defined in the trust-level Docker Compose files:
 
-- ``trust/compose_trust.development.yml`` -- development overrides with
+- ``trust/deploy/compose_trust.development.yml`` -- development overrides with
   configurable ports
-- ``trust/compose_trust.production.yml`` -- production settings with persistent
+- ``trust/deploy/compose_trust.production.yml`` -- production settings with persistent
   volumes and automatic restart
 
 Three services are added:

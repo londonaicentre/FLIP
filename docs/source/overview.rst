@@ -19,7 +19,7 @@ Data from across the Trusts' patient records systems will be transferred into th
    :width: 600
    :align: center
 
-   FLIP at a glance.
+   FLIP node at a glance.
 
 The secure enclave is comprised of multiple hardware and software components. We use high-performance NVIDIA DGX 1 processors to train our algorithms, which have the computing power to analyse hundreds of thousands of medical imaging scans in minutes.
 

@@ -48,24 +48,16 @@ def _mock_settings(net_endpoints: dict) -> SimpleNamespace:
 @patch("flip_api.db.seed.fl_nets.get_settings")
 def test_seed_fl_nets_creates_new_nets_when_none_exist(mock_get_settings, mock_session, sample_net_endpoints):
     """Test that seed_fl_nets creates new nets when none exist."""
-    # Arrange
     mock_get_settings.return_value = _mock_settings(sample_net_endpoints)
-    mock_session.exec.return_value.all.side_effect = [[], []]  # First call empty, second call empty for return
+    mock_session.exec.return_value.all.side_effect = [[], []]  # initial read + final return
 
-    # Act
     seed_fl_nets(mock_session)
 
-    # Assert
     mock_get_settings.assert_called_once()
-    assert mock_session.exec.call_count == 2  # Once to check existing, once to return all
-    assert mock_session.add.call_count == 2  # Two nets added
-    assert mock_session.commit.call_count == 2  # Two commits
+    assert mock_session.add.call_count == 2  # Two new nets added
+    mock_session.commit.assert_called_once()  # Single commit at end of upsert pass
 
-    # Verify the nets that were added
-    add_calls = mock_session.add.call_args_list
-    added_net1 = add_calls[0][0][0]
-    added_net2 = add_calls[1][0][0]
-
+    added_net1, added_net2 = (call.args[0] for call in mock_session.add.call_args_list)
     assert isinstance(added_net1, FLNets)
     assert isinstance(added_net2, FLNets)
     assert {added_net1.name, added_net2.name} == {"net1", "net2"}
@@ -73,61 +65,57 @@ def test_seed_fl_nets_creates_new_nets_when_none_exist(mock_get_settings, mock_s
 
 
 @patch("flip_api.db.seed.fl_nets.get_settings")
-def test_seed_fl_nets_skips_existing_nets(mock_get_settings, mock_session, sample_net_endpoints, mock_fl_net):
-    """Test that seed_fl_nets skips existing nets and only adds new ones."""
-    # Arrange
-    sample_net_endpoints = {"existing_net": "http://existing.com", "new_net": "http://new.com"}
-    mock_get_settings.return_value = _mock_settings(sample_net_endpoints)
+def test_seed_fl_nets_skips_matching_existing_nets(mock_get_settings, mock_session, mock_fl_net):
+    """Existing row whose endpoint already matches NET_ENDPOINTS is left alone."""
+    mock_get_settings.return_value = _mock_settings({"existing_net": "http://existing.com", "new_net": "http://new.com"})
+    mock_session.exec.return_value.all.side_effect = [[mock_fl_net], [mock_fl_net, Mock(spec=FLNets)]]
 
-    existing_nets = [mock_fl_net]
-    final_nets = [mock_fl_net, Mock(spec=FLNets)]
-    mock_session.exec.return_value.all.side_effect = [existing_nets, final_nets]
-
-    # Act
     seed_fl_nets(mock_session)
 
-    # Assert
-    mock_session.add.assert_called_once()  # Only one new net added
-    mock_session.commit.assert_called_once()
-
-    # Verify only the new net was added
-    added_net = mock_session.add.call_args[0][0]
+    mock_session.add.assert_called_once()  # Only the new net is added; the matching one is untouched
+    added_net = mock_session.add.call_args.args[0]
     assert added_net.name == "new_net"
     assert added_net.endpoint == "http://new.com"
 
 
 @patch("flip_api.db.seed.fl_nets.get_settings")
+def test_seed_fl_nets_reconciles_stale_endpoint(mock_get_settings, mock_session, mock_fl_net):
+    """Regression: an existing row whose endpoint differs from NET_ENDPOINTS gets reconciled.
+
+    Before the upsert refactor, `seed_fl_nets` was insert-only — once a row existed,
+    its endpoint was never updated. After the EC2-compose → ECS Cloud Map cutover,
+    rows seeded with the old docker-compose hostname stranded `/api/fl/status` with
+    `Name or service not known`.
+    """
+    mock_get_settings.return_value = _mock_settings({"existing_net": "http://fl-api-net-1.flip.local:8000"})
+    mock_session.exec.return_value.all.side_effect = [[mock_fl_net], [mock_fl_net]]
+
+    seed_fl_nets(mock_session)
+
+    assert mock_fl_net.endpoint == "http://fl-api-net-1.flip.local:8000"
+    mock_session.add.assert_called_once_with(mock_fl_net)
+    mock_session.commit.assert_called_once()
+
+
+@patch("flip_api.db.seed.fl_nets.get_settings")
 def test_seed_fl_nets_returns_all_nets(mock_get_settings, mock_session, sample_net_endpoints):
     """Test that seed_fl_nets returns all nets from database."""
-    # Arrange
     mock_get_settings.return_value = _mock_settings(sample_net_endpoints)
-    mock_net1 = Mock(spec=FLNets)
-    mock_net2 = Mock(spec=FLNets)
-    final_nets = [mock_net1, mock_net2]
-
+    final_nets = [Mock(spec=FLNets), Mock(spec=FLNets)]
     mock_session.exec.return_value.all.side_effect = [[], final_nets]
 
-    # Act
     result = seed_fl_nets(mock_session)
 
-    # Assert
-    assert isinstance(result, list)
-    assert len(result) == 2
     assert result == final_nets
 
 
 @patch("flip_api.db.seed.fl_nets.get_settings")
-def test_seed_fl_nets_with_empty_secrets(mock_get_settings, mock_session):
-    """Test that seed_fl_nets handles empty net endpoints."""
-    # Arrange
-    empty_secrets = {}
-    mock_get_settings.return_value = _mock_settings(empty_secrets)
-    mock_session.exec.return_value.all.return_value = []
+def test_seed_fl_nets_with_empty_endpoints(mock_get_settings, mock_session):
+    """Empty NET_ENDPOINTS: no add() calls; commit() is still invoked once (no-op transaction)."""
+    mock_get_settings.return_value = _mock_settings({})
+    mock_session.exec.return_value.all.side_effect = [[], []]
 
-    # Act
     result = seed_fl_nets(mock_session)
 
-    # Assert
     mock_session.add.assert_not_called()
-    mock_session.commit.assert_not_called()
     assert result == []
