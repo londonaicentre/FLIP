@@ -19,7 +19,7 @@
 # The previous single `aws_s3_bucket.flip_bucket` held three tenants with
 # materially different access patterns:
 #
-#   - model file uploads (researcher → browser PUT today, browser POST once #438 lands → AV-scan → flip-api reads)
+#   - model file uploads (researcher → browser POST → AV-scan → flip-api reads)
 #   - FL results (fl-server writes; researcher downloads via browser GET)
 #   - FL app bundles (server-only — flip-api copies base → destination)
 #
@@ -27,8 +27,9 @@
 # CORS change to widen across every consumer. Splitting into three buckets
 # gives each tenant the minimum CORS surface it needs:
 #
-#   - flip-model-files-uploads: CORS PUT today; narrows to POST once #438 lands
-#     (see the per-module comment below for the dependency)
+#   - flip-model-files-uploads: CORS POST (presigned POST policy enforces a
+#     content-length-range cap and optional Content-Type at the S3 edge —
+#     see flip-api/src/flip_api/utils/s3_client.py::get_put_presigned_post)
 #   - flip-fl-results: CORS GET (browser presigned download)
 #   - flip-app-bundles: no CORS resource (server-only, never browser-direct)
 #
@@ -41,14 +42,13 @@
 module "flip_model_files_uploads_bucket" {
   source      = "./modules/flip_s3_bucket"
   bucket_name = var.FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME
-  # Browser uploads currently use a presigned PUT (`get_put_presigned_url` in
-  # flip-api/src/flip_api/file_services/presigned_url_for_upload.py). PR #438
-  # migrates uploads to `generate_presigned_post` + a content-length-range
-  # policy; when that lands, narrow this to `["POST"]` and add the bucket
-  # policy cap from #438. The issue-24 plan was written assuming #438 had
-  # already merged, but on `origin/develop` the route still mints PUT URLs,
-  # so a POST-only CORS surface rejects the preflight from the running UI.
-  cors_methods         = ["PUT"]
+  # Researcher uploads use a presigned POST policy minted by
+  # `get_put_presigned_post` in
+  # flip-api/src/flip_api/file_services/presigned_url_for_upload.py. The
+  # policy bakes in `["content-length-range", 0, MAX_MODEL_FILE_BYTES]`
+  # (and locks Content-Type when the caller supplies one), so S3 rejects
+  # oversized or wrong-type uploads at the edge — the hub never sees them.
+  cors_methods         = ["POST"]
   cors_allowed_origins = ["https://${var.flip_alb_subdomain}"]
 }
 

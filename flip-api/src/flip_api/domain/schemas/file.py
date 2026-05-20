@@ -90,14 +90,43 @@ class ScannedFileInput(BaseModel):
 
 
 class UploadFileBody(BaseModel):
-    """Model for file upload request body."""
+    """Model for file upload request body.
+
+    Field names are camelCase rather than snake_case because they map
+    directly to the case-sensitive form-field names in the multipart
+    upload (e.g. S3's ``Content-Type`` form field), and to stay
+    consistent with the existing ``fileName`` boundary.
+    """
 
     fileName: str = Field(..., description="Name of the file to upload", min_length=1, max_length=255)
+    contentType: str | None = Field(
+        default=None,
+        description=(
+            "Content-Type the client intends to upload with. When provided, "
+            "the presigned POST policy locks the upload's Content-Type to "
+            "this exact value."
+        ),
+    )
 
     @field_validator("fileName")
     @classmethod
     def _validate_file_name(cls, v: str) -> str:
         return validate_safe_file_name(v)
+
+
+class PresignedUploadResponse(BaseModel):
+    """Response for a presigned-POST upload request.
+
+    The client must POST ``multipart/form-data`` to ``url`` with every entry
+    in ``fields`` included as a form field, plus the file last under the
+    field name ``file``. ``maxBytes`` mirrors the size cap baked into the
+    policy so the UI can short-circuit oversized files locally and surface
+    a clear error.
+    """
+
+    url: str
+    fields: dict[str, str]
+    maxBytes: int
 
 
 class ModelFile(BaseModel):
