@@ -664,7 +664,7 @@ def move_study(cfg: Config, study_uid: str, accession_number: str) -> bool:
     # Pick a random ephemeral port for movescu to listen on
     import socket
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(('', 0))
+    s.bind((socket.gethostname(), 0))
     listen_port = s.getsockname()[1]
     s.close()
 

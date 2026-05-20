@@ -550,7 +550,7 @@ add-k8s-trust: ## Register a K8s trust with the hub (runs register script + terr
 	@echo ""
 	@echo "📋 Next steps:"
 	@echo "   1. Review the generated override: deploy/providers/kubernetes/k8s-trust-$(TRUST_NAME).yaml"
-	@echo "   2. Deploy the chart: make -C deploy/providers/kubernetes/ deploy SECRETS_FILE=k8s-trust-$(TRUST_NAME).yaml"
+	@echo "   2. Deploy the chart: make -C deploy/providers/kubernetes/ deploy OVERRIDES_FILE=k8s-trust-$(TRUST_NAME).yaml"
 	@echo "   3. Verify trust polling: python3 deploy/providers/kubernetes/check_status.py"
 
 .PHONY: down

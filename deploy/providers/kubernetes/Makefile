@@ -14,11 +14,11 @@ NAMESPACE ?= flip-trust
 RELEASE_NAME ?= trust-release
 CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 VALUES_FILE ?= $(CHART_DIR)/values.yaml
-SECRETS_FILE ?=
+OVERRIDES_FILE ?=
 
 # Determine which values files to pass
-ifneq ($(strip $(SECRETS_FILE)),)
-	VALUES_OPTS := -f $(VALUES_FILE) -f $(SECRETS_FILE)
+ifneq ($(strip $(OVERRIDES_FILE)),)
+	VALUES_OPTS := -f $(VALUES_FILE) -f $(OVERRIDES_FILE)
 else
 	VALUES_OPTS := -f $(VALUES_FILE)
 endif
