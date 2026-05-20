@@ -26,25 +26,25 @@ def mock_session():
     return MagicMock(spec=Session)
 
 
-def _settings(trust_names, display_names=None):
-    """Minimal settings stub for seed_trusts (TRUST_NAMES + TRUST_DISPLAY_NAMES)."""
-    return SimpleNamespace(TRUST_NAMES=trust_names, TRUST_DISPLAY_NAMES=display_names or {})
-
-
-@patch("flip_api.db.seed.trusts._bootstrap_trust_hashes", return_value={})
+@patch("flip_api.db.seed.trusts.SEED_NAME_OVERRIDES", {})
 @patch("flip_api.db.seed.trusts.get_settings")
-def test_seed_trusts_creates_new_trusts(mock_get_settings, mock_hashes, mock_session):
-    """Env-slot names with no display override are seeded under their slot name."""
-    mock_get_settings.return_value = _settings(["Trust_1", "Trust_2"])
+def test_seed_trusts_creates_new_trusts(mock_get_settings, mock_session):
+    """Test seeding trusts creates new trust records with derived code and region."""
+    trust_names = ["Trust_1", "Trust_2"]
+    mock_get_settings.return_value = SimpleNamespace(
+        ENV="development", TRUST_NAMES=trust_names, TRUST_API_KEY_HASHES={}
+    )
 
     trust_a = MagicMock(spec=Trust)
     trust_a.name = "Trust_1"
     trust_b = MagicMock(spec=Trust)
     trust_b.name = "Trust_2"
+    final_trusts = [trust_a, trust_b]
+
     mock_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=None)),
         MagicMock(first=MagicMock(return_value=None)),
-        MagicMock(all=MagicMock(return_value=[trust_a, trust_b])),
+        MagicMock(all=MagicMock(return_value=final_trusts)),
     ]
 
     result = seed_trusts(mock_session)
@@ -53,38 +53,28 @@ def test_seed_trusts_creates_new_trusts(mock_get_settings, mock_hashes, mock_ses
     assert mock_session.add.call_count == 2
     assert mock_session.commit.call_count == 1
 
-    added = {c.args[0].name: c.args[0] for c in mock_session.add.call_args_list}
-    assert set(added) == {"Trust_1", "Trust_2"}
-    assert all(isinstance(t, Trust) for t in added.values())
-    assert all(t.region == "London" for t in added.values())
-    assert result == [{"name": "Trust_1"}, {"name": "Trust_2"}]
+    added_trusts = [c.args[0] for c in mock_session.add.call_args_list]
+    assert all(isinstance(t, Trust) for t in added_trusts)
+    by_name = {t.name: t for t in added_trusts}
+    assert by_name["Trust_1"].code == "T1"
+    assert by_name["Trust_2"].code == "T2"
+    assert all(t.region == "London" for t in added_trusts)
 
-
-@patch("flip_api.db.seed.trusts._bootstrap_trust_hashes", return_value={})
-@patch("flip_api.db.seed.trusts.get_settings")
-def test_seed_trusts_applies_display_name(mock_get_settings, mock_hashes, mock_session):
-    """TRUST_DISPLAY_NAMES sets the persisted Trust.name; unlisted slots keep their slot name."""
-    mock_get_settings.return_value = _settings(["Trust_1", "Trust_2"], {"Trust_1": "Open Trust (EC2)"})
-    mock_session.exec.side_effect = [
-        MagicMock(first=MagicMock(return_value=None)),
-        MagicMock(first=MagicMock(return_value=None)),
-        MagicMock(all=MagicMock(return_value=[])),
+    assert result == [
+        {"name": "Trust_1"},
+        {"name": "Trust_2"},
     ]
 
-    seed_trusts(mock_session)
 
-    added = {c.args[0].name for c in mock_session.add.call_args_list}
-    assert added == {"Open Trust (EC2)", "Trust_2"}
-
-
-@patch("flip_api.db.seed.trusts._bootstrap_trust_hashes", return_value={"Trust_1": "slothash"})
 @patch("flip_api.db.seed.trusts.get_settings")
-def test_seed_trusts_inserts_with_hash_keyed_by_env_slot(mock_get_settings, mock_hashes, mock_session):
-    """A new row's api_key_hash comes from the bootstrap source, keyed by the env-slot name."""
-    mock_get_settings.return_value = _settings(["Trust_1"], {"Trust_1": "Open Trust (EC2)"})
+def test_seed_trusts_passes_through_non_devstyle_names(mock_get_settings, mock_session):
+    """Real NHS-style names (e.g. 'GSTT') are kept as-is for the display code."""
+    mock_get_settings.return_value = SimpleNamespace(
+        ENV="development", TRUST_NAMES=["GSTT"], TRUST_API_KEY_HASHES={}
+    )
 
     final = MagicMock(spec=Trust)
-    final.name = "Open Trust (EC2)"
+    final.name = "GSTT"
     mock_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=None)),
         MagicMock(all=MagicMock(return_value=[final])),
@@ -93,41 +83,24 @@ def test_seed_trusts_inserts_with_hash_keyed_by_env_slot(mock_get_settings, mock
     seed_trusts(mock_session)
 
     added = mock_session.add.call_args.args[0]
-    assert added.name == "Open Trust (EC2)"
-    assert added.api_key_hash == "slothash"
+    assert added.code == "GSTT"
+    assert added.region == "London"
 
 
-@patch("flip_api.db.seed.trusts._bootstrap_trust_hashes", return_value={"Trust_1": "abc123"})
+@patch("flip_api.db.seed.trusts.SEED_NAME_OVERRIDES", {})
 @patch("flip_api.db.seed.trusts.get_settings")
-def test_seed_trusts_backfills_api_key_hash(mock_get_settings, mock_hashes, mock_session):
-    """A pre-existing row with a null hash gets the bootstrap hash backfilled."""
-    mock_get_settings.return_value = _settings(["Trust_1"], {"Trust_1": "Open Trust (EC2)"})
-
-    existing = MagicMock(spec=Trust)
-    existing.name = "Open Trust (EC2)"
-    existing.region = "London"
-    existing.api_key_hash = None
-    mock_session.exec.side_effect = [
-        MagicMock(first=MagicMock(return_value=existing)),
-        MagicMock(all=MagicMock(return_value=[existing])),
-    ]
-
-    seed_trusts(mock_session)
-
-    mock_session.add.assert_not_called()
-    assert existing.api_key_hash == "abc123"
-
-
-@patch("flip_api.db.seed.trusts._bootstrap_trust_hashes", return_value={})
-@patch("flip_api.db.seed.trusts.get_settings")
-def test_seed_trusts_backfills_region_and_preserves_hash(mock_get_settings, mock_hashes, mock_session):
-    """A pre-existing row gets region backfilled; an already-set hash is left untouched."""
-    mock_get_settings.return_value = _settings(["Trust_1"])
+def test_seed_trusts_backfills_missing_code_and_region(mock_get_settings, mock_session):
+    """Pre-existing rows without code/region get backfilled in place."""
+    mock_get_settings.return_value = SimpleNamespace(
+        ENV="development", TRUST_NAMES=["Trust_1"], TRUST_API_KEY_HASHES={}
+    )
 
     existing = MagicMock(spec=Trust)
     existing.name = "Trust_1"
+    existing.code = None
     existing.region = None
     existing.api_key_hash = "preserved"
+
     mock_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=existing)),
         MagicMock(all=MagicMock(return_value=[existing])),
@@ -136,20 +109,98 @@ def test_seed_trusts_backfills_region_and_preserves_hash(mock_get_settings, mock
     seed_trusts(mock_session)
 
     mock_session.add.assert_not_called()
+    assert existing.code == "T1"
     assert existing.region == "London"
+    # Hash is not in env, and existing already had one — left untouched.
     assert existing.api_key_hash == "preserved"
 
 
-@patch("flip_api.db.seed.trusts._bootstrap_trust_hashes", return_value={})
 @patch("flip_api.db.seed.trusts.get_settings")
-def test_seed_trusts_skips_existing(mock_get_settings, mock_hashes, mock_session):
-    """Seeding does not duplicate an existing trust."""
-    mock_get_settings.return_value = _settings(["Trust Existing"])
+def test_seed_trusts_backfills_api_key_hash_from_env(mock_get_settings, mock_session):
+    """Pre-existing rows with null hash get the env hash copied in (the migration path)."""
+    env_hash = "abc123"
+    mock_get_settings.return_value = SimpleNamespace(
+        ENV="development",
+        TRUST_NAMES=["Trust_1"],
+        TRUST_API_KEY_HASHES={"Trust_1": env_hash},
+    )
+
+    existing = MagicMock(spec=Trust)
+    existing.name = "Trust_1"
+    existing.code = "T1"
+    existing.region = "London"
+    existing.api_key_hash = None
+
+    mock_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=existing)),
+        MagicMock(all=MagicMock(return_value=[existing])),
+    ]
+
+    seed_trusts(mock_session)
+
+    assert existing.api_key_hash == env_hash
+
+
+@patch(
+    "flip_api.db.seed.trusts.SEED_NAME_OVERRIDES",
+    {"Trust_1": ("(Mock) Friendly Name", "FRIEND")},
+)
+@patch("flip_api.db.seed.trusts.get_settings")
+def test_seed_trusts_applies_name_override(mock_get_settings, mock_session):
+    """A seed entry with an override gets the friendly name + code persisted, not the env key."""
+    mock_get_settings.return_value = SimpleNamespace(
+        ENV="development",
+        TRUST_NAMES=["Trust_1"],
+        TRUST_API_KEY_HASHES={"Trust_1": "envhash"},
+    )
+    mock_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=None)),
+        MagicMock(all=MagicMock(return_value=[])),
+    ]
+
+    seed_trusts(mock_session)
+
+    added = mock_session.add.call_args.args[0]
+    assert added.name == "(Mock) Friendly Name"
+    assert added.code == "FRIEND"
+    assert added.region == "London"
+    assert added.api_key_hash == "envhash"
+
+
+@patch("flip_api.db.seed.trusts.SEED_NAME_OVERRIDES", {})
+@patch("flip_api.db.seed.trusts.get_settings")
+def test_seed_trusts_inserts_with_env_hash_when_available(mock_get_settings, mock_session):
+    """New trusts are seeded with their env hash so they can authenticate immediately."""
+    env_hash = "newrowhash"
+    mock_get_settings.return_value = SimpleNamespace(
+        ENV="development",
+        TRUST_NAMES=["Trust_1"],
+        TRUST_API_KEY_HASHES={"Trust_1": env_hash},
+    )
+
+    final = MagicMock(spec=Trust)
+    final.name = "Trust_1"
+    mock_session.exec.side_effect = [
+        MagicMock(first=MagicMock(return_value=None)),
+        MagicMock(all=MagicMock(return_value=[final])),
+    ]
+
+    seed_trusts(mock_session)
+
+    added = mock_session.add.call_args.args[0]
+    assert added.api_key_hash == env_hash
+
+
+@patch("flip_api.db.seed.trusts.get_settings")
+def test_seed_trusts_skips_existing(mock_get_settings, mock_session):
+    """Test that seeding does not duplicate existing trusts."""
+    mock_get_settings.return_value = SimpleNamespace(
+        ENV="development", TRUST_NAMES=["Trust Existing"], TRUST_API_KEY_HASHES={}
+    )
 
     existing_trust = MagicMock(spec=Trust)
     existing_trust.name = "Trust Existing"
-    existing_trust.region = "London"
-    existing_trust.api_key_hash = "h"
+
     mock_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=existing_trust)),
         MagicMock(all=MagicMock(return_value=[existing_trust])),
@@ -162,11 +213,13 @@ def test_seed_trusts_skips_existing(mock_get_settings, mock_hashes, mock_session
     assert result == [{"name": "Trust Existing"}]
 
 
-@patch("flip_api.db.seed.trusts._bootstrap_trust_hashes", return_value={})
 @patch("flip_api.db.seed.trusts.get_settings")
-def test_seed_trusts_raises_on_lookup_exception(mock_get_settings, mock_hashes, mock_session):
-    """Trust lookup errors are raised and stop seeding."""
-    mock_get_settings.return_value = _settings(["Broken Trust"])
+def test_seed_trusts_raises_on_lookup_exception(mock_get_settings, mock_session):
+    """Test that trust lookup errors are raised and stop seeding."""
+    mock_get_settings.return_value = SimpleNamespace(
+        ENV="development", TRUST_NAMES=["Broken Trust"], TRUST_API_KEY_HASHES={}
+    )
+
     mock_session.exec.side_effect = Exception("lookup failed")
 
     with pytest.raises(Exception, match="lookup failed"):

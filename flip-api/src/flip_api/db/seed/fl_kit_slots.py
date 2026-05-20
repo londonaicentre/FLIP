@@ -17,6 +17,7 @@ from sqlmodel import Session, col, select
 from flip_api.config import get_settings
 from flip_api.db.models.main_models import FLKitSlot, Trust
 from flip_api.db.seed.seed_logger import logger
+from flip_api.db.seed.trusts import SEED_NAME_OVERRIDES
 
 _SLOT_NUMBER_RE = re.compile(r"_(\d+)$")
 
@@ -57,12 +58,11 @@ def seed_fl_kit_slots(session: Session) -> None:
             )
     session.commit()
 
-    # Backfill: a seeded trust gets bound to its matching slot when the slot's env-slot
-    # name matches the trust. The trust's persisted name may be a display name set via
-    # TRUST_DISPLAY_NAMES (e.g. "Trust_1" → "Open Trust (EC2)"), so resolve that before
-    # lookup. Idempotent — only writes when the slot is currently unassigned.
+    # Backfill: a seeded trust gets bound to its matching slot if the slot's env-key
+    # name matches the trust. The trust's *display* name may have been overridden via
+    # SEED_NAME_OVERRIDES (e.g. "Trust_1" → "(Mock) GSTT"), so we resolve the override
+    # before lookup. Idempotent — only writes when the slot is currently unassigned.
     if slot_names:
-        display_names = get_settings().TRUST_DISPLAY_NAMES
         unassigned = session.exec(
             select(FLKitSlot).where(
                 col(FLKitSlot.slot_name).in_(slot_names),
@@ -70,7 +70,8 @@ def seed_fl_kit_slots(session: Session) -> None:
             )
         ).all()
         for slot in unassigned:
-            trust_display_name = display_names.get(slot.slot_name, slot.slot_name)
+            override = SEED_NAME_OVERRIDES.get(slot.slot_name)
+            trust_display_name = override[0] if override else slot.slot_name
             trust = session.exec(
                 select(Trust).where(Trust.name == trust_display_name)
             ).first()
