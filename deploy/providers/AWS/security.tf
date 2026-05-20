@@ -16,15 +16,10 @@
 # modifications on FlipSG-tagged SGs and publishes alerts to an SNS topic.
 # Architecture: CloudTrail -> EventBridge -> Lambda (tag filter) -> SNS -> Email
 #
-# Known limitations:
-# - Tag-based evasion: The Lambda reads tags at invocation time via
-#   describe_security_groups. An attacker who can mutate an SG can also call
-#   DeleteTags first to evade the filter. Mitigation would require subscribing
-#   to CreateTags/DeleteTags events scoped to SG resources.
-# - Missing event types: CreateSecurityGroup, DeleteSecurityGroup,
-#   ModifySecurityGroupRules, UpdateSecurityGroupRuleDescriptions{Ingress,Egress},
-#   and tag mutations (CreateTags/DeleteTags on SG resources) are not captured.
-#   See the EventBridge rule below for the current scope.
+# Covers: Authorize/RevokeSecurityGroup{Ingress,Egress},
+# DeleteSecurityGroup, ModifySecurityGroupRules,
+# UpdateSecurityGroupRuleDescriptions{Ingress,Egress}, CreateSecurityGroup,
+# and CreateTags/DeleteTags on SG resources (mitigates tag-evasion).
 
 ############################
 # SNS Topic for SG drift alerts
@@ -64,49 +59,105 @@ import boto3, json, os
 
 ec2 = boto3.client("ec2")
 
+
+def _collect_sg_ids(request_params, response_elements):
+    """Collect all SG IDs from request and response parameters."""
+    ids = []
+
+    # requestParameters.groupId (Authorize/Revoke/ModifySecurityGroupRules, etc.)
+    gid = request_params.get("groupId")
+    if gid:
+        ids.append(gid)
+
+    # requestParameters.groupSet.items[].groupId (older API variant)
+    for item in request_params.get("groupSet", {}).get("items", []):
+        gid = item.get("groupId")
+        if gid:
+            ids.append(gid)
+
+    # responseElements.groupId (CreateSecurityGroup)
+    gid = response_elements.get("groupId")
+    if gid:
+        ids.append(gid)
+
+    # requestParameters.resourcesSet.items[].resourceId (CreateTags/DeleteTags)
+    for item in request_params.get("resourcesSet", {}).get("items", []):
+        rid = item.get("resourceId", "")
+        if rid.startswith("sg-"):
+            ids.append(rid)
+
+    return ids
+
+
 def handler(event, context):
     detail = event.get("detail", {})
-    request_params = detail.get("requestParameters", {})
+    event_name = detail.get("eventName", "")
+    request_params = detail.get("requestParameters", {}) or {}
+    response_elements = detail.get("responseElements", {}) or {}
 
-    # SG ID can appear in requestParameters.groupId (console/modern API) or
-    # requestParameters.groupSet.items[].groupId (older EC2 API calls).
-    sg_id = request_params.get("groupId", "")
-    if not sg_id:
-        group_set = request_params.get("groupSet", {}).get("items", [])
-        if group_set:
-            sg_id = group_set[0].get("groupId", "")
-    if not sg_id:
+    sg_ids = _collect_sg_ids(request_params, response_elements)
+    if not sg_ids:
         return {"statusCode": 400, "body": "No SG ID found in event"}
 
-    # Fetch tags to check if this is a FLIP-managed SG.
-    try:
-        sg = ec2.describe_security_groups(GroupIds=[sg_id])["SecurityGroups"][0]
-    except Exception as e:
-        return {"statusCode": 500, "body": f"Failed to describe SG {sg_id}: {e}"}
-
-    tags = {t["Key"]: t["Value"] for t in sg.get("Tags", [])}
-    if tags.get("FlipSG") != "true":
-        return {"statusCode": 200, "body": "Not a FLIP SG, skipping"}
-
-    # Publish alert.
     sns = boto3.client("sns")
-    sns.publish(
-        TopicArn=os.environ["SNS_TOPIC_ARN"],
-        Subject=f"SG drift detected on {sg_id}",
-        Message=json.dumps(
-            {
-                "event": event.get("detail-type", ""),
-                "sg_id": sg_id,
-                "sg_name": sg.get("GroupName", ""),
-                "source_ip": detail.get("sourceIPAddress", ""),
-                "time": detail.get("eventTime", ""),
-                "user": detail.get("userIdentity", {}).get("arn", ""),
-                "event_id": detail.get("eventID", ""),
-            },
-            indent=2,
-        ),
-    )
-    return {"statusCode": 200, "body": "Alert published"}
+    topic_arn = os.environ["SNS_TOPIC_ARN"]
+    alerted = False
+
+    for sg_id in sg_ids:
+        try:
+            sg = ec2.describe_security_groups(GroupIds=[sg_id])["SecurityGroups"][0]
+        except ec2.exceptions.ClientError as e:
+            # SG was deleted before we could check tags. For
+            # DeleteSecurityGroup events, alert anyway — the delete itself
+            # is the drift we need to know about.
+            error_code = e.response["Error"]["Code"]
+            if event_name == "DeleteSecurityGroup":
+                sns.publish(
+                    TopicArn=topic_arn,
+                    Subject=f"SG deleted: {sg_id}",
+                    Message=json.dumps(
+                        {
+                            "event": event.get("detail-type", ""),
+                            "event_name": event_name,
+                            "sg_id": sg_id,
+                            "source_ip": detail.get("sourceIPAddress", ""),
+                            "time": detail.get("eventTime", ""),
+                            "user": detail.get("userIdentity", {}).get("arn", ""),
+                            "event_id": detail.get("eventID", ""),
+                            "error": f"{error_code}: SG not found (already deleted)",
+                        },
+                        indent=2,
+                    ),
+                )
+                alerted = True
+            continue
+
+        tags = {t["Key"]: t["Value"] for t in sg.get("Tags", [])}
+        if tags.get("FlipSG") != "true":
+            continue
+
+        sns.publish(
+            TopicArn=topic_arn,
+            Subject=f"SG drift detected on {sg_id}",
+            Message=json.dumps(
+                {
+                    "event": event.get("detail-type", ""),
+                    "event_name": event_name,
+                    "sg_id": sg_id,
+                    "sg_name": sg.get("GroupName", ""),
+                    "source_ip": detail.get("sourceIPAddress", ""),
+                    "time": detail.get("eventTime", ""),
+                    "user": detail.get("userIdentity", {}).get("arn", ""),
+                    "event_id": detail.get("eventID", ""),
+                },
+                indent=2,
+            ),
+        )
+        alerted = True
+
+    if alerted:
+        return {"statusCode": 200, "body": "Alert published"}
+    return {"statusCode": 200, "body": "Not a FLIP SG, skipping"}
 PYTHON
     filename = "lambda_function.py"
   }
@@ -216,6 +267,9 @@ resource "aws_cloudwatch_event_rule" "sg_drift" {
         "ModifySecurityGroupRules",
         "UpdateSecurityGroupRuleDescriptionsIngress",
         "UpdateSecurityGroupRuleDescriptionsEgress",
+        "CreateSecurityGroup",
+        "CreateTags",
+        "DeleteTags",
       ]
     }
   })
