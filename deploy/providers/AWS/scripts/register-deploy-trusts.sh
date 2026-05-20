@@ -60,6 +60,13 @@ if [ -z "$SUBNETS" ] || [ -z "$SGS" ]; then
     exit 1
 fi
 
+# Wait for the flip-api service to be stable before registering. The service's
+# task entrypoint seeds the DB (including the FL kit-slot pool that register_trust
+# claims from); a stable service means that boot — and seed — has completed.
+log_info "Waiting for the $ECS_SERVICE service to reach a stable state..."
+aws_cmd ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+log_success "$ECS_SERVICE service is stable."
+
 log_info "Running register_deploy_trusts as a one-off ECS task..."
 OVERRIDES="$(jq -n \
     --arg cmd1 "uv" --arg cmd2 "run" --arg cmd3 "python" --arg cmd4 "-m" --arg cmd5 "flip_api.scripts.register_deploy_trusts" \

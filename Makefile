@@ -91,6 +91,8 @@ up: check-aws-access generate-internal-service-key create-networks
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
+	@echo "🔑 Registering trusts and writing kit files..."
+	$(MAKE) register-deploy-trusts
 	@echo "🚢 Starting trust services..."
 	$(MAKE) -C trust up
 	@echo "🚢 Starting XNAT services..."
@@ -104,6 +106,8 @@ up-no-trust: generate-internal-service-key create-networks
 	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
 
 up-trusts: create-networks
+	@echo "🔑 Registering trusts and writing kit files (hub must already be up)..."
+	$(MAKE) register-deploy-trusts
 	@echo "🚢 Starting Trust services..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust up
 	@echo "🚢 Starting XNAT services..."
@@ -281,9 +285,20 @@ generate-internal-service-key:
 
 # Register the trusts listed in DEPLOY_TRUSTS on the locally-running hub and
 # write their kit files into trust/.env.<slot>. Idempotent: trusts that already
-# exist are skipped and their kit files are left untouched. Requires the hub
-# (flip-api) to be up — e.g. `make central-hub` or `make up` first.
+# exist are skipped and their kit files are left untouched.
+#
+# Waits for flip-api to answer first: its entrypoint seeds the DB — including
+# the FL kit-slot pool that register_trust claims from — *before* the API comes
+# up, so a healthy /api/health is a safe "seed done" signal.
 register-deploy-trusts:
+	@echo "⏳ Waiting for the hub (flip-api) to be ready on :$(API_PORT)..."
+	@for i in $$(seq 1 90); do \
+	  if curl -sf "http://localhost:$(API_PORT)/api/health" >/dev/null 2>&1; then \
+	    echo "✅ Hub ready."; break; \
+	  fi; \
+	  if [ $$i -eq 90 ]; then echo "❌ flip-api not ready after 180s — is the hub up?"; exit 1; fi; \
+	  sleep 2; \
+	done
 	@echo "🔑 Registering DEPLOY_TRUSTS on the local hub..."
 	@$(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_deploy_trusts \
 		| bash scripts/distribute-trust-kits.sh
