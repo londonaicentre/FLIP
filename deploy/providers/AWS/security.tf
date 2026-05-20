@@ -41,6 +41,16 @@ resource "aws_sns_topic_subscription" "sg_drift_email" {
 }
 
 ############################
+# SQS DLQ for failed SG drift events
+############################
+
+resource "aws_sqs_queue" "sg_drift_dlq" {
+  name                       = "flip-sg-drift-dlq"
+  message_retention_seconds  = 1209600 # 14 days
+  visibility_timeout_seconds = 30
+}
+
+############################
 # Lambda: tag-filtered SG drift publisher
 ############################
 
@@ -113,6 +123,10 @@ resource "aws_lambda_function" "sg_drift_filter" {
   timeout          = 10
   memory_size      = 128
 
+  dead_letter_config {
+    target_arn = aws_sqs_queue.sg_drift_dlq.arn
+  }
+
   environment {
     variables = {
       SNS_TOPIC_ARN = aws_sns_topic.sg_drift.arn
@@ -150,6 +164,12 @@ data "aws_iam_policy_document" "sg_drift_lambda_policy" {
     sid       = "PublishSns"
     actions   = ["sns:Publish"]
     resources = [aws_sns_topic.sg_drift.arn]
+  }
+
+  statement {
+    sid       = "SendToDlq"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.sg_drift_dlq.arn]
   }
 
   # Basic Lambda logging — scoped to this function's log group.
@@ -192,6 +212,10 @@ resource "aws_cloudwatch_event_rule" "sg_drift" {
         "AuthorizeSecurityGroupEgress",
         "RevokeSecurityGroupIngress",
         "RevokeSecurityGroupEgress",
+        "DeleteSecurityGroup",
+        "ModifySecurityGroupRules",
+        "UpdateSecurityGroupRuleDescriptionsIngress",
+        "UpdateSecurityGroupRuleDescriptionsEgress",
       ]
     }
   })
@@ -209,4 +233,24 @@ resource "aws_lambda_permission" "sg_drift_allow_eventbridge" {
   function_name = aws_lambda_function.sg_drift_filter.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.sg_drift.arn
+}
+
+############################
+# CloudWatch alarm: DLQ depth
+############################
+
+resource "aws_cloudwatch_metric_alarm" "sg_drift_dlq_depth" {
+  alarm_name          = "flip-sg-drift-dlq-depth"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "1"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  namespace           = "AWS/SQS"
+  period              = "300"
+  statistic           = "Sum"
+  threshold           = "0"
+  alarm_description   = "SG drift DLQ has undelivered events — Lambda failed after EventBridge retry window"
+  alarm_actions       = [aws_sns_topic.sg_drift.arn]
+  dimensions = {
+    QueueName = aws_sqs_queue.sg_drift_dlq.name
+  }
 }
