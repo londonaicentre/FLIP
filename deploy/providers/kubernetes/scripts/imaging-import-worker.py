@@ -387,7 +387,8 @@ def _ensure_subject(cfg: Config, token: str, project_id: str,
         results = data.get("ResultSet", {}).get("Result", [])
         for r in results:
             if r.get("label") == patient_id:
-                logger.info("Subject %s already exists (ID: %s)", patient_id, r["ID"])
+                logger.info("Subject already exists (XNAT ID: %s)", r["ID"])
+                logger.debug("Subject %s already exists (XNAT ID: %s)", patient_id, r["ID"])
                 return r["ID"]
 
     # Create subject using XML
@@ -416,11 +417,13 @@ def _ensure_subject(cfg: Config, token: str, project_id: str,
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             subject_id = resp.read().decode().strip()
-            logger.info("Created subject %s (ID: %s)", patient_id, subject_id)
+            logger.info("Created subject (XNAT ID: %s)", subject_id)
+            logger.debug("Created subject %s (XNAT ID: %s)", patient_id, subject_id)
             return subject_id
     except urllib.error.HTTPError as e:
         body = e.read().decode().strip()
-        logger.error("Failed to create subject %s: HTTP %d %s", patient_id, e.code, body[:100])
+        logger.error("Failed to create subject: HTTP %d", e.code)
+        logger.debug("Failed to create subject %s: HTTP %d %s", patient_id, e.code, body[:100])
         return None
 
 

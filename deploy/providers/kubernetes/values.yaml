@@ -237,6 +237,9 @@ flClient:
   netId: "net-1"
   s3EndpointOverride: ""
   imagesDir: /app/data/images
+  hostAwsMount:
+    enabled: false
+    readOnly: true
   hostAliases:
     - ip: "13.43.162.56"
       hostnames:
