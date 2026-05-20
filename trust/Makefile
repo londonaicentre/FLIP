@@ -220,11 +220,15 @@ up-trust: update-omop-data update-orthanc-data create-networks
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(KIT)/db_data))
 	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(PULL_ALWAYS_FLAG)
+	@echo "🩻 Starting XNAT for $(KIT)..."
+	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
 
 down-trust:
 	$(require_kit)
 	@echo "🛑 Stopping Trust services (KIT=$(KIT))..."
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) down --remove-orphans
+	@echo "🩻 Stopping XNAT for $(KIT)..."
+	$(MAKE) -C xnat down-xnat KIT=$(KIT) PROD=$(PROD)
 
 restart-trust: down-trust up-trust
 
@@ -237,11 +241,15 @@ up-trust-ec2:
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
+	@echo "🩻 Starting XNAT for $(KIT)..."
+	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
 
 down-trust-ec2:
 	$(require_kit)
 	@echo "🛑 Stopping Trust services on EC2 (KIT=$(KIT))..."
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) down --remove-orphans
+	@echo "🩻 Stopping XNAT for $(KIT)..."
+	$(MAKE) -C xnat down-xnat KIT=$(KIT) PROD=$(PROD)
 
 # LOCAL_TRUST_NAME controls which FL participant kit the FL client mounts.
 # LOCAL_TRUST_NAME is defined in deploy/providers/AWS/Makefile and threaded
@@ -257,11 +265,15 @@ up-local-trust: create-networks-core create-networks-local-trust
 	mkdir -p ./data/local/$(LOCAL_TRUST_NAME)
 	$(LOCAL_TRUST_VARS) DEBUG=$(DEBUG) \
 		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(trust_local) up -d --pull always
+	@echo "🩻 Starting XNAT for the local trust..."
+	$(MAKE) -C xnat up-xnat-local PROD=$(PROD)
 
 down-local-trust:
 	@echo "🛑 Stopping local Trust services..."
 	$(LOCAL_TRUST_VARS) \
 		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(trust_local) down --remove-orphans
+	@echo "🩻 Stopping XNAT for the local trust..."
+	$(MAKE) -C xnat down-xnat-local PROD=$(PROD)
 
 # Dev convenience: bring up both standard trust stacks. Each is a separate
 # sub-make so its `-include trust/.env.<KIT>` loads only that trust's kit.

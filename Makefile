@@ -94,10 +94,8 @@ up: check-aws-access generate-internal-service-key create-networks
 	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
 	@echo "🔑 Registering trusts and writing kit files..."
 	$(MAKE) register-trusts
-	@echo "🚢 Starting trust services..."
+	@echo "🚢 Starting trust services (each trust brings up its own XNAT)..."
 	$(MAKE) -C trust up
-	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -C trust/xnat up
 	@echo "✅ All services started successfully!"
 
 # Minimal $(MAKE) up
@@ -109,10 +107,8 @@ up-no-trust: generate-internal-service-key create-networks
 up-trusts: create-networks
 	@echo "🔑 Registering trusts and writing kit files (hub must already be up)..."
 	$(MAKE) register-trusts
-	@echo "🚢 Starting Trust services..."
+	@echo "🚢 Starting Trust services (each trust brings up its own XNAT)..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust up
-	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up
 	@echo "✅ Trust services started successfully!"
 
 # Uses --pull always to ensure the latest FL images and 'stag'/'prod' version are used
@@ -131,8 +127,6 @@ up-trust-ec2: create-networks
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting Trust services..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=Trust_1 PROD=${PROD}
-	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-1 PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
 LOCAL_TRUST_NAME ?= Trust_2
@@ -141,8 +135,6 @@ up-local-trust: create-networks
 	docker context use default
 	@echo "🚢 Starting local on-prem Trust services (PROD=$(PROD), TRUST_NAME=$(LOCAL_TRUST_NAME))..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-local-trust PROD=$(PROD) LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME)
-	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-local PROD=$(PROD)
 	@echo "✅ Local Trust services started successfully!"
 
 central-hub: create-networks-centralhub
@@ -151,8 +143,8 @@ central-hub: create-networks-centralhub
 # Stop all containers
 down:
 	@echo "🛑 Stopping all services..."
-	$(MAKE) -C trust/xnat down
 	$(MAKE) -C trust down
+
 	${DOCKER_COMMAND} down --remove-orphans
 	@echo "🛌 All services stopped successfully!"
 

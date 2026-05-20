@@ -10,12 +10,9 @@
 # limitations under the License.
 #
 
-.PHONY: build up deploy down clean xnat-shell xnat-war-download xnat-plugins-download \
-	xnat-reset xnat-configure xnat-configure-trust-1 xnat-configure-trust-2 xnat-configure-local \
-	create-network-trust-1 create-network-trust-2 create-network-trust-local \
-	up-xnat-1 up-xnat-2 up-xnat-local \
-	down-xnat-1 down-xnat-2 down-xnat-local \
-	test unit_test local_test
+.PHONY: build up down up-xnat down-xnat up-xnat-local down-xnat-local xnat-shell \
+	xnat-war-download xnat-plugins-download xnat-reset xnat-configure xnat-configure-local \
+	create-xnat-network create-network-trust-local test unit_test local_test
 
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
@@ -51,11 +48,24 @@ export DOCKER_TAG
 XNAT_TAG ?= ${DOCKER_TAG}
 export XNAT_TAG
 
-project1 = xnat1
-project2 = xnat2
+# ── Per-trust XNAT stack ──────────────────────────────────────────────────
+# KIT selects the trust — the kit-file name under trust/.env.<KIT>. That kit
+# file carries this trust's XNAT_PORT / PACS_UI_PORT (unsuffixed), the same
+# host-local profile trust/Makefile reads. KIT has no default so non-KIT
+# targets (build, test) don't spuriously -include a file. The XNAT swarm
+# stack name and overlay network are derived from the kit's trust number so
+# the existing xnat<N> / deploy_trust-network-<N> scheme is preserved.
+KIT_FILE := ../.env.$(KIT)
+-include $(KIT_FILE)
+TRUST_NUM := $(subst Trust_,,$(KIT))
+XNAT_STACK := xnat$(TRUST_NUM)
+XNAT_NETWORK := deploy_trust-network-$(TRUST_NUM)
+# Defaults are the Trust_1 allocation, so a single-trust host (EC2 / on-prem)
+# needs no XNAT port entries in its kit file.
+XNAT_PORT_EFFECTIVE := $(or $(XNAT_PORT),8104)
+PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
+
 project_local = xnat-local
-network1 = deploy_trust-network-1
-network2 = deploy_trust-network-2
 network_local = deploy_trust-network-local
 
 # Path to the dev XNAT folder on the Docker host (bind mounts resolve there, not locally).
@@ -69,6 +79,13 @@ else
 # In development, mount plugins and config from the host for hot-reload
 STACK_FILES = -c docker-compose-stack.yml -c docker-compose-stack.development.yml
 endif
+
+# Guard: a KIT-selected target needs KIT set.
+define require_kit
+	@if [ -z "$(KIT)" ]; then \
+	    echo "❌ KIT is required. Usage: make $@ KIT=<name>  (e.g. KIT=Trust_1)"; exit 1; \
+	fi
+endef
 
 # Build XNAT Docker images locally (mirrors CI workflow)
 # Requires AWS CLI access to download WAR and plugins from S3
@@ -102,27 +119,36 @@ build:
 		nginx/
 	@echo "✅ XNAT Docker images built successfully!"
 
-up: xnat-reset up-xnat-1 up-xnat-2
+# Bring up both dev XNAT stacks. Each is a separate sub-make so its
+# `-include ../.env.<KIT>` loads only that trust's kit file.
+up:
+	$(MAKE) up-xnat KIT=Trust_1
+	$(MAKE) up-xnat KIT=Trust_2
 
-up-xnat-1: create-network-trust-1
+# Bring up the XNAT swarm stack for one trust (KIT=Trust_1 / Trust_2).
+# trust/Makefile's up-trust calls this so a trust comes up complete.
+up-xnat: create-xnat-network
+	$(require_kit)
+	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
-	XNAT_PORT=${XNAT_PORT_TRUST_1} \
-	PACS_UI_PORT=${PACS_UI_PORT_TRUST_1} \
-	DOCKER_NETWORK_NAME=${network1} \
-	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} ${project1}
-	$(MAKE) xnat-configure-trust-1
+	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
+	PACS_UI_PORT=$(PACS_UI_PORT_EFFECTIVE) \
+	DOCKER_NETWORK_NAME=$(XNAT_NETWORK) \
+	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} $(XNAT_STACK)
+	$(MAKE) xnat-configure XNAT_PROJECT=$(XNAT_STACK)
 
-up-xnat-2: create-network-trust-2
-	XNAT_PATH=${XNAT_PATH} \
-	XNAT_PORT=${XNAT_PORT_TRUST_2} \
-	PACS_UI_PORT=${PACS_UI_PORT_TRUST_2} \
-	DOCKER_NETWORK_NAME=${network2} \
-	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} ${project2}
-	$(MAKE) xnat-configure-trust-2
+down:
+	$(MAKE) down-xnat KIT=Trust_1
+	$(MAKE) down-xnat KIT=Trust_2
 
-# Get a shell in the running xnat container (for project1)
+down-xnat:
+	$(require_kit)
+	docker stack rm $(XNAT_STACK) || true
+
+# Get a shell in the running xnat-web container for the selected trust.
 xnat-shell:
-	CONTAINER=$$(docker ps --filter "name=${project1}_xnat-web" -q); \
+	$(require_kit)
+	CONTAINER=$$(docker ps --filter "name=$(XNAT_STACK)_xnat-web" -q); \
 	docker exec -it $$CONTAINER bash
 
 up-xnat-local: create-network-trust-local
@@ -131,15 +157,7 @@ up-xnat-local: create-network-trust-local
 	PACS_UI_PORT=8046 \
 	DOCKER_NETWORK_NAME=${network_local} \
 	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} ${project_local}
-	$(MAKE) xnat-configure-local
-
-down-xnat-1:
-	docker stack rm ${project1}
-
-down-xnat-2:
-	docker stack rm ${project2}
-
-down: down-xnat-1 down-xnat-2
+	$(MAKE) xnat-configure XNAT_PROJECT=${project_local}
 
 down-xnat-local:
 	docker stack rm ${project_local}
@@ -163,22 +181,21 @@ xnat-war-download:
 xnat-plugins-download:
 	@./scripts/ensure_plugins.sh "xnat/plugins" "$(FLIP_ARTIFACTS_BUCKET_NAME)"
 
-# Creates directory structure for XNAT data volumes.
-# Docker Swarm requires host directories to exist before bind-mounting.
-# Note: needs root privileges to clean up previous data.
-# In production/staging, creates directories at /opt/flip/xnat/
-# In development, creates directories relative to current directory using port numbers
+# Creates the data-volume directory structure for one trust's XNAT stack and
+# wipes any previous data. Docker Swarm requires host directories to exist
+# before bind-mounting; the wipe avoids stale bind mounts from a prior run
+# (the second xnat-web otherwise crash-loops on a locked SQLite index).
+# In production/staging the path is /opt/flip/xnat/; in development it is
+# ./[XNAT_PORT]/xnat-data, keyed by this trust's XNAT port.
 xnat-reset:
+	$(require_kit)
 	@case "$$(pwd)" in */trust/xnat) ;; *) \
 		echo "ERROR: xnat-reset must be run from the trust/xnat/ directory (pwd: $$(pwd))"; exit 1;; \
 	esac
-	@if ! echo "$(XNAT_PORT_TRUST_1)" | grep -qE '^[0-9]+$$'; then \
-		echo "ERROR: XNAT_PORT_TRUST_1 must be set to a numeric value, got '$(XNAT_PORT_TRUST_1)'"; exit 1; \
-	fi; \
-	if ! echo "$(XNAT_PORT_TRUST_2)" | grep -qE '^[0-9]+$$'; then \
-		echo "ERROR: XNAT_PORT_TRUST_2 must be set to a numeric value, got '$(XNAT_PORT_TRUST_2)'"; exit 1; \
+	@if ! echo "$(XNAT_PORT_EFFECTIVE)" | grep -qE '^[0-9]+$$'; then \
+		echo "ERROR: XNAT_PORT must be numeric for KIT=$(KIT), got '$(XNAT_PORT_EFFECTIVE)'"; exit 1; \
 	fi
-	@echo "Deleting previous XNAT data and creating new directories ..."; \
+	@echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
 	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \
 		echo "  📍 Using production path: /opt/flip/xnat/"; \
 		sudo rm -rf /opt/flip/xnat; \
@@ -189,17 +206,12 @@ xnat-reset:
 		sudo mkdir -p /opt/flip/xnat/xnat-db-data; \
 		sudo chown -R $(USER):$(USER) /opt/flip/xnat; \
 	else \
-		echo "  📍 Using development path: ./[XNAT_PORT]/xnat-data"; \
-		sudo rm -rf ${XNAT_PORT_TRUST_1}; \
-		sudo rm -rf ${XNAT_PORT_TRUST_2}; \
-		mkdir -p ${XNAT_PORT_TRUST_1}/xnat-data/tomcat_logs; \
-		mkdir -p ${XNAT_PORT_TRUST_1}/xnat-data/archive; \
-		mkdir -p ${XNAT_PORT_TRUST_1}/xnat-data/build; \
-		mkdir -p ${XNAT_PORT_TRUST_1}/xnat-data/cache; \
-		mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/tomcat_logs; \
-		mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/archive; \
-		mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/build; \
-		mkdir -p ${XNAT_PORT_TRUST_2}/xnat-data/cache; \
+		echo "  📍 Using development path: ./$(XNAT_PORT_EFFECTIVE)/xnat-data"; \
+		sudo rm -rf $(XNAT_PORT_EFFECTIVE); \
+		mkdir -p $(XNAT_PORT_EFFECTIVE)/xnat-data/tomcat_logs; \
+		mkdir -p $(XNAT_PORT_EFFECTIVE)/xnat-data/archive; \
+		mkdir -p $(XNAT_PORT_EFFECTIVE)/xnat-data/build; \
+		mkdir -p $(XNAT_PORT_EFFECTIVE)/xnat-data/cache; \
 	fi
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.
@@ -215,27 +227,17 @@ xnat-configure:
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"'; \
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
 
-xnat-configure-trust-1:
-	$(MAKE) xnat-configure XNAT_PROJECT=${project1}
-
-xnat-configure-trust-2:
-	$(MAKE) xnat-configure XNAT_PROJECT=${project2}
-
 xnat-configure-local:
 	$(MAKE) xnat-configure XNAT_PROJECT=${project_local}
 
-create-network-trust-1:
-	@echo "🔧 Ensuring external Docker networks exist..."
-	@docker network inspect ${network1} >/dev/null 2>&1 || \
-		docker network create --driver overlay --attachable ${network1}
-
-create-network-trust-2:
-	@echo "🔧 Ensuring external Docker networks exist..."
-	@docker network inspect ${network2} >/dev/null 2>&1 || \
-		docker network create --driver overlay --attachable ${network2}
+create-xnat-network:
+	$(require_kit)
+	@echo "🔧 Ensuring external Docker network $(XNAT_NETWORK) exists..."
+	@docker network inspect $(XNAT_NETWORK) >/dev/null 2>&1 || \
+		docker network create --driver overlay --attachable $(XNAT_NETWORK)
 
 create-network-trust-local:
-	@echo "🔧 Ensuring external Docker networks exist..."
+	@echo "🔧 Ensuring external Docker network ${network_local} exists..."
 	@docker network inspect ${network_local} >/dev/null 2>&1 || \
 		docker network create --driver overlay --attachable ${network_local}
 
