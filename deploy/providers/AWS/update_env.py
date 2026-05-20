@@ -51,7 +51,7 @@ def update_env_file(env_path, updates):
                 prefix = "export " if line.strip().startswith("export ") else ""
                 new_lines.append(f"{prefix}{key}={new_value}\n")
                 updated_keys.add(key)
-                print(f"   Updated {key} = {new_value}")
+                print(f"   Updated {key}")
             else:
                 new_lines.append(line)
         else:

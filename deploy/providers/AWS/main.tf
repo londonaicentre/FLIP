@@ -39,6 +39,11 @@ provider "null" {
 
 data "aws_availability_zones" "available" {}
 
+# Cross-stack: aicentre-iac's network_account_flip module reads
+# /flip/networking/vpc_id and /flip/networking/private_subnet_ids from
+# this account's SSM (see parameter_store.tf) to back the cross-account
+# TGW VPC attachment. If you recreate or rename this VPC, plan against
+# aicentre-iac immediately afterwards.
 module "flip_vpc" {
   source               = "terraform-aws-modules/vpc/aws"
   version              = "~> 6.0"
@@ -78,6 +83,15 @@ module "ec2_security_group" {
   ]
 }
 
+# Tag the secgroup module SGs for drift detection.
+# Remove these aws_security_group_tags resources if the secgroup module
+# ever adds a `tags` variable — until then, we tag externally.
+resource "aws_ec2_tag" "ec2_security_group_flip_sg" {
+  resource_id = module.ec2_security_group.security_group.id
+  key         = "FlipSG"
+  value       = "true"
+}
+
 # Trust Security Group for Trust EC2 instance
 # NOTE: Trust API port removed — trusts now poll the hub outbound (no inbound connections needed).
 # XNAT and PACS UI ports kept for direct researcher access to imaging tools.
@@ -89,6 +103,12 @@ module "trust_security_group" {
   description = "Security group for FLIP Trust EC2 instance (no inbound - access via SSM Session Manager and SSM port forwarding)"
 
   ingress_rules = []
+}
+
+resource "aws_ec2_tag" "trust_security_group_flip_sg" {
+  resource_id = module.trust_security_group.security_group.id
+  key         = "FlipSG"
+  value       = "true"
 }
 
 # Only allow FL server traffic that arrives through the NLB, not direct client or VPC access.
@@ -117,6 +137,12 @@ module "rds_security_group" {
     }
   ]
   block_all_outbound = true
+}
+
+resource "aws_ec2_tag" "rds_security_group_flip_sg" {
+  resource_id = module.rds_security_group.security_group.id
+  key         = "FlipSG"
+  value       = "true"
 }
 
 resource "aws_security_group_rule" "rds_ingress_ecs_flip_api" {
@@ -167,6 +193,7 @@ module "flip_api_secret" {
   version     = "2.0.0"
   name        = "FLIP_API"
   description = "FLIP_API"
+  kms_key_id  = aws_kms_key.flip_app_key.arn
 
   # Set recovery window to allow secret recovery after accidental deletion
   # To permanently delete: remove from state first with: terraform state rm module.flip_api_secret
@@ -459,6 +486,12 @@ module "alb_security_group" {
   ingress_rules = []
 }
 
+resource "aws_ec2_tag" "alb_security_group_flip_sg" {
+  resource_id = module.alb_security_group.security_group.id
+  key         = "FlipSG"
+  value       = "true"
+}
+
 module "alb" {
   source                     = "terraform-aws-modules/alb/aws"
   name                       = "flip-alb"
@@ -512,6 +545,7 @@ module "fl_server_nlb" {
   subnets                    = module.flip_vpc.public_subnets
   enable_deletion_protection = false
   create_security_group      = true
+  security_group_tags        = { FlipSG = "true" }
 
   # NLB only accepts trusted client sources - allow-list only the trusted client egress IPs
   # TODO explore 'internal' NLB plus private connectivity instead of an internet-facing NLB

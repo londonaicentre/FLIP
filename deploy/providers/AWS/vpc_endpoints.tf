@@ -31,6 +31,10 @@ resource "aws_security_group" "vpc_endpoints" {
   name        = "vpc-endpoints"
   description = "TLS 443 to AWS interface endpoints from VPC tasks"
   vpc_id      = module.flip_vpc.vpc_id
+
+  tags = {
+    FlipSG = "true"
+  }
 }
 
 resource "aws_security_group_rule" "vpc_endpoints_ingress_from_vpc" {
