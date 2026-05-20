@@ -10,9 +10,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Convert each Cypress-recorded mp4 under test/cypress/videos/docs/admin/ into
-# a GIF in-place under docs/source/assets/admin/. Spec filenames map 1:1 to GIF
-# basenames (reset-mfa.spec.ts.mp4 → reset-mfa.gif).
+# Convert each Cypress-recorded demo mp4 into a GIF under docs/source/assets/.
+# Demo specs live at test/cypress/docs/<category>/<name>.spec.ts and map 1:1 to
+# <name>.gif under docs/source/assets/<category>/ — the spec's folder selects
+# the asset subdirectory, the basename selects the GIF:
+#   docs/admin/reset-mfa.spec.ts     -> docs/source/assets/admin/reset-mfa.gif
+#   docs/flip/create-model.spec.ts   -> docs/source/assets/flip/create-model.gif
 
 set -euo pipefail
 
@@ -20,8 +23,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ui_dir="$(cd "${script_dir}/.." && pwd)"
 repo_root="$(cd "${ui_dir}/.." && pwd)"
 
+specs_root="${ui_dir}/test/cypress/docs"
 videos_root="${ui_dir}/test/cypress/videos"
-out_dir="${repo_root}/docs/source/assets/admin"
+assets_root="${repo_root}/docs/source/assets"
 
 # ffmpeg crop window isolating the AUT iframe inside the recorded frame.
 # Must stay in lockstep with cypress.docs.config.ts:
@@ -39,27 +43,30 @@ if [[ ! -d "${videos_root}" ]]; then
     exit 0
 fi
 
-# Cypress writes each video to {videosFolder}/{specRelativePath}.mp4, but the
-# exact prefix varies by version and common-root inference — find any mp4 under
-# the videos root and key off the filename. Demo specs are named to match the
-# target GIF (reset-mfa.spec.ts → reset-mfa.gif), so the basename carries
-# everything we need.
-mapfile -t videos < <(find "${videos_root}" -type f -name "*.mp4" | sort)
-if (( ${#videos[@]} == 0 )); then
-    echo "No mp4 files under ${videos_root}; nothing to convert." >&2
+# Drive off the demo spec files, not the recorded videos: the spec path is
+# stable and authoritative for both the GIF basename and its category subdir,
+# whereas Cypress's video-path prefix varies by version and common-root
+# inference. Each spec's video is then located by its unique filename.
+mapfile -t specs < <(find "${specs_root}" -type f -name "*.spec.ts" | sort)
+if (( ${#specs[@]} == 0 )); then
+    echo "No demo specs under ${specs_root}; nothing to convert." >&2
     exit 0
 fi
 
-mkdir -p "${out_dir}"
+converted=0
+for spec in "${specs[@]}"; do
+    # test/cypress/docs/flip/create-model.spec.ts -> category=flip, name=create-model
+    category="$(basename "$(dirname "${spec}")")"
+    name="$(basename "${spec}" .spec.ts)"
 
-for mp4 in "${videos[@]}"; do
-    base="$(basename "${mp4}")"
-    # reset-mfa.spec.ts.mp4 → reset-mfa
-    name="${base%.spec.ts.mp4}"
-    if [[ "${name}" == "${base}" ]]; then
-        # Fallback for unexpected naming — strip a single trailing extension.
-        name="${base%.mp4}"
+    mp4="$(find "${videos_root}" -type f -name "${name}.spec.ts.mp4" -print -quit)"
+    if [[ -z "${mp4}" ]]; then
+        echo "No video for ${spec}; skipping." >&2
+        continue
     fi
+
+    out_dir="${assets_root}/${category}"
+    mkdir -p "${out_dir}"
     out="${out_dir}/${name}.gif"
     echo "→ ${out}"
     # cypress.docs.config.ts forces Chrome to --window-size=1920,1200 so the
@@ -72,6 +79,7 @@ for mp4 in "${videos[@]}"; do
     ffmpeg -y -hide_banner -loglevel error -i "${mp4}" \
         -vf "crop=${CROP_WIDTH}:${CROP_HEIGHT}:${CROP_X}:${CROP_Y},fps=15,scale=1200:-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=full[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5" \
         "${out}"
+    converted=$(( converted + 1 ))
 done
 
-echo "Converted ${#videos[@]} video(s) → ${out_dir}"
+echo "Converted ${converted} video(s) → ${assets_root}/{admin,flip}"
