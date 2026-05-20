@@ -15,6 +15,16 @@
 # SG drift detection — monitors CloudTrail events for security group
 # modifications on FlipSG-tagged SGs and publishes alerts to an SNS topic.
 # Architecture: CloudTrail -> EventBridge -> Lambda (tag filter) -> SNS -> Email
+#
+# Known limitations:
+# - Tag-based evasion: The Lambda reads tags at invocation time via
+#   describe_security_groups. An attacker who can mutate an SG can also call
+#   DeleteTags first to evade the filter. Mitigation would require subscribing
+#   to CreateTags/DeleteTags events scoped to SG resources.
+# - Missing event types: CreateSecurityGroup, DeleteSecurityGroup,
+#   ModifySecurityGroupRules, UpdateSecurityGroupRuleDescriptions{Ingress,Egress},
+#   and tag mutations (CreateTags/DeleteTags on SG resources) are not captured.
+#   See the EventBridge rule below for the current scope.
 
 ############################
 # SNS Topic for SG drift alerts
@@ -100,6 +110,8 @@ resource "aws_lambda_function" "sg_drift_filter" {
   runtime          = "python3.12"
   architectures    = ["arm64"]
   source_code_hash = data.archive_file.sg_drift_lambda.output_base64sha256
+  timeout          = 10
+  memory_size      = 128
 
   environment {
     variables = {

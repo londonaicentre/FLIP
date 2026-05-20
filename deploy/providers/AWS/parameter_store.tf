@@ -50,5 +50,3 @@ resource "aws_ssm_parameter" "flip_app_bundles_bucket" {
   type        = "String"
   value       = local.flip_app_bundles_bucket_uri
 }
-
-

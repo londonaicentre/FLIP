@@ -56,6 +56,10 @@ resource "aws_security_group" "efs_mount_target" {
   name        = "efs-mount-target"
   description = "NFS 2049 from ECS fl-api and fl-server tasks (rules added in PR 2); no egress by design"
   vpc_id      = module.flip_vpc.vpc_id
+
+  tags = {
+    FlipSG = "true"
+  }
 }
 
 ############################

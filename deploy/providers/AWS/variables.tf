@@ -94,8 +94,8 @@ variable "docker_image_tag" {
   default     = ""
 
   validation {
-    condition     = var.docker_image_tag != "latest"
-    error_message = "docker_image_tag must not be 'latest'. Use an explicit immutable tag."
+    condition     = lower(var.docker_image_tag) != "latest" && !endswith(lower(var.docker_image_tag), "-latest")
+    error_message = "docker_image_tag must not be 'latest' (case-insensitive). Use an explicit immutable tag."
   }
 }
 
@@ -105,8 +105,8 @@ variable "flip_fl_image_tag" {
   default     = ""
 
   validation {
-    condition     = var.flip_fl_image_tag != "latest"
-    error_message = "flip_fl_image_tag must not be 'latest'. Use an explicit immutable tag."
+    condition     = lower(var.flip_fl_image_tag) != "latest" && !endswith(lower(var.flip_fl_image_tag), "-latest")
+    error_message = "flip_fl_image_tag must not be 'latest' (case-insensitive). Use an explicit immutable tag."
   }
 }
 
