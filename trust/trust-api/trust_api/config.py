@@ -57,8 +57,16 @@ class Settings(BaseSettings):
     TRUST_INTERNAL_SERVICE_KEY_HEADER: str = "X-Trust-Internal-Service-Key"
 
     # Polling configuration
-    TRUST_NAME: str  # Must match Trust.name in hub DB (e.g. "Trust_1")
     POLL_INTERVAL_SECONDS: int = 5  # How often to poll the hub for tasks (seconds)
+
+    # Optional misconfig self-check. On first contact the hub returns the
+    # ``{trust_id, trust_name}`` it resolved this host as. When ``EXPECTED_TRUST_ID``
+    # is set (in the kit file) and the hub reports a different id, the trust-api
+    # exits non-zero instead of silently authenticating as the wrong trust — the
+    # typical cause is the operator deploying the wrong kit to the wrong host.
+    # Leaving it empty disables the check; the loud "Authenticated to hub as …"
+    # log line is emitted regardless.
+    EXPECTED_TRUST_ID: str = ""
 
     # Timeout for cohort query requests to data-access-api (seconds)
     COHORT_QUERY_TIMEOUT_SECONDS: int = 300

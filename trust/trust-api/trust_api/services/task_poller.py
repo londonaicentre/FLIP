@@ -10,16 +10,23 @@
 # limitations under the License.
 #
 
-"""
-Background polling service that periodically fetches tasks from the central hub
-and dispatches them to local handlers.
+"""Background polling service: heartbeat → pull pending tasks → dispatch → report.
 
-This replaces the previous model where the hub made inbound HTTP requests to the trust.
-Now all communication is outbound from the trust to the hub.
+All communication is outbound from the trust to the hub. The hub identifies the
+trust by API key alone — there is no ``{trust_name}`` segment in any URL.
+
+On the first successful heartbeat the hub returns ``{trust_id, trust_name, …}``;
+we log the resolved identity (so the operator can see which trust this host
+came up as) and, when ``EXPECTED_TRUST_ID`` is set in the kit file, verify the
+hub's answer against it. A mismatch means the wrong kit was deployed to the
+wrong host — we exit the process so a process-supervisor restart loop surfaces
+the misconfiguration loudly rather than the host silently acting as the wrong
+trust.
 """
 
 import asyncio
 import json
+import sys
 
 import httpx
 
@@ -31,8 +38,12 @@ from trust_api.utils.logger import logger
 CENTRAL_HUB_API_URL = get_settings().CENTRAL_HUB_API_URL
 TRUST_API_KEY = get_settings().TRUST_API_KEY
 TRUST_API_KEY_HEADER = get_settings().TRUST_API_KEY_HEADER
-TRUST_NAME = get_settings().TRUST_NAME
+EXPECTED_TRUST_ID = get_settings().EXPECTED_TRUST_ID
 POLL_INTERVAL_SECONDS = get_settings().POLL_INTERVAL_SECONDS
+
+# Flips True on the first heartbeat that returns a valid identity. Subsequent
+# heartbeats skip the log + EXPECTED_TRUST_ID comparison so we don't spam.
+_identity_logged = False
 
 
 def _auth_headers() -> dict[str, str]:
@@ -44,26 +55,63 @@ def _auth_headers() -> dict[str, str]:
     return {TRUST_API_KEY_HEADER: TRUST_API_KEY}
 
 
-async def _poll_for_tasks(client: httpx.AsyncClient) -> list[dict]:
-    """
-    Poll the central hub for pending tasks.
+def _maybe_announce_identity(body: dict) -> None:
+    """Log resolved identity from the hub once; abort on EXPECTED_TRUST_ID mismatch.
+
+    Called from every successful trust-facing response. The hub embeds
+    ``{trust_id, trust_name}`` in every response body so the trust can identify
+    itself; we only act on the first one (idempotent thanks to ``_identity_logged``).
 
     Args:
-        client: HTTP client for making requests.
+        body (dict): Parsed JSON response from the hub.
+
+    Raises:
+        SystemExit: If ``EXPECTED_TRUST_ID`` is set and disagrees with ``trust_id``.
+    """
+    global _identity_logged  # noqa: PLW0603
+    if _identity_logged:
+        return
+    trust_id = body.get("trust_id")
+    trust_name = body.get("trust_name")
+    if not trust_id or not trust_name:
+        return  # not an identity-bearing response (e.g. an error body)
+
+    if EXPECTED_TRUST_ID and trust_id != EXPECTED_TRUST_ID:
+        # Loud, fatal: this host has been deployed with the wrong kit.
+        logger.error(
+            "Hub identifies this host as trust %r (%s); kit declares "
+            "EXPECTED_TRUST_ID=%s. Wrong kit deployed to this host? Exiting.",
+            trust_name,
+            trust_id,
+            EXPECTED_TRUST_ID,
+        )
+        sys.exit(2)
+
+    logger.info("Authenticated to hub as trust %r (%s).", trust_name, trust_id)
+    _identity_logged = True
+
+
+async def _poll_for_tasks(client: httpx.AsyncClient) -> list[dict]:
+    """Poll the central hub for pending tasks.
+
+    Args:
+        client (httpx.AsyncClient): HTTP client for making requests.
 
     Returns:
-        List of pending task dicts from the hub.
+        list[dict]: Pending task dicts from the hub (encrypted payloads).
     """
     try:
         response = await client.get(
-            f"{CENTRAL_HUB_API_URL}/tasks/{TRUST_NAME}/pending",
+            f"{CENTRAL_HUB_API_URL}/tasks/pending",
             headers=_auth_headers(),
         )
         if response.status_code != 200:
             logger.warning(f"Unexpected status {response.status_code} polling for tasks")
             return []
 
-        tasks = response.json()
+        body = response.json()
+        _maybe_announce_identity(body)
+        tasks = body.get("tasks", [])
         if tasks:
             logger.info(f"Received {len(tasks)} pending tasks from hub")
         return tasks
@@ -73,24 +121,27 @@ async def _poll_for_tasks(client: httpx.AsyncClient) -> list[dict]:
 
 
 async def _send_heartbeat(client: httpx.AsyncClient) -> None:
-    """
-    Send a heartbeat to the central hub to indicate this trust is online.
+    """Send a heartbeat to the central hub and run the identity self-check.
 
     Args:
-        client: HTTP client for making requests.
+        client (httpx.AsyncClient): HTTP client for making requests.
     """
     try:
         response = await client.post(
-            f"{CENTRAL_HUB_API_URL}/trust/{TRUST_NAME}/heartbeat",
+            f"{CENTRAL_HUB_API_URL}/trust/heartbeat",
             headers=_auth_headers(),
         )
         # httpx only raises on transport errors — auth/identity rejections
-        # (401/403/404) come back as a successful HTTP response. Without
-        # this check the trust silently never updates ``trust.last_heartbeat``
-        # on the hub and gets reported "offline" in Connection Status while
+        # (401/403/404) come back as a successful HTTP response. Without this
+        # check the trust silently never updates ``trust.last_heartbeat`` on
+        # the hub and gets reported "offline" in Connection Status while
         # actually polling normally.
         if response.is_success:
             logger.debug("Heartbeat sent successfully")
+            try:
+                _maybe_announce_identity(response.json())
+            except ValueError:
+                pass  # body wasn't JSON; not fatal
         else:
             logger.error(
                 f"Heartbeat rejected by hub: HTTP {response.status_code} — "
@@ -105,16 +156,15 @@ _REPORT_RETRY_DELAY_SECONDS = 2
 
 
 async def _report_task_result(client: httpx.AsyncClient, task_id: str, result: dict) -> None:
-    """
-    Report the result of a completed task back to the central hub.
+    """Report the result of a completed task back to the central hub.
 
     Retries up to ``_REPORT_MAX_RETRIES`` times with exponential backoff on failure,
     since a lost result can leave a task permanently stuck in IN_PROGRESS on the hub.
 
     Args:
-        client: HTTP client for making requests.
-        task_id: The ID of the completed task.
-        result: The result dict containing success status and optional result data.
+        client (httpx.AsyncClient): HTTP client for making requests.
+        task_id (str): The ID of the completed task.
+        result (dict): Result dict with ``success`` and optional ``result`` / ``error`` fields.
     """
     result_data = result.get("result")
     # Include error details in the result field when reporting failures
@@ -129,7 +179,7 @@ async def _report_task_result(client: httpx.AsyncClient, task_id: str, result: d
     for attempt in range(_REPORT_MAX_RETRIES):
         try:
             response = await client.post(
-                f"{CENTRAL_HUB_API_URL}/tasks/{TRUST_NAME}/{task_id}/result",
+                f"{CENTRAL_HUB_API_URL}/tasks/{task_id}/result",
                 headers=_auth_headers(),
                 json=payload,
             )
@@ -153,14 +203,13 @@ async def _report_task_result(client: httpx.AsyncClient, task_id: str, result: d
 
 
 async def _process_task(task: dict) -> dict:
-    """
-    Process a single task by dispatching to the appropriate handler.
+    """Process a single task by dispatching to the appropriate handler.
 
     Args:
-        task: Task dict with id, task_type, and payload fields.
+        task (dict): Task dict with ``id``, ``task_type``, and ``payload`` fields.
 
     Returns:
-        Result dict with success status.
+        dict: Result dict with ``success`` status (and optional ``result`` / ``error``).
     """
     task_type = task.get("task_type", "")
     task_id = task.get("id", "unknown")
@@ -182,20 +231,19 @@ async def _process_task(task: dict) -> dict:
 
 
 async def run_poller() -> None:
-    """
-    Main polling loop. Runs indefinitely, polling the hub for tasks and processing them.
+    """Main polling loop. Runs indefinitely, polling the hub for tasks and processing them.
 
     This function is started as a background task during the FastAPI lifespan.
     """
     logger.info(
-        f"Starting task poller for trust {TRUST_NAME}, "
-        f"polling every {POLL_INTERVAL_SECONDS}s from {CENTRAL_HUB_API_URL}"
+        f"Starting task poller (key-only auth), polling every {POLL_INTERVAL_SECONDS}s "
+        f"from {CENTRAL_HUB_API_URL}. Identity is reported by the hub on first contact."
     )
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
         while True:
             try:
-                # Send heartbeat
+                # Send heartbeat (first call also runs the EXPECTED_TRUST_ID self-check).
                 await _send_heartbeat(client)
 
                 # Poll for tasks
