@@ -174,9 +174,18 @@
                                     <span
                                         v-for="trust in trustsToShow(project)"
                                         :key="trust.id"
-                                        class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                                        class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                                        :class="showsTrustDot(project, trust) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
                                         :title="trust.name"
+                                        data-test="trust-chip"
                                     >
+                                        <!-- Green dot: trust approved (shown only once the project is APPROVED). -->
+                                        <span
+                                            v-if="showsTrustDot(project, trust)"
+                                            class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"
+                                            data-test="trust-approved-dot"
+                                            aria-hidden="true"
+                                        />
                                         {{ trustChipLabel(trust) }}
                                     </span>
                                     <span
@@ -250,9 +259,18 @@
                             <span
                                 v-for="trust in trustsToShow(project)"
                                 :key="trust.id"
-                                class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                                class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                                :class="showsTrustDot(project, trust) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
                                 :title="trust.name"
+                                data-test="trust-chip"
                             >
+                                <!-- Green dot: trust approved (shown only once the project is APPROVED). -->
+                                <span
+                                    v-if="showsTrustDot(project, trust)"
+                                    class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0"
+                                    data-test="trust-approved-dot"
+                                    aria-hidden="true"
+                                />
                                 {{ trustChipLabel(trust) }}
                             </span>
                             <span
@@ -435,13 +453,13 @@ const approvedTrustCount = computed(() => {
     return ids.size;
 });
 
-// Use approvedTrusts as the participating-trusts source. We filter to
-// approved=true only — that's the design's "trusts" concept (active
-// participants, not just invitees). Chips render alphabetically so the same
-// trust appears in the same slot across reloads.
+// `approvedTrusts` is every trust linked to the project (the name predates
+// the staged/approved split) — each carries its own `approved` flag. We show
+// them all so a freshly-staged trust appears on the card straight away; the
+// green dot, not chip presence, marks which trusts have approved. Sorted
+// alphabetically so a trust keeps the same slot across reloads.
 const trustsForProject = (project: IProject): IProjectTrust[] => {
     return (project.approvedTrusts ?? [])
-        .filter(t => t.approved)
         .slice()
         .sort((a, b) => a.name.localeCompare(b.name));
 };
@@ -469,6 +487,13 @@ const trustChipLabel = (trust: IProjectTrust): string => {
 
     return stripped.slice(0, 14) + "…";
 };
+
+// A trust chip gains a green dot once that trust has approved — but only
+// after the project itself reaches APPROVED. While the project is still
+// STAGED every chip stays plain, even for trusts that have already signed
+// off; the dot is the project-wide "this trust is in" marker.
+const showsTrustDot = (project: IProject, trust: IProjectTrust): boolean =>
+    project.status === "APPROVED" && trust.approved;
 
 const STATUS_LABEL: Record<ProjectStatus, string> = {
     APPROVED: "Approved",
