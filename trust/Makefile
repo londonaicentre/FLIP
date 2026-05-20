@@ -185,8 +185,17 @@ define check_omop_data_dir
 	fi
 endef
 
-# Guard: a KIT-selected target needs trust/.env.<KIT> to exist.
+# Guard: any KIT-selected target needs KIT set (it derives the project name,
+# network and kit-file path).
 define require_kit
+	@if [ -z "$(KIT)" ]; then \
+	    echo "❌ KIT is required. Usage: make $@ KIT=<name>  (e.g. KIT=Trust_1)"; exit 1; \
+	fi
+endef
+
+# Guard: bringing a trust UP additionally needs its kit file (ports + credentials).
+# Teardown (down-trust) only needs the project name, so it uses require_kit instead.
+define require_kit_file
 	@if [ -z "$(KIT)" ]; then \
 	    echo "❌ KIT is required. Usage: make $@ KIT=<name>  (e.g. KIT=Trust_1)"; exit 1; \
 	fi; \
@@ -204,7 +213,7 @@ build:
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
 # trust/.env.<KIT> for that trust's ports / dirs / credentials.
 up-trust: update-omop-data update-orthanc-data create-networks
-	$(require_kit)
+	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -223,7 +232,7 @@ restart-trust: down-trust up-trust
 # are provisioned on the instance by deploy/providers/AWS/site.yml, so the
 # update-omop-data / create-networks prerequisites are intentionally omitted.
 up-trust-ec2:
-	$(require_kit)
+	$(require_kit_file)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
