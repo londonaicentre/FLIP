@@ -18,6 +18,19 @@ the same **zero inbound trust** architecture as the Docker Compose deployment:
 trust services only make outbound connections to the Central Hub and the FL
 server; no inbound ports are exposed from the K8s cluster.
 
+> **⚠️  Early-access — not production-ready.**  
+> This chart is in **early-access** stage. Live deployment testing against a
+> single-node k3s cluster revealed several pre-existing issues that prevent
+> production readiness:
+>
+> - `xnat-nginx` exits after entrypoint (no foreground process)
+> - `xnat-web` crash-loops (password mismatch with xnat-db)
+> - `fl-client` fails to maintain a connection over the `stcp` NVFlare transport
+>
+> See the [PR validation notes](https://github.com/londonaicentre/FLIP/pull/420)
+> for details. These issues are tracked in the follow-up issues (#527–#530).
+> Production deployments should wait until these are resolved.
+
 ## Prerequisites
 
 - **Kubernetes cluster** 1.28+ (EKS, AKS, or on-prem)
