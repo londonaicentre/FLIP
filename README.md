@@ -85,6 +85,7 @@ For example:
 | `make clean` | Remove all stopped containers, networks, and images |
 | `make ci` | Run the CI pipeline locally using `act` |
 | `make up-local-trust` | Run a local (on-premises) trust (set `PROD=true` or `PROD=stag` for environment) |
+| `make register-trusts` | Register the `TRUST_<n>_*` trusts on the running hub and write per-trust kit files `trust/.env.Trust_*` (run automatically by `make up`) |
 | `make unit_test` | Run unit tests across all services |
 | `make tests` | Run flip-ui unit tests and the full flip-api test suite (lint + mypy + pytest) |
 | `make debug SERVICE=<name>` | Restart one service in debug mode (waits for a debugger on port 5678). Services: `flip-api`, `fl-api-net-1`, `trust-api`, `imaging-api`, `data-access-api` |
@@ -141,23 +142,23 @@ make down        # Stop XNAT services
 make xnat-shell  # Get a shell in the XNAT container
 ```
 
-### Trust API Key Setup
+### Trust Registration
 
-Before starting the platform, generate per-trust API keys, the internal service key, and the per-trust internal service keys, and write them into `.env.development` using:
+The internal service key (for fl-server-to-hub authentication) must be generated before starting the platform:
 
 ```bash
-make generate-trust-api-keys
 make generate-internal-service-key
-make generate-trust-internal-service-keys
 ```
 
-`generate-trust-api-keys` generates a unique key for each trust found in `.env.development`, and writes both `TRUST_API_KEYS` and `TRUST_API_KEY_HASHES` (JSON dicts) directly into the env file. `generate-internal-service-key` writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` (plain strings) for fl-server-to-hub authentication. `make up` invokes `generate-internal-service-key` automatically. `generate-trust-internal-service-keys` writes `TRUST_INTERNAL_SERVICE_KEYS` (JSON dict) used by trust-api / imaging-api / data-access-api / fl-client to authenticate to one another inside each trust — distinct from the hub's `INTERNAL_SERVICE_KEY` and never sent to the hub. See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the threat model.
+This writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` (plain strings) into `.env.development`. `make up` invokes `generate-internal-service-key` automatically.
 
-To generate a key for a single trust (e.g. when adding a new trust):
+Trusts are registered on the **running hub** rather than configured via env-file key dicts:
 
 ```bash
-make -C flip-api generate-trust-key TRUST_NAME=Trust_1
+make register-trusts
 ```
+
+`register-trusts` registers the `TRUST_<n>_*` trusts (configured in `.env.development`) on the hub: each call inserts a `trust` row with its `api_key_hash`, claims an FL kit slot, and writes that trust's per-trust kit file `trust/.env.Trust_*` (containing `TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`, `FL_KIT_SLOT`, `FL_KIT_SLOT_NUMBER`, `EXPECTED_TRUST_ID`). `make up` runs `register-trusts` automatically once the hub is up. See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the trust-internal auth threat model.
 
 ### Basic Usage
 

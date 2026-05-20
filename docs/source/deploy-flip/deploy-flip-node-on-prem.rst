@@ -84,8 +84,8 @@ Recommended end-to-end (hybrid) flow
 ************************************
 
 The wrapper target ``full-deploy-hybrid`` performs the full Central Hub deploy,
-provisions the on-prem trust, updates AWS Secrets Manager with the trust's
-keys, and redeploys the hub so the new secret values are loaded:
+registers the trusts on the hub (``register-trusts``), and provisions the
+on-prem trust:
 
 .. code-block:: shell
 
@@ -149,7 +149,8 @@ What ``add-local-trust`` does:
    which installs Docker, required system packages, and creates the
    ``/opt/flip/`` directory tree.
 2. Downloads the trust's FL participant kit from S3 and deploys it to
-   ``/opt/flip/services/<TRUST_NAME>/{startup,local,transfer}`` on the trust host.
+   ``/opt/flip/services/<FL_KIT_SLOT>/{startup,local,transfer}`` on the trust
+   host (the kit on disk is keyed by the FL kit slot name, e.g. ``Trust_1``).
 3. Runs a targeted ``terraform apply`` to add the NLB security group rule that
    allows FL traffic from the trust's public IP.
 
@@ -171,8 +172,9 @@ that trust. The trust's env must contain:
 +----------------------------------+--------------------------------------------------------+
 | Variable                         | Purpose                                                |
 +==================================+========================================================+
-| ``TRUST_NAME``                   | Must match a name in the hub's ``TRUST_NAMES`` list    |
-|                                  | (e.g. ``Trust_2``).                                    |
+| ``EXPECTED_TRUST_ID`` (optional) | Opt-in self-check. If set and the hub resolves this    |
+|                                  | host's API key to a different trust *id*, trust-api    |
+|                                  | exits instead of acting as the wrong trust.            |
 +----------------------------------+--------------------------------------------------------+
 | ``TRUST_API_KEY``                | Per-trust secret used on every outbound call to the    |
 |                                  | hub.                                                   |
@@ -191,15 +193,17 @@ that trust. The trust's env must contain:
 **Hub-side prerequisites** (must already be in place before the trust can
 connect):
 
-1. ``TRUST_NAMES`` must include this trust's name.
-2. ``TRUST_API_KEY_HASHES`` must contain the SHA-256 hash of this trust's
-   ``TRUST_API_KEY``.
-3. The hub must be redeployed so the new secret values are loaded
-   (``make deploy-centralhub``).
+1. The trust must be registered on the hub — a row in the ``trust`` table with
+   its ``api_key_hash`` — via ``make register-trusts`` or the Add-Trust admin
+   flow (``POST /admin/trusts``).
+2. ``register_trust`` mints the trust's API key and internal service key into
+   the kit file (``trust/.env.Trust_N``) as part of registration.
+3. No hub redeploy is needed — the trust registry is the live database, read
+   on every request.
 
-The ``full-deploy-hybrid`` wrapper handles key generation and hub redeployment
-automatically. When using ``add-local-trust`` standalone, the keys must
-already be configured on the hub.
+The ``full-deploy-hybrid`` wrapper runs ``register-trusts`` automatically as
+part of the deploy. When using ``add-local-trust`` standalone, the trust must
+already be registered on the hub.
 
 ***********************
 Network requirements

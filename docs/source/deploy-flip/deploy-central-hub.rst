@@ -26,7 +26,7 @@ The Central Hub stack runs in a custom VPC with public and private subnets acros
 - **PostgreSQL (RDS)** — managed database, private subnet.
 - **Cognito** — user authentication (TOTP MFA enforced).
 - **SES** — transactional email (invites, password reset, access requests).
-- **Secrets Manager** — AES key, database password, API key hashes.
+- **Secrets Manager** — AES key, database password, internal service key hash.
 
 Operator access is via AWS Systems Manager (SSM) Session Manager — port 22 is
 **not** open on any security group.
@@ -125,14 +125,13 @@ For debugging or selective steps:
    make create-backend                          # one-off bootstrap of the Terraform state bucket
    make init
    make import-persistent
-   make generate-keys                           # trust API keys (idempotent)
    make generate-internal-service-key           # fl-server → flip-api key
-   make generate-trust-internal-service-keys    # per-trust internal keys (idempotent)
    make plan
    make apply
    make ssh-config
    make ansible-init
    make deploy-centralhub
+   make register-trusts                         # register trusts on the hub (after deploy-centralhub seeds the FL kit-slot pool)
    make deploy-trust
    make status
 
@@ -143,18 +142,21 @@ Service authentication
 The hub uses three separate authentication mechanisms (see :doc:`/sys-admin`
 for full details):
 
-- **Trust API keys** — per-trust plaintext key in ``TRUST_API_KEYS``; hub stores
-  only the SHA-256 hash in ``TRUST_API_KEY_HASHES``. Generated from
-  ``deploy/providers/AWS`` with ``make generate-keys``.
+- **Trust API keys** — minted by the ``register_trust`` service when a trust is
+  registered. The hub stores only the SHA-256 hash in the ``api_key_hash``
+  column of the ``trust`` table; the plaintext is written once into that
+  trust's kit file (``trust/.env.Trust_N``). Trusts are registered from
+  ``deploy/providers/AWS`` with ``make register-trusts``.
 - **Internal service key** — single hub-internal key for fl-server → flip-api
   calls. Generated with ``make generate-internal-service-key``.
 - **Trust-internal service keys** — per-trust shared secret used inside each
   trust for trust-api / imaging-api / fl-client → imaging-api / data-access-api
-  calls. The hub never sees these. Generated with
-  ``make generate-trust-internal-service-keys``.
+  calls. The hub never sees these. Minted by ``register_trust`` alongside the
+  trust API key and written into the trust's kit file.
 
-All three commands populate the active env file (``.env.stag`` or
-``.env.production``) and preserve any keys that already exist.
+``make generate-internal-service-key`` populates the active env file
+(``.env.stag`` or ``.env.production``) and preserves any keys that already
+exist; ``make register-trusts`` writes the per-trust keys into the kit files.
 
 ************
 Email setup

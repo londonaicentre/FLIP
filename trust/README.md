@@ -40,55 +40,60 @@ The Trust API polls the Central Hub for tasks. In development, it connects to th
 
 ## Joining as a new trust (dev hub)
 
-Use this flow when you want a trust whose identity (name, keys, FL kit slot) came from the hub at runtime rather than from `.env.development`. It is the dev equivalent of the prod on-prem walkthrough — it deliberately keeps the trust's plaintext keys out of any hub-side env file. The Ansible-driven prod flow lives in `docs/source/deploy-flip/deploy-flip-node-on-prem.rst`.
+Use this flow when you want a trust whose identity (keys, FL kit slot) came from the hub at runtime. The `trust` table on the hub is the sole trust registry — there is no env-slot model. The trust's plaintext keys never live in a hub-side env file; they live only in the trust's gitignored kit file. The Ansible-driven prod flow lives in `docs/source/deploy-flip/deploy-flip-node-on-prem.rst`.
 
-### 1. Admin creates the trust on the hub
+### 1. Register the trust on the hub
 
-On the **Connection status** page, click **Add Trust** and enter the friendly name, code, and region. The hub (`POST /admin/trusts`):
+A trust is registered on the **running hub** rather than configured via env-file key dicts. Either:
 
-* mints a `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY` (random 32-byte tokens),
+* **`make register-trusts`** (from the repo root) — registers the `TRUST_<n>_*` trusts configured in `.env.development`, or
+* the **Add Trust** button on the **Connection status** page — enter the friendly name, code, and region.
+
+Registration (`register_trust` service, `POST /admin/trusts`):
+
+* mints a `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY` (random tokens),
 * stores only the SHA-256 of the API key on `trust.api_key_hash`,
 * claims the next free `fl_kit_slot` row and binds it to the new trust id.
 
-A modal then surfaces the kit (`TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`, `FL_KIT_SLOT`, `FL_KIT_SLOT_NUMBER`) **once**. The hub never stores either plaintext again — copy them out of the modal before closing it, and hand them to the trust operator over a secure channel.
+`make register-trusts` is idempotent and writes the resulting kit straight into the per-trust kit file. The Add-Trust UI surfaces the kit (`TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`, `FL_KIT_SLOT`, `FL_KIT_SLOT_NUMBER`) in a modal **once** — the hub never stores either plaintext again, so copy it out before closing the modal and hand it to the trust operator over a secure channel.
 
-### 2. Operator drops the kit file alongside this Makefile
+### 2. The per-trust kit file
 
-The Makefile auto-includes a per-host kit file and lets its values override the `TRUST_2_VARS` defaults (`trust/Makefile`, search for `TRUST2_KIT_FILE`). Create `trust/.env.trust2` (gitignored) containing:
+Each trust stack reads a per-trust kit file `trust/.env.Trust_1` / `trust/.env.Trust_2` (gitignored; templates `.env.Trust_*.example`), auto-included by `trust/Makefile`. `make register-trusts` writes it. It carries:
 
 ```sh
-TRUST_NAME=<friendly name from kit>
 TRUST_API_KEY=<from kit>
 TRUST_INTERNAL_SERVICE_KEY=<from kit>
 FL_KIT_SLOT=<from kit>
 FL_KIT_SLOT_NUMBER=<from kit>
+EXPECTED_TRUST_ID=<from kit>
 ```
 
-For the on-prem `up-local-trust` stack the equivalent file is `trust/.env.<LOCAL_TRUST_NAME>` (auto-included via `LOCAL_TRUST_KIT_FILE`).
+plus that trust's host-local ports and data directories. There is no `TRUST_NAME` — the hub identifies the trust by its API key; the optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup. For the on-prem `up-local-trust` stack the equivalent file is `trust/.env.<LOCAL_TRUST_NAME>` (auto-included via `LOCAL_TRUST_KIT_FILE`).
 
 ### 3. Start the trust against the hub
 
 ```sh
-make -C trust down-trust-2   # if a previous trust2 stack is running
-make -C trust up-trust-2
+make -C trust down-trust KIT=Trust_2   # if a previous Trust_2 stack is running
+make -C trust up-trust KIT=Trust_2
 ```
 
-The trust-api container starts authenticating as the kit's `TRUST_NAME`, posts a heartbeat to `/trust/<name>/heartbeat`, and the Connection status page flips the row online within ~30s.
+The trust-api container authenticates with its `TRUST_API_KEY` and posts a heartbeat to `POST /trust/heartbeat` (no name segment — the hub resolves the trust's identity from the API key). The Connection status page flips the row online within ~30s.
 
 ### Cleanup / lost kit
 
 The plaintext keys aren't recoverable — only the hash is on disk. If you didn't save the kit, the only options are:
 
-* delete the row (`DELETE FROM trust WHERE name='<name>';` against `flip-db`, after freeing the slot: `UPDATE fl_kit_slot SET assigned_to_trust_id = NULL, assigned_at = NULL WHERE assigned_to_trust_id = '<trust-id>';`) and re-add via the UI, or
-* rotate locally: `uv run python -m flip_api.scripts.generate_trust_key --trust-name <name>` and `UPDATE trust SET api_key_hash = '<new-hash>' WHERE name = '<name>';`, then put the new plaintext into `.env.trust2`.
+* delete the row (`DELETE FROM trust WHERE name='<name>';` against `flip-db`, after freeing the slot: `UPDATE fl_kit_slot SET assigned_to_trust_id = NULL, assigned_at = NULL WHERE assigned_to_trust_id = '<trust-id>';`) and re-register, or
+* re-register with `make register-trusts`, which mints fresh keys and rewrites the kit file — this also rotates the keys.
 
 ## OMOP Database
 
 See dedicated README under [omop-db/README.md](omop-db/README.md) for instructions to populate the database.
 
-## Start XNAT
+## XNAT
 
-See dedicated README under [xnat/README.md](xnat/README.md).
+`make up` (and `make up-trust KIT=<name>`) brings up that trust's XNAT automatically — it is no longer a separate step. See the dedicated README under [xnat/README.md](xnat/README.md) for standalone XNAT management and debugging.
 
 ## Integration tests (cohort-query end-to-end)
 

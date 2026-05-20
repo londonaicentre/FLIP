@@ -103,8 +103,9 @@ This command executes the following steps in order:
 8. **`ssh-config`**: Update `~/.ssh/config` with EC2 instance IPs
 9. **`ansible-init`**: Configure EC2 instances with Docker, CloudWatch, and FL assets (Trust EC2 only — the Central Hub no longer runs application containers on its EC2 host)
 10. **`deploy-centralhub`**: Force-redeploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) and sync the UI to S3 + invalidate CloudFront
-11. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
-12. **`status`**: Run comprehensive health checks
+11. **`register-trusts`**: Register the `TRUST_<n>_*` trusts on the running hub and distribute per-trust kit files
+12. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
+13. **`status`**: Run comprehensive health checks
 
 ### flip-ui on S3 + CloudFront
 
@@ -228,11 +229,16 @@ make ssh-config
 # 8. Setup EC2 instances with Ansible
 make ansible-init
 
-# 9. Deploy services
+# 9. Deploy the Central Hub
 make deploy-centralhub
+
+# 10. Register the TRUST_<n>_* trusts on the hub and distribute per-trust kit files
+make register-trusts
+
+# 11. Deploy trust services
 make deploy-trust
 
-# 9. Check status
+# 12. Check status
 make status
 ```
 

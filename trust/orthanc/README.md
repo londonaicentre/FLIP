@@ -17,7 +17,7 @@
 
 Orthanc username and password are set by `ORTHANC_USERNAME` and `ORTHANC_PASSWORD` environment variables in the .env.development file at the root of this repository (see example in [.env.development.example](../../.env.development.example)).
 
-You'll need to populate Orthanc with DICOM files in order to test FLIP locally. We have prepared mock DICOM data for each of the 2 dev trusts (Trust_1 and Trust_2) as Orthanc storage volumes on S3. In order to set up the storage locally, these data volumes need to be downloaded/extracted. This is handled automatically when bringing up the trust containers via `make up` / `make up-trusts` (from the repository root) or `make -C trust up-trust-1` / `make -C trust up-trust-2` for a single trust, and similarly they will be updated locally when they are updated on S3 (note for devs: this is controlled by `.data_version` file in this directory).
+You'll need to populate Orthanc with DICOM files in order to test FLIP locally. We have prepared mock DICOM data for each of the 2 dev trusts (Trust_1 and Trust_2) as Orthanc storage volumes on S3. In order to set up the storage locally, these data volumes need to be downloaded/extracted. This is handled automatically when bringing up the trust containers via `make up` / `make up-trusts` (from the repository root) or `make -C trust up-trust KIT=Trust_1` / `make -C trust up-trust KIT=Trust_2` for a single trust, and similarly they will be updated locally when they are updated on S3 (note for devs: this is controlled by `.data_version` file in this directory).
 
 ```sh
 make update-orthanc-data

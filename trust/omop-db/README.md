@@ -27,9 +27,9 @@ make update-omop-data
 The OMOP database container is normally started as part of a full trust stack from the repository root:
 
 ```sh
-make up-trusts                # both trusts
-make -C trust up-trust-1      # Trust_1 only
-make -C trust up-trust-2      # Trust_2 only
+make up-trusts                        # both trusts
+make -C trust up-trust KIT=Trust_1    # Trust_1 only
+make -C trust up-trust KIT=Trust_2    # Trust_2 only
 ```
 
 For database-only debugging (without the rest of the trust stack), `make -C trust/omop-db up-test-omop-trust1` will start just the Trust_1 OMOP container.
