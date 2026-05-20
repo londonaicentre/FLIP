@@ -102,6 +102,14 @@
         <AiLoader v-if="loadingTrusts" class="pb-4" />
         <div v-else-if="!trustsToStage?.length">
             <AiAlert
+                v-if="trustsLoadedCount > 0"
+                :rounded="false"
+                variant="info"
+                text="No trusts have returned cohort results yet, so there is nothing to stage."
+                :bordered="false"
+            />
+            <AiAlert
+                v-else
                 :rounded="false"
                 variant="error"
                 text="Unable to load Trusts, please try again. If the issue persists please contact the service desk."
@@ -152,10 +160,15 @@ const { isObserver } = usePermissions();
 
 const loadingTrusts = ref<boolean>(true);
 const trustsToStage = ref<ITrustToStage[]>();
+// Total trusts the store returned, before the stageable-set filter. Lets the
+// empty-state message tell "no trusts could be loaded" (a real error) apart
+// from "trusts loaded, but none have returned cohort results yet".
+const trustsLoadedCount = ref<number>(0);
 const trustStore = useTrustStore();
 
 watch([trustStore, () => props.stageableTrustIds], () => {
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
+    trustsLoadedCount.value = trusts.length;
 
     trustsToStage.value = filterByQueriedTrustIds(trusts, props.stageableTrustIds)
         .map((trust) => ({

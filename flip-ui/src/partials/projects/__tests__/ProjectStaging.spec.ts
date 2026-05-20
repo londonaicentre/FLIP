@@ -15,6 +15,7 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import { useTrustStore } from "@/store/trusts";
 
 import ProjectStaging from "../ProjectStaging.vue";
@@ -38,7 +39,7 @@ const trustNew = {
     code: "TN"
 };
 
-function mountStaging(stageableTrustIds: string[] | undefined) {
+function mountStaging(stageableTrustIds: string[] | undefined, trusts = [trustA, trustB, trustNew]) {
     const pinia = createTestingPinia({
         createSpy: vi.fn,
         stubActions: false
@@ -53,7 +54,7 @@ function mountStaging(stageableTrustIds: string[] | undefined) {
     });
 
     const trustStore = useTrustStore();
-    trustStore.trusts = [trustA, trustB, trustNew];
+    trustStore.trusts = trusts;
 
     return wrapper;
 }
@@ -92,5 +93,32 @@ describe("ProjectStaging — stageableTrustIds gating", () => {
 
         expect(wrapper.find(`[data-test="${trustA.name}-selector"]`).exists()).toBe(true);
         expect(wrapper.find(`[data-test="${trustB.name}-selector"]`).exists()).toBe(false);
+    });
+});
+
+describe("ProjectStaging — empty staging-list messaging", () => {
+    beforeEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    it("shows an informational message (not an error) when trusts loaded but none returned cohort results", async () => {
+        // stageableTrustIds is empty -> every loaded trust is filtered out, but
+        // the trust list itself loaded fine. A normal empty state, not a failure.
+        const wrapper = mountStaging([]);
+        await flushPromises();
+
+        const alert = wrapper.findComponent(AiAlert);
+        expect(alert.props("variant")).toBe("info");
+        expect(alert.props("text")).toContain("returned cohort results");
+        expect(wrapper.text()).not.toContain("Unable to load Trusts");
+    });
+
+    it("shows the error message when no trusts could be loaded at all", async () => {
+        const wrapper = mountStaging([], []);
+        await flushPromises();
+
+        const alert = wrapper.findComponent(AiAlert);
+        expect(alert.props("variant")).toBe("error");
+        expect(alert.props("text")).toContain("Unable to load Trusts");
     });
 });
