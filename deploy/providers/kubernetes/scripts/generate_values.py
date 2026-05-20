@@ -104,6 +104,9 @@ def build_values(env):
 
 def yaml_quote(value):
     """Return a YAML-safe quoted string for a scalar value."""
+    # Python bool is a subclass of int; check type first.
+    if isinstance(value, bool):
+        return "true" if value else "false"
     s = str(value)
     needs_quoting = (
         not s

@@ -343,8 +343,9 @@ def _xnat_login(cfg: Config) -> str | None:
             token = resp.read().decode().strip()
             logger.info("Authenticated with XNAT as %s", cfg.xnat_admin_user)
             return token
-    except Exception as e:
-        logger.error("XNAT login failed: %s", e)
+    except Exception:
+        logger.error("XNAT login failed — see debug logs for details")
+        logger.debug("XNAT login failure details:", exc_info=True)
         return None
 
 
