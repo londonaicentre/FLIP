@@ -69,7 +69,7 @@ endif
 # (the FL kit slot name, e.g. Trust_1). trust/.env.<KIT> carries that trust's
 # host-local profile (ports, bind dirs) and kit credentials (TRUST_API_KEY,
 # TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID);
-# `make register-deploy-trusts` writes it, trust/.env.<KIT>.example is the
+# `make register-trusts` writes it, trust/.env.<KIT>.example is the
 # template. KIT has no default so up-local-trust (which selects its own kit
 # via LOCAL_TRUST_NAME) never double-includes — pass KIT=<name> explicitly.
 #
@@ -127,7 +127,7 @@ TRUST_VARS = \
 #   cp -r trust/orthanc/orthanc-storage-2/ trust/orthanc/orthanc-storage-local/
 #
 # Per-trust kit file (trust/.env.<LOCAL_TRUST_NAME>) — same schema as the
-# KIT-selected kit above. Dropped in by the deploy's `register-deploy-trusts`
+# KIT-selected kit above. Dropped in by the deploy's `register-trusts`
 # step or by the operator after `POST /admin/trusts`.
 LOCAL_TRUST_KIT_FILE := .env.$(LOCAL_TRUST_NAME)
 -include $(LOCAL_TRUST_KIT_FILE)
@@ -202,7 +202,7 @@ define require_kit_file
 	if [ ! -f "$(KIT_FILE)" ]; then \
 	    echo "❌ Kit file trust/$(KIT_FILE) not found."; \
 	    echo "   Copy trust/$(KIT_FILE).example to trust/$(KIT_FILE), then run"; \
-	    echo "   'make register-deploy-trusts' (from the repo root) to fill in the credentials."; \
+	    echo "   'make register-trusts' (from the repo root) to fill in the credentials."; \
 	    exit 1; \
 	fi
 endef
