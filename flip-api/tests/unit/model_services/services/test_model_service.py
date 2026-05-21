@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -25,6 +25,7 @@ from flip_api.model_services.services.model_service import (
     edit_model,
     get_metrics,
     get_model_status,
+    resolve_trust_from_fl_client_name,
     update_model_status,
     validate_trusts,
 )
@@ -168,18 +169,60 @@ def test_validate_trusts_some_invalid():
     assert result is False
 
 
+@patch("flip_api.model_services.services.model_service.get_settings")
+def test_resolve_trust_nvflare_resolves_kit_slot(mock_get_settings):
+    mock_get_settings.return_value.FL_BACKEND = "nvflare"
+    mock_trust = MagicMock()
+    session = MagicMock()
+    session.exec.return_value.first.return_value = mock_trust
+
+    result = resolve_trust_from_fl_client_name("Trust_2", session)
+    assert result is mock_trust
+
+
+@patch("flip_api.model_services.services.model_service.get_settings")
+def test_resolve_trust_nvflare_unassigned_slot(mock_get_settings):
+    mock_get_settings.return_value.FL_BACKEND = "nvflare"
+    session = MagicMock()
+    # No slot row matches, or the slot is not assigned to a trust.
+    session.exec.return_value.first.return_value = None
+
+    result = resolve_trust_from_fl_client_name("Trust_9", session)
+    assert result is None
+
+
+@patch("flip_api.model_services.services.model_service.get_settings")
+def test_resolve_trust_flower_looks_up_by_name(mock_get_settings):
+    mock_get_settings.return_value.FL_BACKEND = "flower"
+    mock_trust = MagicMock()
+    session = MagicMock()
+    session.exec.return_value.first.return_value = mock_trust
+
+    # Flower's SUPERNODE_NAME is the trust name — the trust is looked up by name.
+    result = resolve_trust_from_fl_client_name("Some Trust", session)
+    assert result is mock_trust
+
+
 def test_get_metrics():
     session = MagicMock()
     model_id = uuid4()
+    trust_a = uuid4()
+    trust_b = uuid4()
 
-    mock_metric1 = FLMetrics(model_id=model_id, label="accuracy", trust="trust1", global_round=1, result=0.9)
-    mock_metric2 = FLMetrics(model_id=model_id, label="accuracy", trust="trust1", global_round=2, result=0.92)
-    mock_metric3 = FLMetrics(model_id=model_id, label="accuracy", trust="trust2", global_round=1, result=0.88)
+    m1 = FLMetrics(
+        model_id=model_id, trust=trust_a, fl_client_name="Trust_1", label="accuracy", global_round=1, result=0.9
+    )
+    m2 = FLMetrics(
+        model_id=model_id, trust=trust_a, fl_client_name="Trust_1", label="accuracy", global_round=2, result=0.92
+    )
+    m3 = FLMetrics(
+        model_id=model_id, trust=trust_b, fl_client_name="Trust_2", label="accuracy", global_round=1, result=0.88
+    )
 
-    # First exec = FLMetrics rows; second exec = slot→code lookup (empty here).
+    # First exec = FLMetrics rows; second exec = trust id -> (code, name) lookup.
     session.exec.side_effect = [
-        MagicMock(all=MagicMock(return_value=[mock_metric1, mock_metric2, mock_metric3])),
-        MagicMock(all=MagicMock(return_value=[])),
+        MagicMock(all=MagicMock(return_value=[m1, m2, m3])),
+        MagicMock(all=MagicMock(return_value=[(trust_a, None, "Trust A"), (trust_b, None, "Trust B")])),
     ]
 
     result = get_metrics(model_id, session)
@@ -187,54 +230,61 @@ def test_get_metrics():
     assert len(result) == 1
     assert result[0].yLabel == "accuracy"
     assert result[0].xLabel == "globalRound"
-    assert len(result[0].metrics) == 2  # trust1 and trust2
+    assert len(result[0].metrics) == 2  # trust_a and trust_b
 
-    trust_labels = sorted([m.seriesLabel for m in result[0].metrics])
-    assert trust_labels == ["trust1", "trust2"]
+    labels = sorted(m.seriesLabel for m in result[0].metrics)
+    assert labels == ["Trust A", "Trust B"]
 
-    trust1_data = next(m for m in result[0].metrics if m.seriesLabel == "trust1").data
-    assert trust1_data[0].xValue == 1
-    assert trust1_data[0].yValue == 0.9
-    assert trust1_data[1].xValue == 2
-    assert trust1_data[1].yValue == 0.92
+    trust_a_data = next(m for m in result[0].metrics if m.seriesLabel == "Trust A").data
+    assert trust_a_data[0].xValue == 1
+    assert trust_a_data[0].yValue == 0.9
+    assert trust_a_data[1].xValue == 2
+    assert trust_a_data[1].yValue == 0.92
 
 
-def test_get_metrics_resolves_slot_to_trust_code():
-    """seriesLabel uses the assigned trust's `code` instead of the raw FL slot name."""
+def test_get_metrics_resolves_trust_to_code():
+    """seriesLabel uses the trust's `code` when one is set."""
     session = MagicMock()
     model_id = uuid4()
+    trust_1 = uuid4()
+    trust_2 = uuid4()
 
-    mock_metric1 = FLMetrics(model_id=model_id, label="accuracy", trust="Trust_1", global_round=1, result=0.9)
-    mock_metric2 = FLMetrics(model_id=model_id, label="accuracy", trust="Trust_2", global_round=1, result=0.85)
+    m1 = FLMetrics(
+        model_id=model_id, trust=trust_1, fl_client_name="Trust_1", label="accuracy", global_round=1, result=0.9
+    )
+    m2 = FLMetrics(
+        model_id=model_id, trust=trust_2, fl_client_name="Trust_2", label="accuracy", global_round=1, result=0.85
+    )
 
     session.exec.side_effect = [
-        MagicMock(all=MagicMock(return_value=[mock_metric1, mock_metric2])),
-        # Slot Trust_1 → "GSTT", slot Trust_2 → "UCLH"; resolved as legend labels.
-        MagicMock(all=MagicMock(return_value=[("Trust_1", "GSTT"), ("Trust_2", "UCLH")])),
+        MagicMock(all=MagicMock(return_value=[m1, m2])),
+        MagicMock(all=MagicMock(return_value=[(trust_1, "GSTT", "Trust One"), (trust_2, "UCLH", "Trust Two")])),
     ]
 
     result = get_metrics(model_id, session)
 
-    labels = sorted([m.seriesLabel for m in result[0].metrics])
+    labels = sorted(m.seriesLabel for m in result[0].metrics)
     assert labels == ["GSTT", "UCLH"]
 
 
-def test_get_metrics_falls_back_to_slot_name_when_no_code():
-    """A trust without a `code` keeps the raw slot name as the legend label."""
+def test_get_metrics_falls_back_to_trust_name_when_no_code():
+    """A trust without a `code` uses the trust name as the legend label."""
     session = MagicMock()
     model_id = uuid4()
+    trust_3 = uuid4()
 
-    mock_metric = FLMetrics(model_id=model_id, label="accuracy", trust="Trust_3", global_round=1, result=0.8)
+    m = FLMetrics(
+        model_id=model_id, trust=trust_3, fl_client_name="Trust_3", label="accuracy", global_round=1, result=0.8
+    )
 
     session.exec.side_effect = [
-        MagicMock(all=MagicMock(return_value=[mock_metric])),
-        # Only Trust_1 has a code; Trust_3 is unmapped → falls back to slot name.
-        MagicMock(all=MagicMock(return_value=[("Trust_1", "GSTT")])),
+        MagicMock(all=MagicMock(return_value=[m])),
+        MagicMock(all=MagicMock(return_value=[(trust_3, None, "Trust Three")])),
     ]
 
     result = get_metrics(model_id, session)
 
-    assert result[0].metrics[0].seriesLabel == "Trust_3"
+    assert result[0].metrics[0].seriesLabel == "Trust Three"
 
 
 def test_get_metrics_no_results():

@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, validator
+from pydantic import BaseModel, Field, validator
 
 from flip_api.config import get_settings
 from flip_api.domain.schemas.status import TaskType
@@ -49,24 +49,14 @@ class OmopCohortResults(BaseModel):
 
 
 class TrainingMetrics(BaseModel):
-    trust: str
-    global_round: int = Field(
-        ...,
-        ge=0,
-        title="global_round",
-        description="'global_round' must be >=0",
-        alias="globalRound",
-    )
+    fl_client_name: str
+    global_round: int = Field(ge=0)
     label: str
     result: float
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-
 
 class TrainingLog(BaseModel):
-    trust: str
+    fl_client_name: str
     log: str
 
 

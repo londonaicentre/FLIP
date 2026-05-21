@@ -15,6 +15,7 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
+from flip_api.config import get_settings
 from flip_api.db.models.main_models import FLKitSlot, FLLogs, FLMetrics, Model, ModelTrustIntersect, Trust
 from flip_api.domain.interfaces.model import (
     IDetailedModelStatus,
@@ -116,7 +117,13 @@ def update_model_status(
 
 
 def add_log(
-    model_id: UUID, log: str, session: Session, transaction: Any | None = None, success: bool = True
+    model_id: UUID,
+    log: str,
+    session: Session,
+    transaction: Any | None = None,
+    success: bool = True,
+    trust: Trust | None = None,
+    fl_client_name: str | None = None,
 ) -> None:
     """
     Add a log entry to the database
@@ -127,6 +134,10 @@ def add_log(
         session (Session): The database session.
         transaction (Any | None): Optional transaction to control commit behavior.
         success (bool): Indicates if the log entry is a success or failure.
+        trust (Trust | None): The trust the log is attributed to, when the log was
+            reported by an FL client. None for model-level (hub) logs.
+        fl_client_name (str | None): The FL client name as reported by the FL server.
+            None for model-level logs.
 
     Returns:
         None
@@ -138,7 +149,13 @@ def add_log(
     logger.info({"message": "Attempting to add a log line for model...", "modelId": model_id, "log": log})
 
     # Create the log entry
-    log_entry = FLLogs(model_id=model_id, log=log, success=success)
+    log_entry = FLLogs(
+        model_id=model_id,
+        log=log,
+        success=success,
+        trust=trust.id if trust is not None else None,
+        fl_client_name=fl_client_name,
+    )
 
     try:
         session.add(log_entry)
@@ -286,6 +303,46 @@ def validate_trusts(model_id: UUID, trusts: list[str], session: Session) -> bool
     return True
 
 
+def resolve_trust_from_fl_client_name(fl_client_name: str, session: Session) -> Trust | None:
+    """Resolve an FL client name (as reported by the FL server) to its Trust.
+
+    The FL client name depends on FL_BACKEND, so this hides that discrepancy
+    behind a single contract (see issue #538):
+
+    - NVFLARE: the FL client name is the FL kit slot — the certificate CN baked
+      in at provisioning time (e.g. ``Trust_2``). It is resolved to the assigned
+      trust via the FLKitSlot table.
+    - Flower: the FL client name is the SUPERNODE_NAME env var, which is the
+      trust's name; the trust is looked up by name.
+
+    Args:
+        fl_client_name (str): The FL client name reported by the FL server.
+        session (Session): The database session.
+
+    Returns:
+        Trust | None: The resolved trust, or None when the FL client name matches
+            no trust (an unknown/unassigned NVFLARE kit slot, or a Flower
+            SUPERNODE_NAME that is not a known trust name).
+    """
+    if get_settings().FL_BACKEND != "nvflare":
+        # Flower: SUPERNODE_NAME is the trust name — look the trust up by name.
+        # FUTURE: rather than trust the operator-set SUPERNODE_NAME env var, derive the
+        # FL client's node_id for the federation and convert that to the trust — a
+        # node_id -> trust registry already exists for the connection-status feature
+        # (the /register_node flow). That removes the free-form env var as a drift source (#538).
+        return session.exec(select(Trust).where(Trust.name == fl_client_name)).first()
+
+    logger.debug(f"Resolving NVFLARE FL kit slot '{fl_client_name}' to its assigned trust ...")
+
+    stmt = (
+        select(Trust)
+        .join(FLKitSlot, FLKitSlot.assigned_to_trust_id == Trust.id)  # type: ignore[arg-type]
+        .where(FLKitSlot.slot_name == fl_client_name)
+    )
+
+    return session.exec(stmt).first()
+
+
 def validate_trust_ids(model_id: UUID, trust_ids: list[UUID], session: Session) -> bool:
     """Validate that every trust id is associated with the model via ModelTrustIntersect.
 
@@ -328,17 +385,11 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
         logger.warning("No metrics have been found")
         return []
 
-    # FLMetrics.trust carries the FL backend's participant identity, which is the
-    # FL kit *slot* name (e.g. "Trust_2") — that's what the cert CN / supernode key
-    # binds to. Resolve to the assigned trust's short `code` (e.g. "UCLH") for chart
-    # legends; falls back to the raw slot name if no code is set.
-    slot_to_code: dict[str, str] = {}
-    for slot_name, code in session.exec(
-        select(FLKitSlot.slot_name, Trust.code)
-        .join(Trust, Trust.id == FLKitSlot.assigned_to_trust_id)  # type: ignore[arg-type]
-    ).all():
-        if code:
-            slot_to_code[slot_name] = code
+    # FLMetrics.trust is the assigned trust's id. Resolve it to the trust's short
+    # `code` (e.g. "UCLH") for chart legends, falling back to the trust's name.
+    trust_label: dict[UUID, str] = {}
+    for trust_id, code, name in session.exec(select(Trust.id, Trust.code, Trust.name)).all():
+        trust_label[trust_id] = code or name
 
     # metrics_map: label -> IModelMetrics
     metrics_map: dict[str, IModelMetrics] = {}
@@ -351,7 +402,7 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
         # Get the list of series for this label
         metric = metrics_map[row.label]
 
-        series_label = slot_to_code.get(row.trust, row.trust)
+        series_label = trust_label.get(row.trust, str(row.trust))
 
         # Find or create the series for this trust
         series = next((s for s in metric.metrics if s.seriesLabel == series_label), None)

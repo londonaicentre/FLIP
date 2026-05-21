@@ -79,7 +79,11 @@ class FLJob(SQLModel, table=True):
 class FLMetrics(SQLModel, table=True):
     __tablename__ = "fl_metrics"  # type: ignore
     id: UUID = Field(default_factory=uuid4, primary_key=True)
-    trust: str = Field()
+    # The trust this metric is attributed to (its id). fl_client_name is the raw
+    # FL client identity as reported by the FL server (FL kit slot for NVFLARE,
+    # SUPERNODE_NAME for Flower), kept for traceability.
+    trust: UUID = Field(foreign_key="trust.id")
+    fl_client_name: str = Field()
     model_id: UUID = Field(foreign_key="model.id")
     global_round: int = Field()
     timestamp: datetime | None = Field(default_factory=datetime.utcnow)
@@ -93,7 +97,9 @@ class FLLogs(SQLModel, table=True):
     model_id: UUID = Field(foreign_key="model.id")
     log_date: Annotated[datetime | None, Field(default_factory=datetime.utcnow)]
     success: bool = Field()
-    trust_name: str | None = Field(default=None, nullable=True)
+    # Set only for logs reported by an FL client; None for model-level (hub) logs.
+    trust: UUID | None = Field(default=None, foreign_key="trust.id")
+    fl_client_name: str | None = Field(default=None)
     log: str = Field()
 
 
