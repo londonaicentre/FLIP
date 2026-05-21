@@ -39,6 +39,11 @@ provider "null" {
 
 data "aws_availability_zones" "available" {}
 
+# Cross-stack: aicentre-iac's network_account_flip module reads
+# /flip/networking/vpc_id and /flip/networking/private_subnet_ids from
+# this account's SSM (see parameter_store.tf) to back the cross-account
+# TGW VPC attachment. If you recreate or rename this VPC, plan against
+# aicentre-iac immediately afterwards.
 module "flip_vpc" {
   source               = "terraform-aws-modules/vpc/aws"
   version              = "~> 6.0"
@@ -78,6 +83,15 @@ module "ec2_security_group" {
   ]
 }
 
+# Tag the secgroup module SGs for drift detection.
+# Remove these aws_security_group_tags resources if the secgroup module
+# ever adds a `tags` variable — until then, we tag externally.
+resource "aws_ec2_tag" "ec2_security_group_flip_sg" {
+  resource_id = module.ec2_security_group.security_group.id
+  key         = "FlipSG"
+  value       = "true"
+}
+
 # Trust Security Group for Trust EC2 instance
 # NOTE: Trust API port removed — trusts now poll the hub outbound (no inbound connections needed).
 # XNAT and PACS UI ports kept for direct researcher access to imaging tools.
@@ -89,6 +103,12 @@ module "trust_security_group" {
   description = "Security group for FLIP Trust EC2 instance (no inbound - access via SSM Session Manager and SSM port forwarding)"
 
   ingress_rules = []
+}
+
+resource "aws_ec2_tag" "trust_security_group_flip_sg" {
+  resource_id = module.trust_security_group.security_group.id
+  key         = "FlipSG"
+  value       = "true"
 }
 
 # Only allow FL server traffic that arrives through the NLB, not direct client or VPC access.
@@ -117,6 +137,12 @@ module "rds_security_group" {
     }
   ]
   block_all_outbound = true
+}
+
+resource "aws_ec2_tag" "rds_security_group_flip_sg" {
+  resource_id = module.rds_security_group.security_group.id
+  key         = "FlipSG"
+  value       = "true"
 }
 
 resource "aws_security_group_rule" "rds_ingress_ecs_flip_api" {
@@ -167,6 +193,7 @@ module "flip_api_secret" {
   version     = "2.0.0"
   name        = "FLIP_API"
   description = "FLIP_API"
+  kms_key_id  = aws_kms_key.flip_app_key.arn
 
   # Set recovery window to allow secret recovery after accidental deletion
   # To permanently delete: remove from state first with: terraform state rm module.flip_api_secret
@@ -434,52 +461,44 @@ resource "aws_instance" "ec2_instance" {
   }
 }
 
-# AWS-managed prefix list containing CloudFront origin-facing egress IPs.
-# Used to restrict ALB ingress to CloudFront only, so the ALB cannot be
-# reached directly from the internet — a WAF attached to the distribution
-# cannot be bypassed if CloudFront is the only path to the ALB.
-data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
-  name = "com.amazonaws.global.cloudfront.origin-facing"
-}
-
 # Application Load Balancer
 #
-# Only HTTPS (443) ingress is configured. The security group denies everything
-# else from the internet by default:
-# - Port 80 (ALB_HTTP_PORT): CloudFront already redirects viewer HTTP to HTTPS
-#   at the edge (default_cache_behavior.viewer_protocol_policy=redirect-to-https)
-#   and never dials the origin over HTTP (origin_protocol_policy=https-only).
-#   The http-redirect listener still exists as a belt-and-braces fallback but
-#   is intentionally unreachable externally.
-# - API_PORT / FL_API_PORT: no external consumer. flip-api is reached via
-#   CloudFront → ALB /api/* rule on HTTPS:443; the FL API is docker-network-only
-#   (see check_status.py — health checks `docker exec` into the container, and
-#   NET_ENDPOINTS uses the internal docker hostname).
+# Internal (no public IP). CloudFront reaches it via aws_cloudfront_vpc_origin
+# (see cloudfront.tf) over an AWS-managed ENI inside this VPC — the ALB has
+# no internet exposure and the prefix-list-based ingress rule of the old
+# public-ALB design is no longer needed.
 #
-# The 443 rule references the AWS-managed `com.amazonaws.global.cloudfront.origin-facing`
-# prefix list. AWS counts an SG rule referencing a managed prefix list against
-# the per-SG rule quota using the list's `MaxEntries`, not its current size —
-# so a single reference consumes the majority of the default 60-rule quota.
-# That's why we can only afford one prefix-list-backed ingress rule here.
+# Ingress on 443 is added separately as `aws_security_group_rule.alb_ingress_https_from_cloudfront`
+# in cloudfront.tf, with source = the CloudFront-VPCOrigins-Service-SG that AWS
+# creates after the VPC origin is provisioned (AWS docs Option 2 in
+# https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html).
+# We learned the hard way that a vpc_cidr-based rule does NOT permit VPC-origin
+# traffic — AWS scopes VPC-origin SG checks to the service-managed SG (or the
+# CloudFront managed prefix list), not the ENI's source IP. The rule lives
+# outside this module so the chain (ALB SG → ALB → VPC origin → service-SG
+# data source → SG rule) doesn't form a cycle.
+# The HTTP listener still exists as a redirect-to-HTTPS belt-and-braces but
+# the SG denies inbound 80 by default.
 module "alb_security_group" {
-  source      = "./modules/secgroup"
-  name        = "alb-security-group"
-  vpc_id      = module.flip_vpc.vpc_id
-  description = "Security group for FLIP ALB"
-  ingress_rules = [
-    {
-      port            = var.ALB_HTTPS_PORT
-      description     = "HTTPS traffic from CloudFront"
-      prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id]
-    }
-  ]
+  source        = "./modules/secgroup"
+  name          = "alb-security-group"
+  vpc_id        = module.flip_vpc.vpc_id
+  description   = "Security group for FLIP ALB"
+  ingress_rules = []
+}
+
+resource "aws_ec2_tag" "alb_security_group_flip_sg" {
+  resource_id = module.alb_security_group.security_group.id
+  key         = "FlipSG"
+  value       = "true"
 }
 
 module "alb" {
   source                     = "terraform-aws-modules/alb/aws"
   name                       = "flip-alb"
   vpc_id                     = module.flip_vpc.vpc_id
-  subnets                    = module.flip_vpc.public_subnets
+  internal                   = true
+  subnets                    = module.flip_vpc.private_subnets
   security_groups            = [module.alb_security_group.security_group.id]
   enable_deletion_protection = false
 
@@ -527,6 +546,7 @@ module "fl_server_nlb" {
   subnets                    = module.flip_vpc.public_subnets
   enable_deletion_protection = false
   create_security_group      = true
+  security_group_tags        = { FlipSG = "true" }
 
   # NLB only accepts trusted client sources - allow-list only the trusted client egress IPs
   # TODO explore 'internal' NLB plus private connectivity instead of an internet-facing NLB

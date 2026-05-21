@@ -20,10 +20,11 @@ Trust services run at each healthcare institution (cloud EC2 or on-prem). All tr
 | File | Purpose |
 | ------ | --------- |
 | `Makefile` | Trust stack orchestration (up/down/debug for trust-1, trust-2, local) |
-| `compose_trust.development.yml` | Dev Docker Compose (builds from source) |
-| `compose_trust.production.yml` | Prod Docker Compose (GHCR images) |
-| `compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
-| `compose_trust.local.yml` | On-prem trust override |
+| `deploy/compose_trust.development.yml` | Dev Docker Compose (builds from source) |
+| `deploy/compose_trust.production.yml` | Prod Docker Compose (GHCR images) |
+| `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
+| `deploy/compose_trust.local.yml` | On-prem trust override |
+| `deploy/compose_trust-1_override.yml` | Dev trust-1 host-port bindings |
 
 ## Commands (from `trust/`)
 

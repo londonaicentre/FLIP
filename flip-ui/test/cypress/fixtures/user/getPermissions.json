@@ -5,6 +5,8 @@
         "CanManageUsers",
         "CanApproveProjects",
         "CanUnstageProjects",
-        "CanAccessAdminPanel"
+        "CanAccessAdminPanel",
+        "CanManageDeployments",
+        "CanManageSiteBanner"
     ]
 }

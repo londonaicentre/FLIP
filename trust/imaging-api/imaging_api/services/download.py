@@ -168,7 +168,7 @@ def format_download_url(
     experiment_id_or_label: str,
     assessor_type: str = "scan",
     resource_type: str = "NIFTI",
-):
+) -> str:
     """
     Formats the XNAT API URL to download experiment scan images.
 
@@ -259,7 +259,8 @@ def unzip_file(zip_path: str, extract_dir: str, new_name: str) -> str:
 
     Raises:
         FileNotFoundError: If the ZIP file does not exist.
-        ValueError: If the ZIP file contains path traversal entries (zip slip).
+        ValueError: If the ZIP file contains path traversal entries (zip slip),
+            or if new_name attempts path traversal outside extract_dir.
     """
     if not os.path.exists(zip_path):
         raise FileNotFoundError(f"ZIP file not found: {zip_path}")
@@ -276,9 +277,14 @@ def unzip_file(zip_path: str, extract_dir: str, new_name: str) -> str:
                 raise ValueError(f"Attempted path traversal in ZIP entry: {member}")
             zip_ref.extract(member, extract_dir_abs)
 
-    # Rename the extracted directory
+    # Rename the extracted directory. new_name is user-controlled (it comes
+    # from accession_id), so we must validate that the renamed path stays
+    # within extract_dir_abs to prevent path traversal.
     extracted_dir = os.path.join(extract_dir_abs, Path(zip_path).stem)
-    renamed_dir = os.path.join(extract_dir_abs, new_name)
+    renamed_dir_candidate = os.path.join(extract_dir_abs, new_name)
+    renamed_dir = os.path.realpath(renamed_dir_candidate)
+    if not renamed_dir.startswith(extract_dir_abs + os.sep):
+        raise ValueError(f"Path traversal detected in new_name: {new_name}")
 
     if os.path.exists(extracted_dir):
         os.rename(extracted_dir, renamed_dir)
