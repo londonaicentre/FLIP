@@ -106,14 +106,47 @@ def resolve_model_name(base_name: str, abort_midway: bool) -> str:
     return f"{base_name}{ABORT_MIDWAY_NAME_SUFFIX}"
 
 
+def _maybe_refresh(headers: dict[str, str]) -> bool:
+    """Refresh the bearer token in-place via Cognito REFRESH_TOKEN_AUTH.
+
+    Used when the smoke runs token-driven against a remote hub (FLIP_E2E_TOKEN):
+    a long run can outlast the access token's TTL, so a 401 triggers a refresh.
+    Returns True if the token was refreshed.
+    """
+    refresh = os.environ.get("FLIP_E2E_REFRESH_TOKEN")
+    client_id = os.environ.get("AWS_COGNITO_APP_CLIENT_ID")
+    if not refresh or not client_id:
+        return False
+    import boto3
+
+    try:
+        resp = boto3.client("cognito-idp", region_name=os.environ.get("AWS_REGION", "eu-west-2")).initiate_auth(
+            ClientId=client_id,
+            AuthFlow="REFRESH_TOKEN_AUTH",
+            AuthParameters={"REFRESH_TOKEN": refresh},
+        )
+        headers["authorization"] = "Bearer " + resp["AuthenticationResult"]["AccessToken"]
+        _log("  🔄 refreshed access token")
+        return True
+    except Exception as exc:  # noqa: BLE001 - refresh is best-effort
+        _log(f"  ⚠️  token refresh failed: {exc}")
+        return False
+
+
 def _post(
     client: requests.Session, path: str, json: dict[str, Any], headers: dict[str, str], timeout: int = 30
 ) -> requests.Response:
-    return client.post(f"{constants.BASE_URL}{path}", json=json, headers=headers, timeout=timeout)
+    resp = client.post(f"{constants.BASE_URL}{path}", json=json, headers=headers, timeout=timeout)
+    if resp.status_code == 401 and _maybe_refresh(headers):
+        resp = client.post(f"{constants.BASE_URL}{path}", json=json, headers=headers, timeout=timeout)
+    return resp
 
 
 def _get(client: requests.Session, path: str, headers: dict[str, str], timeout: int = 30) -> requests.Response:
-    return client.get(f"{constants.BASE_URL}{path}", headers=headers, timeout=timeout)
+    resp = client.get(f"{constants.BASE_URL}{path}", headers=headers, timeout=timeout)
+    if resp.status_code == 401 and _maybe_refresh(headers):
+        resp = client.get(f"{constants.BASE_URL}{path}", headers=headers, timeout=timeout)
+    return resp
 
 
 def _try_request(fn: Any, *args: Any, **kwargs: Any) -> requests.Response | None:
@@ -137,6 +170,13 @@ def _ensure_ok(response: requests.Response, what: str) -> requests.Response:
 
 
 def authenticate() -> dict[str, str]:
+    # FLIP_E2E_TOKEN lets the smoke run against a remote hub (stag/prod) with a
+    # pre-obtained bearer token, bypassing the Cognito USER_PASSWORD_AUTH flow
+    # (which is unavailable when the admin has MFA). _maybe_refresh keeps it live.
+    token = os.environ.get("FLIP_E2E_TOKEN")
+    if token:
+        _log("🔐 Using FLIP_E2E_TOKEN (pre-supplied bearer token)")
+        return {"scheme": "Bearer", "authorization": f"Bearer {token}"}
     _log("🔐 Authenticating as admin via Cognito…")
     headers = admin_authentication()
     _log("  ✅ Got auth token")
@@ -635,6 +675,18 @@ def main(argv: list[str] | None = None) -> int:
     headers = authenticate()
     client = requests.Session()
     client.headers.update({"Content-Type": "application/json"})
+
+    # Against a TLS-terminating proxy (CloudFront → flip-api), FastAPI's
+    # trailing-slash redirects come back with an http:// Location because uvicorn
+    # sees the internal hop as plain HTTP. Following that http:// URL hits a
+    # CloudFront 403. Rewrite redirect Locations to https:// so the smoke's
+    # trailing-slash paths resolve. Harmless against a local http stack.
+    def _force_https_redirect(response: requests.Response, *_: Any, **__: Any) -> None:
+        loc = response.headers.get("location", "")
+        if loc.startswith("http://"):
+            response.headers["location"] = "https://" + loc[len("http://") :]
+
+    client.hooks["response"].append(_force_https_redirect)
 
     try:
         if args.project_id:
