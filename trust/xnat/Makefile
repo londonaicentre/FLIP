@@ -198,13 +198,19 @@ xnat-reset:
 	@echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
 	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \
 		echo "  📍 Using production path: /opt/flip/xnat/"; \
-		sudo rm -rf /opt/flip/xnat; \
-		sudo mkdir -p /opt/flip/xnat/xnat-data/tomcat_logs; \
-		sudo mkdir -p /opt/flip/xnat/xnat-data/archive; \
-		sudo mkdir -p /opt/flip/xnat/xnat-data/build; \
-		sudo mkdir -p /opt/flip/xnat/xnat-data/cache; \
-		sudo mkdir -p /opt/flip/xnat/xnat-db-data; \
-		sudo chown -R $(USER):$(USER) /opt/flip/xnat; \
+		xnat_ctx="$$(docker context show)"; \
+		if [ "$$xnat_ctx" != "default" ]; then \
+			echo "  🛰️  remote swarm deploy (context '$$xnat_ctx') — resetting XNAT dirs on the trust host via ssh"; \
+			ssh "$$xnat_ctx" 'sudo rm -rf /opt/flip/xnat && sudo mkdir -p /opt/flip/xnat/xnat-data/tomcat_logs /opt/flip/xnat/xnat-data/archive /opt/flip/xnat/xnat-data/build /opt/flip/xnat/xnat-data/cache /opt/flip/xnat/xnat-db-data && sudo chown -R 1000:1000 /opt/flip/xnat'; \
+		else \
+			sudo rm -rf /opt/flip/xnat; \
+			sudo mkdir -p /opt/flip/xnat/xnat-data/tomcat_logs; \
+			sudo mkdir -p /opt/flip/xnat/xnat-data/archive; \
+			sudo mkdir -p /opt/flip/xnat/xnat-data/build; \
+			sudo mkdir -p /opt/flip/xnat/xnat-data/cache; \
+			sudo mkdir -p /opt/flip/xnat/xnat-db-data; \
+			sudo chown -R $(USER):$(USER) /opt/flip/xnat; \
+		fi; \
 	else \
 		echo "  📍 Using development path: ./$(XNAT_PORT_EFFECTIVE)/xnat-data"; \
 		sudo rm -rf $(XNAT_PORT_EFFECTIVE); \

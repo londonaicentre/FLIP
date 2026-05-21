@@ -157,6 +157,10 @@
         mode: "0755"
       loop:
         - /opt/flip
+        # Holds the per-trust kit file (.env.<slot>) that register-trusts scp's
+        # to the EC2; the trust compose -include's it. Without this dir the scp
+        # in register-trusts.sh fails with "No such file or directory".
+        - /opt/flip/trust
         # Bind-mount sources for the imaging-api / fl-client images dir.
         # Both compose projects (trust1-, trust2-) bind-mount one of these
         # onto /app/data/images via BASE_IMAGES_DOWNLOAD_DIR_TRUST{1,2}, then

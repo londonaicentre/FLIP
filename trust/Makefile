@@ -89,10 +89,10 @@ TRUST_PROJECT := trust$(TRUST_NUM)
 TRUST_OVERRIDE := $(if $(filter Trust_1,$(KIT)),-f deploy/compose_trust-1_override.yml,)
 
 TRUST_VARS = \
-	BASE_IMAGES_DOWNLOAD_DIR=$(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT)) \
+	BASE_IMAGES_DOWNLOAD_DIR=$(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(filter true stag,$(PROD)),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT))) \
 	OMOP_DB_PORT=$(or $(OMOP_DB_PORT),5434) \
 	PACS_UI_PORT=$(or $(PACS_UI_PORT),8042) \
-	ORTHANC_STORAGE_DIR=$(or $(ORTHANC_STORAGE_DIR),./orthanc/orthanc-storage) \
+	ORTHANC_STORAGE_DIR=$(or $(ORTHANC_STORAGE_DIR),$(if $(filter true stag,$(PROD)),/opt/flip/orthanc/orthanc-storage,./orthanc/orthanc-storage)) \
 	ORTHANC_USERNAME=${ORTHANC_USERNAME} \
 	ORTHANC_PASSWORD=${ORTHANC_PASSWORD} \
 	XNAT_PORT=$(or $(XNAT_PORT),8104) \
@@ -108,6 +108,7 @@ TRUST_VARS = \
 	TRUST_INTERNAL_SERVICE_KEY=$(TRUST_INTERNAL_SERVICE_KEY) \
 	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),$(KIT)) \
 	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),$(TRUST_NUM)) \
+	TRUST_NAME=$(or $(FL_KIT_SLOT),$(KIT)) \
 	EXPECTED_TRUST_ID=$(EXPECTED_TRUST_ID)
 
 # Host ports and bind paths default to the local-trust allocation in
@@ -150,6 +151,7 @@ LOCAL_TRUST_VARS = \
 	TRUST_INTERNAL_SERVICE_KEY=$(TRUST_INTERNAL_SERVICE_KEY) \
 	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),$(LOCAL_TRUST_NAME)) \
 	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),$(subst Trust_,,$(LOCAL_TRUST_NAME))) \
+	TRUST_NAME=$(or $(FL_KIT_SLOT),$(LOCAL_TRUST_NAME)) \
 	EXPECTED_TRUST_ID=$(EXPECTED_TRUST_ID) \
 	OMOP_DATA_DIR=$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data) \
 	ORTHANC_STORAGE_DIR=$(or $(ORTHANC_STORAGE_DIR),./orthanc/orthanc-storage-local) \

@@ -84,7 +84,10 @@ register_one() {
     [ -n "$code" ] && cmd_args+=(--code "$code")
     [ -n "$region" ] && cmd_args+=(--region "$region")
     local overrides
-    overrides="$(jq -n --args '{containerOverrides:[{name:"flip-api",command:$ARGS.positional}]}' "${cmd_args[@]}")"
+    # `--args -- ` is required: cmd_args contains dash-prefixed values (`-m`, `--name`, ...)
+    # and jq scans the whole argv for options regardless of `--args`. The `--` end-of-options
+    # marker is what makes jq treat the rest as positional. Holds on jq 1.6 and 1.7+.
+    overrides="$(jq -n '{containerOverrides:[{name:"flip-api",command:$ARGS.positional}]}' --args -- "${cmd_args[@]}")"
 
     local task_arn task_id
     task_arn="$(aws_cmd ecs run-task \
@@ -100,7 +103,9 @@ register_one() {
         --log-stream-name "flip-api/flip-api/$task_id" --start-from-head \
         --query 'events[].message' --output text)"
     # register_trust prints one JSON array on stdout — the last line starting with '['.
-    kit="$(echo "$log_events" | awk 'NF' | grep -E '^\[' | tail -n 1 || true)"
+    # `aws ... --output text` joins the events[] list with TABs, so the kit message
+    # arrives TAB-prefixed; split on TAB and trim before matching the leading '['.
+    kit="$(echo "$log_events" | tr '\t' '\n' | sed 's/^[[:space:]]*//' | awk 'NF' | grep -E '^\[' | tail -n 1 || true)"
     if [ -z "$kit" ] || [ "$(echo "$kit" | jq 'length')" = "0" ]; then
         log_success "Trust '$name' already registered (or no kit emitted) — nothing to distribute."
         return 0

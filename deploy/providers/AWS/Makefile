@@ -504,7 +504,7 @@ endif
 	@echo ""
 	@echo "⚠️  REMAINING MANUAL STEPS:"
 	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
-	@echo "   2. Start the trust stack: cd ../../../trust && env PROD=$(PROD) make up-local-trust"
+	@echo "   2. Start the trust stack: cd ../../.. && env PROD=$(PROD) make up-local-trust LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME)"
 	@echo "   3. Report this host's public IP to the FLIP admin — they run:"
 	@echo "      make allow-local-trust-nlb LOCAL_TRUST_IP=<this-host-public-ip>"
 
@@ -626,7 +626,7 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 7. register-trusts: register the TRUST_<n>_* trusts on the hub and distribute kit files
 	## 8. deploy-trust + provision-local-trust + status: bring up cloud + local trust hosts and verify
 	## NOTE: After this completes you must manually:
-	##   - Start local trust stack: cd ../../../trust && env PROD=$(PROD) make up-local-trust
+	##   - Start local trust stack: cd ../../.. && env PROD=$(PROD) make up-local-trust LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME)
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-with-local-trust LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
 # The one on-prem trust IP this all-in-one run opens the NLB to — the chain's `apply`
 # step creates the SG rule. For multiple trusts use the async flow instead: set
@@ -653,4 +653,4 @@ full-deploy-hybrid: ## Full hybrid deployment including local trust provisioning
 	echo "" && \
 	echo "✅ Hybrid deployment complete (PROD=$(PROD))." && \
 	echo "➡️  Final manual step: start the local trust stack on the trust host:" && \
-	echo "   cd ../../../trust && env PROD=$(PROD) make up-local-trust"
+	echo "   cd ../../.. && env PROD=$(PROD) make up-local-trust LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME)"
