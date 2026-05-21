@@ -385,7 +385,7 @@ def main(
     print_status("PASS", f"Namespace '{namespace}' exists")
 
     if check_command("helm"):
-        success, hr = run_command(["helm", "list", "-n", namespace, "-o", "json"])
+        success, hr = run_command(["helm", "list", "-n", namespace, "-o", "json", "--all"])
         if success and hr.strip() and hr.strip() != "[]":
             try:
                 releases = json.loads(hr)
@@ -405,21 +405,31 @@ def main(
     # ── Pod readiness ─────────────────────────────────────────────────────
     print_section("Pod Readiness")
 
-    # Expected services and their minimum replica count
+    # Expected services and their minimum replica count.
+    # Discovered via label selector: app.kubernetes.io/instance=<release>,app.kubernetes.io/component=<svc>
     expected_services = {
         "trust-api": 1,
         "data-access-api": 1,
         "imaging-api": 1,
+        "imaging-import-worker": 1,
         "omop-db": 1,
         "orthanc": 1,
         "fl-client": 1,
+        "xnat-web": 1,
+        "xnat-nginx": 1,
+        "xnat-db": 1,
         "minio": 0,  # Optional — warn if missing, pass if present
     }
 
-    all_pods = kubectl_list(["pods"], namespace)
-
     for svc, min_ready in expected_services.items():
-        svc_pods = [p for p in all_pods if f"/{helm_release}-{svc}" in p]
+        # Try exact instance+component label selector first, then fall back to
+        # component-only for pods that may be missing the instance label.
+        label_sel = f"app.kubernetes.io/instance={helm_release},app.kubernetes.io/component={svc}"
+        svc_pods = kubectl_list(["pods", "-l", label_sel], namespace)
+        if not svc_pods:
+            # Fallback: some pods (e.g. imaging-import-worker) lack the instance label
+            label_sel = f"app.kubernetes.io/component={svc}"
+            svc_pods = kubectl_list(["pods", "-l", label_sel], namespace)
         if not svc_pods:
             if min_ready == 0:
                 print_status("INFO", f"No '{svc}' pods (optional)")
@@ -439,18 +449,30 @@ def main(
         else:
             print_status("FAIL", f"'{svc}': {ready}/{len(svc_pods)} ready (expected at least {min_ready})")
 
-    # Check for Pods in CrashLoopBackOff / Error
+    # Check for Pods in CrashLoopBackOff / Error or high restart counts
+    all_pods = kubectl_list(["pods"], namespace)
     print_status("INFO", "Scanning for unhealthy pods...")
     unhealthy = []
     for pod_name in all_pods:
-        field = "jsonpath={.status.containerStatuses[0].state.waiting.reason}"
-        success, reason = run_command(["kubectl", "get", pod_name, "-n", namespace, "-o", field])
+        success, reason = run_command(["kubectl", "get", pod_name, "-n", namespace, "-o",
+                                      "jsonpath={.status.containerStatuses[0].state.waiting.reason}"])
         if success and reason.strip().strip("'\"") in ("CrashLoopBackOff", "Error", "ImagePullBackOff", "ErrImagePull"):
-            unhealthy.append(pod_name)
+            unhealthy.append((pod_name, reason.strip().strip("'\"")))
+            continue
+        # Also flag pods with excessive restarts (even if currently "running")
+        success, restarts = run_command(["kubectl", "get", pod_name, "-n", namespace, "-o",
+                                        "jsonpath={.status.containerStatuses[0].restartCount}"])
+        if success:
+            try:
+                rc = int(restarts.strip().strip("'\""))
+            except (ValueError, TypeError):
+                rc = 0
+            if rc >= 5:
+                unhealthy.append((pod_name, f"restarted {rc} times"))
 
     if unhealthy:
-        for pod_name in unhealthy:
-            print_status("FAIL", f"Unhealthy pod: {pod_name}")
+        for pod_name, reason in unhealthy:
+            print_status("FAIL", f"Unhealthy pod: {pod_name} ({reason})")
     else:
         print_status("PASS", "No pods in CrashLoopBackOff or Error state")
 
@@ -458,7 +480,8 @@ def main(
     if not skip_gpu:
         print_section("GPU Allocation")
 
-        fl_pods = [p for p in all_pods if f"/{helm_release}-fl-client" in p]
+        fl_label = f"app.kubernetes.io/instance={helm_release},app.kubernetes.io/component=fl-client"
+        fl_pods = kubectl_list(["pods", "-l", fl_label], namespace)
         if fl_pods:
             gpu_count = "0"
             for pod_name in fl_pods:
@@ -504,26 +527,67 @@ def main(
             else:
                 print_status("FAIL", f"PVC '{pvc_short}' status: {phase_str}")
 
+    # ── Init Jobs ─────────────────────────────────────────────────────────
+    print_section("Init Jobs")
+
+    init_jobs = [
+        ("trust-release-flip-trust-omop-db-init", "omop-db"),
+        ("trust-release-flip-trust-orthanc-init", "orthanc"),
+        ("trust-release-flip-trust-xnat-init", "xnat"),
+    ]
+
+    for job_name, label in init_jobs:
+        success, status_json = run_command([
+            "kubectl", "get", "job", job_name, "-n", namespace, "-o", "json"
+        ], timeout=10)
+        if not success:
+            print_status("INFO", f"Init job '{job_name}' not found (may not be configured)")
+            continue
+
+        try:
+            job = json.loads(status_json)
+        except json.JSONDecodeError:
+            print_status("WARN", f"Could not parse job status for '{job_name}'")
+            continue
+
+        conditions = job.get("status", {}).get("conditions", [])
+        complete = any(
+            c.get("type") == "Complete" and c.get("status") == "True"
+            for c in conditions
+        )
+        failed = any(
+            c.get("type") == "Failed" and c.get("status") == "True"
+            for c in conditions
+        )
+
+        if complete:
+            print_status("PASS", f"Init job '{job_name}' ({label}) completed successfully")
+        elif failed:
+            print_status("FAIL", f"Init job '{job_name}' ({label}) failed — check its logs")
+        else:
+            print_status("WARN", f"Init job '{job_name}' ({label}) has not completed yet (still running?)")
+
     # ── HTTP endpoint checks (via port-forward) ───────────────────────────
     if not skip_endpoints:
         print_section("Service Endpoint Checks")
 
-        # Map of {service_label: [(pod_ref, container_port, url_suffix, name, expected_http_status)]}
+        # Use service resources for port-forwarding (more stable than deployment refs)
         service_endpoints = [
-            ("deployment/flip-trust-trust-api", 8000, "/health", "trust-api", 200),
-            ("deployment/flip-trust-imaging-api", 8000, "/health", "imaging-api", 200),
-            ("deployment/flip-trust-data-access-api", 8000, "/health", "data-access-api", 200),
-            ("deployment/flip-trust-orthanc", 8042, "/", "Orthanc", [200, 401]),
+            ("service/trust-api", 8000, "/health", "trust-api", 200),
+            ("service/imaging-api", 8000, "/health", "imaging-api", 200),
+            ("service/data-access-api", 8000, "/health", "data-access-api", 200),
+            ("service/orthanc", 8042, "/", "Orthanc", [200, 401]),
         ]
 
-        for pod_ref, container_port, path, name, expected in service_endpoints:
+        for service_ref, container_port, path, name, expected in service_endpoints:
             url = f"http://localhost:{container_port}{path}"
-            forward_then_check(pod_ref, container_port, url, name, expected, namespace)
+            forward_then_check(service_ref, container_port, url, name, expected, namespace)
 
         # ── MinIO S3 check ────────────────────────────────────────────────
         print_section("MinIO S3 Store")
 
-        minio_pods = [p for p in all_pods if f"/{helm_release}-minio" in p]
+        minio_label = f"app.kubernetes.io/instance={helm_release},app.kubernetes.io/component=minio"
+        minio_pods = kubectl_list(["pods", "-l", minio_label], namespace)
         if not minio_pods:
             print_status("INFO", "No MinIO pod — FL client kits may not be available without S3 sync")
         else:
@@ -595,7 +659,13 @@ def main(
 
     critical_containers = {
         "app.kubernetes.io/component=trust-api": "trust-api",
+        "app.kubernetes.io/component=data-access-api": "data-access-api",
+        "app.kubernetes.io/component=imaging-api": "imaging-api",
+        "app.kubernetes.io/component=imaging-import-worker": "imaging-import-worker",
+        "app.kubernetes.io/component=orthanc": "orthanc",
         "app.kubernetes.io/component=fl-client": "fl-client",
+        "app.kubernetes.io/component=xnat-web": "xnat-web",
+        "app.kubernetes.io/component=xnat-nginx": "xnat-nginx",
     }
 
     for label_sel, svc_name in critical_containers.items():
@@ -603,6 +673,12 @@ def main(
             ["pods", "-l", f"app.kubernetes.io/instance={helm_release},{label_sel}", "--field-selector=status.phase=Running"],
             namespace,
         )
+        if not pods:
+            # Fallback: some pods (e.g. imaging-import-worker) lack the instance label
+            pods = kubectl_list(
+                ["pods", "-l", label_sel, "--field-selector=status.phase=Running"],
+                namespace,
+            )
         if not pods:
             print_status("INFO", f"No running '{svc_name}' pods to check logs for")
             continue

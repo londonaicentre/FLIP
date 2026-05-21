@@ -55,8 +55,12 @@ deploy-trust-k8s: deploy ## Deploy trust services to K8s (alias for deploy)
 undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undeploy)
 	@true
 
-status: ## Show the status of the Helm release
+status: ## Show the status of the Helm release and run smoke tests
+	@echo "=== Helm Release Status ==="
 	$(HELM) status $(RELEASE_NAME) --namespace $(NAMESPACE)
+	@echo ""
+	@echo "=== Smoke Tests ==="
+	@python3 $(CHART_DIR)/check_status.py --namespace $(NAMESPACE) --helm-release $(RELEASE_NAME)
 
 list: ## List all Helm releases in the namespace
 	$(HELM) list --namespace $(NAMESPACE)
