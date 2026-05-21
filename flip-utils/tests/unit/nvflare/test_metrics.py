@@ -134,7 +134,7 @@ class TestHandleMetricsEvent:
         )
 
         flip.send_metrics.assert_called_once_with(
-            client_name="Trust_1",
+            client_name="site-1",
             model_id="123e4567-e89b-12d3-a456-426614174000",
             label="loss",
             value=0.5,
@@ -158,7 +158,7 @@ class TestHandleMetricsEvent:
         )
 
         flip.send_metrics.assert_called_once_with(
-            client_name="Trust_2",
+            client_name="site-2",
             model_id="123e4567-e89b-12d3-a456-426614174000",
             label="accuracy",
             value=0.9,
