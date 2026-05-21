@@ -90,9 +90,7 @@ on-prem trust:
 .. code-block:: shell
 
    cd deploy/providers/AWS
-   make full-deploy-hybrid PROD=<stag|true> \
-     LOCAL_TRUST_IP=<public-ip> \
-     [LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key]
+   make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 
 If ``LOCAL_TRUST_IP`` is omitted, the operator workstation's public IP is
 auto-detected via ``curl -s https://api.ipify.org``. ``PROD`` is inherited
@@ -110,30 +108,31 @@ itself:
 Then verify the trust is polling: ``docker logs -f trust-api`` should show
 successful task polls against the Central Hub.
 
-************************
-Provision-only flows
-************************
+****************************************
+Onboarding an on-prem trust (step by step)
+****************************************
 
-If the Central Hub is already deployed and you only need to add a new on-prem
-trust, run provisioning directly:
+When the Central Hub is already deployed, an on-prem trust is onboarded
+asynchronously: the trust operator provisions their own host, and the FLIP
+admin opens the AWS firewall once the operator reports their public IP. There
+is no SSH path — each side runs its own step locally.
 
-**Remote trust host (via SSH):**
+**1. Register the trust (FLIP admin).** Register the trust on the hub — via the
+Add-Trust modal in the UI or ``make register-trusts``. This mints the trust's
+kit file ``trust/.env.Trust_Local`` (``TRUST_API_KEY``,
+``TRUST_INTERNAL_SERVICE_KEY``, ``FL_KIT_SLOT``, …).
 
-.. code-block:: shell
+**2. Distribute the kit (FLIP admin).** Send the kit file and the FL participant
+kit to the trust operator out-of-band.
 
-   cd deploy/providers/AWS
-   make add-local-trust \
-     LOCAL_TRUST_IP=<public-ip> \
-     LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key
-
-**Local trust host (no SSH — provisioning the same machine you're on):**
+**3. Provision the host (trust operator).** On the trust host:
 
 .. code-block:: bash
 
    cd deploy/providers/AWS
    read -rsp 'Sudo password: ' ANSIBLE_BECOME_PASS && echo
    export ANSIBLE_BECOME_PASS
-   make add-local-trust LOCAL_TRUST_IP=<public-ip>
+   make provision-local-trust
 
 In Fish, the prompt-and-export idiom is different:
 
@@ -141,25 +140,40 @@ In Fish, the prompt-and-export idiom is different:
 
    cd deploy/providers/AWS
    set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
-   make add-local-trust LOCAL_TRUST_IP=<public-ip>
+   make provision-local-trust
 
-What ``add-local-trust`` does:
+``provision-local-trust`` runs the Ansible playbook
+``deploy/providers/local/site_local_trust.yml`` (installs Docker and system
+packages, creates the ``/opt/flip/`` tree) and stages the FL participant kit.
+It runs entirely on the trust host.
 
-1. Runs the Ansible playbook ``deploy/providers/local/site_local_trust.yml``,
-   which installs Docker, required system packages, and creates the
-   ``/opt/flip/`` directory tree.
-2. Downloads the trust's FL participant kit from S3 and deploys it to
-   ``/opt/flip/services/<FL_KIT_SLOT>/{startup,local,transfer}`` on the trust
-   host (the kit on disk is keyed by the FL kit slot name, e.g. ``Trust_1``).
-3. Runs a targeted ``terraform apply`` to add the NLB security group rule that
-   allows FL traffic from the trust's public IP.
-
-Post-provisioning, start the trust stack on the host:
+**4. Start the trust stack (trust operator).**
 
 .. code-block:: shell
 
    cd trust
-   env PROD=stag make up-local-trust
+   env PROD=<stag|true> make up-local-trust
+
+**5. Open the AWS firewall (FLIP admin).** Once the operator reports their
+host's public IP, add it to ``LOCAL_TRUST_PUBLIC_IPS`` (an HCL list) in the env
+file ``.env.<stag|production>``, then apply:
+
+.. code-block:: shell
+
+   # in .env.stag / .env.production
+   LOCAL_TRUST_PUBLIC_IPS=["1.2.3.4"]
+
+.. code-block:: shell
+
+   cd deploy/providers/AWS
+   make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>
+
+``allow-local-trust-nlb`` runs a normal ``terraform plan``/``apply`` — the IPs
+are real config, so later full applies stay idempotent (no drift). Passing
+``LOCAL_TRUST_IP`` makes it check that IP is in the list before applying.
+
+Then verify the trust is polling: ``docker logs -f trust-api`` should show
+successful task polls against the Central Hub.
 
 ***********************
 Trust authentication
@@ -203,8 +217,8 @@ connect):
    on every request.
 
 The ``full-deploy-hybrid`` wrapper runs ``register-trusts`` automatically as
-part of the deploy. When using ``add-local-trust`` standalone, the trust must
-already be registered on the hub.
+part of the deploy. In the step-by-step flow above, the trust must be
+registered (step 1) before the operator provisions the host.
 
 ***********************
 Network requirements

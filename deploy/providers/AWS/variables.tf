@@ -320,10 +320,10 @@ variable "ENFORCE_MFA" {
   default     = ""
 }
 
-variable "local_trust_public_ip" {
-  description = "Public IP of an on-premises Trust host. When non-empty, AWS security group rules are created to allow consolidated FL communication on port 8002 from this IP to the Central Hub."
-  type        = string
-  default     = ""
+variable "local_trust_public_ips" {
+  description = "Public IPs of on-premises Trust hosts. Each IP gets an ingress rule on the FL-server NLB security group allowing FL communication to the Central Hub. Set via LOCAL_TRUST_PUBLIC_IPS in the env file."
+  type        = list(string)
+  default     = []
 }
 
 variable "ecs_exec_enabled" {

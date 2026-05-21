@@ -76,7 +76,7 @@ cd deploy/providers/AWS
 ### Recommended end-to-end target (hybrid)
 
 ```bash
-make full-deploy-hybrid PROD=<stag|true> LOCAL_TRUST_IP=<public-ip> [LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key]
+make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 ```
 
 This wrapper target runs the full AWS + local trust provisioning pipeline and registers the trust on the running hub (`make register-trusts`) — inserting the `trust` row with its `api_key_hash`, claiming an FL kit slot, and writing the per-trust kit file. No hub redeploy is needed. `PROD` is inherited from the environment and supports both staging (`stag`) and production (`true`). Omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP.
@@ -87,31 +87,25 @@ cd trust
 env PROD=<stag|true> make up-local-trust
 ```
 
-### Provision a remote trust host (via SSH)
+### Provision the trust host
+
+Run this **on the trust host** — there is no SSH path:
 
 ```bash
-make add-local-trust \
-  LOCAL_TRUST_IP=<public-ip> \
-  LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key
-```
-
-### Provision the local machine as the trust host (no SSH)
-
-```bash
-# Set the sudo password (fish shell)
+# Set the sudo password (fish shell; bash: read -rsp ... && export ANSIBLE_BECOME_PASS)
 set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
 
-make add-local-trust LOCAL_TRUST_IP=<public-ip>
+make provision-local-trust
 ```
 
-### What `add-local-trust` does
+### What `provision-local-trust` does
 
 1. Runs the Ansible playbook (`site_local_trust.yml`) which:
    - Installs Docker and required system packages
    - Creates application directories under `/opt/flip/`
-2. Downloads the `Trust_2` FL participant kit from S3 and deploys it to `/opt/flip/services/Trust_2/{startup,local,transfer}` on the trust host.
-3. Runs a targeted `terraform apply` to:
-   - Add security group rules allowing FL traffic from the local trust's public IP
+2. Downloads the FL participant kit from S3 and stages it under `/tmp`, printing the `sudo rsync` commands to deploy it into `/opt/flip/services/`.
+
+Opening the AWS FL-server NLB to the trust's public IP is a **separate** step — `make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>` — run by the FLIP admin once the operator reports their IP.
 
 ### Post-provisioning manual steps
 
@@ -142,13 +136,13 @@ Any machine with the correct credentials can act as a trust — the hub identifi
 
 1. The trust must be registered on the hub — run `make register-trusts`, or use the Add-Trust button on the Connection status page. Registration inserts the `trust` row with its `api_key_hash` and claims an FL kit slot. No hub redeploy is needed.
 
-The `full-deploy-with-local-trust` / `full-deploy-hybrid` targets handle trust registration automatically (both honour `PROD=stag|true`). When using `add-local-trust` standalone, the trust must already be registered.
+The `full-deploy-with-local-trust` / `full-deploy-hybrid` targets handle trust registration automatically (both honour `PROD=stag|true`). When provisioning a trust standalone with `provision-local-trust`, the trust must already be registered.
 
 ## Ansible Playbook Details
 
 ### `site_local_trust.yml`
 
-The main playbook. It can be run standalone or via the `add-local-trust` Makefile target.
+The main playbook. It can be run standalone or via the `provision-local-trust` Makefile target.
 
 **Optional variables:**
 

@@ -38,7 +38,8 @@ make deploy-ui                                # Build + sync UI to S3 + invalida
 make status                                   # Health checks
 make ssh-config                               # Generate SSH config with SSM ProxyCommand
 make forward-trust                            # SSM port forward all trust UIs
-make add-local-trust LOCAL_TRUST_IP=<ip>      # Provision on-prem trust via Ansible
+make provision-local-trust                     # Provision an on-prem trust host (run ON the host)
+make allow-local-trust-nlb LOCAL_TRUST_IP=<ip>  # Open the FL-server NLB to a trust's reported IP
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login
 ```

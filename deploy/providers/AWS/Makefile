@@ -115,6 +115,11 @@ export TF_VAR_UI_PORT=${UI_PORT}
 export TF_VAR_API_PORT=${API_PORT}
 export TF_VAR_FL_API_PORT=${FL_API_PORT}
 export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
+# On-prem trust IPs allowed through the FL-server NLB security group. An HCL list
+# literal in the env file (LOCAL_TRUST_PUBLIC_IPS, default []); one ingress rule
+# is created per IP. `make allow-local-trust-nlb` applies them.
+LOCAL_TRUST_PUBLIC_IPS ?= []
+export TF_VAR_local_trust_public_ips=$(LOCAL_TRUST_PUBLIC_IPS)
 export TF_VAR_XNAT_PORT=${XNAT_PORT_TRUST_1}
 export TF_VAR_PACS_UI_PORT=${PACS_UI_PORT_TRUST_1}
 export TF_VAR_AWS_REGION=${AWS_REGION}
@@ -392,16 +397,15 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 		--paths "/*" >/dev/null
 	@echo "✅ deploy-ui complete."
 
-# Default SSH user for on-premises trust hosts (override with LOCAL_TRUST_SSH_USER=<user>)
-LOCAL_TRUST_SSH_USER ?= ubuntu
 # Identity of the on-prem (local) trust — selects its kit file
 # trust/.env.Trust_Local and its trust-local data dirs. Distinct from the FL
 # participant kit slot below.
 LOCAL_TRUST_NAME ?= Trust_Local
-# FL participant kit slot the on-prem trust's fl-client mounts. The on-prem
-# trust is provisioned the Trust_2 slot (the EC2 trust uses Trust_1). Names the
+# FL participant kit slot the on-prem trust's fl-client mounts — names the
 # services/<slot>/ dir in the S3 participant-kit bundle and under /opt/flip.
-LOCAL_TRUST_FL_KIT_SLOT ?= Trust_2
+# Read from the trust's kit file (the single source of truth: the kit file's
+# FL_KIT_SLOT is also what trust/Makefile mounts), not duplicated here.
+LOCAL_TRUST_FL_KIT_SLOT := $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(LOCAL_TRUST_NAME) 2>/dev/null)
 
 .PHONY: deploy-trust
 deploy-trust: ssh-config update-env ## Deploy trust relationships after central hub is deployed
@@ -436,36 +440,27 @@ deploy-trust: ssh-config update-env ## Deploy trust relationships after central 
 	$(MAKE) -C ../../../ up-trust-ec2 PROD=${PROD}
 	@echo "✅ Trust deployment complete!"
 
-.PHONY: add-local-trust
-add-local-trust: ## Provision an on-prem Trust host and register it with the Central Hub
-	## LOCAL_TRUST_SSH_KEY is optional. When omitted, runs locally (no SSH) — use this
-	## when the trust host IS the operator workstation or is not reachable via its public IP.
-	## Local mode configures the host (installs Docker, creates directories, deploys FL kit).
-	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make add-local-trust LOCAL_TRUST_IP=<public-ip> [LOCAL_TRUST_SSH_KEY=<path>]"; echo "   Omit LOCAL_TRUST_SSH_KEY to provision the local machine (no SSH)."; echo ""; exit 1)
-	@echo "🔧 Provisioning on-premises Trust host at $(LOCAL_TRUST_IP)..."
+.PHONY: provision-local-trust
+provision-local-trust: ## Provision the on-prem (local) trust host: install Docker + deps, stage the FL kit
+	## Run this ON the trust host. Configures the machine via Ansible (local connection) and
+	## downloads the FL participant kit from S3. Requires ANSIBLE_BECOME_PASS in the environment.
+	## The S3 kit download needs AWS credentials (fine for FLIP-team testing); for real on-prem
+	## trusts the participant kit is delivered to the operator out-of-band.
+	@echo "🔧 Provisioning the on-premises Trust host (this machine)..."
 	@uv sync
 	@uv run ansible-galaxy install -r ../../../deploy/providers/local/requirements.yml
-	@if [ -n "$(LOCAL_TRUST_SSH_KEY)" ]; then \
-		echo "📡 Connecting via SSH (key: $(LOCAL_TRUST_SSH_KEY))..."; \
-		uv run ansible-playbook \
-			-i "$(LOCAL_TRUST_IP)," \
-			-u "$(LOCAL_TRUST_SSH_USER)" \
-			--private-key "$(LOCAL_TRUST_SSH_KEY)" \
-			../../../deploy/providers/local/site_local_trust.yml; \
-	else \
-		echo "💻 Running locally (no SSH — operator machine is the trust host)..."; \
-		if [ -z "$$ANSIBLE_BECOME_PASS" ]; then \
-			echo ""; \
-			echo "❌  ANSIBLE_BECOME_PASS is not set. Run this in your fish terminal first:"; \
-			echo ""; \
-			echo "     set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')"; \
-			echo ""; \
-			echo "   Then re-run this make target."; \
-			echo ""; \
-			exit 1; \
-		fi; \
-		echo "🔐 Authenticating sudo and creating temporary NOPASSWD entry..."; \
-		CURR_USER=$$(id -un); \
+	@if [ -z "$$ANSIBLE_BECOME_PASS" ]; then \
+		echo ""; \
+		echo "❌  ANSIBLE_BECOME_PASS is not set. Run this in your fish terminal first:"; \
+		echo ""; \
+		echo "     set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')"; \
+		echo ""; \
+		echo "   Then re-run this make target."; \
+		echo ""; \
+		exit 1; \
+	fi
+	@echo "🔐 Authenticating sudo and creating temporary NOPASSWD entry..."
+	@CURR_USER=$$(id -un); \
 		echo "$$ANSIBLE_BECOME_PASS" | sudo -S sh -c \
 			"echo '$$CURR_USER ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/flip-ansible-local && chmod 440 /etc/sudoers.d/flip-ansible-local" \
 			2>/dev/null || { echo "❌  sudo authentication failed — check your password."; exit 1; }; \
@@ -477,63 +472,60 @@ add-local-trust: ## Provision an on-prem Trust host and register it with the Cen
 			-e ansible_python_interpreter=/usr/bin/python3 \
 			../../../deploy/providers/local/site_local_trust.yml; \
 		PLAY_RC=$$?; \
-		exit $$PLAY_RC; \
-	fi
+		exit $$PLAY_RC
 	@echo "📦 Downloading the FL participant kit for the local trust from S3..."
 ifeq ($(FL_BACKEND),nvflare)
+	@[ -n "$(LOCAL_TRUST_FL_KIT_SLOT)" ] || (echo ""; echo "❌  FL_KIT_SLOT not found — is trust/.env.$(LOCAL_TRUST_NAME) present with FL_KIT_SLOT set?"; echo ""; exit 1)
 	@LOCAL_TRUST_KIT_DIR=/tmp/$(LOCAL_TRUST_FL_KIT_SLOT)_kit && \
 	  rm -rf $$LOCAL_TRUST_KIT_DIR && mkdir -p $$LOCAL_TRUST_KIT_DIR && \
 	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/$(LOCAL_TRUST_FL_KIT_SLOT)/ \
 	    $$LOCAL_TRUST_KIT_DIR && \
-	  if [ -n "$(LOCAL_TRUST_SSH_KEY)" ]; then \
-	    ssh -i $(LOCAL_TRUST_SSH_KEY) $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP) \
-	      "mkdir -p /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/startup /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/local /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/transfer" && \
-	    rsync -av --delete -e "ssh -i $(LOCAL_TRUST_SSH_KEY)" \
-	      $$LOCAL_TRUST_KIT_DIR/startup/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/startup/ && \
-	    rsync -av --delete -e "ssh -i $(LOCAL_TRUST_SSH_KEY)" \
-	      $$LOCAL_TRUST_KIT_DIR/local/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/local/ && \
-	    rm -rf $$LOCAL_TRUST_KIT_DIR; \
-	  else \
-	    echo ""; \
-	    echo "  # 3. Deploy the $(LOCAL_TRUST_FL_KIT_SLOT) NVFLARE participant kit (kit staged at $$LOCAL_TRUST_KIT_DIR):"; \
-	    echo "  sudo mkdir -p /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/startup /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/local /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/transfer"; \
-	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/startup/ /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/startup/"; \
-	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/local/ /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/local/"; \
-	  fi && \
-	  echo "✅ $(LOCAL_TRUST_FL_KIT_SLOT) NVFLARE kit deployed"
+	  echo "" && \
+	  echo "  # Deploy the $(LOCAL_TRUST_FL_KIT_SLOT) NVFLARE participant kit (staged at $$LOCAL_TRUST_KIT_DIR):" && \
+	  echo "  sudo mkdir -p /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/startup /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/local /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/transfer" && \
+	  echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/startup/ /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/startup/" && \
+	  echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/local/ /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/local/" && \
+	  echo "✅ $(LOCAL_TRUST_FL_KIT_SLOT) NVFLARE kit staged"
 else
 	@LOCAL_TRUST_KIT_DIR=/tmp/$(LOCAL_TRUST_NAME)_kit && \
 	  rm -rf $$LOCAL_TRUST_KIT_DIR && mkdir -p $$LOCAL_TRUST_KIT_DIR/net-1 && \
 	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FL_KIT_DATE)/net-1/ \
 	    $$LOCAL_TRUST_KIT_DIR/net-1/ && \
-	  if [ -n "$(LOCAL_TRUST_SSH_KEY)" ]; then \
-	    ssh -i $(LOCAL_TRUST_SSH_KEY) $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP) \
-	      "mkdir -p /opt/flip/services/net-1" && \
-	    rsync -av --delete -e "ssh -i $(LOCAL_TRUST_SSH_KEY)" \
-	      $$LOCAL_TRUST_KIT_DIR/net-1/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/net-1/ && \
-	    rm -rf $$LOCAL_TRUST_KIT_DIR; \
-	  else \
-	    echo ""; \
-	    echo "  # 3. Deploy the Flower participant kit (kit staged at $$LOCAL_TRUST_KIT_DIR):"; \
-	    echo "  sudo mkdir -p /opt/flip/services/net-1"; \
-	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/net-1/ /opt/flip/services/net-1/"; \
-	  fi && \
-	  echo "✅ $(LOCAL_TRUST_NAME) Flower kit deployed"
+	  echo "" && \
+	  echo "  # Deploy the Flower participant kit (staged at $$LOCAL_TRUST_KIT_DIR):" && \
+	  echo "  sudo mkdir -p /opt/flip/services/net-1" && \
+	  echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/net-1/ /opt/flip/services/net-1/" && \
+	  echo "✅ Flower kit staged"
 endif
-	@echo "🔐 Updating AWS security group rules..."
-	@TF_VAR_local_trust_public_ip=$(LOCAL_TRUST_IP) terraform plan \
-		-target=aws_security_group_rule.local_trust_fl_server_nlb \
-		-out=local-trust.tfplan
-	@TF_VAR_local_trust_public_ip=$(LOCAL_TRUST_IP) terraform apply local-trust.tfplan
-	@rm -f local-trust.tfplan
 	@echo ""
 	@echo "✅ On-premises Trust host provisioned!"
 	@echo ""
 	@echo "⚠️  REMAINING MANUAL STEPS:"
-	@echo "   1. On the trust host — start the trust stack: cd trust && PROD=$(PROD) make up-local-trust"
-	@echo "   2. Verify the trust can poll the hub (check trust-api logs for successful task polling)"
+	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
+	@echo "   2. Start the trust stack: cd ../../../trust && env PROD=$(PROD) make up-local-trust"
+	@echo "   3. Report this host's public IP to the FLIP admin — they run:"
+	@echo "      make allow-local-trust-nlb LOCAL_TRUST_IP=<this-host-public-ip>"
+
+.PHONY: allow-local-trust-nlb
+allow-local-trust-nlb: ## Apply the FL-server NLB ingress rules for the IPs in LOCAL_TRUST_PUBLIC_IPS
+	## Run by the FLIP admin. First add each on-prem trust's public IP to LOCAL_TRUST_PUBLIC_IPS
+	## in the env file (an HCL list, e.g. LOCAL_TRUST_PUBLIC_IPS=["1.2.3.4"]). Pass LOCAL_TRUST_IP=<ip>
+	## to have it checked against the configured list first. This is a normal full terraform
+	## plan/apply — the rules are honest config, so there is no -target and no drift on later applies.
+	@if [ -n "$(LOCAL_TRUST_IP)" ] && ! echo '$(LOCAL_TRUST_PUBLIC_IPS)' | grep -q '"$(LOCAL_TRUST_IP)"'; then \
+		echo ""; \
+		echo "❌  $(LOCAL_TRUST_IP) is not in LOCAL_TRUST_PUBLIC_IPS (currently $(LOCAL_TRUST_PUBLIC_IPS))."; \
+		echo "   Add it to LOCAL_TRUST_PUBLIC_IPS in $(MAIN_ENV_FILE), then re-run, e.g.:"; \
+		echo "       LOCAL_TRUST_PUBLIC_IPS=[\"$(LOCAL_TRUST_IP)\"]"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@echo "🔐 Applying FL-server NLB ingress rules for LOCAL_TRUST_PUBLIC_IPS=$(LOCAL_TRUST_PUBLIC_IPS)..."
+	@$(MAKE) plan
+	@$(MAKE) apply
+	@echo "✅ FL-server NLB security group reconciled."
 
 .PHONY: down
 down:
@@ -627,16 +619,20 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## Step order:
 	## 1. login + init + import: auth, Terraform init, import pre-existing persistent resources
 	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
-	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, ALB, secrets)
+	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, ALB, secrets, on-prem trust NLB rule)
 	## 4. update-env: refresh .env.{PROD} with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure SSH aliases, provision EC2s with Docker + FL kit
 	## 6. deploy-centralhub: bring up the Central Hub
 	## 7. register-trusts: register the TRUST_<n>_* trusts on the hub and distribute kit files
-	## 8. deploy-trust + add-local-trust + status: bring up cloud + local trust hosts and verify
+	## 8. deploy-trust + provision-local-trust + status: bring up cloud + local trust hosts and verify
 	## NOTE: After this completes you must manually:
 	##   - Start local trust stack: cd ../../../trust && env PROD=$(PROD) make up-local-trust
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-with-local-trust LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
-full-deploy-with-local-trust: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust add-local-trust status
+# The one on-prem trust IP this all-in-one run opens the NLB to — the chain's `apply`
+# step creates the SG rule. For multiple trusts use the async flow instead: set
+# LOCAL_TRUST_PUBLIC_IPS in the env file and run `make allow-local-trust-nlb`.
+full-deploy-with-local-trust: LOCAL_TRUST_PUBLIC_IPS := ["$(LOCAL_TRUST_IP)"]
+full-deploy-with-local-trust: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust provision-local-trust status
 
 .PHONY: full-deploy-hybrid
 full-deploy-hybrid: ## Full hybrid deployment including local trust provisioning + hub redeploy (honours PROD)
@@ -652,7 +648,7 @@ full-deploy-hybrid: ## Full hybrid deployment including local trust provisioning
 	else \
 		LOCAL_TRUST_IP="$(LOCAL_TRUST_IP)"; \
 	fi && \
-	$(MAKE) full-deploy-with-local-trust LOCAL_TRUST_IP=$$LOCAL_TRUST_IP LOCAL_TRUST_SSH_KEY="$(LOCAL_TRUST_SSH_KEY)" LOCAL_TRUST_SSH_USER="$(LOCAL_TRUST_SSH_USER)" LOCAL_TRUST_NAME="$(LOCAL_TRUST_NAME)" && \
+	$(MAKE) full-deploy-with-local-trust LOCAL_TRUST_IP=$$LOCAL_TRUST_IP LOCAL_TRUST_NAME="$(LOCAL_TRUST_NAME)" && \
 	$(MAKE) deploy-centralhub PROD=$(PROD) && \
 	echo "" && \
 	echo "✅ Hybrid deployment complete (PROD=$(PROD))." && \

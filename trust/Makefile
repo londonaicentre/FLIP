@@ -118,7 +118,7 @@ TRUST_VARS = \
 # The defaults are picked to be non-overlapping with the Trust_1/Trust_2
 # allocations so the on-prem stack never clashes with a Trust_1/Trust_2 stack
 # sharing the host, and so stag/prod hosts (AWS trust EC2 or on-prem via
-# `make add-local-trust`) work even with no port entries in their kit file.
+# `make provision-local-trust`) work even with no port entries in their kit file.
 # The trust network stays hardcoded — it's a structural identity, not a
 # host-tunable value.
 #

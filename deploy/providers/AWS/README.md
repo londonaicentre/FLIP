@@ -454,7 +454,7 @@ Recommended orchestration target (works for both `PROD=stag` and `PROD=true`):
 
 ```bash
 cd deploy/providers/AWS
-make full-deploy-hybrid PROD=<stag|true> LOCAL_TRUST_IP=<public-ip> [LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key]
+make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 ```
 
 This wrapper target runs the full AWS deployment, provisions the local trust, and redeploys the Central Hub so the new secret values are loaded. `PROD` is inherited from the environment — omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP via `curl ipify.org`.
@@ -463,23 +463,26 @@ You still need to:
 1. Start the trust stack on the host: `cd trust && env PROD=<stag|true> make up-local-trust`
 2. Verify the trust can poll the hub (check trust-api logs for successful task polling)
 
-Or run provisioning directly:
+Or onboard the trust step by step — the trust operator provisions their own host,
+and the FLIP admin opens the firewall once the operator reports their public IP:
 
 ```bash
+# On the trust host (trust operator) — provision, then start the stack
 cd deploy/providers/AWS
+set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')   # fish; bash differs
+make provision-local-trust
+cd ../../../trust && env PROD=<stag|true> make up-local-trust
 
-# Remote host (via SSH)
-make add-local-trust LOCAL_TRUST_IP=<public-ip> LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key
-
-# Local machine (no SSH)
-set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
-make add-local-trust LOCAL_TRUST_IP=<public-ip>
+# On the FLIP side (admin), once the operator reports their host's public IP:
+#   add it to LOCAL_TRUST_PUBLIC_IPS (an HCL list) in .env.stag / .env.production, e.g.
+#   LOCAL_TRUST_PUBLIC_IPS=["1.2.3.4"]
+cd deploy/providers/AWS
+make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>
 ```
 
-After provisioning, complete the manual steps printed by the target:
+`allow-local-trust-nlb` runs a normal `terraform plan`/`apply` — the IPs are real config, so later full applies stay idempotent (no `-target`, no drift).
 
-1. Start the trust stack on the host: `cd trust && env PROD=stag make up-local-trust`
-2. Verify the trust can poll the hub (check trust-api logs for successful task polling)
+Verify the trust can poll the hub (check trust-api logs for successful task polling).
 
 Full details are in the [local provider README](../local/README.md).
 
@@ -659,7 +662,7 @@ Trust services can run on AWS EC2 or on-premises. Both models use the same Docke
 - Automatic Docker network creation for inter-service communication
 - Runs in a private subnet with no inbound ports — XNAT and Orthanc accessible only via SSM port forwarding for debugging
 
-**On-Premises Trust** — provisioned via `make add-local-trust` and the Ansible playbook in [`deploy/providers/local/`](../local/README.md):
+**On-Premises Trust** — provisioned via `make provision-local-trust` and the Ansible playbook in [`deploy/providers/local/`](../local/README.md):
 
 - Same Docker Compose stack, running on a local Ubuntu host
 - No inbound port forwarding or firewall rules needed — all trust communication is outbound
