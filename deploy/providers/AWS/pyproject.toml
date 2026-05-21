@@ -23,6 +23,7 @@ dependencies = [
     "ansible-core>=2.19.2",
     "click>=8.0.0",
     "cryptography>=46.0.5",
+    "idna>=3.14",
     "requests>=2.33.0",
     "urllib3>=2.7.0",
 ]
