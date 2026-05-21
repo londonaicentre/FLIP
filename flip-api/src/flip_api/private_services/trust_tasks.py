@@ -225,7 +225,7 @@ def _record_heartbeat(trust: Trust, db: Session) -> dict[str, object]:
     summary="Get pending tasks for the authenticated trust",
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("12/minute")
+@limiter.limit("30/minute")
 def get_pending_tasks(
     request: Request,
     db: Session = Depends(get_session),
@@ -279,7 +279,7 @@ def submit_task_result(
     summary="Trust heartbeat",
     status_code=status.HTTP_200_OK,
 )
-@limiter.limit("12/minute")
+@limiter.limit("30/minute")
 def trust_heartbeat(
     request: Request,
     db: Session = Depends(get_session),
