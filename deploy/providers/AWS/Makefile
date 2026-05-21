@@ -394,8 +394,14 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 
 # Default SSH user for on-premises trust hosts (override with LOCAL_TRUST_SSH_USER=<user>)
 LOCAL_TRUST_SSH_USER ?= ubuntu
-# Trust kit for the local (on-prem) trust FL client (default Trust_2; EC2 trust uses Trust_1)
-LOCAL_TRUST_NAME ?= Trust_2
+# Identity of the on-prem (local) trust — selects its kit file
+# trust/.env.Trust_Local and its trust-local data dirs. Distinct from the FL
+# participant kit slot below.
+LOCAL_TRUST_NAME ?= Trust_Local
+# FL participant kit slot the on-prem trust's fl-client mounts. The on-prem
+# trust is provisioned the Trust_2 slot (the EC2 trust uses Trust_1). Names the
+# services/<slot>/ dir in the S3 participant-kit bundle and under /opt/flip.
+LOCAL_TRUST_FL_KIT_SLOT ?= Trust_2
 
 .PHONY: deploy-trust
 deploy-trust: ssh-config update-env ## Deploy trust relationships after central hub is deployed
@@ -473,29 +479,29 @@ add-local-trust: ## Provision an on-prem Trust host and register it with the Cen
 		PLAY_RC=$$?; \
 		exit $$PLAY_RC; \
 	fi
-	@echo "📦 Downloading $(LOCAL_TRUST_NAME) FL participant kit from S3..."
+	@echo "📦 Downloading the FL participant kit for the local trust from S3..."
 ifeq ($(FL_BACKEND),nvflare)
-	@LOCAL_TRUST_KIT_DIR=/tmp/$(LOCAL_TRUST_NAME)_kit && \
+	@LOCAL_TRUST_KIT_DIR=/tmp/$(LOCAL_TRUST_FL_KIT_SLOT)_kit && \
 	  rm -rf $$LOCAL_TRUST_KIT_DIR && mkdir -p $$LOCAL_TRUST_KIT_DIR && \
 	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
-	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/$(LOCAL_TRUST_NAME)/ \
+	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/$(LOCAL_TRUST_FL_KIT_SLOT)/ \
 	    $$LOCAL_TRUST_KIT_DIR && \
 	  if [ -n "$(LOCAL_TRUST_SSH_KEY)" ]; then \
 	    ssh -i $(LOCAL_TRUST_SSH_KEY) $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP) \
-	      "mkdir -p /opt/flip/services/$(LOCAL_TRUST_NAME)/startup /opt/flip/services/$(LOCAL_TRUST_NAME)/local /opt/flip/services/$(LOCAL_TRUST_NAME)/transfer" && \
+	      "mkdir -p /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/startup /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/local /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/transfer" && \
 	    rsync -av --delete -e "ssh -i $(LOCAL_TRUST_SSH_KEY)" \
-	      $$LOCAL_TRUST_KIT_DIR/startup/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/$(LOCAL_TRUST_NAME)/startup/ && \
+	      $$LOCAL_TRUST_KIT_DIR/startup/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/startup/ && \
 	    rsync -av --delete -e "ssh -i $(LOCAL_TRUST_SSH_KEY)" \
-	      $$LOCAL_TRUST_KIT_DIR/local/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/$(LOCAL_TRUST_NAME)/local/ && \
+	      $$LOCAL_TRUST_KIT_DIR/local/ $(LOCAL_TRUST_SSH_USER)@$(LOCAL_TRUST_IP):/opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/local/ && \
 	    rm -rf $$LOCAL_TRUST_KIT_DIR; \
 	  else \
 	    echo ""; \
-	    echo "  # 3. Deploy the $(LOCAL_TRUST_NAME) NVFLARE participant kit (kit staged at $$LOCAL_TRUST_KIT_DIR):"; \
-	    echo "  sudo mkdir -p /opt/flip/services/$(LOCAL_TRUST_NAME)/startup /opt/flip/services/$(LOCAL_TRUST_NAME)/local /opt/flip/services/$(LOCAL_TRUST_NAME)/transfer"; \
-	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/startup/ /opt/flip/services/$(LOCAL_TRUST_NAME)/startup/"; \
-	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/local/ /opt/flip/services/$(LOCAL_TRUST_NAME)/local/"; \
+	    echo "  # 3. Deploy the $(LOCAL_TRUST_FL_KIT_SLOT) NVFLARE participant kit (kit staged at $$LOCAL_TRUST_KIT_DIR):"; \
+	    echo "  sudo mkdir -p /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/startup /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/local /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/transfer"; \
+	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/startup/ /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/startup/"; \
+	    echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/local/ /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/local/"; \
 	  fi && \
-	  echo "✅ $(LOCAL_TRUST_NAME) NVFLARE kit deployed"
+	  echo "✅ $(LOCAL_TRUST_FL_KIT_SLOT) NVFLARE kit deployed"
 else
 	@LOCAL_TRUST_KIT_DIR=/tmp/$(LOCAL_TRUST_NAME)_kit && \
 	  rm -rf $$LOCAL_TRUST_KIT_DIR && mkdir -p $$LOCAL_TRUST_KIT_DIR/net-1 && \

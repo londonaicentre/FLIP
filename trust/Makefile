@@ -110,15 +110,20 @@ TRUST_VARS = \
 	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),$(TRUST_NUM)) \
 	EXPECTED_TRUST_ID=$(EXPECTED_TRUST_ID)
 
-# Host ports, bind paths, and the trust network are hardcoded here (not env
-# vars) so the local-trust stack can coexist with dev trust1/trust2 on one
-# laptop without colliding, and so stag/prod hosts (AWS trust EC2 or on-prem
-# via `make add-local-trust`) don't need any _LOCAL_TRUST entries in their
-# env files or AWS Secrets Manager. Port numbers / dir names are arbitrary —
-# picked to be non-overlapping with the Trust_1/Trust_2 allocations.
+# Host ports and bind paths default to the local-trust allocation in
+# LOCAL_TRUST_VARS below, but — like TRUST_VARS — each can be overridden from
+# the kit file trust/.env.<LOCAL_TRUST_NAME> (see trust/.env.Trust_Local.example).
+# The "local" trust is the on-prem trust of a production deployment (as opposed
+# to the AWS EC2 trust); dev deployments use the Trust_1/Trust_2 stacks instead.
+# The defaults are picked to be non-overlapping with the Trust_1/Trust_2
+# allocations so the on-prem stack never clashes with a Trust_1/Trust_2 stack
+# sharing the host, and so stag/prod hosts (AWS trust EC2 or on-prem via
+# `make add-local-trust`) work even with no port entries in their kit file.
+# The trust network stays hardcoded — it's a structural identity, not a
+# host-tunable value.
 #
-# ORTHANC_STORAGE_DIR gets a dedicated `orthanc-storage-local` path rather
-# than reusing whichever trust dir matches LOCAL_TRUST_NAME. Sharing the
+# ORTHANC_STORAGE_DIR defaults to a dedicated `orthanc-storage-local` path
+# rather than reusing whichever trust dir matches LOCAL_TRUST_NAME. Sharing the
 # dir saves the gigabytes of seeded DICOM data, but two Orthanc containers
 # cannot open the same SQLite index — the second crash-loops on `database is
 # locked` and the trust network loses its `orthanc` alias, which in turn
@@ -133,12 +138,12 @@ LOCAL_TRUST_KIT_FILE := .env.$(LOCAL_TRUST_NAME)
 -include $(LOCAL_TRUST_KIT_FILE)
 
 LOCAL_TRUST_VARS = \
-	BASE_IMAGES_DOWNLOAD_DIR=./data/local/$(LOCAL_TRUST_NAME) \
-	OMOP_DB_PORT=5438 \
-	PACS_UI_PORT=8046 \
-	XNAT_PORT=8108 \
-	GRAFANA_PORT=3002 \
-	LOKI_PORT=3102 \
+	BASE_IMAGES_DOWNLOAD_DIR=$(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/local/$(LOCAL_TRUST_NAME)) \
+	OMOP_DB_PORT=$(or $(OMOP_DB_PORT),5438) \
+	PACS_UI_PORT=$(or $(PACS_UI_PORT),8046) \
+	XNAT_PORT=$(or $(XNAT_PORT),8108) \
+	GRAFANA_PORT=$(or $(GRAFANA_PORT),3002) \
+	LOKI_PORT=$(or $(LOKI_PORT),3102) \
 	TRUST_NETWORK_NAME=${network_local} \
 	TRUST_NUMBER=$(subst Trust_,,$(LOCAL_TRUST_NAME)) \
 	TRUST_API_KEY=$(TRUST_API_KEY) \
@@ -146,8 +151,8 @@ LOCAL_TRUST_VARS = \
 	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),$(LOCAL_TRUST_NAME)) \
 	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),$(subst Trust_,,$(LOCAL_TRUST_NAME))) \
 	EXPECTED_TRUST_ID=$(EXPECTED_TRUST_ID) \
-	OMOP_DATA_DIR=./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data \
-	ORTHANC_STORAGE_DIR=./orthanc/orthanc-storage-local \
+	OMOP_DATA_DIR=$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data) \
+	ORTHANC_STORAGE_DIR=$(or $(ORTHANC_STORAGE_DIR),./orthanc/orthanc-storage-local) \
 	OBSERVABILITY_CONFIG_DIR=./observability \
 	LOKI_DATA_VOLUME=trust-local-loki-data \
 	GRAFANA_DATA_VOLUME=trust-local-grafana-data
@@ -251,18 +256,22 @@ down-trust-ec2:
 	@echo "🩻 Stopping XNAT for $(KIT)..."
 	$(MAKE) -C xnat down-xnat KIT=$(KIT) PROD=$(PROD)
 
-# LOCAL_TRUST_NAME controls which FL participant kit the FL client mounts.
-# LOCAL_TRUST_NAME is defined in deploy/providers/AWS/Makefile and threaded
-# through the root Makefile. The local-trust stack uses an isolated port set
-# and the trust-local project/network so it can coexist with dev trust1/trust2.
+# LOCAL_TRUST_NAME identifies the on-prem (local) trust of a production
+# deployment — it selects the kit file trust/.env.$(LOCAL_TRUST_NAME) and the
+# trust-local data dirs. It is defined in deploy/providers/AWS/Makefile and
+# threaded through the root Makefile. The FL participant kit the fl-client
+# mounts is a separate value, FL_KIT_SLOT, carried in the kit file. The
+# local-trust stack uses an isolated port set and the trust-local
+# project/network so it never clashes with a Trust_1/Trust_2 stack sharing the
+# host.
 up-local-trust: create-networks-core create-networks-local-trust
-	## Starts local trust compose stack with LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME).
-	## Uses project name 'trust-local' to avoid collisions with dev trust1/trust2.
+	## Starts the on-prem (local) trust compose stack with LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME).
+	## Uses project name 'trust-local' so it never clashes with a Trust_1/Trust_2 stack.
 	@echo "🚢 Starting local Trust services (LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME))..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(call check_omop_data_dir,./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data)
-	mkdir -p ./data/local/$(LOCAL_TRUST_NAME)
+	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data))
+	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/local/$(LOCAL_TRUST_NAME))
 	$(LOCAL_TRUST_VARS) DEBUG=$(DEBUG) \
 		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(trust_local) up -d --pull always
 	@echo "🩻 Starting XNAT for the local trust..."
@@ -309,9 +318,9 @@ create-networks-trust-2:
 	@{ docker network inspect deploy_trust-network-2 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-2; }
 
 # Dedicated network for the local trust stack so it doesn't attach to
-# deploy_trust-network-1 when dev trust1 is also running. Not wired into the
-# top-level `create-networks` target because `make up` (dev) doesn't need it;
-# `up-local-trust` requires it explicitly.
+# deploy_trust-network-1 when a Trust_1 stack is also running on the host. Not
+# wired into the top-level `create-networks` target because `make up` doesn't
+# need it; `up-local-trust` requires it explicitly.
 create-networks-local-trust:
 	@{ docker network inspect $(network_local) >/dev/null 2>&1 || docker network create --driver overlay --attachable $(network_local); }
 

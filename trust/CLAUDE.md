@@ -25,7 +25,7 @@ Trust services run at each healthcare institution (cloud EC2 or on-prem). All tr
 | `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
 | `deploy/compose_trust.local.yml` | On-prem trust override |
 | `deploy/compose_trust-1_override.yml` | Dev trust-1 host-port bindings |
-| `.env.Trust_1` / `.env.Trust_2` | Per-trust kit file (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID, host-local ports/dirs); gitignored, templates `.env.Trust_*.example` |
+| `.env.Trust_1` / `.env.Trust_2` / `.env.Trust_Local` | Per-trust kit file (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID, host-local ports/dirs); gitignored, templates `.env.Trust_*.example`. `Trust_Local` is the on-prem trust (selected by `LOCAL_TRUST_NAME`); its `FL_KIT_SLOT` is decoupled from the file name |
 
 ## Commands (from `trust/`)
 

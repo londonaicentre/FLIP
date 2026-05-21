@@ -129,7 +129,7 @@ up-trust-ec2: create-networks
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=Trust_1 PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
-LOCAL_TRUST_NAME ?= Trust_2
+LOCAL_TRUST_NAME ?= Trust_Local
 
 up-local-trust: create-networks
 	docker context use default

@@ -197,7 +197,8 @@ connect):
    its ``api_key_hash`` — via ``make register-trusts`` or the Add-Trust admin
    flow (``POST /admin/trusts``).
 2. ``register_trust`` mints the trust's API key and internal service key into
-   the kit file (``trust/.env.Trust_N``) as part of registration.
+   the kit file (``trust/.env.Trust_Local`` for the on-prem trust) as part of
+   registration.
 3. No hub redeploy is needed — the trust registry is the live database, read
    on every request.
 
