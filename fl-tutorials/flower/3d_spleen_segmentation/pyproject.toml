@@ -70,6 +70,7 @@ spatial-dims = 3 # This is currently unused but can be passed to get_model()
 flip-model-id = "uuid"
 flip-project-id = "uuid"
 flip-cohort-query = "*"
+
 # Linter
 [tool.ruff]
 line-length = 120
