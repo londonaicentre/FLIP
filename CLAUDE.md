@@ -75,11 +75,29 @@ make debug-off-all         # Remove all debug modes
 make unit_test             # All unit tests across all services (from root)
 make integration_test      # flip-api + trust integration tests (from root)
 make tests                 # flip-ui + flip-api tests (from root)
+make e2e_smoke             # End-to-end smoke against a running stack (see below)
 # From a service directory (e.g., flip-api/):
 make test                  # ruff + mypy + pytest (unit + integration)
 make unit_test             # Unit tests only
 make integration_test      # Integration tests only (also available from root and trust/)
 make local_test            # Tests without Docker
+```
+
+### End-to-End Smoke Test
+
+`make e2e_smoke` (from root) drives a full project lifecycle against an **already-running stack**: create project → submit cohort query → wait for image pull → run FL training → download results. It is the scripted form of the manual UI sanity-check and is **not run in CI**. Long-running (image pull + FL training) — run it in the background.
+
+Prerequisites:
+- Stack up via `make up` (central hub + trusts + XNAT) with trusts registered; Orthanc PACS seeded with DICOM data so image pull has something to pull.
+- Sibling repo `../flip-fl-base-flower` (Flower) or `../flip-fl-base` (NVFLARE) checked out — its chest-xray tutorial supplies the model files and `query.sql`.
+
+Defaults track `FL_BACKEND` (default `flower`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `../../flip-fl-base-flower/tutorials/xray_classification/`. Common overrides:
+
+```bash
+make e2e_smoke FL_BACKEND=nvflare                              # use the NVFLARE tutorial
+make e2e_smoke MODEL_FILES_DIR=/path/app QUERY_FILE=/path/q.sql
+make e2e_smoke EXTRA_ARGS="--abort-midway"                     # exercise the FL stop-training path
+make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
 ```
 
 ### Linting & Type Checking
