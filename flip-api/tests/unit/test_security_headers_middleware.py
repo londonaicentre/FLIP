@@ -56,6 +56,7 @@ def test_security_headers_on_unhandled_exception():
     response = client.get("/error")
 
     assert response.status_code == 500
+    assert response.text == "Internal Server Error"
     assert response.headers["strict-transport-security"] == \
         "max-age=31536000; includeSubDomains"
     assert response.headers["x-frame-options"] == "DENY"

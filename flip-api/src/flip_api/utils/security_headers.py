@@ -20,9 +20,13 @@ included for text/html responses only; the SPA primarily relies on
 CloudFront edge CSP for HTML assets.
 """
 
+import logging
+
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import PlainTextResponse, Response
+
+logger = logging.getLogger(__name__)
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -54,10 +58,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         Wraps ``call_next`` in try/except so that security headers are
         injected even when the downstream handler raises an unhandled
-        exception.  On the exception path a minimal 500 fallback response
-        is returned with the same security headers — this is more secure
-        than re-raising and letting the framework's outermost error
-        middleware produce a bare response with no headers.
+        exception.  On the exception path the traceback is logged and a
+        500 fallback response is returned with the same security
+        headers — this is more secure than re-raising and letting the
+        framework's outermost error middleware produce a bare response
+        with no headers.
 
         Args:
             request: The incoming HTTP request.
@@ -69,7 +74,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         try:
             response = await call_next(request)
         except Exception:
-            response = Response(status_code=500)
+            logger.exception("Unhandled exception processing request")
+            response = PlainTextResponse("Internal Server Error", status_code=500)
         for header, value in self.SECURITY_HEADERS.items():
             response.headers[header] = value
         # CSP only applies to HTML responses — no-op for API JSON.
