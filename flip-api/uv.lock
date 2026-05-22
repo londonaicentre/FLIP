@@ -715,7 +715,7 @@ requires-dist = [
     { name = "boto3-stubs", specifier = ">=1.37.22" },
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.11" },
-    { name = "idna", specifier = ">=3.14" },
+    { name = "idna", specifier = ">=3.15" },
     { name = "psycopg2-binary", specifier = ">=2.9.10" },
     { name = "pydantic", specifier = ">=2.6.1" },
     { name = "pydantic-settings", specifier = ">=2.9.1" },

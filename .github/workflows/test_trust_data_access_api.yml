@@ -88,7 +88,7 @@ jobs:
           lockfile: trust/data-access-api/uv.lock
 
       - name: Sync data-access-api venv (incl. testcontainers)
-        run: uv sync --frozen
+        run: uv sync --locked
 
       - name: Lint (ruff)
         env:

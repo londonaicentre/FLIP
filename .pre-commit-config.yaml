@@ -37,3 +37,41 @@ repos:
         exclude: '^\.github/workflows/'
       - id: end-of-file-fixer
       - id: detect-private-key
+
+  # Keep each uv project's lockfile in sync with its pyproject.toml. uv-lock
+  # operates on a single project, so this monorepo needs one entry per project,
+  # each scoped (via files:) to that project's manifest and lockfile.
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.11.16
+    hooks:
+      - id: uv-lock
+        name: uv-lock (root)
+        files: '^(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (flip-api)
+        args: ['--project', 'flip-api']
+        files: '^flip-api/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (docs)
+        args: ['--project', 'docs']
+        files: '^docs/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (trust-api)
+        args: ['--project', 'trust/trust-api']
+        files: '^trust/trust-api/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (imaging-api)
+        args: ['--project', 'trust/imaging-api']
+        files: '^trust/imaging-api/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (data-access-api)
+        args: ['--project', 'trust/data-access-api']
+        files: '^trust/data-access-api/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (xnat-tests)
+        args: ['--project', 'trust/xnat/tests']
+        files: '^trust/xnat/tests/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (aws-deploy)
+        args: ['--project', 'deploy/providers/AWS']
+        files: '^deploy/providers/AWS/(pyproject\.toml|uv\.lock|uv\.toml)$'

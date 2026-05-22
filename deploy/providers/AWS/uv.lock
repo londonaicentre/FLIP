@@ -98,7 +98,7 @@ requires-dist = [
     { name = "ansible-core", specifier = ">=2.19.2" },
     { name = "click", specifier = ">=8.0.0" },
     { name = "cryptography", specifier = ">=46.0.5" },
-    { name = "idna", specifier = ">=3.14" },
+    { name = "idna", specifier = ">=3.15" },
     { name = "requests", specifier = ">=2.33.0" },
     { name = "urllib3", specifier = ">=2.7.0" },
 ]
