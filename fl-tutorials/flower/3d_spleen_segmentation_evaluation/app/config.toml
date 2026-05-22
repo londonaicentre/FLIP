@@ -2,10 +2,9 @@
 #
 # fl-api-flower's submit_run passes this file to `flwr run --run-config`. Keys here override
 # values already declared in pyproject.toml's [tool.flwr.app.config] -- they cannot introduce
-# new keys. The FL API injects flip-model-id / flip-project-id / flip-cohort-query at upload time.
+# new keys. The FL API injects flip-model-id / flip-project-id / flip-cohort-query / flip-job-dir
+# at upload time.
 
-# Real model checkpoint and architecture for this run. These override the dummy placeholders
-# in pyproject.toml's [tool.flwr.app.config.models.monai_spleen_unet] section.
-[models.monai_spleen_unet]
+# Checkpoint file to evaluate, relative to flip-job-dir. Overrides the dummy
+# placeholder in pyproject.toml's [tool.flwr.app.config].
 checkpoint = "model.pt"
-path = "unet"

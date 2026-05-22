@@ -20,17 +20,12 @@ from fl_api.schemas import UploadAppRequest
 
 
 @pytest.fixture
-def upload_dir(tmp_path):
-    upload_dir = tmp_path / "uploads"
+def upload_dir(tmp_path, monkeypatch):
+    """Base directory the FL API downloads bundles into (FLOWER_SRC_ROOT)."""
+    upload_dir = tmp_path / "src"
     upload_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("FLOWER_SRC_ROOT", str(upload_dir))
     return upload_dir
-
-
-@pytest.fixture
-def checkpoints_dir(tmp_path):
-    checkpoints_dir = tmp_path / "model_checkpoints"
-    checkpoints_dir.mkdir(parents=True, exist_ok=True)
-    return checkpoints_dir
 
 
 @pytest.fixture
@@ -59,7 +54,7 @@ def mock_requests_get(monkeypatch):
     return _mock_get
 
 
-def test_upload_app_basic_success(client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get):
+def test_upload_app_basic_success(client, upload_dir, mock_requests_get):
     """Test basic app upload with pyproject.toml and config.toml."""
     model_id = "test-model-123"
 
@@ -82,9 +77,6 @@ checkpoint = "model.pt"
         f"https://example.com/{model_id}/app/config.toml": config_content,
     })
 
-    monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
-    monkeypatch.setenv("MODEL_CHECKPOINTS_DIR", str(checkpoints_dir))
-
     body = UploadAppRequest(
         project_id="project-123",
         cohort_query="SELECT * FROM patients",
@@ -100,7 +92,6 @@ checkpoint = "model.pt"
     assert response.status_code == 200
     result = response.json()
     assert "successfully" in result["message"].lower()
-    assert result["job_type"] == "standard"
 
     # Verify files were created
     job_dir = upload_dir / model_id
@@ -108,9 +99,7 @@ checkpoint = "model.pt"
     assert (job_dir / "app" / "config.toml").exists()
 
 
-def test_upload_app_injects_flip_params_without_touching_pyproject(
-    client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get
-):
+def test_upload_app_injects_flip_params_without_touching_pyproject(client, upload_dir, mock_requests_get):
     """config.toml receives the FLIP params; pyproject.toml is left untouched."""
     model_id = "test-inject-123"
 
@@ -135,9 +124,6 @@ accuracy = true
         f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
         f"https://example.com/{model_id}/app/config.toml": config_content,
     })
-
-    monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
-    monkeypatch.setenv("MODEL_CHECKPOINTS_DIR", str(checkpoints_dir))
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -171,10 +157,12 @@ accuracy = true
     assert "metrics" in config_doc
 
 
-def test_upload_app_routes_checkpoints_to_checkpoints_dir(
-    client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get
-):
-    """Test that .pt and .pth files are routed to checkpoints_dir, not upload_dir."""
+def test_upload_app_places_checkpoint_in_job_dir(client, upload_dir, mock_requests_get):
+    """Checkpoint files are downloaded into the job dir alongside the sources.
+
+    They are no longer routed to a separate volume: the evaluation ServerApp reads
+    them from the job dir via the injected flip-job-dir run-config value.
+    """
     model_id = "test-checkpoint-123"
 
     pyproject_content = b"""
@@ -185,16 +173,10 @@ publisher = "test"
 num_server_rounds = 3
 """
 
-    checkpoint_content = b"fake model weights"
-
     mock_requests_get({
         f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-        f"https://example.com/{model_id}/model.pt": checkpoint_content,
-        f"https://example.com/{model_id}/other_model.pth": checkpoint_content,
+        f"https://example.com/{model_id}/model.pt": b"fake model weights",
     })
-
-    monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
-    monkeypatch.setenv("MODEL_CHECKPOINTS_DIR", str(checkpoints_dir))
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -203,7 +185,6 @@ num_server_rounds = 3
         bundle_urls=[
             f"https://example.com/{model_id}/pyproject.toml",
             f"https://example.com/{model_id}/model.pt",
-            f"https://example.com/{model_id}/other_model.pth",
         ],
     )
 
@@ -211,21 +192,12 @@ num_server_rounds = 3
 
     assert response.status_code == 200
 
-    # Checkpoints should be in checkpoints_dir
-    model_checkpoints = checkpoints_dir / model_id
-    assert (model_checkpoints / "model.pt").exists()
-    assert (model_checkpoints / "other_model.pth").exists()
-
-    # Checkpoints should NOT be in upload_dir
     job_dir = upload_dir / model_id
-    assert not (job_dir / "model.pt").exists()
-    assert not (job_dir / "other_model.pth").exists()
-
-    # pyproject.toml should be in upload_dir
+    assert (job_dir / "model.pt").exists()
     assert (job_dir / "pyproject.toml").exists()
 
 
-def test_upload_app_keeps_config_toml_in_app_dir(client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get):
+def test_upload_app_keeps_config_toml_in_app_dir(client, upload_dir, mock_requests_get):
     """config.toml stays in app/ (where submit_run reads it); it is not moved to the job root."""
     model_id = "test-config-location-123"
 
@@ -246,9 +218,6 @@ path = "model_path"
         f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
         f"https://example.com/{model_id}/app/config.toml": app_config_content,
     })
-
-    monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
-    monkeypatch.setenv("MODEL_CHECKPOINTS_DIR", str(checkpoints_dir))
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -273,100 +242,7 @@ path = "model_path"
     assert not (job_dir / "config.toml").exists()
 
 
-def test_upload_app_evaluation_requires_models_in_pyproject(
-    client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get
-):
-    """Evaluation apps are rejected when pyproject.toml declares no models."""
-    model_id = "test-eval-validation-123"
-
-    # pyproject.toml WITHOUT a [tool.flwr.app.config.models] section
-    pyproject_content = b"""
-[tool.flwr.app]
-publisher = "test"
-
-[tool.flwr.app.config]
-num_server_rounds = 1
-"""
-
-    config_json_content = b"""
-{
-    "job_type": "evaluation"
-}
-"""
-
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-        f"https://example.com/{model_id}/config.json": config_json_content,
-    })
-
-    monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
-    monkeypatch.setenv("MODEL_CHECKPOINTS_DIR", str(checkpoints_dir))
-
-    body = UploadAppRequest(
-        project_id="project-123",
-        cohort_query="*",
-        trusts=["trust1"],
-        bundle_urls=[
-            f"https://example.com/{model_id}/pyproject.toml",
-            f"https://example.com/{model_id}/config.json",
-        ],
-    )
-
-    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
-
-    # Should fail validation
-    assert response.status_code == 500
-    assert "models" in response.json()["detail"].lower()
-
-
-def test_upload_app_evaluation_success_with_models(client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get):
-    """Evaluation apps succeed when pyproject.toml declares a models section."""
-    model_id = "test-eval-success-123"
-
-    pyproject_content = b"""
-[tool.flwr.app]
-publisher = "test"
-
-[tool.flwr.app.config]
-num_server_rounds = 1
-
-[tool.flwr.app.config.models.my_model]
-checkpoint = "model.pt"
-path = "unet"
-"""
-
-    config_json_content = b"""
-{
-    "job_type": "evaluation"
-}
-"""
-
-    mock_requests_get({
-        f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
-        f"https://example.com/{model_id}/config.json": config_json_content,
-    })
-
-    monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
-    monkeypatch.setenv("MODEL_CHECKPOINTS_DIR", str(checkpoints_dir))
-
-    body = UploadAppRequest(
-        project_id="project-123",
-        cohort_query="*",
-        trusts=["trust1"],
-        bundle_urls=[
-            f"https://example.com/{model_id}/pyproject.toml",
-            f"https://example.com/{model_id}/config.json",
-        ],
-    )
-
-    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
-
-    assert response.status_code == 200
-    result = response.json()
-    assert result["job_type"] == "evaluation"
-
-
-def test_upload_app_download_failure(client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get):
+def test_upload_app_download_failure(client, upload_dir, mock_requests_get):
     """Test that upload fails gracefully when file download fails."""
     model_id = "test-download-fail-123"
 
@@ -374,9 +250,6 @@ def test_upload_app_download_failure(client, upload_dir, checkpoints_dir, monkey
     mock_requests_get({
         f"https://example.com/{model_id}/pyproject.toml": b"content",
     })
-
-    monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
-    monkeypatch.setenv("MODEL_CHECKPOINTS_DIR", str(checkpoints_dir))
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -393,18 +266,14 @@ def test_upload_app_download_failure(client, upload_dir, checkpoints_dir, monkey
     assert response.status_code == 500
 
 
-def test_upload_app_cleans_existing_directories(client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get):
-    """Test that existing job directories are cleaned before upload."""
+def test_upload_app_cleans_existing_directories(client, upload_dir, mock_requests_get):
+    """Test that an existing job directory is cleaned before upload."""
     model_id = "test-clean-123"
 
-    # Create existing directories with old files
+    # Create an existing job directory with an old file
     job_dir = upload_dir / model_id
     job_dir.mkdir(parents=True, exist_ok=True)
     (job_dir / "old_file.txt").write_text("old content")
-
-    model_checkpoints = checkpoints_dir / model_id
-    model_checkpoints.mkdir(parents=True, exist_ok=True)
-    (model_checkpoints / "old_model.pt").write_text("old model")
 
     pyproject_content = b"""
 [tool.flwr.app]
@@ -417,9 +286,6 @@ num_server_rounds = 3
     mock_requests_get({
         f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
     })
-
-    monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
-    monkeypatch.setenv("MODEL_CHECKPOINTS_DIR", str(checkpoints_dir))
 
     body = UploadAppRequest(
         project_id="project-123",
@@ -434,9 +300,8 @@ num_server_rounds = 3
 
     assert response.status_code == 200
 
-    # Old files should be gone
+    # Old file should be gone
     assert not (job_dir / "old_file.txt").exists()
-    assert not (model_checkpoints / "old_model.pt").exists()
 
     # New file should exist
     assert (job_dir / "pyproject.toml").exists()

@@ -65,14 +65,6 @@ def _get_src_root() -> Path:
     return Path(os.getenv("FLOWER_SRC_ROOT", "/app/src"))
 
 
-def _get_upload_dir() -> Path:
-    return Path(os.getenv("UPLOAD_DIR", "/app/uploads"))
-
-
-def _get_checkpoints_dir() -> Path:
-    return Path(os.getenv("MODEL_CHECKPOINTS_DIR", "/app/model_checkpoints"))
-
-
 def _get_superlink_health_address() -> str:
     return os.getenv("SUPERLINK_HEALTH_ADDRESS", "").strip()
 
@@ -177,17 +169,13 @@ def _validate_app_folder(app_folder: str) -> Path:
     #         detail=(f"Invalid app folder '{app_folder}'. Allowed values: {sorted(allowed_job_folders)}"),
     #     )
 
-    # First try upload directory (for dynamically uploaded apps)
-    job_dir = _get_upload_dir() / app_folder
-    if job_dir.is_dir():
-        return job_dir
-
-    # Fall back to src root (for static tutorial apps)
+    # Uploaded apps and static tutorial apps both live under the src root: the FL API
+    # downloads bundles into FLOWER_SRC_ROOT/<model_id>, alongside the tutorial folders.
     job_dir = _get_src_root() / app_folder
     if not job_dir.is_dir():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Job folder path does not exist in uploads or tutorials: {app_folder}",
+            detail=f"Job folder path does not exist: {app_folder}",
         )
 
     return job_dir
@@ -341,12 +329,21 @@ def submit_run(app_folder: str) -> str:
     # --run-config </path/to/config.toml> allows us to specify a config file that can override the defaults
     config_toml_path = job_dir / "app" / "config.toml"
 
+    command = ["uvx", "flwr", "run", ".", "local", "--format", "json"]
     if config_toml_path.is_file():
         logger.info("Using config.toml overrides from %s for job submission.", job_dir)
-        command = ["uvx", "flwr", "run", ".", "local", "--format", "json", "--run-config", str(config_toml_path)]
+        # flip-job-dir tells the evaluation ServerApp where the app directory (and
+        # the model checkpoint) live. It is passed as an inline --run-config
+        # override rather than written to config.toml, so it works even when the
+        # app directory is a read-only bind mount.
+        command += [
+            "--run-config",
+            str(config_toml_path),
+            "--run-config",
+            f'flip-job-dir="{config_toml_path.parent}"',
+        ]
     else:
         logger.warning("No config.toml found in %s. Using default configuration.", job_dir)
-        command = ["uvx", "flwr", "run", ".", "local", "--format", "json"]
 
     with _state_lock:
         if _submission_in_progress:
@@ -457,6 +454,5 @@ def upload_app(model_id: str, body: UploadAppRequest) -> dict[str, str]:
     Returns:
         dict[str, str]: A dictionary containing the status of the upload.
     """
-    upload_dir = _get_upload_dir()
-    checkpoints_dir = _get_checkpoints_dir()
-    return upload_application(model_id, body, upload_dir=upload_dir, checkpoints_dir=checkpoints_dir)
+    upload_dir = _get_src_root()
+    return upload_application(model_id, body, upload_dir=upload_dir)

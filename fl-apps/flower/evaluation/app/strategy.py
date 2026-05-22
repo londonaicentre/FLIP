@@ -11,7 +11,7 @@
 # limitations under the License.
 #
 
-"""Custom Federated Learning strategies for evaluation."""
+"""Custom Federated Learning strategy for evaluation."""
 
 from collections.abc import Iterable
 from logging import INFO
@@ -29,46 +29,35 @@ class MetricsValidator:
 
     Args:
         metrics_spec: Dictionary mapping metric names to their expected types.
-                     Example: {"mean_dice": float, "raw_dice": list}
-        model_names: List of model names to validate.
+                      Example: {"mean_dice": float}
     """
 
-    def __init__(self, metrics_spec: Dict[str, Type], model_names: List[str]):
+    def __init__(self, metrics_spec: Dict[str, Type]):
         self.metrics_spec = metrics_spec
-        self.model_names = model_names
 
-    def validate(self, evaluation_results: Dict[str, Dict[str, Any]]) -> Tuple[bool, str]:
-        """Validate that evaluation results match the expected structure and types.
+    def validate(self, metrics: Dict[str, Any]) -> Tuple[bool, str]:
+        """Validate that a client's metrics match the expected names and types.
 
         Args:
-            evaluation_results: Dict mapping model names to their metrics.
-                               Example: {"model1": {"mean_dice": 0.85, "raw_dice": [0.8, 0.9]}}
+            metrics: Dict mapping metric names to values. Example: {"mean_dice": 0.85}
 
         Returns:
             Tuple of (is_valid, message)
         """
-        # Check that all models in results are expected
-        for model_name in evaluation_results.keys():
-            if model_name not in self.model_names:
-                return False, f"Model '{model_name}' is not in the list of expected models: {self.model_names}"
+        if not isinstance(metrics, dict):
+            return False, f"Metrics must be a dictionary, got {type(metrics)}"
 
-        # Validate each model's metrics
-        for model_name, metrics in evaluation_results.items():
-            if not isinstance(metrics, dict):
-                return False, f"Metrics for model '{model_name}' must be a dictionary, got {type(metrics)}"
+        for metric_name, metric_value in metrics.items():
+            if metric_name not in self.metrics_spec:
+                return (
+                    False,
+                    f"Unexpected metric '{metric_name}'. Expected metrics: {list(self.metrics_spec.keys())}",
+                )
 
-            # Check each metric against the spec
-            for metric_name, metric_value in metrics.items():
-                if metric_name not in self.metrics_spec:
-                    return (
-                        False,
-                        f"Unexpected metric '{metric_name}' for model '{model_name}'. Expected metrics: {list(self.metrics_spec.keys())}",
-                    )
-
-                expected_type = self.metrics_spec[metric_name]
-                success, message = self._validate_type(metric_name, metric_value, expected_type)
-                if not success:
-                    return False, f"Model '{model_name}': {message}"
+            expected_type = self.metrics_spec[metric_name]
+            success, message = self._validate_type(metric_name, metric_value, expected_type)
+            if not success:
+                return False, message
 
         return True, "Successfully validated all evaluation results"
 
@@ -102,11 +91,10 @@ class MetricsValidator:
 class EvaluationStrategy(FedAvg):
     """Custom strategy for evaluation-only federated learning.
 
-    This strategy aggregates evaluation metrics from multiple clients across multiple models.
+    This strategy aggregates evaluation metrics for a single model across multiple clients.
 
     Args:
         metrics_spec: Dictionary mapping metric names to their expected types.
-        model_names: List of model names to evaluate.
         flip: FLIP instance used by the fl-server to forward metrics to the Central Hub.
         model_id: FLIP model ID (UUID) for the current run.
     """
@@ -114,7 +102,6 @@ class EvaluationStrategy(FedAvg):
     def __init__(
         self,
         metrics_spec: Dict[str, Type],
-        model_names: List[str],
         flip: FLIP,
         model_id: str,
         *args,
@@ -122,13 +109,13 @@ class EvaluationStrategy(FedAvg):
     ):
         super().__init__(*args, **kwargs)
         self.metrics_spec = metrics_spec
-        self.model_names = model_names
         self.flip = flip
         self.model_id = model_id
-        self.validator = MetricsValidator(metrics_spec=metrics_spec, model_names=model_names)
-        self.all_results: Dict[str, Dict[str, List]] = {}
-        # Store per-client results: {model_name: {client_id: {metric_name: value}}}
-        self.per_client_results: Dict[str, Dict[str, Dict[str, float]]] = {}
+        self.validator = MetricsValidator(metrics_spec=metrics_spec)
+        # Aggregated metric values across clients: {metric_name: [values]}
+        self.all_results: Dict[str, List] = {}
+        # Per-client results: {client_name: {metric_name: value}}
+        self.per_client_results: Dict[str, Dict[str, float]] = {}
 
     def aggregate_evaluate(
         self,
@@ -162,7 +149,6 @@ class EvaluationStrategy(FedAvg):
 
             # metric_records contains {'metrics': {actual_metrics_dict}}
             metrics_outer = dict(msg.content.metric_records)
-            log(INFO, f"DEBUG: Client {client_id} metrics keys: {list(metrics_outer.keys())}")
 
             # Extract the inner 'metrics' dict
             if "metrics" not in metrics_outer:
@@ -170,25 +156,17 @@ class EvaluationStrategy(FedAvg):
                 continue
 
             metrics = metrics_outer["metrics"]
-            log(INFO, f"DEBUG: Client {client_id} inner metrics: {metrics}")
 
             # Get client name from message config record (sent by client via SUPERNODE_NAME env var)
             config_outer = dict(msg.content.get("config", {}))
             client_name = config_outer.get("client_name", client_id)
-            log(INFO, f"DEBUG: Client {client_id} using client_name: {client_name}")
 
-            # Reconstruct evaluation results from flattened keys
-            # Keys are in format: "evaluation.model_name.metric_name"
+            # Reconstruct this client's metrics from flattened "evaluation.<metric_name>" keys
             client_eval = {}
             for key, value in metrics.items():
                 if key.startswith("evaluation."):
-                    # Extract model_name and metric_name from "evaluation.model_name.metric_name"
-                    parts = key.split(".", 2)
-                    if len(parts) == 3:
-                        _, model_name, metric_name = parts
-                        if model_name not in client_eval:
-                            client_eval[model_name] = {}
-                        client_eval[model_name][metric_name] = value
+                    metric_name = key.split(".", 1)[1]
+                    client_eval[metric_name] = value
 
             if not client_eval:
                 log(INFO, f"Warning: No evaluation results from client {client_name}")
@@ -202,46 +180,31 @@ class EvaluationStrategy(FedAvg):
 
             log(INFO, f"Client {client_name} - Valid evaluation results received")
 
-            # Aggregate results
-            for model_name, model_metrics in client_eval.items():
-                if model_name not in self.all_results:
-                    self.all_results[model_name] = {metric_name: [] for metric_name in self.metrics_spec.keys()}
-                if model_name not in self.per_client_results:
-                    self.per_client_results[model_name] = {}
-
-                # Store per-client results using client name
-                if client_name not in self.per_client_results[model_name]:
-                    self.per_client_results[model_name][client_name] = {}
-
-                # Collect metrics (only scalar numeric types: float or int)
-                for metric_name in self.metrics_spec.keys():
-                    if metric_name in model_metrics:
-                        metric_value = model_metrics[metric_name]
-                        # Convert to float for aggregation (works for both int and float types)
-                        float_value = float(metric_value)
-                        self.all_results[model_name][metric_name].append(float_value)
-                        self.per_client_results[model_name][client_name][metric_name] = float_value
+            # Aggregate results (only scalar numeric types: float or int)
+            self.per_client_results.setdefault(client_name, {})
+            for metric_name in self.metrics_spec.keys():
+                if metric_name in client_eval:
+                    # Convert to float for aggregation (works for both int and float types)
+                    float_value = float(client_eval[metric_name])
+                    self.all_results.setdefault(metric_name, []).append(float_value)
+                    self.per_client_results[client_name][metric_name] = float_value
 
         # Calculate final aggregated results and return as MetricRecord
         aggregated_metrics = MetricRecord()
 
         # Add aggregated (mean) metrics
-        for model_name, metrics_data in self.all_results.items():
-            for metric_name, values in metrics_data.items():
-                if not values:
-                    continue
-
-                # Calculate mean for all metrics (even if originally scalar)
-                mean_value = sum(values) / len(values)
-                # Ensure native Python types (not numpy)
-                aggregated_metrics[f"{model_name}.{metric_name}_mean"] = float(mean_value)
-                aggregated_metrics[f"{model_name}.{metric_name}_count"] = int(len(values))
+        for metric_name, values in self.all_results.items():
+            if not values:
+                continue
+            mean_value = sum(values) / len(values)
+            # Ensure native Python types (not numpy)
+            aggregated_metrics[f"{metric_name}_mean"] = float(mean_value)
+            aggregated_metrics[f"{metric_name}_count"] = int(len(values))
 
         # Add per-client metrics
-        for model_name, client_data in self.per_client_results.items():
-            for client_name, metrics in client_data.items():
-                for metric_name, value in metrics.items():
-                    aggregated_metrics[f"{model_name}.{client_name}.{metric_name}"] = float(value)
+        for client_name, metrics in self.per_client_results.items():
+            for metric_name, value in metrics.items():
+                aggregated_metrics[f"{client_name}.{metric_name}"] = float(value)
 
         log(INFO, f"Round {server_round} - Aggregated evaluation results: {dict(aggregated_metrics)}")
 

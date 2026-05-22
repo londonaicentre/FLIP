@@ -27,31 +27,8 @@ from flwr.app import ArrayRecord, Context
 from flwr.common import log
 from flwr.serverapp import Grid, ServerApp
 
-from app.models import get_model_for_path
+from app.models import get_model
 from app.strategy import EvaluationStrategy
-
-
-def parse_models_config(run_config: Dict) -> Dict:
-    """Reconstruct the models dict from Flower's flattened dot-separated run_config keys.
-
-    Flower flattens ``[tool.flwr.app.config.models.foo]`` into keys like
-    ``"models.foo.checkpoint"`` and ``"models.foo.path"`` in run_config.
-    This function reconstructs the expected nested structure:
-
-        {
-            "foo": {"checkpoint": "...", "path": "..."}
-        }
-    """
-    models: Dict[str, Dict] = {}
-    prefix = "models."
-    for key, value in run_config.items():
-        if key.startswith(prefix):
-            rest = key[len(prefix) :]  # e.g. "monai_spleen_unet.checkpoint"
-            parts = rest.split(".", 1)
-            if len(parts) == 2:
-                model_name, field = parts
-                models.setdefault(model_name, {})[field] = value
-    return models
 
 
 def parse_metrics_config(metrics_config: Dict[str, str]) -> Dict[str, Type]:
@@ -90,24 +67,6 @@ def parse_metrics_config(metrics_config: Dict[str, str]) -> Dict[str, Type]:
     return metrics_spec
 
 
-# Separator used to namespace per-model parameter keys inside a single ArrayRecord.
-# Must not appear in any PyTorch state-dict key.
-_MODEL_KEY_SEP = "/"
-
-
-def pack_models(models: Dict[str, torch.nn.Module]) -> ArrayRecord:
-    """Pack multiple models' state dicts into one ArrayRecord.
-
-    Each tensor key is prefixed with ``<model_name><sep><original_key>``
-    so that the client can extract per-model state dicts by filtering on the prefix.
-    """
-    combined: Dict[str, torch.Tensor] = {}
-    for model_name, model in models.items():
-        for layer_key, tensor in model.state_dict().items():
-            combined[f"{model_name}{_MODEL_KEY_SEP}{layer_key}"] = tensor
-    return ArrayRecord(combined)
-
-
 # Create ServerApp
 app = ServerApp()
 
@@ -123,72 +82,45 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     flip.update_status(model_id, ModelStatus.INITIATED)
 
     # ------------------------------------------------------------------
-    # Load all models listed in the run config.
+    # Locate and load the model checkpoint.
     #
-    # Expected config structure:
-    #   "models": {
-    #     "<model_name>": {
-    #       "checkpoint": "<filename.pt>",   # relative to MODEL_CHECKPOINTS_DIR
-    #       "path": "<architecture_key>"     # key in models.model_paths
-    #     },
-    #     ...
-    #   }
+    # ``flip-job-dir`` is injected as a run-config override by the FL API at
+    # submission time and points at the app directory on the shared volume,
+    # where the uploaded .pt checkpoint lives next to config.toml and the app
+    # sources. ``checkpoint`` is the checkpoint filename within that directory.
     # ------------------------------------------------------------------
-    models_config: Dict = parse_models_config(run_config)
-    if not models_config:
-        msg = "No models specified. Set 'models' in pyproject.toml under [tool.flwr.app.config]."
+    app_dir = run_config.get("flip-job-dir")
+    if not app_dir:
+        msg = "flip-job-dir is not set in the run config"
         log(ERROR, msg)
         raise ValueError(msg)
 
-    # ------------------------------------------------------------------
-    # Determine checkpoint directory.
-    #
-    # Checkpoints are stored under ``MODEL_CHECKPOINTS_DIR/<model_id>/`` by the
-    # FL API upload endpoint. ``MODEL_CHECKPOINTS_DIR`` is a shared volume
-    # mounted into the FL API, SuperLink and SuperNodes.
-    # ------------------------------------------------------------------
-    base_checkpoints_dir = os.getenv("MODEL_CHECKPOINTS_DIR")
-    if not base_checkpoints_dir:
-        msg = "MODEL_CHECKPOINTS_DIR environment variable is not set"
+    checkpoint_name = run_config.get("checkpoint")
+    if not checkpoint_name:
+        msg = "checkpoint is not set in the run config"
         log(ERROR, msg)
         raise ValueError(msg)
 
-    # Prefer the per-model subdirectory (populated by the FL API on upload).
-    # Fall back to the base directory for dev/standalone where a single
-    # checkpoint file is dropped directly into MODEL_CHECKPOINTS_DIR.
-    per_model_dir = os.path.join(base_checkpoints_dir, model_id)
-    if os.path.isdir(per_model_dir):
-        checkpoints_dir = per_model_dir
-        log(INFO, f"Using per-model checkpoints directory: {checkpoints_dir}")
-    else:
-        checkpoints_dir = base_checkpoints_dir
-        log(INFO, f"Using MODEL_CHECKPOINTS_DIR from environment: {checkpoints_dir}")
+    checkpoint_file = os.path.join(app_dir, checkpoint_name)
+    if not os.path.exists(checkpoint_file):
+        msg = f"Checkpoint not found at: {checkpoint_file}"
+        log(ERROR, msg)
+        raise FileNotFoundError(msg)
 
-    loaded_models: Dict[str, torch.nn.Module] = {}
-    for model_name, model_cfg in models_config.items():
-        arch_path = model_cfg["path"]
-        checkpoint_file = os.path.join(checkpoints_dir, model_cfg["checkpoint"])
-
-        if not os.path.exists(checkpoint_file):
-            msg = f"Checkpoint for model '{model_name}' not found at: {checkpoint_file}"
-            log(ERROR, msg)
-            raise FileNotFoundError(msg)
-
-        model = get_model_for_path(arch_path)
-        checkpoint = torch.load(checkpoint_file, map_location="cpu", weights_only=True)
-        model.load_state_dict(checkpoint, strict=False)
-        loaded_models[model_name] = model
-        log(INFO, f"Loaded model '{model_name}' (arch='{arch_path}') from {checkpoint_file}")
+    model = get_model()
+    state_dict = torch.load(checkpoint_file, map_location="cpu", weights_only=True)
+    model.load_state_dict(state_dict, strict=False)
+    log(INFO, f"Loaded model from {checkpoint_file}")
 
     flip.update_status(model_id, ModelStatus.PREPARED)
 
-    # Pack all models into a single ArrayRecord with namespaced keys.
-    arrays = pack_models(loaded_models)
+    # Pack the model weights into an ArrayRecord for distribution to clients.
+    arrays = ArrayRecord(model.state_dict())
 
     # Parse metrics specification from config
     # TOML nested tables are flattened in run_config, so extract keys starting with "metrics."
     metrics_config = {
-        key.split(".", 1)[1]: value for key, value in context.run_config.items() if key.startswith("metrics.")
+        key.split(".", 1)[1]: value for key, value in run_config.items() if key.startswith("metrics.")
     }
     if not metrics_config:
         msg = "No metrics configuration found in pyproject.toml. Please define [tool.flwr.app.config.metrics]."
@@ -201,7 +133,6 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # Use custom evaluation strategy
     strategy = EvaluationStrategy(
         metrics_spec=metrics_spec,
-        model_names=list(models_config.keys()),
         flip=flip,
         model_id=model_id,
         fraction_train=0.0,  # No training
@@ -226,7 +157,6 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # Prepare evaluation results
     evaluation_results = {
         "num_rounds": num_rounds,
-        "models_evaluated": list(models_config.keys()),
         "metrics_spec": {k: v.__name__ for k, v in metrics_spec.items()},
         "results": strategy.per_client_results,
     }
@@ -253,15 +183,17 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     log(INFO, "\n✓ Evaluation complete. All outputs saved to %s", output_dir)
     log(INFO, "  - Results JSON: evaluation_results.json")
 
-    # Clean up model checkpoints directory if it exists
-    # In production, flip-job-dir is typically /app/model_checkpoints/{model_id}
-    if checkpoints_dir and Path(checkpoints_dir).exists():
+    # Clean up the job folder once evaluation is done. flip-job-dir points at the
+    # app directory on the shared volume; its parent is the job folder (the
+    # uploaded bundle: sources + checkpoint). Removing it frees the upload.
+    job_dir = Path(app_dir).parent
+    if job_dir.exists():
         # Only delete if the path contains the model_id (safety check)
-        if model_id in str(checkpoints_dir):
+        if model_id in str(job_dir):
             try:
-                shutil.rmtree(checkpoints_dir)
-                log(INFO, "✓ Cleaned up checkpoints directory: %s", checkpoints_dir)
+                shutil.rmtree(job_dir)
+                log(INFO, "✓ Cleaned up job folder: %s", job_dir)
             except Exception as e:
-                log(INFO, "Warning: Failed to clean up checkpoints directory %s: %s", checkpoints_dir, str(e))
+                log(INFO, "Warning: Failed to clean up job folder %s: %s", job_dir, str(e))
         else:
-            log(INFO, "Skipping cleanup: checkpoints directory %s does not contain model_id", checkpoints_dir)
+            log(INFO, "Skipping cleanup: job folder %s does not contain model_id", job_dir)

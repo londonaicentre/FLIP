@@ -1,6 +1,4 @@
-import json
 import shutil
-from enum import Enum
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -10,18 +8,6 @@ from tomlkit import dumps, parse
 
 from fl_api.schemas import UploadAppRequest
 from fl_api.utils.logger import logger
-
-
-class CheckpointExtension(str, Enum):
-    """Allowed file extensions that are treated as model checkpoints and routed to the
-    shared checkpoints directory instead of the upload directory."""
-
-    PT = ".pt"
-    PTH = ".pth"
-
-    @classmethod
-    def values(cls) -> set[str]:
-        return {member.value for member in cls}
 
 
 def _key_after_model_id(url: str, model_id: str) -> Path:
@@ -44,72 +30,15 @@ def _key_after_model_id(url: str, model_id: str) -> Path:
     return Path(*parts[index + 1 :])
 
 
-def _is_checkpoint_file(path: Path) -> bool:
-    """Check if a file is a model checkpoint based on its extension.
-
-    Args:
-        path: Path object to check
-
-    Returns:
-        True if the file extension is in CheckpointExtension enum values
-    """
-    return path.suffix.lower() in CheckpointExtension.values()
-
-
-def _read_job_type(job_dir: Path) -> str:
-    """Read the job type from the optional config.json bundled with the app.
-
-    The FLIP UI uses ``job_type`` to tell users whether an app is a training or
-    evaluation app. Defaults to ``"standard"`` when config.json is absent or invalid.
-
-    Args:
-        job_dir: The job directory the app was downloaded into.
-
-    Returns:
-        The job type string (e.g. ``"standard"`` or ``"evaluation"``).
-    """
-    config_json = job_dir / "config.json"
-    if not config_json.exists():
-        return "standard"
-
-    try:
-        return str(json.loads(config_json.read_text()).get("job_type", "standard"))
-    except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse config.json: {e}. Using default job_type='standard'")
-        return "standard"
-
-
-def _pyproject_has_models(pyproject_path: Path) -> bool:
-    """Check whether pyproject.toml declares a non-empty models table.
-
-    Evaluation apps load model checkpoints declared under
-    ``[tool.flwr.app.config.models]`` in pyproject.toml, so an evaluation app with
-    no models table is invalid.
-
-    Args:
-        pyproject_path: Path to the app's pyproject.toml file.
-
-    Returns:
-        True if ``[tool.flwr.app.config.models]`` exists and is non-empty.
-    """
-    if not pyproject_path.exists():
-        return False
-
-    node: object = parse(pyproject_path.read_text())
-    for key in ("tool", "flwr", "app", "config", "models"):
-        if not isinstance(node, dict) or key not in node:
-            return False
-        node = node[key]
-
-    return bool(node)
-
-
 def upsert_flwr_run_config(config_path: Path, model_id: str, project_id: str, cohort_query: str) -> None:
     """Insert or update the FLIP runtime parameters as top-level keys in config.toml.
 
     config.toml is the Flower ``--run-config`` override file: Flower reads the full app
     config from pyproject.toml and applies these keys on top of it. Any other content the
     researcher placed in config.toml is preserved.
+
+    ``flip-job-dir`` is not set here — ``submit_run`` (in app.py) passes it as an
+    inline ``--run-config`` override at submission time.
 
     Args:
         config_path: Path to the app's config.toml file.
@@ -127,9 +56,7 @@ def upsert_flwr_run_config(config_path: Path, model_id: str, project_id: str, co
     config_path.write_text(dumps(doc))
 
 
-def upload_application(
-    model_id: str, body: UploadAppRequest, upload_dir: Path, checkpoints_dir: Path
-) -> dict[str, str]:
+def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) -> dict[str, str]:
     """
     Handles the logic of uploading an application to the server. This involves downloading the files uploaded by the
     user to a specific location on the server, and then returning a success message.
@@ -139,9 +66,6 @@ def upload_application(
         store the uploaded files.
         body (UploadAppRequest): The body of the upload request, containing details such as project_id, cohort_query.
         upload_dir (Path): The base directory on the server where uploaded applications should be stored.
-        checkpoints_dir (Path): The base directory where model checkpoint files (.pt, .pth) should be stored.
-            This is a separate volume shared between the FL API and the SuperLink (and SuperNodes) so that
-            evaluation apps can load checkpoints by model_id.
 
     Returns:
         dict[str, str]: A dictionary containing a success message and the location where the application was uploaded.
@@ -163,30 +87,14 @@ def upload_application(
     # Then we create the job directory.
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    # Per-model checkpoints directory shared with the SuperLink/SuperNodes.
-    # Checkpoint files (.pt, .pth) are routed here so they are not bundled into the
-    # Flower app sent to SuperNodes, but remain accessible to evaluation apps.
-    model_checkpoints_dir = checkpoints_dir / model_id
-    if model_checkpoints_dir.exists():
-        logger.warning(f"Model checkpoints directory {model_checkpoints_dir} already exists, removing it...")
-        shutil.rmtree(model_checkpoints_dir, ignore_errors=True)
-    model_checkpoints_dir.mkdir(parents=True, exist_ok=True)
-
     logger.info(f"Downloading {len(bundle_urls)} files into job directory: {job_dir}")
 
     for url in bundle_urls:
         logger.info(f"Downloading file from {url}")
 
-        # Reconstruct structure under app_dir using the URL path after model_id
+        # Reconstruct structure under job_dir using the URL path after model_id
         relative_path = _key_after_model_id(url, model_id)  # e.g. app/config.toml
-
-        # Route checkpoint files to the shared checkpoints directory (flat layout: only filename)
-        if _is_checkpoint_file(relative_path):
-            dest_path = model_checkpoints_dir / relative_path.name
-            logger.info(f"Routing checkpoint file to shared checkpoints dir: {dest_path}")
-        else:
-            dest_path = job_dir / relative_path  # job_dir/app/config.toml
-
+        dest_path = job_dir / relative_path  # e.g. job_dir/app/config.toml
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -202,25 +110,7 @@ def upload_application(
 
         logger.info(f"Downloaded file {dest_path}")
 
-    # Part 2: determine the job type and validate evaluation apps before writing config.
-    # The FLIP UI shows job_type to indicate whether this is a training or evaluation app.
-    job_type = _read_job_type(job_dir)
-    logger.info(f"Detected job_type: {job_type}")
-
-    # Evaluation apps load model checkpoints declared under [tool.flwr.app.config.models]
-    # in pyproject.toml; reject them early if that section is missing.
-    if job_type == "evaluation" and not _pyproject_has_models(job_dir / "pyproject.toml"):
-        logger.error("Evaluation app pyproject.toml missing [tool.flwr.app.config.models] section")
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Evaluation apps require pyproject.toml to declare models under "
-                "[tool.flwr.app.config.models] (e.g. [tool.flwr.app.config.models.<name>] "
-                "with checkpoint and path fields)"
-            ),
-        )
-
-    # Part 3: optional config.toml override file
+    # Part 2: optional config.toml file
     # among the uploaded files, there may be an override config.toml file
     # populate the config.toml file with the FLIP configuration parameters (model_id, project_id, cohort_query)
     config_toml = job_dir / "app" / "config.toml"
@@ -236,10 +126,7 @@ def upload_application(
 
     logger.info("config.toml updated with FLIP runtime parameters")
 
-    response = {
-        "message": f"Application uploaded successfully to: {job_dir}",
-        "job_type": job_type,
-    }
+    response = {"message": f"Application uploaded successfully to: {job_dir}"}
 
     logger.info(response)
 

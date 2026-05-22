@@ -73,7 +73,7 @@ curl -X POST http://localhost:8000/submit_run/xray_classification
 
 The compose file (`deploy/compose.yml`) wires everything correctly:
 
-- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`, `MODEL_CHECKPOINTS_DIR`
+- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`
   are resolved from `.env.flwr.development` (read by Docker Compose as the
   `${VAR}` substitutions in each service's `volumes:` block) and bind-mounted
   into the SuperNode and SuperLink containers — one source of truth for paths.
