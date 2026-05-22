@@ -18,6 +18,12 @@
 describe("docs: create project", () => {
     it("creates a new project", () => {
         cy.login();
+        // Start from an empty project list (as create_project.spec.ts does):
+        // each project card also carries data-test="project-name", so the
+        // default non-empty list collides with the modal's name input.
+        cy.intercept("GET", "/projects?pageNumber=1&pageSize=20", {
+            fixture: "project/getProjectsEmpty"
+        }).as("getProjectsEmpty");
         cy.intercept("POST", "/projects", {
             statusCode: 200,
             body: { id: "6fcbdd40-3675-45c9-899e-1a005e5245ba" }

@@ -20,8 +20,21 @@ describe("docs: cohort query", () => {
         const projectId = "6fcbdd40-3675-45c9-899e-1a005e5245ba";
 
         cy.login();
-        cy.intercept("POST", "/step/cohort", { fixture: "cohort/cohortQueryResponseOMOP" })
-            .as("submitCohortQuery");
+        // sendQuery() returns the raw POST body and runCohortQuery() reads
+        // `response.trust` off it directly. The cohortQueryResponseOMOP fixture
+        // wraps that payload in a stringified `body` envelope, so the success
+        // branch would throw and surface an error snackbar instead. Mock the
+        // shape the app actually consumes (ICohortQueryResponse).
+        cy.intercept("POST", "/step/cohort", {
+            statusCode: 200,
+            body: {
+                trust: [
+                    { name: "UCLH", statusCode: 200 },
+                    { name: "KCH", statusCode: 200 }
+                ],
+                queryId: "c9453df9-d228-4c9c-80dd-9a2e3c2ecf11"
+            }
+        }).as("submitCohortQuery");
         cy.intercept("GET", "cohort/*", { fixture: "cohort/cohortQueryResultsOmop" })
             .as("cohortResults");
         cy.intercept("GET", "/projects/" + projectId, {
@@ -39,8 +52,9 @@ describe("docs: cohort query", () => {
 
         cy.getBySel("view-cohort-query-results-btn").demoClick();
         cy.wait("@submitCohortQuery");
-        cy.wait("@cohortResults");
 
+        // Assert the success snackbar before anything else — Snackbar.show
+        // auto-dismisses after 6s, so a later cy.wait could outlast it.
         cy.contains("Cohort query has been sent to trusts and queued for processing").should("be.visible");
         cy.demoPause(1200);
     });

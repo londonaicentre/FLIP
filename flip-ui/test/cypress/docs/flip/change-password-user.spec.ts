@@ -31,12 +31,23 @@ describe("docs: change password", () => {
         cy.getBySel("change-password-btn").demoClick();
         cy.demoPause();
 
+        // The request-code form needs the email typed in: routeChange.changePassword
+        // pushes the route with both `path` and `params`, and Vue Router drops
+        // `params` when `path` is present, so the field never prefills.
+        cy.getBySel("email").demoType(email);
+        cy.demoPause();
+
         cy.intercept("POST", cognitoUrl, {
             statusCode: 200,
             fixture: "auth/cognitoForgotPassword"
         }).as("requestCode");
         cy.getBySel("requestCode-btn").demoClick();
         cy.wait("@requestCode");
+        cy.demoPause();
+
+        // The change-password form is a separate form with its own (empty)
+        // email field — re-enter it, mirroring reset_password.spec.ts.
+        cy.getBySel("email").demoType(email);
         cy.demoPause();
 
         cy.getBySel("confirmation-code").demoType("12345");

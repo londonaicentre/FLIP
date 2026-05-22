@@ -33,6 +33,11 @@ describe("docs: forgot password", () => {
         cy.wait("@requestCode");
         cy.demoPause();
 
+        // The change-password form is a separate <Form> with its own (empty)
+        // email field — re-enter it, mirroring reset_password.spec.ts.
+        cy.getBySel("email").demoType(email);
+        cy.demoPause();
+
         cy.getBySel("confirmation-code").demoType("12345");
         cy.demoPause();
 

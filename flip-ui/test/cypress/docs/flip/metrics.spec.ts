@@ -69,7 +69,12 @@ describe("docs: model metrics", () => {
         cy.wait("@getMetrics");
         cy.demoPause();
 
-        cy.contains("Accuracy").should("be.visible");
+        // AiModelMetricsChart paints the chart — title, axes, legend — onto an
+        // ECharts <canvas>, so "Accuracy" is never DOM text. Assert the charts
+        // rendered instead: the empty-state placeholder is gone and a chart
+        // canvas is visible.
+        cy.contains("Any results generated during training will show here.").should("not.exist");
+        cy.get("canvas").first().should("be.visible");
         cy.demoPause(1200);
     });
 });
