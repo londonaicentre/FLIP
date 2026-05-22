@@ -56,6 +56,54 @@ def _is_checkpoint_file(path: Path) -> bool:
     return path.suffix.lower() in CheckpointExtension.values()
 
 
+def _read_job_type(job_dir: Path) -> str:
+    """Read the job type from the optional config.json bundled with the app.
+
+    The FLIP UI uses ``job_type`` to tell users whether an app is a training or
+    evaluation app. Defaults to ``"standard"`` when config.json is absent or invalid.
+
+    Args:
+        job_dir: The job directory the app was downloaded into.
+
+    Returns:
+        The job type string (e.g. ``"standard"`` or ``"evaluation"``).
+    """
+    config_json = job_dir / "config.json"
+    if not config_json.exists():
+        return "standard"
+
+    try:
+        return str(json.loads(config_json.read_text()).get("job_type", "standard"))
+    except json.JSONDecodeError as e:
+        logger.warning(f"Failed to parse config.json: {e}. Using default job_type='standard'")
+        return "standard"
+
+
+def _pyproject_has_models(pyproject_path: Path) -> bool:
+    """Check whether pyproject.toml declares a non-empty models table.
+
+    Evaluation apps load model checkpoints declared under
+    ``[tool.flwr.app.config.models]`` in pyproject.toml, so an evaluation app with
+    no models table is invalid.
+
+    Args:
+        pyproject_path: Path to the app's pyproject.toml file.
+
+    Returns:
+        True if ``[tool.flwr.app.config.models]`` exists and is non-empty.
+    """
+    if not pyproject_path.exists():
+        return False
+
+    node: object = parse(pyproject_path.read_text())
+    for key in ("tool", "flwr", "app", "config", "models"):
+        if not isinstance(node, dict) or key not in node:
+            return False
+        node = node[key]
+
+    return bool(node)
+
+
 def upsert_flwr_run_config(config_path: Path, model_id: str, project_id: str, cohort_query: str) -> None:
     """Insert or update the FLIP runtime parameters as top-level keys in config.toml.
 
@@ -154,16 +202,33 @@ def upload_application(
 
         logger.info(f"Downloaded file {dest_path}")
 
-    # Part 2: optional config.toml file
+    # Part 2: determine the job type and validate evaluation apps before writing config.
+    # The FLIP UI shows job_type to indicate whether this is a training or evaluation app.
+    job_type = _read_job_type(job_dir)
+    logger.info(f"Detected job_type: {job_type}")
+
+    # Evaluation apps load model checkpoints declared under [tool.flwr.app.config.models]
+    # in pyproject.toml; reject them early if that section is missing.
+    if job_type == "evaluation" and not _pyproject_has_models(job_dir / "pyproject.toml"):
+        logger.error("Evaluation app pyproject.toml missing [tool.flwr.app.config.models] section")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Evaluation apps require pyproject.toml to declare models under "
+                "[tool.flwr.app.config.models] (e.g. [tool.flwr.app.config.models.<name>] "
+                "with checkpoint and path fields)"
+            ),
+        )
+
+    # Part 3: optional config.toml override file
     # among the uploaded files, there may be an override config.toml file
     # populate the config.toml file with the FLIP configuration parameters (model_id, project_id, cohort_query)
     config_toml = job_dir / "app" / "config.toml"
-    pyproject_toml = job_dir / "pyproject.toml"
 
-    # Create an empty config.toml if the researcher did not upload one
+    # Create an empty config.toml if the researcher did not upload one (needed to inject FLIP runtime parameters)
     if not config_toml.exists():
-        # If config.toml is not found, we create a default empty one to add FLIP configuration
         logger.warning(f"config.toml not found at expected location: {config_toml}. Will create an empty one.")
+        config_toml.parent.mkdir(parents=True, exist_ok=True)
         config_toml.write_text("")
 
     # Now we add FLIP configuration as top-level run-config key/value pairs in config.toml
@@ -171,7 +236,10 @@ def upload_application(
 
     logger.info("config.toml updated with FLIP runtime parameters")
 
-    response = {"message": f"Application uploaded successfully to: {job_dir}"}
+    response = {
+        "message": f"Application uploaded successfully to: {job_dir}",
+        "job_type": job_type,
+    }
 
     logger.info(response)
 
