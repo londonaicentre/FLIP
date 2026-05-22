@@ -39,6 +39,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
 
+      - name: Supply-chain cooldown check
+        uses: ./.github/actions/check-package-age
+        with:
+          paths: flip-ui/package-lock.json
+
       - name: Set Node.js version
         uses: actions/setup-node@v5 #
         with:

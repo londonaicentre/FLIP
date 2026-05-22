@@ -1,0 +1,24 @@
+version = 1
+revision = 3
+requires-python = ">=3.12"
+
+[[package]]
+name = "flip-sample-app"
+version = "0.1.0"
+source = { editable = "." }
+
+[[package]]
+name = "annotated-types"
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/67/531ea369ba64dcff5ec9c3402f9f51bf748cec26dde048a2f973a4eea7f5/annotated_types-0.7.0.tar.gz", hash = "sha256:aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89", size = 16081, upload-time = "2024-05-20T21:33:25.928Z" }
+
+[[package]]
+name = "recent-demo-package"
+version = "9.9.9"
+source = { registry = "https://pypi.org/simple" }
+
+[[package]]
+name = "internal-git-tool"
+version = "1.2.3"
+source = { git = "https://github.com/londonaicentre/example.git?rev=main#0000000000000000000000000000000000000000" }

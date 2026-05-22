@@ -49,8 +49,9 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install
+# Install dependencies strictly from the lockfile so a CI build cannot resolve
+# a fresh, un-vetted version even when the lockfile pins an older one.
+RUN npm ci
 
 ARG UI_PORT
 # Expose port

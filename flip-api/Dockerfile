@@ -26,7 +26,7 @@ WORKDIR /app
 RUN chown -R ${UNAME}:${UNAME} /app
 
 # Add uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
 
 # Sync the project into a new environment, using the frozen lockfile
 COPY pyproject.toml uv.lock ./

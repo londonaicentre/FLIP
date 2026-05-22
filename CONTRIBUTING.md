@@ -119,6 +119,40 @@ uv add <package-name> --group <group>  # dependency in a named group
 The `pyproject.toml` file is the source of truth for dependencies. The Python version in `.python-version` must match
 the version used in the service's Dockerfile.
 
+### Dependency cooldown (supply-chain protection)
+
+Recent npm and PyPI supply-chain attacks follow a consistent pattern: a maintainer's credentials are compromised, a
+malicious release is published, the community detects it, and the package is yanked — usually within a few hours. To
+keep poisoned releases out of FLIP's CI, developer machines, and Trust-side containers, FLIP enforces a **72-hour
+cooldown** on dependency installs:
+
+> No FLIP build, CI or local, may install a Python or JavaScript package whose release timestamp on its upstream
+> registry (PyPI / npm) is less than 72 hours old. This applies to direct **and** transitive dependencies.
+
+The policy is enforced in two layers:
+
+- **Preventive** — [`renovate.json`](renovate.json) sets `minimumReleaseAge: "72 hours"` for the `pypi` and `npm`
+  datasources, so Renovate holds a dependency-update PR for 72 hours after the upstream release before opening it.
+- **Detective** — the [`check-package-age`](.github/actions/check-package-age) composite action parses every
+  `uv.lock` and `package-lock.json`, queries PyPI and npm for each pinned version's release timestamp, and fails CI
+  if any version — however it entered the lockfile — is younger than the cooldown window. It runs in every test
+  workflow, and a repository-wide scan runs in [`secret-scanning.yml`](.github/workflows/secret-scanning.yml).
+
+When you run `uv add <package>` or `npm install <package>`, prefer a version that has been published for at least 72
+hours. If you adopt a newer release, expect the detective check to fail until that release ages out of the window.
+
+#### Emergency override
+
+For a genuine same-day patch of an active CVE, the cooldown can be bypassed in one of two ways:
+
+- apply the **`supply-chain-override`** label to the pull request. The check reads the label on every CI run, so add
+  it before pushing the dependency change — or, if the check has already failed, push a commit to re-trigger CI so the
+  label is picked up (re-running an existing job alone does **not** pick up a newly added label); **or**
+- include **`[skip-cooldown]`** in a commit message on the pull-request branch.
+
+Either path must be justified in the pull-request description. Use it only for security patches that genuinely cannot
+wait 72 hours.
+
 ### Environment variables
 
 Environment variables for local development are defined in [`.env.development.example`](.env.development.example). This file uses

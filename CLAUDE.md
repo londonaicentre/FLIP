@@ -212,7 +212,7 @@ After changes, evaluate if docs need updating:
 
 ## CI/CD
 
-GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
+GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `test_check_package_age.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
 ### Docker image builds: manual trigger required for branches
 
@@ -242,6 +242,7 @@ TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict marker
 - Trust-internal service key for trust-api / imaging-api / fl-client → imaging-api / data-access-api auth (per-trust, never leaves trust env). See **Trust-internal Service Authentication** below.
 - FL clients intentionally have no Central Hub credentials.
 - Do not hardcode env values in Dockerfiles or compose files.
+- 72-hour supply-chain cooldown on Python/npm package installs — enforced by Renovate (`renovate.json`) and the `check-package-age` CI action (`.github/actions/check-package-age`). See CONTRIBUTING.md ("Dependency cooldown").
 
 ## Trust-internal Service Authentication
 
