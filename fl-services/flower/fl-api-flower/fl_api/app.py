@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ import grpc
 from fastapi import FastAPI, HTTPException, Query, status
 from grpc_health.v1.health_pb2 import HealthCheckRequest, HealthCheckResponse
 from grpc_health.v1.health_pb2_grpc import HealthStub
+from tomlkit import dumps, parse
 
 from fl_api.schemas import (
     ClientInfoModel,
@@ -175,7 +177,7 @@ def _validate_app_folder(app_folder: str) -> Path:
     if not job_dir.is_dir():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Job folder path does not exist: {app_folder}",
+            detail=f"Job folder path does not exist: {job_dir}",
         )
 
     return job_dir
@@ -325,25 +327,11 @@ def submit_run(app_folder: str) -> str:
 
     global _submission_in_progress
 
-    # Override app config with FLIP parameters and user-provided overrides before submission
-    # --run-config </path/to/config.toml> allows us to specify a config file that can override the defaults
+    # config.toml holds the run-config overrides for this app. It may sit on a
+    # read-only bind mount, so rather than mutating it we merge flip-job-dir into a
+    # temp copy and pass that to `flwr run` -- flwr also rejects mixing a config
+    # file with inline key=value overrides, so everything goes through one file.
     config_toml_path = job_dir / "app" / "config.toml"
-
-    command = ["uvx", "flwr", "run", ".", "local", "--format", "json"]
-    if config_toml_path.is_file():
-        logger.info("Using config.toml overrides from %s for job submission.", job_dir)
-        # flip-job-dir tells the evaluation ServerApp where the app directory (and
-        # the model checkpoint) live. It is passed as an inline --run-config
-        # override rather than written to config.toml, so it works even when the
-        # app directory is a read-only bind mount.
-        command += [
-            "--run-config",
-            str(config_toml_path),
-            "--run-config",
-            f'flip-job-dir="{config_toml_path.parent}"',
-        ]
-    else:
-        logger.warning("No config.toml found in %s. Using default configuration.", job_dir)
 
     with _state_lock:
         if _submission_in_progress:
@@ -353,7 +341,22 @@ def submit_run(app_folder: str) -> str:
             )
         _submission_in_progress = True
 
+    run_config_path: str | None = None
     try:
+        command = ["uvx", "flwr", "run", ".", "local", "--format", "json"]
+        if config_toml_path.is_file():
+            logger.info("Using config.toml overrides from %s for job submission.", job_dir)
+            # flip-job-dir points the evaluation ServerApp at the app directory,
+            # where the uploaded model checkpoint lives.
+            run_config_doc = parse(config_toml_path.read_text())
+            run_config_doc["flip-job-dir"] = str(config_toml_path.parent)
+            fd, run_config_path = tempfile.mkstemp(suffix=".toml", prefix="flwr-run-config-")
+            os.close(fd)
+            Path(run_config_path).write_text(dumps(run_config_doc))
+            command += ["--run-config", run_config_path]
+        else:
+            logger.warning("No config.toml found in %s. Using default configuration.", job_dir)
+
         try:
             result = _run_flwr_command(command, job_dir, "submit")
         except HTTPException as err:
@@ -387,6 +390,8 @@ def submit_run(app_folder: str) -> str:
     finally:
         with _state_lock:
             _submission_in_progress = False
+        if run_config_path is not None:
+            os.unlink(run_config_path)
 
 
 def _find_terminal_run(src_root: Path, run_id: str) -> JobMetadata | None:

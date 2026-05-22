@@ -12,8 +12,10 @@
 #
 
 import subprocess
+from pathlib import Path
 
 import pytest
+from tomlkit import parse
 
 from fl_api import app as app_module
 
@@ -40,8 +42,8 @@ def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
     assert response.status_code == 200
 
 
-def test_submit_run_passes_flip_job_dir_inline(client, src_root, monkeypatch):
-    """submit_run passes flip-job-dir as an inline --run-config override, not a file write."""
+def test_submit_run_merges_flip_job_dir_into_run_config(client, src_root, monkeypatch):
+    """submit_run merges flip-job-dir into a temp run-config file, leaving config.toml untouched."""
     app_dir = src_root / "eval_app" / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
     config_toml = app_dir / "config.toml"
@@ -51,6 +53,9 @@ def test_submit_run_passes_flip_job_dir_inline(client, src_root, monkeypatch):
 
     def _capture(command, *_args, **_kwargs):
         captured["command"] = command
+        # the temp --run-config file still exists here (before submit_run's finally)
+        run_config_arg = command[command.index("--run-config") + 1]
+        captured["run_config"] = parse(Path(run_config_arg).read_text())
         return subprocess.CompletedProcess(
             args=command,
             returncode=0,
@@ -67,12 +72,11 @@ def test_submit_run_passes_flip_job_dir_inline(client, src_root, monkeypatch):
     response = client.post("/submit_run/eval_app")
     assert response.status_code == 200
 
-    command = captured["command"]
-    # flip-job-dir is passed inline, pointing at the app directory
-    assert f'flip-job-dir="{app_dir}"' in command
-    # the researcher's config.toml is still passed as a --run-config file
-    assert str(config_toml) in command
-    # config.toml itself is not modified -- read-only bind mounts must work
+    # the run-config passed to flwr merges flip-job-dir with the app's config.toml
+    run_config = captured["run_config"]
+    assert run_config["flip-job-dir"] == str(app_dir)
+    assert run_config["checkpoint"] == "model.pt"
+    # the app's own config.toml is left untouched
     assert config_toml.read_text() == 'checkpoint = "model.pt"\n'
 
 
