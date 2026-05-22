@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import requests
 from fastapi import HTTPException
-from tomlkit import dumps, parse, table
+from tomlkit import dumps, parse
 
 from fl_api.schemas import UploadAppRequest
 from fl_api.utils.logger import logger
@@ -56,86 +56,27 @@ def _is_checkpoint_file(path: Path) -> bool:
     return path.suffix.lower() in CheckpointExtension.values()
 
 
-def upsert_flwr_run_config(
-    config_path: Path,
-    model_id: str,
-    project_id: str,
-    cohort_query: str,
-    checkpoint_files: list[str] | None = None,
-    app_config_path: Path | None = None,
-    pyproject_path: Path | None = None,
-) -> None:
-    """Merge config.toml into pyproject.toml and rewrite config.toml with only FLIP parameters.
+def upsert_flwr_run_config(config_path: Path, model_id: str, project_id: str, cohort_query: str) -> None:
+    """Insert or update the FLIP runtime parameters as top-level keys in config.toml.
 
-    Process:
-    1. Read user's config.toml (has [models], [metrics] in simplified format)
-    2. Merge into pyproject.toml under [tool.flwr.app.config]
-    3. Overwrite config.toml with ONLY FLIP runtime parameters
-    4. Flower reads full config from pyproject.toml, overrides from config.toml via --run-config
+    config.toml is the Flower ``--run-config`` override file: Flower reads the full app
+    config from pyproject.toml and applies these keys on top of it. Any other content the
+    researcher placed in config.toml is preserved.
 
     Args:
-        config_path: Path to config.toml file
-        model_id: Model ID to inject
-        project_id: Project ID to inject
-        cohort_query: Cohort query to inject
-        checkpoint_files: Not used (kept for compatibility)
-        app_config_path: Not used (kept for compatibility)
-        pyproject_path: Path to pyproject.toml to update
+        config_path: Path to the app's config.toml file.
+        model_id: Model ID to inject as ``flip-model-id``.
+        project_id: Project ID to inject as ``flip-project-id``.
+        cohort_query: Cohort query to inject as ``flip-cohort-query``.
     """
-    if not pyproject_path or not pyproject_path.exists():
-        logger.error(f"pyproject.toml not found at {pyproject_path}")
-        return
+    doc = parse(config_path.read_text()) if config_path.exists() else parse("")
 
-    # Step 1: Read config.toml (simplified format: [models], [metrics], etc.)
-    user_sections = {}
-    if config_path.exists():
-        config_doc = parse(config_path.read_text())
-        for key, value in config_doc.items():
-            if isinstance(value, dict):
-                user_sections[key] = value
-        logger.info(f"Loaded config.toml with sections: {list(user_sections.keys())}")
+    # run config values must be top-level key/value pairs in config.toml
+    doc["flip-model-id"] = model_id
+    doc["flip-project-id"] = project_id
+    doc["flip-cohort-query"] = cohort_query
 
-    # Step 2: Merge into pyproject.toml [tool.flwr.app.config]
-    pyproject_doc = parse(pyproject_path.read_text())
-
-    if (
-        "tool" in pyproject_doc  # type: ignore[operator]
-        and "flwr" in pyproject_doc["tool"]  # type: ignore[operator,index]
-        and "app" in pyproject_doc["tool"]["flwr"]  # type: ignore[operator,index]
-        and "config" in pyproject_doc["tool"]["flwr"]["app"]  # type: ignore[operator,index]
-    ):
-        config_section = pyproject_doc["tool"]["flwr"]["app"]["config"]  # type: ignore[index]
-
-        # Merge user sections (models, metrics, etc.)
-        for section_name, section_content in user_sections.items():
-            new_section = table()
-            for key, value in section_content.items():
-                if isinstance(value, dict):
-                    # Nested table (e.g., models.model_name)
-                    nested_table = table()
-                    for k, v in value.items():
-                        nested_table[k] = v
-                    new_section[key] = nested_table
-                else:
-                    new_section[key] = value
-            config_section[section_name] = new_section  # type: ignore[index]
-            logger.info(f"Merged [{section_name}] into pyproject.toml [tool.flwr.app.config.{section_name}]")
-
-        # Write updated pyproject.toml
-        pyproject_path.write_text(dumps(pyproject_doc))
-        logger.info(f"Updated pyproject.toml with {len(user_sections)} section(s) from config.toml")
-    else:
-        logger.error("pyproject.toml missing [tool.flwr.app.config] section")
-        return
-
-    # Step 3: Overwrite config.toml with ONLY FLIP parameters
-    clean_config = table()
-    clean_config["flip-model-id"] = model_id
-    clean_config["flip-project-id"] = project_id
-    clean_config["flip-cohort-query"] = cohort_query
-
-    config_path.write_text(dumps(clean_config))
-    logger.info("Rewrote config.toml with only FLIP runtime parameters")
+    config_path.write_text(dumps(doc))
 
 
 def upload_application(
@@ -185,9 +126,6 @@ def upload_application(
 
     logger.info(f"Downloading {len(bundle_urls)} files into job directory: {job_dir}")
 
-    # Track uploaded checkpoint files to configure in config.toml
-    checkpoint_files: list[str] = []
-
     for url in bundle_urls:
         logger.info(f"Downloading file from {url}")
 
@@ -197,7 +135,6 @@ def upload_application(
         # Route checkpoint files to the shared checkpoints directory (flat layout: only filename)
         if _is_checkpoint_file(relative_path):
             dest_path = model_checkpoints_dir / relative_path.name
-            checkpoint_files.append(relative_path.name)  # Track for config.toml
             logger.info(f"Routing checkpoint file to shared checkpoints dir: {dest_path}")
         else:
             dest_path = job_dir / relative_path  # job_dir/app/config.toml
@@ -212,80 +149,29 @@ def upload_application(
                         if chunk:
                             f.write(chunk)
         except Exception as e:
-            logger.error(f"Failed to download from URL {url} with error: {e}")
+            logger.error(f"Failed to download file from {url} with error: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to download file from {url}: {e}")
 
         logger.info(f"Downloaded file {dest_path}")
 
-    # Part 2: Move app/config.toml to root, merge into pyproject.toml, then clean config.toml
-    config_toml = job_dir / "config.toml"
-    app_config_toml = job_dir / "app" / "config.toml"
+    # Part 2: optional config.toml file
+    # among the uploaded files, there may be an override config.toml file
+    # populate the config.toml file with the FLIP configuration parameters (model_id, project_id, cohort_query)
+    config_toml = job_dir / "app" / "config.toml"
     pyproject_toml = job_dir / "pyproject.toml"
 
-    # If app/config.toml exists, move it to root level
-    if app_config_toml.exists() and not config_toml.exists():
-        logger.info(f"Moving {app_config_toml} to {config_toml}")
-        shutil.move(str(app_config_toml), str(config_toml))
-
-    # Create empty config.toml if none exists
+    # Create an empty config.toml if the researcher did not upload one
     if not config_toml.exists():
-        logger.warning("No config.toml found. Creating empty root config.toml")
+        # If config.toml is not found, we create a default empty one to add FLIP configuration
+        logger.warning(f"config.toml not found at expected location: {config_toml}. Will create an empty one.")
         config_toml.write_text("")
 
-    # Part 3: Read job_type from config.json and validate BEFORE merging config
-    # The FLIP UI displays the job_type to inform users whether this is a training or evaluation app
-    job_type = "standard"  # Default to standard if config.json is missing or doesn't specify
-    config_json = job_dir / "config.json"
-    if config_json.exists():
-        try:
-            config_data = json.loads(config_json.read_text())
-            job_type = config_data.get("job_type", "standard")
-            logger.info(f"Detected job_type from config.json: {job_type}")
-        except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse config.json: {e}. Using default job_type='standard'")
-        except Exception as e:
-            logger.warning(f"Error reading config.json: {e}. Using default job_type='standard'")
+    # Now we add FLIP configuration as top-level run-config key/value pairs in config.toml
+    upsert_flwr_run_config(config_toml, model_id, body.project_id, body.cohort_query)
 
-    # Part 4: Validate that evaluation apps have models configuration in config.toml BEFORE cleaning it
-    if job_type == "evaluation":
-        if not config_toml.exists():
-            logger.error("Evaluation apps require config.toml with model configuration")
-            raise HTTPException(status_code=500, detail="Evaluation apps require config.toml with [models] section")
+    logger.info("config.toml updated with FLIP runtime parameters")
 
-        # Check if config.toml has models section (simplified format: [models] not [tool.flwr.app.config.models])
-        # Flower automatically treats this as [tool.flwr.app.config.models] when using --run-config
-        config_doc = parse(config_toml.read_text())
-        has_models = "models" in config_doc and len(config_doc["models"]) > 0  # type: ignore[arg-type]
-
-        if not has_models:
-            logger.error("Evaluation app config.toml missing [models] section")
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Evaluation apps require config.toml with [models] section "
-                    "defining model checkpoints (e.g., [models.model_name] with checkpoint and path fields)"
-                ),
-            )
-
-        logger.info(f"Validated evaluation app has models configuration in {config_toml}")
-
-    # Part 5: Merge config.toml with FLIP parameters (keeps all user content: models, metrics, etc.)
-    upsert_flwr_run_config(
-        config_toml,
-        model_id,
-        body.project_id,
-        body.cohort_query,
-        checkpoint_files=checkpoint_files if checkpoint_files else None,
-        app_config_path=app_config_toml if app_config_toml.exists() else None,
-        pyproject_path=pyproject_toml if pyproject_toml.exists() else None,
-    )
-
-    logger.info("config.toml updated with FLIP parameters while preserving all user content")
-
-    response = {
-        "message": f"Application uploaded successfully to: {job_dir}",
-        "job_type": job_type,
-    }
+    response = {"message": f"Application uploaded successfully to: {job_dir}"}
 
     logger.info(response)
 

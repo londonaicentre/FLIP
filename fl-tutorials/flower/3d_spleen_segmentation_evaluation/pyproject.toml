@@ -70,11 +70,13 @@ flip-job-dir = "job-dir"
 [tool.flwr.app.config.metrics]
 mean_dice = "float"
 
-
 # Model definitions
+# checkpoint and path are dummy placeholders -- the real values are supplied per run via
+# app/config.toml. The model entry must exist here so config.toml's [models.monai_spleen_unet]
+# section can override it (--run-config cannot introduce keys absent from pyproject.toml).
 [tool.flwr.app.config.models.monai_spleen_unet]
-checkpoint = "model.pt"
-path = "unet"
+checkpoint = "dummy.pt"
+path = "dummy"
 
 # Linter
 [tool.ruff]

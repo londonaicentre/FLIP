@@ -64,14 +64,20 @@ flip-model-id = "uuid"
 flip-project-id = "uuid"
 flip-cohort-query = "*"
 
-# Metrics specification for evaluation (can be overridden via config.toml)
-# Define metric names and their expected types ("float" or "int" only - native numeric types)
+# Metrics specification for evaluation
+# Define metric names and their expected types ("float" or "int" only - native numeric types).
 [tool.flwr.app.config.metrics]
-# Placeholder - actual metrics should be defined in config.toml during upload
+mean_dice = "float"
 
-# Model definitions (can be overridden via config.toml)
-[tool.flwr.app.config.models]
-# Placeholder - actual models should be defined in config.toml during upload
+# Model definitions
+# A model entry must exist here so config.toml can override it: Flower's --run-config can only
+# override keys already declared in pyproject.toml, never add new ones. The checkpoint and path
+# below are dummy placeholders -- supply the real values per run in config.toml under a matching
+# [models.example_model] section. The model name (example_model) is fixed here; config.toml can
+# override its values but not rename it.
+[tool.flwr.app.config.models.example_model]
+checkpoint = "dummy.pt"
+path = "dummy"
 
 # Linter
 [tool.ruff]

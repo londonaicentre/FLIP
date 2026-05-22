@@ -105,12 +105,14 @@ checkpoint = "model.pt"
     # Verify files were created
     job_dir = upload_dir / model_id
     assert (job_dir / "pyproject.toml").exists()
-    assert (job_dir / "config.toml").exists()
+    assert (job_dir / "app" / "config.toml").exists()
 
 
-def test_upload_app_merges_config_into_pyproject(client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get):
-    """Test that config.toml sections are merged into pyproject.toml [tool.flwr.app.config]."""
-    model_id = "test-merge-123"
+def test_upload_app_injects_flip_params_without_touching_pyproject(
+    client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get
+):
+    """config.toml receives the FLIP params; pyproject.toml is left untouched."""
+    model_id = "test-inject-123"
 
     pyproject_content = b"""
 [tool.flwr.app]
@@ -151,28 +153,22 @@ accuracy = true
 
     assert response.status_code == 200
 
-    # Verify pyproject.toml has merged sections
     job_dir = upload_dir / model_id
+
+    # pyproject.toml is left as uploaded -- no models/metrics merged into it
     pyproject_doc = parse((job_dir / "pyproject.toml").read_text())
-
-    assert "tool" in pyproject_doc
-    assert "flwr" in pyproject_doc["tool"]
-    assert "app" in pyproject_doc["tool"]["flwr"]
-    assert "config" in pyproject_doc["tool"]["flwr"]["app"]
-
     config_section = pyproject_doc["tool"]["flwr"]["app"]["config"]
-    assert "models" in config_section
-    assert "my_model" in config_section["models"]
-    assert config_section["models"]["my_model"]["path"] == "unet"
-    assert "metrics" in config_section
+    assert "num_server_rounds" in config_section
+    assert "models" not in config_section
+    assert "metrics" not in config_section
 
-    # Verify config.toml only has FLIP parameters
-    config_doc = parse((job_dir / "config.toml").read_text())
+    # config.toml gets the FLIP params and keeps the researcher's original content
+    config_doc = parse((job_dir / "app" / "config.toml").read_text())
     assert config_doc["flip-model-id"] == model_id
     assert config_doc["flip-project-id"] == "project-123"
     assert config_doc["flip-cohort-query"] == "*"
-    assert "models" not in config_doc
-    assert "metrics" not in config_doc
+    assert config_doc["models"]["my_model"]["path"] == "unet"
+    assert "metrics" in config_doc
 
 
 def test_upload_app_routes_checkpoints_to_checkpoints_dir(
@@ -229,9 +225,9 @@ num_server_rounds = 3
     assert (job_dir / "pyproject.toml").exists()
 
 
-def test_upload_app_moves_app_config_to_root(client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get):
-    """Test that app/config.toml is moved to root level config.toml."""
-    model_id = "test-config-move-123"
+def test_upload_app_keeps_config_toml_in_app_dir(client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get):
+    """config.toml stays in app/ (where submit_run reads it); it is not moved to the job root."""
+    model_id = "test-config-location-123"
 
     pyproject_content = b"""
 [tool.flwr.app]
@@ -270,19 +266,20 @@ path = "model_path"
 
     job_dir = upload_dir / model_id
 
-    # config.toml should exist at root
-    assert (job_dir / "config.toml").exists()
+    # config.toml stays in app/
+    assert (job_dir / "app" / "config.toml").exists()
 
-    # app/config.toml should be gone (moved)
-    assert not (job_dir / "app" / "config.toml").exists()
+    # it is not moved to the job root
+    assert not (job_dir / "config.toml").exists()
 
 
-def test_upload_app_evaluation_requires_models_section(
+def test_upload_app_evaluation_requires_models_in_pyproject(
     client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get
 ):
-    """Test that evaluation apps require a [models] section in config.toml."""
+    """Evaluation apps are rejected when pyproject.toml declares no models."""
     model_id = "test-eval-validation-123"
 
+    # pyproject.toml WITHOUT a [tool.flwr.app.config.models] section
     pyproject_content = b"""
 [tool.flwr.app]
 publisher = "test"
@@ -297,16 +294,9 @@ num_server_rounds = 1
 }
 """
 
-    # Config WITHOUT models section
-    config_content = b"""
-[metrics]
-accuracy = true
-"""
-
     mock_requests_get({
         f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
         f"https://example.com/{model_id}/config.json": config_json_content,
-        f"https://example.com/{model_id}/app/config.toml": config_content,
     })
 
     monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
@@ -319,7 +309,6 @@ accuracy = true
         bundle_urls=[
             f"https://example.com/{model_id}/pyproject.toml",
             f"https://example.com/{model_id}/config.json",
-            f"https://example.com/{model_id}/app/config.toml",
         ],
     )
 
@@ -331,7 +320,7 @@ accuracy = true
 
 
 def test_upload_app_evaluation_success_with_models(client, upload_dir, checkpoints_dir, monkeypatch, mock_requests_get):
-    """Test that evaluation apps succeed when they have a [models] section."""
+    """Evaluation apps succeed when pyproject.toml declares a models section."""
     model_id = "test-eval-success-123"
 
     pyproject_content = b"""
@@ -340,6 +329,10 @@ publisher = "test"
 
 [tool.flwr.app.config]
 num_server_rounds = 1
+
+[tool.flwr.app.config.models.my_model]
+checkpoint = "model.pt"
+path = "unet"
 """
 
     config_json_content = b"""
@@ -348,16 +341,9 @@ num_server_rounds = 1
 }
 """
 
-    config_content = b"""
-[models.my_model]
-path = "unet"
-checkpoint = "model.pt"
-"""
-
     mock_requests_get({
         f"https://example.com/{model_id}/pyproject.toml": pyproject_content,
         f"https://example.com/{model_id}/config.json": config_json_content,
-        f"https://example.com/{model_id}/app/config.toml": config_content,
     })
 
     monkeypatch.setenv("UPLOAD_DIR", str(upload_dir))
@@ -370,7 +356,6 @@ checkpoint = "model.pt"
         bundle_urls=[
             f"https://example.com/{model_id}/pyproject.toml",
             f"https://example.com/{model_id}/config.json",
-            f"https://example.com/{model_id}/app/config.toml",
         ],
     )
 

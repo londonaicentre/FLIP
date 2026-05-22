@@ -1,12 +1,11 @@
-# Configuration for evaluation app
-# Models section defines which checkpoints to load
-# The "path" field refers to the model architecture defined in models.py
-# The "checkpoint" field is the filename of the .pt file being uploaded
+# Flower run-config overrides for this evaluation app.
+#
+# fl-api-flower's submit_run passes this file to `flwr run --run-config`. Keys here override
+# values already declared in pyproject.toml's [tool.flwr.app.config] -- they cannot introduce
+# new keys. The FL API injects flip-model-id / flip-project-id / flip-cohort-query at upload time.
 
+# Real model checkpoint and architecture for this run. These override the dummy placeholders
+# in pyproject.toml's [tool.flwr.app.config.models.monai_spleen_unet] section.
 [models.monai_spleen_unet]
 checkpoint = "model.pt"
 path = "unet"
-# Metrics specification for evaluation
-# Define metric names and their expected types ("float" or "int" only - native numeric types)
-[metrics]
-mean_dice = "float"
