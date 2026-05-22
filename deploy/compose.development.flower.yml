@@ -38,10 +38,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     networks:
       - default
       - shared-net-1
@@ -72,10 +68,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     networks:
       - default
       - shared-net-2
@@ -126,10 +118,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     networks:
       - shared-net-1
     restart: unless-stopped

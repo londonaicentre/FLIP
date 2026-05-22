@@ -31,10 +31,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-1/services/flip-fl-api-net-1/local:/app/admin/local
@@ -58,10 +54,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     volumes:
       # Provisioned NVFLARE admin secrets (certificates, fed_admin.json)
       - ${FL_PROVISIONED_DIR}/net-2/services/flip-fl-api-net-2/local:/app/admin/local
@@ -102,10 +94,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     networks:
       - shared-net-1
     restart: unless-stopped
@@ -140,10 +128,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     networks:
       - shared-net-2
     restart: unless-stopped

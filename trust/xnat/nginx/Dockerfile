@@ -17,7 +17,7 @@ FROM nginx:${NGINX_VERSION}
 # This will overwrite the nginx.conf included in the base image
 COPY custom-nginx.conf /etc/nginx/nginx.conf
 
-# Ensure correct permissions (nginx runs as root inside official image)
+# Ensure correct permissions (chmod is done during build as root before switching to nginx user)
 RUN chmod 644 /etc/nginx/nginx.conf
 
 # Drop root privileges: the nginx user exists in the base image.

@@ -24,10 +24,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     environment:
       - CATALINA_OPTS=-Xms${XNAT_MIN_HEAP} -Xmx${XNAT_MAX_HEAP} -Dxnat.home=${XNAT_HOME} -XX:+UseG1GC -Djava.awt.headless=true -XX:+ParallelRefProcEnabled -XX:ParallelGCThreads=6 -XX:+UseStringDeduplication
       - XNAT_HOME=${XNAT_HOME}
@@ -55,10 +51,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
       - SETPCAP
     environment:
       - POSTGRES_PASSWORD=${XNAT_DATASOURCE_ADMIN_PASSWORD}
@@ -81,10 +73,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     # ports:
     #   - "80:80"
 

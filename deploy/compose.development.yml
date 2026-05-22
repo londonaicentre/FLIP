@@ -139,10 +139,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     restart: unless-stopped
     container_name: flip-api
 
@@ -160,10 +156,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
       - SETPCAP
     networks:
       - default
@@ -185,10 +177,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     networks:

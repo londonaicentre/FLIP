@@ -29,11 +29,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
-      - SETPCAP
     environment:
       POSTGRES_USER: ${OMOP_POSTGRES_USER}
       POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
@@ -55,10 +50,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
       - NET_RAW
       - KILL
     volumes:
@@ -87,10 +78,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     environment:
       XNAT_URL: ${XNAT_URL}
       XNAT_PORT: ${XNAT_PORT}
@@ -132,10 +119,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     environment:
       OMOP_DB_SERVICE_NAME: ${OMOP_DB_SERVICE_NAME}
       DATA_ACCESS_POSTGRES_USER: ${DATA_ACCESS_POSTGRES_USER}
@@ -171,10 +154,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     environment:
       # Dev-only override: the env-file value of CENTRAL_HUB_API_URL is the browser-facing
       # URL (host port 8080 published by flip-ui's nginx) and is unreachable from inside
@@ -216,10 +195,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     volumes:
       - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
       - loki-data:/loki
@@ -236,10 +211,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     volumes:
       - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -256,10 +227,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - DAC_OVERRIDE
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
     volumes:
