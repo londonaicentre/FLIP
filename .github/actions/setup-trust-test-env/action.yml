@@ -34,18 +34,10 @@ inputs:
     description: Postgres password used for both DATA_ACCESS / OMOP roles
     required: false
     default: "test_password"
-  lockfile:
-    description: Path to the calling service's uv.lock, scanned by the supply-chain cooldown check
-    required: true
 
 runs:
   using: composite
   steps:
-    - name: Supply-chain cooldown check
-      uses: ./.github/actions/check-package-age
-      with:
-        paths: ${{ inputs.lockfile }}
-
     - name: Set up Python
       uses: actions/setup-python@v5
       with:

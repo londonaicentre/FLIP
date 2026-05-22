@@ -40,11 +40,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Supply-chain cooldown check
-        uses: ./.github/actions/check-package-age
-        with:
-          paths: trust/xnat/tests/uv.lock
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:

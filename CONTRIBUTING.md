@@ -129,29 +129,35 @@ cooldown** on dependency installs:
 > No FLIP build, CI or local, may install a Python or JavaScript package whose release timestamp on its upstream
 > registry (PyPI / npm) is less than 72 hours old. This applies to direct **and** transitive dependencies.
 
-The policy is enforced in two layers:
+The policy is enforced through native package-manager configuration:
 
-- **Preventive** — [`renovate.json`](renovate.json) sets `minimumReleaseAge: "72 hours"` for the `pypi` and `npm`
-  datasources, so Renovate holds a dependency-update PR for 72 hours after the upstream release before opening it.
-- **Detective** — the [`check-package-age`](.github/actions/check-package-age) composite action parses every
-  `uv.lock` and `package-lock.json`, queries PyPI and npm for each pinned version's release timestamp, and fails CI
-  if any version — however it entered the lockfile — is younger than the cooldown window. It runs in every test
-  workflow, and a repository-wide scan runs in [`secret-scanning.yml`](.github/workflows/secret-scanning.yml).
+- **Renovate** ([`renovate.json`](renovate.json)) sets `minimumReleaseAge: "72 hours"` for the `pypi` and `npm`
+  datasources, so automated dependency-update PRs are held for 72 hours after the upstream release.
+- **uv (Python)** — every `pyproject.toml` sets `tool.uv.exclude-newer = "3 days"`, so `uv lock` and `uv add` never
+  resolve a release younger than 72 hours (the `uv.lock` records this as a rolling `exclude-newer-span`). The
+  **Dependency Cooldown Check** job in [`secret-scanning.yml`](.github/workflows/secret-scanning.yml) runs
+  `uv lock --check` on every project, failing CI if a lockfile drifts from its manifest or smuggles in a fresh
+  release.
+- **npm (JavaScript)** — `flip-ui/.npmrc` and `deploy/providers/AWS/.npmrc` set `min-release-age=3`, so `npm install`
+  refuses a release younger than 72 hours (requires npm >= 11.10). CI installs use `npm ci`, which fails on any
+  `package-lock.json` / `package.json` mismatch. npm does not re-check release age during `npm ci`, so the npm
+  cooldown rests on Renovate and `.npmrc` rather than a CI gate.
 
-When you run `uv add <package>` or `npm install <package>`, prefer a version that has been published for at least 72
-hours. If you adopt a newer release, expect the detective check to fail until that release ages out of the window.
+The cooldown applies automatically when you run `uv add <package>` or `npm install <package>` — a release younger
+than 72 hours is simply not selected. Run `make lock` to refresh every `uv.lock` after a dependency change.
 
 #### Emergency override
 
-For a genuine same-day patch of an active CVE, the cooldown can be bypassed in one of two ways:
+For a genuine same-day patch of an active CVE, the cooldown can be bypassed for the single package that needs it:
 
-- apply the **`supply-chain-override`** label to the pull request. The check reads the label on every CI run, so add
-  it before pushing the dependency change — or, if the check has already failed, push a commit to re-trigger CI so the
-  label is picked up (re-running an existing job alone does **not** pick up a newly added label); **or**
-- include **`[skip-cooldown]`** in a commit message on the pull-request branch.
+- **uv** — add an `exclude-newer-package` entry under `[tool.uv]` for that package (for example
+  `exclude-newer-package = { "<package>" = "<recent-timestamp>" }`) and re-run `uv lock`. The entry is committed, so
+  the exception is visible in the pull request and `uv lock --check` still passes.
+- **npm** — run `npm install <package> --min-release-age=0`, which overrides the `.npmrc` setting for that one
+  command.
 
-Either path must be justified in the pull-request description. Use it only for security patches that genuinely cannot
-wait 72 hours.
+Any override must be justified in the pull-request description. Use it only for security patches that genuinely
+cannot wait 72 hours.
 
 ### Environment variables
 

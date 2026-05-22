@@ -47,7 +47,6 @@ jobs:
           trust-api-key: ${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}
           aes-key-base64: ${{ secrets.AES_KEY_BASE64 || 'dGVzdC1hZXMta2V5LWZvci1jaS10ZXN0aW5nLTMyYnl0ZXM=' }}  # pragma: allowlist secret
           postgres-password: ${{ secrets.POSTGRES_PASSWORD }}
-          lockfile: trust/trust-api/uv.lock
 
       - name: Run tests with pytest (example)
         # Replace with your actual test command
@@ -88,7 +87,6 @@ jobs:
           trust-api-key: ${{ secrets.TRUST_API_KEY || 'test-trust-api-key-for-ci' }}
           aes-key-base64: ${{ secrets.AES_KEY_BASE64 || 'QgZ+TBA0lUxcuCiRPLneFe/JjMaUEUJWHACHHGz2gGA=' }}  # pragma: allowlist secret
           postgres-password: ${{ secrets.POSTGRES_PASSWORD || 'test_password' }}
-          lockfile: trust/trust-api/uv.lock
 
       - name: Sync trust-api venv (incl. testcontainers)
         run: uv sync --locked
