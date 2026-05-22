@@ -24,7 +24,7 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Sync the project into a new environment, using the frozen lockfile
-COPY pyproject.toml ./
+COPY pyproject.toml uv.lock ./
 
 COPY ./entrypoint.sh /app/entrypoint.sh
 RUN chown -R app:app /app
@@ -34,7 +34,7 @@ RUN chmod +x /app/entrypoint.sh
 USER app
 
 # Sync dependencies using uv
-RUN uv sync --no-dev
+RUN uv sync --locked --no-dev
 
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"
