@@ -49,6 +49,12 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
+# Bump npm to >=11.10.0 so .npmrc `min-release-age` is honoured. Node 22 ships
+# npm 10.9.8, which silently ignores the key — leaving the supply-chain
+# cooldown a documentation artefact in this image. Pin a specific version so
+# the cooldown applies to the cooldown tooling itself.
+RUN npm install -g npm@11.10.0
+
 # Install dependencies strictly from the lockfile so a CI build cannot resolve
 # a fresh, un-vetted version even when the lockfile pins an older one.
 RUN npm ci
