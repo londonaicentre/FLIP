@@ -245,23 +245,31 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 | xnat-db | `postgres` | Pre-existing in the base image (`postgres`) |
 | flip-db / omop-db | `postgres` | Pre-existing in the base image (`postgres`) |
 
+**Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 1000) no
+longer run as root, the host-side bind-mount source directories must be owned by the matching
+UID. The Ansible playbooks `deploy/providers/AWS/site.yml` and
+`deploy/providers/local/site_local_trust.yml` provision `/opt/flip/xnat/**` as UID 1001 and
+`/opt/flip/orthanc/**` as UID 1000 — including a recursive `chown` after extracting the Orthanc
+storage archive (which `tar` writes as root). If you provision a trust host outside Ansible, you
+must replicate this ownership or first-boot writes (archive ingest, SQLite index, log rotation)
+will fail with EACCES.
+
 ### Linux Capability Restrictions
 
-Every container drops **all** Linux capabilities (`cap_drop: [ALL]`) and only adds back what the service strictly requires:
+Every container drops **all** Linux capabilities (`cap_drop: [ALL]`) and only adds back what the
+service strictly requires. The per-service grants in the compose files are:
 
-| Capability | Purpose |
-|------------|---------|
-| `CHOWN` | Change file ownership (needed by nearly all services) |
-| `DAC_OVERRIDE` | Bypass file permission checks |
-| `SETUID` / `SETGID` | Change UID/GID for subprocesses |
-| `NET_BIND_SERVICE` | Bind to network ports (including privileged ports < 1024) |
-| `NET_RAW` | Raw sockets (orthanc DICOM networking) |
-| `KILL` | Send signals to terminate processes cleanly (orthanc) |
-| `SETPCAP` | Manage capabilities internally (PostgreSQL only) |
+| Service(s) | Granted capabilities | Reason |
+|------------|----------------------|--------|
+| flip-api, fl-api, fl-server, trust-api, imaging-api, data-access-api, orthanc-base, xnat-web, xnat-nginx, pgadmin | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
+| flip-db, omop-db, xnat-db | `CHOWN`, `SETPCAP` | PostgreSQL's startup adjusts its own capability bounding set. |
+| orthanc | `CHOWN`, `NET_RAW`, `KILL` | `NET_RAW` for DICOM networking; `KILL` for clean shutdown of worker processes. |
+| flip-ui (development only) | `CHOWN`, `DAC_OVERRIDE`, `SETUID`, `SETGID`, `NET_BIND_SERVICE` | Vite dev server with bind-mounted source; not present in production where the UI ships as static files served by CloudFront. |
 
-PostgreSQL services (`flip-db`, `omop-db`, `xnat-db`) additionally receive `SETPCAP` to support
-the database's internal capability management. Orthanc additionally receives `NET_RAW` for DICOM
-network communication and `KILL` for clean process termination.
+Notably **not** granted anywhere: `SYS_ADMIN`, `SYS_PTRACE`, `SYS_MODULE`, `MAC_*`, `AUDIT_*`,
+`DAC_READ_SEARCH`. Combined with `no-new-privileges` (below), this defeats the standard
+`setuid`-binary and `LD_PRELOAD` escalation paths even if an attacker achieves RCE inside a
+container.
 
 ### No New Privileges
 
