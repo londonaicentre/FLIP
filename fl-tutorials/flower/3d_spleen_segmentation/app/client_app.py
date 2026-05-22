@@ -108,6 +108,7 @@ def train(msg: Message, context: Context) -> Message:
             loss_fn=loss_fn,
             device=device,
         )
+        round = global_round * (local_epochs) + epoch + 1
 
         val_dice, val_loss = validate_func(
             model=model,
@@ -116,10 +117,11 @@ def train(msg: Message, context: Context) -> Message:
             loss_fn=loss_fn,
         )
 
-        # Use epoch_{N}_ format for per-epoch metrics (NEW format for handle_client_metrics)
-        per_epoch_metrics[f"epoch_{epoch}_train_loss"] = float(train_loss)
-        per_epoch_metrics[f"epoch_{epoch}_val_loss"] = float(val_loss)
-        per_epoch_metrics[f"epoch_{epoch}_val_dice"] = float(val_dice)
+        # Tag each epoch's data point with its own round number so the fl-server
+        # forwards one Hub point per epoch (see handle_client_metrics).
+        per_epoch_metrics[f"train_loss.round_{round}"] = float(train_loss)
+        per_epoch_metrics[f"val_loss.round_{round}"] = float(val_loss)
+        per_epoch_metrics[f"val_dice.round_{round}"] = float(val_dice)
 
         losses["train"].append(train_loss)
         losses["val"].append(val_loss)
@@ -133,7 +135,7 @@ def train(msg: Message, context: Context) -> Message:
     # Construct and return the reply Message
     model_record = ArrayRecord(model.state_dict())
 
-    site_config = ConfigRecord({"site": client_name, "local_epochs": local_epochs})
+    site_config = ConfigRecord({"site": client_name})
     metrics = {
         "train_loss": avg_train_loss,
         "val_loss": avg_val_loss,
