@@ -25,11 +25,12 @@
 resource "aws_ecs_service" "flip_api" {
   count = var.enable_service_discovery ? 1 : 0
 
-  name            = "flip-api"
-  cluster         = aws_ecs_cluster.flip.id
-  task_definition = aws_ecs_task_definition.flip_api.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  name                   = "flip-api"
+  cluster                = aws_ecs_cluster.flip.id
+  task_definition        = aws_ecs_task_definition.flip_api.arn
+  desired_count          = 1
+  launch_type            = "FARGATE"
+  enable_execute_command = var.ecs_exec_enabled
 
   network_configuration {
     subnets          = module.flip_vpc.private_subnets
@@ -68,11 +69,12 @@ resource "aws_ecs_service" "flip_api" {
 resource "aws_ecs_service" "fl_api_net_1" {
   count = var.enable_service_discovery ? 1 : 0
 
-  name            = "fl-api-net-1"
-  cluster         = aws_ecs_cluster.flip.id
-  task_definition = aws_ecs_task_definition.fl_api_net_1[0].arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  name                   = "fl-api-net-1"
+  cluster                = aws_ecs_cluster.flip.id
+  task_definition        = aws_ecs_task_definition.fl_api_net_1[0].arn
+  desired_count          = 1
+  launch_type            = "FARGATE"
+  enable_execute_command = var.ecs_exec_enabled
 
   network_configuration {
     subnets          = module.flip_vpc.private_subnets
@@ -100,11 +102,12 @@ resource "aws_ecs_service" "fl_api_net_1" {
 resource "aws_ecs_service" "fl_server_net_1" {
   count = var.enable_service_discovery ? 1 : 0
 
-  name            = "fl-server-net-1"
-  cluster         = aws_ecs_cluster.flip.id
-  task_definition = aws_ecs_task_definition.fl_server_net_1[0].arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  name                   = "fl-server-net-1"
+  cluster                = aws_ecs_cluster.flip.id
+  task_definition        = aws_ecs_task_definition.fl_server_net_1[0].arn
+  desired_count          = 1
+  launch_type            = "FARGATE"
+  enable_execute_command = var.ecs_exec_enabled
 
   network_configuration {
     subnets          = module.flip_vpc.private_subnets

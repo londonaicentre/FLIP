@@ -1,14 +1,21 @@
 # Debugging across services in FLIP [VScode guide]
 
-Before running the debug command, ensure that you have the services up and running. You can do this by executing:
+Before running the debug command, ensure that the services are up. Start the full stack normally with:
 
 ```bash
 make up
 ```
 
-This will run all API services in debug mode.
+then bring up the API services in debug mode with either:
+
+```bash
+make debug-all                      # all API services in debug mode
+make debug SERVICE=<service-name>   # one service in debug mode
+```
+
 When in debug mode, the services will wait for a debugger to attach before proceeding.
 You can attach a debugger using your IDE or by using `pdb` in the terminal.
+To leave debug mode use `make debug-off SERVICE=<service-name>` or `make debug-off-all`.
 
 ## Debugging with VSCode
 

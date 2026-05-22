@@ -28,3 +28,9 @@ variable "cors_allowed_origins" {
   description = "Browser origins permitted to make CORS calls against this bucket. Typically the public canonical https://<flip_alb_subdomain>. Ignored when cors_methods is empty."
   default     = []
 }
+
+variable "kms_key_arn" {
+  description = "ARN of KMS CMK for SSE-KMS on this bucket. null (default) uses the AWS-managed key (aws/s3). When provided, the SSE block sets kms_master_key_id so S3 uses the specified CMK."
+  type        = string
+  default     = null
+}

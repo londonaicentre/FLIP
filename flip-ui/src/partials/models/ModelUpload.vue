@@ -132,7 +132,7 @@ import { FileInfo, FileUploadStatus } from "@/interfaces/model/types";
 import { deleteModelFile, downloadModelFile, processScannedFile } from "@/services/file-service";
 import { JobTypes } from "@/services/model-service";
 import { useAuthStore } from "@/store/auth";
-import { createPreSignedUrl, uploadFile as uploadFileService } from "@/utils/file";
+import { createPreSignedUrl, FileTooLargeError, uploadFile as uploadFileService } from "@/utils/file";
 import { formatBytes, getRandomId } from "@/utils/helpers";
 import { Snackbar } from "@/utils/snackbar";
 
@@ -226,19 +226,23 @@ const uploadFile = async (fileList: FileList) => {
         }
 
         try {
-            const url = await createPreSignedUrl(
+            const policy = await createPreSignedUrl(
                 file,
                 "/files/preSignedUrl/model",
                 route.params["modelId"].toString()
             );
 
-            if (!url) {
-                throw Error("No presigned URL returned 😢");
+            if (!policy) {
+                throw Error("No presigned upload policy returned");
+            }
+
+            if (file.size > policy.maxBytes) {
+                throw new FileTooLargeError(policy.maxBytes, file.size);
             }
 
             await uploadFileService(
                 file,
-                url
+                policy
             );
 
             filesAreUploading.value = true;
@@ -273,10 +277,18 @@ const uploadFile = async (fileList: FileList) => {
                 erroredFile.status = FileUploadStatus.ERROR;
             }
 
-            Snackbar.error({
-                title: "Error uploading file",
-                text: "There was an error uploading this file. Please try again."
-            });
+            if (error instanceof FileTooLargeError) {
+                Snackbar.error({
+                    title: "File too large",
+                    text: `${file.name} is ${formatBytes(error.actualBytes)} which exceeds the `
+                        + `${formatBytes(error.limitBytes)} limit.`
+                }, 12_000);
+            } else {
+                Snackbar.error({
+                    title: "Error uploading file",
+                    text: "There was an error uploading this file. Please try again."
+                });
+            }
         }
     }
 

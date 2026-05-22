@@ -19,11 +19,19 @@
 # (stag.flip.aicentre.co.uk / app.flip.aicentre.co.uk); that A-record
 # (aws_route53_record.alb in main.tf) aliases this CloudFront distribution.
 #
-# CloudFront serves the UI static bundle from S3 (default behavior)
-# and forwards /api/* to the ALB via api.<subdomain> — a backend-only
-# DNS name introduced solely so CloudFront can validate the origin's
-# TLS cert (AWS does not issue ACM certs for raw *.elb.amazonaws.com
-# hostnames). Trusts and users never see api.<subdomain>.
+# CloudFront serves the UI static bundle from S3 (default behavior) and
+# forwards /api/* to the (internal) ALB via aws_cloudfront_vpc_origin —
+# CloudFront provisions an AWS-managed ENI inside our VPC and dials the
+# ALB privately. The ALB has no public IP and no internet-facing path:
+# its security group accepts ingress on 443 only from the AWS-managed
+# CloudFront-VPCOrigins-Service-SG (see aws_security_group_rule.alb_ingress_https_from_cloudfront
+# below) — Option 2 from
+# https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html.
+#
+# Origin TLS: CloudFront sets the Host header to var.flip_alb_subdomain
+# and the ALB's default listener cert (aws_acm_certificate.flip, see
+# main.tf) covers that name, so origin TLS validation passes without
+# the legacy api.<subdomain> SNI cert chain.
 ############################################################
 
 # us-east-1 provider alias is required because CloudFront viewer
@@ -76,67 +84,64 @@ resource "aws_acm_certificate_validation" "flip_cloudfront" {
 }
 
 ############################
-# ALB API-origin cert (eu-west-2)
+# CloudFront VPC origin for the (internal) ALB
 #
-# Attached to the existing ALB HTTPS:443 listener as an additional
-# SNI cert so CloudFront can reach the ALB over HTTPS using
-# api.<subdomain>.
+# CloudFront provisions an AWS-managed ENI in this VPC and forwards
+# /api/* requests to the ALB over HTTPS:443 privately. The ALB has no
+# public IP; its security group accepts ingress from the AWS-managed
+# CloudFront-VPCOrigins-Service-SG only (see the data source and
+# aws_security_group_rule below).
 ############################
 
-resource "aws_acm_certificate" "flip_api" {
-  domain_name       = "api.${var.flip_alb_subdomain}"
-  validation_method = "DNS"
+resource "aws_cloudfront_vpc_origin" "flip_api" {
+  vpc_origin_endpoint_config {
+    # CloudFront VPC origin names accept only alphanumerics, dashes, and
+    # underscores — the subdomain contains dots, so replace them with dashes.
+    name                   = "flip-api-vpc-origin-${replace(var.flip_alb_subdomain, ".", "-")}"
+    arn                    = module.alb.arn
+    http_port              = 80
+    https_port             = 443
+    origin_protocol_policy = "https-only"
 
-  lifecycle {
-    create_before_destroy = true
-  }
-
-  tags = {
-    Name = "flip-api-origin-certificate"
-  }
-}
-
-resource "aws_route53_record" "api_cert_validation" {
-  for_each = {
-    for dvo in tolist(aws_acm_certificate.flip_api.domain_validation_options) : dvo.domain_name => {
-      name   = dvo.resource_record_name
-      record = dvo.resource_record_value
-      type   = dvo.resource_record_type
+    origin_ssl_protocols {
+      items    = ["TLSv1.2"]
+      quantity = 1
     }
   }
-
-  allow_overwrite = true
-  name            = each.value.name
-  records         = [each.value.record]
-  ttl             = 60
-  type            = each.value.type
-  zone_id         = data.aws_route53_zone.subdomain.zone_id
 }
 
-resource "aws_acm_certificate_validation" "flip_api" {
-  certificate_arn         = aws_acm_certificate.flip_api.arn
-  validation_record_fqdns = [for record in aws_route53_record.api_cert_validation : record.fqdn]
+# CloudFront creates `CloudFront-VPCOrigins-Service-SG` automatically when the
+# first VPC origin is provisioned in this VPC. The data lookup depends on the
+# VPC origin so a fresh apply doesn't try to read the SG before it exists.
+#
+# Per AWS docs (Option 2 in
+# https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html),
+# scoping the ALB ingress to this SG is the documented and most-restrictive
+# pattern — it accepts traffic only from this account's CloudFront VPC origin
+# ENIs. A vpc_cidr-based rule does NOT work for VPC-origin traffic even
+# though the ENIs have IPs inside the VPC CIDR; AWS evaluates VPC-origin SG
+# checks against the service-managed SG (or the CloudFront managed prefix
+# list), not the ENI source IP.
+data "aws_security_group" "cloudfront_vpcorigins_service" {
+  name   = "CloudFront-VPCOrigins-Service-SG"
+  vpc_id = module.flip_vpc.vpc_id
+
+  depends_on = [aws_cloudfront_vpc_origin.flip_api]
 }
 
-resource "aws_lb_listener_certificate" "flip_api_sni" {
-  listener_arn    = module.alb.listeners["https-listener"].arn
-  certificate_arn = aws_acm_certificate_validation.flip_api.certificate_arn
-}
-
-############################
-# Route53 A-alias for the ALB API origin (backend-only DNS)
-############################
-
-resource "aws_route53_record" "alb_api_origin" {
-  zone_id = data.aws_route53_zone.subdomain.zone_id
-  name    = "api.${var.flip_alb_subdomain}"
-  type    = "A"
-
-  alias {
-    name                   = module.alb.dns_name
-    zone_id                = module.alb.zone_id
-    evaluate_target_health = true
-  }
+# Adding this rule via a standalone resource (rather than inside the
+# alb_security_group module) avoids a dependency cycle: the ALB needs an SG to
+# exist before it can be created, the VPC origin needs the ALB, and the SG
+# lookup needs the VPC origin. Attaching the rule outside the module keeps the
+# chain linear.
+resource "aws_security_group_rule" "alb_ingress_https_from_cloudfront" {
+  description              = "HTTPS from the CloudFront-VPCOrigins-Service-SG (Option 2 in AWS VPC origins docs)"
+  type                     = "ingress"
+  from_port                = var.ALB_HTTPS_PORT
+  to_port                  = var.ALB_HTTPS_PORT
+  protocol                 = "tcp"
+  security_group_id        = module.alb_security_group.security_group.id
+  source_security_group_id = data.aws_security_group.cloudfront_vpcorigins_service.id
 }
 
 ############################
@@ -636,14 +641,16 @@ resource "aws_cloudfront_distribution" "flip_ui" {
   }
 
   origin {
-    domain_name = aws_route53_record.alb_api_origin.fqdn
+    # domain_name drives the Host header CloudFront sends to the origin and
+    # the SNI hostname it presents for TLS validation. Routing is via the
+    # VPC origin ID, not DNS, so this value need not resolve from CloudFront
+    # itself. The ALB listener cert (aws_acm_certificate.flip) is issued for
+    # var.flip_alb_subdomain, so origin TLS validation passes.
+    domain_name = var.flip_alb_subdomain
     origin_id   = "alb-api-origin"
 
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "https-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
+    vpc_origin_config {
+      vpc_origin_id = aws_cloudfront_vpc_origin.flip_api.id
     }
   }
 
@@ -736,9 +743,4 @@ output "CloudfrontDistributionDomain" {
 output "FlipUiBucketName" {
   description = "S3 bucket holding the UI static assets"
   value       = aws_s3_bucket.flip_ui.bucket
-}
-
-output "AlbApiOriginFqdn" {
-  description = "Backend-only DNS name used by CloudFront to reach the ALB API listener over HTTPS"
-  value       = aws_route53_record.alb_api_origin.fqdn
 }

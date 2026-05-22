@@ -18,7 +18,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, computed_field, field_validator
 
-from flip_api.domain.schemas.status import ClientStatus
+from flip_api.domain.schemas.status import ClientStatus, FLJobStatus
 from flip_api.domain.schemas.types import TrimStr
 from flip_api.utils.constants import JOB_TYPES_REQUIRED_FILES_FILE
 
@@ -70,13 +70,17 @@ class IJobResponse(BaseModel):
 
 
 class IJobMetaData(BaseModel):
-    """Defines the meta data of a job."""
+    """Job metadata as returned by an FL-API adapter's ``GET /list_jobs``.
+
+    The shared job-metadata contract (GitHub issue #490). flip-api correlates
+    ``model_id`` <-> ``job_id`` in its own ``fl_job`` table, so the contract carries
+    only ``job_id`` + ``status``.
+    """
 
     model_config = ConfigDict(extra="ignore")
 
     job_id: str
-    job_name: str
-    status: str
+    status: FLJobStatus
 
 
 class IRequiredTrainingInformation(BaseModel):

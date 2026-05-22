@@ -83,7 +83,7 @@ async def test_happy_path_image_counts_and_age_sex(stub_hub_received):
 
     # Sex Distribution: persons 1-12 appear in image_occurrence; 6 M, 6 F. The SQL
     # groups by gender_source_value of distinct person_id. The compose stack runs
-    # with COHORT_QUERY_THRESHOLD=5 (see trust/compose.test.yml), so 6 clears the
+    # with COHORT_QUERY_THRESHOLD=5 (see trust/deploy/compose.test.yml), so 6 clears the
     # bucket-rollup threshold and neither value collapses into "Other".
     sex = _aggregate(body, "Sex Distribution")
     assert sex == {"M": 6, "F": 6}

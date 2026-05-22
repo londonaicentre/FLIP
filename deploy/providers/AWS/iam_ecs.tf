@@ -72,6 +72,17 @@ data "aws_iam_policy_document" "ecs_task_execution_secrets" {
       "arn:aws:ssm:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:parameter/flip/*",
     ]
   }
+
+  statement {
+    sid = "KmsDecryptFlipKey"
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey",
+      "kms:GenerateDataKeyWithoutPlaintext",
+      "kms:DescribeKey",
+    ]
+    resources = [aws_kms_key.flip_app_key.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "ecs_task_execution_secrets" {
@@ -149,6 +160,17 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
       aws_s3_bucket.aicentre_bucket.arn,
       "${aws_s3_bucket.aicentre_bucket.arn}/*",
     ]
+  }
+
+  statement {
+    sid = "KmsDecryptFlipKey"
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey",
+      "kms:GenerateDataKeyWithoutPlaintext",
+      "kms:DescribeKey",
+    ]
+    resources = [aws_kms_key.flip_app_key.arn]
   }
 }
 
@@ -232,6 +254,17 @@ data "aws_iam_policy_document" "ecs_fl_server_task" {
       variable = "s3:prefix"
       values   = ["fl-flare-participant-kits/*", "fl-flare-participant-kits"]
     }
+  }
+
+  statement {
+    sid = "KmsDecryptFlipKey"
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey",
+      "kms:GenerateDataKeyWithoutPlaintext",
+      "kms:DescribeKey",
+    ]
+    resources = [aws_kms_key.flip_app_key.arn]
   }
 }
 
