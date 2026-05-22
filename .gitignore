@@ -376,4 +376,4 @@ trust/orthanc/orthanc/orthanc-storage
 trust/orthanc/orthanc/orthanc-storage-2
 
 # Federated learning runtime directories (at repo root, same pattern as flip-fl-base-flower)
-model_checkpoints/
+jobs/

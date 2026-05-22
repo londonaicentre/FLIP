@@ -21,14 +21,13 @@ services:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
-      - ${MODEL_CHECKPOINTS_DIR}/net-1:/app/model_checkpoints
+      - ${FL_JOBS_DIR}/net-1:/app/src
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
-      - FLOWER_SRC_ROOT=/app
-      - MODEL_CHECKPOINTS_DIR=/app/model_checkpoints
+      - FLOWER_SRC_ROOT=/app/src
     ports:
       - "${FL_API_PORT}:8000"
       - "5679:5679"
@@ -50,14 +49,13 @@ services:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
-      - ${MODEL_CHECKPOINTS_DIR}/net-2:/app/model_checkpoints
+      - ${FL_JOBS_DIR}/net-2:/app/src
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-2:9093
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-2:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
-      - FLOWER_SRC_ROOT=/app
-      - MODEL_CHECKPOINTS_DIR=/app/model_checkpoints
+      - FLOWER_SRC_ROOT=/app/src
     depends_on:
       - fl-server-net-2
     networks:
@@ -82,8 +80,10 @@ services:
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
-      # Model checkpoints shared with FL API
-      - ${MODEL_CHECKPOINTS_DIR}/net-1:/app/model_checkpoints
+      # Shared with FL API: uploaded app bundles (sources + checkpoint) live under
+      # /app/src/<model_id>; the evaluation ServerApp reads the checkpoint from
+      # the path in the flip-job-dir run-config value the FL API injects at submit.
+      - ${FL_JOBS_DIR}/net-1:/app/src
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false
@@ -94,7 +94,6 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
-      - MODEL_CHECKPOINTS_DIR=/app/model_checkpoints
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -147,8 +146,10 @@ services:
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
-      # Model checkpoints shared with FL API
-      - ${MODEL_CHECKPOINTS_DIR}/net-2:/app/model_checkpoints
+      # Shared with FL API: uploaded app bundles (sources + checkpoint) live under
+      # /app/src/<model_id>; the evaluation ServerApp reads the checkpoint from
+      # the path in the flip-job-dir run-config value the FL API injects at submit.
+      - ${FL_JOBS_DIR}/net-2:/app/src
     environment:
       - NET_ID=net-2
       - LOCAL_DEV=false
@@ -159,7 +160,6 @@ services:
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
       - AWS_PROFILE=${AWS_PROFILE}
-      - MODEL_CHECKPOINTS_DIR=/app/model_checkpoints
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
