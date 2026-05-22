@@ -108,3 +108,29 @@ def test_security_headers_csp_on_html_response():
     assert "script-src 'self'" in csp
     assert "object-src 'none'" in csp
     assert "frame-ancestors 'none'" in csp
+
+
+def test_security_headers_no_csp_on_docs_routes():
+    """Verify CSP is NOT added on docs routes so Swagger/ReDoc can load CDN assets."""
+    app = FastAPI()
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    for path in ("/api/docs", "/api/redoc", "/api/openapi.json"):
+        @app.get(path)
+        async def docs_route():
+            from fastapi.responses import HTMLResponse
+            return HTMLResponse("<html></html>")
+
+        client = TestClient(app)
+        response = client.get(path)
+
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        # Other security headers still present
+        assert "strict-transport-security" in response.headers
+        assert "x-frame-options" in response.headers
+        assert "x-content-type-options" in response.headers
+        assert "referrer-policy" in response.headers
+        # CSP should NOT be present on docs routes
+        assert "content-security-policy" not in response.headers, \
+            f"CSP unexpectedly present on {path}"
