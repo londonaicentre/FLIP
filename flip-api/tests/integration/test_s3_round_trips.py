@@ -138,12 +138,16 @@ def test_s3_client_list_objects_returns_full_paths_with_scheme(s3_buckets):
 # ---------------------------------------------------------------------------
 
 
-def test_post_presigned_url_endpoint_returns_working_upload_url(client: TestClient, session, s3_buckets):
-    """Endpoint returns a presigned PUT URL; the URL actually accepts an upload.
+def test_post_presigned_url_endpoint_returns_working_upload_policy(
+    client: TestClient, session, s3_buckets
+):
+    """Endpoint returns a presigned POST policy; the policy actually accepts an upload.
 
-    This is the strongest possible end-to-end S3 test: build the URL via the
-    endpoint, sign it with moto's signing path, send a real PUT through
-    ``requests``, then verify the object lands at the expected key.
+    Build the policy via the endpoint, sign it with moto's signing path, send
+    a real multipart POST through ``requests``, then verify the object lands
+    at the expected key. Locks in the contract that the response carries
+    ``url`` + ``fields`` + ``maxBytes`` and that the POSTed object materialises
+    in the bucket.
     """
     user_id = admin_user(session)
     _, model_id = _seed_project_and_model(session, user_id)
@@ -151,21 +155,74 @@ def test_post_presigned_url_endpoint_returns_working_upload_url(client: TestClie
 
     response = client.post(
         f"/api/files/preSignedUrl/model/{model_id}",
-        json={"fileName": "weights.bin"},
+        json={"fileName": "weights.bin", "contentType": "application/octet-stream"},
     )
     assert response.status_code == 200, response.text
-    presigned_url = response.json()
-    assert presigned_url, "endpoint returned an empty URL"
+    policy = response.json()
+    assert policy["url"], "endpoint returned an empty URL"
+    assert isinstance(policy["fields"], dict)
+    assert policy["maxBytes"] > 0
+    assert policy["fields"].get("Content-Type") == "application/octet-stream"
 
     payload = b"\x00\x01\x02moto-bytes"
-    put = requests.put(presigned_url, data=payload, timeout=10)
-    assert put.status_code == 200, put.text
+    post = requests.post(
+        policy["url"],
+        data=policy["fields"],
+        files={"file": ("weights.bin", payload, "application/octet-stream")},
+        timeout=10,
+    )
+    assert post.status_code in (200, 204), post.text
 
     settings = get_settings()
     bucket, prefix = _bucket_and_prefix(settings.UPLOADED_MODEL_FILES_BUCKET)
     expected_key = f"{prefix}/{model_id}/weights.bin"
     obj = boto3.client("s3").get_object(Bucket=bucket, Key=expected_key)
     assert obj["Body"].read() == payload
+
+
+def test_post_presigned_url_policy_carries_size_cap_and_content_type_lock(
+    client: TestClient, session, s3_buckets, monkeypatch
+):
+    """The policy returned by the endpoint must bake the size cap and the
+    Content-Type lock in directly.
+
+    Real S3 enforces ``content-length-range`` and Content-Type conditions
+    server-side — that's the actual storage-cost-DoS mitigation. moto's
+    fake doesn't enforce policy conditions on POST uploads (oversized
+    payloads still get a 204), so this test asserts the structural
+    contract by base64-decoding the policy field instead.
+    """
+    import base64
+    import json as _json
+
+    from flip_api.utils.s3_client import _MULTIPART_OVERHEAD_BUFFER_BYTES
+
+    user_id = admin_user(session)
+    _, model_id = _seed_project_and_model(session, user_id)
+    override_verify_token_as(user_id)
+
+    monkeypatch.setattr(get_settings(), "MAX_MODEL_FILE_BYTES", 64)
+
+    response = client.post(
+        f"/api/files/preSignedUrl/model/{model_id}",
+        json={"fileName": "huge.bin", "contentType": "application/octet-stream"},
+    )
+    assert response.status_code == 200, response.text
+    policy_response = response.json()
+    # The endpoint surfaces the raw file-size cap so the UI guard mirrors it.
+    assert policy_response["maxBytes"] == 64
+    assert policy_response["fields"]["Content-Type"] == "application/octet-stream"
+
+    decoded = _json.loads(base64.b64decode(policy_response["fields"]["policy"]))
+    conditions = decoded["conditions"]
+    # S3 sees ``max_bytes + buffer`` because content-length-range checks the
+    # whole encoded request body (multipart framing), not just the file part.
+    expected_cap = 64 + _MULTIPART_OVERHEAD_BUFFER_BYTES
+    assert ["content-length-range", 0, expected_cap] in conditions
+    assert any(
+        isinstance(c, dict) and c.get("Content-Type") == "application/octet-stream"
+        for c in conditions
+    )
 
 
 def test_post_presigned_url_endpoint_404_for_unknown_model(client: TestClient, session, s3_buckets):

@@ -12,6 +12,7 @@
 
 import json
 import logging
+from typing import Any
 
 from fastapi import status
 
@@ -24,7 +25,7 @@ HEADERS = {
 }
 
 
-def success(status_code=status.HTTP_200_OK, data=None):
+def success(status_code: int = status.HTTP_200_OK, data: dict | None = None) -> dict:
     """
     Construct a successful API response with default CORS headers.
 
@@ -43,7 +44,7 @@ def success(status_code=status.HTTP_200_OK, data=None):
     return response
 
 
-def error(status_code, error):
+def error(status_code: int, error: Exception | Any) -> dict:
     """
     Construct an error response with logging and error message.
 
@@ -67,7 +68,7 @@ def error(status_code, error):
     return response
 
 
-def unhandled_error(status_code, error):
+def unhandled_error(status_code: int, error: Exception | Any) -> dict:
     """
     Construct an unhandled error response with logging and generic error message.
 
@@ -90,7 +91,7 @@ def unhandled_error(status_code, error):
     return response
 
 
-def api_response(status_code, body=None):
+def api_response(status_code: int, body: dict | None = None) -> dict:
     """
     Construct a generic API response with default CORS headers.
 
