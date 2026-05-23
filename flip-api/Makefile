@@ -103,6 +103,17 @@ endif
 e2e_smoke:
 	@echo "🚀 Running e2e smoke (model files: $(MODEL_FILES_DIR), query: $(QUERY_FILE))..."
 	env DB_HOST=localhost uv run python -m tests.e2e_smoke --model-files-dir $(MODEL_FILES_DIR) --query-file $(QUERY_FILE) $(EXTRA_ARGS)
+
+# Spleen-segmentation variant of e2e_smoke: same recipe, with the spleen tutorial
+# defaults plus a data-enrichment step that uploads segmentation labels to each
+# trust's XNAT (via flip_project_spleen_segmentation/upload_labels_to_XNAT.py)
+# between image pull and training. Target-specific vars override the e2e_smoke
+# defaults; e2e_smoke runs as a prerequisite with this target's vars applied.
+e2e_smoke_spleen: MODEL_FILES_DIR := ../../flip-fl-base-flower/tutorials/3d_spleen_segmentation/app
+e2e_smoke_spleen: QUERY_FILE := ../../flip-fl-base-flower/tutorials/3d_spleen_segmentation/query.sql
+e2e_smoke_spleen: EXTRA_ARGS := --data-enrichment-cwd ../../flip_project_spleen_segmentation --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id $$FLIP_PROJECT_ID'
+e2e_smoke_spleen: e2e_smoke
+
 generate-trust-key:
 	uv run python -m flip_api.scripts.generate_trust_key --trust-name $(TRUST_NAME)
 generate-trust-api-keys:
