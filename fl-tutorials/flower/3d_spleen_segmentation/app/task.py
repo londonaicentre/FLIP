@@ -21,6 +21,7 @@ from monai.data import DataLoader
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.networks.utils import one_hot
+from monai.transforms import AsDiscrete
 
 from app.transforms import get_sliding_window_inferer
 
@@ -101,7 +102,11 @@ def validate_func(
         Running loss across all validation samples
     """
     model.eval()
-    dice_metric = DiceMetric(reduction="mean")
+    # include_background=False + AsDiscrete(argmax=True) below mirror the flip-fl-base
+    # reference's validator (trainer.py:79-81). Without these, DiceMetric receives
+    # raw logits and the bg dice ~= 1.0 dominates the mean, so val_dice stays pinned
+    # at ~0.5 across all rounds regardless of whether the model is actually learning.
+    dice_metric = DiceMetric(include_background=False, reduction="mean")
 
     log(INFO, f"Starting validation on {len(val_loader)} batches")
 
@@ -122,22 +127,21 @@ def validate_func(
             loss = loss_fn(predictions, labels).item()
             running_loss += loss
 
-            # Convert labels to one-hot encoding for Dice computation
-            # (same approach as FLARE validator)
             num_classes = predictions.shape[1]
+            post_pred = AsDiscrete(argmax=True, to_onehot=num_classes)
+            predictions_onehot = torch.stack([post_pred(p) for p in predictions])
             labels_one_hot = one_hot(labels, num_classes=num_classes)
 
-            # Accumulate Dice scores
-            dice_metric(predictions, labels_one_hot)
+            dice_metric(predictions_onehot, labels_one_hot)
 
             log(INFO, f"Validation batch {i + 1}/{len(val_loader)} processed")
 
-    # Compute final aggregated Dice score
+    # Compute final aggregated Dice score (foreground only — spleen for this task).
     dice_score = dice_metric.aggregate().cpu().numpy().item()
     running_loss /= max(1, len(val_loader.dataset))
     dice_metric.reset()
 
-    log(INFO, f"Validation completed. Mean Dice score: {dice_score:.4f}, Average Loss: {running_loss:.4f}")
+    log(INFO, f"Validation completed. Foreground Dice score: {dice_score:.4f}, Average Loss: {running_loss:.4f}")
 
     return dice_score, running_loss
 
@@ -161,7 +165,8 @@ def test_func(
         Running loss across all test samples
     """
     model.eval()
-    dice_metric = DiceMetric(reduction="mean")
+    # Same discretization fix as validate_func above (see comment there).
+    dice_metric = DiceMetric(include_background=False, reduction="mean")
 
     log(INFO, f"Starting test evaluation on {len(val_loader)} batches")
 
@@ -178,20 +183,20 @@ def test_func(
             loss = loss_fn(predictions, labels).item()
             running_loss += loss
 
-            # Convert labels to one-hot encoding for Dice computation
             num_classes = predictions.shape[1]
+            post_pred = AsDiscrete(argmax=True, to_onehot=num_classes)
+            predictions_onehot = torch.stack([post_pred(p) for p in predictions])
             labels_one_hot = one_hot(labels, num_classes=num_classes)
 
-            # Accumulate Dice scores
-            dice_metric(predictions, labels_one_hot)
+            dice_metric(predictions_onehot, labels_one_hot)
 
             log(INFO, f"Test batch {i + 1}/{len(val_loader)} processed")
 
-    # Compute final aggregated Dice score
+    # Foreground-only dice (spleen for this task).
     dice_score = dice_metric.aggregate().cpu().numpy().item()
     running_loss /= max(1, len(val_loader.dataset))
     dice_metric.reset()
 
-    log(INFO, f"Test evaluation completed. Mean Dice score: {dice_score:.4f}, Average Loss: {running_loss:.4f}")
+    log(INFO, f"Test evaluation completed. Foreground Dice score: {dice_score:.4f}, Average Loss: {running_loss:.4f}")
 
     return dice_score, running_loss
