@@ -34,7 +34,7 @@ dependencies = [
     "numpy>=2.4.2",
     "pandas>=3.0.0",
     "pydicom>=3.0.1",
-    "torch>=2.10.0",
+    "torch>=2.10.0,<2.12",
 ]
 
 [dependency-groups]
