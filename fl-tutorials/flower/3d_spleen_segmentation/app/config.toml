@@ -1,0 +1,22 @@
+# Per-tutorial run-config overrides for the spleen-segmentation training app.
+#
+# The fl-api reads this file at job-submit time and merges it into the
+# Flower --run-config TOML it passes to `flwr run`. Each key here must
+# already be declared in src/standard/pyproject.toml's [tool.flwr.app.config]
+# (Flower rejects --run-config overrides for undeclared keys).
+#
+# Tuning rationale:
+#  - num-server-rounds = 10, local-epochs = 2:
+#    Default 3x1 gave a dead-flat val_dice of 0.505453 across all rounds
+#    (model never learned to predict the spleen class). 20 effective passes
+#    per client gives the optimiser enough budget to start moving off the
+#    "always background" baseline on the tiny dev cohort (~7 train volumes
+#    per trust).
+#  - learning-rate = 5e-5:
+#    Matches the flip-fl-base reference. Half the original 1e-4 -- gentler
+#    for batch_norm with batch_size=2, where high LR + small batch statistics
+#    cause noisy updates.
+
+num-server-rounds = 10
+local-epochs = 2
+learning-rate = 5e-5

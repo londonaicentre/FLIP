@@ -18,7 +18,7 @@ from logging import INFO, WARNING
 import torch
 from flwr.common import log
 from monai.data import DataLoader
-from monai.losses import DiceLoss
+from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
 from monai.networks.utils import one_hot
 
@@ -29,7 +29,7 @@ def train_func(
     model: torch.nn.Module,
     train_loader: DataLoader,
     optimizer: torch.optim.Optimizer,
-    loss_fn: DiceLoss,
+    loss_fn: DiceCELoss,
     device: torch.device,
 ) -> float:
     """Train the model for one pass through the dataset.
@@ -38,7 +38,7 @@ def train_func(
         model: The segmentation model (UNet) to train
         train_loader: DataLoader with training data
         optimizer: Adam optimizer
-        loss_fn: DiceLoss with to_onehot_y=True, softmax=True
+        loss_fn: DiceCELoss with to_onehot_y=True, softmax=True (matches flip-fl-base reference)
         device: Device to train on (cuda or cpu)
 
     Returns:
@@ -81,7 +81,7 @@ def validate_func(
     model: torch.nn.Module,
     val_loader: DataLoader,
     device: torch.device,
-    loss_fn: DiceLoss,
+    loss_fn: DiceCELoss,
 ) -> tuple[float, float]:
     """Validate the model using sliding window inference.
 
@@ -94,7 +94,7 @@ def validate_func(
         model: The segmentation model to evaluate
         val_loader: DataLoader with validation data
         device: Device to evaluate on
-        loss_fn: DiceLoss (not used for validation but included for consistency)
+        loss_fn: DiceCELoss (not used for validation but included for consistency)
 
     Returns:
         Mean Dice score across all validation samples
@@ -146,7 +146,7 @@ def test_func(
     model: torch.nn.Module,
     val_loader: DataLoader,
     device: torch.device,
-    loss_fn: DiceLoss,
+    loss_fn: DiceCELoss,
 ) -> tuple[float, float]:
     """Test the model on test data (same as validate_func but for test set).
 
@@ -154,7 +154,7 @@ def test_func(
         model: The segmentation model to evaluate
         val_loader: DataLoader with test data
         device: Device to evaluate on
-        loss_fn: DiceLoss for computing loss
+        loss_fn: DiceCELoss for computing loss
 
     Returns:
         Mean Dice score across all test samples
