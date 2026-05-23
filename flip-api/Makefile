@@ -114,6 +114,17 @@ e2e_smoke_spleen: QUERY_FILE := ../../flip-fl-base-flower/tutorials/3d_spleen_se
 e2e_smoke_spleen: EXTRA_ARGS := --data-enrichment-cwd ../../flip_project_spleen_segmentation --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id $$FLIP_PROJECT_ID'
 e2e_smoke_spleen: e2e_smoke
 
+# Spleen-segmentation evaluation variant of e2e_smoke_spleen: same cohort query
+# and same data-enrichment step, but uploads the evaluation tutorial's app dir
+# instead of the training one. That dir bundles a pre-trained model.pt
+# alongside the code -- the e2e smoke uploads it as part of the model files;
+# the fl-api writes it into /app/src/<model_id>/app/ on the shared FL_JOBS_DIR
+# mount; the evaluation ServerApp reads it via flip-job-dir at submit time.
+e2e_smoke_spleen_evaluation: MODEL_FILES_DIR := ../../flip-fl-base-flower/tutorials/3d_spleen_segmentation_evaluation/app
+e2e_smoke_spleen_evaluation: QUERY_FILE := ../../flip-fl-base-flower/tutorials/3d_spleen_segmentation/query.sql
+e2e_smoke_spleen_evaluation: EXTRA_ARGS := --data-enrichment-cwd ../../flip_project_spleen_segmentation --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id $$FLIP_PROJECT_ID'
+e2e_smoke_spleen_evaluation: e2e_smoke
+
 generate-trust-key:
 	uv run python -m flip_api.scripts.generate_trust_key --trust-name $(TRUST_NAME)
 generate-trust-api-keys:
