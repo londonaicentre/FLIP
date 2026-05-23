@@ -20,6 +20,7 @@ from monai.data import DataLoader
 from monai.losses import DiceLoss
 from monai.metrics import DiceMetric
 from monai.networks.utils import one_hot
+from monai.transforms import AsDiscrete
 
 from app.transforms import get_sliding_window_inferer
 
@@ -149,12 +150,17 @@ def evaluate_func(
     test_loader: DataLoader,
     device: torch.device,
 ) -> list[float]:
-    """Evaluate the model using sliding window inference and return individual Dice scores.
+    """Evaluate the model using sliding window inference and return per-sample foreground Dice scores.
 
-    Key features:
-    - Sliding window inference for full volume prediction
-    - DiceMetric without reduction to get per-sample scores
-    - One-hot encoding of labels for Dice computation
+    Mirrors the flip-fl-base reference's validator (trainer.py:79-81):
+      - Sliding-window logits are discretized via AsDiscrete(argmax=True, to_onehot=N)
+        before being passed to DiceMetric. Without this step DiceMetric receives raw
+        logits and produces a degenerate score that's constant (~0.5 for binary
+        segmentation) regardless of model quality.
+      - DiceMetric is built with include_background=False so the returned score
+        averages only the foreground class(es); a 2-class binary segmenter where
+        the foreground is <1% of voxels otherwise dominates the mean with bg dice
+        ≈ 1.0 and hides any real signal in the spleen class.
 
     Args:
         model: The segmentation model to evaluate
@@ -162,10 +168,10 @@ def evaluate_func(
         device: Device to evaluate on
 
     Returns:
-        List of individual Dice scores for each sample in the test set
+        List of per-sample foreground-class Dice scores.
     """
     model.eval()
-    dice_metric = DiceMetric(reduction="mean_batch")
+    dice_metric = DiceMetric(include_background=False, reduction="mean_batch")
 
     logger.info(f"Starting evaluation on {len(test_loader)} batches")
 
@@ -183,22 +189,25 @@ def evaluate_func(
 
             predictions = inferer(inputs=images, network=model)
 
-            # Convert labels to one-hot encoding for Dice computation
+            # AsDiscrete + one_hot give DiceMetric the discrete inputs it expects.
             num_classes = predictions.shape[1]
+            post_pred = AsDiscrete(argmax=True, to_onehot=num_classes)
+            # AsDiscrete drops the batch dim; re-add it so DiceMetric sees (B, C, ...).
+            predictions_onehot = torch.stack([post_pred(p) for p in predictions])
             labels_one_hot = one_hot(labels, num_classes=num_classes)
 
-            # Compute Dice score for this batch
-            dice_metric(predictions, labels_one_hot)
+            dice_metric(predictions_onehot, labels_one_hot)
             batch_dice_per_class = dice_metric.aggregate().cpu().numpy()
 
-            # Take mean across all classes to get single score per batch
+            # include_background=False already excluded the bg row; mean across remaining
+            # foreground classes (just spleen for 2-class binary segmentation).
             batch_dice = float(batch_dice_per_class.mean())
             dice_scores.append(batch_dice)
             dice_metric.reset()
 
-            logger.info(f"Evaluation batch {i + 1}/{len(test_loader)} processed, Dice: {batch_dice:.4f}")
+            logger.info(f"Evaluation batch {i + 1}/{len(test_loader)} processed, foreground Dice: {batch_dice:.4f}")
 
     mean_dice = sum(dice_scores) / len(dice_scores) if dice_scores else 0.0
-    logger.info(f"Evaluation completed. Mean Dice score: {mean_dice:.4f}")
+    logger.info(f"Evaluation completed. Mean foreground Dice score: {mean_dice:.4f}")
 
     return dice_scores
