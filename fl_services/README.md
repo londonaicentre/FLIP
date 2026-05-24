@@ -13,7 +13,7 @@
 
 # NVFLARE Federated  Learning services
 
-This folder contains base code to create NVIDIA FLARE federated learning networks, each containing a set of clients, a server and an API. `fl-api-base` and `fl-base` are base services used by the provisioning command to build up on. `fl-base` can be used to test applications locally, but is a single container that does not constitute a fully working FL network.
+This folder contains base code to create NVIDIA FLARE federated learning networks, each containing a set of clients, a server and an API. `fl-api-base` and `fl-base` are base services used by the provisioning command to build upon. `fl-base` can be used to test applications locally, but is a single container that does not constitute a fully working FL network.
 
 This diagram provides an overview of the services:
 
