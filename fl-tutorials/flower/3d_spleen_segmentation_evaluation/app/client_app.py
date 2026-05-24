@@ -62,7 +62,11 @@ def evaluate(msg: Message, context: Context) -> Message:
     # Load the model weights distributed by the ServerApp.
     arrays: ArrayRecord = msg.content["arrays"]
     model = get_model()
-    model.load_state_dict(arrays.to_torch_state_dict(), strict=False)
+    # strict=True (default) — server and client both build get_model() from the
+    # same factory, so any missing/unexpected key means the wire format has
+    # drifted from the architecture, not a legitimate partial load. Better to
+    # fail the eval task than score with random weights in mismatched layers.
+    model.load_state_dict(arrays.to_torch_state_dict())
     model.to(device)
 
     # evaluate_func sweeps the whole test_loader once and returns one dice

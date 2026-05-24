@@ -88,7 +88,11 @@ def train(msg: Message, context: Context) -> Message:
     # Initialize model and load received weights
     model = get_model()
     state_dict = msg.content["arrays"].to_torch_state_dict()
-    model.load_state_dict(state_dict=state_dict, strict=False)
+    # strict=True (default) — server and client build get_model() from the same
+    # factory, so any missing/unexpected key means the wire format has drifted
+    # from the architecture; better to fail than train with random weights in
+    # mismatched layers.
+    model.load_state_dict(state_dict=state_dict)
     model.to(device)
 
     # Initialize optimizer and loss function
@@ -200,7 +204,9 @@ def evaluate(msg: Message, context: Context) -> Message:
     # Initialize model and load received weights
     model = get_model()
     state_dict = msg.content["arrays"].to_torch_state_dict()
-    model.load_state_dict(state_dict=state_dict, strict=False)
+    # strict=True (default) — see note in the train handler above; same wire
+    # contract applies to the test path.
+    model.load_state_dict(state_dict=state_dict)
     model.to(device)
 
     # Initialize loss function

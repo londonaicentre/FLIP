@@ -110,7 +110,11 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     model = get_model()
     # Load to CPU: the SuperLink runs CPU-only and only repacks the weights for distribution to SuperNodes.
     state_dict = torch.load(checkpoint_file, map_location="cpu", weights_only=True)
-    model.load_state_dict(state_dict, strict=False)
+    # strict=True (default) — a missing/unexpected key means the on-disk checkpoint
+    # doesn't match get_model()'s architecture, and the eval would otherwise run
+    # with the mismatched layers still at random init and report a plausible-but-
+    # meaningless dice. Fail loudly here instead.
+    model.load_state_dict(state_dict)
     log(INFO, f"Loaded model from {checkpoint_file}")
 
     flip.update_status(model_id, ModelStatus.PREPARED)
