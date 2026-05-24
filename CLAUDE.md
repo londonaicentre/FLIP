@@ -165,16 +165,16 @@ After changes, evaluate if docs need updating:
 
 | Change Type | Documentation to Review |
 |-------------|------------------------|
-| New service/component | `README.md`, `CONTRIBUTING.md`, `docs/source/2_components.rst` |
-| New API endpoints | `docs/source/5_api_reference.rst`, service `README.md` |
-| Changed env vars | `.env.development.example`, `CONTRIBUTING.md`, `docs/source/3_sys-admin.rst` |
+| New service/component | `README.md`, `CONTRIBUTING.md`, `docs/source/components.rst` |
+| New API endpoints | `docs/source/api-reference.rst`, service `README.md` |
+| Changed env vars | `.env.development.example`, `CONTRIBUTING.md`, `docs/source/sys-admin.rst` |
 | New dependencies | `CONTRIBUTING.md`, service `README.md` |
-| Changed deployment config | `deploy/README.md`, `docs/source/3_sys-admin.rst` |
+| Changed deployment config | `deploy/README.md`, `docs/source/sys-admin.rst` |
 | New Make targets | `README.md`, this file |
-| User-facing workflow changes | `docs/source/4_user-guides.rst` |
+| User-facing workflow changes | `docs/source/user-guides.rst` |
 | FL framework features | `docs/source/components/component-fl-nodes.rst` |
 | Trust service changes | `trust/README.md`, relevant `trust/*/README.md` |
-| Auth/role changes | `docs/source/components/component-user-roles.rst` |
+| Auth/role changes | `docs/source/sys-admin/admin-user-roles.rst` |
 
 ## Code Style & Conventions
 
@@ -301,8 +301,8 @@ The senders construct the header inline at call sites:
 ## Documentation Files
 
 Key docs (read on demand):
-- Auth/deployment: `docs/source/3_sys-admin.rst`
-- Components: `docs/source/2_components.rst`
-- API reference: `docs/source/5_api_reference.rst`
-- User guides: `docs/source/4_user-guides.rst`
+- Auth/deployment: `docs/source/sys-admin.rst`
+- Components: `docs/source/components.rst`
+- API reference: `docs/source/api-reference.rst`
+- User guides: `docs/source/user-guides.rst`
 - AWS deployment: `deploy/providers/AWS/README.md`
