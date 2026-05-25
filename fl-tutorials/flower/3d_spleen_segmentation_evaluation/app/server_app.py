@@ -108,6 +108,7 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
         raise FileNotFoundError(msg)
 
     model = get_model()
+    # Load to CPU: the SuperLink runs CPU-only and only repacks the weights for distribution to SuperNodes.
     state_dict = torch.load(checkpoint_file, map_location="cpu", weights_only=True)
     model.load_state_dict(state_dict, strict=False)
     log(INFO, f"Loaded model from {checkpoint_file}")
