@@ -557,9 +557,10 @@ def run_data_enrichment(cwd: Path, cmd: str, project_id: str) -> None:
     exported, so any project-aware enrichment (e.g. the spleen segmentation
     tutorial's upload-labels-to-XNAT step) can resolve the per-trust XNAT id from
     the central-hub project id. Non-zero exit raises ``SmokeFailure``.
+
+    ``cwd`` existence and the cwd/cmd pairing are validated upfront in
+    :func:`parse_args` so misuse fails before the multi-minute image-pull wait.
     """
-    if not cwd.exists():
-        raise SmokeFailure(f"--data-enrichment-cwd does not exist: {cwd}")
     _log(f"🧪 Data enrichment: running `{cmd}` in {cwd} (FLIP_PROJECT_ID={project_id})")
     env = {**os.environ, "FLIP_PROJECT_ID": project_id}
     result = subprocess.run(cmd, shell=True, cwd=str(cwd), env=env)
@@ -651,7 +652,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Shell command for the data-enrichment step (paired with --data-enrichment-cwd).",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+
+    # Validate the data-enrichment pair upfront so a typo doesn't surface only
+    # after the 5–15 min image-pull wait. Both flags are required together;
+    # the cwd must exist.
+    if bool(args.data_enrichment_cmd) != bool(args.data_enrichment_cwd):
+        parser.error("--data-enrichment-cmd and --data-enrichment-cwd must be used together")
+    if args.data_enrichment_cwd is not None and not args.data_enrichment_cwd.exists():
+        parser.error(f"--data-enrichment-cwd does not exist: {args.data_enrichment_cwd}")
+
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -694,8 +705,6 @@ def main(argv: list[str] | None = None) -> int:
             client, headers, project_id, args.image_pull_threshold, args.image_pull_timeout
         )
         if args.data_enrichment_cmd:
-            if not args.data_enrichment_cwd:
-                raise SmokeFailure("--data-enrichment-cmd requires --data-enrichment-cwd")
             run_data_enrichment(args.data_enrichment_cwd, args.data_enrichment_cmd, project_id)
         initiate_training(client, headers, model_id, [t["name"] for t in trusts])
         wait_for_training_started(client, headers, model_id, args.training_start_timeout)

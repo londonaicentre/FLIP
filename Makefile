@@ -151,7 +151,7 @@ up-local-trust: create-networks
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-local PROD=$(PROD)
 	@echo "✅ Local Trust services started successfully!"
 
-central-hub: create-networks-centralhub _ensure-fl-jobs-dir
+central-hub: create-networks-centralhub
 	$(MAKE) -C flip-api up
 
 # Stop all containers
