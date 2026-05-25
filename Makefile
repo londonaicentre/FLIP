@@ -99,13 +99,27 @@ up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jo
 	$(MAKE) -C trust/xnat up
 	@echo "✅ All services started successfully!"
 
-# Ensure jobs directory exists with proper permissions before starting containers
-# to avoid Docker creating it as root which prevents the fl-api container (runs as app user) from writing
-# Only needed for Flower backend
+# Ensure jobs/<net> dirs exist with writable perms before starting containers,
+# so Docker doesn't create them root-owned and lock out the fl-api container
+# (which runs as a non-root `app` user).
+#
+# Net IDs come from NET_ENDPOINTS (the per-env single source of truth — prod
+# has only net-1; dev has net-1 + net-2). A new net is just an NET_ENDPOINTS
+# entry plus a compose service block; this target picks it up automatically.
+# Only needed for the Flower backend (NVFLARE doesn't use FL_JOBS_DIR).
 _ensure-fl-jobs-dir:
 	@if [ "$(FL_BACKEND)" = "flower" ]; then \
-		mkdir -p jobs/net-1 jobs/net-2; \
-		chmod 777 jobs jobs/net-1 jobs/net-2; \
+		nets=$$(printf '%s' '$(NET_ENDPOINTS)' | python3 -c "import json,sys; d=sys.stdin.read().strip(); print(' '.join(json.loads(d).keys()) if d else '')"); \
+		if [ -z "$$nets" ]; then \
+			echo "❌ _ensure-fl-jobs-dir: NET_ENDPOINTS is empty or unparseable; cannot derive net IDs" >&2; \
+			exit 1; \
+		fi; \
+		mkdir -p jobs; \
+		chmod 777 jobs; \
+		for net in $$nets; do \
+			mkdir -p jobs/$$net; \
+			chmod 777 jobs/$$net; \
+		done; \
 	fi
 
 # Minimal $(MAKE) up
