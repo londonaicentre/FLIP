@@ -214,4 +214,59 @@ test("renders the 'No trusts staged' subtitle on projects without any approvedTr
         expect(wrapper.find("[data-test='projects-list-view']").exists()).toBe(true);
         expect(wrapper.find("[data-test='projects-grid-view']").exists()).toBe(false);
     });
+
+    test("trust chips fall back to a cleaned + truncated name when no code is supplied", async () => {
+        setProject(makeProject("STAGED", [
+            // No code → name is stripped of "NHS Foundation Trust" / "NHS Trust" / "Trust"
+            { id: "t1", name: "Maple NHS Foundation Trust", code: undefined as unknown as string, approved: true }
+        ]));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const chips = wrapper.findAll("[data-test='trust-chip']");
+        expect(chips).toHaveLength(1);
+        // After stripping bloat: "Maple" — well under the 16-char limit.
+        expect(chips[0].text()).toBe("Maple");
+    });
+
+    test("caps visible trust chips at 4 and surfaces a +N marker for the overflow", async () => {
+        // 6 trusts → first 4 chips + "+2" overflow.
+        const trusts = ["A", "B", "C", "D", "E", "F"].map((c, i) => trust(`t${i}`, c, true));
+        setProject(makeProject("APPROVED", trusts));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const chips = wrapper.findAll("[data-test='trust-chip']");
+        expect(chips).toHaveLength(4);
+        // The "+N" indicator lives near the chip row — assert it's somewhere
+        // in the rendered card.
+        expect(wrapper.text()).toContain("+2");
+    });
+
+    test("renders a relative-time stamp ('Xs / Xm / Xh / Xd ago') for project creation", async () => {
+        const project = makeProject("STAGED", [trust("t1", "KCH", true)]);
+        // 2 hours ago — should land in the "h ago" bucket.
+        project.creationtimestamp = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+        setProject(project);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.text()).toContain("h ago");
+        expect(wrapper.text()).toContain("created");
+    });
+
+    test("only the APPROVED project's chips carry the green approval dot, even when trust.approved is true on a STAGED project", async () => {
+        // showsTrustDot guards on project.status === "APPROVED" too — a
+        // freshly-staged trust that's already signed off must still render
+        // a plain chip until the project itself approves.
+        setProject(makeProject("STAGED", [trust("t1", "KCH", true)]));
+        const stagedWrapper = mountPage();
+        await stagedWrapper.vm.$nextTick();
+        expect(stagedWrapper.findAll("[data-test='trust-approved-dot']")).toHaveLength(0);
+
+        setProject(makeProject("APPROVED", [trust("t1", "KCH", true)]));
+        const approvedWrapper = mountPage();
+        await approvedWrapper.vm.$nextTick();
+        expect(approvedWrapper.findAll("[data-test='trust-approved-dot']")).toHaveLength(1);
+    });
 });
