@@ -375,5 +375,63 @@ describe("CohortQuery", () => {
 
             await vi.waitFor(() => expect(wrapper.emitted("UpdateProject")).toBeDefined());
         });
+
+        it("aggregates per-trust statusCode>=300 into the error snackbar text", async () => {
+            // The server resolves the POST but reports failures per-trust. The
+            // submit handler maps each non-2xx into a "Trust: NAME (Error CODE):
+            // MESSAGE" line and throws the joined message — which then surfaces
+            // through the catch-block snackbar.
+            mockSendQuery.mockResolvedValue({
+                queryId: "qid-broken",
+                trust: [
+                    { statusCode: 400, name: "Trust A", message: "Bad SQL" },
+                    { statusCode: 500, name: "Trust B", message: "Internal" }
+                ]
+            });
+
+            const wrapper = mountCohortQuery({ project: unstagedProject });
+            await wrapper.find("form").trigger("submit");
+
+            await vi.waitFor(() => expect(mockSnackbarError).toHaveBeenCalled());
+
+            const [snackbarPayload] = mockSnackbarError.mock.calls[0];
+            expect(snackbarPayload.title).toBe("Error running cohort query");
+            expect(snackbarPayload.text).toContain("Trust: Trust A (Error 400): Bad SQL");
+            expect(snackbarPayload.text).toContain("Trust: Trust B (Error 500): Internal");
+        });
+
+        it("flips formSubmitting back to false (re-emits submittingChange) when sendQuery errors", async () => {
+            mockSendQuery.mockRejectedValue(new Error("boom"));
+
+            const wrapper = mountCohortQuery({ project: unstagedProject });
+            await wrapper.find("form").trigger("submit");
+
+            // submittingChange fires twice: true on submit start, false on error catch.
+            await vi.waitFor(() => {
+                const events = wrapper.emitted("submittingChange") ?? [];
+                expect(events.length).toBeGreaterThanOrEqual(2);
+            });
+            const events = wrapper.emitted("submittingChange")!;
+            // The final emission must be `false` — without that, the parent's
+            // submit-button stays in its loading state forever after an error.
+            expect(events.at(-1)).toEqual([false]);
+        });
+
+        it("does not re-issue sendQuery while a previous submit is still in flight", async () => {
+            // Resolve the first call slowly so the second submit lands while
+            // formSubmitting is still true.
+            let resolveFirst: (v: unknown) => void = () => {};
+            mockSendQuery.mockReturnValueOnce(new Promise(resolve => { resolveFirst = resolve; }));
+
+            const wrapper = mountCohortQuery({ project: unstagedProject });
+            await wrapper.find("form").trigger("submit");
+            await wrapper.find("form").trigger("submit");
+
+            // Only the first submit issued a request.
+            expect(mockSendQuery).toHaveBeenCalledTimes(1);
+
+            // Resolve so the test doesn't leak an unfinished promise.
+            resolveFirst({ queryId: "q", trust: [{ statusCode: 200, name: "A", message: "OK" }] });
+        });
     });
 });
