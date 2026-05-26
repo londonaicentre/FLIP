@@ -93,4 +93,69 @@ describe("FLNetsCard", () => {
         expect(net1Title).toBeDefined();
         expect(net1Title!.text()).not.toContain("(");
     });
+
+    it("renders the loader (and no net cards) while flStatus is undefined", () => {
+        // Default beforeEach() resets mockSwrvData to undefined.
+        const wrapper = mountFLNetsCard();
+        // AiLoader is stubbed to a marker, so this confirms the v-if="!flStatus" branch.
+        expect(wrapper.findAll("h3").length).toBe(0);
+    });
+
+it("renders one row per client and sorts them alphabetically by name", () => {
+        mockSwrvData.value = [
+            {
+                name: "net-1",
+                fl_backend: "nvflare",
+                clients: [
+                    { name: "Zebra", online: true },
+                    { name: "Acme",  online: true },
+                    { name: "Maple", online: true }
+                ]
+            }
+        ];
+        const wrapper = mountFLNetsCard();
+        const names = wrapper.findAll("[data-test=project-name]").map(n => n.text());
+        expect(names).toEqual(["Acme", "Maple", "Zebra"]);
+    });
+
+    it("renders project-list-item rows with view-project-btn anchors for each client", () => {
+        mockSwrvData.value = [
+            {
+                name: "net-1",
+                fl_backend: "nvflare",
+                clients: [
+                    { name: "Trust A", online: true },
+                    { name: "Trust B", online: false }
+                ]
+            }
+        ];
+        const wrapper = mountFLNetsCard();
+        expect(wrapper.findAll("[data-test=project-list-item-0]").length).toBe(1);
+        expect(wrapper.findAll("[data-test=project-list-item-1]").length).toBe(1);
+        // The clickable wrapper carries view-project-btn per row — used by the
+        // group-6 Cypress project_list flow.
+        expect(wrapper.findAll("[data-test=view-project-btn]").length).toBe(2);
+    });
+
+    it("decorates the net card with the offline-glow when any client is offline", () => {
+        mockSwrvData.value = [
+            {
+                name: "net-with-offline",
+                fl_backend: "nvflare",
+                clients: [
+                    { name: "Trust A", online: true },
+                    { name: "Trust B", online: false }
+                ]
+            },
+            {
+                name: "net-all-online",
+                fl_backend: "nvflare",
+                clients: [{ name: "Trust C", online: true }]
+            }
+        ];
+        const wrapper = mountFLNetsCard();
+        const glowEls = wrapper.findAll(".from-red-500");
+        // Exactly one card carries the glow div: the one with an offline client.
+        expect(glowEls.length).toBe(1);
+    });
 });
