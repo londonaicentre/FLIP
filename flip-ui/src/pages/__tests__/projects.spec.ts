@@ -155,4 +155,63 @@ describe("Projects Page", () => {
         expect(grid.exists()).toBe(true);
         expect(grid.findAll("[data-test='trust-approved-dot']")).toHaveLength(2);
     });
+
+    test("renders the empty-state copy when the API returns zero projects", async () => {
+        mockSwrvData.value = { data: [], totalPages: 0, page: 1 };
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.text()).toContain("There are no projects to show");
+        expect(wrapper.findAll("[data-test='project-list-item-0']")).toHaveLength(0);
+    });
+
+    test("status indicators show human-friendly labels (Draft / Staged / Approved)", async () => {
+        // Three projects, one per status — the sort puts STAGED first, then
+        // APPROVED, then UNSTAGED (see STATUS_SORT_VALUE in projects.vue), so
+        // the indicator labels follow that order.
+        mockSwrvData.value = {
+            data: [
+                makeProject("APPROVED", []),
+                makeProject("UNSTAGED", []),
+                makeProject("STAGED", [])
+            ],
+            totalPages: 1,
+            page: 1
+        };
+        // Tie-break in the sort uses project.id (which embeds the status name
+        // in the makeProject helper) — fine for this assertion since we're only
+        // checking labels, not order.
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const labels = wrapper.findAll("[data-test='project-status-indicator']").map(s => s.text());
+        expect(labels).toContain("Draft");
+        expect(labels).toContain("Staged");
+        expect(labels).toContain("Approved");
+    });
+
+test("renders the 'No trusts staged' subtitle on projects without any approvedTrusts", async () => {
+        setProject(makeProject("UNSTAGED", []));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        expect(wrapper.text()).toContain("No trusts staged");
+        expect(wrapper.findAll("[data-test='trust-chip']")).toHaveLength(0);
+    });
+
+    test("toggles between list and grid views via the view-mode buttons", async () => {
+        setProject(makeProject("STAGED", [trust("t1", "KCH", true)]));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        // Default is the list view — the list container is mounted, grid isn't.
+        expect(wrapper.find("[data-test='projects-list-view']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='projects-grid-view']").exists()).toBe(false);
+
+        await wrapper.find("[data-test='view-mode-grid']").trigger("click");
+        expect(wrapper.find("[data-test='projects-list-view']").exists()).toBe(false);
+        expect(wrapper.find("[data-test='projects-grid-view']").exists()).toBe(true);
+
+        await wrapper.find("[data-test='view-mode-list']").trigger("click");
+        expect(wrapper.find("[data-test='projects-list-view']").exists()).toBe(true);
+        expect(wrapper.find("[data-test='projects-grid-view']").exists()).toBe(false);
+    });
 });
