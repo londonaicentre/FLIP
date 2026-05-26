@@ -43,9 +43,9 @@
         "name": "Some test query",
         "query": "Some query > 3000",
         "totalCohort": 32567,
-        "queriedTrustIds": ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+        "queriedTrustIds": ["53ca8126-5551-41a8-bd0a-587956c859d5", "4c9692ac-f607-4216-9f0b-b45eb72d83d2"],
         "erroredTrustIds": [],
-        "respondedTrustIds": ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+        "respondedTrustIds": ["53ca8126-5551-41a8-bd0a-587956c859d5", "4c9692ac-f607-4216-9f0b-b45eb72d83d2"],
         "pendingTrustIds": [],
         "cancelledTrustIds": []
     }
