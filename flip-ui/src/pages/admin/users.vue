@@ -34,7 +34,7 @@
                     <AiSearch
                         v-model="search"
                         data-test="user-search"
-                        placeholder="Search by name, email or org"
+                        placeholder="Search by name, email, org or role"
                     />
                 </div>
                 <div class="flex-grow min-h-0 overflow-y-auto">
@@ -420,7 +420,7 @@ const filteredUsers = computed<IUser[]>(() => {
     }
 
     return users.filter((user) =>
-        [user.name, user.email, user.organisation].some(
+        [user.name, user.email, user.organisation, user.roles?.[0]?.rolename].some(
             (field) => (field ?? "").toLowerCase().includes(query)
         )
     );

@@ -443,7 +443,7 @@ describe("User Management", () => {
             expect(rows[0].text()).toContain("Priya Raghavan");
         });
 
-        test("search also matches email and organisation", async () => {
+        test("search also matches email, organisation, and role", async () => {
             const wrapper = await mountWithUsers();
 
             await wrapper.find("[data-test='user-search']").setValue("kcl.ac.uk");
@@ -451,6 +451,10 @@ describe("User Management", () => {
             expect(wrapper.findAll("[data-test='user']")).toHaveLength(1);
 
             await wrapper.find("[data-test='user-search']").setValue("King's College London");
+            await flushPromises();
+            expect(wrapper.findAll("[data-test='user']")).toHaveLength(1);
+
+            await wrapper.find("[data-test='user-search']").setValue("researcher");
             await flushPromises();
             expect(wrapper.findAll("[data-test='user']")).toHaveLength(1);
         });
