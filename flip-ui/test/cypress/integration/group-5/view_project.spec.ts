@@ -259,37 +259,36 @@ describe("Project Page: Researcher & Owner [APPROVED]", () => {
         cy.getBySel("project-creation-incomplete-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585").should("exist");
         cy.getBySel("project-creation-incomplete-df8f0069-ad2c-44a7-b082-10e84d453b24").should("not.exist");
 
+        // Import-bar stats are now always rendered (deliberately, so every trust card
+        // shares the same body height — see ProjectStatus.vue comment). Trusts without
+        // an importStatus payload default to 0 across all four counters.
         cy.getBySel("successful-imports-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("successful-imports-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("successful-imports-df8f0069-ad2c-44a7-b082-10e84d453b24")
-            .should("exist")
-            .contains(12);
+            .should("have.text", "12");
 
         cy.getBySel("processing-imports-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("processing-imports-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("processing-imports-df8f0069-ad2c-44a7-b082-10e84d453b24")
-            .should("exist")
-            .contains(2);
+            .should("have.text", "2");
 
         cy.getBySel("queued-imports-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("queued-imports-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("queued-imports-df8f0069-ad2c-44a7-b082-10e84d453b24")
-            .should("exist")
-            .contains(212);
+            .should("have.text", "212");
 
         cy.getBySel("failed-imports-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("failed-imports-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("failed-imports-df8f0069-ad2c-44a7-b082-10e84d453b24")
-            .should("exist")
-            .contains(26);
+            .should("have.text", "26");
 
         cy.getBySel("project-reimport-status-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
             .should("exist")
