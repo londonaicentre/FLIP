@@ -113,3 +113,110 @@ def test_propagates_registration_error(monkeypatch, session):
 
     with pytest.raises(NoFreeKitSlotError):
         register_one_trust("New Trust", None, None, session)
+
+
+# ---------------------------------------------------------------------------
+# CLI entry point — `main()` parses argv, calls `register_one_trust`, writes
+# the kit JSON to stdout, and exits 1 on TrustRegistrationError. The body
+# below is what `deploy/providers/AWS/scripts/register-trusts.sh` (and the
+# Makefile's `register-trust-<n>` targets) drive, so it is worth its own
+# coverage.
+# ---------------------------------------------------------------------------
+
+
+def _patch_session(monkeypatch):
+    """Replace `Session(engine)` in the CLI with a session-shaped MagicMock."""
+    session_mock = MagicMock()
+    session_ctx = MagicMock()
+    session_ctx.__enter__.return_value = session_mock
+    session_ctx.__exit__.return_value = False
+    monkeypatch.setattr(
+        "flip_api.scripts.register_trust.Session", lambda _engine: session_ctx
+    )
+    return session_mock
+
+
+def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
+    """Happy path: CLI emits a JSON-array of one kit object on stdout."""
+    from flip_api.scripts import register_trust as cli
+
+    _patch_session(monkeypatch)
+    monkeypatch.setattr(
+        cli,
+        "register_one_trust",
+        lambda name, code, region, session: [
+            {
+                "trust_id": "tid",
+                "trust_name": name,
+                "trust_api_key": "k",
+                "trust_internal_service_key": "ik",
+                "fl_kit_slot": "Trust_001",
+                "fl_kit_slot_number": 1,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "sys.argv", ["register_trust", "--name", "Open Trust", "--code", "OPEN", "--region", "London"]
+    )
+
+    cli.main()
+
+    out = capsys.readouterr().out
+    import json as _json
+
+    payload = _json.loads(out)
+    assert isinstance(payload, list) and len(payload) == 1
+    assert payload[0]["trust_name"] == "Open Trust"
+    assert payload[0]["fl_kit_slot_number"] == 1
+
+
+def test_main_skip_prints_empty_array(monkeypatch, capsys):
+    """Idempotent skip: an already-registered trust → stdout is exactly `[]`."""
+    from flip_api.scripts import register_trust as cli
+
+    _patch_session(monkeypatch)
+    monkeypatch.setattr(cli, "register_one_trust", lambda *_a, **_kw: [])
+    monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Existing Trust"])
+
+    cli.main()
+
+    assert capsys.readouterr().out.strip() == "[]"
+
+
+def test_main_exits_1_on_registration_error(monkeypatch, capsys):
+    """Service failure: rollback, print `[]`, sys.exit(1)."""
+    from flip_api.scripts import register_trust as cli
+
+    session = _patch_session(monkeypatch)
+
+    def boom(*_a, **_kw):
+        raise TrustRegistrationError("kit slot pool exhausted")
+
+    monkeypatch.setattr(cli, "register_one_trust", boom)
+    monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Doomed"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    assert excinfo.value.code == 1
+    assert capsys.readouterr().out.strip() == "[]"
+    session.rollback.assert_called_once()
+
+
+def test_main_requires_name(monkeypatch, capsys):
+    """argparse rejects a call with no --name and exits 2 (the argparse convention)."""
+    from flip_api.scripts import register_trust as cli
+
+    _patch_session(monkeypatch)
+    monkeypatch.setattr("sys.argv", ["register_trust"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        cli.main()
+
+    assert excinfo.value.code == 2  # argparse error code
+    # argparse writes the "the following arguments are required" message to stderr.
+    assert "--name" in capsys.readouterr().err
+
+
+# TrustRegistrationError needs to be importable at the module level (used by main).
+from flip_api.trusts_services.services.register_trust import TrustRegistrationError  # noqa: E402
