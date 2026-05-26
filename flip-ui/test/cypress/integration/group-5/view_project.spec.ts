@@ -140,10 +140,13 @@ describe("Project Page: STAGED", () => {
         cy.contains("You must select a minimum of one trust when approving.")
             .should("be.visible");
 
-        cy.getBySel("trust-staged-0").click();
+        // ProjectApproval.vue sorts trusts alphabetically by code (fallback: name) —
+        // the fixture's three trusts go GSTT (0), Kings (1), UCLH (2). Pick indices
+        // 1 + 2 so the approve body lines up with the test's expected (KCH + UCLH).
+        cy.getBySel("trust-staged-1").click();
         cy.contains("You must select a minimum of one trust when approving.")
             .should("not.exist");
-        cy.getBySel("trust-staged-1").click();
+        cy.getBySel("trust-staged-2").click();
 
         cy.getBySel("approve-project-btn").click();
 
