@@ -140,6 +140,7 @@ app = FastAPI(
     docs_url=f"{API_PREFIX}/docs" if _docs_enabled else None,
     openapi_url=f"{API_PREFIX}/openapi.json" if _docs_enabled else None,
     redoc_url=f"{API_PREFIX}/redoc" if _docs_enabled else None,
+    swagger_ui_oauth2_redirect_url=f"{API_PREFIX}/docs/oauth2-redirect" if _docs_enabled else None,
 )
 
 # Rate limiter — keyed by trust_name path parameter (falls back to client IP)

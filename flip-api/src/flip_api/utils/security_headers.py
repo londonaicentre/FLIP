@@ -91,6 +91,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             response.headers[header] = value
         # CSP only applies to HTML responses — no-op for API JSON.
         content_type = response.headers.get("content-type", "")
-        if "text/html" in content_type and request.url.path not in self.DOCS_PATHS:
+        if "text/html" in content_type and not request.url.path.startswith(self.DOCS_PATHS):
             response.headers["Content-Security-Policy"] = self.CSP
         return response

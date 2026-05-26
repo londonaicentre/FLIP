@@ -115,7 +115,7 @@ def test_security_headers_no_csp_on_docs_routes():
     app = FastAPI()
     app.add_middleware(SecurityHeadersMiddleware)
 
-    for path in ("/api/docs", "/api/redoc", "/api/openapi.json"):
+    for path in ("/api/docs", "/api/redoc", "/api/openapi.json", "/api/docs/oauth2-redirect"):
         @app.get(path)
         async def docs_route():
             from fastapi.responses import HTMLResponse
