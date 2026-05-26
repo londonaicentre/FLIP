@@ -189,10 +189,10 @@
                         </div>
                         <div class="p-6 space-y-3 border-b border-gray-100 dark:border-gray-700">
                             <div>
-                                <h3 class="text-sm font-bold text-gray-900 font-heading dark:text-gray-100">
+                                <h3 class="text-base font-bold text-gray-900 font-heading dark:text-gray-100">
                                     Role
                                 </h3>
-                                <p class="text-xs text-gray-500 dark:text-gray-400">
+                                <p class="text-sm text-gray-500 dark:text-gray-400">
                                     One role per user. Determines what they can see and do.
                                 </p>
                             </div>
@@ -217,12 +217,12 @@
                                             <RoleBadge :role-name="role.rolename" />
                                             <span
                                                 v-if="role.rolename === 'Admin'"
-                                                class="text-[11px] text-gray-500 dark:text-gray-400"
+                                                class="text-xs text-gray-500 dark:text-gray-400"
                                             >
                                                 Includes platform admin access
                                             </span>
                                         </span>
-                                        <span class="text-xs leading-relaxed text-gray-600 dark:text-gray-400">
+                                        <span class="text-sm leading-relaxed text-gray-600 dark:text-gray-400">
                                             {{ role.roledescription }}
                                         </span>
                                     </span>

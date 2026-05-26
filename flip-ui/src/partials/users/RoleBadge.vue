@@ -14,7 +14,7 @@
 <template>
     <span
         class="inline-flex items-center font-semibold rounded-full gap-1.5 whitespace-nowrap"
-        :class="dense ? 'px-2 py-px text-[11px]' : 'px-2 py-0.5 text-[11.5px]'"
+        :class="dense ? 'px-2 py-px text-[11px]' : 'px-2.5 py-0.5 text-[13px]'"
         :style="{ color: tone.fg, backgroundColor: tone.bg }"
         data-test="role-badge"
     >
