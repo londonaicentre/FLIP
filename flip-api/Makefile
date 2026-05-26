@@ -109,6 +109,12 @@ e2e_smoke:
 # trust's XNAT (via flip_project_spleen_segmentation/upload_labels_to_XNAT.py)
 # between image pull and training. Target-specific vars override the e2e_smoke
 # defaults; e2e_smoke runs as a prerequisite with this target's vars applied.
+#
+# Prereq: requires the internal `flip_project_spleen_segmentation` repo checked
+# out alongside FLIP at ../../flip_project_spleen_segmentation. Not yet in the
+# public CLAUDE.md "Related Repositories" list -- ask the team for access if you
+# don't already have it. Without it, both e2e_smoke_spleen and
+# e2e_smoke_spleen_evaluation will fail in the data-enrichment step.
 e2e_smoke_spleen: MODEL_FILES_DIR := ../../flip-fl-base-flower/tutorials/3d_spleen_segmentation/app
 e2e_smoke_spleen: QUERY_FILE := ../../flip-fl-base-flower/tutorials/3d_spleen_segmentation/query.sql
 e2e_smoke_spleen: EXTRA_ARGS := --data-enrichment-cwd ../../flip_project_spleen_segmentation --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id $$FLIP_PROJECT_ID'
