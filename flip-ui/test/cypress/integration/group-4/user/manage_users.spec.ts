@@ -109,7 +109,11 @@ describe("Manage Users as Administrator", () => {
         cy.getBySel("organisation-field").type("King's College London");
         cy.getBySel("email-field").type("testperson");
         cy.getBySel("register-user-confirm-btn").click();
-        cy.get(".error_message").should("have.text", "Please enter a valid email address");
+        // RegisterUserModal lost the legacy .error_message CSS hook with the
+        // Listbox-based role chooser refactor — validation errors now render
+        // as plain <div class="text-sm text-red-500"> next to the field. Match
+        // on the message text instead, which is the actual contract.
+        cy.contains("Please enter a valid email address").should("be.visible");
     });
 
     it("Should not allow you to register a user without a role", () => {
@@ -118,7 +122,11 @@ describe("Manage Users as Administrator", () => {
         cy.getBySel("organisation-field").type("King's College London");
         cy.getBySel("email-field").type("testperson@test.com");
         cy.getBySel("register-user-confirm-btn").click();
-        cy.get(".error_message").should("have.text", "Select at least 1 role");
+        // Same as the email-validation case — the new modal's role chooser
+        // surfaces its yup error inline. Also note the wording changed with
+        // the Listbox refactor: "Please select a role" (was "Select at least
+        // 1 role" in the old chip-select form).
+        cy.contains("Please select a role").should("be.visible");
     });
 
     it("Should allow you to disable access for a user", () => {

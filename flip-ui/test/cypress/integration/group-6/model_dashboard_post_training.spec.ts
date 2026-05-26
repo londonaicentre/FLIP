@@ -46,7 +46,8 @@ describe("Model Dashboard - Post Training", () => {
         // After training has started the Initiate button isn't even rendered —
         // it's gated on isTrainingPending() (model.status === "PENDING").
         cy.getBySel("initiate-training-btn").should("not.exist");
-        cy.getBySel("user-btn").click();
+        // TrainingActionsMenu now exposes stop-training-btn / download-results-btn
+        // directly — the old "user-btn" dropdown wrapper is gone.
         cy.getBySel("stop-training-btn").should("be.disabled");
     });
 
@@ -64,7 +65,8 @@ describe("Model Dashboard - Post Training", () => {
         // After training has started the Initiate button isn't even rendered —
         // it's gated on isTrainingPending() (model.status === "PENDING").
         cy.getBySel("initiate-training-btn").should("not.exist");
-        cy.getBySel("user-btn").click();
+        // TrainingActionsMenu now exposes stop-training-btn / download-results-btn
+        // directly — the old "user-btn" dropdown wrapper is gone.
         cy.getBySel("stop-training-btn").should("be.visible").click();
         cy.getBySel("confirm-modal-btn").click();
 
