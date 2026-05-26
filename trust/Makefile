@@ -11,7 +11,8 @@
 #
 
 .PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
-	up-fl-clients down-fl-clients up-local-trust down-local-trust create-networks create-networks-local-trust \
+	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
+	up-local-trust down-local-trust create-networks create-networks-local-trust \
 	remove-networks recreate-networks tests update-omop-data update-orthanc-data integration_test
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
@@ -297,16 +298,28 @@ down:
 	$(MAKE) down-trust KIT=Trust_2
 
 # Start / stop only the FL client containers, leaving the rest of each trust stack up.
-# Each dev trust project (trust1, trust2) runs a client per FL net, hence both net-1 and net-2.
+# Each dev trust project (trust1, trust2) runs a client per FL net, hence both
+# net-1 and net-2. Per-trust delegation uses the same KIT machinery as up-trust:
+# the sub-make's `-include ../.env.<KIT>` re-resolves TRUST_VARS / TRUST_PROJECT /
+# TRUST_OVERRIDE for that kit alone, so Trust_1 picks up its host-port override
+# and Trust_2 stays on the network ports from its kit file.
 up-fl-clients:
 	@echo "🚢 Starting FL clients..."
-	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} up -d --no-deps $(PULL_ALWAYS_FLAG) fl-client-net-1 fl-client-net-2
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d --no-deps $(PULL_ALWAYS_FLAG) fl-client-net-1 fl-client-net-2
+	$(MAKE) up-fl-clients-kit KIT=Trust_1
+	$(MAKE) up-fl-clients-kit KIT=Trust_2
+
+up-fl-clients-kit:
+	$(require_kit_file)
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(PULL_ALWAYS_FLAG) fl-client-net-1 fl-client-net-2
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."
-	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} rm -fs fl-client-net-1 fl-client-net-2
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} rm -fs fl-client-net-1 fl-client-net-2
+	$(MAKE) down-fl-clients-kit KIT=Trust_1
+	$(MAKE) down-fl-clients-kit KIT=Trust_2
+
+down-fl-clients-kit:
+	$(require_kit)
+	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) rm -fs fl-client-net-1 fl-client-net-2
 
 update-omop-data:
 	$(OMOP_DB_CMD) update-omop-data

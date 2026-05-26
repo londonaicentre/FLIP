@@ -40,6 +40,13 @@ def _trust_name_key(request: Request) -> str:
     """
     api_key = request.headers.get(get_settings().TRUST_API_KEY_HEADER)
     if api_key:
+        # SHA-256 is appropriate here: the input is a 256-bit random token from
+        # `secrets.token_urlsafe(32)`, not a user-chosen password. Slow KDFs
+        # (bcrypt/argon2) only defend against low-entropy inputs; against 256-bit
+        # random keys they provide no security benefit. The hash is only used as
+        # a rate-limit bucket key — it's not stored or transmitted. CodeQL flags
+        # this as `py/weak-sensitive-data-hashing` but the rule targets password
+        # hashing — false positive. Same pattern as access_manager.py.
         return "trust:" + hashlib.sha256(api_key.encode()).hexdigest()[:16]
     return request.path_params.get("trust_name", request.client.host if request.client else "unknown")
 

@@ -10,15 +10,32 @@
 # limitations under the License.
 #
 
+import hashlib
 from unittest.mock import MagicMock
 
+from flip_api.config import get_settings
 from flip_api.utils.rate_limiter import _trust_name_key
 
 
+# `request.headers` must be a real dict on these mocks: MagicMock's `.get(...)` returns
+# another MagicMock (truthy), which would force every test through the API-key branch
+# and try to hash a non-bytes object.
 class TestTrustNameKey:
-    def test_returns_trust_name_when_present_in_path_params(self):
-        """Should return the trust_name path parameter when it exists."""
+    def test_hashes_trust_api_key_when_header_present(self):
+        """Primary path: rate-limit per-trust by hashing the trust API key header."""
+        api_key = "trust-1-secret"
         request = MagicMock()
+        request.headers = {get_settings().TRUST_API_KEY_HEADER: api_key}
+
+        result = _trust_name_key(request)
+
+        expected = "trust:" + hashlib.sha256(api_key.encode()).hexdigest()[:16]
+        assert result == expected
+
+    def test_returns_trust_name_when_present_in_path_params(self):
+        """Fallback: trust_name path parameter when no API key header."""
+        request = MagicMock()
+        request.headers = {}
         request.path_params = {"trust_name": "Trust_1"}
         request.client.host = "192.168.1.1"
 
@@ -27,8 +44,9 @@ class TestTrustNameKey:
         assert result == "Trust_1"
 
     def test_falls_back_to_client_host_when_no_trust_name(self):
-        """Should return request.client.host when trust_name is not in path_params."""
+        """Fallback: client.host when neither the API key header nor trust_name is present."""
         request = MagicMock()
+        request.headers = {}
         request.path_params = {}
         request.client.host = "10.0.0.42"
 
@@ -37,8 +55,9 @@ class TestTrustNameKey:
         assert result == "10.0.0.42"
 
     def test_returns_unknown_when_no_client(self):
-        """Should return 'unknown' when request.client is None and no trust_name."""
+        """Fallback: 'unknown' sentinel when there's no client and nothing else identifies the caller."""
         request = MagicMock()
+        request.headers = {}
         request.path_params = {}
         request.client = None
 
