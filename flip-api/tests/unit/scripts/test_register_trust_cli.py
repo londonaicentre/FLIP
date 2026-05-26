@@ -165,7 +165,8 @@ def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
     import json as _json
 
     payload = _json.loads(out)
-    assert isinstance(payload, list) and len(payload) == 1
+    assert isinstance(payload, list)
+    assert len(payload) == 1
     assert payload[0]["trust_name"] == "Open Trust"
     assert payload[0]["fl_kit_slot_number"] == 1
 
