@@ -298,9 +298,16 @@ describe("Project Page: Researcher & Owner [APPROVED]", () => {
             .should("exist")
             .contains("Reimport attempts");
 
-        cy.getBySel("import-status-warning-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
-            .should("exist")
-            .contains("Awaiting study import status from trust.");
+        // The standalone "Awaiting study import status from trust." warning was
+        // replaced by an inline "no imports yet" subtitle on the import-bar
+        // (rowTotal === 0 branch in ProjectStatus.vue). KCH has no importStatus
+        // payload, so its trust card should carry that subtitle — and the
+        // big retrieved-% should fall back to the em-dash.
+        cy.getBySel("pct-retrieved-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
+            .should("have.text", "—");
+        cy.getBySel("trust-name-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
+            .closest("li")
+            .should("contain.text", "no imports yet");
 
         cy.getBySel("project-reimport-status-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585")
             .should("not.exist");

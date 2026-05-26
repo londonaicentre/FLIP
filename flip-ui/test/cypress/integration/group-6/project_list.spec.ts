@@ -69,7 +69,10 @@ describe("project list", () => {
 
             cy.wait("@getProjects");
 
-            cy.getBySel("view-project-btn").first().click();
+            // The list redesign turned each row into a router-link itself —
+            // there's no separate "View Project" button anymore. Click the
+            // row to navigate (project-list-item-0 is the first row).
+            cy.getBySel("project-list-item-0").click();
 
             cy.url().should("include", `/project/${projects.data[0].id}`);
         });
