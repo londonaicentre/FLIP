@@ -188,32 +188,13 @@ describe("Model Dashboard - Pre Training", () => {
         cy.getBySel("trust-selection-1").should("not.exist");
     });
 
-    it("displays correct cohort query value and results", () => {
-
-
-        cy.intercept("POST", `/step/model/${modelId}`, { fixture: "model/getModel" })
-            .as("getModel");
-        cy.visit(`project/${projectId}/model/${modelId}`);
-        cy.wait("@getModel");
-
-        cy.intercept("GET", "cohort/*",
-            { fixture: "cohort/cohortQueryResultsOmop" })
-            .as("cohortResults");
-
-        cy.intercept("GET", "projects/" + projectId,
-            { fixture: "project/getProjectWithQuery" })
-            .as("project");
-
-        cy.wait("@projectWithQuery");
-
-        cy.getBySel("view-results-btn").click()
-            .wait("@cohortResults")
-            .then(() => {
-                cy.get("canvas").eq(0).scrollIntoView().should("be.visible");
-                cy.get("canvas").eq(1).scrollIntoView().should("be.visible");
-                cy.get("canvas").eq(2).scrollIntoView().should("be.visible");
-            });
-    });
+    // The "displays correct cohort query value and results" test that lived
+    // here drove a view-results-btn click on the model dashboard. The page
+    // redesign moved the cohort-query card (with view-results-btn) onto the
+    // project route — QueryDetails.vue is no longer mounted on /model/<id>.
+    // Cohort-query UI behavior is covered by the cohort specs (group-6 cohort/
+    // and the QueryResultCharts vitest suite), so the test was dropped rather
+    // than ported to the project page.
 });
 
 describe("Model Dashboard - Pre Training with only one approved trust", () => {

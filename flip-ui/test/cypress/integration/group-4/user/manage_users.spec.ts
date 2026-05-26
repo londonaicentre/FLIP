@@ -68,8 +68,8 @@ describe("Manage Users as Administrator", () => {
         cy.getBySel("name-field").type("Test Person");
         cy.getBySel("organisation-field").type("King's College London");
         cy.getBySel("email-field").type("test.person@kcl.ac.uk");
-        cy.getBySel("chip-select").click();
-        cy.getBySel("chip-select-option").contains("Researcher").click();
+        cy.getBySel("role-select").click();
+        cy.getBySel("role-select-option").contains("Researcher").click();
         cy.intercept("POST", "step/users", { fixture: "user/postRegisterUser" }).as("registerUser");
         cy.getBySel("register-user-confirm-btn").click();
 
@@ -91,8 +91,8 @@ describe("Manage Users as Administrator", () => {
         cy.getBySel("name-field").type("Test Person");
         cy.getBySel("organisation-field").type("King's College London");
         cy.getBySel("email-field").type("test.person@kcl.ac.uk");
-        cy.getBySel("chip-select").click();
-        cy.getBySel("chip-select-option").contains("Researcher").click();
+        cy.getBySel("role-select").click();
+        cy.getBySel("role-select-option").contains("Researcher").click();
         // step function returns 200 with empty response body if user registration fails
         cy.intercept("POST", "step/users", {}).as("registerUser");
         cy.getBySel("register-user-confirm-btn").click();
@@ -103,8 +103,8 @@ describe("Manage Users as Administrator", () => {
 
     it("Should not allow you to register a user with invalid email", () => {
         cy.getBySel("register-user-btn").click();
-        cy.getBySel("chip-select").click();
-        cy.getBySel("chip-select-option").contains("Researcher").click();
+        cy.getBySel("role-select").click();
+        cy.getBySel("role-select-option").contains("Researcher").click();
         cy.getBySel("name-field").type("Test Person");
         cy.getBySel("organisation-field").type("King's College London");
         cy.getBySel("email-field").type("testperson");
