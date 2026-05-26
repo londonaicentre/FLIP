@@ -14,8 +14,8 @@
 # Demo specs live at test/cypress/docs/<category>/<name>.spec.ts and map 1:1 to
 # <name>.gif under docs/source/assets/<category>/ — the spec's folder selects
 # the asset subdirectory, the basename selects the GIF:
-#   docs/admin/reset-mfa.spec.ts     -> docs/source/assets/admin/reset-mfa.gif
-#   docs/flip/create-model.spec.ts   -> docs/source/assets/flip/create-model.gif
+#   test/cypress/docs/admin/reset-mfa.spec.ts    -> docs/source/assets/admin/reset-mfa.gif
+#   test/cypress/docs/flip/create-model.spec.ts  -> docs/source/assets/flip/create-model.gif
 
 set -euo pipefail
 
@@ -59,11 +59,21 @@ for spec in "${specs[@]}"; do
     category="$(basename "$(dirname "${spec}")")"
     name="$(basename "${spec}" .spec.ts)"
 
-    mp4="$(find "${videos_root}" -type f -name "${name}.spec.ts.mp4" -print -quit)"
-    if [[ -z "${mp4}" ]]; then
+    # Scope the search to the spec's category subdir so a same-named spec in a
+    # different category can't be picked up by mistake, and bail on >1 matches
+    # rather than silently pick a stale recording (e.g. left over from a run
+    # against a different Cypress version with a different video-path prefix).
+    mapfile -t mp4_matches < <(find "${videos_root}" -type f -path "*/${category}/${name}.spec.ts.mp4" | sort)
+    if (( ${#mp4_matches[@]} == 0 )); then
         echo "No video for ${spec}; skipping." >&2
         continue
     fi
+    if (( ${#mp4_matches[@]} > 1 )); then
+        echo "Multiple videos for ${spec} — clean ${videos_root} and re-record:" >&2
+        printf '  %s\n' "${mp4_matches[@]}" >&2
+        exit 1
+    fi
+    mp4="${mp4_matches[0]}"
 
     out_dir="${assets_root}/${category}"
     mkdir -p "${out_dir}"
