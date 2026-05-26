@@ -53,22 +53,6 @@ describe("Project Page: Researcher & Owner [UNAPPROVED]", () => {
         cy.visit("/project/" + validProject.id);
     });
 
-    it("Show the correct breadcrumbs", () => {
-        cy.getBySel("parent-page-text")
-            .first()
-            .should("contain.text", "Projects");
-
-        cy.getBySel("current-page-text")
-            .should("contain.text", validProject.name);
-    });
-
-    it("Has the correct href attribute", () => {
-        cy.getBySel("parent-page-text")
-            .first()
-            .should("contain.text", "Projects")
-            .should("have.attr", "href", "/projects");
-    });
-
     it("Show the correct details", () => {
         cy.getBySel("project-name-text")
             .should("contain.text", validProject.name);

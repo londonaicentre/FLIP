@@ -40,8 +40,10 @@ describe("project list", () => {
             .as("getProjects");
         cy.visit("/projects");
         cy.wait("@getProjects");
-        cy.getBySel("project-list-item-1").getBySel("project-status-indicator").should("contain", "STAGED");
-        cy.getBySel("project-list-item-2").getBySel("project-status-indicator").should("contain", "APPROVED");
+        // The status indicator renders human-friendly labels (Staged / Approved / Draft),
+        // mapped from the raw STAGED / APPROVED / UNSTAGED enum (see projects.vue STATUS_LABEL).
+        cy.getBySel("project-list-item-1").getBySel("project-status-indicator").should("contain", "Staged");
+        cy.getBySel("project-list-item-2").getBySel("project-status-indicator").should("contain", "Approved");
     });
 
     it("displays appropriate message when get projects returns nil", () => {
