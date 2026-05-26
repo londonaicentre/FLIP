@@ -40,7 +40,7 @@ describe("Manage Users as Administrator", () => {
     });
 
     it("Should allow you to change a user's role", () => {
-        cy.getBySel("user").contains("Researcher User (London AI Centre)").click();
+        cy.getBySel("user").contains("Researcher User").click();
         cy.getBySel("select-admin-role").find("input").check();
         cy.intercept("POST", "/users/**/roles", { statusCode: 200 }).as("postRoles");
         cy.getBySel("save-user-btn").click();
@@ -49,7 +49,7 @@ describe("Manage Users as Administrator", () => {
     });
 
     it("Should save one selected role for users with existing multiple roles", () => {
-        cy.getBySel("user").contains("Multiple Role User (King's College London)").click();
+        cy.getBySel("user").contains("Multiple Role User").click();
         cy.intercept("POST", "/users/**/roles", { statusCode: 200 }).as("postRoles");
         cy.getBySel("select-researcher-role").find("input").check();
         cy.getBySel("save-user-btn").click();
@@ -58,7 +58,7 @@ describe("Manage Users as Administrator", () => {
     });
 
     it("Should show roles as a single selected radio choice", () => {
-        cy.getBySel("user").contains("Researcher User (London AI Centre)").click();
+        cy.getBySel("user").contains("Researcher User").click();
         cy.getBySel("select-researcher-role").find("input").should("be.checked");
         cy.getBySel("select-admin-role").find("input").should("not.be.checked");
     });
@@ -122,7 +122,7 @@ describe("Manage Users as Administrator", () => {
     });
 
     it("Should allow you to disable access for a user", () => {
-        cy.getBySel("user").contains("Researcher User (London AI Centre)").click();
+        cy.getBySel("user").contains("Researcher User").click();
         cy.intercept("PUT", "/users/**", { statusCode: 200 }).as("disableUser");
         cy.getBySel("disable-user-btn").click();
         cy.getBySel("confirm-modal-btn").click();
@@ -132,7 +132,7 @@ describe("Manage Users as Administrator", () => {
     });
 
     it("Should allow you to enable access for a disabled user", () => {
-        cy.getBySel("user").contains("Disabled User (London AI Centre)").click();
+        cy.getBySel("user").contains("Disabled User").click();
         cy.intercept("PUT", "/users/**", { statusCode: 200 }).as("enableUser");
         cy.getBySel("enable-user-btn").click();
         cy.getBySel("confirm-modal-btn").click();
@@ -142,7 +142,7 @@ describe("Manage Users as Administrator", () => {
     });
 
     it("allows reset of a user's password", () => {
-        cy.getBySel("user").contains("Researcher User (London AI Centre)").click();
+        cy.getBySel("user").contains("Researcher User").click();
         cy.intercept("POST", "https://cognito-idp.eu-west-2.amazonaws.com/", { statusCode: 200, body: {} })
             .as("passwordReset");
         cy.getBySel("reset-password-btn").click();
@@ -156,6 +156,6 @@ describe("Manage Users as Administrator", () => {
             .as("pageTwo");
         cy.getBySel("page-btn-2").click();
         cy.wait("@pageTwo");
-        cy.contains("Test User (London AI Centre)").should("be.visible");
+        cy.contains("Test User").should("be.visible");
     });
 });
