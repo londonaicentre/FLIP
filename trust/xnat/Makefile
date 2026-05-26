@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build up down up-xnat down-xnat up-xnat-local down-xnat-local xnat-shell \
+.PHONY: build up down up-xnat down-xnat up-xnat-local down-xnat-local xnat-shell xnat-stack-down clean \
 	xnat-war-download xnat-plugins-download xnat-reset xnat-configure xnat-configure-local \
 	create-xnat-network create-network-trust-local test unit_test local_test
 
@@ -120,7 +120,11 @@ build:
 	@echo "✅ XNAT Docker images built successfully!"
 
 # Bring up both dev XNAT stacks. Each is a separate sub-make so its
-# `-include ../.env.<KIT>` loads only that trust's kit file.
+# `-include ../.env.<KIT>` loads only that trust's kit file. `up-xnat` first
+# blocks on `down-xnat` (via `xnat-stack-down`) before `xnat-reset` — otherwise
+# a still-running xnat-web container holds the bind-mounted data dir's inode
+# and the `sudo rm -rf` in `xnat-reset` silently leaves archive writes broken
+# ("Source ... does not exist") so DICOM import fails on the next boot.
 up:
 	$(MAKE) up-xnat KIT=Trust_1
 	$(MAKE) up-xnat KIT=Trust_2
@@ -129,6 +133,7 @@ up:
 # trust/Makefile's up-trust calls this so a trust comes up complete.
 up-xnat: create-xnat-network
 	$(require_kit)
+	$(MAKE) down-xnat KIT=$(KIT)
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
 	XNAT_PORT=$(XNAT_PORT_EFFECTIVE) \
@@ -143,7 +148,7 @@ down:
 
 down-xnat:
 	$(require_kit)
-	docker stack rm $(XNAT_STACK) || true
+	$(MAKE) xnat-stack-down STACK=$(XNAT_STACK)
 
 # Get a shell in the running xnat-web container for the selected trust.
 xnat-shell:
@@ -159,8 +164,27 @@ up-xnat-local: create-network-trust-local
 	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} ${project_local}
 	$(MAKE) xnat-configure XNAT_PROJECT=${project_local}
 
+# Remove a single XNAT Swarm stack and BLOCK until all its containers have
+# stopped. `docker stack rm` is asynchronous; callers that then delete the
+# stack's bind-mounted host directories (see `xnat-reset`) must wait for the
+# containers to release those mounts first.
+# Usage: $(MAKE) xnat-stack-down STACK=<stack-name>
+xnat-stack-down:
+	@[ -n "$(STACK)" ] || (echo "❌ STACK is required"; exit 1)
+	@echo "🧹 Removing XNAT stack $(STACK) if present..."
+	@docker stack rm $(STACK) 2>/dev/null || true
+	@elapsed=0; \
+	while [ -n "$$(docker ps -aq --filter label=com.docker.stack.namespace=$(STACK) 2>/dev/null)" ]; do \
+		if [ $$elapsed -ge 120 ]; then \
+			echo "❌ ERROR: $(STACK) containers still running after 120s"; exit 1; \
+		fi; \
+		echo "⏳ Waiting for $(STACK) containers to stop ($${elapsed}s)..."; \
+		sleep 2; elapsed=$$((elapsed + 2)); \
+	done
+	@echo "✅ $(STACK) fully removed."
+
 down-xnat-local:
-	docker stack rm ${project_local}
+	$(MAKE) xnat-stack-down STACK=${project_local}
 
 # Stop and clean up images
 clean: down

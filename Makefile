@@ -11,7 +11,7 @@
 #
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
-		restart restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
+		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
 		check-aws-access up-local-trust generate-internal-service-key \
 		register-trust-1 register-trust-2 register-trusts _wait-for-hub integration_test
 
@@ -156,6 +156,24 @@ clean:
 
 # Stop all services and remove the containers
 restart: down up
+
+# Restart only FL services (APIs, servers, and clients in trusts)
+# NOTE: Uses $(PULL_ALWAYS_FLAG) — pulls fresh FL images only when DOCKER_FL_REGISTRY is set
+#       (same logic as `up`); an empty registry keeps locally built flip-fl-base-flower images.
+# NOTE: Client keys must be re-registered before starting clients (Flower only)
+restart-fl:
+	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
+	@echo "🔄 Step 1: Stopping and removing old FL clients..."
+	$(MAKE) -C trust down-fl-clients
+	@echo "🔄 Step 2: Restarting FL APIs and servers..."
+	${DOCKER_COMMAND} up -d --force-recreate --no-deps $(PULL_ALWAYS_FLAG) fl-api-net-1 fl-api-net-2 fl-server-net-1 fl-server-net-2
+	@if [ "$(FL_BACKEND)" = "flower" ]; then \
+		echo "🔄 Step 3: Registering new client keys with FL servers (Flower only)..."; \
+		${DOCKER_COMMAND} up --force-recreate $(PULL_ALWAYS_FLAG) register-supernode-keys-net-1 register-supernode-keys-net-2; \
+	fi
+	@echo "🔄 Step 4: Starting new FL clients..."
+	$(MAKE) -C trust up-fl-clients
+	@echo "✅ FL services restarted successfully!"
 
 # Stop and start all services except the trust services related services
 restart-no-trust:

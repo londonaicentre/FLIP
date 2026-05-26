@@ -24,6 +24,7 @@ dependencies = [
     "cryptography>=46.0.7",
     "fastapi[standard]>=0.115.11",
     "greenlet>=3.1.1",
+    "idna>=3.15",
     "pandas>=2.2.3",
     "pydicom>=2.4.5",
     "pydantic-settings>=2.9.1",
