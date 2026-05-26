@@ -291,6 +291,9 @@ UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-acce
 
 # Regenerate every uv.lock so it matches its pyproject.toml. Run after changing
 # dependencies in any service, or to refresh all lockfiles in one pass.
+# Note: `uv lock` re-resolves all dependencies under each project's
+# `exclude-newer` window, so transitive pin versions may shift even when no
+# direct dependency changed.
 lock:
 	@for dir in $(UV_PROJECTS); do \
 		echo "Locking $$dir"; \
