@@ -50,3 +50,7 @@ exclude = [
 
 [tool.mypy]
 ignore_missing_imports = true
+
+[tool.uv]
+# 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
+exclude-newer = "3 days"

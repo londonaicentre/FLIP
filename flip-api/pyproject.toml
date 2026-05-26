@@ -110,3 +110,7 @@ ignore_missing_imports = true
 exclude = [
     "src/flip_api/translation/*",
 ]
+
+[tool.uv]
+# 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
+exclude-newer = "3 days"

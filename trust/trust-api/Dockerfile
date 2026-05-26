@@ -21,18 +21,18 @@ RUN groupadd -g ${GID} ${UNAME}
 RUN useradd -u ${UID} -g ${GID} -m -d /home/${UNAME} -s /bin/bash ${UNAME}
 
 # Add uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
 
 WORKDIR /app
 
-# Sync the project into a new environment, using the frozen lockfile
+# Sync the project into a new environment, using the lockfile
 COPY pyproject.toml uv.lock ./
 
 RUN chown -R ${UNAME}:${UNAME} /app
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 USER ${UNAME}
-RUN uv sync --frozen
+RUN uv sync --locked
 
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"

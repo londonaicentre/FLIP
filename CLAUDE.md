@@ -59,6 +59,7 @@ make up-trusts             # Start trust services only
 make down                  # Stop all services
 make restart               # Stop and restart all
 make build                 # Build all Docker images
+make lock                  # Regenerate every uv.lock from its pyproject.toml
 make ui                    # Start UI only
 make clean                 # Remove all stopped containers, networks, and images
 make ci                    # Run CI pipeline locally using act
@@ -247,7 +248,7 @@ Wait for green completion (`gh run list --workflow=docker_build_flip_api.yml --b
 
 ## Pre-commit Hooks
 
-TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict markers, YAML validation, private key detection, env var validation. Install: `pre-commit install`.
+TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict markers, YAML validation, private key detection, env var validation, uv lockfile sync (`uv-lock`, one entry per uv project). Install: `pre-commit install`.
 
 ## Security Rules
 
@@ -260,6 +261,7 @@ TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict marker
 - Trust-internal service key for trust-api / imaging-api / fl-client → imaging-api / data-access-api auth (per-trust, never leaves trust env). See **Trust-internal Service Authentication** below.
 - FL clients intentionally have no Central Hub credentials.
 - Do not hardcode env values in Dockerfiles or compose files.
+- 72-hour supply-chain cooldown on Python/npm package installs — enforced by uv `exclude-newer` (`[tool.uv]` in every `pyproject.toml`) and npm `min-release-age` (`flip-ui/.npmrc`, requires npm >= 11.10 which Node 24 LTS ships), backstopped by a `uv lock --check` CI gate in `secret-scanning.yml`. See CONTRIBUTING.md ("Dependency cooldown").
 
 ## Trust-internal Service Authentication
 

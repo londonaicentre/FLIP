@@ -119,6 +119,50 @@ uv add <package-name> --group <group>  # dependency in a named group
 The `pyproject.toml` file is the source of truth for dependencies. The Python version in `.python-version` must match
 the version used in the service's Dockerfile.
 
+### Dependency cooldown (supply-chain protection)
+
+Recent npm and PyPI supply-chain attacks follow a consistent pattern: a maintainer's credentials are compromised, a
+malicious release is published, the community detects it, and the package is yanked — usually within a few hours. To
+keep poisoned releases out of FLIP's CI, developer machines, and Trust-side containers, FLIP enforces a **72-hour
+cooldown** on dependency installs:
+
+> No FLIP build, CI or local, may install a Python or JavaScript package whose release timestamp on its upstream
+> registry (PyPI / npm) is less than 72 hours old. This applies to direct **and** transitive dependencies.
+
+The policy is enforced through native package-manager configuration:
+
+- **uv (Python)** — every `pyproject.toml` sets `tool.uv.exclude-newer = "3 days"`, so `uv lock` and `uv add` never
+  resolve a release younger than 72 hours (the `uv.lock` records this as a rolling `exclude-newer-span`). The
+  **Dependency Cooldown Check** job in [`secret-scanning.yml`](.github/workflows/secret-scanning.yml) runs
+  `uv lock --check` on every project, failing CI if a lockfile drifts from its manifest or was generated under a
+  wider `exclude-newer` window than the committed manifest allows.
+- **npm (JavaScript)** — `flip-ui/.npmrc` sets `min-release-age=3`, so `npm install` refuses to resolve a release
+  younger than 72 hours. This key was introduced in npm 11.10, so `flip-ui/Dockerfile` and the `test_flip_ui.yml`
+  workflow use Node 24 LTS (which ships npm >= 11.10); Node 22 LTS bundles npm 10.x and silently ignores the key.
+  CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only enforces
+  `min-release-age` at lockfile-write time (`npm install <pkg>`), not when installing from a pinned
+  `package-lock.json`, so the npm cooldown rests on `.npmrc` rather than a CI gate.
+
+There is no automated dependency-update bot wired into the repo today. Dependency bumps are hand-rolled PRs; the
+two layers above (uv `exclude-newer` and npm `min-release-age` at install time, `uv lock --check` in CI) catch a
+too-fresh package regardless of how it arrived in the lockfile.
+
+The cooldown applies automatically when you run `uv add <package>` or `npm install <package>` — a release younger
+than 72 hours is simply not selected. Run `make lock` to refresh every `uv.lock` after a dependency change.
+
+#### Emergency override
+
+For a genuine same-day patch of an active CVE, the cooldown can be bypassed for the single package that needs it:
+
+- **uv** — add an `exclude-newer-package` entry under `[tool.uv]` for that package (for example
+  `exclude-newer-package = { "<package>" = "<recent-timestamp>" }`) and re-run `uv lock`. The entry is committed, so
+  the exception is visible in the pull request and `uv lock --check` still passes.
+- **npm** — run `npm install <package> --min-release-age=0`, which overrides the `.npmrc` setting for that one
+  command.
+
+Any override must be justified in the pull-request description. Use it only for security patches that genuinely
+cannot wait 72 hours.
+
 ### Environment variables
 
 Environment variables for local development are defined in [`.env.development.example`](.env.development.example). This file uses

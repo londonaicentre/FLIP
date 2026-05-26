@@ -161,9 +161,8 @@ check-ssm-ready: ## Verify SSM Session Manager prerequisites are installed
 	@[ -f ~/.ssh/host-aws ] || { echo "⚠️  SSH key ~/.ssh/host-aws not found (will be needed for Ansible)"; }
 	@echo "✅ SSM prerequisites verified!"
 
-prettier:
+prettier: ## Format Terraform files. YAML files are formatted by the prettier pre-commit hook.
 	terraform fmt -recursive
-	npx prettier --write "**/*.{yml,yaml}"
 
 .PHONY: create-backend
 create-backend: ## Create Terraform backend S3 bucket - Only run once
