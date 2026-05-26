@@ -31,7 +31,7 @@
                     </AiCard>
                 </div>
             </div>
-            <div v-else-if="!results.trustsResults.length">
+            <div v-else-if="!results.trustsResults.length" data-test="no-results-message">
                 <div class="py-4">
                     <div>
                         <p class="mt-2 text-lg text-gray-500">
