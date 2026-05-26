@@ -680,13 +680,17 @@ def main(argv: list[str] | None = None) -> int:
     # trailing-slash redirects come back with an http:// Location because uvicorn
     # sees the internal hop as plain HTTP. Following that http:// URL hits a
     # CloudFront 403. Rewrite redirect Locations to https:// so the smoke's
-    # trailing-slash paths resolve. Harmless against a local http stack.
-    def _force_https_redirect(response: requests.Response, *_: Any, **__: Any) -> None:
-        loc = response.headers.get("location", "")
-        if loc.startswith("http://"):
-            response.headers["location"] = "https://" + loc[len("http://") :]
+    # trailing-slash paths resolve. Only attach against an https BASE_URL — on a
+    # local http stack the redirect Location is the real target and rewriting it
+    # to https triggers an SSL handshake against a plain-http port.
+    if constants.BASE_URL.startswith("https://"):
 
-    client.hooks["response"].append(_force_https_redirect)
+        def _force_https_redirect(response: requests.Response, *_: Any, **__: Any) -> None:
+            loc = response.headers.get("location", "")
+            if loc.startswith("http://"):
+                response.headers["location"] = "https://" + loc[len("http://") :]
+
+        client.hooks["response"].append(_force_https_redirect)
 
     try:
         if args.project_id:
