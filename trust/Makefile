@@ -26,7 +26,10 @@ MAIN_ENV_FILE=../.env.development
 __DCKR_SUFFIX=development
 endif
 
-# replace environment variables by the values from the .env files
+# Optional: include the hub's main env file when present. On a hub-admin box,
+# this provides dev-only convenience values; on a remote trust operator's
+# host, MAIN_ENV_FILE is absent and the kit file (trust/.env.<KIT>) is the
+# single source of truth for all trust runtime config.
 ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
 include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
