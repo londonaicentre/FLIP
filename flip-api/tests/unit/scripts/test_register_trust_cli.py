@@ -288,6 +288,9 @@ from flip_api.trusts_services.services.register_trust import TrustRegistrationEr
 # hub_shared block
 # ---------------------------------------------------------------------------
 
+# Mirror of HUB_SHARED_ENV_KEYS in flip_api/scripts/register_trust.py — kept
+# local (rather than importing the production tuple) so the tests fail loudly
+# if the production list changes without an explicit test update.
 HUB_SHARED_KEYS = (
     "AES_KEY_BASE64",
     "CENTRAL_HUB_API_URL",
@@ -296,10 +299,9 @@ HUB_SHARED_KEYS = (
     "FLOWER_KIT_DATE",
     "FLARE_KIT_DATE",
     "DOCKER_TAG",
+    "DOCKER_REGISTRY",
     "DOCKER_FL_TAG",
     "DOCKER_FL_REGISTRY",
-    "DOCKER_FL_CLIENT_NAME",
-    "UPLOADED_FEDERATED_DATA_BUCKET",
     "NLB_SUBDOMAIN",
     "FL_SERVER_PORT",
 )
@@ -310,6 +312,12 @@ def test_kit_dict_includes_hub_shared_block_from_env(monkeypatch, session):
     monkeypatch.setattr("flip_api.scripts.register_trust.register_trust", lambda **kw: _kit(kw["name"]))
     session.exec.return_value.first.return_value = None
 
+    # Clear all hub-shared keys first so the host shell env doesn't leak into
+    # the result and cause a spurious mismatch — only the explicit `env` dict
+    # below should appear in the emitted hub_shared block.
+    for key in HUB_SHARED_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
     env = {
         "AES_KEY_BASE64": "Zm9vYmFy",
         "CENTRAL_HUB_API_URL": "https://hub.example/api",
@@ -318,10 +326,9 @@ def test_kit_dict_includes_hub_shared_block_from_env(monkeypatch, session):
         "FLOWER_KIT_DATE": "20260401",
         "FLARE_KIT_DATE": "20260318",
         "DOCKER_TAG": "stag",
+        "DOCKER_REGISTRY": "ghcr.io/londonaicentre/",
         "DOCKER_FL_TAG": "stag",
         "DOCKER_FL_REGISTRY": "ghcr.io/londonaicentre/",
-        "DOCKER_FL_CLIENT_NAME": "flower-fl-client",
-        "UPLOADED_FEDERATED_DATA_BUCKET": "flip-federated-data",
         "NLB_SUBDOMAIN": "fl-server.example.internal",
         "FL_SERVER_PORT": "8002",
     }
