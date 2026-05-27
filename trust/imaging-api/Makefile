@@ -10,18 +10,12 @@
 # limitations under the License.
 #
 
-# if tag PROD=true is passed, set PROD=true
-ifeq ($(PROD),true)
-MAIN_ENV_FILE=../../.env.production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE=../../.env.stag
-else
-MAIN_ENV_FILE=../../.env.development
-endif
-
-ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
-include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+# Pull defaults from the per-trust kit example (the only tracked env source —
+# the real kit file is gitignored and may not exist on a dev box).
+KIT_ENV_FILE=../.env.Trust_1.example
+ifneq ("$(wildcard $(KIT_ENV_FILE))","")
+include $(KIT_ENV_FILE)
+export $(shell sed 's/=.*//' $(KIT_ENV_FILE))
 endif
 
 service_name = imaging-api
