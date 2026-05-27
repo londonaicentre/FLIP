@@ -148,25 +148,15 @@ central-hub: create-networks-centralhub
 # On-prem operator flow — start a trust on the local host pointing at a
 # remote hub (typically the prod CloudFront one).
 #
-# First-run behaviour: if the kit file at trust/.env.<KIT> still has the
-# <run-make-register-trusts> placeholders the .example template carries,
-# this target prints the operator's public IP + the steps to onboard with
-# the FLIP admin (open the NLB ingress, UI Add-Trust, paste kit
-# credentials) and exits without trying to bring up trust-api with empty
-# credentials (which would crash on pydantic validation). Re-run after
-# the kit file is filled in for a normal stack-up.
+# Gated on the onboard-onprem-trust checklist (kit file present, swarm
+# initialized, Hub-shared + Kit credentials filled in, FL_KIT_DIR exists +
+# contains the expected files). On any failure the checklist prints what's
+# missing and how to fix it; we exit so the operator doesn't hit a cryptic
+# compose / pydantic failure deeper in the stack.
 up-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
-	@[ -f trust/.env.$(KIT) ] || (echo "❌ Kit file trust/.env.$(KIT) not found."; \
-		echo "   Copy the on-prem template first:"; \
-		echo "     cp trust/.env.Trust_2.production.example trust/.env.$(KIT)"; \
-		echo "   Then edit it to set your Trust-local credentials + host paths."; \
-		exit 1)
-	@if grep -q '<run-make-register-trusts>' trust/.env.$(KIT); then \
-		$(MAKE) print-onprem-onboarding-info KIT=$(KIT); \
-	else \
-		$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true); \
-	fi
+	@$(MAKE) onboard-onprem-trust KIT=$(KIT)
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
 # so an operator doesn't have to remember the -C trust path or PROD value.
@@ -174,103 +164,29 @@ down-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
 	$(MAKE) -C trust down-trust KIT=$(KIT) PROD=$(or $(PROD),true)
 
-# Prints the steps an on-prem operator + FLIP admin need to take to
-# onboard this trust on the remote hub. Invoked automatically by
-# up-onprem-trust when the kit file is unfilled; can also be run
-# standalone (e.g. `make print-onprem-onboarding-info KIT=Trust_2`).
-print-onprem-onboarding-info:
-	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required"; exit 1)
-	@OPERATOR_IP="$$(curl -sf --max-time 5 https://api.ipify.org || echo '<could not detect — set it manually>')"; \
-	HUB_URL="$$(sed -n 's/^CENTRAL_HUB_API_URL=//p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
-	HUB_URL="$${HUB_URL%/api}"; \
-	FL_BACKEND="$$(sed -n 's/^FL_BACKEND=//p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
-	FL_KIT_DIR="$$(sed -n 's/^FL_KIT_DIR=//p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
-	S3_BUCKET="$$(sed -n 's|^UPLOADED_FEDERATED_DATA_BUCKET=s3://\([^/]*\)/.*|\1|p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
-	if [ "$$FL_BACKEND" = "nvflare" ]; then \
-	  FL_KIT_DATE="$$(sed -n 's/^FLARE_KIT_DATE=//p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
-	  FL_KIT_PREFIX="fl-flare-participant-kits"; \
-	else \
-	  FL_KIT_DATE="$$(sed -n 's/^FLOWER_KIT_DATE=//p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
-	  FL_KIT_PREFIX="fl-flower-participant-kits"; \
-	fi; \
-	echo ""; \
-	echo "════════════════════════════════════════════════════════════════════════"; \
-	echo "  On-prem trust onboarding — kit trust/.env.$(KIT) not yet credentialed"; \
-	echo "════════════════════════════════════════════════════════════════════════"; \
-	echo ""; \
-	echo "  Your public IP (this host):  $$OPERATOR_IP"; \
-	echo ""; \
-	echo "  1. Send your public IP to the FLIP admin and ask them to run"; \
-	echo "     (from deploy/providers/AWS, with their prod AWS creds):"; \
-	echo ""; \
-	echo "       AWS_PROFILE=prod make allow-local-trust-nlb LOCAL_TRUST_IP=$$OPERATOR_IP PROD=true"; \
-	echo ""; \
-	echo "     This opens the prod FL-server NLB to your fl-client traffic."; \
-	echo ""; \
-	echo "  2. Open the prod UI in your browser:"; \
-	echo ""; \
-	echo "       $${HUB_URL:-<set CENTRAL_HUB_API_URL in your kit file first>}"; \
-	echo ""; \
-	echo "  3. Log in, navigate to Connection Status, click Add Trust:"; \
-	echo "       - Trust name: $(KIT)   (or whatever your hub admin agreed)"; \
-	echo "       - Short code: e.g. your hospital code"; \
-	echo "       - Region: e.g. London"; \
-	echo "     Submit. The modal will show 5 KEY=VALUE lines, ONCE."; \
-	echo ""; \
-	echo "  4. Copy each line from the modal and paste into the"; \
-	echo "     Kit credentials block at the bottom of trust/.env.$(KIT),"; \
-	echo "     replacing the <run-make-register-trusts> placeholders:"; \
-	echo "       TRUST_API_KEY=…"; \
-	echo "       TRUST_INTERNAL_SERVICE_KEY=…"; \
-	echo "       FL_KIT_SLOT=…"; \
-	echo "       FL_KIT_SLOT_NUMBER=…"; \
-	echo "       EXPECTED_TRUST_ID=…"; \
-	echo ""; \
-	echo "  5. Ask the FLIP admin to package your FL participant kit (they have"; \
-	echo "     the prod AWS creds you don't). They run a SELECTIVE sync — only YOUR"; \
-	echo "     slot's portion of the bundle, never the whole net-1/ tree — and send"; \
-	echo "     you the resulting tarball over an encrypted channel. Extract it at"; \
-	echo "     FL_KIT_DIR (= $${FL_KIT_DIR:-<unset — set FL_KIT_DIR in your kit file>})"; \
-	echo "     preserving the net-1/ hierarchy."; \
-	echo ""; \
-	echo "     Commands for the FLIP admin (copy-paste with your slot's values from step 4):"; \
-	echo ""; \
-	if [ -z "$$S3_BUCKET" ] || [ -z "$$FL_KIT_DATE" ]; then \
-	  echo "       (sync the hub-shared block first — re-run this target after"; \
-	  echo "        running 'make sync-trust-kit-N' so the per-backend command renders)"; \
-	elif [ "$$FL_BACKEND" = "nvflare" ]; then \
-	  echo "       # NVFLARE — admin runs these, then tarballs + sends:"; \
-	  echo "       mkdir -p /tmp/fl-kit-bundle/net-1/services/<your-slot>"; \
-	  echo "       AWS_PROFILE=prod aws s3 sync \\"; \
-	  echo "         s3://$$S3_BUCKET/$$FL_KIT_PREFIX/$$FL_KIT_DATE/net-1/services/<your-slot>/ \\"; \
-	  echo "         /tmp/fl-kit-bundle/net-1/services/<your-slot>/"; \
-	  echo "       tar -C /tmp/fl-kit-bundle -czf /tmp/fl-kit-<your-slot>.tar.gz net-1"; \
-	  echo ""; \
-	  echo "     Then on this host, after the admin sends you the tarball:"; \
-	  echo "       mkdir -p $${FL_KIT_DIR:-<FL_KIT_DIR>}"; \
-	  echo "       tar -C $${FL_KIT_DIR:-<FL_KIT_DIR>} -xzf <path-to-received-tarball>"; \
-	else \
-	  echo "       # Flower — admin runs these, then tarballs + sends:"; \
-	  echo "       mkdir -p /tmp/fl-kit-bundle/net-1/certificates /tmp/fl-kit-bundle/net-1/keys"; \
-	  echo "       AWS_PROFILE=prod aws s3 sync \\"; \
-	  echo "         s3://$$S3_BUCKET/$$FL_KIT_PREFIX/$$FL_KIT_DATE/net-1/certificates/ \\"; \
-	  echo "         /tmp/fl-kit-bundle/net-1/certificates/"; \
-	  echo "       AWS_PROFILE=prod aws s3 cp \\"; \
-	  echo "         s3://$$S3_BUCKET/$$FL_KIT_PREFIX/$$FL_KIT_DATE/net-1/keys/supernode_credentials_<your-FL_KIT_SLOT_NUMBER> \\"; \
-	  echo "         /tmp/fl-kit-bundle/net-1/keys/"; \
-	  echo "       tar -C /tmp/fl-kit-bundle -czf /tmp/fl-kit-<your-slot>.tar.gz net-1"; \
-	  echo ""; \
-	  echo "     Then on this host, after the admin sends you the tarball:"; \
-	  echo "       mkdir -p $${FL_KIT_DIR:-<FL_KIT_DIR>}"; \
-	  echo "       tar -C $${FL_KIT_DIR:-<FL_KIT_DIR>} -xzf <path-to-received-tarball>"; \
-	fi; \
-	echo ""; \
-	echo "  6. Re-run this command to bring the stack up:"; \
-	echo ""; \
-	echo "       make up-onprem-trust KIT=$(KIT) PROD=$(or $(PROD),true)"; \
-	echo ""; \
-	echo "════════════════════════════════════════════════════════════════════════"; \
-	echo ""
+# Readiness checklist for an on-prem trust. Prints the operator's public
+# IP + a row per precondition (kit file, swarm, Hub-shared block, Kit
+# credentials, FL_KIT_DIR and its contents) with ✅/❌ and a concrete fix
+# under each failing row. Exits 0 when all checks pass (the operator can
+# then run `make up-onprem-trust KIT=<slot>`), 1 otherwise.
+#
+# Invoked automatically as a precheck by up-onprem-trust; can also be run
+# standalone (e.g. `make onboard-onprem-trust KIT=Trust_2`).
+#
+# On-prem onboarding splits like this:
+#   - Admin owns: opening the prod NLB to the operator's IP, UI-registering
+#     the trust on the prod hub (Add-Trust modal mints the 5 Kit credentials,
+#     admin pastes into trust/.env.<KIT>), running `make sync-trust-kit-N`
+#     to populate the Hub-shared block in trust/.env.<KIT>, running
+#     `make package-onprem-trust-kit` to tarball the populated env file
+#     plus the operator's slice of the FL participant kit S3 bucket.
+#   - Operator owns: extracting the tarball, copying the .env.<KIT> in,
+#     setting FL_KIT_DIR + Host-local profile, running `make up-onprem-trust`.
+# The operator never touches the prod UI directly — the admin uses it on
+# the operator's behalf because Hub-shared values + FL kit S3 slice both
+# need prod AWS creds the operator doesn't have.
+onboard-onprem-trust:
+	@bash scripts/onboard-onprem-trust.sh $(KIT)
 
 # Stop all containers
 down:

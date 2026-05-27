@@ -49,6 +49,29 @@ switching `FL_BACKEND`, etc., then re-transmit the refreshed kit file to the
 remote operator (out-of-band, same as initial distribution — SCP-via-SSM
 for EC2; encrypted channel for on-prem).
 
+For the on-prem flow, the admin populates `trust/.env.<slot>` by hand
+on their workstation:
+
+1. UI → Add Trust → paste the 5 modal lines into the Kit credentials
+   section, replacing `<run-make-register-trusts>` placeholders.
+2. `make sync-trust-kit-N` (from repo root) — fills the Hub-shared block,
+   replacing `<run-make-sync-trust-kit>` placeholders.
+
+Then `make -C deploy/providers/AWS package-onprem-trust-kit KIT=<slot>`
+tarballs the populated kit file as-is + the operator's slice of the FL
+participant kit S3 bucket into
+`deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz`.
+The packager does NOT edit the kit file.
+
+The operator extracts, copies the `.env.<slot>` into their checkout, edits
+only the Host-local profile (sets `FL_KIT_DIR`, ports/dirs), runs
+`make onboard-onprem-trust KIT=<slot>` for the readiness checklist (kit
+present, swarm active, Hub-shared + Kit credentials populated, FL_KIT_DIR
+exists + has the expected files), then `make up-onprem-trust KIT=<slot>`.
+They never touch the prod UI directly — the admin uses it on their behalf
+because the Hub-shared block + FL kit S3 slice both need prod AWS creds
+the operator does not have.
+
 ## Key Files
 
 | File | Purpose |

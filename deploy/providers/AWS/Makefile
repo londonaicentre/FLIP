@@ -600,6 +600,21 @@ register-trusts: ## Register the TRUST_<n>_* trusts on the hub and distribute ki
 	## re-running is safe.
 	@bash scripts/register-trusts.sh
 
+.PHONY: package-onprem-trust-kit
+package-onprem-trust-kit: ## Tarball trust/.env.<KIT> + FL kit slice for an on-prem operator
+	## Does NOT edit the kit file. The admin populates trust/.env.<KIT> first:
+	##   1. UI → Add Trust → paste the 5 KEY=VALUE modal lines into trust/.env.<KIT>.
+	##   2. `make sync-trust-kit-N` (from repo root) — fills the Hub-shared block.
+	## This target then reads FL_BACKEND / FL_KIT_SLOT / etc. out of the populated
+	## kit file, slices the operator's portion of the FL participant kit out of
+	## S3 (net-1/services/<slot>/ for nvflare; certificates/ + one
+	## supernode_credentials_<N> for flower), and tarballs the kit file + slice
+	## into deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz.
+	## Hand the tarball to the operator over an encrypted channel.
+	## Required: KIT=<slot> (e.g. KIT=Trust_2).
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	@KIT=$(KIT) bash scripts/package-onprem-trust-kit.sh
+
 .PHONY: delete-trust
 delete-trust: ## Hard-delete a trust on the hub (frees the name + FL kit slot; cascades through dependent tables)
 	## Runs flip_api.scripts.delete_trust as a one-off ECS task. Removes the trust row

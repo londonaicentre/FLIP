@@ -117,17 +117,47 @@ asynchronously: the trust operator provisions their own host, and the FLIP
 admin opens the AWS firewall once the operator reports their public IP. There
 is no SSH path — each side runs its own step locally.
 
-**1. Register the trust (FLIP admin).** Register the trust on the hub — via the
-Add-Trust modal in the UI or ``make register-trusts``. This mints the trust's
-kit file ``trust/.env.<KIT>`` — by default ``trust/.env.Trust_2``
-in the FLIP prod environment, where Trust_2 is the on-prem (BDMS) slot
-(``TRUST_API_KEY``,
-``TRUST_INTERNAL_SERVICE_KEY``, ``FL_KIT_SLOT``, …).
+**1. Fill in the kit file (FLIP admin).** On a workstation with prod AWS
+creds, copy the template and populate the two managed blocks:
 
-**2. Distribute the kit (FLIP admin).** Send the kit file and the FL participant
-kit to the trust operator out-of-band.
+.. code-block:: shell
 
-**3. Provision the host (trust operator).** On the trust host:
+   cp trust/.env.Trust_2.production.example trust/.env.Trust_2
+
+a. In the prod UI, open Connection Status → Add Trust → fill in the trust's
+   name / code / region → submit. The modal surfaces 5 KEY=VALUE lines
+   exactly once (``TRUST_API_KEY``, ``TRUST_INTERNAL_SERVICE_KEY``,
+   ``FL_KIT_SLOT``, ``FL_KIT_SLOT_NUMBER``, ``EXPECTED_TRUST_ID``). Paste
+   them into the Kit credentials section of ``trust/.env.Trust_2``,
+   replacing the ``<run-make-register-trusts>`` placeholders. The hub
+   stores only SHA-256 hashes and cannot re-emit them, so capture all 5
+   before closing the modal.
+
+b. Run ``make sync-trust-kit-2`` (from the repo root) to populate the
+   Hub-shared block (14 keys), replacing the ``<run-make-sync-trust-kit>``
+   placeholders.
+
+**2. Package the kit (FLIP admin).** Tarball the populated kit file + the
+operator's slice of the FL participant kit:
+
+.. code-block:: shell
+
+   cd deploy/providers/AWS
+   AWS_PROFILE=prod make package-onprem-trust-kit KIT=Trust_2 PROD=true
+
+The script copies ``trust/.env.Trust_2`` as-is (does not edit it), reads
+``FL_BACKEND`` / ``FL_KIT_SLOT`` / ``FL_KIT_SLOT_NUMBER`` /
+``UPLOADED_FEDERATED_DATA_BUCKET`` out of it, slices only this operator's
+portion of the FL participant kit out of S3 (``net-1/services/<slot>/`` for
+nvflare; ``net-1/certificates/`` + one ``supernode_credentials_<N>`` for
+flower), and writes a tarball to
+``deploy/providers/AWS/build/trust-kits/flip-trust-kit-<slot>-<date>.tar.gz``.
+
+**3. Distribute the kit (FLIP admin).** Send the tarball to the trust operator
+over an encrypted channel (Signal, Keybase, age-encrypted attachment) — it
+contains a plaintext API key, AES encryption key, and an FL TLS private key.
+
+**4. Provision the host (trust operator).** On the trust host:
 
 .. code-block:: bash
 
@@ -147,21 +177,36 @@ In Fish, the prompt-and-export idiom is different:
 ``provision-local-trust`` runs the Ansible playbook
 ``deploy/providers/local/site_local_trust.yml`` (installs Docker and system
 packages, creates the ``/opt/flip/`` tree including the empty FL kit dirs
-under ``/opt/flip/fl-kit/net-1/...``) and stages a FL participant kit
-bundle under ``/tmp``. The trust kit file points at the FL kit root via
-``FL_KIT_DIR`` (default ``/opt/flip/fl-kit``); the prod trust compose then
-mounts ``${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/...`` (nvflare) or
-``${FL_KIT_DIR}/net-1/{certificates,keys}`` (flower) into the fl-client
-container. It runs entirely on the trust host.
+under ``/opt/flip/fl-kit/net-1/...``). It runs entirely on the trust host. For
+a laptop deployment, you can skip this step and extract the kit somewhere
+under ``$HOME`` instead — the trust kit file points at the FL kit root via
+``FL_KIT_DIR``.
 
-**4. Start the trust stack (trust operator).**
+**5. Stage the kit + start the trust stack (trust operator).**
 
 .. code-block:: shell
 
-   cd ../../..
-   env PROD=<stag|true> make -C trust up-trust KIT=Trust_2   # replace Trust_2 with whichever slot register-trusts wrote
+   mkdir -p $HOME/flip-trust-kit
+   tar -C $HOME/flip-trust-kit -xzf flip-trust-kit-<slot>-<date>.tar.gz
+   cp $HOME/flip-trust-kit/.env.Trust_2 trust/.env.Trust_2
+   # Edit trust/.env.Trust_2 (Host-local profile section only):
+   #   - FL_KIT_DIR=$HOME/flip-trust-kit/fl-kit
+   #   - adjust ports / bind-mount dirs to match your host
+   #   - override Trust-local passwords for production-grade secrets if desired
+   make onboard-onprem-trust KIT=Trust_2   # readiness checklist
+   make up-onprem-trust KIT=Trust_2        # comes up after all checks pass
 
-**5. Open the AWS firewall (FLIP admin).** Once the operator reports their
+``make onboard-onprem-trust KIT=Trust_2`` prints a ✅/❌ checklist (your IP,
+docker swarm state, Hub-shared / Kit credentials populated, FL_KIT_DIR set
+and on disk, FL kit contents present) — fix any ❌ rows before
+``up-onprem-trust``, which gates on the same checks.
+
+The prod trust compose mounts ``${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/…``
+(nvflare) or ``${FL_KIT_DIR}/net-1/{certificates,keys}`` (flower) into the
+fl-client container, so the ``net-1/`` hierarchy must be preserved as
+extracted.
+
+**6. Open the AWS firewall (FLIP admin).** Once the operator reports their
 host's public IP, add it to ``LOCAL_TRUST_PUBLIC_IPS`` (an HCL list) in the env
 file ``.env.<stag|production>``, then apply:
 

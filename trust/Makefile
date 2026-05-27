@@ -177,7 +177,7 @@ define require_kit_file
 	    echo "❌ Kit file trust/$(KIT_FILE) still has $$n unfilled <run-make-…> placeholder(s)."; \
 	    echo "   Local hub: run 'make register-trusts' (from the repo root)."; \
 	    echo "   On-prem trust against a remote hub:"; \
-	    echo "     run 'make print-onprem-onboarding-info KIT=$(KIT)' (from the repo root)"; \
+	    echo "     run 'make onboard-onprem-trust KIT=$(KIT)' (from the repo root)"; \
 	    echo "     for the onboarding steps; if only <run-make-sync-trust-kit> values remain,"; \
 	    echo "     ask the hub admin to re-send the kit (it's been resynced)."; \
 	    exit 1; \

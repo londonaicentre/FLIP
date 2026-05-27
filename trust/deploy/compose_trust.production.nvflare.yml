@@ -24,7 +24,7 @@ services:
       # FL_KIT_DIR is the kit root on the trust host — Ansible-managed
       # /opt/flip/fl-kit on the AWS EC2 trust (see site.yml), or wherever
       # the on-prem operator extracted their selectively-synced kit (see
-      # the `make print-onprem-onboarding-info` instructions). The
+      # the `make onboard-onprem-trust` checklist). The
       # net-1/services/${TRUST_NAME}/ prefix mirrors the S3 bundle's own
       # layout — no Ansible-side flattening so EC2 and on-prem hosts
       # share the same compose mount shape.
