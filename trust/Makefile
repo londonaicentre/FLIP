@@ -16,24 +16,27 @@
 	remove-networks recreate-networks tests update-omop-data update-orthanc-data integration_test
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
-MAIN_ENV_FILE=../.env.production
 __DCKR_SUFFIX=production
 else ifeq ($(PROD),stag)
-MAIN_ENV_FILE=../.env.stag
 __DCKR_SUFFIX=production
 else
-MAIN_ENV_FILE=../.env.development
 __DCKR_SUFFIX=development
 endif
 
-# Optional: include the hub's main env file when present. On a hub-admin box,
-# this provides dev-only convenience values; on a remote trust operator's
-# host, MAIN_ENV_FILE is absent and the kit file (trust/.env.<KIT>) is the
-# single source of truth for all trust runtime config.
-ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
-include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
-endif
+# The trust stack runs against the per-trust kit file (trust/.env.<KIT>) as the
+# single source of truth — no hub `.env.*` include. A remote trust operator
+# only ever has their kit file, and we want a hub-admin dev box to fail loud
+# on a stale kit rather than silently fall back to hub env values. The kit
+# file's "Hub-shared (managed)" section, populated by `make register-trusts`
+# / `make sync-trust-kits`, carries the values that used to flow from hub env
+# (AES_KEY_BASE64, CENTRAL_HUB_API_URL, DOCKER_*, FL_BACKEND, NLB_SUBDOMAIN,
+# etc.) — see HUB_SHARED_ENV_KEYS in flip_api/scripts/register_trust.py.
+# Kit includes must come BEFORE fl_backend.mk so its $(FL_BACKEND)-derived
+# vars resolve against the kit's value, not fl_backend.mk's fallback default.
+KIT_FILE := .env.$(KIT)
+-include $(KIT_FILE)
+LOCAL_TRUST_KIT_FILE := .env.$(LOCAL_TRUST_NAME)
+-include $(LOCAL_TRUST_KIT_FILE)
 
 include ../deploy/fl_backend.mk
 
@@ -71,17 +74,17 @@ endif
 # ── Per-trust deployment ──────────────────────────────────────────────────
 # A trust stack is selected by KIT — the kit-file name under trust/.env.<KIT>
 # (the FL kit slot name, e.g. Trust_1). trust/.env.<KIT> carries that trust's
-# host-local profile (ports, bind dirs) and kit credentials (TRUST_API_KEY,
-# TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID);
-# `make register-trusts` writes it, trust/.env.<KIT>.example is the
-# template. KIT has no default so up-local-trust (which selects its own kit
-# via LOCAL_TRUST_NAME) never double-includes — pass KIT=<name> explicitly.
+# host-local profile (ports, bind dirs), trust-local credentials, hub-shared
+# block, and kit credentials. `make register-trusts` writes the hub-managed
+# blocks, trust/.env.<KIT>.example is the template the operator copies first.
+# KIT has no default so up-local-trust (which selects its own kit via
+# LOCAL_TRUST_NAME) never double-includes — pass KIT=<name> explicitly. The
+# kit file itself is `-include`d at the top of this Makefile so FL_BACKEND
+# (hub-shared) lands before fl_backend.mk consumes it.
 #
 # The defaults in TRUST_VARS are the Trust_1 port allocation: a single-trust
 # host (EC2 / on-prem) needs no port entries in its kit file, while a second
 # dev stack overrides them via its kit file so two trusts coexist on one host.
-KIT_FILE := .env.$(KIT)
--include $(KIT_FILE)
 
 # Numeric suffix of the kit (Trust_1 -> 1) — drives the per-trust overlay
 # network and compose project name, preserving the deploy_trust-network-N scheme.
@@ -96,7 +99,7 @@ TRUST_VARS = \
 	BASE_IMAGES_DOWNLOAD_DIR=$(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(filter true stag,$(PROD)),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT))) \
 	OMOP_DB_PORT=$(or $(OMOP_DB_PORT),5434) \
 	PACS_UI_PORT=$(or $(PACS_UI_PORT),8042) \
-	ORTHANC_STORAGE_DIR=$(or $(ORTHANC_STORAGE_DIR),$(if $(filter true stag,$(PROD)),/opt/flip/orthanc/orthanc-storage,./orthanc/orthanc-storage)) \
+	ORTHANC_STORAGE_DIR=$(or $(ORTHANC_STORAGE_DIR),$(if $(filter true stag,$(PROD)),/opt/flip/orthanc/orthanc-storage-trust1,./orthanc/orthanc-storage-trust1)) \
 	ORTHANC_USERNAME=${ORTHANC_USERNAME} \
 	ORTHANC_PASSWORD=${ORTHANC_PASSWORD} \
 	XNAT_PORT=$(or $(XNAT_PORT),8104) \
@@ -137,10 +140,9 @@ TRUST_VARS = \
 #   cp -r trust/orthanc/orthanc-storage-2/ trust/orthanc/orthanc-storage-local/
 #
 # Per-trust kit file (trust/.env.<LOCAL_TRUST_NAME>) — same schema as the
-# KIT-selected kit above. Dropped in by the deploy's `register-trusts`
-# step or by the operator after `POST /admin/trusts`.
-LOCAL_TRUST_KIT_FILE := .env.$(LOCAL_TRUST_NAME)
--include $(LOCAL_TRUST_KIT_FILE)
+# KIT-selected kit above. Dropped in by the deploy's `register-trusts` step
+# or by the operator after `POST /admin/trusts`. `-include`d at the top of
+# this Makefile so its hub-shared FL_BACKEND lands before fl_backend.mk.
 
 LOCAL_TRUST_VARS = \
 	BASE_IMAGES_DOWNLOAD_DIR=$(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/local/$(LOCAL_TRUST_NAME)) \
@@ -226,7 +228,7 @@ build:
 up-trust: update-omop-data update-orthanc-data create-networks
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
-	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
+	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(KIT)/db_data))
 	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
@@ -249,7 +251,7 @@ restart-trust: down-trust up-trust
 up-trust-ec2:
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
-	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
+	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."
@@ -274,7 +276,7 @@ up-local-trust: create-networks-core create-networks-local-trust
 	## Starts the on-prem (local) trust compose stack with LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME).
 	## Uses project name 'trust-local' so it never clashes with a Trust_1/Trust_2 stack.
 	@echo "🚢 Starting local Trust services (LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME))..."
-	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
+	@echo "⚙️ Using kit file trust/$(LOCAL_TRUST_KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data))
 	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/local/$(LOCAL_TRUST_NAME))

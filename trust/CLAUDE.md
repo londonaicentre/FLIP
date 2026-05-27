@@ -18,7 +18,13 @@ Trust services run at each healthcare institution (cloud EC2 or on-prem). All tr
 ## Kit file structure
 
 Each `trust/.env.<KIT>` is a self-contained config — a trust operator only
-needs this file (no hub `.env`). Four sections, in order:
+needs this file (no hub `.env`). `trust/Makefile` deliberately does NOT
+include any `.env.*` from the repo root; the kit file is the single source
+of truth at runtime, so a stale or missing entry fails loud instead of
+silently falling back to a hub value.
+
+Four sections, in order (the templates `.env.Trust_*.example` carry the
+same layout):
 
 | Section | Owner | Touched by |
 |---------|-------|-----------|
@@ -27,11 +33,21 @@ needs this file (no hub `.env`). Four sections, in order:
 | Hub-shared (managed) | Hub admin | `make register-trust-N` / `make sync-trust-kit-N` |
 | Kit credentials (managed) | Hub | `make register-trust-N` only — write-once; hub keeps only the hash |
 
-`make sync-trust-kit-N` refreshes the Hub-shared block from the hub's
-`MAIN_ENV_FILE` without touching credentials. Run after rotating
-`AES_KEY_BASE64`, bumping `DOCKER_FL_TAG`, switching `FL_BACKEND`, etc., then
-re-transmit the refreshed kit file to the remote operator (out-of-band, same
-as initial distribution — SCP-via-SSM for EC2; encrypted channel for on-prem).
+The Hub-shared block is delimited by a sentinel comment
+(`# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──`)
+that `scripts/distribute-trust-kits.sh` and `scripts/sync-trust-kits.sh`
+match byte-for-byte. The exact key set is the `HUB_SHARED_ENV_KEYS` tuple in
+`flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
+`CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
+`FLOWER_KIT_DATE`, `FLARE_KIT_DATE`, `DOCKER_TAG`, `DOCKER_REGISTRY`,
+`DOCKER_FL_TAG`, `DOCKER_FL_REGISTRY`, `DOCKER_FL_CLIENT_NAME`,
+`UPLOADED_FEDERATED_DATA_BUCKET`, `NLB_SUBDOMAIN`, `FL_SERVER_PORT`).
+
+`make sync-trust-kit-N` refreshes the Hub-shared block without rotating
+credentials. Run after rotating `AES_KEY_BASE64`, bumping `DOCKER_TAG`,
+switching `FL_BACKEND`, etc., then re-transmit the refreshed kit file to the
+remote operator (out-of-band, same as initial distribution — SCP-via-SSM
+for EC2; encrypted channel for on-prem).
 
 ## Key Files
 
@@ -66,8 +82,9 @@ make create-networks           # Create Docker overlay networks
 
 ## Environment
 
-- `MAIN_ENV_FILE` resolves from PROD flag: `.env.development`, `.env.stag`, or `.env.production`
+- All runtime config comes from the kit file (`trust/.env.<KIT>`); no hub `.env.*` is included by `trust/Makefile` or `trust/xnat/Makefile`. `PROD` still selects the compose-file suffix (development / production) but no longer drives an env-file include.
 - Trust identity: `TRUST_API_KEY` (per-trust, from the kit file `trust/.env.<slot>`); optional `EXPECTED_TRUST_ID` self-check. The hub identifies the trust by API key alone.
-- Encryption: `AES_KEY_BASE64` for trust-to-hub payload encryption
+- Encryption: `AES_KEY_BASE64` for trust-to-hub payload encryption (hub-shared; synced into the kit file).
+- `DEBUG` is no longer inherited from a hub env file. `make debug` / `make debug-off` set it explicitly; `make up-trust` without an explicit `DEBUG=true` runs services in non-debug mode.
 - Two trust instances (Trust_1, Trust_2) have separate ports, networks, and data dirs
 - Local trust uses `trust-local` project name to avoid port collisions

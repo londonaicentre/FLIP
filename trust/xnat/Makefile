@@ -14,20 +14,13 @@
 	xnat-war-download xnat-plugins-download xnat-reset xnat-configure xnat-configure-local \
 	create-xnat-network create-network-trust-local test unit_test local_test
 
-# if tag PROD=true is passed, set PROD=true
-ifeq ($(PROD),true)
-MAIN_ENV_FILE=../../.env.production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE=../../.env.stag
-else
-MAIN_ENV_FILE=../../.env.development
-endif
-
-# replace environment variables by the values from the .env files
-ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
-include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
-endif
+# Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_REGISTRY,
+# DOCKER_TAG, XNAT_PORT, XNAT_ADMIN_*, XNAT_SERVICE_*, XNAT_DATABASE_URL) is
+# pulled from the kit file via `-include $(KIT_FILE)` below; XNAT-internal
+# build args (XNAT_VERSION, XNAT_DATASOURCE_*, XNAT_SMTP_*, heap, paths) come
+# from trust/xnat/.env. The dev-admin build path (xnat-war-download /
+# xnat-plugins-download) needs FLIP_ARTIFACTS_BUCKET_NAME — pass it on the
+# CLI if invoking those targets directly.
 
 # Load XNAT-specific .env file
 ifneq ("$(wildcard .env)","")
@@ -48,6 +41,9 @@ export DOCKER_TAG
 XNAT_TAG ?= ${DOCKER_TAG}
 export XNAT_TAG
 
+# XNAT_DATA_DIR is set AFTER the kit-file include below so the kit's value
+# wins over the make-side default.
+
 # ── Per-trust XNAT stack ──────────────────────────────────────────────────
 # KIT selects the trust — the kit-file name under trust/.env.<KIT>. That kit
 # file carries this trust's XNAT_PORT / PACS_UI_PORT (unsuffixed), the same
@@ -64,6 +60,23 @@ XNAT_NETWORK := deploy_trust-network-$(TRUST_NUM)
 # needs no XNAT port entries in its kit file.
 XNAT_PORT_EFFECTIVE := $(or $(XNAT_PORT),8104)
 PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
+
+# Host path that backs this trust's XNAT bind mounts (parent of xnat-data/
+# and xnat-db-data/). Sourced from the kit file's Host-local profile;
+# falls back to a per-trust default when the kit omits it:
+#   stag/prod → /opt/flip/xnat   (what the Ansible provisioner creates)
+#   dev       → ./xnat-data-trust$(TRUST_NUM)   (per-stack local dir; isolates
+#               concurrent Trust_1 / Trust_2 stacks on the same host)
+# Override per-host (e.g. on a box where /opt is small and the XNAT archive
+# lives on a larger /data volume) by setting XNAT_DATA_DIR in
+# trust/.env.<KIT> or exporting it before invoking make. Resolved to an
+# absolute path so docker-compose-stack.{development,production}.yml can
+# bind-mount it directly without a separate `${XNAT_PATH}/` prefix. Both
+# this recipe and the compose stacks read the same exported var so the
+# dirs Make creates and the dirs compose mounts stay in lockstep.
+XNAT_DATA_DIR ?= $(if $(filter true stag,$(PROD)),/opt/flip/xnat,./xnat-data-trust$(TRUST_NUM))
+XNAT_DATA_DIR := $(abspath $(XNAT_DATA_DIR))
+export XNAT_DATA_DIR
 
 project_local = xnat-local
 network_local = deploy_trust-network-local
@@ -209,8 +222,8 @@ xnat-plugins-download:
 # wipes any previous data. Docker Swarm requires host directories to exist
 # before bind-mounting; the wipe avoids stale bind mounts from a prior run
 # (the second xnat-web otherwise crash-loops on a locked SQLite index).
-# In production/staging the path is /opt/flip/xnat/; in development it is
-# ./[XNAT_PORT]/xnat-data, keyed by this trust's XNAT port.
+# Data dir defaults vary by PROD — see the XNAT_DATA_DIR comment above
+# for the resolution rule and how to override per-host.
 xnat-reset:
 	$(require_kit)
 	@case "$$(pwd)" in */trust/xnat) ;; *) \
@@ -221,27 +234,27 @@ xnat-reset:
 	fi
 	@echo "Deleting previous XNAT data and creating new directories for $(KIT) ..."; \
 	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \
-		echo "  📍 Using production path: /opt/flip/xnat/"; \
+		echo "  📍 Using prod data dir: $(XNAT_DATA_DIR)/"; \
 		xnat_ctx="$$(docker context show)"; \
 		if [ "$$xnat_ctx" != "default" ]; then \
 			echo "  🛰️  remote swarm deploy (context '$$xnat_ctx') — resetting XNAT dirs on the trust host via ssh"; \
-			ssh "$$xnat_ctx" 'sudo rm -rf /opt/flip/xnat && sudo mkdir -p /opt/flip/xnat/xnat-data/tomcat_logs /opt/flip/xnat/xnat-data/archive /opt/flip/xnat/xnat-data/build /opt/flip/xnat/xnat-data/cache /opt/flip/xnat/xnat-db-data && sudo chown -R 1000:1000 /opt/flip/xnat'; \
+			ssh "$$xnat_ctx" "sudo rm -rf $(XNAT_DATA_DIR) && sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/tomcat_logs $(XNAT_DATA_DIR)/xnat-data/archive $(XNAT_DATA_DIR)/xnat-data/build $(XNAT_DATA_DIR)/xnat-data/cache $(XNAT_DATA_DIR)/xnat-db-data && sudo chown -R 1000:1000 $(XNAT_DATA_DIR)"; \
 		else \
-			sudo rm -rf /opt/flip/xnat; \
-			sudo mkdir -p /opt/flip/xnat/xnat-data/tomcat_logs; \
-			sudo mkdir -p /opt/flip/xnat/xnat-data/archive; \
-			sudo mkdir -p /opt/flip/xnat/xnat-data/build; \
-			sudo mkdir -p /opt/flip/xnat/xnat-data/cache; \
-			sudo mkdir -p /opt/flip/xnat/xnat-db-data; \
-			sudo chown -R $(USER):$(USER) /opt/flip/xnat; \
+			sudo rm -rf $(XNAT_DATA_DIR); \
+			sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/tomcat_logs; \
+			sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/archive; \
+			sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/build; \
+			sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/cache; \
+			sudo mkdir -p $(XNAT_DATA_DIR)/xnat-db-data; \
+			sudo chown -R $(USER):$(USER) $(XNAT_DATA_DIR); \
 		fi; \
 	else \
-		echo "  📍 Using development path: ./$(XNAT_PORT_EFFECTIVE)/xnat-data"; \
-		sudo rm -rf $(XNAT_PORT_EFFECTIVE); \
-		mkdir -p $(XNAT_PORT_EFFECTIVE)/xnat-data/tomcat_logs; \
-		mkdir -p $(XNAT_PORT_EFFECTIVE)/xnat-data/archive; \
-		mkdir -p $(XNAT_PORT_EFFECTIVE)/xnat-data/build; \
-		mkdir -p $(XNAT_PORT_EFFECTIVE)/xnat-data/cache; \
+		echo "  📍 Using dev data dir: $(XNAT_DATA_DIR)/"; \
+		sudo rm -rf $(XNAT_DATA_DIR); \
+		mkdir -p $(XNAT_DATA_DIR)/xnat-data/tomcat_logs; \
+		mkdir -p $(XNAT_DATA_DIR)/xnat-data/archive; \
+		mkdir -p $(XNAT_DATA_DIR)/xnat-data/build; \
+		mkdir -p $(XNAT_DATA_DIR)/xnat-data/cache; \
 	fi
 
 # Configure an XNAT instance with initial settings and run dcm2niix setup.
