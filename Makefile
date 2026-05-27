@@ -186,7 +186,7 @@ down-onprem-trust:
 # the operator's behalf because Hub-shared values + FL kit S3 slice both
 # need prod AWS creds the operator doesn't have.
 onboard-onprem-trust:
-	@uv run scripts/onboard_onprem_trust.py $(KIT)
+	@uv run --no-config scripts/onboard_onprem_trust.py $(KIT)
 
 # Stop all containers
 down:
@@ -401,7 +401,7 @@ register-trusts: register-trust-1 register-trust-2
 sync-trust-kit:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> required (e.g. KIT=Trust_2)"; exit 1)
 	@echo "🔄 Syncing hub-shared block for kit $(KIT) from $(MAIN_ENV_FILE)..."
-	@uv run scripts/sync_trust_kit.py $(KIT)
+	@uv run --no-config scripts/sync_trust_kit.py $(KIT)
 
 # Sync every locally-present kit file. Globs trust/.env.* and drops the
 # .example / .production.example templates.

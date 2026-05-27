@@ -79,7 +79,7 @@ def _run(repo_root: Path, kit: str, env_overrides: dict[str, str] | None = None)
     if not copy.exists():
         shutil.copy2(SYNC_SCRIPT, copy)
     return subprocess.run(
-        ["uv", "run", str(copy), kit],
+        ["uv", "run", "--no-config", str(copy), kit],
         cwd=repo_root,
         env=env,
         capture_output=True,
@@ -155,7 +155,7 @@ def test_4_missing_env_var_is_error() -> None:
         env = {k: v for k, v in HUB_SHARED_DEFAULTS.items() if k != "AES_KEY_BASE64"}
         env["PATH"] = os.environ.get("PATH", "")
         result = subprocess.run(
-            ["uv", "run", str(SYNC_SCRIPT), "Trust_1"],
+            ["uv", "run", "--no-config", str(SYNC_SCRIPT), "Trust_1"],
             cwd=root,
             env=env,
             capture_output=True,
