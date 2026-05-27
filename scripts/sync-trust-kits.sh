@@ -53,9 +53,18 @@ upsert_var() {
 }
 
 KITS_JSON="$(cat)"
-# Tolerate leading build/log noise: keep the last line that looks like a JSON array.
-KITS_JSON="$(echo "$KITS_JSON" | awk 'NF' | grep -E '^\[' | tail -n 1 || true)"
-[ -n "$KITS_JSON" ] || KITS_JSON="[]"
+# Tolerate two upstream JSON shapes:
+#   1. Single-line compact array (Makefile pipeline that uses `jq -c …`).
+#   2. Pretty-printed multi-line array (a plain `jq …` without `-c`).
+# Plus tolerate leading build/log noise on either shape. First try the
+# single-line grep (the historic fast path). If that finds nothing,
+# fall back to parsing the whole input as JSON — `jq -c .` accepts
+# either shape and emits compact form. Empty/invalid input → "[]".
+FILTERED="$(echo "$KITS_JSON" | awk 'NF' | grep -E '^\[' | tail -n 1 || true)"
+if [ -z "$FILTERED" ]; then
+    FILTERED="$(echo "$KITS_JSON" | jq -c '.' 2>/dev/null || true)"
+fi
+KITS_JSON="${FILTERED:-[]}"
 
 NUM_KITS="$(echo "$KITS_JSON" | jq 'length')"
 if [ "$NUM_KITS" = "0" ]; then
