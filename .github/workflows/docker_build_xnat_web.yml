@@ -39,7 +39,7 @@ jobs:
       IMAGE_NAME: londonaicentre/xnat-web
       FLIP_ARTIFACTS_BUCKET_NAME: flipdev-artifacts
       BUILD_ARGS: |
-        --build-arg XNAT_VERSION=1.9.3
+        --build-arg XNAT_VERSION=1.10.0
         --build-arg XNAT_SMTP_ENABLED=false
         --build-arg XNAT_DATASOURCE_DRIVER=org.postgresql.Driver
         --build-arg XNAT_DATASOURCE_USERNAME=xnat
@@ -113,7 +113,7 @@ jobs:
         run: echo "$GH_TOKEN" | docker login $REGISTRY -u "$GH_ACTOR" --password-stdin
 
       - name: Download XNAT WAR
-        run: aws s3 cp s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/xnat-web-1.9.3.war build-artifacts/xnat-web-1.9.3.war
+        run: aws s3 cp s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/xnat-web-1.10.0.war build-artifacts/xnat-web-1.10.0.war
 
       - name: Download XNAT plugins
         run: aws s3 sync s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/plugins/ plugins/

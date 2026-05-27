@@ -76,14 +76,14 @@ Plugins and the XNAT WAR are stored in S3 at `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/
 
 Make sure to always use the correct version of the plugins that are compatible with the XNAT version specified. Check the plugin's compatibility matrix for more information (for example, see [DQR Plugin Compatibility Matrix](https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix)).
 
-The following table lists the compatible versions of the plugins for the XNAT version `1.9.3` used in this environment.
+The following table lists the compatible versions of the plugins for the XNAT version `1.10.0` used in this environment. XNAT 1.10.0 is the first release compiled against JDK 21, so every plugin in S3 must be rebuilt against the 1.10-compatible plugin release line — older 1.9-era JARs will not load. Check each plugin's compatibility matrix (e.g. [Container Service](https://wiki.xnat.org/container-service/container-service-compatibility-matrix), [DQR](https://wiki.xnat.org/xnat-tools/dqr-plugin-compatibility-matrix)) before uploading replacements to `s3://<FLIP_ARTIFACTS_BUCKET_NAME>/xnat/plugins/`.
 
-| Plugin                          | Version for XNAT 1.9.3  |
+| Plugin                          | Version for XNAT 1.10.0 |
 | ------------------------------- | ----------------------- |
-| Container Service Plugin        | 3.7.3                   |
-| Batch Launch Plugin             | 0.9.0                   |
-| DICOM Query-Retrieve Plugin     | 2.2.0                   |
-| OHIF Viewer Plugin              | 3.7.1                   |
+| Container Service Plugin        | TBD (1.10-compatible)   |
+| Batch Launch Plugin             | TBD (1.10-compatible)   |
+| DICOM Query-Retrieve Plugin     | TBD (1.10-compatible)   |
+| OHIF Viewer Plugin              | TBD (1.10-compatible)   |
 
 ### Adding or updating a plugin
 

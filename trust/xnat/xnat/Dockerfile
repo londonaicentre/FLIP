@@ -6,7 +6,7 @@
 # Modifications Copyright (c) 2026,
 # Guy's and St Thomas' NHS Foundation Trust & King's College London
 
-FROM tomcat:9.0.108-jdk8-temurin-noble AS development
+FROM tomcat:9.0.108-jdk21-temurin-noble AS development
 
 ARG XNAT_VERSION=${XNAT_VERSION}
 ARG XNAT_ROOT=${XNAT_ROOT}
