@@ -192,11 +192,11 @@ cat <<EOF
   Operator-side instructions (paste these to them):
   ────────────────────────────────────────────────────────────────────────
 
-  1. Receive flip-trust-kit-${slot}-${DATE}.tar.gz, save it to a private
-     location (e.g. \$HOME). Extract:
+  1. Receive flip-trust-kit-${slot}-${DATE}.tar.gz, save it to \$HOME
+     (or adjust the paths below). Extract:
 
        mkdir -p \$HOME/flip-trust-kit
-       tar -C \$HOME/flip-trust-kit -xzf flip-trust-kit-${slot}-${DATE}.tar.gz
+       tar -C \$HOME/flip-trust-kit -xzf \$HOME/flip-trust-kit-${slot}-${DATE}.tar.gz
 
   2. From your FLIP checkout, copy the env file in:
 
