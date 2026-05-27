@@ -219,3 +219,222 @@ def test_get_projects_endpoint_admin_bypasses_user_filter(
 
     _, kwargs = mock_get_projects_paginated_orm.call_args
     assert kwargs["user_id"] is None
+
+
+@patch("flip_api.project_services.get_projects.get_projects_paginated_orm")
+@patch("flip_api.project_services.get_projects.has_permissions")
+def test_get_projects_endpoint_500_when_paginated_orm_raises(
+    mock_has_permissions: MagicMock,
+    mock_get_projects_paginated_orm: MagicMock,
+):
+    """A bare exception inside the ORM helper must be translated to a sanitised
+    HTTP 500 — re-raising the raw SQLAlchemyError would leak DB internals to the
+    response body.
+    """
+    import pytest
+    from fastapi import HTTPException
+
+    request = MagicMock()
+    request.query_params = {}
+    session = MagicMock(spec=Session)
+    mock_has_permissions.return_value = True
+    mock_get_projects_paginated_orm.side_effect = RuntimeError("db connection dropped")
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_projects_endpoint(request=request, session=session, user_id=uuid.uuid4())
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "Error occurred while fetching projects."
+
+
+def test_get_projects_paginated_orm_reads_total_cohort_from_query_stats(user_id):
+    """A well-formed QueryStats.stats row populates total_cohort on the response
+    — exercises the happy-path branch alongside the malformed-JSON guard.
+    """
+    session = MagicMock(spec=Session)
+
+    project_id = uuid.uuid4()
+    query_id = uuid.uuid4()
+    project = Projects(
+        id=project_id,
+        name="P",
+        description="d",
+        owner_id=user_id,
+        status=ProjectStatus.APPROVED,
+        creation_timestamp=datetime.utcnow(),
+    )
+
+    projects_call = MagicMock(all=MagicMock(return_value=[(project, "Owner")]))
+    count_call = MagicMock(one_or_none=MagicMock(return_value=1))
+    trusts_call = MagicMock(all=MagicMock(return_value=[]))
+    queries_call = MagicMock(all=MagicMock(return_value=[(
+        query_id, project_id, "Q", "SELECT 1", datetime.utcnow(), None, [],
+    )]))
+    pair_rows_call = MagicMock(all=MagicMock(return_value=[]))
+    pending_rows_call = MagicMock(all=MagicMock(return_value=[]))
+    stats_call = MagicMock(all=MagicMock(return_value=[(query_id, '{"TotalCount": 42}')]))
+    stage_audit_call = MagicMock(all=MagicMock(return_value=[]))
+    user_counts_call = MagicMock(all=MagicMock(return_value=[]))
+    session.exec.side_effect = [
+        projects_call,
+        count_call,
+        trusts_call,
+        queries_call,
+        pair_rows_call,
+        pending_rows_call,
+        stats_call,
+        stage_audit_call,
+        user_counts_call,
+    ]
+
+    response = get_projects_paginated_orm(
+        session=session,
+        user_id=user_id,
+        paging_details=paging_details,
+        filter_details=get_filter_details(),
+    )
+
+    assert response.data[0].query is not None
+    assert response.data[0].query.total_cohort == 42
+
+
+def test_get_projects_paginated_orm_skips_malformed_query_stats_json(user_id):
+    """A QueryStats.stats row with invalid JSON must not abort the whole load —
+    log + continue, the project still surfaces with totalCohort=0.
+    """
+    session = MagicMock(spec=Session)
+
+    project_id = uuid.uuid4()
+    query_id = uuid.uuid4()
+    project = Projects(
+        id=project_id,
+        name="P",
+        description="d",
+        owner_id=user_id,
+        status=ProjectStatus.APPROVED,
+        creation_timestamp=datetime.utcnow(),
+    )
+
+    projects_call = MagicMock(all=MagicMock(return_value=[(project, "Owner")]))
+    count_call = MagicMock(one_or_none=MagicMock(return_value=1))
+    trusts_call = MagicMock(all=MagicMock(return_value=[]))
+    queries_call = MagicMock(all=MagicMock(return_value=[(
+        query_id, project_id, "Q", "SELECT 1", datetime.utcnow(), None, [],
+    )]))
+    pair_rows_call = MagicMock(all=MagicMock(return_value=[]))
+    pending_rows_call = MagicMock(all=MagicMock(return_value=[]))
+    # Malformed JSON + a row with empty stats string + a row with a valid payload.
+    stats_call = MagicMock(all=MagicMock(return_value=[
+        (query_id, "not-a-json-blob"),
+        (query_id, ""),
+        (None, '{"record_count": 99}'),  # None query_id → skipped by the guard
+    ]))
+    stage_audit_call = MagicMock(all=MagicMock(return_value=[]))
+    user_counts_call = MagicMock(all=MagicMock(return_value=[]))
+    session.exec.side_effect = [
+        projects_call,
+        count_call,
+        trusts_call,
+        queries_call,
+        pair_rows_call,
+        pending_rows_call,
+        stats_call,
+        stage_audit_call,
+        user_counts_call,
+    ]
+
+    response = get_projects_paginated_orm(
+        session=session,
+        user_id=user_id,
+        paging_details=paging_details,
+        filter_details=get_filter_details(),
+    )
+
+    assert len(response.data) == 1
+    # The malformed payloads were tolerated; total_cohort falls back to 0.
+    assert response.data[0].query is not None
+    assert response.data[0].query.total_cohort == 0
+
+
+def test_get_projects_paginated_orm_applies_search_and_owner_filters(user_id):
+    """When a search string and an owner filter are provided, the corresponding
+    where-conditions are appended to the base query.
+
+    Asserted by inspecting the assembled WHERE clause text — searching the
+    compiled SQL is fragile against minor SQLAlchemy version changes, so we
+    just compile to a string and check for the expected substrings.
+    """
+    session = MagicMock(spec=Session)
+    session.exec.return_value.all.return_value = []
+    session.exec.return_value.one_or_none.return_value = None
+
+    search_paging = get_paging_details({"search": "cancer"})
+    owner_filter = get_filter_details({"owner": str(user_id)})
+
+    get_projects_paginated_orm(
+        session=session,
+        user_id=user_id,
+        paging_details=search_paging,
+        filter_details=owner_filter,
+    )
+
+    # The first `exec()` is the projects SELECT — render to a string and assert
+    # the search + owner-filter predicates are present. We compile without
+    # `literal_binds` because the UUID type renderer doesn't support it; the
+    # column-name substrings are enough to confirm both predicates were appended.
+    first_stmt = session.exec.call_args_list[0].args[0]
+    compiled = str(first_stmt.compile()).lower()
+    assert "lower" in compiled
+    assert "like" in compiled
+    assert "owner_id" in compiled
+
+
+def test_get_projects_paginated_orm_picks_latest_audit_per_project(user_id):
+    """`_load_latest_audit_at_per_project` reads STAGE-action audit rows ordered
+    desc and keeps the first row per project — verifies the dedup in the
+    helper's loop.
+    """
+    session = MagicMock(spec=Session)
+
+    project_id = uuid.uuid4()
+    older = datetime(2026, 1, 1, 9, 0, 0)
+    newer = datetime(2026, 5, 1, 9, 0, 0)
+    project = Projects(
+        id=project_id,
+        name="P",
+        description="d",
+        owner_id=user_id,
+        status=ProjectStatus.APPROVED,
+        creation_timestamp=datetime.utcnow(),
+    )
+
+    projects_call = MagicMock(all=MagicMock(return_value=[(project, None)]))
+    count_call = MagicMock(one_or_none=MagicMock(return_value=1))
+    trusts_call = MagicMock(all=MagicMock(return_value=[]))
+    queries_call = MagicMock(all=MagicMock(return_value=[]))
+    # Rows arrive sorted desc by audit_date — the helper's "in latest" check
+    # must keep only the first (newer) one, plus a None row is dropped.
+    stage_audit_call = MagicMock(all=MagicMock(return_value=[
+        (project_id, newer),
+        (project_id, older),
+        (None, datetime.utcnow()),
+    ]))
+    user_counts_call = MagicMock(all=MagicMock(return_value=[]))
+    session.exec.side_effect = [
+        projects_call,
+        count_call,
+        trusts_call,
+        queries_call,
+        stage_audit_call,
+        user_counts_call,
+    ]
+
+    response = get_projects_paginated_orm(
+        session=session,
+        user_id=user_id,
+        paging_details=paging_details,
+        filter_details=get_filter_details(),
+    )
+
+    assert len(response.data) == 1
+    assert response.data[0].staged_at == newer.isoformat(timespec="milliseconds")

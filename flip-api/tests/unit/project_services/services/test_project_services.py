@@ -781,3 +781,151 @@ class TestGetUsersWithAccess:
         result = get_users_with_access(project_id, mock_db_session)
 
         assert result == []
+
+
+# Helpers introduced by the connection-status PR — _collect_errored_trust_ids,
+# update_project_user_access, plus warn paths in get_project_models_service /
+# unstage_project_service.
+
+
+class TestCollectErroredTrustIds:
+    """A QueryResult row whose `data` JSON fails to parse is treated as errored.
+
+    Better to surface the trust as red in the UI than silently swallow a corrupt
+    response — the latter would let staging-eligibility include a trust whose
+    results we never validated.
+    """
+
+    def test_marks_malformed_json_as_errored(self):
+        from flip_api.project_services.services.project_services import _collect_errored_trust_ids
+
+        tid = uuid4()
+        result = _collect_errored_trust_ids([(tid, "not-a-json-blob")], query_id=uuid4())
+
+        assert result == [tid]
+
+    def test_explicit_error_field_marks_trust_as_errored(self):
+        from flip_api.project_services.services.project_services import _collect_errored_trust_ids
+
+        tid = uuid4()
+        result = _collect_errored_trust_ids(
+            [(tid, '{"record_count": 0, "error": "OMOP timeout"}')], query_id=uuid4()
+        )
+
+        assert result == [tid]
+
+    def test_success_payload_is_not_marked_errored(self):
+        from flip_api.project_services.services.project_services import _collect_errored_trust_ids
+
+        tid = uuid4()
+        result = _collect_errored_trust_ids(
+            [(tid, '{"record_count": 7, "error": null}')], query_id=uuid4()
+        )
+
+        assert result == []
+
+
+class TestUpdateProjectUserAccess:
+    """Persists one `ProjectUserAccess` row per user id in a single commit.
+
+    The endpoint that calls this (`approve_project` and friends) already
+    guarantees the project exists, so there's no existence check here.
+    """
+
+    def test_persists_one_access_row_per_user(self, mock_db_session: MagicMock):
+        from flip_api.db.models.main_models import ProjectUserAccess
+        from flip_api.project_services.services.project_services import update_project_user_access
+
+        project_id = uuid4()
+        user_ids = [uuid4(), uuid4(), uuid4()]
+
+        update_project_user_access(project_id, user_ids, mock_db_session)
+
+        mock_db_session.add_all.assert_called_once()
+        added = mock_db_session.add_all.call_args.args[0]
+        assert len(added) == 3
+        assert all(isinstance(entry, ProjectUserAccess) for entry in added)
+        assert {entry.user_id for entry in added} == set(user_ids)
+        mock_db_session.commit.assert_called_once()
+
+    def test_empty_user_list_still_persists_an_empty_batch(self, mock_db_session: MagicMock):
+        """An empty list isn't an error — clearing then re-applying is a
+        legitimate code path (e.g. project owner removes all collaborators).
+        """
+        from flip_api.project_services.services.project_services import update_project_user_access
+
+        update_project_user_access(uuid4(), [], mock_db_session)
+
+        mock_db_session.add_all.assert_called_once_with([])
+        mock_db_session.commit.assert_called_once()
+
+
+def test_get_trusts_approval_status_for_projects_returns_empty_for_empty_input():
+    """`get_trusts_approval_status_for_projects` short-circuits on empty input
+    without issuing a SQL query — paginated callers can pass `[]` when their
+    page is empty without paying for a wasted round-trip.
+    """
+    from unittest.mock import MagicMock
+
+    from flip_api.project_services.services.project_services import (
+        get_trusts_approval_status_for_projects,
+    )
+
+    session = MagicMock()
+
+    result = get_trusts_approval_status_for_projects([], session)
+
+    assert result == {}
+    session.exec.assert_not_called()
+
+
+class TestGetProjectModelsServiceSearch:
+    """`get_project_models_service` accepts a `search` query-string param and
+    appends a case-insensitive name+description filter to both the model and
+    count queries.
+    """
+
+    def test_search_string_appends_filter_to_both_statements(self, mock_db_session: MagicMock):
+        mock_db_session.exec.return_value.first.return_value = 0
+        mock_db_session.exec.return_value.all.return_value = []
+
+        get_project_models_service(
+            project_id=uuid4(),
+            session=mock_db_session,
+            query_params={"search": "segmentation"},
+        )
+
+        # Two exec() calls: count then models. Both should carry the `like %seg%` predicate.
+        compiled_stmts = [
+            str(call.args[0].compile()).lower() for call in mock_db_session.exec.call_args_list
+        ]
+        for compiled in compiled_stmts:
+            assert "like" in compiled
+            assert "lower" in compiled
+
+
+class TestUnstageWarnsOnZeroDeletes:
+    def test_warns_when_no_rows_deleted_but_still_completes(
+        self, mock_db_session: MagicMock, sample_project: Projects
+    ):
+        """A staged project whose trust-intersect rows were already gone should
+        still flip back to UNSTAGED with a warn-log, not raise. Belt-and-braces
+        for projects whose state drifted out-of-band.
+        """
+        project_id = sample_project.id
+        mock_db_session.get.return_value = sample_project
+
+        zero_result = MagicMock()
+        zero_result.rowcount = 0
+        mock_db_session.execute.return_value = zero_result
+
+        with (
+            patch(f"{MOCK_SERVICE_PATH}.update_project_status") as mock_update_status,
+            patch(f"{MOCK_SERVICE_PATH}.audit_project_action") as mock_audit,
+            patch(f"{MOCK_SERVICE_PATH}.logger") as mock_logger,
+        ):
+            unstage_project_service(project_id, uuid4(), mock_db_session)
+
+            mock_logger.warn.assert_called_once()
+            mock_update_status.assert_called_once()
+            mock_audit.assert_called_once()

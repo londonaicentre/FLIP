@@ -556,4 +556,53 @@ describe("CohortQuery", () => {
             expect(lastRunCell(wrapper)).toBeNull();
         });
     });
+
+    describe("project-store reactivity", () => {
+        it("syncs the local project ref when the store's project changes after mount", async () => {
+            const { useProjectStore } = await import("@/store/project");
+            const wrapper = mountCohortQuery({ project: unstagedProject });
+            // Before the store updates, AiCodeTextArea sees the initial project's
+            // (undefined) query.
+            const code = wrapper.findComponent({ name: "AiCodeTextArea" });
+            expect(code.props("initialValue")).toBeUndefined();
+
+            // Mutate the store; the local project ref must follow.
+            useProjectStore().project = unstagedProjectWithQuery;
+            await wrapper.vm.$nextTick();
+
+            expect(code.props("initialValue")).toBe("SELECT * FROM patients");
+        });
+
+        it("flips submittingChange back to false once the project store carries the just-submitted query id", async () => {
+            mockSendQuery.mockResolvedValue({
+                queryId: "qid-handshake",
+                trust: [{
+                    statusCode: 200,
+                    name: "Trust A",
+                    message: "OK"
+                }]
+            });
+            const { useProjectStore } = await import("@/store/project");
+
+            const wrapper = mountCohortQuery({ project: unstagedProject });
+            await wrapper.find("form").trigger("submit");
+            await vi.waitFor(() => expect(mockSendQuery).toHaveBeenCalled());
+
+            // After the success branch, formSubmitting stays `true` waiting for
+            // the project store to surface the new query id. Inject it and the
+            // watch should flip submitting → false.
+            useProjectStore().project = {
+                ...unstagedProject,
+                query: {
+                    ...unstagedProjectWithQuery.query!,
+                    id: "qid-handshake"
+                }
+            };
+            await wrapper.vm.$nextTick();
+            await vi.waitFor(() => {
+                const events = wrapper.emitted("submittingChange") ?? [];
+                expect(events.at(-1)).toEqual([false]);
+            });
+        });
+    });
 });

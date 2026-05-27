@@ -326,3 +326,32 @@ def test_get_required_training_details_no_query(fake_session, model_id):
 
     with pytest.raises(NotFoundError, match="No cohort query found for this project"):
         fl_scheduler_service.get_required_training_details(model_id, fake_session)
+
+
+# get_slot_names_by_trust_ids — added in the connection-status PR.
+
+def test_get_slot_names_by_trust_ids_empty_input_returns_empty(fake_session):
+    """An empty input is a "no trusts to resolve" sentinel — return {} without
+    issuing a DB query.
+    """
+    result = fl_scheduler_service.get_slot_names_by_trust_ids([], fake_session)
+
+    assert result == {}
+    fake_session.exec.assert_not_called()
+
+
+def test_get_slot_names_by_trust_ids_maps_assigned_slots(fake_session):
+    """Rows from FLKitSlot are folded into a {trust_id: slot_name} map; rows
+    whose trust_id is NULL are filtered out (slot exists but is unassigned).
+    """
+    trust_a = uuid4()
+    trust_b = uuid4()
+    fake_session.exec.return_value.all.return_value = [
+        (trust_a, "Trust_1"),
+        (None, "Trust_unassigned"),
+        (trust_b, "Trust_2"),
+    ]
+
+    result = fl_scheduler_service.get_slot_names_by_trust_ids([trust_a, trust_b], fake_session)
+
+    assert result == {trust_a: "Trust_1", trust_b: "Trust_2"}

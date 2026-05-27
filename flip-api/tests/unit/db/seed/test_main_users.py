@@ -251,3 +251,37 @@ def test_ensure_user_and_role_is_idempotent_when_grant_already_exists(
 
     mock_session.add.assert_not_called()
     mock_session.commit.assert_not_called()
+
+
+@patch("flip_api.db.seed.main_users.get_settings")
+@patch("flip_api.db.seed.main_users.get_user_by_email_or_id")
+def test_ensure_user_and_role_updates_existing_profile_when_seed_fields_drift(
+    mock_get_user_by_email_or_id, mock_get_settings, mock_session, mock_settings
+):
+    """A profile row already exists but the seeded display name/org have
+    changed (e.g. a hardcoded admin was renamed in MAIN_USER_PROFILES).
+    The profile must be brought in line on next boot.
+
+    The role grant stays unchanged — `has_any_role` is short-circuited by the
+    existing UserRole row.
+    """
+    mock_get_settings.return_value = mock_settings
+    sub = uuid4()
+    mock_get_user_by_email_or_id.return_value = CognitoUser(
+        id=sub, email="alex@example.com", is_disabled=False
+    )  # type: ignore[call-arg]
+    existing_profile = UserProfile(user_id=sub, name="Stale Name", organisation="Old Org")
+    mock_session.get.return_value = existing_profile
+    mock_session.exec.return_value.first.return_value = UserRole(
+        user_id=sub, role_id=RoleRef.RESEARCHER.value
+    )
+
+    ensure_user_and_role(
+        "alex@example.com", RoleRef.RESEARCHER, mock_session, "Fresh Name", "New Org"
+    )
+
+    # The in-place mutation + add() captures the updated row for the commit.
+    assert existing_profile.name == "Fresh Name"
+    assert existing_profile.organisation == "New Org"
+    mock_session.add.assert_called_once_with(existing_profile)
+    mock_session.commit.assert_called_once()

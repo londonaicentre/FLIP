@@ -262,4 +262,52 @@ describe("MainLayout", () => {
             expect(authStore.signOut).toHaveBeenCalled();
         });
     });
+
+    describe("project fetch reactions", () => {
+        it("setProject + hasProject when data arrives (whenever data → callback)", async () => {
+            // `whenever` is stubbed to vi.fn() so callbacks don't auto-fire — pull
+            // the captured callback out of the mock's first call (data arm) and
+            // run it manually, then assert the store side-effect.
+            mountMainLayout({
+                routePath: "/project/abc",
+                routeParams: { projectId: "abc" }
+            });
+
+            const { whenever } = await import("@vueuse/core");
+            const dataCallback = (whenever as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1];
+            dataCallback();
+
+            const { useProjectStore } = await import("@/store/project");
+            const projectStore = useProjectStore();
+            // setProject is a Pinia action; createTestingPinia spies on it.
+            expect(projectStore.setProject).toHaveBeenCalled();
+        });
+
+        it("routes to / and shows an error snackbar when getProject errors (whenever error → callback)", async () => {
+            mountMainLayout({
+                routePath: "/project/abc",
+                routeParams: { projectId: "abc" }
+            });
+
+            const { whenever } = await import("@vueuse/core");
+            const errorCallback = (whenever as unknown as ReturnType<typeof vi.fn>).mock.calls[1][1];
+            errorCallback();
+
+            const { Snackbar } = await import("@/utils/snackbar");
+            expect(Snackbar.error).toHaveBeenCalledWith(
+                expect.objectContaining({ title: "Not found" })
+            );
+            expect(mockRouterPush).toHaveBeenCalledWith({ path: "/" });
+        });
+
+        it("clears the project store when the route leaves /project/", async () => {
+            // Mount on a non-project page → the immediate watch falls into the
+            // `else` branch and clears the store.
+            mountMainLayout({ routePath: "/projects" });
+
+            const { useProjectStore } = await import("@/store/project");
+            const projectStore = useProjectStore();
+            expect(projectStore.clearProject).toHaveBeenCalled();
+        });
+    });
 });
