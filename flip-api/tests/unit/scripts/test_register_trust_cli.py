@@ -72,20 +72,30 @@ def test_registers_new_trust_and_returns_one_kit(monkeypatch, session):
         "trust_internal_service_key",
         "fl_kit_slot",
         "fl_kit_slot_number",
+        "hub_shared",
     }
 
 
-def test_skips_already_registered_trust(monkeypatch, session):
-    """An existing trust → register_trust is NOT called and [] is returned (idempotent)."""
+def test_skip_path_emits_metadata_without_credentials(monkeypatch, session):
+    """An existing trust → register_trust is NOT called; returns one metadata-only kit (no creds)."""
     monkeypatch.setattr(
         "flip_api.scripts.register_trust.register_trust",
         MagicMock(side_effect=AssertionError("register_trust must not be called")),
     )
-    session.exec.return_value.first.return_value = Trust(id=uuid4(), name="Existing Trust")
+    existing_trust = Trust(id=uuid4(), name="Existing Trust")
+    existing_slot = FLKitSlot(slot_name="Trust_2", slot_number=2, assigned_to_trust_id=existing_trust.id)
+    session.exec.return_value.first.side_effect = [existing_trust, existing_slot]
 
     kits = register_one_trust("Existing Trust", None, None, session)
 
-    assert kits == []
+    assert len(kits) == 1
+    kit = kits[0]
+    assert kit["trust_name"] == "Existing Trust"
+    assert kit["fl_kit_slot"] == "Trust_2"
+    assert kit["fl_kit_slot_number"] == 2
+    assert "trust_api_key" not in kit
+    assert "trust_internal_service_key" not in kit
+    assert "hub_shared" in kit
 
 
 def test_strips_whitespace_from_name(monkeypatch, session):
@@ -221,3 +231,76 @@ def test_main_requires_name(monkeypatch, capsys):
 
 # TrustRegistrationError needs to be importable at the module level (used by main).
 from flip_api.trusts_services.services.register_trust import TrustRegistrationError  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# hub_shared block
+# ---------------------------------------------------------------------------
+
+HUB_SHARED_KEYS = (
+    "AES_KEY_BASE64",
+    "CENTRAL_HUB_API_URL",
+    "TRUST_API_KEY_HEADER",
+    "FL_BACKEND",
+    "FLOWER_KIT_DATE",
+    "FLARE_KIT_DATE",
+    "DOCKER_TAG",
+    "DOCKER_FL_TAG",
+    "DOCKER_FL_REGISTRY",
+    "DOCKER_FL_CLIENT_NAME",
+)
+
+
+def test_kit_dict_includes_hub_shared_block_from_env(monkeypatch, session):
+    """Hub-shared values from os.environ are copied into the emitted kit dict."""
+    monkeypatch.setattr("flip_api.scripts.register_trust.register_trust", lambda **kw: _kit(kw["name"]))
+    session.exec.return_value.first.return_value = None
+
+    env = {
+        "AES_KEY_BASE64": "Zm9vYmFy",
+        "CENTRAL_HUB_API_URL": "https://hub.example/api",
+        "TRUST_API_KEY_HEADER": "Authorization",
+        "FL_BACKEND": "flower",
+        "FLOWER_KIT_DATE": "20260401",
+        "FLARE_KIT_DATE": "20260318",
+        "DOCKER_TAG": "stag",
+        "DOCKER_FL_TAG": "stag",
+        "DOCKER_FL_REGISTRY": "ghcr.io/londonaicentre/",
+        "DOCKER_FL_CLIENT_NAME": "flower-fl-client",
+    }
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+
+    kit = register_one_trust("Open Trust (EC2)", None, None, session)[0]
+
+    assert kit["hub_shared"] == env
+
+
+def test_kit_dict_hub_shared_omits_unset_env_vars(monkeypatch, session):
+    """Env vars that are unset are simply not included (no empty strings)."""
+    monkeypatch.setattr("flip_api.scripts.register_trust.register_trust", lambda **kw: _kit(kw["name"]))
+    session.exec.return_value.first.return_value = None
+    for key in HUB_SHARED_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("AES_KEY_BASE64", "Zm9vYmFy")
+
+    kit = register_one_trust("Open Trust (EC2)", None, None, session)[0]
+
+    assert kit["hub_shared"] == {"AES_KEY_BASE64": "Zm9vYmFy"}
+
+
+def test_skip_path_also_emits_hub_shared(monkeypatch, session):
+    """Idempotent skip still returns one kit dict so the distributor can sync shared values."""
+    existing_trust = Trust(id=uuid4(), name="Open Trust (EC2)")
+    existing_slot = FLKitSlot(slot_name="Trust_1", slot_number=1, assigned_to_trust_id=existing_trust.id)
+    session.exec.return_value.first.side_effect = [existing_trust, existing_slot]
+
+    monkeypatch.setenv("AES_KEY_BASE64", "Zm9vYmFy")
+
+    kits = register_one_trust("Open Trust (EC2)", None, None, session)
+
+    assert len(kits) == 1
+    kit = kits[0]
+    assert kit["trust_name"] == "Open Trust (EC2)"
+    assert kit["hub_shared"]["AES_KEY_BASE64"] == "Zm9vYmFy"
+    assert "trust_api_key" not in kit  # creds are NOT in the skip-path kit
+    assert "trust_internal_service_key" not in kit

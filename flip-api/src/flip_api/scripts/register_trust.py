@@ -30,18 +30,39 @@ Contract:
 
 import argparse
 import json
+import os
 import sys
 from typing import Any
 
 from sqlmodel import Session, select
 
 from flip_api.db.database import engine
-from flip_api.db.models.main_models import Trust
+from flip_api.db.models.main_models import FLKitSlot, Trust
 from flip_api.trusts_services.services.register_trust import (
     TrustRegistrationError,
     register_trust,
 )
 from flip_api.utils.logger import logger
+
+# Keep this list in sync with scripts/distribute-trust-kits.sh and
+# scripts/sync-trust-kits.sh — those scripts upsert exactly these keys.
+HUB_SHARED_ENV_KEYS = (
+    "AES_KEY_BASE64",
+    "CENTRAL_HUB_API_URL",
+    "TRUST_API_KEY_HEADER",
+    "FL_BACKEND",
+    "FLOWER_KIT_DATE",
+    "FLARE_KIT_DATE",
+    "DOCKER_TAG",
+    "DOCKER_FL_TAG",
+    "DOCKER_FL_REGISTRY",
+    "DOCKER_FL_CLIENT_NAME",
+)
+
+
+def _hub_shared_from_env() -> dict[str, str]:
+    """Read hub-shared values from os.environ. Unset keys are omitted (no empty strings)."""
+    return {key: os.environ[key] for key in HUB_SHARED_ENV_KEYS if key in os.environ}
 
 
 def register_one_trust(
@@ -59,16 +80,29 @@ def register_one_trust(
         session (Session): SQLModel session.
 
     Returns:
-        list[dict[str, Any]]: ``[kit]`` for a new registration, ``[]`` when a
-        trust with this name already exists (idempotent skip).
+        list[dict[str, Any]]: ``[kit]`` always — one full kit dict (including
+        credentials) for a new registration, or one metadata-only dict (no
+        credentials) when the trust already existed (idempotent skip). Both
+        shapes include a ``hub_shared`` key populated from os.environ so the
+        deploy distributor can sync shared values without rotating credentials.
 
     Raises:
         TrustRegistrationError: If registration of a new trust fails.
     """
     name = name.strip()
-    if session.exec(select(Trust).where(Trust.name == name)).first() is not None:
-        logger.info("Trust %r already registered — skipping.", name)
-        return []
+    existing = session.exec(select(Trust).where(Trust.name == name)).first()
+    if existing is not None:
+        logger.info("Trust %r already registered — emitting hub-shared block only.", name)
+        slot = session.exec(select(FLKitSlot).where(FLKitSlot.assigned_to_trust_id == existing.id)).first()
+        return [
+            {
+                "trust_id": str(existing.id),
+                "trust_name": existing.name,
+                "fl_kit_slot": slot.slot_name if slot else None,
+                "fl_kit_slot_number": slot.slot_number if slot else None,
+                "hub_shared": _hub_shared_from_env(),
+            }
+        ]
 
     kit = register_trust(name=name, code=code, region=region, session=session)
     logger.info(
@@ -85,6 +119,7 @@ def register_one_trust(
             "trust_internal_service_key": kit.trust_internal_service_key,
             "fl_kit_slot": kit.fl_kit_slot.slot_name,
             "fl_kit_slot_number": kit.fl_kit_slot.slot_number,
+            "hub_shared": _hub_shared_from_env(),
         }
     ]
 
