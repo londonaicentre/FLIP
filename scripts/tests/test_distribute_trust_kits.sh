@@ -82,7 +82,7 @@ assert_grep "$KIT" "^TRUST_INTERNAL_SERVICE_KEY=preserved-internal$" "existing T
 assert_grep "$KIT" "^AES_KEY_BASE64=rotated$"       "hub-shared AES_KEY_BASE64 upserted on skip path"
 rm -rf "$T2"
 
-# ─── Test 3: Skip path does NOT write null creds ──────────────────────────────
+# Test 3: Skip path does NOT write null creds
 echo "▶ skip path does not write null creds when creds absent from JSON"
 T3="$(mktemp -d)"
 run_simple "$T3" \
@@ -128,7 +128,7 @@ else
 fi
 rm -rf "$T4"
 
-# ─── Test 5: Hub-shared value rotates on subsequent run ───────────────────────
+# Test 5: Hub-shared value rotates on subsequent run
 echo "▶ hub-shared value is updated (not duplicated) when rotated"
 T5="$(mktemp -d)"
 mkdir -p "$T5/trust" "$T5/scripts"
@@ -174,7 +174,7 @@ assert_grep "$KIT" "^FL_KIT_SLOT_NUMBER=1$"   "FL_KIT_SLOT_NUMBER written on ski
 assert_grep "$KIT" "^TRUST_API_KEY=existing-cred$" "existing cred preserved on skip path"
 rm -rf "$T7"
 
-# ─── Summary ──────────────────────────────────────────────────────────────────
+# Summary
 echo "—"
 echo "PASS=$PASS  FAIL=$FAIL"
 [ "$FAIL" -eq 0 ]
