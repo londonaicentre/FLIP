@@ -14,7 +14,7 @@
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
 		check-aws-access generate-internal-service-key \
 		register-trust-1 register-trust-2 register-trusts _wait-for-hub integration_test \
-		sync-trust-kit-1 sync-trust-kit-2 sync-trust-kits lock
+		sync-trust-kit sync-trust-kits lock
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -389,27 +389,34 @@ register-trust-2: _wait-for-hub
 
 register-trusts: register-trust-1 register-trust-2
 
-# Refresh the Hub-shared block in an existing kit file with current MAIN_ENV_FILE
+# Refresh the Hub-shared block in trust/.env.<KIT> with current $(MAIN_ENV_FILE)
 # values. Preserves credentials. Safe to run repeatedly. Use after rotating
 # AES_KEY_BASE64 or bumping image tags on the hub side — does NOT redistribute
 # the updated kit file to remote operators (that step is still out-of-band).
-sync-trust-kit-1: _wait-for-hub
-	@echo "🔄 Syncing hub-shared block for trust 1 ($(TRUST_1_NAME))..."
-	@$(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust \
-		--name "$(TRUST_1_NAME)" $(if $(TRUST_1_CODE),--code "$(TRUST_1_CODE)") $(if $(TRUST_1_REGION),--region "$(TRUST_1_REGION)") \
-		--require-existing \
-		| jq -c 'map(del(.trust_api_key, .trust_internal_service_key))' \
-		| bash scripts/sync-trust-kits.sh
+#
+# Works identically for dev/stag/prod: the Hub-shared values live in
+# $(MAIN_ENV_FILE), which the root Makefile already `include`s + exports.
+# No docker compose exec, no ECS round-trip, no per-trust TRUST_<n>_NAME
+# lookup — just a file→file copy keyed on KIT.
+sync-trust-kit:
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> required (e.g. KIT=Trust_2)"; exit 1)
+	@echo "🔄 Syncing hub-shared block for kit $(KIT) from $(MAIN_ENV_FILE)..."
+	@uv run scripts/sync_trust_kit.py $(KIT)
 
-sync-trust-kit-2: _wait-for-hub
-	@echo "🔄 Syncing hub-shared block for trust 2 ($(TRUST_2_NAME))..."
-	@$(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust \
-		--name "$(TRUST_2_NAME)" $(if $(TRUST_2_CODE),--code "$(TRUST_2_CODE)") $(if $(TRUST_2_REGION),--region "$(TRUST_2_REGION)") \
-		--require-existing \
-		| jq -c 'map(del(.trust_api_key, .trust_internal_service_key))' \
-		| bash scripts/sync-trust-kits.sh
-
-sync-trust-kits: sync-trust-kit-1 sync-trust-kit-2
+# Sync every locally-present kit file. Globs trust/.env.* and drops the
+# .example / .production.example templates.
+sync-trust-kits:
+	@found=0; \
+	for f in trust/.env.*; do \
+	    case "$$f" in *.example) continue;; esac; \
+	    [ -f "$$f" ] || continue; \
+	    kit="$${f#trust/.env.}"; \
+	    found=$$((found + 1)); \
+	    $(MAKE) sync-trust-kit KIT="$$kit"; \
+	done; \
+	if [ "$$found" = "0" ]; then \
+	    echo "ℹ️  No trust/.env.<kit> files found — nothing to sync."; \
+	fi
 
 check-aws-access:
 	@echo "🔎 Checking AWS CLI access..."

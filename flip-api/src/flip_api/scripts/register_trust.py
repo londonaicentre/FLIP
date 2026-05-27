@@ -57,7 +57,7 @@ from flip_api.utils.logger import logger
 # Keep this list in sync with:
 #   - scripts/distribute-trust-kits.sh (dev-side kit distributor)
 #   - deploy/providers/AWS/scripts/register-trusts.sh (HUB_SHARED_KEYS array)
-#   - scripts/sync-trust-kits.sh (added in a follow-up task)
+#   - scripts/sync_trust_kit.py (HUB_SHARED_KEYS tuple)
 # All three upsert exactly these keys.
 HUB_SHARED_ENV_KEYS = (
     "AES_KEY_BASE64",
@@ -70,8 +70,6 @@ HUB_SHARED_ENV_KEYS = (
     "DOCKER_REGISTRY",
     "DOCKER_FL_TAG",
     "DOCKER_FL_REGISTRY",
-    "DOCKER_FL_CLIENT_NAME",
-    "UPLOADED_FEDERATED_DATA_BUCKET",
     "NLB_SUBDOMAIN",
     "FL_SERVER_PORT",
 )

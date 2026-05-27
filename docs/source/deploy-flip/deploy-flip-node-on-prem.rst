@@ -133,7 +133,7 @@ a. In the prod UI, open Connection Status → Add Trust → fill in the trust's
    stores only SHA-256 hashes and cannot re-emit them, so capture all 5
    before closing the modal.
 
-b. Run ``make sync-trust-kit-2`` (from the repo root) to populate the
+b. Run ``make sync-trust-kit KIT=Trust_2 PROD=true`` (from the repo root) to populate the
    Hub-shared block (14 keys), replacing the ``<run-make-sync-trust-kit>``
    placeholders.
 

@@ -159,9 +159,8 @@ docker compose -f deploy/compose.development.yml run --rm <service>
 make register-trusts                  # Register all configured trusts on the running hub
 make register-trust-1                 # Register trust 1 only
 make register-trust-2                 # Register trust 2 only
-make sync-trust-kits                  # Refresh hub-shared values in existing kit files
-make sync-trust-kit-1                 # Refresh Trust_1 only
-make sync-trust-kit-2                 # Refresh Trust_2 only
+make sync-trust-kit KIT=<slot>        # Refresh hub-shared values in trust/.env.<slot>
+make sync-trust-kits                  # Refresh every locally-present kit file
 make generate-internal-service-key    # Generate fl-server-to-hub key
 ```
 

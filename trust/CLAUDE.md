@@ -35,19 +35,27 @@ same layout):
 
 The Hub-shared block is delimited by a sentinel comment
 (`# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──`)
-that `scripts/distribute-trust-kits.sh` and `scripts/sync-trust-kits.sh`
+that `scripts/distribute-trust-kits.sh` and `scripts/sync_trust_kit.py`
 match byte-for-byte. The exact key set is the `HUB_SHARED_ENV_KEYS` tuple in
 `flip_api/scripts/register_trust.py` (`AES_KEY_BASE64`,
 `CENTRAL_HUB_API_URL`, `TRUST_API_KEY_HEADER`, `FL_BACKEND`,
 `FLOWER_KIT_DATE`, `FLARE_KIT_DATE`, `DOCKER_TAG`, `DOCKER_REGISTRY`,
-`DOCKER_FL_TAG`, `DOCKER_FL_REGISTRY`, `DOCKER_FL_CLIENT_NAME`,
-`UPLOADED_FEDERATED_DATA_BUCKET`, `NLB_SUBDOMAIN`, `FL_SERVER_PORT`).
+`DOCKER_FL_TAG`, `DOCKER_FL_REGISTRY`, `NLB_SUBDOMAIN`, `FL_SERVER_PORT`).
+`UPLOADED_FEDERATED_DATA_BUCKET` is hub-only (fl-server uploads aggregated
+results to S3); `DOCKER_FL_CLIENT_NAME` is derived from `FL_BACKEND` by
+`deploy/fl_backend.mk` (trust/Makefile includes it).
 
-`make sync-trust-kit-N` refreshes the Hub-shared block without rotating
-credentials. Run after rotating `AES_KEY_BASE64`, bumping `DOCKER_TAG`,
-switching `FL_BACKEND`, etc., then re-transmit the refreshed kit file to the
-remote operator (out-of-band, same as initial distribution — SCP-via-SSM
-for EC2; encrypted channel for on-prem).
+`make sync-trust-kit KIT=<slot>` refreshes the Hub-shared block in
+`trust/.env.<slot>` from the admin's local `$(MAIN_ENV_FILE)` without
+rotating credentials. Implemented by `scripts/sync_trust_kit.py` (uv
+PEP 723 script — stdlib only, no docker/jq/ECS round-trip). Works
+identically across dev/stag/prod — the root Makefile's `include
+$(MAIN_ENV_FILE)` + `export` populates os.environ before the script
+runs, so `PROD=true` simply selects which env file to read. Run after
+rotating `AES_KEY_BASE64`, bumping `DOCKER_TAG`, switching `FL_BACKEND`,
+etc., then re-transmit the refreshed kit file to the remote operator
+(out-of-band, same as initial distribution — SCP-via-SSM for EC2;
+encrypted channel for on-prem).
 
 For the on-prem flow, the admin populates `trust/.env.<slot>` by hand
 on their workstation:

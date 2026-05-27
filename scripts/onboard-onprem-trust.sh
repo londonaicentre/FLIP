@@ -66,7 +66,9 @@ echo "════════════════════════�
 OPERATOR_IP="$(curl -sf --max-time 5 https://api.ipify.org || echo '<could not detect — set it manually>')"
 echo ""
 echo "  Your public IP:  $OPERATOR_IP"
-echo "  Send this to the FLIP admin so they can open the prod FL-server NLB:"
+echo "  Send this to the FLIP admin so they can open the prod FL-server NLB"
+echo "  (the admin runs this from deploy/providers/AWS, with prod AWS creds):"
+echo "      cd deploy/providers/AWS"
 echo "      AWS_PROFILE=prod make allow-local-trust-nlb LOCAL_TRUST_IP=$OPERATOR_IP PROD=true"
 echo ""
 echo "  Checks:"
@@ -93,15 +95,14 @@ else
     hint "    cp <extracted-dir>/.env.${KIT} trust/.env.${KIT}"
 fi
 
-# --- 3. Hub-shared block (14 keys; placed by admin's sync-trust-kit-N) ---
+# --- 3. Hub-shared block (12 keys; placed by admin's sync-trust-kit) ---
 hub_keys=(
     AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND
     FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY
-    DOCKER_FL_TAG DOCKER_FL_REGISTRY DOCKER_FL_CLIENT_NAME
-    UPLOADED_FEDERATED_DATA_BUCKET NLB_SUBDOMAIN FL_SERVER_PORT
+    DOCKER_FL_TAG DOCKER_FL_REGISTRY NLB_SUBDOMAIN FL_SERVER_PORT
 )
 if ! $kit_present; then
-    pending "Hub-shared block (14 keys): pending — needs kit file"
+    pending "Hub-shared block (12 keys): pending — needs kit file"
 else
     hub_missing=()
     for k in "${hub_keys[@]}"; do
@@ -112,11 +113,11 @@ else
     hub_url="$(get_var CENTRAL_HUB_API_URL)"
     hub_url_display="${hub_url%/api}"
     if [ ${#hub_missing[@]} -eq 0 ]; then
-        pass "Hub-shared block (14 keys): populated"
+        pass "Hub-shared block (12 keys): populated"
         echo "       UI URL:               ${hub_url_display:-<unset>}"
     else
-        fail "Hub-shared block (14 keys): ${#hub_missing[@]} unfilled: ${hub_missing[*]}"
-        hint "Ask the FLIP admin to run 'make sync-trust-kit-N' and re-send the kit."
+        fail "Hub-shared block (12 keys): ${#hub_missing[@]} unfilled: ${hub_missing[*]}"
+        hint "Ask the FLIP admin to run 'make sync-trust-kit KIT=<slot>' and re-send the kit."
     fi
 fi
 
@@ -192,6 +193,53 @@ elif [ -n "$fl_kit_dir" ] && [ -d "$fl_kit_dir" ] && [ -n "$fl_backend" ] && [ -
             hint "Check the tarball was extracted preserving the net-1/{certificates,keys}/ hierarchy."
         fi
     fi
+fi
+
+# --- 8. OMOP / Orthanc data dirs ---
+# Mocked test data lives under trust/ — when ORTHANC_STORAGE_DIR / OMOP_DATA_DIR
+# is a relative path it resolves from trust/ and is populated by the
+# `make -C trust update-{orthanc,omop}-data` targets (which up-trust already
+# runs as deps). For a real hospital deployment the operator would point
+# these at absolute paths backed by real PACS / OMOP data; in that case the
+# check still flags an empty mount, but the fix is "point at real data",
+# not "run update-*-data".
+check_data_dir() {
+    local label="$1" var_name="$2" update_target="$3"
+    local raw resolved
+    raw="$(get_var "$var_name")"
+    if [ -z "$raw" ]; then
+        fail "$label $var_name unset in kit file"
+        return
+    fi
+    # Strip a leading "./" so the display path doesn't read as
+    # "/repo/trust/./omop-db/..." (cosmetic only — both forms resolve to
+    # the same inode).
+    case "$raw" in
+        /*) resolved="$raw" ;;
+        ./*) resolved="$REPO_ROOT/trust/${raw#./}" ;;
+        *)  resolved="$REPO_ROOT/trust/$raw" ;;
+    esac
+    if [ ! -d "$resolved" ]; then
+        fail "$label $resolved (dir does not exist)"
+        hint "If using the mocked test data, run: make -C trust $update_target"
+        hint "Otherwise point $var_name at the host path holding your real data."
+        return
+    fi
+    if [ -z "$(ls -A "$resolved" 2>/dev/null)" ]; then
+        fail "$label $resolved (dir is empty)"
+        hint "If using the mocked test data, run: make -C trust $update_target"
+        hint "Otherwise populate $resolved with your trust's real data."
+        return
+    fi
+    pass "$label $resolved"
+}
+
+if ! $kit_present; then
+    pending "OMOP data dir:               pending — needs kit file"
+    pending "Orthanc storage dir:         pending — needs kit file"
+else
+    check_data_dir "OMOP data dir:             " OMOP_DATA_DIR update-omop-data
+    check_data_dir "Orthanc storage dir:       " ORTHANC_STORAGE_DIR update-orthanc-data
 fi
 
 echo ""
