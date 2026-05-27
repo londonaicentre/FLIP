@@ -233,18 +233,23 @@ xnat-reset:
 	if [ "$(PROD)" = "true" ] || [ "$(PROD)" = "stag" ]; then \
 		echo "  📍 Using prod data dir: $(XNAT_DATA_DIR)/"; \
 		xnat_ctx="$$(docker context show)"; \
-		if [ "$$xnat_ctx" != "default" ]; then \
-			echo "  🛰️  remote swarm deploy (context '$$xnat_ctx') — resetting XNAT dirs on the trust host via ssh"; \
-			ssh "$$xnat_ctx" "sudo rm -rf $(XNAT_DATA_DIR) && sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/tomcat_logs $(XNAT_DATA_DIR)/xnat-data/archive $(XNAT_DATA_DIR)/xnat-data/build $(XNAT_DATA_DIR)/xnat-data/cache $(XNAT_DATA_DIR)/xnat-db-data && sudo chown -R 1000:1000 $(XNAT_DATA_DIR)"; \
-		else \
-			sudo rm -rf $(XNAT_DATA_DIR); \
-			sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/tomcat_logs; \
-			sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/archive; \
-			sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/build; \
-			sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/cache; \
-			sudo mkdir -p $(XNAT_DATA_DIR)/xnat-db-data; \
-			sudo chown -R $(USER):$(USER) $(XNAT_DATA_DIR); \
-		fi; \
+		xnat_endpoint="$$(docker context inspect "$$xnat_ctx" --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"; \
+		case "$$xnat_endpoint" in \
+			ssh://*) \
+				echo "  🛰️  remote swarm deploy (context '$$xnat_ctx') — resetting XNAT dirs on the trust host via ssh"; \
+				ssh "$$xnat_ctx" "sudo rm -rf $(XNAT_DATA_DIR) && sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/tomcat_logs $(XNAT_DATA_DIR)/xnat-data/archive $(XNAT_DATA_DIR)/xnat-data/build $(XNAT_DATA_DIR)/xnat-data/cache $(XNAT_DATA_DIR)/xnat-db-data && sudo chown -R 1000:1000 $(XNAT_DATA_DIR)"; \
+				;; \
+			*) \
+				echo "  💻 local docker context '$$xnat_ctx' ($$xnat_endpoint) — resetting XNAT dirs on this host"; \
+				sudo rm -rf $(XNAT_DATA_DIR); \
+				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/tomcat_logs; \
+				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/archive; \
+				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/build; \
+				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-data/cache; \
+				sudo mkdir -p $(XNAT_DATA_DIR)/xnat-db-data; \
+				sudo chown -R $(USER):$$(id -gn) $(XNAT_DATA_DIR); \
+				;; \
+		esac; \
 	else \
 		echo "  📍 Using dev data dir: $(XNAT_DATA_DIR)/"; \
 		sudo rm -rf $(XNAT_DATA_DIR); \
