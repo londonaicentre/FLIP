@@ -29,8 +29,10 @@ LOCAL_DATA_VERSION_FILE="${VOLUMES_DIR}/.local_data_version"    # tracks local v
 
 # Required env vars
 : "${AICENTRE_BUCKET_NAME:?AICENTRE_BUCKET_NAME is required}"
-: "${ORTHANC_STORAGE_DIR_TRUST_1:?ORTHANC_STORAGE_DIR_TRUST_1 is required}"
-: "${ORTHANC_STORAGE_DIR_TRUST_2:?ORTHANC_STORAGE_DIR_TRUST_2 is required}"
+# Per-trust storage dirs fall back to repo-root-relative defaults when the
+# caller (trust/orthanc/Makefile) hasn't sourced them from the kit files.
+: "${ORTHANC_STORAGE_DIR_TRUST_1:=orthanc-storage-trust1}"
+: "${ORTHANC_STORAGE_DIR_TRUST_2:=orthanc-storage-trust2}"
 
 S3_ORTHANC_PREFIX="s3://${AICENTRE_BUCKET_NAME}/orthanc"
 
@@ -83,7 +85,14 @@ else
 fi
 
 echo "🗑️ Removing existing orthanc storage dirs..."
-sudo rm -rf "./${ORTHANC_STORAGE_DIR_TRUST_1}" "./${ORTHANC_STORAGE_DIR_TRUST_2}"
+# The dirs are owned by the orthanc container's uid, so removal needs sudo —
+# but sudo prompts for a password in non-interactive runs. Only invoke it when
+# there's actually something to delete (first-run case has no dirs yet).
+for dir in "./${ORTHANC_STORAGE_DIR_TRUST_1}" "./${ORTHANC_STORAGE_DIR_TRUST_2}"; do
+  if [[ -e "${dir}" ]]; then
+    sudo rm -rf "${dir}"
+  fi
+done
 mkdir -p "./${ORTHANC_STORAGE_DIR_TRUST_1}" "./${ORTHANC_STORAGE_DIR_TRUST_2}"
 
 echo "📁 Extracting .tar.gz files (will replace existing storage dirs)..."
