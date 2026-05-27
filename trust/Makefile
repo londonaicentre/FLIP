@@ -172,8 +172,8 @@ define require_kit_file
 	    echo "   'make register-trusts' (from the repo root) to fill in the credentials."; \
 	    exit 1; \
 	fi; \
-	if grep -q '<run-make-' $(KIT_FILE); then \
-	    n=$$(grep -c '<run-make-' $(KIT_FILE)); \
+	if grep -qE '^[A-Z0-9_]+=<run-make-' $(KIT_FILE); then \
+	    n=$$(grep -cE '^[A-Z0-9_]+=<run-make-' $(KIT_FILE)); \
 	    echo "❌ Kit file trust/$(KIT_FILE) still has $$n unfilled <run-make-…> placeholder(s)."; \
 	    echo "   Local hub: run 'make register-trusts' (from the repo root)."; \
 	    echo "   On-prem trust against a remote hub:"; \

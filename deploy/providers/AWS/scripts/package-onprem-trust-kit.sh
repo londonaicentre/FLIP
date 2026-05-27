@@ -66,12 +66,15 @@ fi
 
 # Refuse to package an unfinished kit — the operator would just hit the same
 # placeholder guard on their end. Tell the admin which step they skipped.
-if grep -q '<run-make-' "$KIT_FILE"; then
-    n="$(grep -c '<run-make-' "$KIT_FILE")"
+# Anchor on `^KEY=<run-make-` so comment lines that *mention* the placeholder
+# in prose (the template's leading doc block does, multiple times) don't
+# trip a false positive.
+if grep -qE '^[A-Z0-9_]+=<run-make-' "$KIT_FILE"; then
+    n="$(grep -cE '^[A-Z0-9_]+=<run-make-' "$KIT_FILE")"
     log_error "$KIT_FILE still has $n unfilled <run-make-…> placeholder(s)."
     log_error "Fill them in first:"
     log_error "  - Kit credentials (5 lines): UI → Add Trust → paste the modal output."
-    log_error "  - Hub-shared block (14 lines): run 'make sync-trust-kit-N' from the repo root."
+    log_error "  - Hub-shared block (12 lines): run 'make sync-trust-kit KIT=<slot> PROD=true' from repo root."
     exit 1
 fi
 
