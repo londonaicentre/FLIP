@@ -17,9 +17,7 @@
         <p class="mb-2 text-xs font-heading text-gray-500">
             FEDERATED LEARNING & INTEROPERABILITY PLATFORM
         </p>
-        <h1
-            class="mb-5 text-xl font-heading font-black md:text-3xl [-webkit-text-stroke:1px_currentColor]"
-        >
+        <h1 class="mb-5 text-xl font-heading md:text-3xl">
             Sign in to <span class="text-primary-500 underline underline-offset-4">FLIP</span>
         </h1>
         <Form
