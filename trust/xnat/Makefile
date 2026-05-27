@@ -10,9 +10,9 @@
 # limitations under the License.
 #
 
-.PHONY: build up down up-xnat down-xnat up-xnat-local down-xnat-local xnat-shell xnat-stack-down clean \
-	xnat-war-download xnat-plugins-download xnat-reset xnat-configure xnat-configure-local \
-	create-xnat-network create-network-trust-local test unit_test local_test
+.PHONY: build up down up-xnat down-xnat xnat-shell xnat-stack-down clean \
+	xnat-war-download xnat-plugins-download xnat-reset xnat-configure \
+	create-xnat-network test unit_test local_test
 
 # Mirrors trust/Makefile: no hub `.env.*` include. Runtime config (DOCKER_REGISTRY,
 # DOCKER_TAG, XNAT_PORT, XNAT_ADMIN_*, XNAT_SERVICE_*, XNAT_DATABASE_URL) is
@@ -88,9 +88,6 @@ PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 XNAT_DATA_DIR ?= $(if $(filter true stag,$(PROD)),/opt/flip/xnat,./xnat-data-trust$(TRUST_NUM))
 XNAT_DATA_DIR := $(abspath $(XNAT_DATA_DIR))
 export XNAT_DATA_DIR
-
-project_local = xnat-local
-network_local = deploy_trust-network-local
 
 # Path to the dev XNAT folder on the Docker host (bind mounts resolve there, not locally).
 export XNAT_PATH=$(realpath .)
@@ -180,14 +177,6 @@ xnat-shell:
 	CONTAINER=$$(docker ps --filter "name=$(XNAT_STACK)_xnat-web" -q); \
 	docker exec -it $$CONTAINER bash
 
-up-xnat-local: create-network-trust-local
-	XNAT_PATH=${XNAT_PATH} \
-	XNAT_PORT=8108 \
-	PACS_UI_PORT=8046 \
-	DOCKER_NETWORK_NAME=${network_local} \
-	docker stack deploy --with-registry-auth --detach=false ${STACK_FILES} ${project_local}
-	$(MAKE) xnat-configure XNAT_PROJECT=${project_local}
-
 # Remove a single XNAT Swarm stack and BLOCK until all its containers have
 # stopped. `docker stack rm` is asynchronous; callers that then delete the
 # stack's bind-mounted host directories (see `xnat-reset`) must wait for the
@@ -206,9 +195,6 @@ xnat-stack-down:
 		sleep 2; elapsed=$$((elapsed + 2)); \
 	done
 	@echo "✅ $(STACK) fully removed."
-
-down-xnat-local:
-	$(MAKE) xnat-stack-down STACK=${project_local}
 
 # Stop and clean up images
 clean: down
@@ -281,19 +267,11 @@ xnat-configure:
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"'; \
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
 
-xnat-configure-local:
-	$(MAKE) xnat-configure XNAT_PROJECT=${project_local}
-
 create-xnat-network:
 	$(require_kit)
 	@echo "🔧 Ensuring external Docker network $(XNAT_NETWORK) exists..."
 	@docker network inspect $(XNAT_NETWORK) >/dev/null 2>&1 || \
 		docker network create --driver overlay --attachable $(XNAT_NETWORK)
-
-create-network-trust-local:
-	@echo "🔧 Ensuring external Docker network ${network_local} exists..."
-	@docker network inspect ${network_local} >/dev/null 2>&1 || \
-		docker network create --driver overlay --attachable ${network_local}
 
 # Anonymization-script tests (pure Python; no XNAT or Docker required)
 test unit_test local_test:

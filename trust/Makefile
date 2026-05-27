@@ -51,8 +51,15 @@ ifeq ($(patsubst /%,,$(FL_PROVISIONED_DIR)),$(FL_PROVISIONED_DIR))
 override FL_PROVISIONED_DIR := $(abspath $(MAKEFILE_DIR)/../$(FL_PROVISIONED_DIR))
 endif
 
-network_local = deploy_trust-network-local
-trust_local = trust-local
+# Local-trust names derived from LOCAL_TRUST_NAME the same way TRUST_NUM /
+# TRUST_PROJECT / TRUST_NETWORK_NAME are derived from $(KIT) below — kit
+# name is the single source of truth for stack identity. For the
+# conventional LOCAL_TRUST_NAME=Trust_Local this yields project trustLocal
+# and network deploy_trust-network-Local (replacing the previous lowercase
+# trust-local / deploy_trust-network-local constants).
+LOCAL_TRUST_NUM := $(subst Trust_,,$(LOCAL_TRUST_NAME))
+LOCAL_TRUST_PROJECT := trust$(LOCAL_TRUST_NUM)
+LOCAL_TRUST_NETWORK_NAME := deploy_trust-network-$(LOCAL_TRUST_NUM)
 
 OMOP_DB_CMD=make -C ./omop-db
 ORTHANC_CMD=make -C ./orthanc
@@ -151,7 +158,7 @@ LOCAL_TRUST_VARS = \
 	XNAT_PORT=$(or $(XNAT_PORT),8108) \
 	GRAFANA_PORT=$(or $(GRAFANA_PORT),3002) \
 	LOKI_PORT=$(or $(LOKI_PORT),3102) \
-	TRUST_NETWORK_NAME=${network_local} \
+	TRUST_NETWORK_NAME=$(LOCAL_TRUST_NETWORK_NAME) \
 	TRUST_NUMBER=$(subst Trust_,,$(LOCAL_TRUST_NAME)) \
 	TRUST_API_KEY=$(TRUST_API_KEY) \
 	TRUST_INTERNAL_SERVICE_KEY=$(TRUST_INTERNAL_SERVICE_KEY) \
@@ -274,23 +281,24 @@ down-trust-ec2:
 # host.
 up-local-trust: create-networks-core create-networks-local-trust
 	## Starts the on-prem (local) trust compose stack with LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME).
-	## Uses project name 'trust-local' so it never clashes with a Trust_1/Trust_2 stack.
+	## Compose project name $(LOCAL_TRUST_PROJECT) (derived from LOCAL_TRUST_NAME)
+	## stays distinct from a co-located trust1 / trust2 stack on the same host.
 	@echo "🚢 Starting local Trust services (LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME))..."
 	@echo "⚙️ Using kit file trust/$(LOCAL_TRUST_KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data))
 	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/local/$(LOCAL_TRUST_NAME))
 	$(LOCAL_TRUST_VARS) DEBUG=$(DEBUG) \
-		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(trust_local) up -d --pull always
+		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(LOCAL_TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for the local trust..."
-	$(MAKE) -C xnat up-xnat-local PROD=$(PROD)
+	$(MAKE) -C xnat up-xnat KIT=$(LOCAL_TRUST_NAME) PROD=$(PROD)
 
 down-local-trust:
 	@echo "🛑 Stopping local Trust services..."
 	$(LOCAL_TRUST_VARS) \
-		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(trust_local) down --remove-orphans
+		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(LOCAL_TRUST_PROJECT) down --remove-orphans
 	@echo "🩻 Stopping XNAT for the local trust..."
-	$(MAKE) -C xnat down-xnat-local PROD=$(PROD)
+	$(MAKE) -C xnat down-xnat KIT=$(LOCAL_TRUST_NAME) PROD=$(PROD)
 
 # Dev convenience: bring up both standard trust stacks. Each is a separate
 # sub-make so its `-include trust/.env.<KIT>` loads only that trust's kit.
@@ -354,7 +362,7 @@ create-networks-trust-2:
 # wired into the top-level `create-networks` target because `make up` doesn't
 # need it; `up-local-trust` requires it explicitly.
 create-networks-local-trust:
-	@{ docker network inspect $(network_local) >/dev/null 2>&1 || docker network create --driver overlay --attachable $(network_local); }
+	@{ docker network inspect $(LOCAL_TRUST_NETWORK_NAME) >/dev/null 2>&1 || docker network create --driver overlay --attachable $(LOCAL_TRUST_NETWORK_NAME); }
 
 create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2
 
@@ -363,7 +371,7 @@ remove-networks:
 	@docker network rm central-hub-trust-apis-network 2>/dev/null || true
 	@docker network rm deploy_trust-network-1 2>/dev/null || true
 	@docker network rm deploy_trust-network-2 2>/dev/null || true
-	@docker network rm $(network_local) 2>/dev/null || true
+	@docker network rm $(LOCAL_TRUST_NETWORK_NAME) 2>/dev/null || true
 	@docker network rm deploy_shared-net-1 2>/dev/null || true
 	@docker network rm deploy_shared-net-2 2>/dev/null || true
 	@echo "✅ Trust networks removed!"
