@@ -604,7 +604,7 @@ register-trusts: ## Register the TRUST_<n>_* trusts on the hub and distribute ki
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT> + FL kit slice for an on-prem operator
 	## Does NOT edit the kit file. The admin populates trust/.env.<KIT> first:
 	##   1. UI → Add Trust → paste the 5 KEY=VALUE modal lines into trust/.env.<KIT>.
-	##   2. `make sync-trust-kit-N` (from repo root) — fills the Hub-shared block.
+	##   2. `make sync-trust-kit KIT=<slot> PROD=true` (from repo root) — fills Hub-shared.
 	## This target then reads FL_BACKEND / FL_KIT_SLOT / etc. out of the populated
 	## kit file, slices the operator's portion of the FL participant kit out of
 	## S3 (net-1/services/<slot>/ for nvflare; certificates/ + one

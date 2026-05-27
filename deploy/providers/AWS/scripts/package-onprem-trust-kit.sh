@@ -22,14 +22,16 @@
 #      TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER,
 #      EXPECTED_TRUST_ID) and paste them into trust/.env.<KIT>, replacing
 #      the <run-make-register-trusts> placeholders.
-#   2. Run `make sync-trust-kit-N` (from the repo root) to populate the
-#      Hub-shared block in trust/.env.<KIT>, replacing the
+#   2. Run `make sync-trust-kit KIT=<slot> PROD=true` (from the repo root) to
+#      populate the Hub-shared block in trust/.env.<KIT>, replacing the
 #      <run-make-sync-trust-kit> placeholders.
 #
 # This script's job (admin runs from deploy/providers/AWS with prod AWS creds):
 #   3. Validate the kit file has no unfilled placeholders.
 #   4. Read FL_BACKEND, FLARE_KIT_DATE / FLOWER_KIT_DATE, FL_KIT_SLOT,
-#      FL_KIT_SLOT_NUMBER, UPLOADED_FEDERATED_DATA_BUCKET out of the kit file.
+#      FL_KIT_SLOT_NUMBER from the kit file, and UPLOADED_FEDERATED_DATA_BUCKET
+#      from the admin's $(MAIN_ENV_FILE) (which the AWS Makefile includes +
+#      exports — it's a hub-side value, not per-trust).
 #   5. Sync only this operator's portion of the FL participant kit out of S3
 #      (net-1/services/<slot>/ for nvflare; net-1/certificates/ + one
 #      supernode_credentials_<N> for flower).
@@ -84,15 +86,17 @@ get_var() {
 }
 
 fl_backend="$(get_var FL_BACKEND)"
-bucket_raw="$(get_var UPLOADED_FEDERATED_DATA_BUCKET)"
 slot="$(get_var FL_KIT_SLOT)"
 slot_number="$(get_var FL_KIT_SLOT_NUMBER)"
 
-# Validate the values that actually drive S3 paths. These are populated by
-# the admin's UI/sync steps; missing values mean those steps didn't run.
-for k in FL_BACKEND UPLOADED_FEDERATED_DATA_BUCKET FL_KIT_SLOT FL_KIT_SLOT_NUMBER; do
+# Validate the kit-file values that drive S3 paths. These are populated by
+# the admin's UI Add-Trust + sync-trust-kit steps; missing values mean
+# those steps didn't run yet.
+for k in FL_BACKEND FL_KIT_SLOT FL_KIT_SLOT_NUMBER; do
     if [ -z "$(get_var "$k")" ]; then
-        log_error "$k is empty in $KIT_FILE — re-run 'make sync-trust-kit-N' first."
+        log_error "$k is empty in $KIT_FILE — fill the kit file first:"
+        log_error "  - UI → Add Trust → paste the 5 modal lines into the kit file."
+        log_error "  - Then run: make sync-trust-kit KIT=$KIT PROD=true (from repo root)."
         exit 1
     fi
 done
@@ -107,7 +111,7 @@ else
     date_var="FLOWER_KIT_DATE"
 fi
 if [ -z "$fl_kit_date" ]; then
-    log_error "$date_var is empty in $KIT_FILE — re-run 'make sync-trust-kit-N' first."
+    log_error "$date_var is empty in $KIT_FILE — run 'make sync-trust-kit KIT=$KIT PROD=true' from repo root."
     exit 1
 fi
 
@@ -119,9 +123,20 @@ if [ "$slot" != "$KIT" ]; then
     exit 1
 fi
 
-# UPLOADED_FEDERATED_DATA_BUCKET may carry an `s3://` prefix or a path suffix
-# (e.g. `s3://flipprod/uploaded-federated-data`). Reduce to the bucket name.
-bucket_name="${bucket_raw#s3://}"
+# UPLOADED_FEDERATED_DATA_BUCKET comes from the admin's $(MAIN_ENV_FILE)
+# (.env.<env>), which the AWS Makefile `include`s + `export`s — it's a
+# hub-side value, not a per-trust kit value, so it lives in the admin's env
+# rather than the trust's kit file. May carry an `s3://` prefix or a path
+# suffix (e.g. `s3://flipprod/uploaded-federated-data`); reduce to the
+# bucket name only.
+if [ -z "${UPLOADED_FEDERATED_DATA_BUCKET:-}" ]; then
+    log_error "UPLOADED_FEDERATED_DATA_BUCKET is unset in the environment."
+    log_error "  This script reads it from the admin's \$(MAIN_ENV_FILE) — make sure"
+    log_error "  you ran make from deploy/providers/AWS with PROD=true (or stag)"
+    log_error "  and that the matching .env.production / .env.stag has it set."
+    exit 1
+fi
+bucket_name="${UPLOADED_FEDERATED_DATA_BUCKET#s3://}"
 bucket_name="${bucket_name%%/*}"
 
 BUILD_DIR="$REPO_ROOT/deploy/providers/AWS/build/trust-kits"
