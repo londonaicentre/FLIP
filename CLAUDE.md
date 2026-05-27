@@ -139,6 +139,9 @@ docker compose -f deploy/compose.development.yml run --rm <service>
 make register-trusts                  # Register all configured trusts on the running hub
 make register-trust-1                 # Register trust 1 only
 make register-trust-2                 # Register trust 2 only
+make sync-trust-kits                  # Refresh hub-shared values in existing kit files
+make sync-trust-kit-1                 # Refresh Trust_1 only
+make sync-trust-kit-2                 # Refresh Trust_2 only
 make generate-internal-service-key    # Generate fl-server-to-hub key
 ```
 
@@ -209,6 +212,8 @@ After changes, evaluate if docs need updating:
 - `FL_BACKEND` — `flower` (default) or `nvflare`
 - `PROD` — `true` (production), `stag` (staging), unset (development)
 - `AES_KEY_BASE64` — encryption key for trust communication
+- A remote trust operator only needs their kit file (`trust/.env.<KIT>`) — no hub `.env.<env>` needed on trust hosts.
+  See `trust/README.md` for the standalone-operator quick-start.
 - `TRUST_API_KEY` — single per-trust plaintext API key, lives only in that trust's kit file (`trust/.env.<slot>`), never on the hub
 - `INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for internal service auth
 - `INTERNAL_SERVICE_KEY` — internal service key for fl-server-to-hub auth (Central Hub only)

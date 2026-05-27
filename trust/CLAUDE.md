@@ -15,6 +15,24 @@ Trust services run at each healthcare institution (cloud EC2 or on-prem). All tr
 | xnat | 8104 | Mocked neuroimaging platform |
 | observability | 3000/3100 | Grafana + Loki monitoring stack |
 
+## Kit file structure
+
+Each `trust/.env.<KIT>` is a self-contained config — a trust operator only
+needs this file (no hub `.env`). Four sections, in order:
+
+| Section | Owner | Touched by |
+|---------|-------|-----------|
+| Host-local profile | Operator | hand-edit (ports, bind dirs) |
+| Trust-local credentials | Operator | hand-edit (passwords, service URLs) |
+| Hub-shared (managed) | Hub admin | `make register-trust-N` / `make sync-trust-kit-N` |
+| Kit credentials (managed) | Hub | `make register-trust-N` only — write-once; hub keeps only the hash |
+
+`make sync-trust-kit-N` refreshes the Hub-shared block from the hub's
+`MAIN_ENV_FILE` without touching credentials. Run after rotating
+`AES_KEY_BASE64`, bumping `DOCKER_FL_TAG`, switching `FL_BACKEND`, etc., then
+re-transmit the refreshed kit file to the remote operator (out-of-band, same
+as initial distribution — SCP-via-SSM for EC2; encrypted channel for on-prem).
+
 ## Key Files
 
 | File | Purpose |

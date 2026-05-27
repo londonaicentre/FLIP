@@ -95,6 +95,45 @@ See dedicated README under [omop-db/README.md](omop-db/README.md) for instructio
 
 `make up` (and `make up-trust KIT=<name>`) brings up that trust's XNAT automatically — it is no longer a separate step. See the dedicated README under [xnat/README.md](xnat/README.md) for standalone XNAT management and debugging.
 
+## Running standalone (remote trust operator)
+
+If you are operating a trust on a host that does not have the hub's
+`.env.<env>` file (e.g. an on-prem deployment or a third-party trust), you
+need only your trust's kit file (`trust/.env.<KIT>`) — typically
+`trust/.env.Trust_2` for the second registered trust, or
+`trust/.env.Trust_Local` for an on-prem trust.
+
+### One-time setup
+
+1. The hub admin runs `make register-trust-<N>` on their box. The output
+   is a complete kit file at `trust/.env.<KIT>` containing credentials,
+   the AES key, the hub URL, image tags, and your host-local profile.
+2. The hub admin transmits the file to you out-of-band (SCP-via-SSM for an
+   EC2 trust; encrypted channel for on-prem).
+3. Drop it at `trust/.env.<KIT>` in your checkout.
+4. Fill in the **Trust-local credentials** block (Orthanc / OMOP / XNAT /
+   Grafana passwords) — these are your secrets, the hub never sees them.
+5. Start the stack:
+   - EC2 trust: `make -C trust up-trust-ec2 KIT=<KIT> PROD=true`
+   - On-prem trust: `make -C trust up-local-trust LOCAL_TRUST_NAME=<KIT> PROD=true`
+
+   The dev-only target `make -C trust up-trust KIT=<KIT>` has additional
+   prerequisites (`update-omop-data`, `update-orthanc-data`) that require
+   the hub's AWS credentials to download test fixtures from S3 — it is
+   intentionally not suitable for a remote operator.
+
+### Refreshing shared values (when the hub admin rotates an AES key etc.)
+
+When the hub admin rotates a shared value (AES key, FL backend, image tag),
+they will run `make sync-trust-kit-<N>` on their side. That produces an
+updated kit file with the new Hub-shared block; credentials are preserved.
+The updated file is transmitted to you using the same out-of-band channel.
+Replace your local copy and restart the stack:
+
+```bash
+make -C trust restart-trust KIT=<KIT> PROD=true
+```
+
 ## Integration tests (cohort-query end-to-end)
 
 The `trust-api` and `data-access-api` integration suites run against a throwaway Compose stack — vanilla Postgres seeded from a small OMOP fixture plus a freshly-built `data-access-api`. The stack is defined in [`deploy/compose.test.yml`](deploy/compose.test.yml) and brought up by [Testcontainers](https://testcontainers-python.readthedocs.io/) inside session-scoped pytest fixtures, so a single test invocation is enough — no `make up` first.
