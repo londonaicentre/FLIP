@@ -659,6 +659,7 @@ def main(
 
         # XNAT Trust 1 endpoint - use 127.0.0.1 to avoid IPv6 routing issues with Docker Swarm
         check_http_endpoint(f"http://127.0.0.1:{XNAT_PORT_TRUST_1}", "XNAT Trust 1 Web UI", [200, 302])
+        check_http_endpoint(f"http://localhost:{PACS_UI_PORT_TRUST_1}", "Orthanc PACS Trust 1", [200, 401])
 
         # XNAT Trust 2 endpoint - use 127.0.0.1 to avoid IPv6 routing issues with Docker Swarm
         check_http_endpoint(f"http://127.0.0.1:{XNAT_PORT_TRUST_2}", "XNAT Trust 2 Web UI", [200, 302])
