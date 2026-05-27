@@ -55,7 +55,6 @@ services:
         UID: ${UID}
         GID: ${GID}
         UNAME: ${UNAME}
-        DEBUG_PORT: ${IMAGING_DEBUG_PORT_TRUST_1}
       context: ./imaging-api
       dockerfile: Dockerfile
       target: development
@@ -70,7 +69,7 @@ services:
       XNAT_DATABASE_URL: ${XNAT_DATABASE_URL}
       DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
       AES_KEY_BASE64: ${AES_KEY_BASE64}
-      DEBUG_PORT: ${IMAGING_DEBUG_PORT_TRUST_1}
+      DEBUG_PORT: ${IMAGING_DEBUG_PORT}
       DEBUG: ${DEBUG}
       ENV: development
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
@@ -90,7 +89,6 @@ services:
         UID: ${UID}
         GID: ${GID}
         UNAME: ${UNAME}
-        DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT_TRUST_1}
       context: ./data-access-api
       dockerfile: Dockerfile
       target: development
@@ -102,7 +100,7 @@ services:
       DATA_ACCESS_POSTGRES_PASSWORD: ${DATA_ACCESS_POSTGRES_PASSWORD}
       OMOP_POSTGRES_DB: ${OMOP_POSTGRES_DB}
       AES_KEY_BASE64: ${AES_KEY_BASE64}
-      DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT_TRUST_1}
+      DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT}
       DEBUG: ${DEBUG}
       ENV: development
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
@@ -119,7 +117,6 @@ services:
         UID: ${UID}
         GID: ${GID}
         UNAME: ${UNAME}
-        DEBUG_PORT: ${TRUST_DEBUG_PORT}
       context: ./trust-api
       dockerfile: Dockerfile
       target: development
