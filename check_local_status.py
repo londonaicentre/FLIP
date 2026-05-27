@@ -369,10 +369,14 @@ def main(
     IMAGING_API_PORT = env_vars.get("IMAGING_API_PORT", "8200")
     DATA_ACCESS_API_PORT = env_vars.get("DATA_ACCESS_API_PORT", "8300")
     POSTGRES_PORT = env_vars.get("POSTGRES_PORT", "5432")
-    XNAT_PORT_TRUST_1 = env_vars.get("XNAT_PORT_TRUST_1", "8104")
-    XNAT_PORT_TRUST_2 = env_vars.get("XNAT_PORT_TRUST_2", "8106")
-    PACS_UI_PORT_TRUST_1 = env_vars.get("PACS_UI_PORT_TRUST_1", "8042")
-    PACS_UI_PORT_TRUST_2 = env_vars.get("PACS_UI_PORT_TRUST_2", "8044")
+    # Per-trust XNAT/PACS ports live in each trust's kit file, not the top-level
+    # .env.development — that's the source of truth `trust/Makefile` -includes too.
+    trust_1_env = load_env_file(project_dir / "trust" / ".env.Trust_1")
+    trust_2_env = load_env_file(project_dir / "trust" / ".env.Trust_2")
+    XNAT_PORT_TRUST_1 = trust_1_env.get("XNAT_PORT", "8104")
+    XNAT_PORT_TRUST_2 = trust_2_env.get("XNAT_PORT", "8108")
+    PACS_UI_PORT_TRUST_1 = trust_1_env.get("PACS_UI_PORT", "8042")
+    PACS_UI_PORT_TRUST_2 = trust_2_env.get("PACS_UI_PORT", "8046")
 
     # Parse NET_ENDPOINTS to determine which FL networks are configured
     NET_ENDPOINTS = env_vars.get("NET_ENDPOINTS", "{}")

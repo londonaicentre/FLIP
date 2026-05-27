@@ -283,11 +283,13 @@ variable "SES_VERIFIED_EMAIL" {
 variable "XNAT_PORT" {
   description = "Port for XNAT service"
   type        = number
+  default     = 8104
 }
 
 variable "PACS_UI_PORT" {
   description = "Port for Orthanc PACS UI"
   type        = number
+  default     = 8042
 }
 
 variable "TRUST_API_KEY_HEADER" {

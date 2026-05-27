@@ -120,8 +120,6 @@ export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
 # is created per IP. `make allow-local-trust-nlb` applies them.
 LOCAL_TRUST_PUBLIC_IPS ?= []
 export TF_VAR_local_trust_public_ips=$(LOCAL_TRUST_PUBLIC_IPS)
-export TF_VAR_XNAT_PORT=${XNAT_PORT_TRUST_1}
-export TF_VAR_PACS_UI_PORT=${PACS_UI_PORT_TRUST_1}
 export TF_VAR_AWS_REGION=${AWS_REGION}
 export TF_VAR_VPC_NAME=${VPC_NAME}
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
