@@ -55,6 +55,7 @@ make aws-login                                # AWS SSO login
 - **CloudFront + S3**: flip-ui static hosting
 - **Secrets Manager**: `FLIP_API` secret (AES key, DB password, key hashes)
 - **Cognito**: `flip-user-pool` with email auth
+- **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust EC2 / on-prem hosts do too. **There is no ECR mirror.** A surgical centralhub redeploy (per `project_prod_ecs_deploy.md` — don't `make apply` for prod) is: GH workflow `workflow_dispatch` to build the branch image to GHCR → `aws ecs register-task-definition` with the branch tag → `aws ecs update-service --force-new-deployment`. The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
 
 ## State Management
 
