@@ -11,18 +11,24 @@
 # limitations under the License.
 #
 # Read a JSON array of trust kits on stdin (the stdout of
-# `flip_api.scripts.register_deploy_trusts`) and write each one into its
-# per-trust kit file `trust/.env.<fl_kit_slot>` in the working tree.
+# `flip_api.scripts.register_trust`) and write each one into its per-trust kit
+# file `trust/.env.<fl_kit_slot>` in the working tree.
 #
 # For each kit:
 #   - If trust/.env.<slot> is absent, seed it from trust/.env.<slot>.example
 #     (so the host-local port/dir profile is present), or start an empty file.
-#   - Upsert the five credential keys (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY,
-#     FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID) — replace the line if
-#     the key already exists, append it otherwise. The port/dir lines and any
-#     operator edits are preserved.
+#   - Credentials block (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY,
+#     FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID): upserted only when
+#     the kit contains them (new registration). The skip path omits credentials
+#     so an idempotent re-run does NOT clobber the existing kit file's creds.
+#   - Hub-shared block: upserted unconditionally. A sentinel header comment
+#     # ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──
+#     is appended once (on first write); subsequent runs upsert the values in
+#     place. The port/dir lines and any operator edits outside this block are
+#     preserved.
 #
-# An empty input array (`[]`, i.e. every trust already registered) is a no-op.
+# An empty input array (`[]`, i.e. a registration error) is a no-op; a
+# skip-path kit (creds absent) still refreshes the hub-shared block.
 
 set -eo pipefail
 
@@ -48,9 +54,13 @@ KITS_JSON="$(echo "$KITS_JSON" | awk 'NF' | grep -E '^\[' | tail -n 1 || true)"
 
 NUM_KITS="$(echo "$KITS_JSON" | jq 'length')"
 if [ "$NUM_KITS" = "0" ]; then
-    echo "ℹ️  No new trust registrations — kit files unchanged."
+    echo "ℹ️  No kits to distribute (empty array — registration error?). Kit files unchanged."
     exit 0
 fi
+
+# Sentinel comment line that marks the start of the managed hub-shared block.
+# distribute / sync scripts both look for this line to know whether to append vs. upsert.
+HUB_SHARED_HEADER='# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──'
 
 echo "$KITS_JSON" | jq -c '.[]' | while read -r kit; do
     slot="$(echo "$kit" | jq -r '.fl_kit_slot')"
@@ -67,11 +77,26 @@ echo "$KITS_JSON" | jq -c '.[]' | while read -r kit; do
         fi
     fi
 
-    upsert_var "$target" TRUST_API_KEY "$(echo "$kit" | jq -r '.trust_api_key')"
-    upsert_var "$target" TRUST_INTERNAL_SERVICE_KEY "$(echo "$kit" | jq -r '.trust_internal_service_key')"
-    upsert_var "$target" FL_KIT_SLOT "$(echo "$kit" | jq -r '.fl_kit_slot')"
-    upsert_var "$target" FL_KIT_SLOT_NUMBER "$(echo "$kit" | jq -r '.fl_kit_slot_number')"
-    upsert_var "$target" EXPECTED_TRUST_ID "$(echo "$kit" | jq -r '.trust_id')"
+    # Credentials block — only present on a new registration. The skip path omits
+    # these fields so we do NOT clobber the operator's existing TRUST_API_KEY etc.
+    if echo "$kit" | jq -e '.trust_api_key' >/dev/null; then
+        upsert_var "$target" TRUST_API_KEY "$(echo "$kit" | jq -r '.trust_api_key')"
+        upsert_var "$target" TRUST_INTERNAL_SERVICE_KEY "$(echo "$kit" | jq -r '.trust_internal_service_key')"
+        upsert_var "$target" FL_KIT_SLOT "$(echo "$kit" | jq -r '.fl_kit_slot')"
+        upsert_var "$target" FL_KIT_SLOT_NUMBER "$(echo "$kit" | jq -r '.fl_kit_slot_number')"
+        upsert_var "$target" EXPECTED_TRUST_ID "$(echo "$kit" | jq -r '.trust_id')"
+    fi
+
+    # Hub-shared block — present on both new-registration and skip paths.
+    # Add the header line on first write so a human reader sees the section is
+    # machine-managed; the line is a comment so make's `include` treats it as a no-op.
+    if ! grep -qF "$HUB_SHARED_HEADER" "$target"; then
+        printf '\n%s\n' "$HUB_SHARED_HEADER" >> "$target"
+    fi
+    while IFS='=' read -r key value; do
+        upsert_var "$target" "$key" "$value"
+    done < <(echo "$kit" | jq -r '.hub_shared // {} | to_entries[] | "\(.key)=\(.value)"')
+
     chmod 600 "$target"
 
     echo "✅ Wrote kit for trust '$(echo "$kit" | jq -r '.trust_name')' → $target"
