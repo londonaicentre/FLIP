@@ -38,7 +38,7 @@ TRUST_DIR="$REPO_ROOT/trust"
 
 # Sentinel comment line that marks the start of the managed hub-shared block.
 # Must be byte-identical to the sentinel in distribute-trust-kits.sh.
-HUB_SHARED_HEADER='# -- Hub-shared (managed by register-trust / sync-trust-kits -- do not edit) --'
+HUB_SHARED_HEADER='# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──'
 
 # Replace `KEY=...` in $file if present, else append `KEY=value`.
 upsert_var() {
