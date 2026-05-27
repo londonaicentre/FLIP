@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build dev prod clean stop up down up-trust up-trust-stack down-trust restart-trust up-trust-ec2 down-trust-ec2 \
+.PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
 	update-omop-data update-orthanc-data integration_test
@@ -167,16 +167,11 @@ build:
 	$(TRUST_VARS) ${DOCKER_COMPOSE_CMD} -p $(or $(TRUST_PROJECT),trust) build
 
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
-# trust/.env.<KIT> for that trust's ports / dirs / credentials.
-# Pulls dev mock OMOP / Orthanc fixtures from the hub-side S3 bucket — only
-# appropriate for dev / hybrid testing (the on-prem real-data path uses
-# `up-trust-stack` instead).
-up-trust: update-omop-data update-orthanc-data up-trust-stack
-
-# Bare stack-up (no dev-S3 fixture sync). Used directly by the on-prem
-# flow where the operator brings their own OMOP / Orthanc data and must
-# not have it overwritten by the test fixtures.
-up-trust-stack: create-networks
+# trust/.env.<KIT> for that trust's ports / dirs / credentials. The
+# update-omop-data / update-orthanc-data prereqs pull mock OMOP / Orthanc
+# fixtures from the hub-side dev S3 bucket — fine for dev / hybrid testing.
+# (Marked for removal once those fixtures move to a different source.)
+up-trust: update-omop-data update-orthanc-data create-networks
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"

@@ -134,8 +134,7 @@ central-hub: create-networks-centralhub
 	$(MAKE) -C flip-api up
 
 # On-prem operator flow — start a trust on the local host pointing at a
-# remote hub (typically the prod CloudFront one). Bare stack-up (no dev
-# S3 fixture sync — operator brings their own OMOP / Orthanc data).
+# remote hub (typically the prod CloudFront one).
 #
 # First-run behaviour: if the kit file at trust/.env.<KIT> still has the
 # <run-make-register-trusts> placeholders the .example template carries,
@@ -155,7 +154,7 @@ up-onprem-trust:
 		$(MAKE) print-onprem-onboarding-info KIT=$(KIT); \
 		exit 0; \
 	fi
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-stack KIT=$(KIT) PROD=$(or $(PROD),true)
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
 # so an operator doesn't have to remember the -C trust path or PROD value.
