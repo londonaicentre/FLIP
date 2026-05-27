@@ -181,17 +181,39 @@ def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
     assert payload[0]["fl_kit_slot_number"] == 1
 
 
-def test_main_skip_prints_empty_array(monkeypatch, capsys):
-    """Idempotent skip: an already-registered trust → stdout is exactly `[]`."""
+def test_main_skip_prints_metadata_only_kit(monkeypatch, capsys):
+    """Idempotent skip: an already-registered trust → stdout is a one-element JSON array without credentials."""
     from flip_api.scripts import register_trust as cli
 
     _patch_session(monkeypatch)
-    monkeypatch.setattr(cli, "register_one_trust", lambda *_a, **_kw: [])
+    monkeypatch.setattr(
+        cli,
+        "register_one_trust",
+        lambda name, code, region, session: [
+            {
+                "trust_id": "tid",
+                "trust_name": name,
+                "fl_kit_slot": "Trust_002",
+                "fl_kit_slot_number": 2,
+                "hub_shared": {"AES_KEY_BASE64": "Zm9vYmFy"},
+            }
+        ],
+    )
     monkeypatch.setattr("sys.argv", ["register_trust", "--name", "Existing Trust"])
 
     cli.main()
 
-    assert capsys.readouterr().out.strip() == "[]"
+    import json as _json
+
+    payload = _json.loads(capsys.readouterr().out)
+    assert isinstance(payload, list)
+    assert len(payload) == 1
+    kit = payload[0]
+    assert kit["trust_name"] == "Existing Trust"
+    assert kit["fl_kit_slot_number"] == 2
+    assert "trust_api_key" not in kit
+    assert "trust_internal_service_key" not in kit
+    assert kit["hub_shared"] == {"AES_KEY_BASE64": "Zm9vYmFy"}
 
 
 def test_main_exits_1_on_registration_error(monkeypatch, capsys):

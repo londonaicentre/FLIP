@@ -21,9 +21,19 @@ Idempotent: if a trust with ``--name`` already exists it is skipped.
 
 Contract:
 
-- **stdout** — a JSON array: one kit object for a new registration, ``[]`` when
-  the trust already existed. The array shape keeps ``distribute-trust-kits.sh``
-  uniform whether or not anything was registered.
+- **stdout** — a JSON array of exactly one kit object in both cases:
+
+  - *New registration*: full kit (``trust_id``, ``trust_name``,
+    ``trust_api_key``, ``trust_internal_service_key``, ``fl_kit_slot``,
+    ``fl_kit_slot_number``, ``hub_shared``).
+  - *Idempotent skip* (trust already existed): metadata-only kit (same keys
+    minus ``trust_api_key`` / ``trust_internal_service_key``). The hub stores
+    only the SHA-256 hashes of those keys and cannot re-emit plaintext, so
+    credentials are intentionally absent on the skip path.
+
+  Both shapes include ``hub_shared`` so ``distribute-trust-kits.sh`` can sync
+  shared env values without rotating credentials.
+
 - **stderr** — human-readable logging.
 - Exit code 0 on success or skip; 1 on a registration failure.
 """
