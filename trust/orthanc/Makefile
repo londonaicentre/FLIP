@@ -58,10 +58,9 @@ shell:
 	$(TRUST_1_VARS) $(docker_command) $(run_clean) $(service_name) /bin/bash
 
 # Sync mock orthanc DICOM data (used in development / staging environments where real data is not available)
-# Needs AWS account credentials configured to run S3 commands
+# Fetched anonymously from the public Hugging Face dataset (no AWS CLI / credentials needed)
 update-orthanc-data:
 	CLEAN_AFTER_UPDATE=True \
-	AICENTRE_BUCKET_NAME=$(AICENTRE_BUCKET_NAME) \
 	ORTHANC_STORAGE_DIR_TRUST_1=$(ORTHANC_STORAGE_DIR_TRUST_1) \
 	ORTHANC_STORAGE_DIR_TRUST_2=$(ORTHANC_STORAGE_DIR_TRUST_2) \
 	./update_orthanc_data.sh
