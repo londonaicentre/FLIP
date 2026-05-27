@@ -29,9 +29,10 @@
 # This script's job (admin runs from deploy/providers/AWS with prod AWS creds):
 #   3. Validate the kit file has no unfilled placeholders.
 #   4. Read FL_BACKEND, FLARE_KIT_DATE / FLOWER_KIT_DATE, FL_KIT_SLOT,
-#      FL_KIT_SLOT_NUMBER from the kit file, and UPLOADED_FEDERATED_DATA_BUCKET
-#      from the admin's $(MAIN_ENV_FILE) (which the AWS Makefile includes +
-#      exports — it's a hub-side value, not per-trust).
+#      FL_KIT_SLOT_NUMBER from the kit file, and AICENTRE_BUCKET_NAME from
+#      the admin's $(MAIN_ENV_FILE) (which the AWS Makefile includes +
+#      exports — it's the hub-side bucket that holds the provisioned FL
+#      participant kits, not per-trust).
 #   5. Sync only this operator's portion of the FL participant kit out of S3
 #      (net-1/services/<slot>/ for nvflare; net-1/certificates/ + one
 #      supernode_credentials_<N> for flower).
@@ -123,21 +124,23 @@ if [ "$slot" != "$KIT" ]; then
     exit 1
 fi
 
-# UPLOADED_FEDERATED_DATA_BUCKET comes from the admin's $(MAIN_ENV_FILE)
-# (.env.<env>), which the AWS Makefile `include`s + `export`s — it's a
-# hub-side value, not a per-trust kit value, so it lives in the admin's env
-# rather than the trust's kit file. May carry an `s3://` prefix or a path
-# suffix (e.g. `s3://flipprod/uploaded-federated-data`); reduce to the
-# bucket name only.
-if [ -z "${UPLOADED_FEDERATED_DATA_BUCKET:-}" ]; then
-    log_error "UPLOADED_FEDERATED_DATA_BUCKET is unset in the environment."
+# AICENTRE_BUCKET_NAME is the hub-side bucket that holds the provisioned FL
+# participant kits (`fl-{flare,flower}-participant-kits/<date>/net-1/...`) —
+# Terraform creates it (`aws_s3_bucket.aicentre_bucket`), Ansible's trust EC2
+# provisioner reads it (`deploy/providers/AWS/site.yml`), and the EC2
+# `deploy-trust` target pulls from it (`deploy/providers/AWS/Makefile`). It's
+# a hub-side value, not per-trust, so it lives in $(MAIN_ENV_FILE) — the AWS
+# Makefile `include`s + `export`s the env file, so it's in os.environ for
+# any recipe running from deploy/providers/AWS with PROD=true (or stag).
+# Plain bucket name, no `s3://` prefix.
+if [ -z "${AICENTRE_BUCKET_NAME:-}" ]; then
+    log_error "AICENTRE_BUCKET_NAME is unset in the environment."
     log_error "  This script reads it from the admin's \$(MAIN_ENV_FILE) — make sure"
     log_error "  you ran make from deploy/providers/AWS with PROD=true (or stag)"
     log_error "  and that the matching .env.production / .env.stag has it set."
     exit 1
 fi
-bucket_name="${UPLOADED_FEDERATED_DATA_BUCKET#s3://}"
-bucket_name="${bucket_name%%/*}"
+bucket_name="$AICENTRE_BUCKET_NAME"
 
 BUILD_DIR="$REPO_ROOT/deploy/providers/AWS/build/trust-kits"
 mkdir -p "$BUILD_DIR"
@@ -147,14 +150,42 @@ KIT_STAGE_DIR="$STAGE_DIR/fl-kit"
 mkdir -p "$KIT_STAGE_DIR"
 
 # --- Slice the operator's FL participant kit ---
+# `aws s3 sync` silently succeeds with zero files when the source prefix
+# doesn't exist — without the post-sync guard below, a wrong bucket / wrong
+# date / un-provisioned slot would ship an empty tarball that only fails
+# on the operator's `onboard-onprem-trust` later. Assert non-empty here so
+# the admin sees the bad config immediately.
 log_info "Syncing FL kit slice from S3 ($fl_backend; bucket=$bucket_name; date=$fl_kit_date; slot=$slot)..."
 if [ "$fl_backend" = "nvflare" ]; then
     target="$KIT_STAGE_DIR/net-1/services/$slot"
     mkdir -p "$target"
     aws_cmd s3 sync "s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/services/$slot/" "$target/"
+    if [ -z "$(ls -A "$target" 2>/dev/null)" ]; then
+        log_error "Sync produced an empty kit at $target."
+        log_error "  Source: s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/services/$slot/"
+        log_error "  Verify the provisioner has uploaded this slot's kit:"
+        log_error "    aws s3 ls s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/services/"
+        log_error "  Check FLARE_KIT_DATE in trust/.env.$KIT matches an actual S3 date prefix,"
+        log_error "  and confirm FL_KIT_SLOT='$slot' is one of the provisioned slot names."
+        exit 1
+    fi
+    # NVFLARE's service layout requires `transfer/` to exist as a directory —
+    # it's the runtime drop for trained models. Provisioner ships it empty, so
+    # `aws s3 sync` (which only mirrors objects, not empty prefixes) leaves it
+    # out. Recreate it here so the unpacked kit matches the layout
+    # `onboard-onprem-trust` expects.
+    mkdir -p "$target/transfer"
 else
-    mkdir -p "$KIT_STAGE_DIR/net-1/certificates" "$KIT_STAGE_DIR/net-1/keys"
-    aws_cmd s3 sync "s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/certificates/" "$KIT_STAGE_DIR/net-1/certificates/"
+    certs_target="$KIT_STAGE_DIR/net-1/certificates"
+    mkdir -p "$certs_target" "$KIT_STAGE_DIR/net-1/keys"
+    aws_cmd s3 sync "s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/certificates/" "$certs_target/"
+    if [ -z "$(ls -A "$certs_target" 2>/dev/null)" ]; then
+        log_error "Sync produced empty certificates at $certs_target."
+        log_error "  Source: s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/certificates/"
+        log_error "  Verify FLOWER_KIT_DATE in trust/.env.$KIT matches an actual S3 date prefix:"
+        log_error "    aws s3 ls s3://$bucket_name/$fl_prefix/"
+        exit 1
+    fi
     aws_cmd s3 cp \
         "s3://$bucket_name/$fl_prefix/$fl_kit_date/net-1/keys/supernode_credentials_$slot_number" \
         "$KIT_STAGE_DIR/net-1/keys/"
