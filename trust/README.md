@@ -100,8 +100,9 @@ See dedicated README under [omop-db/README.md](omop-db/README.md) for instructio
 If you are operating a trust on a host that does not have the hub's
 `.env.<env>` file (e.g. an on-prem deployment or a third-party trust), you
 need only your trust's kit file (`trust/.env.<KIT>`) — typically
-`trust/.env.Trust_2` for the second registered trust, or
-`trust/.env.Trust_Local` for an on-prem trust.
+`trust/.env.Trust_2` for the second registered trust (also the on-prem
+slot in the FLIP prod environment, where it represents BDMS; see
+`trust/.env.Trust_2.production.example` for the prod-flavor template).
 
 ### One-time setup
 

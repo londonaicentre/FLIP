@@ -53,10 +53,12 @@ endif
 
 # Local-trust names derived from LOCAL_TRUST_NAME the same way TRUST_NUM /
 # TRUST_PROJECT / TRUST_NETWORK_NAME are derived from $(KIT) below — kit
-# name is the single source of truth for stack identity. For the
-# conventional LOCAL_TRUST_NAME=Trust_Local this yields project trustLocal
-# and network deploy_trust-network-Local (replacing the previous lowercase
-# trust-local / deploy_trust-network-local constants).
+# name is the single source of truth for stack identity. In the FLIP prod
+# environment the on-prem slot is Trust_2 (BDMS), so LOCAL_TRUST_NAME=Trust_2
+# yields project trust2 and network deploy_trust-network-2. The kit template
+# for this slot lives at trust/.env.Trust_2.production.example (the
+# dev-flavor sibling .env.Trust_2.example is used by the regular up-trust
+# KIT=Trust_2 path).
 LOCAL_TRUST_NUM := $(subst Trust_,,$(LOCAL_TRUST_NAME))
 LOCAL_TRUST_PROJECT := trust$(LOCAL_TRUST_NUM)
 LOCAL_TRUST_NETWORK_NAME := deploy_trust-network-$(LOCAL_TRUST_NUM)
@@ -125,52 +127,19 @@ TRUST_VARS = \
 	TRUST_NUMBER=$(TRUST_NUM) \
 	TRUST_NAME=$(or $(FL_KIT_SLOT),$(KIT))
 
-# Host ports and bind paths default to the local-trust allocation in
-# LOCAL_TRUST_VARS below, but — like TRUST_VARS — each can be overridden from
-# the kit file trust/.env.<LOCAL_TRUST_NAME> (see trust/.env.Trust_Local.example).
-# The "local" trust is the on-prem trust of a production deployment (as opposed
-# to the AWS EC2 trust); dev deployments use the Trust_1/Trust_2 stacks instead.
-# The defaults are picked to be non-overlapping with the Trust_1/Trust_2
-# allocations so the on-prem stack never clashes with a Trust_1/Trust_2 stack
-# sharing the host, and so stag/prod hosts (AWS trust EC2 or on-prem via
-# `make provision-local-trust`) work even with no port entries in their kit file.
-# The trust network stays hardcoded — it's a structural identity, not a
-# host-tunable value.
-#
-# ORTHANC_STORAGE_DIR defaults to a dedicated `orthanc-storage-local` path
-# rather than reusing whichever trust dir matches LOCAL_TRUST_NAME. Sharing the
-# dir saves the gigabytes of seeded DICOM data, but two Orthanc containers
-# cannot open the same SQLite index — the second crash-loops on `database is
-# locked` and the trust network loses its `orthanc` alias, which in turn
-# breaks xnat-nginx upstream resolution. To re-seed the local-trust Orthanc
-# on a dev laptop, copy from the matching trust dir once:
-#   cp -r trust/orthanc/orthanc-storage-2/ trust/orthanc/orthanc-storage-local/
-#
-# Per-trust kit file (trust/.env.<LOCAL_TRUST_NAME>) — same schema as the
-# KIT-selected kit above. Dropped in by the deploy's `register-trusts` step
-# or by the operator after `POST /admin/trusts`. `-include`d at the top of
-# this Makefile so its hub-shared FL_BACKEND lands before fl_backend.mk.
-
+# LOCAL_TRUST_VARS mirrors TRUST_VARS in shape — only values derived from
+# $(LOCAL_TRUST_NAME) at make-time that aren't (or can't be) in the kit file.
+# Every kit-file key (host-local ports + bind dirs, trust-local credentials,
+# hub-shared block, kit credentials, named-volume references) reaches docker
+# compose via the --env-file flag baked into DOCKER_COMPOSE_CMD above. The
+# on-prem kit template trust/.env.Trust_2.production.example carries the
+# previously make-side defaults (port allocation, observability named
+# volumes, dedicated `-local` Orthanc/OMOP/XNAT dirs to dodge SQLite-index
+# contention with a co-located dev Trust_1/Trust_2 stack).
 LOCAL_TRUST_VARS = \
-	BASE_IMAGES_DOWNLOAD_DIR=$(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/local/$(LOCAL_TRUST_NAME)) \
-	OMOP_DB_PORT=$(or $(OMOP_DB_PORT),5438) \
-	PACS_UI_PORT=$(or $(PACS_UI_PORT),8046) \
-	XNAT_PORT=$(or $(XNAT_PORT),8108) \
-	GRAFANA_PORT=$(or $(GRAFANA_PORT),3002) \
-	LOKI_PORT=$(or $(LOKI_PORT),3102) \
 	TRUST_NETWORK_NAME=$(LOCAL_TRUST_NETWORK_NAME) \
-	TRUST_NUMBER=$(subst Trust_,,$(LOCAL_TRUST_NAME)) \
-	TRUST_API_KEY=$(TRUST_API_KEY) \
-	TRUST_INTERNAL_SERVICE_KEY=$(TRUST_INTERNAL_SERVICE_KEY) \
-	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),$(LOCAL_TRUST_NAME)) \
-	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),$(subst Trust_,,$(LOCAL_TRUST_NAME))) \
-	TRUST_NAME=$(or $(FL_KIT_SLOT),$(LOCAL_TRUST_NAME)) \
-	EXPECTED_TRUST_ID=$(EXPECTED_TRUST_ID) \
-	OMOP_DATA_DIR=$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data) \
-	ORTHANC_STORAGE_DIR=$(or $(ORTHANC_STORAGE_DIR),./orthanc/orthanc-storage-local) \
-	OBSERVABILITY_CONFIG_DIR=./observability \
-	LOKI_DATA_VOLUME=trust-local-loki-data \
-	GRAFANA_DATA_VOLUME=trust-local-grafana-data
+	TRUST_NUMBER=$(LOCAL_TRUST_NUM) \
+	TRUST_NAME=$(or $(FL_KIT_SLOT),$(LOCAL_TRUST_NAME))
 
 # Guard: refuse to bring a trust up if its OMOP DB data dir is empty or missing.
 # Docker would otherwise silently auto-create an empty bind mount on first start,

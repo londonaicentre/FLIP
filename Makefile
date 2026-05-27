@@ -130,7 +130,10 @@ up-trust-ec2: create-networks
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=Trust_1 PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
-LOCAL_TRUST_NAME ?= Trust_Local
+# The on-prem trust slot. In the FLIP prod environment this is Trust_2 (BDMS,
+# TRUST_2_HOST=local) — the kit template is trust/.env.Trust_2.production.example.
+# Override per-deployment if the on-prem trust uses a different slot name.
+LOCAL_TRUST_NAME ?= Trust_2
 
 up-local-trust: create-networks
 	docker context use default

@@ -5,8 +5,9 @@
 # stack Just Works on a laptop without an Ansible-style host bootstrap.
 #
 # Host-port collisions with a co-located dev trust1 are avoided by the
-# Trust_Local kit file picking non-overlapping DATA_ACCESS_API_PORT /
-# IMAGING_API_PORT / TRUST_API_PORT (see trust/.env.Trust_Local.example).
+# on-prem kit file picking non-overlapping DATA_ACCESS_API_PORT /
+# IMAGING_API_PORT / TRUST_API_PORT (see trust/.env.Trust_2.production.example —
+# Trust_2 is the on-prem slot in the FLIP prod environment).
 # That's a kit-file concern, not a compose-overlay one — keeping it in the
 # kit means real on-prem operators on a dedicated host can revert to
 # standard 8010/8001/8020 without a separate compose file.

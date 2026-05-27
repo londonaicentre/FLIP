@@ -398,9 +398,11 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 	@echo "✅ deploy-ui complete."
 
 # Identity of the on-prem (local) trust — selects its kit file
-# trust/.env.Trust_Local and its trust-local data dirs. Distinct from the FL
-# participant kit slot below.
-LOCAL_TRUST_NAME ?= Trust_Local
+# trust/.env.<LOCAL_TRUST_NAME> and its trust-local data dirs. Distinct from
+# the FL participant kit slot below. In the FLIP prod environment this is
+# Trust_2 (BDMS, TRUST_2_HOST=local). Template:
+# trust/.env.Trust_2.production.example.
+LOCAL_TRUST_NAME ?= Trust_2
 # FL participant kit slot the on-prem trust's fl-client mounts — names the
 # services/<slot>/ dir in the S3 participant-kit bundle and under /opt/flip.
 # Read from the trust's kit file (the single source of truth: the kit file's
