@@ -37,7 +37,7 @@ services:
       # - "${PACS_DICOM_PORT}:4242"
       - "${PACS_UI_PORT}:8042"
     volumes:
-      - ${ORTHANC_STORAGE_DIR}:/var/lib/orthanc/db
+      - ${ORTHANC_STORAGE_DIR:-/opt/flip/orthanc/orthanc-storage}:/var/lib/orthanc/db
     environment:
       ORTHANC__REGISTERED_USERS: |
           {"${ORTHANC_USERNAME}": "${ORTHANC_PASSWORD}"}
