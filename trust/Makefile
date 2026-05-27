@@ -59,14 +59,20 @@ ORTHANC_CMD=make -C ./orthanc
 # --project-directory . keeps relative paths inside the compose files (./trust-api,
 # ./observability/, ./omop-db/volumes/, …) resolving from trust/ even though the compose
 # files now live in trust/deploy/. Avoids having to rewrite every ./X to ../X.
-# --env-file $(KIT_FILE) hands compose the kit file so ${POLL_INTERVAL_SECONDS},
-# ${PACS_ID}, ${OMOP_POSTGRES_*}, etc. (all the kit's Trust-local creds + tunables
-# that aren't in TRUST_VARS) resolve at YAML-substitution time. Without it
-# compose silently uses empty strings → trust-api/imaging-api boot fails with
-# pydantic int-parse errors on POLL_INTERVAL_SECONDS / PACS_ID.
-# `-f /dev/null` keeps the flag harmless when KIT is unset (build/test targets);
-# compose tolerates a missing/empty file passed via --env-file.
-__ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
+# --env-file <kit> hands compose the kit file so ${POLL_INTERVAL_SECONDS},
+# ${PACS_ID}, ${OMOP_POSTGRES_*}, etc. (all the kit's Trust-local creds +
+# tunables that aren't in TRUST_VARS / LOCAL_TRUST_VARS) resolve at
+# YAML-substitution time. Without it compose silently uses empty strings →
+# trust-api/imaging-api boot fails with pydantic int-parse errors on
+# POLL_INTERVAL_SECONDS / PACS_ID.
+# We pick whichever kit file exists for the calling target: KIT_FILE for the
+# KIT-named flow (up-trust / down-trust / build / debug), LOCAL_TRUST_KIT_FILE
+# for the on-prem flow (up-local-trust / down-local-trust). KIT-named wins if
+# both somehow exist — the explicit-trust path is the more-specific selector.
+# Build/test targets that set neither leave the flag empty (compose tolerates
+# absence of --env-file just fine).
+__KIT_FILE_RESOLVED := $(or $(wildcard $(KIT_FILE)),$(wildcard $(LOCAL_TRUST_KIT_FILE)))
+__ENV_FILE_FLAG := $(if $(__KIT_FILE_RESOLVED),--env-file $(__KIT_FILE_RESOLVED),)
 DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.debug.override.yml
 

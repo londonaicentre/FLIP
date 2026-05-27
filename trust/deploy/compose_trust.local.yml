@@ -1,26 +1,15 @@
 # Local trust override — uses Docker named volumes for observability data
-# instead of EC2 host bind mounts. No sudo or UID management needed.
+# instead of host bind mounts (the prod compose mounts ${LOKI_DATA_VOLUME} /
+# ${GRAFANA_DATA_VOLUME} from operator-provisioned host paths under
+# /opt/flip/volumes/...). The named volumes are declared here so the local
+# stack Just Works on a laptop without an Ansible-style host bootstrap.
 #
-# Also drops the host-port bindings for imaging-api, data-access-api, and
-# trust-api inherited from deploy/compose_trust.production.yml. The local-trust
-# stack does not need external access to these services (trust-api polls the
-# Central Hub outbound; imaging-api and data-access-api are only called by
-# trust-api / fl-client within the trust Docker network). Removing the host
-# bindings lets `up-local-trust` coexist on the same laptop as `make up` (dev
-# trust1 binds 8001/8010/8020 via deploy/compose_trust-1_override.yml) without
-# port collisions.
-#
-# The `!override` YAML tag (Compose v2.24+) replaces the merged `ports` list
-# rather than appending to it — a plain `ports: []` redefinition would still
-# inherit the bindings from the production compose.
-services:
-  imaging-api:
-    ports: !override []
-  data-access-api:
-    ports: !override []
-  trust-api:
-    ports: !override []
-
+# Host-port collisions with a co-located dev trust1 are avoided by the
+# Trust_Local kit file picking non-overlapping DATA_ACCESS_API_PORT /
+# IMAGING_API_PORT / TRUST_API_PORT (see trust/.env.Trust_Local.example).
+# That's a kit-file concern, not a compose-overlay one — keeping it in the
+# kit means real on-prem operators on a dedicated host can revert to
+# standard 8010/8001/8020 without a separate compose file.
 volumes:
   trust-local-loki-data:
   trust-local-grafana-data:
