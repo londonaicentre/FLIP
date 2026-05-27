@@ -77,7 +77,7 @@
                                             type="button"
                                             class="text-xs text-primary-600 hover:underline"
                                             data-test="copy-api-key-btn"
-                                            @click="copy(trust?.trust_api_key ?? '', 'API key')"
+                                            @click="copyEnvLine('TRUST_API_KEY', trust?.trust_api_key)"
                                         >
                                             Copy
                                         </button>
@@ -99,7 +99,7 @@
                                             type="button"
                                             class="text-xs text-primary-600 hover:underline"
                                             data-test="copy-internal-key-btn"
-                                            @click="copy(trust?.trust_internal_service_key ?? '', 'Internal service key')"
+                                            @click="copyEnvLine('TRUST_INTERNAL_SERVICE_KEY', trust?.trust_internal_service_key)"
                                         >
                                             Copy
                                         </button>
@@ -115,27 +115,53 @@
                                 <div>
                                     <div class="flex items-center justify-between mb-1">
                                         <span class="text-xs font-bold uppercase tracking-widest text-gray-500">
-                                            FL kit slot
+                                            FL_KIT_SLOT
                                         </span>
                                         <button
                                             type="button"
                                             class="text-xs text-primary-600 hover:underline"
                                             data-test="copy-fl-kit-slot-btn"
-                                            @click="copy(trust?.fl_kit_slot ?? '', 'FL kit slot')"
+                                            @click="copyFlKitSlotBlock"
+                                        >
+                                            Copy
+                                        </button>
+                                    </div>
+                                    <div
+                                        class="font-mono text-xs bg-gray-50 dark:bg-gray-900 p-2 rounded break-all whitespace-pre-line"
+                                        data-test="fl-kit-slot-value"
+                                        v-text="flKitSlotBlock"
+                                    />
+                                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                        Operator mounts <code>workspace/net-N/services/{{ trust?.fl_kit_slot ?? "—" }}/</code>
+                                        from flip-fl-base; their FL clients register with the FL server under this identity
+                                        regardless of the friendly name above.
+                                    </p>
+                                </div>
+
+                                <div>
+                                    <div class="flex items-center justify-between mb-1">
+                                        <span class="text-xs font-bold uppercase tracking-widest text-gray-500">
+                                            EXPECTED_TRUST_ID
+                                        </span>
+                                        <button
+                                            type="button"
+                                            class="text-xs text-primary-600 hover:underline"
+                                            data-test="copy-expected-trust-id-btn"
+                                            @click="copyEnvLine('EXPECTED_TRUST_ID', trust?.id)"
                                         >
                                             Copy
                                         </button>
                                     </div>
                                     <div
                                         class="font-mono text-xs bg-gray-50 dark:bg-gray-900 p-2 rounded break-all"
-                                        data-test="fl-kit-slot-value"
+                                        data-test="expected-trust-id-value"
                                     >
-                                        {{ trust?.fl_kit_slot ?? "—" }} (slot #{{ trust?.fl_kit_slot_number ?? "—" }})
+                                        {{ trust?.id ?? "—" }}
                                     </div>
                                     <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                        Operator mounts <code>workspace/net-N/services/{{ trust?.fl_kit_slot ?? "—" }}/</code>
-                                        from flip-fl-base; their FL clients register with the FL server under this identity
-                                        regardless of the friendly name above.
+                                        Optional self-check pasted into the trust's kit file. If the hub later resolves
+                                        the trust's API key to a different id, trust-api exits at startup instead of
+                                        silently acting as the wrong trust.
                                     </p>
                                 </div>
 
@@ -173,7 +199,7 @@
 
 <script setup lang="ts">
 import { Dialog, DialogTitle, TransitionChild, TransitionRoot } from "@headlessui/vue";
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
@@ -205,9 +231,28 @@ const close = () => {
     emit("closeModal");
 };
 
-const copy = async (value: string, label: string) => {
+// FL_KIT_SLOT and FL_KIT_SLOT_NUMBER are paired in the kit file. Render them
+// together so the displayed block matches what the Copy button puts on the
+// clipboard — operator pastes a single two-line block into trust/.env.<KIT>.
+const flKitSlotBlock = computed(() => [
+    `FL_KIT_SLOT=${props.trust?.fl_kit_slot ?? "—"}`,
+    `FL_KIT_SLOT_NUMBER=${props.trust?.fl_kit_slot_number ?? "—"}`
+].join("\n"));
+
+// Copy a single env-file line in `KEY=VALUE` form so the operator can paste
+// it straight into trust/.env.<KIT> without losing track of which key the
+// raw token belonged to.
+const copyEnvLine = async (key: string, value: string | number | null | undefined) => {
+    await copyText(`${key}=${value ?? ""}`, key);
+};
+
+const copyFlKitSlotBlock = async () => {
+    await copyText(flKitSlotBlock.value, "FL_KIT_SLOT");
+};
+
+const copyText = async (text: string, label: string) => {
     try {
-        await navigator.clipboard.writeText(value);
+        await navigator.clipboard.writeText(text);
         Snackbar.success({
             title: "Copied",
             text: `${label} copied to clipboard.`
