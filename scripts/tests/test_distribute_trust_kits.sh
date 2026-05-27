@@ -157,8 +157,8 @@ KIT="$T6/trust/.env.Trust_1"
 assert_grep "$KIT" "^TRUST_API_KEY=untouched$" "empty array leaves kit file unchanged"
 rm -rf "$T6"
 
-# ─── Test 7: FL_KIT_SLOT* written on skip path (no credentials in kit) ────────
-echo "▶ FL_KIT_SLOT* upserted on skip path (regression: was inside creds if-block)"
+# ─── Test 7: FL_KIT_SLOT* and EXPECTED_TRUST_ID written on skip path ──────────
+echo "▶ FL_KIT_SLOT* and EXPECTED_TRUST_ID upserted on skip path (regression: was inside creds if-block)"
 T7="$(mktemp -d)"
 T7_PRE="TRUST_API_KEY=existing-cred
 "
@@ -171,6 +171,7 @@ run_simple "$T7" "$T7_PRE" "$T7_JSON"
 KIT="$T7/trust/.env.Trust_1"
 assert_grep "$KIT" "^FL_KIT_SLOT=Trust_1$"    "FL_KIT_SLOT written on skip path"
 assert_grep "$KIT" "^FL_KIT_SLOT_NUMBER=1$"   "FL_KIT_SLOT_NUMBER written on skip path"
+assert_grep "$KIT" "^EXPECTED_TRUST_ID=abc$"  "EXPECTED_TRUST_ID written on skip path"
 assert_grep "$KIT" "^TRUST_API_KEY=existing-cred$" "existing cred preserved on skip path"
 rm -rf "$T7"
 

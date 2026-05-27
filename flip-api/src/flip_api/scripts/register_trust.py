@@ -70,6 +70,9 @@ HUB_SHARED_ENV_KEYS = (
     "DOCKER_FL_TAG",
     "DOCKER_FL_REGISTRY",
     "DOCKER_FL_CLIENT_NAME",
+    "UPLOADED_FEDERATED_DATA_BUCKET",
+    "NLB_SUBDOMAIN",
+    "FL_SERVER_PORT",
 )
 
 
@@ -83,6 +86,7 @@ def register_one_trust(
     code: str | None,
     region: str | None,
     session: Session,
+    require_existing: bool = False,
 ) -> list[dict[str, Any]]:
     """Register one trust if it does not already exist.
 
@@ -91,6 +95,9 @@ def register_one_trust(
         code (str | None): Optional short code.
         region (str | None): Optional NHS region.
         session (Session): SQLModel session.
+        require_existing (bool): When True, exit with an error if the trust has not yet
+            been registered. Prevents ``sync-trust-kit-N`` from silently minting and
+            discarding credentials for an unregistered trust.
 
     Returns:
         list[dict[str, Any]]: ``[kit]`` always — one full kit dict (including
@@ -101,6 +108,7 @@ def register_one_trust(
 
     Raises:
         TrustRegistrationError: If registration of a new trust fails.
+        SystemExit: If ``require_existing`` is True and the trust does not exist.
     """
     name = name.strip()
     existing = session.exec(select(Trust).where(Trust.name == name)).first()
@@ -116,6 +124,14 @@ def register_one_trust(
                 "hub_shared": _hub_shared_from_env(),
             }
         ]
+
+    if require_existing:
+        logger.error(
+            "Trust %r has not been registered yet. Run 'make register-trusts' first. "
+            "Refusing to mint credentials that would be discarded by sync-trust-kits.",
+            name,
+        )
+        sys.exit(1)
 
     kit = register_trust(name=name, code=code, region=region, session=session)
     logger.info(
@@ -143,11 +159,22 @@ def main() -> None:
     parser.add_argument("--name", required=True, help="Trust display name.")
     parser.add_argument("--code", default=None, help="Optional short code (e.g. GSTT).")
     parser.add_argument("--region", default=None, help="Optional NHS region (e.g. London).")
+    parser.add_argument(
+        "--require-existing",
+        action="store_true",
+        default=False,
+        help=(
+            "Fail with exit code 1 if the trust has not yet been registered. "
+            "Used by sync-trust-kit-N to prevent silently minting credentials on an unregistered trust."
+        ),
+    )
     args = parser.parse_args()
 
     with Session(engine) as session:
         try:
-            kits = register_one_trust(args.name, args.code, args.region, session)
+            kits = register_one_trust(
+                args.name, args.code, args.region, session, require_existing=args.require_existing
+            )
         except TrustRegistrationError as e:
             logger.error("Failed to register trust %r: %s", args.name, e)
             session.rollback()

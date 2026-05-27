@@ -335,6 +335,7 @@ sync-trust-kit-1: _wait-for-hub
 	@echo "🔄 Syncing hub-shared block for trust 1 ($(TRUST_1_NAME))..."
 	@$(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust \
 		--name "$(TRUST_1_NAME)" $(if $(TRUST_1_CODE),--code "$(TRUST_1_CODE)") $(if $(TRUST_1_REGION),--region "$(TRUST_1_REGION)") \
+		--require-existing \
 		| jq 'map(del(.trust_api_key, .trust_internal_service_key))' \
 		| bash scripts/sync-trust-kits.sh
 
@@ -342,6 +343,7 @@ sync-trust-kit-2: _wait-for-hub
 	@echo "🔄 Syncing hub-shared block for trust 2 ($(TRUST_2_NAME))..."
 	@$(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust \
 		--name "$(TRUST_2_NAME)" $(if $(TRUST_2_CODE),--code "$(TRUST_2_CODE)") $(if $(TRUST_2_REGION),--region "$(TRUST_2_REGION)") \
+		--require-existing \
 		| jq 'map(del(.trust_api_key, .trust_internal_service_key))' \
 		| bash scripts/sync-trust-kits.sh
 

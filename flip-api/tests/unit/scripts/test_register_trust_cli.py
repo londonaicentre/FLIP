@@ -112,6 +112,36 @@ def test_strips_whitespace_from_name(monkeypatch, session):
     assert kits[0]["trust_name"] == "Padded Trust"
 
 
+def test_require_existing_errors_on_missing_trust(session):
+    """--require-existing aborts with SystemExit(1) when the trust has never been registered."""
+    session.exec.return_value.first.return_value = None  # trust not found
+
+    with pytest.raises(SystemExit) as excinfo:
+        register_one_trust("Ghost Trust", None, None, session, require_existing=True)
+
+    assert excinfo.value.code == 1
+
+
+def test_require_existing_allows_existing_trust(monkeypatch, session):
+    """--require-existing returns the metadata-only kit when the trust already exists."""
+    monkeypatch.setattr(
+        "flip_api.scripts.register_trust.register_trust",
+        MagicMock(side_effect=AssertionError("register_trust must not be called")),
+    )
+    existing_trust = Trust(id=uuid4(), name="Known Trust")
+    existing_slot = FLKitSlot(slot_name="Trust_1", slot_number=1, assigned_to_trust_id=existing_trust.id)
+    session.exec.return_value.first.side_effect = [existing_trust, existing_slot]
+
+    kits = register_one_trust("Known Trust", None, None, session, require_existing=True)
+
+    assert len(kits) == 1
+    kit = kits[0]
+    assert kit["trust_name"] == "Known Trust"
+    assert kit["fl_kit_slot"] == "Trust_1"
+    assert "trust_api_key" not in kit
+    assert "trust_internal_service_key" not in kit
+
+
 def test_propagates_registration_error(monkeypatch, session):
     """A service-level failure propagates so the CLI can exit non-zero."""
 
@@ -154,7 +184,7 @@ def test_main_happy_path_prints_kit_json(monkeypatch, capsys):
     monkeypatch.setattr(
         cli,
         "register_one_trust",
-        lambda name, code, region, session: [
+        lambda name, code, region, session, require_existing=False: [
             {
                 "trust_id": "tid",
                 "trust_name": name,
@@ -189,7 +219,7 @@ def test_main_skip_prints_metadata_only_kit(monkeypatch, capsys):
     monkeypatch.setattr(
         cli,
         "register_one_trust",
-        lambda name, code, region, session: [
+        lambda name, code, region, session, require_existing=False: [
             {
                 "trust_id": "tid",
                 "trust_name": name,
@@ -269,6 +299,9 @@ HUB_SHARED_KEYS = (
     "DOCKER_FL_TAG",
     "DOCKER_FL_REGISTRY",
     "DOCKER_FL_CLIENT_NAME",
+    "UPLOADED_FEDERATED_DATA_BUCKET",
+    "NLB_SUBDOMAIN",
+    "FL_SERVER_PORT",
 )
 
 
@@ -288,6 +321,9 @@ def test_kit_dict_includes_hub_shared_block_from_env(monkeypatch, session):
         "DOCKER_FL_TAG": "stag",
         "DOCKER_FL_REGISTRY": "ghcr.io/londonaicentre/",
         "DOCKER_FL_CLIENT_NAME": "flower-fl-client",
+        "UPLOADED_FEDERATED_DATA_BUCKET": "flip-federated-data",
+        "NLB_SUBDOMAIN": "fl-server.example.internal",
+        "FL_SERVER_PORT": "8002",
     }
     for k, v in env.items():
         monkeypatch.setenv(k, v)

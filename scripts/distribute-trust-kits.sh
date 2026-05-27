@@ -83,11 +83,12 @@ echo "$KITS_JSON" | jq -c '.[]' | while read -r kit; do
     if echo "$kit" | jq -e '.trust_api_key' >/dev/null; then
         upsert_var "$target" TRUST_API_KEY "$(echo "$kit" | jq -r '.trust_api_key')"
         upsert_var "$target" TRUST_INTERNAL_SERVICE_KEY "$(echo "$kit" | jq -r '.trust_internal_service_key')"
-        upsert_var "$target" EXPECTED_TRUST_ID "$(echo "$kit" | jq -r '.trust_id')"
     fi
-    # FL_KIT_SLOT / FL_KIT_SLOT_NUMBER are metadata — present on both paths
-    # (new-registration and skip). Upserted unconditionally, matching the
-    # AWS distributor's write_kit_file which also emits them on both paths.
+    # EXPECTED_TRUST_ID, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER are metadata — present on
+    # both paths (new-registration and skip). Upserted unconditionally so that
+    # operators who did not have EXPECTED_TRUST_ID on first registration can recover
+    # it via a subsequent sync without needing to re-register.
+    upsert_var "$target" EXPECTED_TRUST_ID "$(echo "$kit" | jq -r '.trust_id')"
     upsert_var "$target" FL_KIT_SLOT "$(echo "$kit" | jq -r '.fl_kit_slot')"
     upsert_var "$target" FL_KIT_SLOT_NUMBER "$(echo "$kit" | jq -r '.fl_kit_slot_number')"
 
