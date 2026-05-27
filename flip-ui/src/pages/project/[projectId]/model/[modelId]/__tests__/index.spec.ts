@@ -13,8 +13,8 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
-import { reactive, ref } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { reactive, ref } from "vue";
 
 import { FileUploadStatus } from "@/interfaces/model/types";
 import type { IModelDashboard } from "@/services/model-service";
@@ -23,11 +23,15 @@ const mockRoute = reactive({
     name: "Model",
     fullPath: "/project/test-project/model/test-model",
     path: "/project/test-project/model/test-model",
-    params: { projectId: "test-project", modelId: "test-model" } as Record<string, string>
+    params: {
+        projectId: "test-project",
+        modelId: "test-model"
+    } as Record<string, string>
 });
 
 vi.mock("vue-router", async (importOriginal) => {
     const actual = await importOriginal<typeof import("vue-router")>();
+
     return {
         ...actual,
         useRoute: () => mockRoute
@@ -38,50 +42,86 @@ const mockSwrvData = ref<IModelDashboard | undefined>(undefined);
 const mockSwrvError = ref<Error | null>(null);
 const mutateMock = vi.fn();
 
+const flStatusData = ref<{ fl_backend?: string }[] | undefined>(undefined);
+
 vi.mock("swrv", () => ({
-    default: () => ({
-        data: mockSwrvData,
-        mutate: mutateMock,
-        error: mockSwrvError
-    })
+    default: (key: unknown) => {
+        const resolved = typeof key === "function" ? key() : key;
+        if (typeof resolved === "string" && resolved.startsWith("fl/")) {
+            return {
+                data: flStatusData,
+                mutate: vi.fn(),
+                error: ref(null)
+            };
+        }
+
+        return {
+            data: mockSwrvData,
+            mutate: mutateMock,
+            error: mockSwrvError
+        };
+    }
 }));
 
-vi.mock("@/composables/useErrorHandler", () => ({
-    default: vi.fn()
+vi.mock("@/composables/useErrorHandler", () => ({ default: vi.fn() }));
+
+const routeViewProject = vi.fn();
+
+vi.mock("@/router", () => ({ routeChange: { viewProject: (...args: unknown[]) => routeViewProject(...args) } }));
+
+const mockSnackbarError = vi.fn();
+const mockSnackbarSuccess = vi.fn();
+const mockSnackbarWarning = vi.fn();
+
+vi.mock("@/utils/snackbar", () => ({
+    Snackbar: {
+        error: (...args: unknown[]) => mockSnackbarError(...args),
+        success: (...args: unknown[]) => mockSnackbarSuccess(...args),
+        warning: (...args: unknown[]) => mockSnackbarWarning(...args),
+        show: vi.fn()
+    }
 }));
 
-vi.mock("@/router", () => ({
-    routeChange: { viewProject: vi.fn() }
-}));
 
 const resolveModelConfigStateMock = vi.fn();
 
-vi.mock("@/services/file-service", () => ({
-    resolveModelConfigState: (...args: unknown[]) => resolveModelConfigStateMock(...args)
-}));
+vi.mock("@/services/file-service", () => ({ resolveModelConfigState: (...args: unknown[]) => resolveModelConfigStateMock(...args) }));
 
 const jobTypes = {
     standard: ["trainer.py", "config.json"],
     diffusion: ["trainer.py", "config.json", "diffusion.py"]
 };
 
+const mockEditModel = vi.fn();
+
 vi.mock("@/services/model-service", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/services/model-service")>();
+
     return {
         ...actual,
         fetchJobTypes: vi.fn().mockResolvedValue(jobTypes),
         getModel: vi.fn(),
-        editModel: vi.fn()
+        editModel: (...args: unknown[]) => mockEditModel(...args)
     };
 });
 
+const initiateTrainingSpy = vi.fn();
+
 const stubs = {
-    AiAlert: { template: "<div data-test='ai-alert' :data-variant='variant'><slot /></div>", props: ["variant"] },
+    AiAlert: {
+        template: "<div data-test='ai-alert' :data-variant='variant'><slot /></div>",
+        props: ["variant"]
+    },
     AiBreadcrumbs: { template: "<div />" },
-    AiButton: { template: "<button><slot /></button>" },
+    AiButton: {
+        inheritAttrs: false,
+        props: ["disabled"],
+        template: "<button v-bind=\"$attrs\" :disabled='disabled' @click=\"$emit('click', $event)\"><slot /></button>"
+    },
     AiGuard: { template: "<div><slot /></div>" },
     AiLoader: { template: "<div data-test='loader' />" },
     AiSteps: { template: "<div />" },
+    LifecycleTrack: { template: "<div />" },
     ModelDetails: { template: "<div />" },
     ModelUpload: {
         name: "ModelUpload",
@@ -89,8 +129,26 @@ const stubs = {
         emits: ["uploaded", "deleted-file"]
     },
     QueryDetails: { template: "<div />" },
-    Training: { template: "<div />" },
-    EditModelDrawer: { template: "<div />" }
+    Training: {
+        name: "Training",
+        props: ["flBackendLabel"],
+        template: "<div data-test='training' :data-fl-backend-label='flBackendLabel' />",
+        setup: () => ({
+            initiateTraining: initiateTrainingSpy,
+            isSubmitting: false
+        })
+    },
+    TrainingActionsMenu: {
+        name: "TrainingActionsMenu",
+        props: ["status"],
+        template: "<div data-test='training-actions-menu' :data-status='status' />"
+    },
+    EditModelDrawer: {
+        name: "EditModelDrawer",
+        props: ["id", "show", "name", "description", "modelPending", "updating", "ownerId"],
+        emits: ["close", "save"],
+        template: "<div data-test='edit-model-drawer' :data-show='show' />"
+    }
 };
 
 function makeModel(
@@ -103,7 +161,11 @@ function makeModel(
         modelName: "Test Model",
         modelDescription: "",
         status: "PENDING",
-        query: { name: "", query: "", results: [] },
+        query: {
+            name: "",
+            query: "",
+            results: []
+        },
         files: files as IModelDashboard["files"],
         ...overrides
     };
@@ -115,21 +177,63 @@ async function flushPromises(): Promise<void> {
     await Promise.resolve();
 }
 
-async function mountPage() {
+async function mountPage(options: {
+    projectStatus?: "APPROVED" | "STAGED" | "UNSTAGED";
+    ownerId?: string;
+    users?: { id: string }[];
+    currentUserId?: string;
+    permissions?: string[];
+} = {}) {
+    const {
+        projectStatus = "APPROVED",
+        ownerId = "owner-1",
+        users = [],
+        currentUserId = "owner-1",
+        permissions = ["CanCreateProjects", "CanManageProjects"]
+    } = options;
     const ModelPage = (await import("@/pages/project/[projectId]/model/[modelId]/index.vue")).default;
-    const pinia = createTestingPinia({ createSpy: vi.fn, stubActions: false });
-    pinia.state.value.project = { project: { id: "test-project", name: "P", status: "APPROVED" } };
+    const pinia = createTestingPinia({
+        createSpy: vi.fn,
+        stubActions: false
+    });
+    pinia.state.value.project = {
+        project: {
+            id: "test-project",
+            name: "P",
+            status: projectStatus,
+            ownerId,
+            users
+        }
+    };
+    pinia.state.value.auth = {
+        user: {
+            userId: currentUserId,
+            permissions
+        }
+    };
     const wrapper = mount(ModelPage, {
-        global: { plugins: [pinia], stubs, directives: { tippy: () => {} } }
+        global: {
+            plugins: [pinia],
+            stubs,
+            directives: { tippy: () => {} }
+        }
     });
     await flushPromises();
+
     return wrapper;
 }
 
 beforeEach(() => {
     mockSwrvData.value = undefined;
     mockSwrvError.value = null;
+    flStatusData.value = undefined;
     mutateMock.mockReset();
+    mockEditModel.mockReset();
+    routeViewProject.mockReset();
+    mockSnackbarError.mockReset();
+    mockSnackbarSuccess.mockReset();
+    mockSnackbarWarning.mockReset();
+    initiateTrainingSpy.mockReset();
     resolveModelConfigStateMock.mockReset();
     resolveModelConfigStateMock.mockResolvedValue({
         changed: true,
@@ -148,7 +252,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
     it("invokes resolveModelConfigState with the current config.json status on each poll", async () => {
         const wrapper = await mountPage();
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.SCANNING }
+            {
+                name: "config.json",
+                status: FileUploadStatus.SCANNING
+            }
         ]);
         await flushPromises();
         await wrapper.vm.$nextTick();
@@ -156,7 +263,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
 
         expect(resolveModelConfigStateMock).toHaveBeenCalled();
         const call = resolveModelConfigStateMock.mock.calls.at(-1);
-        expect(call?.[0]).toEqual([{ name: "config.json", status: FileUploadStatus.SCANNING }]);
+        expect(call?.[0]).toEqual([{
+            name: "config.json",
+            status: FileUploadStatus.SCANNING
+        }]);
         // previousStatus starts as null
         expect(call?.[1]).toBeNull();
         expect(call?.[2]).toEqual(jobTypes);
@@ -171,7 +281,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
             requiredFiles: jobTypes.diffusion
         });
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.COMPLETED }
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
         ]);
         const wrapper = await mountPage();
         await flushPromises();
@@ -180,7 +293,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
 
         // Trigger a second poll with a new object reference but unchanged content
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.COMPLETED }
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
         ]);
         await flushPromises();
         await wrapper.vm.$nextTick();
@@ -201,7 +317,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
             requiredFiles: jobTypes.standard
         });
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.SCANNING }
+            {
+                name: "config.json",
+                status: FileUploadStatus.SCANNING
+            }
         ]);
         const wrapper = await mountPage();
         await flushPromises();
@@ -212,7 +331,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
         // Tracker must stay at SCANNING regardless of how many times the watch fires.
         resolveModelConfigStateMock.mockResolvedValue({ changed: false });
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.COMPLETED }
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
         ]);
         await flushPromises();
         await wrapper.vm.$nextTick();
@@ -228,7 +350,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
             requiredFiles: jobTypes.diffusion
         });
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.COMPLETED }
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
         ]);
         await flushPromises();
         await wrapper.vm.$nextTick();
@@ -250,7 +375,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
             requiredFiles: jobTypes.standard
         });
         mockSwrvData.value = makeModel(
-            [{ name: "config.json", status: FileUploadStatus.COMPLETED }],
+            [{
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }],
             { status: "ERROR" }
         );
         const wrapper = await mountPage();
@@ -271,7 +399,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
             requiredFiles: jobTypes.standard
         });
         mockSwrvData.value = makeModel(
-            [{ name: "config.json", status: FileUploadStatus.COMPLETED }],
+            [{
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }],
             { status: "TRAINING_STARTED" }
         );
         const wrapper = await mountPage();
@@ -279,6 +410,151 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
         await wrapper.vm.$nextTick();
 
         expect(wrapper.find("[data-test='model-error-banner']").exists()).toBe(false);
+    });
+
+    it("aborts onBeforeMount when the parent project is not APPROVED and warns + routes back", async () => {
+        const wrapper = await mountPage({ projectStatus: "UNSTAGED" });
+        await flushPromises();
+        expect(mockSnackbarError).toHaveBeenCalledWith(
+            expect.objectContaining({ title: "Requires Project Approval" })
+        );
+        expect(routeViewProject).toHaveBeenCalledWith("test-project");
+        wrapper.unmount();
+    });
+
+    it("watch(error) routes to the parent project and shows a warning snackbar when SWRV errors", async () => {
+        const wrapper = await mountPage();
+        mockSwrvError.value = new Error("boom");
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        expect(routeViewProject).toHaveBeenCalledWith("test-project");
+        expect(mockSnackbarWarning).toHaveBeenCalledWith(
+            expect.objectContaining({ title: "Model doesn't exist" })
+        );
+    });
+
+    it("flBackendLabel surfaces the FL net's backend name on the Training stub", async () => {
+        flStatusData.value = [{ fl_backend: "nvflare" }];
+        mockSwrvData.value = makeModel(
+            [{
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }]
+        );
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        const training = wrapper.find("[data-test='training']");
+        expect(training.attributes("data-fl-backend-label")).toBe("NVFlare");
+    });
+
+    it("flBackendLabel is undefined when no FL net advertises a backend", async () => {
+        flStatusData.value = [{}];
+        mockSwrvData.value = makeModel([
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
+        ]);
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        const training = wrapper.find("[data-test='training']");
+        // Empty string ↔ absent for the attribute coercion of `undefined`.
+        expect(training.attributes("data-fl-backend-label")).toBeFalsy();
+    });
+
+    it("shows TrainingActionsMenu instead of Initiate Training once status leaves PENDING", async () => {
+        mockSwrvData.value = makeModel(
+            [{
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }],
+            { status: "TRAINING_STARTED" }
+        );
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        expect(wrapper.find("[data-test='initiate-training-btn']").exists()).toBe(false);
+        expect(wrapper.find("[data-test='training-actions-menu']").exists()).toBe(true);
+    });
+
+    it("openEditModelDrawer click flips the drawer's show prop; @close flips it back", async () => {
+        mockSwrvData.value = makeModel([
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
+        ]);
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        const drawer = wrapper.findComponent({ name: "EditModelDrawer" });
+        expect(drawer.props("show")).toBe(false);
+        await wrapper.find("[data-test='edit-model-btn']").trigger("click");
+        expect(drawer.props("show")).toBe(true);
+
+        await drawer.vm.$emit("close");
+        expect(drawer.props("show")).toBe(false);
+    });
+
+    it("EditModelDrawer @save success calls editModel + shows success snackbar + closes the drawer", async () => {
+        mockEditModel.mockResolvedValue(undefined);
+        mockSwrvData.value = makeModel(
+            [{
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }],
+            { modelName: "Test Model" }
+        );
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        const drawer = wrapper.findComponent({ name: "EditModelDrawer" });
+        await wrapper.find("[data-test='edit-model-btn']").trigger("click");
+        expect(drawer.props("show")).toBe(true);
+
+        await drawer.vm.$emit("save", {
+            name: "New name",
+            description: "desc"
+        });
+        await flushPromises();
+
+        expect(mockEditModel).toHaveBeenCalledWith("/model/test-model", {
+            name: "New name",
+            description: "desc"
+        });
+        expect(mockSnackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "Model Updated" }));
+        expect(drawer.props("show")).toBe(false);
+    });
+
+    it("EditModelDrawer @save failure surfaces an error snackbar and still closes the drawer", async () => {
+        mockEditModel.mockRejectedValue(new Error("nope"));
+        mockSwrvData.value = makeModel([
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
+        ]);
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        const drawer = wrapper.findComponent({ name: "EditModelDrawer" });
+        await drawer.vm.$emit("save", {
+            name: "X",
+            description: ""
+        });
+        await flushPromises();
+
+        expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Unable to update model" }));
+        expect(drawer.props("show")).toBe(false);
     });
 
     it("resets the tracked status when ModelUpload emits deleted-file", async () => {
@@ -289,7 +565,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
             requiredFiles: jobTypes.standard
         });
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.COMPLETED }
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
         ]);
         const wrapper = await mountPage();
         await flushPromises();
@@ -309,7 +588,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
 
         // Simulate the refreshed poll response; helper should see previousStatus=null again
         mockSwrvData.value = makeModel([
-            { name: "trainer.py", status: FileUploadStatus.COMPLETED }
+            {
+                name: "trainer.py",
+                status: FileUploadStatus.COMPLETED
+            }
         ]);
         await flushPromises();
         await wrapper.vm.$nextTick();

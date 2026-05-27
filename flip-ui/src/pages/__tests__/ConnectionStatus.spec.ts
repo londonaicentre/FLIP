@@ -38,8 +38,18 @@ const stubs = {
         inheritAttrs: false
     },
     AiLoader: { template: "<div data-test=\"ai-loader\" />" },
-    AddTrustModal: { template: "<div />" },
-    TrustKitModal: { template: "<div />" },
+    AddTrustModal: {
+        name: "AddTrustModal",
+        props: ["dialog"],
+        emits: ["close-modal", "on-success"],
+        template: "<div data-test='add-trust-modal' :data-dialog='dialog' />"
+    },
+    TrustKitModal: {
+        name: "TrustKitModal",
+        props: ["dialog", "trust"],
+        emits: ["close-modal"],
+        template: "<div data-test='trust-kit-modal' :data-dialog='dialog' />"
+    },
     // Stubbed: the shared swrv mock returns trust fixtures, which the partial
     // (which expects IFLStatus shape) would otherwise misinterpret.
     FLNetsCard: { template: "<div />" },
@@ -93,9 +103,7 @@ function mountPage({ permissions = ["CanAccessAdminPanel"] }: MountOptions = {})
             plugins: [createTestingPinia({
                 createSpy: vi.fn,
                 stubActions: false,
-                initialState: {
-                    auth: { user: { permissions } }
-                }
+                initialState: { auth: { user: { permissions } } }
             })],
             stubs
         }
@@ -188,13 +196,17 @@ describe("ConnectionStatus", () => {
 
     it("renders one row per trust with each trust's code (or name when no code)", async () => {
         mockSwrvData.value = [
-            { ...fixture[0], code: undefined as unknown as string }, // codeless trust falls back to name
+            {
+                ...fixture[0],
+                code: undefined as unknown as string
+            }, // codeless trust falls back to name
             fixture[1]
         ];
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
         const codes = codesInOrder(wrapper);
-        // Sorted alphabetically by display label — "Acme NHS Trust" (ANT code) before "Zebra NHS Trust" (no code → name).
+        // Sorted alphabetically by display label — "Acme NHS Trust" (ANT code) before
+        // "Zebra NHS Trust" (no code → name).
         expect(codes).toEqual(["ANT", "Zebra NHS Trust"]);
     });
 
@@ -237,5 +249,104 @@ describe("ConnectionStatus", () => {
         await radialTab.trigger("click");
         expect(listTab.attributes("aria-selected")).toBe("false");
         expect(radialTab.attributes("aria-selected")).toBe("true");
+    });
+
+    it("sorts by region alphabetically and toggles direction on repeat click", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        const regionHeader = wrapper.find("[data-test='sort-header-region']");
+        await regionHeader.trigger("click");
+        // Regions: London (ZNT), North East (MNT), South West (ANT).
+        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
+        await regionHeader.trigger("click");
+        expect(codesInOrder(wrapper)).toEqual(["ANT", "MNT", "ZNT"]);
+    });
+
+    it("sorts by heartbeat freshness, pushing the never-heartbeat trust to the end", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        // Freshness: Zebra 10s, Maple 120s, Acme never (Infinity).
+        await wrapper.find("[data-test='sort-header-heartbeat']").trigger("click");
+        expect(codesInOrder(wrapper)).toEqual(["ZNT", "MNT", "ANT"]);
+    });
+
+    it("renders hour and day buckets in the heartbeat column", async () => {
+        const HOUR = 60 * 60;
+        const DAY = 24 * HOUR;
+        mockSwrvData.value = [
+            {
+                ...fixture[0],
+                last_heartbeat: seconds(2 * HOUR)
+            },
+            {
+                ...fixture[2],
+                last_heartbeat: seconds(3 * DAY)
+            }
+        ];
+        const wrapper = mountPage();
+        const heartbeats = wrapper.findAll("[data-test='trust-heartbeat']").map(h => h.text());
+        expect(heartbeats.some(t => t.includes("h ago"))).toBe(true);
+        expect(heartbeats.some(t => t.includes("d ago"))).toBe(true);
+    });
+
+    it("flags a disabled trust regardless of last_heartbeat", async () => {
+        mockSwrvData.value = [{
+            ...fixture[0],
+            disabled_at: seconds(60),
+            last_heartbeat: seconds(5)
+        }];
+        const wrapper = mountPage();
+        // Disabled appears in the status pill — assert the row carries the
+        // gray "disabled" dot class rather than the green "online" one.
+        const row = wrapper.find("[data-test='trust-row']");
+        expect(row.html()).toContain("bg-gray-400");
+    });
+
+    it("opens the Add Trust modal when an admin clicks the button", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        const modal = wrapper.findComponent({ name: "AddTrustModal" });
+        // The stub forwards its `dialog` prop verbatim — start closed.
+        expect(modal.props("dialog")).toBe(false);
+
+        await wrapper.find("[data-test='add-trust-btn']").trigger("click");
+        expect(modal.props("dialog")).toBe(true);
+    });
+
+    it("closes AddTrustModal and opens TrustKitModal when a trust is created", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+
+        await wrapper.find("[data-test='add-trust-btn']").trigger("click");
+        const addModal = wrapper.findComponent({ name: "AddTrustModal" });
+        const kitModal = wrapper.findComponent({ name: "TrustKitModal" });
+        expect(addModal.props("dialog")).toBe(true);
+
+        await addModal.vm.$emit("on-success", {
+            id: "new-id",
+            name: "New Trust"
+        });
+        expect(addModal.props("dialog")).toBe(false);
+        expect(kitModal.props("dialog")).toBe(true);
+
+        await kitModal.vm.$emit("close-modal");
+        expect(kitModal.props("dialog")).toBe(false);
+    });
+
+    it("sets hoverTrustId on radial mouseenter and clears it on mouseleave", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+
+        const detail = () => wrapper.find("[data-test='radial-hover-detail']");
+        expect(detail().exists()).toBe(false);
+
+        const nodes = wrapper.find("[data-test='connection-radial-svg']").findAll("g[style*='cursor: pointer']");
+        expect(nodes.length).toBe(fixture.length);
+        await nodes[0].trigger("mouseenter");
+        expect(detail().exists()).toBe(true);
+
+        await nodes[0].trigger("mouseleave");
+        expect(detail().exists()).toBe(false);
     });
 });

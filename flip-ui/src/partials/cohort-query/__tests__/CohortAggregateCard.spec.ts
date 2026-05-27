@@ -161,4 +161,39 @@ describe("CohortAggregateCard", () => {
         expect(wrapper.text()).toContain("0 trusts complete");
         expect(wrapper.text()).toContain("3 running");
     });
+
+    it("falls back to the legacy trustsResults shape when trustRecordCounts is absent", async () => {
+        // Older responses didn't carry trustRecordCounts — the card walks
+        // trustsResults instead, picks the first field with results, and sums
+        // each trust's data counts. Verifies the fallback branch (lines 85-92).
+        const data = {
+            trustsResults: [
+                {
+                    name: "empty-field",
+                    results: []
+                },
+                {
+                    name: "age",
+                    results: [
+                        {
+                            trustId: "trust-1",
+                            data: [{ count: 4 }, { count: 3 }]
+                        },
+                        {
+                            trustId: "trust-2",
+                            data: [{ count: 5 }]
+                        }
+                    ]
+                }
+            ]
+        };
+        const wrapper = mountCard({ data });
+        await nextTick();
+        await flushPromises();
+
+        // trust-1: 4 + 3 = 7; trust-2: 5; total 12.
+        expect(wrapper.text()).toContain("12");
+        expect(wrapper.text()).toContain("2 trusts complete");
+        expect(wrapper.text()).toContain("1 running");
+    });
 });

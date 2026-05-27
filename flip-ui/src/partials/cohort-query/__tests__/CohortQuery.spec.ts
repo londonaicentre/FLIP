@@ -15,9 +15,8 @@ import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
 import { reactive } from "vue";
 
-import { IProject } from "@/services/project-service";
-
 import CohortQueryPageWrapper from "@/pages/project/[projectId]/cohort-query/index.vue";
+import { IProject } from "@/services/project-service";
 
 import CohortQuery from "../CohortQuery.vue";
 import { CohortQueryPage } from "./selectors";
@@ -38,7 +37,9 @@ vi.mock("vue-router", async (importOriginal) => {
     };
 });
 
-vi.mock("@/router", () => ({ default: { push: vi.fn() } }));
+const mockRouterPush = vi.fn();
+
+vi.mock("@/router", () => ({ default: { push: (...args: unknown[]) => mockRouterPush(...args) } }));
 
 const mockSendQuery = vi.fn();
 
@@ -172,7 +173,10 @@ function mountCohortQueryPage(options: {
                         user: {
                             username: "testuser",
                             userId: "1",
-                            attributes: { sub: "1", email: "test@example.com" },
+                            attributes: {
+                                sub: "1",
+                                email: "test@example.com"
+                            },
                             permissions
                         },
                         signInStep: "DONE"
@@ -190,6 +194,7 @@ describe("CohortQuery", () => {
         mockSendQuery.mockReset();
         mockSnackbarShow.mockReset();
         mockSnackbarError.mockReset();
+        mockRouterPush.mockReset();
     });
 
     describe("rendering", () => {
@@ -384,8 +389,16 @@ describe("CohortQuery", () => {
             mockSendQuery.mockResolvedValue({
                 queryId: "qid-broken",
                 trust: [
-                    { statusCode: 400, name: "Trust A", message: "Bad SQL" },
-                    { statusCode: 500, name: "Trust B", message: "Internal" }
+                    {
+                        statusCode: 400,
+                        name: "Trust A",
+                        message: "Bad SQL"
+                    },
+                    {
+                        statusCode: 500,
+                        name: "Trust B",
+                        message: "Internal"
+                    }
                 ]
             });
 
@@ -431,7 +444,116 @@ describe("CohortQuery", () => {
             expect(mockSendQuery).toHaveBeenCalledTimes(1);
 
             // Resolve so the test doesn't leak an unfinished promise.
-            resolveFirst({ queryId: "q", trust: [{ statusCode: 200, name: "A", message: "OK" }] });
+            resolveFirst({
+                queryId: "q",
+                trust: [{
+                    statusCode: 200,
+                    name: "A",
+                    message: "OK"
+                }]
+            });
+        });
+
+        it("wires the success snackbar's View Project action to router.push", async () => {
+            mockSendQuery.mockResolvedValue({
+                queryId: "qid-ok",
+                trust: [{
+                    statusCode: 200,
+                    name: "Trust A",
+                    message: "OK"
+                }]
+            });
+
+            const wrapper = mountCohortQuery({ project: unstagedProject });
+            await wrapper.find("form").trigger("submit");
+            await vi.waitFor(() => expect(mockSnackbarShow).toHaveBeenCalled());
+
+            const payload = mockSnackbarShow.mock.calls[0][0];
+            payload.action();
+
+            expect(mockRouterPush).toHaveBeenCalledWith({ path: `/project/${unstagedProject.id}` });
+        });
+    });
+
+    describe("lastRunLine", () => {
+        // Find the LAST `lastRunLine`-style cell — the partial repeats the
+        // class on other muted-mono labels, but the run-stamp is the only one
+        // whose text starts with "Last run".
+        const lastRunCell = (wrapper: ReturnType<typeof mountCohortQuery>) => {
+            const candidates = wrapper.findAll(".uppercase.font-mono");
+
+            return candidates.find(c => c.text().startsWith("Last run")) ?? null;
+        };
+
+        it("renders nothing when the persisted query has no created timestamp", () => {
+            const wrapper = mountCohortQuery({ project: unstagedProjectWithQuery });
+            expect(lastRunCell(wrapper)).toBeNull();
+        });
+
+        it("renders 'today' when the query was created earlier in the day", () => {
+            const now = new Date();
+            now.setHours(14, 32, 0, 0);
+            const project: IProject = {
+                ...unstagedProjectWithQuery,
+                query: {
+                    ...unstagedProjectWithQuery.query!,
+                    created: now.toISOString(),
+                    createdBy: "R. Patel"
+                }
+            };
+            const wrapper = mountCohortQuery({ project });
+            const cell = lastRunCell(wrapper);
+            expect(cell).not.toBeNull();
+            expect(cell!.text()).toContain("today");
+            expect(cell!.text()).toContain("by R. Patel");
+        });
+
+        it("renders 'yesterday' when the query was created on the previous calendar day", () => {
+            const ts = new Date();
+            ts.setDate(ts.getDate() - 1);
+            const project: IProject = {
+                ...unstagedProjectWithQuery,
+                query: {
+                    ...unstagedProjectWithQuery.query!,
+                    created: ts.toISOString()
+                }
+            };
+            const wrapper = mountCohortQuery({ project });
+            const cell = lastRunCell(wrapper);
+            expect(cell).not.toBeNull();
+            expect(cell!.text()).toContain("yesterday");
+            // No createdBy → no " by …" suffix.
+            expect(cell!.text()).not.toContain(" by ");
+        });
+
+        it("renders an absolute date when the query is older than yesterday", () => {
+            const ts = new Date();
+            ts.setDate(ts.getDate() - 7);
+            const project: IProject = {
+                ...unstagedProjectWithQuery,
+                query: {
+                    ...unstagedProjectWithQuery.query!,
+                    created: ts.toISOString()
+                }
+            };
+            const wrapper = mountCohortQuery({ project });
+            const cell = lastRunCell(wrapper);
+            expect(cell).not.toBeNull();
+            expect(cell!.text()).toContain("on ");
+            expect(cell!.text()).not.toContain("today");
+            expect(cell!.text()).not.toContain("yesterday");
+        });
+
+        it("renders nothing when created is an unparseable date string", () => {
+            const project: IProject = {
+                ...unstagedProjectWithQuery,
+                query: {
+                    ...unstagedProjectWithQuery.query!,
+                    created: "not-a-date"
+                }
+            };
+            const wrapper = mountCohortQuery({ project });
+            expect(lastRunCell(wrapper)).toBeNull();
         });
     });
 });

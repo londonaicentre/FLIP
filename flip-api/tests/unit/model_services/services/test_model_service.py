@@ -27,6 +27,7 @@ from flip_api.model_services.services.model_service import (
     get_model_status,
     resolve_trust_from_fl_client_name,
     update_model_status,
+    validate_trust_ids,
     validate_trusts,
 )
 
@@ -296,3 +297,125 @@ def test_get_metrics_no_results():
     result = get_metrics(model_id, session)
 
     assert len(result) == 0
+
+
+# ---------------------------------------------------------------------------
+# update_model_status — additional branches: passing status=None preserves the
+# current status; audit + scheduler side-effects fire on terminal transitions.
+# ---------------------------------------------------------------------------
+
+
+@patch("flip_api.model_services.services.model_service.audit_model_action")
+def test_update_model_status_with_none_keeps_existing_status(mock_audit):
+    """status=None means "re-emit the current status" — used by callers that
+    just want the value back without mutating it. The audit map only fires
+    when the status actually changes, so no audit row is written here.
+    """
+    session = MagicMock()
+    mock_model = MagicMock(status=ModelStatus.INITIATED)
+    session.get.return_value = mock_model
+
+    result = update_model_status(uuid4(), None, session)
+
+    assert result == ModelStatus.INITIATED
+    # No transition → no audit insert.
+    mock_audit.assert_not_called()
+
+
+@patch("flip_api.model_services.services.model_service.audit_model_action")
+def test_update_model_status_writes_audit_on_transition_to_prepared(mock_audit):
+    """A PENDING → PREPARED transition writes a PREPARED audit row."""
+    session = MagicMock()
+    mock_model = MagicMock(status=ModelStatus.PENDING)
+    session.get.return_value = mock_model
+    user_id = uuid4()
+    model_id = uuid4()
+
+    update_model_status(model_id, ModelStatus.PREPARED, session, user_id=user_id)
+
+    mock_audit.assert_called_once()
+    audited_model_id, audited_action, audited_user, audited_session = mock_audit.call_args.args
+    assert audited_model_id == model_id
+    assert audited_user == user_id
+
+
+@patch("flip_api.model_services.services.model_service.fl_scheduler_service")
+@patch("flip_api.model_services.services.model_service.audit_model_action")
+def test_update_model_status_notifies_scheduler_on_terminal_status(mock_audit, mock_scheduler):
+    """Terminal statuses (ERROR/STOPPED/RESULTS_UPLOADED) prompt the scheduler
+    to retire the run — confirms the side-effect on transition.
+    """
+    session = MagicMock()
+    mock_model = MagicMock(status=ModelStatus.TRAINING_STARTED)
+    session.get.return_value = mock_model
+    model_id = uuid4()
+
+    update_model_status(model_id, ModelStatus.ERROR, session)
+
+    mock_scheduler.update_fl_scheduler.assert_called_once_with(model_id, session)
+
+
+@patch("flip_api.model_services.services.model_service.audit_model_action")
+def test_update_model_status_no_audit_when_status_is_unchanged(mock_audit):
+    """Repeating the same terminal status fires no audit; idempotency keeps the
+    timeline clean and prevents duplicate "RESULTS_UPLOADED" rows from polling.
+    """
+    session = MagicMock()
+    mock_model = MagicMock(status=ModelStatus.RESULTS_UPLOADED)
+    session.get.return_value = mock_model
+
+    update_model_status(uuid4(), ModelStatus.RESULTS_UPLOADED, session)
+
+    mock_audit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# delete_models — the soft branch (ensure_deletion=False with no rows) returns
+# 0 instead of raising. Belt-and-braces for callers that loop over projects.
+# ---------------------------------------------------------------------------
+
+
+def test_delete_models_returns_zero_when_ensure_deletion_is_false():
+    session = MagicMock()
+    session.exec.return_value.all.return_value = []
+
+    result = delete_models(uuid4(), "user", session, ensure_deletion=False)
+
+    assert result == 0
+    # No models → no audit + no commit.
+    session.commit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# validate_trust_ids — every id must be in ModelTrustIntersect for the model.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_trust_ids_all_associated():
+    session = MagicMock()
+    model_id = uuid4()
+    trust_1 = uuid4()
+    trust_2 = uuid4()
+    session.exec.return_value.all.return_value = [trust_1, trust_2]
+
+    assert validate_trust_ids(model_id, [trust_1, trust_2], session) is True
+
+
+def test_validate_trust_ids_returns_false_when_any_id_is_unknown():
+    session = MagicMock()
+    trust_1 = uuid4()
+    trust_2 = uuid4()
+    unknown = uuid4()
+    session.exec.return_value.all.return_value = [trust_1, trust_2]
+
+    assert validate_trust_ids(uuid4(), [trust_1, unknown], session) is False
+
+
+def test_validate_trust_ids_returns_true_for_empty_input():
+    """An empty trust-id list is trivially "all associated" — set-difference
+    against any superset is empty.
+    """
+    session = MagicMock()
+    session.exec.return_value.all.return_value = [uuid4()]
+
+    assert validate_trust_ids(uuid4(), [], session) is True

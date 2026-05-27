@@ -40,11 +40,20 @@ vi.mock("swrv", () => ({
 
 const stubs = {
     AiCard: { template: "<div><slot /></div>" },
-    AiButton: { template: "<button><slot /></button>" },
+    AiButton: {
+        // Forward attrs (data-test) and emit click so tests can target the
+        // primary "Create project" button.
+        inheritAttrs: false,
+        template: "<button v-bind=\"$attrs\" @click=\"$emit('click', $event)\"><slot /></button>"
+    },
     AiLoader: { template: "<div />" },
-    AiSearch: { template: "<div />" },
+    AiSearch: {
+        props: ["modelValue"],
+        emits: ["update:modelValue"],
+        template: "<input data-test='project-search' :value='modelValue' @input='$emit(\"update:modelValue\", $event.target.value)' />"
+    },
     AiPagination: { template: "<div />" },
-    CreateProjectModal: { template: "<div />" },
+    CreateProjectModal: { template: "<div data-test='create-project-modal' />" },
     // The global test setup stubs router-link with an empty (no-slot) stub;
     // override it so project rows actually render their content.
     "router-link": {
@@ -84,12 +93,22 @@ const setProject = (project: IProject): void => {
     };
 };
 
-function mountPage() {
+function mountPage(options: { permissions?: string[] } = {}) {
+    const { permissions = ["CanCreateProjects"] } = options;
+
     return mount(Page, {
         global: {
             plugins: [createTestingPinia({
                 createSpy: vi.fn,
-                stubActions: false
+                stubActions: false,
+                initialState: {
+                    auth: {
+                        user: {
+                            userId: "u1",
+                            permissions
+                        }
+                    }
+                }
             })],
             stubs
         }
@@ -157,7 +176,11 @@ describe("Projects Page", () => {
     });
 
     test("renders the empty-state copy when the API returns zero projects", async () => {
-        mockSwrvData.value = { data: [], totalPages: 0, page: 1 };
+        mockSwrvData.value = {
+            data: [],
+            totalPages: 0,
+            page: 1
+        };
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
 
@@ -190,7 +213,7 @@ describe("Projects Page", () => {
         expect(labels).toContain("Approved");
     });
 
-test("renders the 'No trusts staged' subtitle on projects without any approvedTrusts", async () => {
+    test("renders the 'No trusts staged' subtitle on projects without any approvedTrusts", async () => {
         setProject(makeProject("UNSTAGED", []));
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
@@ -218,7 +241,12 @@ test("renders the 'No trusts staged' subtitle on projects without any approvedTr
     test("trust chips fall back to a cleaned + truncated name when no code is supplied", async () => {
         setProject(makeProject("STAGED", [
             // No code → name is stripped of "NHS Foundation Trust" / "NHS Trust" / "Trust"
-            { id: "t1", name: "Maple NHS Foundation Trust", code: undefined as unknown as string, approved: true }
+            {
+                id: "t1",
+                name: "Maple NHS Foundation Trust",
+                code: undefined as unknown as string,
+                approved: true
+            }
         ]));
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
@@ -268,5 +296,155 @@ test("renders the 'No trusts staged' subtitle on projects without any approvedTr
         const approvedWrapper = mountPage();
         await approvedWrapper.vm.$nextTick();
         expect(approvedWrapper.findAll("[data-test='trust-approved-dot']")).toHaveLength(1);
+    });
+
+    test("hides the Create project button when the user lacks CanCreateProjects", async () => {
+        setProject(makeProject("STAGED", []));
+        const wrapper = mountPage({ permissions: [] });
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find("[data-test='add-project-btn']").exists()).toBe(false);
+    });
+
+    test("clicking Create project toggles the create-project modal store", async () => {
+        setProject(makeProject("STAGED", []));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        const modalsStore = (await import("@/store/modals")).useModalsStore();
+        await wrapper.find("[data-test='add-project-btn']").trigger("click");
+        // The AiButton stub forwards `@click` and the native button bubbles
+        // the same event, so the handler may fire more than once — we just
+        // care that it fires at all.
+        expect(modalsStore.toggleCreateProject).toHaveBeenCalled();
+    });
+
+    test("the name sort option reorders projects alphabetically by name", async () => {
+        const p1 = {
+            ...makeProject("STAGED", []),
+            id: "p1",
+            name: "Zebra"
+        };
+        const p2 = {
+            ...makeProject("STAGED", []),
+            id: "p2",
+            name: "Apple"
+        };
+        const p3 = {
+            ...makeProject("STAGED", []),
+            id: "p3",
+            name: "Maple"
+        };
+        mockSwrvData.value = {
+            data: [p1, p2, p3],
+            totalPages: 1,
+            page: 1
+        };
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        await wrapper.find("[data-test='project-sort']").setValue("name");
+
+        const titles = wrapper.findAll("[data-test='project-name']").map(n => n.text());
+        expect(titles).toEqual(["Apple", "Maple", "Zebra"]);
+    });
+
+    test("the cohort sort option puts the largest cohort first; missing cohorts sink to the bottom", async () => {
+        const withCohort = (id: string, name: string, total?: number): IProject => ({
+            ...makeProject("STAGED", []),
+            id,
+            name,
+            query: total !== undefined
+                ? {
+                    id: `q-${id}`,
+                    name: "q",
+                    query: "",
+                    queriedTrustIds: [],
+                    pendingTrustIds: [],
+                    cancelledTrustIds: [],
+                    respondedTrustIds: [],
+                    erroredTrustIds: [],
+                    totalCohort: total
+                }
+                : undefined
+        });
+        mockSwrvData.value = {
+            data: [
+                withCohort("p1", "Small", 10),
+                withCohort("p2", "Big", 9999),
+                withCohort("p3", "None")
+            ],
+            totalPages: 1,
+            page: 1
+        };
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        await wrapper.find("[data-test='project-sort']").setValue("cohort");
+        const titles = wrapper.findAll("[data-test='project-name']").map(n => n.text());
+        expect(titles).toEqual(["Big", "Small", "None"]);
+    });
+
+    test("the status sort orders STAGED → APPROVED → UNSTAGED", async () => {
+        mockSwrvData.value = {
+            data: [
+                makeProject("UNSTAGED", []),
+                makeProject("APPROVED", []),
+                makeProject("STAGED", [])
+            ],
+            totalPages: 1,
+            page: 1
+        };
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        await wrapper.find("[data-test='project-sort']").setValue("status");
+        const labels = wrapper.findAll("[data-test='project-status-indicator']").map(s => s.text());
+        expect(labels).toEqual(["Staged", "Approved", "Draft"]);
+    });
+
+    test("owner label falls back to the local part of ownerEmail when ownerName is unset", async () => {
+        const project = {
+            ...makeProject("STAGED", []),
+            ownerEmail: "rashida.patel@example.com"
+        };
+        setProject(project);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        expect(wrapper.text()).toContain("rashida.patel");
+    });
+
+    test("relativeUpdated renders 'created Xd ago' for older projects", async () => {
+        const project = makeProject("STAGED", []);
+        project.creationtimestamp = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+        setProject(project);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        expect(wrapper.text()).toContain("created 3d ago");
+    });
+
+    test("relativeUpdated renders the em-dash when creationtimestamp is missing", async () => {
+        const project = makeProject("STAGED", []);
+        project.creationtimestamp = "";
+        // Set an explicit owner name + non-em-dash description so the "·"
+        // separator we look for unambiguously hugs the relativeUpdated cell.
+        project.ownerName = "Owner";
+        project.description = "Multi-trust evaluation.";
+        setProject(project);
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        expect(wrapper.text()).toContain("Owner · —");
+    });
+
+    test("clicking the 'My projects' tab flips the ownerFilter state", async () => {
+        setProject(makeProject("STAGED", []));
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+
+        const allTab = wrapper.find("[data-test='access-filter-all']");
+        const mineTab = wrapper.find("[data-test='access-filter-mine']");
+        expect(allTab.classes().join(" ")).toContain("text-gray-900");
+
+        await mineTab.trigger("click");
+        // The active class moves to the mine tab.
+        expect(mineTab.classes().join(" ")).toContain("text-gray-900");
     });
 });
