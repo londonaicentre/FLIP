@@ -286,21 +286,31 @@ def stage_and_approve(client: requests.Session, headers: dict[str, str], project
     return trusts
 
 
-def _import_progress(status: dict[str, Any]) -> tuple[int, int]:
-    """Return (successful, total) counts for one trust's import status.
+def _import_progress(status: dict[str, Any]) -> tuple[int, int, int]:
+    """Return (successful, in_flight, total) counts for one trust's import status.
+
+    ``in_flight`` is processing + queued — work that may still complete.
+    ``total`` includes the terminal ``failed`` + ``queueFailed`` counts so the
+    caller can detect when failures alone push the max achievable ratio below
+    threshold (otherwise wait_for_image_pull sits idle for the full timeout
+    on any run with unrecoverable scan failures).
 
     A trust that's still waiting for `projectCreationCompleted` reports no
-    importStatus yet — treat that as 0/0 so the caller polls again.
+    importStatus yet — treat that as 0/0/0 so the caller polls again.
     """
     import_status = status.get("importStatus")
     if not import_status:
-        return 0, 0
+        return 0, 0, 0
     successful = int(import_status.get("successful", 0))
     failed = int(import_status.get("failed", 0))
     processing = int(import_status.get("processing", 0))
     queued = int(import_status.get("queued", 0))
     queue_failed = int(import_status.get("queueFailed", 0))
-    return successful, successful + failed + processing + queued + queue_failed
+    return (
+        successful,
+        processing + queued,
+        successful + failed + processing + queued + queue_failed,
+    )
 
 
 def wait_for_image_pull(
@@ -332,10 +342,17 @@ def wait_for_image_pull(
 
         per_trust = []
         all_ready = True
+        unreachable: tuple[str, float] | None = None
         for s in statuses:
-            successful, total = _import_progress(s)
+            successful, in_flight, total = _import_progress(s)
             ratio = (successful / total) if total else 0.0
             per_trust.append(f"{s['trustName']}: {successful}/{total} ({ratio:.0%})")
+            # Failed + queueFailed scans never recover, so once
+            # (successful + in_flight) / total dips below threshold the run
+            # cannot reach the bar — fail fast instead of waiting out the
+            # full timeout.
+            if total > 0 and (successful + in_flight) / total < threshold:
+                unreachable = (s["trustName"], (successful + in_flight) / total)
             if total == 0 or ratio < threshold:
                 all_ready = False
 
@@ -343,6 +360,13 @@ def wait_for_image_pull(
         if summary != last_summary:
             _log(f"  📊 {summary}")
             last_summary = summary
+        if unreachable:
+            trust_name, max_ratio = unreachable
+            raise SmokeFailure(
+                f"{trust_name}: failed scans push max reachable ratio to "
+                f"{max_ratio:.0%}, below threshold {int(threshold * 100)}%. "
+                "Aborting — image pull will not recover."
+            )
         if all_ready:
             _log("  ✅ image pull threshold reached")
             return
