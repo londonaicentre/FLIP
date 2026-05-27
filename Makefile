@@ -186,7 +186,7 @@ down-onprem-trust:
 # the operator's behalf because Hub-shared values + FL kit S3 slice both
 # need prod AWS creds the operator doesn't have.
 onboard-onprem-trust:
-	@bash scripts/onboard-onprem-trust.sh $(KIT)
+	@uv run scripts/onboard_onprem_trust.py $(KIT)
 
 # Stop all containers
 down:
