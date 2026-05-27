@@ -54,8 +54,11 @@ from flip_api.trusts_services.services.register_trust import (
 )
 from flip_api.utils.logger import logger
 
-# Keep this list in sync with scripts/distribute-trust-kits.sh and
-# scripts/sync-trust-kits.sh — those scripts upsert exactly these keys.
+# Keep this list in sync with:
+#   - scripts/distribute-trust-kits.sh (dev-side kit distributor)
+#   - deploy/providers/AWS/scripts/register-trusts.sh (HUB_SHARED_KEYS array)
+#   - scripts/sync-trust-kits.sh (added in a follow-up task)
+# All three upsert exactly these keys.
 HUB_SHARED_ENV_KEYS = (
     "AES_KEY_BASE64",
     "CENTRAL_HUB_API_URL",

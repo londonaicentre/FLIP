@@ -39,8 +39,9 @@ TRUST_DIR="$REPO_ROOT/trust"
 upsert_var() {
     local file="$1" key="$2" value="$3"
     if grep -qE "^${key}=" "$file"; then
-        # `|` delimiter is safe: values are url-safe base64 / UUIDs / ints / slot
-        # names — none contain `|`.
+        # `|` delimiter is safe: all current values (url-safe base64, UUIDs, ints,
+        # slot names, URLs (CENTRAL_HUB_API_URL), header names (TRUST_API_KEY_HEADER),
+        # backend names (FL_BACKEND, DOCKER_*)) are `|`-free.
         sed -i "s|^${key}=.*|${key}=${value}|" "$file"
     else
         echo "${key}=${value}" >> "$file"
@@ -82,10 +83,13 @@ echo "$KITS_JSON" | jq -c '.[]' | while read -r kit; do
     if echo "$kit" | jq -e '.trust_api_key' >/dev/null; then
         upsert_var "$target" TRUST_API_KEY "$(echo "$kit" | jq -r '.trust_api_key')"
         upsert_var "$target" TRUST_INTERNAL_SERVICE_KEY "$(echo "$kit" | jq -r '.trust_internal_service_key')"
-        upsert_var "$target" FL_KIT_SLOT "$(echo "$kit" | jq -r '.fl_kit_slot')"
-        upsert_var "$target" FL_KIT_SLOT_NUMBER "$(echo "$kit" | jq -r '.fl_kit_slot_number')"
         upsert_var "$target" EXPECTED_TRUST_ID "$(echo "$kit" | jq -r '.trust_id')"
     fi
+    # FL_KIT_SLOT / FL_KIT_SLOT_NUMBER are metadata — present on both paths
+    # (new-registration and skip). Upserted unconditionally, matching the
+    # AWS distributor's write_kit_file which also emits them on both paths.
+    upsert_var "$target" FL_KIT_SLOT "$(echo "$kit" | jq -r '.fl_kit_slot')"
+    upsert_var "$target" FL_KIT_SLOT_NUMBER "$(echo "$kit" | jq -r '.fl_kit_slot_number')"
 
     # Hub-shared block — present on both new-registration and skip paths.
     # Add the header line on first write so a human reader sees the section is

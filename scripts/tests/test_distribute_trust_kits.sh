@@ -42,40 +42,6 @@ assert_no_grep() {
     fi
 }
 
-# Run the script with crafted JSON against a temp trust dir.
-# Usage: run <name> <pre-existing-kit-contents-or-empty> <json> [assertions...]
-run() {
-    local name="$1" pre="$2" json="$3"; shift 3
-    local tmp
-    tmp="$(mktemp -d)"
-    mkdir -p "$tmp/trust" "$tmp/scripts"
-    ln -s "$SCRIPT" "$tmp/scripts/distribute-trust-kits.sh"
-    # Temporarily override REPO_ROOT so the script writes into $tmp.
-    # The script derives TRUST_DIR from REPO_ROOT via BASH_SOURCE; we use a
-    # symlink that makes "$SCRIPT/../.." resolve to $tmp.
-    mkdir -p "$tmp/scripts/inner"
-    # Write a wrapper that overrides TRUST_DIR before sourcing the real script logic.
-    # Simpler: just patch via env by relying on the fact the script uses REPO_ROOT
-    # derived from BASH_SOURCE. We symlink $SCRIPT into $tmp/scripts so that
-    # REPO_ROOT="$(cd dirname/..)/.." = $tmp — matching what the real layout does.
-    echo "$json" | BASH_ENV="" bash "$tmp/scripts/distribute-trust-kits.sh" >/dev/null
-    KIT="$tmp/trust/.env.Trust_1"
-    # shellcheck disable=SC2034  # KIT is used by the eval'd assertion commands
-    export KIT
-    # Export helpers into the subshell used for assertions.
-    export -f assert_grep assert_no_grep
-    export PASS FAIL
-    echo "▶ $name"
-    "$@"
-    # Re-import updated PASS/FAIL from the subshell is not straightforward with
-    # `bash -c`; instead we run assertions in the current shell by passing them
-    # as a function name + args or via eval. The callers use `bash -c` for
-    # multi-statement blocks — capture PASS/FAIL changes via a temp file.
-    rm -rf "$tmp"
-}
-
-# ─── Simpler harness: run script in a temp dir, then assert from the caller ───
-
 run_simple() {
     local tmp="$1" pre="$2" json="$3"
     mkdir -p "$tmp/trust" "$tmp/scripts"
@@ -87,8 +53,13 @@ run_simple() {
 # ─── Test 1: New registration writes creds + hub-shared block ─────────────────
 echo "▶ new registration writes creds + hub-shared"
 T1="$(mktemp -d)"
-run_simple "$T1" "" \
-    '[{"trust_id":"abc","trust_name":"Trust_1","trust_api_key":"plain-api-1","trust_internal_service_key":"plain-int-1","fl_kit_slot":"Trust_1","fl_kit_slot_number":1,"hub_shared":{"AES_KEY_BASE64":"Zm9vYmFy","FL_BACKEND":"flower"}}]'
+T1_JSON="$(jq -n -c '{
+    trust_id:"abc", trust_name:"Trust_1",
+    trust_api_key:"plain-api-1", trust_internal_service_key:"plain-int-1",
+    fl_kit_slot:"Trust_1", fl_kit_slot_number:1,
+    hub_shared:{AES_KEY_BASE64:"Zm9vYmFy", FL_BACKEND:"flower"}
+}' | jq -c '[.]')"
+run_simple "$T1" "" "$T1_JSON"
 KIT="$T1/trust/.env.Trust_1"
 assert_grep "$KIT" "^TRUST_API_KEY=plain-api-1$"    "creds written (TRUST_API_KEY)"
 assert_grep "$KIT" "^TRUST_INTERNAL_SERVICE_KEY=plain-int-1$" "creds written (TRUST_INTERNAL_SERVICE_KEY)"
@@ -125,7 +96,12 @@ rm -rf "$T3"
 
 # ─── Test 4: Hub-shared header upserted exactly once on repeated runs ─────────
 echo "▶ header is upserted, not duplicated, on repeat"
-JSON='[{"trust_id":"abc","trust_name":"Trust_1","trust_api_key":"k","trust_internal_service_key":"i","fl_kit_slot":"Trust_1","fl_kit_slot_number":1,"hub_shared":{"AES_KEY_BASE64":"v"}}]'
+JSON="$(jq -n -c '{
+    trust_id:"abc", trust_name:"Trust_1",
+    trust_api_key:"k", trust_internal_service_key:"i",
+    fl_kit_slot:"Trust_1", fl_kit_slot_number:1,
+    hub_shared:{AES_KEY_BASE64:"v"}
+}' | jq -c '[.]')"
 T4="$(mktemp -d)"
 mkdir -p "$T4/trust" "$T4/scripts"
 ln -s "$SCRIPT" "$T4/scripts/distribute-trust-kits.sh"
@@ -157,9 +133,13 @@ echo "▶ hub-shared value is updated (not duplicated) when rotated"
 T5="$(mktemp -d)"
 mkdir -p "$T5/trust" "$T5/scripts"
 ln -s "$SCRIPT" "$T5/scripts/distribute-trust-kits.sh"
-echo '[{"trust_id":"abc","trust_name":"Trust_1","trust_api_key":"k","trust_internal_service_key":"i","fl_kit_slot":"Trust_1","fl_kit_slot_number":1,"hub_shared":{"AES_KEY_BASE64":"original"}}]' \
+jq -n -c '[{trust_id:"abc", trust_name:"Trust_1",
+    trust_api_key:"k", trust_internal_service_key:"i",
+    fl_kit_slot:"Trust_1", fl_kit_slot_number:1,
+    hub_shared:{AES_KEY_BASE64:"original"}}]' \
     | bash "$T5/scripts/distribute-trust-kits.sh" >/dev/null
-echo '[{"trust_id":"abc","trust_name":"Trust_1","fl_kit_slot":"Trust_1","hub_shared":{"AES_KEY_BASE64":"rotated"}}]' \
+jq -n -c '[{trust_id:"abc", trust_name:"Trust_1",
+    fl_kit_slot:"Trust_1", hub_shared:{AES_KEY_BASE64:"rotated"}}]' \
     | bash "$T5/scripts/distribute-trust-kits.sh" >/dev/null
 KIT="$T5/trust/.env.Trust_1"
 assert_grep    "$KIT" "^AES_KEY_BASE64=rotated$"    "hub-shared value updated to rotated"
@@ -176,6 +156,23 @@ echo "[]" | bash "$T6/scripts/distribute-trust-kits.sh" >/dev/null || true
 KIT="$T6/trust/.env.Trust_1"
 assert_grep "$KIT" "^TRUST_API_KEY=untouched$" "empty array leaves kit file unchanged"
 rm -rf "$T6"
+
+# ─── Test 7: FL_KIT_SLOT* written on skip path (no credentials in kit) ────────
+echo "▶ FL_KIT_SLOT* upserted on skip path (regression: was inside creds if-block)"
+T7="$(mktemp -d)"
+T7_PRE="TRUST_API_KEY=existing-cred
+"
+T7_JSON="$(jq -n -c '{
+    trust_id:"abc", trust_name:"Trust_1",
+    fl_kit_slot:"Trust_1", fl_kit_slot_number:1,
+    hub_shared:{AES_KEY_BASE64:"v"}
+}' | jq -c '[.]')"
+run_simple "$T7" "$T7_PRE" "$T7_JSON"
+KIT="$T7/trust/.env.Trust_1"
+assert_grep "$KIT" "^FL_KIT_SLOT=Trust_1$"    "FL_KIT_SLOT written on skip path"
+assert_grep "$KIT" "^FL_KIT_SLOT_NUMBER=1$"   "FL_KIT_SLOT_NUMBER written on skip path"
+assert_grep "$KIT" "^TRUST_API_KEY=existing-cred$" "existing cred preserved on skip path"
+rm -rf "$T7"
 
 # ─── Summary ──────────────────────────────────────────────────────────────────
 echo "—"
