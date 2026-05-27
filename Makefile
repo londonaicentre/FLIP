@@ -66,14 +66,25 @@ DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose -f $(COMMON_COMPOSE_FILE) -f $(FL_
 SHOW_LOGS_CENTRAL_HUB=docker logs -f flip-api --tail 100 --timestamps --follow
 GENERIC_LOGS=docker logs -f --tail 100 --timestamps --follow
 
-# NOTE DOCKER_FL_REGISTRY is set to empty when we use local FL images during development (e.g. flare-fl-server:dev).
-# In that case, '--pull always' will error because docker won't be able to find the manifest for the dev image online,
-# so we need to remove the --pull always flag. Non-FL images keep DOCKER_REGISTRY (always GHCR), so they're not the
-# constraint here — the check fires only when the FL registry is empty.
-ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
-PULL_ALWAYS_FLAG=--pull always
+# UP_PULL_FLAGS controls the pull/build behaviour of the `up` targets.
+#
+# Default: repo-built services (flip-api + trust APIs + orthanc) carry
+# `pull_policy: always` in the dev compose, so they always pull from GHCR on
+# their own. This flag only adds the global `--pull always` that keeps FL images
+# fresh — and it's dropped when DOCKER_FL_REGISTRY is empty (local `:dev` FL
+# images, e.g. flare-fl-server:dev), because docker can't pull a manifest that
+# isn't published and `--pull always` would error.
+#
+# BUILD=true: rebuild the repo-built services from source instead of pulling.
+# `--build` forces the build; `--pull missing` overrides the per-service
+# `pull_policy: always` for this run so the fresh build isn't immediately
+# re-pulled away, while still fetching any absent FL/infra image.
+ifeq ($(BUILD),true)
+UP_PULL_FLAGS=--build --pull missing
+else ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
+UP_PULL_FLAGS=--pull always
 else
-PULL_ALWAYS_FLAG=
+UP_PULL_FLAGS=
 endif
 
 # Build the Docker images
@@ -91,7 +102,7 @@ up: check-aws-access generate-internal-service-key create-networks
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
+	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 	@echo "🚢 Starting trust services..."
 	$(MAKE) -C trust up
 	@echo "🚢 Starting XNAT services..."
@@ -102,7 +113,7 @@ up: check-aws-access generate-internal-service-key create-networks
 up-no-trust: generate-internal-service-key create-networks
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	${DOCKER_COMMAND} up --remove-orphans -d $(PULL_ALWAYS_FLAG)
+	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 
 up-trusts: create-networks
 	@echo "🚢 Starting Trust services..."
@@ -162,7 +173,7 @@ clean:
 restart: down up
 
 # Restart only FL services (APIs, servers, and clients in trusts)
-# NOTE: Uses $(PULL_ALWAYS_FLAG) — pulls fresh FL images only when DOCKER_FL_REGISTRY is set
+# NOTE: Uses $(UP_PULL_FLAGS) — pulls fresh FL images only when DOCKER_FL_REGISTRY is set
 #       (same logic as `up`); an empty registry keeps locally built flip-fl-base-flower images.
 # NOTE: Client keys must be re-registered before starting clients (Flower only)
 restart-fl:
@@ -170,10 +181,10 @@ restart-fl:
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
 	@echo "🔄 Step 2: Restarting FL APIs and servers..."
-	${DOCKER_COMMAND} up -d --force-recreate --no-deps $(PULL_ALWAYS_FLAG) fl-api-net-1 fl-api-net-2 fl-server-net-1 fl-server-net-2
+	${DOCKER_COMMAND} up -d --force-recreate --no-deps $(UP_PULL_FLAGS) fl-api-net-1 fl-api-net-2 fl-server-net-1 fl-server-net-2
 	@if [ "$(FL_BACKEND)" = "flower" ]; then \
 		echo "🔄 Step 3: Registering new client keys with FL servers (Flower only)..."; \
-		${DOCKER_COMMAND} up --force-recreate $(PULL_ALWAYS_FLAG) register-supernode-keys-net-1 register-supernode-keys-net-2; \
+		${DOCKER_COMMAND} up --force-recreate $(UP_PULL_FLAGS) register-supernode-keys-net-1 register-supernode-keys-net-2; \
 	fi
 	@echo "🔄 Step 4: Starting new FL clients..."
 	$(MAKE) -C trust up-fl-clients

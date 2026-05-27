@@ -59,13 +59,25 @@ ORTHANC_CMD=make -C ./orthanc
 DOCKER_COMPOSE_CMD=docker compose --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.debug.override.yml
 
-# NOTE DOCKER_FL_REGISTRY is set to empty when we use local FL images during development (e.g. flare-fl-client:dev).
-# In that case, '--pull always' will error because docker won't be able to find the manifest for the dev image online,
-# so we need to remove the --pull always flag. Non-FL images keep DOCKER_REGISTRY (always GHCR).
-ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
-PULL_ALWAYS_FLAG=--pull always
+# UP_PULL_FLAGS controls the pull/build behaviour of the up-trust targets.
+#
+# Default: repo-built services (trust-api, imaging-api, data-access-api, orthanc)
+# carry `pull_policy: always` in compose_trust.development.yml, so they always
+# pull from GHCR on their own. This flag only adds the global `--pull always`
+# that keeps FL images fresh — dropped when DOCKER_FL_REGISTRY is empty (local
+# `:dev` FL images, e.g. flare-fl-client:dev), since docker can't pull an
+# unpublished manifest and `--pull always` would error.
+#
+# BUILD=true: rebuild the repo-built services from source instead of pulling.
+# `--build` forces the build; `--pull missing` overrides the per-service
+# `pull_policy: always` for this run so the fresh build isn't re-pulled away.
+# Propagated automatically from `make up BUILD=true` at the repo root.
+ifeq ($(BUILD),true)
+UP_PULL_FLAGS=--build --pull missing
+else ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
+UP_PULL_FLAGS=--pull always
 else
-PULL_ALWAYS_FLAG=
+UP_PULL_FLAGS=
 endif
 
 TRUST_1_VARS = \
@@ -150,7 +162,7 @@ up-trust-1: update-omop-data update-orthanc-data
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST1}
-	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} up -d $(PULL_ALWAYS_FLAG)
+	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} up -d $(UP_PULL_FLAGS)
 
 down-trust-1:
 	@echo "🛑 Stopping Trust 1 services..."
@@ -202,7 +214,7 @@ up-trust-2: update-omop-data update-orthanc-data
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST2}
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d $(PULL_ALWAYS_FLAG)
+	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d $(UP_PULL_FLAGS)
 
 down-trust-2:
 	@echo "🛑 Stopping Trust 2 services..."
@@ -218,8 +230,8 @@ down: down-trust-1 down-trust-2
 # Each dev trust project (trust1, trust2) runs a client per FL net, hence both net-1 and net-2.
 up-fl-clients:
 	@echo "🚢 Starting FL clients..."
-	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} up -d --no-deps $(PULL_ALWAYS_FLAG) fl-client-net-1 fl-client-net-2
-	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d --no-deps $(PULL_ALWAYS_FLAG) fl-client-net-1 fl-client-net-2
+	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} up -d --no-deps $(UP_PULL_FLAGS) fl-client-net-1 fl-client-net-2
+	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d --no-deps $(UP_PULL_FLAGS) fl-client-net-1 fl-client-net-2
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."
@@ -295,4 +307,3 @@ debug-trust-api-off:
 integration_test:
 	$(MAKE) -C data-access-api integration_test
 	$(MAKE) -C trust-api integration_test
-
