@@ -121,7 +121,7 @@ up-trusts: create-networks
 	@echo "🔑 Registering trusts and writing kit files (hub must already be up)..."
 	$(MAKE) register-trusts
 	@echo "🚢 Starting Trust services (each trust brings up its own XNAT)..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust up
+	$(MAKE) DEBUG=$(DEBUG) -C trust up
 	@echo "✅ Trust services started successfully!"
 
 # Uses --pull always to ensure the latest FL images and 'stag'/'prod' version are used
@@ -139,7 +139,7 @@ up-trust-ec2: create-networks
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting Trust services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=Trust_1 PROD=${PROD}
+	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=Trust_1 PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
 central-hub: create-networks-centralhub
@@ -156,7 +156,7 @@ central-hub: create-networks-centralhub
 up-onprem-trust:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
 	@$(MAKE) onboard-onprem-trust KIT=$(KIT)
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true)
+	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
 # so an operator doesn't have to remember the -C trust path or PROD value.
