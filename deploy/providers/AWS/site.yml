@@ -404,7 +404,11 @@
     hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
     hf_trust_data_revision: "{{ trust_data_hf_revision | default('main') }}"
     hf_base_url: "https://huggingface.co/datasets/{{ hf_trust_data_repo }}/resolve/{{ hf_trust_data_revision }}"
-    pgdata_trust_dir: "{{ pgdata_archive.split('_')[0] }}"
+    # Per-trust dataset subdirectory on HF. Kept independent of the archive
+    # filename (matches the dev-script convention) so a renamed or differently
+    # prefixed archive does not silently produce a wrong URL. Override via
+    # extra-vars alongside pgdata_archive if deploying a non-trust1 host.
+    pgdata_trust_dir: "trust1"
   tasks:
     - name: install tar
       apt:
@@ -456,7 +460,10 @@
     hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
     hf_trust_data_revision: "{{ trust_data_hf_revision | default('main') }}"
     hf_base_url: "https://huggingface.co/datasets/{{ hf_trust_data_repo }}/resolve/{{ hf_trust_data_revision }}"
-    orthanc_trust_dir: "{{ archive.split('_')[0] }}"
+    # Per-trust dataset subdirectory on HF. Kept independent of the archive
+    # filename (matches the dev-script convention) so a renamed or differently
+    # prefixed archive does not silently produce a wrong URL.
+    orthanc_trust_dir: "trust1"
   tasks:
     - name: install tar
       apt:
