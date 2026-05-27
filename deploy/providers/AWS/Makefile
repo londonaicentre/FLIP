@@ -602,11 +602,12 @@ register-trusts: ## Register the TRUST_<n>_* trusts on the hub and distribute ki
 	@bash scripts/register-trusts.sh
 
 .PHONY: delete-trust
-delete-trust: ## Soft-delete a trust on the hub (frees the name + FL kit slot for re-registration)
-	## Runs flip_api.scripts.delete_trust as a one-off ECS task. Stamps disabled_at,
-	## renames the row to <NAME>_archived_<unix_ts>, and frees its FL kit slot — keeps the
-	## trust's historical data (cohort queries, projects) intact so we don't cascade-delete
-	## through 6+ FK tables. Operator can then UI-add a new trust with the freed name.
+delete-trust: ## Hard-delete a trust on the hub (frees the name + FL kit slot; cascades through dependent tables)
+	## Runs flip_api.scripts.delete_trust as a one-off ECS task. Removes the trust row
+	## entirely, NULLs its fl_kit_slot.assigned_to_trust_id, and deletes rows from the
+	## eight tables holding non-cascading trust.id FKs (trust_task, fl_metrics, fl_logs,
+	## fl_job_trust, model_trust_intersect, project_trust_intersect, query_result,
+	## xnat_project_status). Operator can then UI-add a new trust with the freed name.
 	## Required: NAME=<trust-name> matching trust.name exactly.
 	@[ -n "$(NAME)" ] || (echo "❌ NAME=<trust-name> is required"; exit 1)
 	@NAME=$(NAME) bash scripts/delete-trust.sh

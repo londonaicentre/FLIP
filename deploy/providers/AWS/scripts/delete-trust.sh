@@ -10,16 +10,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Soft-delete a trust on the hub via a one-off ECS Fargate task. Mirrors
+# Hard-delete a trust on the hub via a one-off ECS Fargate task. Mirrors
 # register-trusts.sh's pattern: discover the running flip-api service's
 # network config, run an ad-hoc task with command overrides invoking
 # `flip_api.scripts.delete_trust --name <NAME>`, wait for stop, pull the
 # JSON status from CloudWatch.
 #
-# Required env: NAME (the trust slot to soft-delete; must match trust.name
-# exactly). The Python script stamps disabled_at + renames trust to
-# <NAME>_archived_<unix_ts> + frees the FL kit slot — see
-# flip_api/scripts/delete_trust.py for the full contract.
+# Required env: NAME (the trust slot to delete; must match trust.name
+# exactly). The Python script removes the trust row entirely and cascades
+# through the nine tables holding trust.id FKs (NULL'ing the fl_kit_slot
+# FK to free the slot, deleting dependent rows from the other eight) —
+# see flip_api/scripts/delete_trust.py for the full contract.
 
 set -eo pipefail
 
@@ -55,7 +56,7 @@ log_info "Waiting for the $ECS_SERVICE service to reach a stable state..."
 aws_cmd ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
 log_success "$ECS_SERVICE service is stable."
 
-log_info "Soft-deleting trust '$NAME' via a one-off ECS task..."
+log_info "Hard-deleting trust '$NAME' via a one-off ECS task..."
 cmd_args=(uv run python -m flip_api.scripts.delete_trust --name "$NAME")
 # `--args -- ` is required: cmd_args contains dash-prefixed values (-m, --name)
 # and jq scans the whole argv for options regardless of `--args`. The `--`
@@ -89,17 +90,14 @@ fi
 
 status="$(echo "$result_json" | jq -r '.status')"
 case "$status" in
-    disabled)
-        archived_name="$(echo "$result_json" | jq -r '.archived_name')"
+    deleted)
         freed_slot="$(echo "$result_json" | jq -r '.freed_fl_kit_slot')"
-        log_success "Soft-deleted trust '$NAME' → archived as '$archived_name', freed FL kit slot '$freed_slot'."
+        # Compact one-line summary of which dependent tables got cleaned and how many rows.
+        cascade="$(echo "$result_json" | jq -r '.dependent_rows_deleted | to_entries | map("\(.key)=\(.value)") | join(", ")')"
+        log_success "Deleted trust '$NAME' → freed FL kit slot '$freed_slot' + cascaded ($cascade)."
         ;;
     not_found)
         log_warn "Trust '$NAME' not found on the hub — nothing to delete."
-        ;;
-    already_disabled)
-        disabled_at="$(echo "$result_json" | jq -r '.disabled_at')"
-        log_warn "Trust '$NAME' was already disabled at $disabled_at — no-op."
         ;;
     *)
         log_error "Unexpected status '$status' from delete_trust: $result_json"
