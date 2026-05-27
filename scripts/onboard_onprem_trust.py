@@ -192,6 +192,30 @@ def docker_swarm_state() -> str:
     return result.stdout.strip() or "inactive"
 
 
+def detect_host_gpu_count() -> int | None:
+    """Best-effort count of NVIDIA GPUs visible to this host. None when undetectable.
+
+    Returns 0 cleanly when nvidia-smi is absent — that's the unambiguous
+    "no NVIDIA GPU exposed to Linux containers" signal on macOS (including
+    Apple Silicon — Docker Desktop does not passthrough the integrated GPU)
+    and on Linux hosts without the NVIDIA driver. Returns None only when
+    nvidia-smi exists but errors, so the GPU-capacity check can avoid raising
+    a false-positive warning.
+    """
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--list-gpus"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except FileNotFoundError:
+        return 0
+    except subprocess.SubprocessError:
+        return None
+    if result.returncode != 0:
+        return None
+    return sum(1 for line in result.stdout.splitlines() if line.strip())
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Individual checks (each returns a Check)
 # ─────────────────────────────────────────────────────────────────────
@@ -338,6 +362,63 @@ def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     )
 
 
+def check_gpu_capacity(kit_vars: dict[str, str], kit_present: bool, kit: str) -> Check:
+    """Warn when the kit claims more GPUs than the host actually exposes.
+
+    The fl-client container expands resources.json from a template using
+    NUM_AVAILABLE_GPUS at start-up. If the kit says e.g. 1 but the host has 0
+    (Mac without GPU passthrough, CPU-only Linux box, etc.), nvflare crashes
+    with `ValueError: num_of_gpus specified (N) exceeds available GPUs: 0.`
+    before it ever dials the FL server — and the failure is opaque in the
+    fl-client logs. Surface it here so the operator fixes it pre-launch.
+
+    Soft WARN (not FAIL) because the operator can knowingly bring the stack
+    up with a stale value and just tolerate the fl-client crash-loop while
+    they iterate; the rest of the trust services come up regardless.
+    """
+    if not kit_present:
+        return Check("fl-client GPU capacity", Status.PENDING, "pending — needs kit file")
+    raw = (kit_vars.get("NUM_AVAILABLE_GPUS") or "").strip()
+    if not raw:
+        return Check(
+            "fl-client GPU capacity", Status.PASS,
+            "NUM_AVAILABLE_GPUS unset in kit (template treats as 0 → CPU-only)",
+        )
+    try:
+        kit_gpus = int(raw)
+    except ValueError:
+        return Check(
+            "fl-client GPU capacity", Status.FAIL,
+            f"NUM_AVAILABLE_GPUS='{raw}' is not an integer",
+            hints=[f"Edit trust/.env.{kit} → Trust-local credentials section."],
+        )
+    if kit_gpus <= 0:
+        return Check(
+            "fl-client GPU capacity", Status.PASS,
+            f"NUM_AVAILABLE_GPUS={kit_gpus} (CPU-only)",
+        )
+    host_gpus = detect_host_gpu_count()
+    if host_gpus is None:
+        return Check(
+            "fl-client GPU capacity", Status.PASS,
+            f"NUM_AVAILABLE_GPUS={kit_gpus}; host GPU count undetectable (nvidia-smi errored)",
+        )
+    if host_gpus >= kit_gpus:
+        return Check(
+            "fl-client GPU capacity", Status.PASS,
+            f"NUM_AVAILABLE_GPUS={kit_gpus} ≤ host NVIDIA GPUs ({host_gpus})",
+        )
+    return Check(
+        "fl-client GPU capacity", Status.WARN,
+        f"NUM_AVAILABLE_GPUS={kit_gpus} but host exposes {host_gpus} NVIDIA GPU(s)",
+        hints=[
+            "fl-client will crash-loop on `num_of_gpus specified exceeds available GPUs`.",
+            f"Edit trust/.env.{kit} → set NUM_AVAILABLE_GPUS=0 and MEMORY_PER_GPU_IN_GIB=0",
+            "  for CPU-only (slow but functional), or move to a host with the expected GPU(s).",
+        ],
+    )
+
+
 def check_unrotated_passwords(
     kit_vars: dict[str, str], kit_present: bool, repo_root: Path, kit: str,
 ) -> Check:
@@ -457,6 +538,7 @@ def run_checks(kit: str, repo_root: Path) -> list[Check]:
         check_fl_kit_dir_set(kit_vars, kit_present, kit),
         check_fl_kit_dir_exists(fl_kit_dir, kit_present),
         check_fl_kit_contents(kit_vars, kit_present),
+        check_gpu_capacity(kit_vars, kit_present, kit),
         check_unrotated_passwords(kit_vars, kit_present, repo_root, kit),
         check_data_dir(
             "OMOP data dir", "OMOP_DATA_DIR", "update-omop-data",
