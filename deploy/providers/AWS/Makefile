@@ -601,6 +601,16 @@ register-trusts: ## Register the TRUST_<n>_* trusts on the hub and distribute ki
 	## re-running is safe.
 	@bash scripts/register-trusts.sh
 
+.PHONY: delete-trust
+delete-trust: ## Soft-delete a trust on the hub (frees the name + FL kit slot for re-registration)
+	## Runs flip_api.scripts.delete_trust as a one-off ECS task. Stamps disabled_at,
+	## renames the row to <NAME>_archived_<unix_ts>, and frees its FL kit slot — keeps the
+	## trust's historical data (cohort queries, projects) intact so we don't cascade-delete
+	## through 6+ FK tables. Operator can then UI-add a new trust with the freed name.
+	## Required: NAME=<trust-name> matching trust.name exactly.
+	@[ -n "$(NAME)" ] || (echo "❌ NAME=<trust-name> is required"; exit 1)
+	@NAME=$(NAME) bash scripts/delete-trust.sh
+
 .PHONY: full-deploy
 full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trust + Central Hub
 	## Step order:
