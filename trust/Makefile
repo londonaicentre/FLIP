@@ -65,13 +65,25 @@ __ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
 DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.debug.override.yml
 
-# NOTE DOCKER_FL_REGISTRY is set to empty when we use local FL images during development (e.g. flare-fl-client:dev).
-# In that case, '--pull always' will error because docker won't be able to find the manifest for the dev image online,
-# so we need to remove the --pull always flag. Non-FL images keep DOCKER_REGISTRY (always GHCR).
-ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
-PULL_ALWAYS_FLAG=--pull always
+# UP_PULL_FLAGS controls the pull/build behaviour of the up-trust targets.
+#
+# Default: repo-built services (trust-api, imaging-api, data-access-api, orthanc)
+# carry `pull_policy: always` in compose_trust.development.yml, so they always
+# pull from GHCR on their own. This flag only adds the global `--pull always`
+# that keeps FL images fresh — dropped when DOCKER_FL_REGISTRY is empty (local
+# `:dev` FL images, e.g. flare-fl-client:dev), since docker can't pull an
+# unpublished manifest and `--pull always` would error.
+#
+# BUILD=true: rebuild the repo-built services from source instead of pulling.
+# `--build` forces the build; `--pull missing` overrides the per-service
+# `pull_policy: always` for this run so the fresh build isn't re-pulled away.
+# Propagated automatically from `make up BUILD=true` at the repo root.
+ifeq ($(BUILD),true)
+UP_PULL_FLAGS=--build --pull missing
+else ifneq ($(strip $(DOCKER_FL_REGISTRY)),)
+UP_PULL_FLAGS=--pull always
 else
-PULL_ALWAYS_FLAG=
+UP_PULL_FLAGS=
 endif
 
 # ── Per-trust deployment ──────────────────────────────────────────────────
@@ -169,8 +181,11 @@ build:
 # Bring up the trust stack selected by KIT (e.g. KIT=Trust_1). Reads
 # trust/.env.<KIT> for that trust's ports / dirs / credentials. The
 # update-omop-data / update-orthanc-data prereqs pull mock OMOP / Orthanc
-# fixtures from the hub-side dev S3 bucket — fine for dev / hybrid testing.
-# (Marked for removal once those fixtures move to a different source.)
+# fixtures from the dev source — fine for dev / hybrid testing.
+# Pull/build behaviour is governed by $(UP_PULL_FLAGS) (defined in the
+# root Makefile and inherited here): pulls fresh FL images when
+# DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op
+# otherwise.
 up-trust: update-omop-data update-orthanc-data create-networks
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
@@ -178,7 +193,7 @@ up-trust: update-omop-data update-orthanc-data create-networks
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(KIT)/db_data))
 	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(PULL_ALWAYS_FLAG)
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
 
@@ -233,7 +248,7 @@ up-fl-clients:
 
 up-fl-clients-kit:
 	$(require_kit_file)
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(PULL_ALWAYS_FLAG) fl-client-net-1 fl-client-net-2
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) fl-client-net-1 fl-client-net-2
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."

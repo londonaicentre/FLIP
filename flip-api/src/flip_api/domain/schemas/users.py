@@ -37,7 +37,7 @@ class GetUserById(GetUser):
     """Model specifically for retrieving a user by UUID."""
 
     @field_validator("userId")
-    def validate_uuid(cls, v):
+    def validate_uuid(cls, v: str) -> str:
         try:
             UUID(v)
         except ValueError:

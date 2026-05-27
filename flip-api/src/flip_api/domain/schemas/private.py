@@ -42,7 +42,7 @@ class OmopCohortResults(BaseModel):
     error: str | None = None
 
     @validator("data", pre=True, always=True)
-    def ensure_data_is_list(cls, value):
+    def ensure_data_is_list(cls, value: Any) -> list[Any]:
         if value is None:
             return []
         return value

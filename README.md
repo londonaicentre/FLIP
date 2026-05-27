@@ -88,6 +88,7 @@ For example:
 | `make register-trusts` | Register the `TRUST_<n>_*` trusts on the running hub and write per-trust kit files `trust/.env.Trust_*` (run automatically by `make up`) |
 | `make unit_test` | Run unit tests across all services |
 | `make tests` | Run flip-ui unit tests and the full flip-api test suite (lint + mypy + pytest) |
+| `make lock` | Regenerate every service's `uv.lock` from its `pyproject.toml` |
 | `make debug SERVICE=<name>` | Restart one service in debug mode (waits for a debugger on port 5678). Services: `flip-api`, `fl-api-net-1`, `trust-api`, `imaging-api`, `data-access-api` |
 | `make debug-off SERVICE=<name>` | Take a single service back out of debug mode |
 | `make debug-all` | Restart every API service in debug mode |

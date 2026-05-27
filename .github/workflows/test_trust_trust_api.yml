@@ -89,7 +89,7 @@ jobs:
           postgres-password: ${{ secrets.POSTGRES_PASSWORD || 'test_password' }}
 
       - name: Sync trust-api venv (incl. testcontainers)
-        run: uv sync --frozen
+        run: uv sync --locked
 
       - name: Lint (ruff)
         env:

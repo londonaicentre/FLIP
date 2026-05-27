@@ -17,8 +17,8 @@ Postgres database containing OMOP-ified data.
 
 ## Set up
 
-We have prepared mock data for each of the 2 dev trusts (Trust_1 and Trust_2) as postgres data volumes on S3. In order to set up the database locally, these data volumes need to be downloaded/extracted. This will be handled automatically when
-creating the trust containers, and similarly they will be updated locally when they are updated on S3 (note for devs: this is controlled by .data_version file in this directory).
+We have prepared mock data for each of the 2 dev trusts (Trust_1 and Trust_2) as postgres data volumes, published to the public Hugging Face dataset [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data). In order to set up the database locally, these data volumes need to be downloaded/extracted. They are fetched anonymously over HTTPS — no AWS CLI or credentials required. This will be handled automatically when
+creating the trust containers, and similarly they will be updated locally when the desired version changes (note for devs: this is controlled by the `.data_version` file in this directory).
 
 ```sh
 make update-omop-data

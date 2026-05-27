@@ -381,3 +381,4 @@ deploy/providers/AWS/dev/.terraform.lock.hcl
 .claude/scheduled_tasks.lock
 
 design_handoff*
+CONTEXT.md

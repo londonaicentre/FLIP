@@ -171,7 +171,7 @@ class IEditProject(BaseModel):
 
     # Handles cases where no users are added when editing a project (in which case the input is '[null]')
     @validator("users", pre=True)
-    def replace_null_list(cls, value):
+    def replace_null_list(cls, value: list[UUID] | None) -> list[UUID]:
         if value is None:
             return []
         if isinstance(value, list) and all(v is None for v in value):

@@ -112,7 +112,7 @@ class IInitiateTrainingInputPayload(BaseModel):
 
     @field_validator("trusts")
     @classmethod
-    def must_be_unique(cls, v):
+    def must_be_unique(cls, v: list[TrimStr]) -> list[TrimStr]:
         if len(set(v)) != len(v):
             raise ValueError("'trusts' must all be unique entries")
         return v
@@ -187,10 +187,10 @@ JobTypes = Enum("JobTypes", {job_type: job_type for job_type in _JOB_TYPES_CONFI
 class JobRequiredFiles(BaseModel):
     model_config = {"extra": "allow"}
 
-    def __init__(self, **data):
+    def __init__(self, **data: object) -> None:
         """Initialize with required files from JSON configuration."""
         super().__init__(**data)
-        config = self._load_job_types_config()
+        config = _load_job_types_config()
         for job_type, files in config.items():
             setattr(self, job_type, files)
 

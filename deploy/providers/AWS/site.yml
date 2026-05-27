@@ -32,7 +32,7 @@
         that:
           - pgdata_archive is defined
           - pgdata_archive | length > 0
-        fail_msg: "The pgdata_archive variable must be defined to proceed (e.g. trust1_pgdata_20260106.tar.gz)."
+        fail_msg: "The pgdata_archive variable must be defined to proceed (e.g. trust1_pgdata_20260129.tar)."
     - name: initialize Terraform backend for validation
       command: >
         terraform init
@@ -415,9 +415,18 @@
   hosts: trust_ec2
   become: true
   vars:
-    s3_bucket: "{{ flip_aicentre_bucket }}"
-    s3_prefix: "omop"
     omop_dir: "/opt/flip/omop"
+    # Mock data is fetched anonymously over HTTPS from the public Hugging Face
+    # dataset (no AWS CLI / credentials needed). Laid out per trust; archives are
+    # gzip-compressed tarballs named .tar (tar auto-detects gzip on extraction).
+    hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
+    hf_trust_data_revision: "{{ trust_data_hf_revision | default('main') }}"
+    hf_base_url: "https://huggingface.co/datasets/{{ hf_trust_data_repo }}/resolve/{{ hf_trust_data_revision }}"
+    # Per-trust dataset subdirectory on HF. Kept independent of the archive
+    # filename (matches the dev-script convention) so a renamed or differently
+    # prefixed archive does not silently produce a wrong URL. Override via
+    # extra-vars alongside pgdata_archive if deploying a non-trust1 host.
+    pgdata_trust_dir: "trust1"
   tasks:
     - name: install tar
       apt:
@@ -435,13 +444,11 @@
         - "{{ omop_dir }}"
         - "{{ omop_dir }}/db_data"
 
-    - name: download OMOP PGDATA archive from S3
-      command: >
-        aws s3 cp
-        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ pgdata_archive }}
-        {{ omop_dir }}/pgdata.tar.gz
-      args:
-        creates: "{{ omop_dir }}/pgdata.tar.gz"
+    - name: download OMOP PGDATA archive from Hugging Face
+      ansible.builtin.get_url:
+        url: "{{ hf_base_url }}/{{ pgdata_trust_dir }}/{{ pgdata_archive }}"
+        dest: "{{ omop_dir }}/pgdata.tar"
+        mode: "0644"
 
     - name: clear existing PGDATA directory
       shell: rm -rf {{ omop_dir }}/db_data/*
@@ -449,7 +456,7 @@
 
     - name: extract OMOP PGDATA
       command: >
-        tar -xzf {{ omop_dir }}/pgdata.tar.gz
+        tar -xf {{ omop_dir }}/pgdata.tar
         -C {{ omop_dir }}/db_data
 
     - name: set Postgres ownership and permissions
@@ -462,11 +469,19 @@
   hosts: trust_ec2
   become: true
   vars:
-    s3_bucket: "{{ flip_aicentre_bucket }}"
-    s3_prefix: "orthanc"
-    archive: "trust1_orthanc_data_20260106.tar.gz"
+    archive: "trust1_orthanc_data_20260106.tar"
     base_dir: "/opt/flip/orthanc"
     data_dir: "/opt/flip/orthanc/orthanc-storage"
+    # Mock data is fetched anonymously over HTTPS from the public Hugging Face
+    # dataset (no AWS CLI / credentials needed). Laid out per trust; archives are
+    # gzip-compressed tarballs named .tar (tar auto-detects gzip on extraction).
+    hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
+    hf_trust_data_revision: "{{ trust_data_hf_revision | default('main') }}"
+    hf_base_url: "https://huggingface.co/datasets/{{ hf_trust_data_repo }}/resolve/{{ hf_trust_data_revision }}"
+    # Per-trust dataset subdirectory on HF. Kept independent of the archive
+    # filename (matches the dev-script convention) so a renamed or differently
+    # prefixed archive does not silently produce a wrong URL.
+    orthanc_trust_dir: "trust1"
   tasks:
     - name: install tar
       apt:
@@ -481,13 +496,11 @@
         state: directory
         mode: "0755"
 
-    - name: download Orthanc archive from S3
-      command: >
-        aws s3 cp
-        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ archive }}
-        {{ base_dir }}/orthanc-storage.tar.gz
-      args:
-        creates: "{{ base_dir }}/orthanc-storage.tar.gz"
+    - name: download Orthanc archive from Hugging Face
+      ansible.builtin.get_url:
+        url: "{{ hf_base_url }}/{{ orthanc_trust_dir }}/{{ archive }}"
+        dest: "{{ base_dir }}/orthanc-storage.tar"
+        mode: "0644"
 
     - name: clear existing Orthanc storage
       shell: rm -rf {{ data_dir }}/*
@@ -501,7 +514,7 @@
 
     - name: extract Orthanc data into orthanc-storage
       command: >
-        tar -xzf {{ base_dir }}/orthanc-storage.tar.gz -C {{ data_dir }}
+        tar -xf {{ base_dir }}/orthanc-storage.tar -C {{ data_dir }}
 
     - name: ensure Orthanc storage is writable
       file:

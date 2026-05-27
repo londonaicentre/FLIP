@@ -17,8 +17,8 @@ set -euo pipefail
 # This script ensures that the local Orthanc storage dirs are populated
 # with the correct version of mock DICOM data as specified in the .data_version
 # file in the repo. If the local data version does not match the desired version,
-# it downloads the appropriate data archives from the specified S3 bucket and
-# extracts them into the local storage dirs.
+# it downloads the appropriate data archives from the public Hugging Face dataset
+# and extracts them into the local storage dirs.
 # NOTE this is only intended for use in development / test environments where
 # real DICOM data is not available.
 
@@ -27,14 +27,21 @@ REPO_DATA_VERSION_FILE=".data_version"                          # committed in r
 VOLUMES_DIR="./volumes"                                         # local dir for downloaded archives
 LOCAL_DATA_VERSION_FILE="${VOLUMES_DIR}/.local_data_version"    # tracks local version
 
-# Required env vars
-: "${AICENTRE_BUCKET_NAME:?AICENTRE_BUCKET_NAME is required}"
 # Per-trust storage dirs fall back to repo-root-relative defaults when the
-# caller (trust/orthanc/Makefile) hasn't sourced them from the kit files.
+# caller (trust/orthanc/Makefile) hasn't sourced them from the kit files
+# (the kit-file refactor moved per-trust paths to unsuffixed names like
+# ORTHANC_STORAGE_DIR, so this script — shared across both trusts — keeps
+# its own legacy-suffixed defaults to stay self-contained).
 : "${ORTHANC_STORAGE_DIR_TRUST_1:=orthanc-storage-trust1}"
 : "${ORTHANC_STORAGE_DIR_TRUST_2:=orthanc-storage-trust2}"
 
-S3_ORTHANC_PREFIX="s3://${AICENTRE_BUCKET_NAME}/orthanc"
+# Mock data is fetched anonymously over HTTPS from a public Hugging Face dataset
+# (no AWS CLI or credentials required). The dataset is laid out per trust:
+#   <repo>/resolve/<revision>/trust1/trust1_orthanc_data_<version>.tar
+# Both the repo and revision can be overridden via the environment.
+HF_TRUST_DATA_REPO="${HF_TRUST_DATA_REPO:-aicentreflip/trust-data}"
+HF_TRUST_DATA_REVISION="${HF_TRUST_DATA_REVISION:-main}"
+HF_BASE_URL="https://huggingface.co/datasets/${HF_TRUST_DATA_REPO}/resolve/${HF_TRUST_DATA_REVISION}"
 
 # --- read desired data version from repo file ---
 DATA_VERSION="$(tr -d ' \n\r\t' < "${REPO_DATA_VERSION_FILE}")"
@@ -60,26 +67,29 @@ else
   echo "🔄 Updating Orthanc data: ${LOCAL_VERSION} -> ${DATA_VERSION}"
 fi
 
-# Download the appropriate .tar.gz files from S3
-TRUST1_ARCHIVE="trust1_orthanc_data_${DATA_VERSION}.tar.gz"
-TRUST2_ARCHIVE="trust2_orthanc_data_${DATA_VERSION}.tar.gz"
+# Archives are gzip-compressed tarballs named .tar on Hugging Face (the .gz is
+# dropped from the name, not the content), grouped under per-trust dirs.
+# tar auto-detects the gzip on extraction, so -xf (no -z) handles them.
+TRUST1_ARCHIVE="trust1_orthanc_data_${DATA_VERSION}.tar"
+TRUST2_ARCHIVE="trust2_orthanc_data_${DATA_VERSION}.tar"
 
-S3_TRUST1_ARCHIVE="${S3_ORTHANC_PREFIX}/${TRUST1_ARCHIVE}"
-S3_TRUST2_ARCHIVE="${S3_ORTHANC_PREFIX}/${TRUST2_ARCHIVE}"
+HF_TRUST1_ARCHIVE="${HF_BASE_URL}/trust1/${TRUST1_ARCHIVE}"
+HF_TRUST2_ARCHIVE="${HF_BASE_URL}/trust2/${TRUST2_ARCHIVE}"
 LOCAL_TRUST1_ARCHIVE="${VOLUMES_DIR}/${TRUST1_ARCHIVE}"
 LOCAL_TRUST2_ARCHIVE="${VOLUMES_DIR}/${TRUST2_ARCHIVE}"
 
-# If the files do not exist locally, download them
+# If the files do not exist locally, download them.
+# -f: fail on HTTP errors, -S: show errors, -L: follow LFS redirects.
 if [[ ! -f "${LOCAL_TRUST1_ARCHIVE}" ]]; then
-  echo "📦 Downloading ${S3_TRUST1_ARCHIVE}"
-  aws s3 cp "${S3_TRUST1_ARCHIVE}" "${LOCAL_TRUST1_ARCHIVE}"
+  echo "📦 Downloading ${HF_TRUST1_ARCHIVE}"
+  curl -fSL "${HF_TRUST1_ARCHIVE}" -o "${LOCAL_TRUST1_ARCHIVE}"
 else
   echo "📦 ${LOCAL_TRUST1_ARCHIVE} already exists, skipping download"
 fi
 
 if [[ ! -f "${LOCAL_TRUST2_ARCHIVE}" ]]; then
-  echo "📦 Downloading ${S3_TRUST2_ARCHIVE}"
-  aws s3 cp "${S3_TRUST2_ARCHIVE}" "${LOCAL_TRUST2_ARCHIVE}"
+  echo "📦 Downloading ${HF_TRUST2_ARCHIVE}"
+  curl -fSL "${HF_TRUST2_ARCHIVE}" -o "${LOCAL_TRUST2_ARCHIVE}"
 else
   echo "📦 ${LOCAL_TRUST2_ARCHIVE} already exists, skipping download"
 fi
@@ -95,9 +105,9 @@ for dir in "./${ORTHANC_STORAGE_DIR_TRUST_1}" "./${ORTHANC_STORAGE_DIR_TRUST_2}"
 done
 mkdir -p "./${ORTHANC_STORAGE_DIR_TRUST_1}" "./${ORTHANC_STORAGE_DIR_TRUST_2}"
 
-echo "📁 Extracting .tar.gz files (will replace existing storage dirs)..."
-tar -xzf "${LOCAL_TRUST1_ARCHIVE}" -C "./${ORTHANC_STORAGE_DIR_TRUST_1}"
-tar -xzf "${LOCAL_TRUST2_ARCHIVE}" -C "./${ORTHANC_STORAGE_DIR_TRUST_2}"
+echo "📁 Extracting archives (will replace existing storage dirs)..."
+tar -xf "${LOCAL_TRUST1_ARCHIVE}" -C "./${ORTHANC_STORAGE_DIR_TRUST_1}"
+tar -xf "${LOCAL_TRUST2_ARCHIVE}" -C "./${ORTHANC_STORAGE_DIR_TRUST_2}"
 
 # Record the new local data version
 echo "${DATA_VERSION}" > "${LOCAL_DATA_VERSION_FILE}"
