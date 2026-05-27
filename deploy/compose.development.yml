@@ -49,6 +49,13 @@ services:
 
   flip-api:
     platform: linux/x86_64
+    # Pull the pre-built GHCR image by default (pull_policy: always); the local
+    # src/ bind-mount below overlays it so live reload still runs your working
+    # copy. `make up BUILD=true` rebuilds from the build: block instead.
+    # flip-ui is intentionally NOT given an image/pull_policy — it has no GHCR
+    # image (its workflow is a CI smoke test; prod serves it from S3/CloudFront).
+    image: ${DOCKER_REGISTRY}flip-api:${DOCKER_TAG}
+    pull_policy: always
     build:
       args:
         UID: ${UID}
