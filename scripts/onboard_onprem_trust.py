@@ -62,6 +62,21 @@ KIT_CRED_KEYS: tuple[str, ...] = (
     "FL_KIT_SLOT_NUMBER", "EXPECTED_TRUST_ID",
 )
 
+# Trust-local credentials the operator must rotate for a real on-prem
+# deployment. Used by the soft-warning check that flags any password still
+# matching the .example template verbatim. Usernames are deliberately
+# excluded — service-account usernames legitimately stay as their template
+# defaults (XNAT depends on `flipServiceAccount` etc.).
+TRUST_LOCAL_PASSWORD_KEYS: tuple[str, ...] = (
+    "ORTHANC_PASSWORD",
+    "OMOP_POSTGRES_PASSWORD",
+    "DATA_ACCESS_POSTGRES_PASSWORD",
+    "XNAT_ADMIN_INITIAL_PASSWORD",
+    "XNAT_ADMIN_PASSWORD",
+    "XNAT_SERVICE_PASSWORD",
+    "GRAFANA_ADMIN_PASSWORD",
+)
+
 # ─────────────────────────────────────────────────────────────────────
 # Output helpers
 # ─────────────────────────────────────────────────────────────────────
@@ -82,6 +97,7 @@ class Status(Enum):
     PASS = ("✅", GREEN)
     FAIL = ("❌", RED)
     PENDING = ("⏳", YELLOW)
+    WARN = ("⚠️ ", YELLOW)  # trailing space — ⚠️ renders narrow on some terminals
 
     @property
     def glyph(self) -> str:
@@ -322,6 +338,46 @@ def check_fl_kit_contents(kit_vars: dict[str, str], kit_present: bool) -> Check:
     )
 
 
+def check_unrotated_passwords(
+    kit_vars: dict[str, str], kit_present: bool, repo_root: Path, kit: str,
+) -> Check:
+    """Soft-warn if any Trust-local password still matches the .example template.
+
+    The packager hands the operator a kit whose Trust-local credentials section
+    is verbatim from the .production.example (dev-friendly defaults). For a
+    real on-prem hospital deployment the operator must rotate these before
+    bringing the stack up. Returns Status.WARN (not FAIL) — defaults are
+    technically usable for dev/testing and we don't want to block that path.
+    """
+    if not kit_present:
+        return Check("Trust-local passwords", Status.PENDING, "pending — needs kit file")
+    # Prefer the production template (closer to what an on-prem operator copied);
+    # fall back to the dev template; skip silently if neither exists.
+    candidates = [
+        repo_root / "trust" / f".env.{kit}.production.example",
+        repo_root / "trust" / f".env.{kit}.example",
+    ]
+    template = next((c for c in candidates if c.is_file()), None)
+    if template is None:
+        return Check("Trust-local passwords", Status.PASS, "no template to compare against (skipped)")
+    template_vars = read_kit_vars(template)
+    unchanged = [
+        key for key in TRUST_LOCAL_PASSWORD_KEYS
+        if kit_vars.get(key) and kit_vars[key] == template_vars.get(key)
+    ]
+    if not unchanged:
+        return Check("Trust-local passwords", Status.PASS, "all rotated from template defaults")
+    return Check(
+        "Trust-local passwords", Status.WARN,
+        f"{len(unchanged)}/{len(TRUST_LOCAL_PASSWORD_KEYS)} still match {template.name} defaults",
+        hints=[
+            f"Unchanged: {', '.join(unchanged)}",
+            f"For a real on-prem deployment, edit trust/.env.{kit} → Trust-local credentials",
+            "  section and replace with production-grade secrets.",
+        ],
+    )
+
+
 def check_data_dir(
     label: str,
     var_name: str,
@@ -387,6 +443,7 @@ def run_checks(kit: str, repo_root: Path) -> list[Check]:
         check_fl_kit_dir_set(kit_vars, kit_present, kit),
         check_fl_kit_dir_exists(fl_kit_dir, kit_present),
         check_fl_kit_contents(kit_vars, kit_present),
+        check_unrotated_passwords(kit_vars, kit_present, repo_root, kit),
         check_data_dir(
             "OMOP data dir", "OMOP_DATA_DIR", "update-omop-data",
             kit_vars, kit_present, repo_root,
@@ -440,18 +497,26 @@ def main() -> None:
     n_pass = sum(1 for c in checks if c.status == Status.PASS)
     n_fail = sum(1 for c in checks if c.status == Status.FAIL)
     n_pending = sum(1 for c in checks if c.status == Status.PENDING)
-    all_pass = n_fail == 0 and n_pending == 0
+    n_warn = sum(1 for c in checks if c.status == Status.WARN)
+    # Warnings are advisory — they don't block readiness, but they DO count
+    # toward the summary so the operator can see them in the headline.
+    is_ready = n_fail == 0 and n_pending == 0
 
     print()
-    if all_pass:
-        heading(f"Status: READY {Status.PASS.glyph}  ({n_pass}/{len(checks)} checks passed)")
+    if is_ready:
+        suffix = f", {n_warn} warning{'s' if n_warn != 1 else ''}" if n_warn else ""
+        heading(f"Status: READY {Status.PASS.glyph}  ({n_pass}/{len(checks)} pass{suffix})")
         print()
         print(f"  Bring the stack up:")
         print(f"      {BOLD}make up-onprem-trust KIT={kit}{RESET}")
+        if n_warn:
+            print(f"  {YELLOW}Heads-up:{RESET} review the {YELLOW}⚠️{RESET}  warning(s) above before running in production.")
         print()
         sys.exit(0)
-    summary = f"Status: NOT READY  ({n_pass} pass, {n_fail} fail, {n_pending} pending)"
-    heading(summary)
+    parts = [f"{n_pass} pass", f"{n_fail} fail", f"{n_pending} pending"]
+    if n_warn:
+        parts.append(f"{n_warn} warn")
+    heading(f"Status: NOT READY  ({', '.join(parts)})")
     print(f"  Fix the {RED}❌{RESET} items and resolve the {YELLOW}⏳{RESET} pending steps above.")
     print()
     sys.exit(1)
