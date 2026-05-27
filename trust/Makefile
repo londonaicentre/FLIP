@@ -132,12 +132,7 @@ TRUST_VARS = \
 # Pass the resolved path (matching what the compose file will mount) as $1.
 define check_omop_data_dir
 	@dir="$(1)"; \
-	if [ ! -d "$$dir" ]; then \
-	    populated=0; \
-	else \
-	    links=$$(stat -c '%h' "$$dir" 2>/dev/null || echo 2); \
-	    if [ "$$links" -gt 2 ]; then populated=1; else populated=0; fi; \
-	fi; \
+	if [ -f "$$dir/PG_VERSION" ]; then populated=1; else populated=0; fi; \
 	if [ "$$populated" -eq 0 ]; then \
 	    echo "❌ OMOP DB data dir is empty or missing: $$dir"; \
 	    echo "   The omop-db container would start with no schema and no"; \
