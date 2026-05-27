@@ -164,9 +164,9 @@ up-onprem-trust:
 		exit 1)
 	@if grep -q '<run-make-register-trusts>' trust/.env.$(KIT); then \
 		$(MAKE) print-onprem-onboarding-info KIT=$(KIT); \
-		exit 0; \
+	else \
+		$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true); \
 	fi
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true)
 
 # Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
 # so an operator doesn't have to remember the -C trust path or PROD value.

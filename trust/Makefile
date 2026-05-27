@@ -158,6 +158,10 @@ endef
 
 # Guard: bringing a trust UP additionally needs its kit file (ports + credentials).
 # Teardown (down-trust) only needs the project name, so it uses require_kit instead.
+# Placeholder check: refuse to start a stack with `<run-make-…>` placeholders still
+# in the kit file. Without this, an unfilled value like FL_KIT_SLOT=<run-make-register-trusts>
+# would flow into the docker compose command line as TRUST_NAME=<…> and the shell
+# would parse `<` as a stdin redirect (cryptic "No such file or directory" crash).
 define require_kit_file
 	@if [ -z "$(KIT)" ]; then \
 	    echo "❌ KIT is required. Usage: make $@ KIT=<name>  (e.g. KIT=Trust_1)"; exit 1; \
@@ -166,6 +170,16 @@ define require_kit_file
 	    echo "❌ Kit file trust/$(KIT_FILE) not found."; \
 	    echo "   Copy trust/$(KIT_FILE).example to trust/$(KIT_FILE), then run"; \
 	    echo "   'make register-trusts' (from the repo root) to fill in the credentials."; \
+	    exit 1; \
+	fi; \
+	if grep -q '<run-make-' $(KIT_FILE); then \
+	    n=$$(grep -c '<run-make-' $(KIT_FILE)); \
+	    echo "❌ Kit file trust/$(KIT_FILE) still has $$n unfilled <run-make-…> placeholder(s)."; \
+	    echo "   Local hub: run 'make register-trusts' (from the repo root)."; \
+	    echo "   On-prem trust against a remote hub:"; \
+	    echo "     run 'make print-onprem-onboarding-info KIT=$(KIT)' (from the repo root)"; \
+	    echo "     for the onboarding steps; if only <run-make-sync-trust-kit> values remain,"; \
+	    echo "     ask the hub admin to re-send the kit (it's been resynced)."; \
 	    exit 1; \
 	fi
 endef
