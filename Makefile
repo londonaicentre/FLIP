@@ -400,8 +400,7 @@ register-trusts: register-trust-1 register-trust-2
 # lookup — just a file→file copy keyed on KIT.
 sync-trust-kit:
 	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> required (e.g. KIT=Trust_2)"; exit 1)
-	@echo "🔄 Syncing hub-shared block for kit $(KIT) from $(MAIN_ENV_FILE)..."
-	@uv run --no-config scripts/sync_trust_kit.py $(KIT)
+	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py $(KIT)
 
 # Sync every locally-present kit file. Globs trust/.env.* and drops the
 # .example / .production.example templates.

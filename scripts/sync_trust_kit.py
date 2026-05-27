@@ -89,6 +89,20 @@ def main() -> None:
 
     new_values = {k: os.environ[k] for k in HUB_SHARED_KEYS}
 
+    # Surface the source env file + destination URL up-front. The root
+    # Makefile prints `Using MAIN_ENV_FILE: .env.<env>` at the top of its
+    # output, but that scrolls past easily — log it here too so the
+    # KIT-keyed sync command is self-documenting. Doubles as a footgun
+    # guard: on-prem-pointed kits (typically Trust_2) accidentally synced
+    # without PROD=true would silently get the dev hub URL.
+    source = os.environ.get("MAIN_ENV_FILE", "<environment>")
+    hub_url = new_values["CENTRAL_HUB_API_URL"]
+    print(f"🔄 Syncing hub-shared block for trust/.env.{args.kit} from {source}")
+    print(f"   CENTRAL_HUB_API_URL → {hub_url}")
+    if "localhost" in hub_url or "127.0.0.1" in hub_url:
+        print("   ⚠️  Hub URL points at localhost — this is the dev hub.")
+        print("       If this kit should target stag/prod, re-run with PROD=stag or PROD=true.")
+
     # Upsert: replace `KEY=...` lines in-place for keys already present,
     # append the rest below the sentinel header. Comments (`#`) and blank
     # lines pass through unchanged. Existing positions are preserved so a
