@@ -146,8 +146,13 @@ In Fish, the prompt-and-export idiom is different:
 
 ``provision-local-trust`` runs the Ansible playbook
 ``deploy/providers/local/site_local_trust.yml`` (installs Docker and system
-packages, creates the ``/opt/flip/`` tree) and stages the FL participant kit.
-It runs entirely on the trust host.
+packages, creates the ``/opt/flip/`` tree including the empty FL kit dirs
+under ``/opt/flip/fl-kit/net-1/...``) and stages a FL participant kit
+bundle under ``/tmp``. The trust kit file points at the FL kit root via
+``FL_KIT_DIR`` (default ``/opt/flip/fl-kit``); the prod trust compose then
+mounts ``${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/...`` (nvflare) or
+``${FL_KIT_DIR}/net-1/{certificates,keys}`` (flower) into the fl-client
+container. It runs entirely on the trust host.
 
 **4. Start the trust stack (trust operator).**
 

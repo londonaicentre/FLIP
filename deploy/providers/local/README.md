@@ -106,7 +106,7 @@ make provision-local-trust
 1. Runs the Ansible playbook (`site_local_trust.yml`) which:
    - Installs Docker and required system packages
    - Creates application directories under `/opt/flip/`
-2. Downloads the FL participant kit from S3 and stages it under `/tmp`, printing the `sudo rsync` commands to deploy it into `/opt/flip/services/`.
+2. Downloads the FL participant kit from S3 and stages it under `/tmp`, printing the `sudo rsync` commands to deploy it into `${FL_KIT_DIR}/net-1/...` (default `/opt/flip/fl-kit/net-1/...`).
 
 Opening the AWS FL-server NLB to the trust's public IP is a **separate** step — `make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>` — run by the FLIP admin once the operator reports their IP.
 

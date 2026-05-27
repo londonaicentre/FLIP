@@ -202,12 +202,17 @@
   hosts: trust_ec2
   become: true
   vars:
-    trust_services_dir: "/opt/flip/services"
+    # FL_KIT_DIR on the trust host — kit root containing net-1/services/<slot>/
+    # for nvflare and net-1/{certificates,keys} for flower. The trust kit file
+    # (/opt/flip/trust/.env.Trust_1) sets FL_KIT_DIR=/opt/flip/fl-kit so the
+    # prod compose mounts resolve to the same on-disk paths Ansible stages
+    # below — keep the two sides in lockstep.
+    fl_kit_dir: "/opt/flip/fl-kit"
     trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/Trust_1/"
   tasks:
-    - name: ensure trust services directory exists
+    - name: ensure FL kit directory exists
       file:
-        path: "{{ trust_services_dir }}"
+        path: "{{ fl_kit_dir }}"
         state: directory
         owner: ubuntu
         group: ubuntu
@@ -222,9 +227,15 @@
       # against a server cert signed by the new rootCA. Wipe the
       # destination first to force a clean copy. Mirrors the
       # ecs_efs_provision.tf fix on the central-hub side.
+      #
+      # The hierarchical dest (net-1/services/Trust_1) preserves the
+      # S3 bundle's own layout — the compose mount in
+      # trust/deploy/compose_trust.production.nvflare.yml is
+      # ${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/{local,startup,transfer},
+      # which resolves to /opt/flip/fl-kit/net-1/services/Trust_1/...
       shell: |
         set -euo pipefail
-        dest="{{ trust_services_dir }}/Trust_1"
+        dest="{{ fl_kit_dir }}/net-1/services/Trust_1"
         mkdir -p "$dest"
         find "$dest" -mindepth 1 -delete 2>/dev/null || true
         aws s3 sync \
@@ -240,12 +251,15 @@
   hosts: trust_ec2
   become: true
   vars:
-    trust_services_dir: "/opt/flip/services"
+    # See the NVFLARE play above for the rationale on fl_kit_dir / the
+    # preserved net-1/ hierarchy. For flower the compose mounts are
+    # ${FL_KIT_DIR}/net-1/{certificates,keys}.
+    fl_kit_dir: "/opt/flip/fl-kit"
     trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flower-participant-kits/{{ fl_kit_date }}/net-1/"
   tasks:
-    - name: ensure trust services directory exists
+    - name: ensure FL kit directory exists
       file:
-        path: "{{ trust_services_dir }}"
+        path: "{{ fl_kit_dir }}"
         state: directory
         owner: ubuntu
         group: ubuntu
@@ -260,11 +274,11 @@
       # client fails the TLS handshake to fl-server.
       shell: |
         set -euo pipefail
-        mkdir -p "{{ trust_services_dir }}/net-1"
-        find "{{ trust_services_dir }}/net-1" -mindepth 1 -delete 2>/dev/null || true
+        mkdir -p "{{ fl_kit_dir }}/net-1"
+        find "{{ fl_kit_dir }}/net-1" -mindepth 1 -delete 2>/dev/null || true
         aws s3 sync \
           "{{ trust_s3_source }}/" \
-          "{{ trust_services_dir }}/net-1/"
+          "{{ fl_kit_dir }}/net-1/"
       args:
         executable: /bin/bash
       register: trust_sync

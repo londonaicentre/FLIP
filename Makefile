@@ -171,6 +171,16 @@ print-onprem-onboarding-info:
 	@OPERATOR_IP="$$(curl -sf --max-time 5 https://api.ipify.org || echo '<could not detect — set it manually>')"; \
 	HUB_URL="$$(sed -n 's/^CENTRAL_HUB_API_URL=//p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
 	HUB_URL="$${HUB_URL%/api}"; \
+	FL_BACKEND="$$(sed -n 's/^FL_BACKEND=//p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
+	FL_KIT_DIR="$$(sed -n 's/^FL_KIT_DIR=//p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
+	S3_BUCKET="$$(sed -n 's|^UPLOADED_FEDERATED_DATA_BUCKET=s3://\([^/]*\)/.*|\1|p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
+	if [ "$$FL_BACKEND" = "nvflare" ]; then \
+	  FL_KIT_DATE="$$(sed -n 's/^FLARE_KIT_DATE=//p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
+	  FL_KIT_PREFIX="fl-flare-participant-kits"; \
+	else \
+	  FL_KIT_DATE="$$(sed -n 's/^FLOWER_KIT_DATE=//p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
+	  FL_KIT_PREFIX="fl-flower-participant-kits"; \
+	fi; \
 	echo ""; \
 	echo "════════════════════════════════════════════════════════════════════════"; \
 	echo "  On-prem trust onboarding — kit trust/.env.$(KIT) not yet credentialed"; \
@@ -204,7 +214,46 @@ print-onprem-onboarding-info:
 	echo "       FL_KIT_SLOT_NUMBER=…"; \
 	echo "       EXPECTED_TRUST_ID=…"; \
 	echo ""; \
-	echo "  5. Re-run this command to bring the stack up:"; \
+	echo "  5. Ask the FLIP admin to package your FL participant kit (they have"; \
+	echo "     the prod AWS creds you don't). They run a SELECTIVE sync — only YOUR"; \
+	echo "     slot's portion of the bundle, never the whole net-1/ tree — and send"; \
+	echo "     you the resulting tarball over an encrypted channel. Extract it at"; \
+	echo "     FL_KIT_DIR (= $${FL_KIT_DIR:-<unset — set FL_KIT_DIR in your kit file>})"; \
+	echo "     preserving the net-1/ hierarchy."; \
+	echo ""; \
+	echo "     Commands for the FLIP admin (copy-paste with your slot's values from step 4):"; \
+	echo ""; \
+	if [ -z "$$S3_BUCKET" ] || [ -z "$$FL_KIT_DATE" ]; then \
+	  echo "       (sync the hub-shared block first — re-run this target after"; \
+	  echo "        running 'make sync-trust-kit-N' so the per-backend command renders)"; \
+	elif [ "$$FL_BACKEND" = "nvflare" ]; then \
+	  echo "       # NVFLARE — admin runs these, then tarballs + sends:"; \
+	  echo "       mkdir -p /tmp/fl-kit-bundle/net-1/services/<your-slot>"; \
+	  echo "       AWS_PROFILE=prod aws s3 sync \\"; \
+	  echo "         s3://$$S3_BUCKET/$$FL_KIT_PREFIX/$$FL_KIT_DATE/net-1/services/<your-slot>/ \\"; \
+	  echo "         /tmp/fl-kit-bundle/net-1/services/<your-slot>/"; \
+	  echo "       tar -C /tmp/fl-kit-bundle -czf /tmp/fl-kit-<your-slot>.tar.gz net-1"; \
+	  echo ""; \
+	  echo "     Then on this host, after the admin sends you the tarball:"; \
+	  echo "       mkdir -p $${FL_KIT_DIR:-<FL_KIT_DIR>}"; \
+	  echo "       tar -C $${FL_KIT_DIR:-<FL_KIT_DIR>} -xzf <path-to-received-tarball>"; \
+	else \
+	  echo "       # Flower — admin runs these, then tarballs + sends:"; \
+	  echo "       mkdir -p /tmp/fl-kit-bundle/net-1/certificates /tmp/fl-kit-bundle/net-1/keys"; \
+	  echo "       AWS_PROFILE=prod aws s3 sync \\"; \
+	  echo "         s3://$$S3_BUCKET/$$FL_KIT_PREFIX/$$FL_KIT_DATE/net-1/certificates/ \\"; \
+	  echo "         /tmp/fl-kit-bundle/net-1/certificates/"; \
+	  echo "       AWS_PROFILE=prod aws s3 cp \\"; \
+	  echo "         s3://$$S3_BUCKET/$$FL_KIT_PREFIX/$$FL_KIT_DATE/net-1/keys/supernode_credentials_<your-FL_KIT_SLOT_NUMBER> \\"; \
+	  echo "         /tmp/fl-kit-bundle/net-1/keys/"; \
+	  echo "       tar -C /tmp/fl-kit-bundle -czf /tmp/fl-kit-<your-slot>.tar.gz net-1"; \
+	  echo ""; \
+	  echo "     Then on this host, after the admin sends you the tarball:"; \
+	  echo "       mkdir -p $${FL_KIT_DIR:-<FL_KIT_DIR>}"; \
+	  echo "       tar -C $${FL_KIT_DIR:-<FL_KIT_DIR>} -xzf <path-to-received-tarball>"; \
+	fi; \
+	echo ""; \
+	echo "  6. Re-run this command to bring the stack up:"; \
 	echo ""; \
 	echo "       make up-onprem-trust KIT=$(KIT) PROD=$(or $(PROD),true)"; \
 	echo ""; \
