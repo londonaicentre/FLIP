@@ -97,7 +97,8 @@ build:
 	@echo "✅ Docker images built successfully!"
 
 # Run all services
-# Uses --pull always to ensure the latest FL images are used
+# Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
+# when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
 up: check-aws-access generate-internal-service-key create-networks
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."

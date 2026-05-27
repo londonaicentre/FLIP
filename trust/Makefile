@@ -155,7 +155,8 @@ build:
 	$(TRUST_1_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust1} build --no-cache
 	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} build
 
-# Uses --pull always to ensure the latest FL images and omop-db image are used
+# Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
+# when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
 # ensure omop and orthanc data are up to date before bringing up trust 1
 up-trust-1: update-omop-data update-orthanc-data
 	@echo "🚢 Starting Trust 1 services..."
@@ -207,7 +208,8 @@ down-local-trust:
 	$(LOCAL_TRUST_VARS) \
 		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(trust_local) down --remove-orphans
 
-# Uses --pull always to ensure the latest FL images and omop-db image are used
+# Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
+# when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
 # ensure omop and orthanc data are up to date before bringing up trust 2
 up-trust-2: update-omop-data update-orthanc-data
 	@echo "🚢 Starting Trust 2 services..."

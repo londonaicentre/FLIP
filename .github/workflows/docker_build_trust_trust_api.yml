@@ -16,8 +16,9 @@ on:
   workflow_dispatch:
   # Publish only after the trust-api test suite ("Trust - Trust API CI") completes
   # on main/develop; the job-level `if` below gates on its success. The test
-  # workflow is path-filtered to trust/trust-api/**, so the build only fires when
-  # trust-api actually changed.
+  # workflow is path-filtered, but to more than trust/trust-api/** (it also runs
+  # on trust/data-access-api/**, trust/observability/**, etc.), so this build can
+  # republish the trust-api image even when only those sibling paths changed.
   workflow_run:
     workflows: ["Trust - Trust API CI"]
     types: [completed]
@@ -51,8 +52,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          repository: ${{ github.event.workflow_run.head_repository.full_name }}
-          ref: ${{ github.event.workflow_run.head_sha }}
+          # workflow_run.* is empty on manual workflow_dispatch runs, so fall
+          # back to the dispatched ref so manual builds check out correctly.
+          repository: ${{ github.event.workflow_run.head_repository.full_name || github.repository }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Determine tags
         id: tags

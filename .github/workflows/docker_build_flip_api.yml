@@ -52,8 +52,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          repository: ${{ github.event.workflow_run.head_repository.full_name }}
-          ref: ${{ github.event.workflow_run.head_sha }}
+          # workflow_run.* is empty on manual workflow_dispatch runs, so fall
+          # back to the dispatched ref so manual builds check out correctly.
+          repository: ${{ github.event.workflow_run.head_repository.full_name || github.repository }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Determine tags
         id: tags
