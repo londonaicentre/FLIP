@@ -133,6 +133,85 @@ up-trust-ec2: create-networks
 central-hub: create-networks-centralhub
 	$(MAKE) -C flip-api up
 
+# On-prem operator flow — start a trust on the local host pointing at a
+# remote hub (typically the prod CloudFront one). Bare stack-up (no dev
+# S3 fixture sync — operator brings their own OMOP / Orthanc data).
+#
+# First-run behaviour: if the kit file at trust/.env.<KIT> still has the
+# <run-make-register-trusts> placeholders the .example template carries,
+# this target prints the operator's public IP + the steps to onboard with
+# the FLIP admin (open the NLB ingress, UI Add-Trust, paste kit
+# credentials) and exits without trying to bring up trust-api with empty
+# credentials (which would crash on pydantic validation). Re-run after
+# the kit file is filled in for a normal stack-up.
+up-onprem-trust:
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	@[ -f trust/.env.$(KIT) ] || (echo "❌ Kit file trust/.env.$(KIT) not found."; \
+		echo "   Copy the on-prem template first:"; \
+		echo "     cp trust/.env.Trust_2.production.example trust/.env.$(KIT)"; \
+		echo "   Then edit it to set your Trust-local credentials + host paths."; \
+		exit 1)
+	@if grep -q '<run-make-register-trusts>' trust/.env.$(KIT); then \
+		$(MAKE) print-onprem-onboarding-info KIT=$(KIT); \
+		exit 0; \
+	fi
+	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-stack KIT=$(KIT) PROD=$(or $(PROD),true)
+
+# Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
+# so an operator doesn't have to remember the -C trust path or PROD value.
+down-onprem-trust:
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	$(MAKE) -C trust down-trust KIT=$(KIT) PROD=$(or $(PROD),true)
+
+# Prints the steps an on-prem operator + FLIP admin need to take to
+# onboard this trust on the remote hub. Invoked automatically by
+# up-onprem-trust when the kit file is unfilled; can also be run
+# standalone (e.g. `make print-onprem-onboarding-info KIT=Trust_2`).
+print-onprem-onboarding-info:
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required"; exit 1)
+	@OPERATOR_IP="$$(curl -sf --max-time 5 https://api.ipify.org || echo '<could not detect — set it manually>')"; \
+	HUB_URL="$$(sed -n 's/^CENTRAL_HUB_API_URL=//p' trust/.env.$(KIT) 2>/dev/null | head -1)"; \
+	HUB_URL="$${HUB_URL%/api}"; \
+	echo ""; \
+	echo "════════════════════════════════════════════════════════════════════════"; \
+	echo "  On-prem trust onboarding — kit trust/.env.$(KIT) not yet credentialed"; \
+	echo "════════════════════════════════════════════════════════════════════════"; \
+	echo ""; \
+	echo "  Your public IP (this host):  $$OPERATOR_IP"; \
+	echo ""; \
+	echo "  1. Send your public IP to the FLIP admin and ask them to run"; \
+	echo "     (from deploy/providers/AWS, with their prod AWS creds):"; \
+	echo ""; \
+	echo "       AWS_PROFILE=prod make allow-local-trust-nlb LOCAL_TRUST_IP=$$OPERATOR_IP PROD=true"; \
+	echo ""; \
+	echo "     This opens the prod FL-server NLB to your fl-client traffic."; \
+	echo ""; \
+	echo "  2. Open the prod UI in your browser:"; \
+	echo ""; \
+	echo "       $${HUB_URL:-<set CENTRAL_HUB_API_URL in your kit file first>}"; \
+	echo ""; \
+	echo "  3. Log in, navigate to Connection Status, click Add Trust:"; \
+	echo "       - Trust name: $(KIT)   (or whatever your hub admin agreed)"; \
+	echo "       - Short code: e.g. your hospital code"; \
+	echo "       - Region: e.g. London"; \
+	echo "     Submit. The modal will show 5 KEY=VALUE lines, ONCE."; \
+	echo ""; \
+	echo "  4. Copy each line from the modal and paste into the"; \
+	echo "     Kit credentials block at the bottom of trust/.env.$(KIT),"; \
+	echo "     replacing the <run-make-register-trusts> placeholders:"; \
+	echo "       TRUST_API_KEY=…"; \
+	echo "       TRUST_INTERNAL_SERVICE_KEY=…"; \
+	echo "       FL_KIT_SLOT=…"; \
+	echo "       FL_KIT_SLOT_NUMBER=…"; \
+	echo "       EXPECTED_TRUST_ID=…"; \
+	echo ""; \
+	echo "  5. Re-run this command to bring the stack up:"; \
+	echo ""; \
+	echo "       make up-onprem-trust KIT=$(KIT) PROD=$(or $(PROD),true)"; \
+	echo ""; \
+	echo "════════════════════════════════════════════════════════════════════════"; \
+	echo ""
+
 # Stop all containers
 down:
 	@echo "🛑 Stopping all services..."

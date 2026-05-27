@@ -10,42 +10,49 @@
 # limitations under the License.
 #
 
-"""Soft-delete a single trust on the hub (deploy-time CLI).
+"""Hard-delete a single trust on the hub (deploy-time CLI).
 
-Designed for the "I want to re-register this trust via the UI Add-Trust
-flow" case — frees the trust's name and its FL kit slot without cascading
-through the trust's history (cohort queries, projects, trust_task rows,
-the 6+ tables that hold trust.id FKs). Hard-deleting on a prod hub where
-the trust has been operational would either need cascade-delete configured
-on every FK or a fragile per-table cleanup pass; soft-delete via
-``disabled_at`` keeps the historical data intact while still freeing the
-slot for re-registration.
+Removes the trust row entirely so the slot can be UI-re-registered cleanly
+(name free, FL kit slot free, no archived row left behind). Handles the
+trust.id FK landscape explicitly — the schema has nine tables that reference
+trust.id and none of them declare ON DELETE CASCADE, so a naive
+``session.delete(trust)`` would fail with a foreign-key violation. This
+script clears each dependent table in the right order before deleting the
+trust row.
 
-Mechanics:
+Dependent tables (from flip_api.db.models.main_models):
 
-1. Stamp ``trust.disabled_at = now()``
-2. Rename ``trust.name = <original>_archived_<unix_ts>`` so the original
-   name is free for ``register_trust``'s existence check (which uses an
-   exact name match, no disabled_at filter).
-3. Null out ``fl_kit_slot.assigned_to_trust_id`` + ``assigned_at`` for
-   whichever slot the trust held, so the next ``POST /admin/trusts`` can
-   claim it.
+| Table                    | FK field                  | Strategy        |
+|--------------------------|---------------------------|-----------------|
+| fl_kit_slot              | assigned_to_trust_id      | NULL the FK     |
+| fl_job_trust             | trust_id (PK part)        | DELETE rows     |
+| fl_metrics               | trust (NOT NULL)          | DELETE rows     |
+| fl_logs                  | trust (nullable)          | DELETE rows     |
+| model_trust_intersect    | trust_id (nullable)       | DELETE rows     |
+| project_trust_intersect  | trust_id (nullable)       | DELETE rows     |
+| query_result             | trust_id (nullable)       | DELETE rows     |
+| trust_task               | trust_id (NOT NULL)       | DELETE rows     |
+| xnat_project_status      | trust_id (nullable)       | DELETE rows     |
+
+For the nullable FKs we could either NULL or DELETE — DELETE makes the
+intent clearer (a metric/log/result tied to a now-gone trust serves no
+purpose and would orphan stats in the UI). The fl_kit_slot row is the
+exception: NULL'ing reclaims the slot for future registrations, which is
+the whole point of the delete.
 
 Contract:
 
 - **stdout** — a single JSON object:
 
-  - ``status: "disabled"`` — soft-delete succeeded. Includes ``trust_id``,
-    ``original_name``, ``archived_name``, ``freed_fl_kit_slot``.
+  - ``status: "deleted"`` — hard-delete succeeded. Includes ``trust_id``,
+    ``name``, ``freed_fl_kit_slot``, and a ``dependent_rows_deleted`` dict
+    summarising the cascade.
   - ``status: "not_found"`` — no trust with that name; nothing to do.
     Includes ``name``.
-  - ``status: "already_disabled"`` — trust was already soft-deleted by a
-    prior run. Includes ``trust_id``, ``name``, ``disabled_at``.
 
 - **stderr** — human-readable logging.
-- Exit code 0 on any of the three statuses (all are non-error outcomes —
-  the caller can decide what to do based on the JSON status). Non-zero
-  only on argument errors or unexpected exceptions.
+- Exit code 0 on either status; non-zero only on argument errors or
+  unexpected exceptions (e.g. an FK we haven't accounted for).
 
 Invoked by ``deploy/providers/AWS/scripts/delete-trust.sh`` as a one-off
 ECS task (mirrors the ``register-trusts.sh`` pattern). For local dev:
@@ -54,25 +61,50 @@ ECS task (mirrors the ``register-trusts.sh`` pattern). For local dev:
 
 import argparse
 import json
-from datetime import datetime, timezone
 from typing import Any
 
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 
 from flip_api.db.database import engine
-from flip_api.db.models.main_models import FLKitSlot, Trust
+from flip_api.db.models.main_models import (
+    FLJobTrust,
+    FLKitSlot,
+    FLLogs,
+    FLMetrics,
+    ModelTrustIntersect,
+    ProjectTrustIntersect,
+    QueryResult,
+    Trust,
+    TrustTask,
+    XNATProjectStatus,
+)
 from flip_api.utils.logger import logger
+
+# (model class, FK field name) for each table that references trust.id.
+# fl_kit_slot is handled separately — we NULL the FK rather than delete.
+_DEPENDENT_TABLES: tuple[tuple[type, str], ...] = (
+    (FLJobTrust, "trust_id"),
+    (FLMetrics, "trust"),
+    (FLLogs, "trust"),
+    (ModelTrustIntersect, "trust_id"),
+    (ProjectTrustIntersect, "trust_id"),
+    (QueryResult, "trust_id"),
+    (TrustTask, "trust_id"),
+    (XNATProjectStatus, "trust_id"),
+)
 
 
 def delete_one_trust(name: str, session: Session) -> dict[str, Any]:
-    """Soft-delete a trust by name.
+    """Hard-delete a trust by name. Cascades through dependent tables.
 
     Args:
         name (str): Trust display name (matches ``trust.name`` exactly).
         session (Session): SQLModel session.
 
     Returns:
-        dict[str, Any]: One of three shapes — see module docstring.
+        dict[str, Any]: ``{"status": "deleted", ...}`` on success or
+        ``{"status": "not_found", "name": name}`` when there's nothing
+        to delete.
     """
     name = name.strip()
     trust = session.exec(select(Trust).where(Trust.name == name)).first()
@@ -80,62 +112,60 @@ def delete_one_trust(name: str, session: Session) -> dict[str, Any]:
         logger.info("Trust %r not found — nothing to delete.", name)
         return {"status": "not_found", "name": name}
 
-    if trust.disabled_at is not None:
-        logger.info(
-            "Trust %r (id=%s) already disabled at %s — no-op.",
-            trust.name,
-            trust.id,
-            trust.disabled_at.isoformat(),
-        )
-        return {
-            "status": "already_disabled",
-            "trust_id": str(trust.id),
-            "name": trust.name,
-            "disabled_at": trust.disabled_at.isoformat(),
-        }
+    trust_id = trust.id
+    trust_name = trust.name
 
-    # Free the FL kit slot so the next registration can claim it.
-    slot = session.exec(
-        select(FLKitSlot).where(FLKitSlot.assigned_to_trust_id == trust.id)
-    ).first()
+    # NULL the FL kit slot first so the row can be reclaimed by a future
+    # registration. Done before the dependent-rows pass so a partial run
+    # doesn't leave the slot stuck assigned to a half-deleted trust.
     freed_slot: str | None = None
+    slot = session.exec(
+        select(FLKitSlot).where(FLKitSlot.assigned_to_trust_id == trust_id)
+    ).first()
     if slot is not None:
         slot.assigned_to_trust_id = None
         slot.assigned_at = None
         session.add(slot)
         freed_slot = slot.slot_name
 
-    # Stamp + rename so the original name is free for re-registration.
-    # register_trust.py's existence check uses an exact-name match without a
-    # disabled_at filter; without the rename a re-registration would treat
-    # the disabled row as the existing trust and refuse to mint a new kit.
-    now = datetime.now(timezone.utc)
-    archived_name = f"{trust.name}_archived_{int(now.timestamp())}"
-    original_name = trust.name
-    trust.disabled_at = now
-    trust.name = archived_name
-    session.add(trust)
+    # Delete dependent rows table-by-table. SQLAlchemy's bulk `delete()`
+    # is one statement per table — faster than a row-by-row session.delete()
+    # and avoids loading the rows into memory. Routed through
+    # session.execute() (not SQLModel's exec(), which only accepts SELECTs).
+    deleted_counts: dict[str, int] = {}
+    for model, fk_field in _DEPENDENT_TABLES:
+        result = session.execute(
+            delete(model).where(getattr(model, fk_field) == trust_id)
+        )
+        # __tablename__ is set on every SQLModel table class above; cast
+        # via getattr so mypy doesn't trip over the loosely-typed `type`
+        # element in _DEPENDENT_TABLES. rowcount lives on CursorResult,
+        # which session.execute returns for DML.
+        table_name: str = getattr(model, "__tablename__")
+        deleted_counts[table_name] = result.rowcount  # type: ignore[attr-defined]
+
+    session.delete(trust)
     session.commit()
 
     logger.info(
-        "Soft-deleted trust %r (id=%s) — archived as %r, freed FL kit slot %r.",
-        original_name,
-        trust.id,
-        archived_name,
+        "Hard-deleted trust %r (id=%s) — freed FL kit slot %r, dependent rows: %s.",
+        trust_name,
+        trust_id,
         freed_slot,
+        deleted_counts,
     )
     return {
-        "status": "disabled",
-        "trust_id": str(trust.id),
-        "original_name": original_name,
-        "archived_name": archived_name,
+        "status": "deleted",
+        "trust_id": str(trust_id),
+        "name": trust_name,
         "freed_fl_kit_slot": freed_slot,
+        "dependent_rows_deleted": deleted_counts,
     }
 
 
 def main() -> None:
-    """CLI entry point: soft-delete one trust, emit its status JSON to stdout."""
-    parser = argparse.ArgumentParser(description="Soft-delete one trust on the hub.")
+    """CLI entry point: hard-delete one trust, emit its status JSON to stdout."""
+    parser = argparse.ArgumentParser(description="Hard-delete one trust on the hub.")
     parser.add_argument("--name", required=True, help="Trust name (exact match).")
     args = parser.parse_args()
 
