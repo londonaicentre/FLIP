@@ -59,8 +59,16 @@ ORTHANC_CMD=make -C ./orthanc
 # --project-directory . keeps relative paths inside the compose files (./trust-api,
 # ./observability/, ./omop-db/volumes/, …) resolving from trust/ even though the compose
 # files now live in trust/deploy/. Avoids having to rewrite every ./X to ../X.
-DOCKER_COMPOSE_CMD=docker compose --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
-DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.debug.override.yml
+# --env-file $(KIT_FILE) hands compose the kit file so ${POLL_INTERVAL_SECONDS},
+# ${PACS_ID}, ${OMOP_POSTGRES_*}, etc. (all the kit's Trust-local creds + tunables
+# that aren't in TRUST_VARS) resolve at YAML-substitution time. Without it
+# compose silently uses empty strings → trust-api/imaging-api boot fails with
+# pydantic int-parse errors on POLL_INTERVAL_SECONDS / PACS_ID.
+# `-f /dev/null` keeps the flag harmless when KIT is unset (build/test targets);
+# compose tolerates a missing/empty file passed via --env-file.
+__ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
+DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
+DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.debug.override.yml
 
 # NOTE DOCKER_FL_REGISTRY is set to empty when we use local FL images during development (e.g. flare-fl-client:dev).
 # In that case, '--pull always' will error because docker won't be able to find the manifest for the dev image online,
@@ -82,9 +90,13 @@ endif
 # kit file itself is `-include`d at the top of this Makefile so FL_BACKEND
 # (hub-shared) lands before fl_backend.mk consumes it.
 #
-# The defaults in TRUST_VARS are the Trust_1 port allocation: a single-trust
-# host (EC2 / on-prem) needs no port entries in its kit file, while a second
-# dev stack overrides them via its kit file so two trusts coexist on one host.
+# TRUST_VARS now only carries values that aren't in the kit file: ones
+# derived from $(KIT) at make-time. Every kit-file key (host-local ports
+# + bind dirs, trust-local credentials, hub-shared block, kit credentials)
+# now flows into docker compose via the --env-file flag baked into
+# DOCKER_COMPOSE_CMD above. The kit file is authoritative — operators
+# customise paths/ports there, not via make-side overrides — so the
+# previous PROD-keyed fallbacks and per-key passthroughs are gone.
 
 # Numeric suffix of the kit (Trust_1 -> 1) — drives the per-trust overlay
 # network and compose project name, preserving the deploy_trust-network-N scheme.
@@ -96,27 +108,9 @@ TRUST_PROJECT := trust$(TRUST_NUM)
 TRUST_OVERRIDE := $(if $(filter Trust_1,$(KIT)),-f deploy/compose_trust-1_override.yml,)
 
 TRUST_VARS = \
-	BASE_IMAGES_DOWNLOAD_DIR=$(or $(BASE_IMAGES_DOWNLOAD_DIR),$(if $(filter true stag,$(PROD)),/opt/flip/data/trust-$(TRUST_NUM),./data/$(KIT))) \
-	OMOP_DB_PORT=$(or $(OMOP_DB_PORT),5434) \
-	PACS_UI_PORT=$(or $(PACS_UI_PORT),8042) \
-	ORTHANC_STORAGE_DIR=$(or $(ORTHANC_STORAGE_DIR),$(if $(filter true stag,$(PROD)),/opt/flip/orthanc/orthanc-storage-trust1,./orthanc/orthanc-storage-trust1)) \
-	ORTHANC_USERNAME=${ORTHANC_USERNAME} \
-	ORTHANC_PASSWORD=${ORTHANC_PASSWORD} \
-	XNAT_PORT=$(or $(XNAT_PORT),8104) \
-	DATA_ACCESS_API_PORT=${DATA_ACCESS_API_PORT} \
-	TRUST_DEBUG_PORT=$(or $(TRUST_DEBUG_PORT),5682) \
-	IMAGING_DEBUG_PORT=$(or $(IMAGING_DEBUG_PORT),5681) \
-	DATA_ACCESS_DEBUG_PORT=$(or $(DATA_ACCESS_DEBUG_PORT),5680) \
-	GRAFANA_PORT=$(or $(GRAFANA_PORT),3000) \
-	LOKI_PORT=$(or $(LOKI_PORT),3100) \
 	TRUST_NETWORK_NAME=deploy_trust-network-$(TRUST_NUM) \
 	TRUST_NUMBER=$(TRUST_NUM) \
-	TRUST_API_KEY=$(TRUST_API_KEY) \
-	TRUST_INTERNAL_SERVICE_KEY=$(TRUST_INTERNAL_SERVICE_KEY) \
-	FL_KIT_SLOT=$(or $(FL_KIT_SLOT),$(KIT)) \
-	FL_KIT_SLOT_NUMBER=$(or $(FL_KIT_SLOT_NUMBER),$(TRUST_NUM)) \
-	TRUST_NAME=$(or $(FL_KIT_SLOT),$(KIT)) \
-	EXPECTED_TRUST_ID=$(EXPECTED_TRUST_ID)
+	TRUST_NAME=$(or $(FL_KIT_SLOT),$(KIT))
 
 # Host ports and bind paths default to the local-trust allocation in
 # LOCAL_TRUST_VARS below, but — like TRUST_VARS — each can be overridden from

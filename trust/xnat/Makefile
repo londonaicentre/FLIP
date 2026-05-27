@@ -53,6 +53,17 @@ export XNAT_TAG
 # the existing xnat<N> / deploy_trust-network-<N> scheme is preserved.
 KIT_FILE := ../.env.$(KIT)
 -include $(KIT_FILE)
+# Kit-file values must reach the shell env, not just Make vars. docker stack
+# deploy (unlike docker compose) has no --env-file flag; it substitutes
+# ${XNAT_ADMIN_USER}, ${PACS_DICOM_PORT}, ${DOCKER_REGISTRY}, etc. in the
+# compose YAML from the calling shell env only. Without this export, the
+# stack came up with empty admin creds and configure-xnat.sh would 401/403
+# on every auth call, leaving "Site has not yet been configured" forever.
+# Pattern mirrors line 28 for trust/xnat/.env; Make silently ignores the
+# comment-line "exports" that sed leaks through.
+ifneq ("$(wildcard $(KIT_FILE))","")
+export $(shell sed 's/=.*//' $(KIT_FILE))
+endif
 TRUST_NUM := $(subst Trust_,,$(KIT))
 XNAT_STACK := xnat$(TRUST_NUM)
 XNAT_NETWORK := deploy_trust-network-$(TRUST_NUM)
