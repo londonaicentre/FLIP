@@ -344,7 +344,10 @@ trust/.env.Trust_*
 !trust/.env.Trust_*.example
 trust/.env.trust_*
 
-
+# NVFLARE participant-kit trees synced from the hub's S3 bucket
+# (s3://<aicentre-bucket>/fl-flare-participant-kits/<date>/net-1/services/<slot>/).
+# Contains client.key / client.crt — never commit.
+trust/fl_participant_kits/
 
 trust/terraform.tfstate
 
