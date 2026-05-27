@@ -12,8 +12,8 @@
 
 .PHONY: build dev prod clean stop up down up-trust down-trust restart-trust up-trust-ec2 down-trust-ec2 \
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
-	up-local-trust down-local-trust create-networks create-networks-local-trust \
-	remove-networks recreate-networks tests update-omop-data update-orthanc-data integration_test
+	create-networks remove-networks recreate-networks tests \
+	update-omop-data update-orthanc-data integration_test
 # if tag PROD=true is passed, set PROD=true
 ifeq ($(PROD),true)
 __DCKR_SUFFIX=production
@@ -35,8 +35,6 @@ endif
 # vars resolve against the kit's value, not fl_backend.mk's fallback default.
 KIT_FILE := .env.$(KIT)
 -include $(KIT_FILE)
-LOCAL_TRUST_KIT_FILE := .env.$(LOCAL_TRUST_NAME)
--include $(LOCAL_TRUST_KIT_FILE)
 
 include ../deploy/fl_backend.mk
 
@@ -51,18 +49,6 @@ ifeq ($(patsubst /%,,$(FL_PROVISIONED_DIR)),$(FL_PROVISIONED_DIR))
 override FL_PROVISIONED_DIR := $(abspath $(MAKEFILE_DIR)/../$(FL_PROVISIONED_DIR))
 endif
 
-# Local-trust names derived from LOCAL_TRUST_NAME the same way TRUST_NUM /
-# TRUST_PROJECT / TRUST_NETWORK_NAME are derived from $(KIT) below — kit
-# name is the single source of truth for stack identity. In the FLIP prod
-# environment the on-prem slot is Trust_2 (BDMS), so LOCAL_TRUST_NAME=Trust_2
-# yields project trust2 and network deploy_trust-network-2. The kit template
-# for this slot lives at trust/.env.Trust_2.production.example (the
-# dev-flavor sibling .env.Trust_2.example is used by the regular up-trust
-# KIT=Trust_2 path).
-LOCAL_TRUST_NUM := $(subst Trust_,,$(LOCAL_TRUST_NAME))
-LOCAL_TRUST_PROJECT := trust$(LOCAL_TRUST_NUM)
-LOCAL_TRUST_NETWORK_NAME := deploy_trust-network-$(LOCAL_TRUST_NUM)
-
 OMOP_DB_CMD=make -C ./omop-db
 ORTHANC_CMD=make -C ./orthanc
 # --project-directory . keeps relative paths inside the compose files (./trust-api,
@@ -70,18 +56,12 @@ ORTHANC_CMD=make -C ./orthanc
 # files now live in trust/deploy/. Avoids having to rewrite every ./X to ../X.
 # --env-file <kit> hands compose the kit file so ${POLL_INTERVAL_SECONDS},
 # ${PACS_ID}, ${OMOP_POSTGRES_*}, etc. (all the kit's Trust-local creds +
-# tunables that aren't in TRUST_VARS / LOCAL_TRUST_VARS) resolve at
-# YAML-substitution time. Without it compose silently uses empty strings →
-# trust-api/imaging-api boot fails with pydantic int-parse errors on
-# POLL_INTERVAL_SECONDS / PACS_ID.
-# We pick whichever kit file exists for the calling target: KIT_FILE for the
-# KIT-named flow (up-trust / down-trust / build / debug), LOCAL_TRUST_KIT_FILE
-# for the on-prem flow (up-local-trust / down-local-trust). KIT-named wins if
-# both somehow exist — the explicit-trust path is the more-specific selector.
-# Build/test targets that set neither leave the flag empty (compose tolerates
-# absence of --env-file just fine).
-__KIT_FILE_RESOLVED := $(or $(wildcard $(KIT_FILE)),$(wildcard $(LOCAL_TRUST_KIT_FILE)))
-__ENV_FILE_FLAG := $(if $(__KIT_FILE_RESOLVED),--env-file $(__KIT_FILE_RESOLVED),)
+# tunables that aren't in TRUST_VARS) resolve at YAML-substitution time.
+# Without it compose silently uses empty strings → trust-api/imaging-api
+# boot fails with pydantic int-parse errors on POLL_INTERVAL_SECONDS /
+# PACS_ID. Build/test targets that don't set KIT leave the flag empty
+# (compose tolerates absence of --env-file just fine).
+__ENV_FILE_FLAG := $(if $(wildcard $(KIT_FILE)),--env-file $(KIT_FILE),)
 DOCKER_COMPOSE_CMD=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE)
 DEBUG_OVERRIDE_COMPOSE_COMMAND=docker compose $(__ENV_FILE_FLAG) --project-directory . -f $(COMMON_COMPOSE_FILE) -f $(FL_BACKEND_COMPOSE_FILE) -f deploy/compose_trust.debug.override.yml
 
@@ -100,10 +80,10 @@ endif
 # host-local profile (ports, bind dirs), trust-local credentials, hub-shared
 # block, and kit credentials. `make register-trusts` writes the hub-managed
 # blocks, trust/.env.<KIT>.example is the template the operator copies first.
-# KIT has no default so up-local-trust (which selects its own kit via
-# LOCAL_TRUST_NAME) never double-includes — pass KIT=<name> explicitly. The
-# kit file itself is `-include`d at the top of this Makefile so FL_BACKEND
-# (hub-shared) lands before fl_backend.mk consumes it.
+# KIT has no default so non-KIT targets (build, test) don't spuriously
+# -include a kit file — pass KIT=<name> explicitly. The kit file itself is
+# `-include`d at the top of this Makefile so FL_BACKEND (hub-shared) lands
+# before fl_backend.mk consumes it.
 #
 # TRUST_VARS now only carries values that aren't in the kit file: ones
 # derived from $(KIT) at make-time. Every kit-file key (host-local ports
@@ -127,19 +107,6 @@ TRUST_VARS = \
 	TRUST_NUMBER=$(TRUST_NUM) \
 	TRUST_NAME=$(or $(FL_KIT_SLOT),$(KIT))
 
-# LOCAL_TRUST_VARS mirrors TRUST_VARS in shape — only values derived from
-# $(LOCAL_TRUST_NAME) at make-time that aren't (or can't be) in the kit file.
-# Every kit-file key (host-local ports + bind dirs, trust-local credentials,
-# hub-shared block, kit credentials, named-volume references) reaches docker
-# compose via the --env-file flag baked into DOCKER_COMPOSE_CMD above. The
-# on-prem kit template trust/.env.Trust_2.production.example carries the
-# previously make-side defaults (port allocation, observability named
-# volumes, dedicated `-local` Orthanc/OMOP/XNAT dirs to dodge SQLite-index
-# contention with a co-located dev Trust_1/Trust_2 stack).
-LOCAL_TRUST_VARS = \
-	TRUST_NETWORK_NAME=$(LOCAL_TRUST_NETWORK_NAME) \
-	TRUST_NUMBER=$(LOCAL_TRUST_NUM) \
-	TRUST_NAME=$(or $(FL_KIT_SLOT),$(LOCAL_TRUST_NAME))
 
 # Guard: refuse to bring a trust up if its OMOP DB data dir is empty or missing.
 # Docker would otherwise silently auto-create an empty bind mount on first start,
@@ -240,35 +207,6 @@ down-trust-ec2:
 	@echo "🩻 Stopping XNAT for $(KIT)..."
 	$(MAKE) -C xnat down-xnat KIT=$(KIT) PROD=$(PROD)
 
-# LOCAL_TRUST_NAME identifies the on-prem (local) trust of a production
-# deployment — it selects the kit file trust/.env.$(LOCAL_TRUST_NAME) and the
-# trust-local data dirs. It is defined in deploy/providers/AWS/Makefile and
-# threaded through the root Makefile. The FL participant kit the fl-client
-# mounts is a separate value, FL_KIT_SLOT, carried in the kit file. The
-# local-trust stack uses an isolated port set and the trust-local
-# project/network so it never clashes with a Trust_1/Trust_2 stack sharing the
-# host.
-up-local-trust: create-networks-core create-networks-local-trust
-	## Starts the on-prem (local) trust compose stack with LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME).
-	## Compose project name $(LOCAL_TRUST_PROJECT) (derived from LOCAL_TRUST_NAME)
-	## stays distinct from a co-located trust1 / trust2 stack on the same host.
-	@echo "🚢 Starting local Trust services (LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME))..."
-	@echo "⚙️ Using kit file trust/$(LOCAL_TRUST_KIT_FILE)"
-	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(LOCAL_TRUST_NAME)/db_data))
-	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/local/$(LOCAL_TRUST_NAME))
-	$(LOCAL_TRUST_VARS) DEBUG=$(DEBUG) \
-		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(LOCAL_TRUST_PROJECT) up -d --pull always
-	@echo "🩻 Starting XNAT for the local trust..."
-	$(MAKE) -C xnat up-xnat KIT=$(LOCAL_TRUST_NAME) PROD=$(PROD)
-
-down-local-trust:
-	@echo "🛑 Stopping local Trust services..."
-	$(LOCAL_TRUST_VARS) \
-		$(DOCKER_COMPOSE_CMD) -f deploy/compose_trust.local.yml -p $(LOCAL_TRUST_PROJECT) down --remove-orphans
-	@echo "🩻 Stopping XNAT for the local trust..."
-	$(MAKE) -C xnat down-xnat KIT=$(LOCAL_TRUST_NAME) PROD=$(PROD)
-
 # Dev convenience: bring up both standard trust stacks. Each is a separate
 # sub-make so its `-include trust/.env.<KIT>` loads only that trust's kit.
 up: create-networks
@@ -326,13 +264,6 @@ create-networks-trust-1:
 create-networks-trust-2:
 	@{ docker network inspect deploy_trust-network-2 >/dev/null 2>&1 || docker network create --driver overlay --attachable deploy_trust-network-2; }
 
-# Dedicated network for the local trust stack so it doesn't attach to
-# deploy_trust-network-1 when a Trust_1 stack is also running on the host. Not
-# wired into the top-level `create-networks` target because `make up` doesn't
-# need it; `up-local-trust` requires it explicitly.
-create-networks-local-trust:
-	@{ docker network inspect $(LOCAL_TRUST_NETWORK_NAME) >/dev/null 2>&1 || docker network create --driver overlay --attachable $(LOCAL_TRUST_NETWORK_NAME); }
-
 create-networks: create-networks-core create-networks-trust-1 create-networks-trust-2
 
 remove-networks:
@@ -340,7 +271,6 @@ remove-networks:
 	@docker network rm central-hub-trust-apis-network 2>/dev/null || true
 	@docker network rm deploy_trust-network-1 2>/dev/null || true
 	@docker network rm deploy_trust-network-2 2>/dev/null || true
-	@docker network rm $(LOCAL_TRUST_NETWORK_NAME) 2>/dev/null || true
 	@docker network rm deploy_shared-net-1 2>/dev/null || true
 	@docker network rm deploy_shared-net-2 2>/dev/null || true
 	@echo "✅ Trust networks removed!"

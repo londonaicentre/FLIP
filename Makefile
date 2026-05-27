@@ -12,7 +12,7 @@
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access up-local-trust generate-internal-service-key \
+		check-aws-access generate-internal-service-key \
 		register-trust-1 register-trust-2 register-trusts _wait-for-hub integration_test \
 		sync-trust-kit-1 sync-trust-kit-2 sync-trust-kits
 
@@ -129,17 +129,6 @@ up-trust-ec2: create-networks
 	@echo "🚢 Starting Trust services..."
 	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=Trust_1 PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
-
-# The on-prem trust slot. In the FLIP prod environment this is Trust_2 (BDMS,
-# TRUST_2_HOST=local) — the kit template is trust/.env.Trust_2.production.example.
-# Override per-deployment if the on-prem trust uses a different slot name.
-LOCAL_TRUST_NAME ?= Trust_2
-
-up-local-trust: create-networks
-	docker context use default
-	@echo "🚢 Starting local on-prem Trust services (PROD=$(PROD), TRUST_NAME=$(LOCAL_TRUST_NAME))..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-local-trust PROD=$(PROD) LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME)
-	@echo "✅ Local Trust services started successfully!"
 
 central-hub: create-networks-centralhub
 	$(MAKE) -C flip-api up

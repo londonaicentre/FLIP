@@ -84,7 +84,7 @@ For example:
 | `make restart-no-trust` | Stop and start all services except the trust services related services |
 | `make clean` | Remove all stopped containers, networks, and images |
 | `make ci` | Run the CI pipeline locally using `act` |
-| `make up-local-trust` | Run a local (on-premises) trust (set `PROD=true` or `PROD=stag` for environment) |
+| `make -C trust up-trust KIT=<slot> PROD=<env>` | Run a trust on the local host pointing at a remote hub (kit file `trust/.env.<slot>`; in FLIP prod the on-prem slot is `Trust_2` — template `trust/.env.Trust_2.production.example`) |
 | `make register-trusts` | Register the `TRUST_<n>_*` trusts on the running hub and write per-trust kit files `trust/.env.Trust_*` (run automatically by `make up`) |
 | `make unit_test` | Run unit tests across all services |
 | `make tests` | Run flip-ui unit tests and the full flip-api test suite (lint + mypy + pytest) |
@@ -223,7 +223,7 @@ If you see errors like "fed_client.json does not exist" or "missing startup fold
 For production deployments on AWS, see the [AWS Deployment Guide](deploy/README.md). This covers provisioning
 infrastructure with OpenTofu (Terraform), configuring AWS services, and deploying the platform at scale.
 
-For hybrid on-premises trust deployments, see the [Local Trust Deployment Guide](deploy/providers/local/README.md).
+For hybrid on-premises trust deployments, see the [On-Prem Trust Deployment Guide](deploy/providers/local/README.md).
 
 ## Project Structure
 

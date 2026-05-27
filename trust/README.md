@@ -69,7 +69,7 @@ FL_KIT_SLOT_NUMBER=<from kit>
 EXPECTED_TRUST_ID=<from kit>
 ```
 
-plus that trust's host-local ports and data directories. There is no `TRUST_NAME` — the hub identifies the trust by its API key; the optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup. For the on-prem `up-local-trust` stack the equivalent file is `trust/.env.<LOCAL_TRUST_NAME>` (auto-included via `LOCAL_TRUST_KIT_FILE`).
+plus that trust's host-local ports and data directories. There is no `TRUST_NAME` — the hub identifies the trust by its API key; the optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup. The same schema serves dev trusts (`Trust_1`/`Trust_2` against a local hub), on-prem trusts (any slot name against a prod hub), and laptop-against-prod testing — operator picks the kit name (`trust/.env.<KIT>`) and `make -C trust up-trust KIT=<KIT> PROD=<env>` handles the rest.
 
 ### 3. Start the trust against the hub
 
@@ -116,12 +116,12 @@ slot in the FLIP prod environment, where it represents BDMS; see
    Grafana passwords) — these are your secrets, the hub never sees them.
 5. Start the stack:
    - EC2 trust: `make -C trust up-trust-ec2 KIT=<KIT> PROD=true`
-   - On-prem trust: `make -C trust up-local-trust LOCAL_TRUST_NAME=<KIT> PROD=true`
+   - On-prem trust (or laptop-against-prod): `make -C trust up-trust KIT=<KIT> PROD=true`
 
-   The dev-only target `make -C trust up-trust KIT=<KIT>` has additional
-   prerequisites (`update-omop-data`, `update-orthanc-data`) that require
-   the hub's AWS credentials to download test fixtures from S3 — it is
-   intentionally not suitable for a remote operator.
+   The on-prem path skips the dev-only `update-omop-data` / `update-orthanc-data`
+   steps (which pull test fixtures from S3 and need hub AWS credentials) —
+   real on-prem operators populate `./omop-db/volumes/<KIT>/db_data` and
+   `./orthanc/orthanc-storage-<…>` themselves.
 
 ### Refreshing shared values (when the hub admin rotates an AES key etc.)
 

@@ -102,8 +102,8 @@ itself:
 
 .. code-block:: shell
 
-   cd trust
-   env PROD=<stag|true> make up-local-trust
+   cd ../../..
+   env PROD=<stag|true> make -C trust up-trust KIT=Trust_2   # replace Trust_2 with whichever slot register-trusts wrote
 
 Then verify the trust is polling: ``docker logs -f trust-api`` should show
 successful task polls against the Central Hub.
@@ -119,7 +119,7 @@ is no SSH path — each side runs its own step locally.
 
 **1. Register the trust (FLIP admin).** Register the trust on the hub — via the
 Add-Trust modal in the UI or ``make register-trusts``. This mints the trust's
-kit file ``trust/.env.<LOCAL_TRUST_NAME>`` — by default ``trust/.env.Trust_2``
+kit file ``trust/.env.<KIT>`` — by default ``trust/.env.Trust_2``
 in the FLIP prod environment, where Trust_2 is the on-prem (BDMS) slot
 (``TRUST_API_KEY``,
 ``TRUST_INTERNAL_SERVICE_KEY``, ``FL_KIT_SLOT``, …).
@@ -153,8 +153,8 @@ It runs entirely on the trust host.
 
 .. code-block:: shell
 
-   cd trust
-   env PROD=<stag|true> make up-local-trust
+   cd ../../..
+   env PROD=<stag|true> make -C trust up-trust KIT=Trust_2   # replace Trust_2 with whichever slot register-trusts wrote
 
 **5. Open the AWS firewall (FLIP admin).** Once the operator reports their
 host's public IP, add it to ``LOCAL_TRUST_PUBLIC_IPS`` (an HCL list) in the env
@@ -213,7 +213,7 @@ connect):
    its ``api_key_hash`` — via ``make register-trusts`` or the Add-Trust admin
    flow (``POST /admin/trusts``).
 2. ``register_trust`` mints the trust's API key and internal service key into
-   the kit file (``trust/.env.<LOCAL_TRUST_NAME>`` for the on-prem trust —
+   the kit file (``trust/.env.<KIT>`` for the on-prem trust —
    typically ``trust/.env.Trust_2`` in the FLIP prod environment) as part of
    registration.
 3. No hub redeploy is needed — the trust registry is the live database, read

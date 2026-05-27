@@ -457,10 +457,10 @@ cd deploy/providers/AWS
 make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 ```
 
-This wrapper target runs the full AWS deployment, provisions the local trust, and redeploys the Central Hub so the new secret values are loaded. `PROD` is inherited from the environment — omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP via `curl ipify.org`.
+This wrapper target runs the full AWS deployment, provisions the on-prem trust host, and redeploys the Central Hub so the new secret values are loaded. `PROD` is inherited from the environment — omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP via `curl ipify.org`.
 You still need to:
 
-1. Start the trust stack on the host: `cd trust && env PROD=<stag|true> make up-local-trust`
+1. Start the trust stack on the host: `cd ../../.. && env PROD=<stag|true> make -C trust up-trust KIT=Trust_2` (replace `Trust_2` with whichever slot `register-trusts` wrote)
 2. Verify the trust can poll the hub (check trust-api logs for successful task polling)
 
 Or onboard the trust step by step — the trust operator provisions their own host,
@@ -470,8 +470,8 @@ and the FLIP admin opens the firewall once the operator reports their public IP:
 # On the trust host (trust operator) — provision, then start the stack
 cd deploy/providers/AWS
 set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')   # fish; bash differs
-make provision-local-trust
-cd ../../../trust && env PROD=<stag|true> make up-local-trust
+make provision-local-trust KIT=Trust_2
+cd ../../.. && env PROD=<stag|true> make -C trust up-trust KIT=Trust_2
 
 # On the FLIP side (admin), once the operator reports their host's public IP:
 #   add it to LOCAL_TRUST_PUBLIC_IPS (an HCL list) in .env.stag / .env.production, e.g.

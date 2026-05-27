@@ -48,7 +48,7 @@ Each local Trust host runs:
 | data-access-api | 8000 | HTTP (internal) |
 | fl-client | — | TCP (connects outbound to FL server via NLB) |
 
-The `up-local-trust` stack does **not** publish these container ports to the host (see `trust/deploy/compose_trust.local.yml`) — services communicate over the internal Docker network only, which lets the local-trust stack coexist on a developer laptop with `make up` (whose dev `trust1` instance binds host ports `8001`/`8010`/`8020` via `trust/deploy/compose_trust-1_override.yml`). When the same images run on a cloud Trust EC2 (production compose), the container ports are mapped to host ports `IMAGING_API_PORT` (8001), `DATA_ACCESS_API_PORT` (8010), and `TRUST_API_PORT` (8020) — see `.env.development.example`.
+The on-prem trust kit (e.g. `trust/.env.Trust_2.production.example`) defaults `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the dev Trust_1 allocation (`8005` / `8014` / `8024` vs Trust_1's `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose dev `trust1` instance binds the original ports via `trust/deploy/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
 
 ## Prerequisites
 
@@ -79,13 +79,16 @@ cd deploy/providers/AWS
 make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 ```
 
-This wrapper target runs the full AWS + local trust provisioning pipeline and registers the trust on the running hub (`make register-trusts`) — inserting the `trust` row with its `api_key_hash`, claiming an FL kit slot, and writing the per-trust kit file. No hub redeploy is needed. `PROD` is inherited from the environment and supports both staging (`stag`) and production (`true`). Omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP.
-You still need to start the local trust stack on the trust host:
+This wrapper target runs the full AWS + on-prem trust provisioning pipeline and registers the trust on the running hub (`make register-trusts`) — inserting the `trust` row with its `api_key_hash`, claiming an FL kit slot, and writing the per-trust kit file. No hub redeploy is needed. `PROD` is inherited from the environment and supports both staging (`stag`) and production (`true`). Omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP.
+
+You still need to start the on-prem trust stack on the trust host:
 
 ```bash
-cd trust
-env PROD=<stag|true> make up-local-trust
+cd ../../..
+env PROD=<stag|true> make -C trust up-trust KIT=Trust_2
 ```
+
+Replace `Trust_2` with whichever slot name your `register-trusts` wrote into `trust/.env.<slot>` (defaults to `Trust_2` for the FLIP-prod BDMS on-prem flow).
 
 ### Provision the trust host
 
@@ -112,8 +115,8 @@ Opening the AWS FL-server NLB to the trust's public IP is a **separate** step �
 1. **Start the trust stack** on the trust host:
 
    ```bash
-   cd trust
-   env PROD=stag make up-local-trust
+   cd ../../..
+   env PROD=stag make -C trust up-trust KIT=Trust_2   # or whichever slot register-trusts wrote
    ```
 
 2. **Verify** the trust can poll the hub (check trust-api logs for successful task polling).

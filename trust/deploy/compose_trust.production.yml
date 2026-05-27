@@ -116,7 +116,7 @@ services:
       - "${LOKI_PORT}:3100"
     volumes:
       - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
-      - ${LOKI_DATA_VOLUME:-/opt/flip/volumes/loki}:/loki
+      - ${LOKI_DATA_VOLUME:-trust-local-loki-data}:/loki
 
   alloy:
     image: grafana/alloy:v1.9.0
@@ -139,7 +139,7 @@ services:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
     volumes:
-      - ${GRAFANA_DATA_VOLUME:-/opt/flip/volumes/grafana}:/var/lib/grafana
+      - ${GRAFANA_DATA_VOLUME:-trust-local-grafana-data}:/var/lib/grafana
       - ${OBSERVABILITY_CONFIG_DIR:-/opt/flip/config/observability}/grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       - loki
@@ -148,3 +148,16 @@ networks:
   default:
     external: true
     name: ${TRUST_NETWORK_NAME}
+
+# Docker-managed named volumes for the observability stack. Defaults baked
+# into the loki / grafana mounts above point at these names so a fresh
+# trust stack on a laptop Just Works without any host-side bootstrap.
+# Operators on an Ansible-provisioned EC2 / on-prem host override
+# LOKI_DATA_VOLUME / GRAFANA_DATA_VOLUME in their kit file to bind paths
+# under /opt/flip/volumes/... (which the playbook creates with the right
+# ownership). Both shapes — bind path or named volume — slot into the same
+# compose mount syntax; docker compose distinguishes them by whether the
+# value matches a declared `volumes:` entry below.
+volumes:
+  trust-local-loki-data:
+  trust-local-grafana-data:

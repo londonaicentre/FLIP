@@ -397,17 +397,16 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 		--paths "/*" >/dev/null
 	@echo "✅ deploy-ui complete."
 
-# Identity of the on-prem (local) trust — selects its kit file
-# trust/.env.<LOCAL_TRUST_NAME> and its trust-local data dirs. Distinct from
-# the FL participant kit slot below. In the FLIP prod environment this is
-# Trust_2 (BDMS, TRUST_2_HOST=local). Template:
+# Identity of the on-prem trust kit being provisioned — selects its kit
+# file trust/.env.<KIT> and its trust-local data dirs. In the FLIP prod
+# environment this is Trust_2 (BDMS, TRUST_2_HOST=local). Template:
 # trust/.env.Trust_2.production.example.
-LOCAL_TRUST_NAME ?= Trust_2
-# FL participant kit slot the on-prem trust's fl-client mounts — names the
+KIT ?= Trust_2
+# FL participant kit slot the trust's fl-client mounts — names the
 # services/<slot>/ dir in the S3 participant-kit bundle and under /opt/flip.
 # Read from the trust's kit file (the single source of truth: the kit file's
 # FL_KIT_SLOT is also what trust/Makefile mounts), not duplicated here.
-LOCAL_TRUST_FL_KIT_SLOT := $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(LOCAL_TRUST_NAME) 2>/dev/null)
+FL_KIT_SLOT := $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT) 2>/dev/null)
 
 .PHONY: deploy-trust
 deploy-trust: ssh-config update-env ## Deploy trust relationships after central hub is deployed
@@ -475,30 +474,30 @@ provision-local-trust: ## Provision the on-prem (local) trust host: install Dock
 			../../../deploy/providers/local/site_local_trust.yml; \
 		PLAY_RC=$$?; \
 		exit $$PLAY_RC
-	@echo "📦 Downloading the FL participant kit for the local trust from S3..."
+	@echo "📦 Downloading the FL participant kit for the on-prem trust from S3..."
 ifeq ($(FL_BACKEND),nvflare)
-	@[ -n "$(LOCAL_TRUST_FL_KIT_SLOT)" ] || (echo ""; echo "❌  FL_KIT_SLOT not found — is trust/.env.$(LOCAL_TRUST_NAME) present with FL_KIT_SLOT set?"; echo ""; exit 1)
-	@LOCAL_TRUST_KIT_DIR=/tmp/$(LOCAL_TRUST_FL_KIT_SLOT)_kit && \
-	  rm -rf $$LOCAL_TRUST_KIT_DIR && mkdir -p $$LOCAL_TRUST_KIT_DIR && \
+	@[ -n "$(FL_KIT_SLOT)" ] || (echo ""; echo "❌  FL_KIT_SLOT not found — is trust/.env.$(KIT) present with FL_KIT_SLOT set?"; echo ""; exit 1)
+	@TRUST_KIT_DIR=/tmp/$(FL_KIT_SLOT)_kit && \
+	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR && \
 	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
-	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/$(LOCAL_TRUST_FL_KIT_SLOT)/ \
-	    $$LOCAL_TRUST_KIT_DIR && \
+	    s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FL_KIT_DATE)/net-1/services/$(FL_KIT_SLOT)/ \
+	    $$TRUST_KIT_DIR && \
 	  echo "" && \
-	  echo "  # Deploy the $(LOCAL_TRUST_FL_KIT_SLOT) NVFLARE participant kit (staged at $$LOCAL_TRUST_KIT_DIR):" && \
-	  echo "  sudo mkdir -p /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/startup /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/local /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/transfer" && \
-	  echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/startup/ /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/startup/" && \
-	  echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/local/ /opt/flip/services/$(LOCAL_TRUST_FL_KIT_SLOT)/local/" && \
-	  echo "✅ $(LOCAL_TRUST_FL_KIT_SLOT) NVFLARE kit staged"
+	  echo "  # Deploy the $(FL_KIT_SLOT) NVFLARE participant kit (staged at $$TRUST_KIT_DIR):" && \
+	  echo "  sudo mkdir -p /opt/flip/services/$(FL_KIT_SLOT)/startup /opt/flip/services/$(FL_KIT_SLOT)/local /opt/flip/services/$(FL_KIT_SLOT)/transfer" && \
+	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/startup/ /opt/flip/services/$(FL_KIT_SLOT)/startup/" && \
+	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/local/ /opt/flip/services/$(FL_KIT_SLOT)/local/" && \
+	  echo "✅ $(FL_KIT_SLOT) NVFLARE kit staged"
 else
-	@LOCAL_TRUST_KIT_DIR=/tmp/$(LOCAL_TRUST_NAME)_kit && \
-	  rm -rf $$LOCAL_TRUST_KIT_DIR && mkdir -p $$LOCAL_TRUST_KIT_DIR/net-1 && \
+	@TRUST_KIT_DIR=/tmp/$(KIT)_kit && \
+	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR/net-1 && \
 	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
 	    s3://$(AICENTRE_BUCKET_NAME)/fl-flower-participant-kits/$(FL_KIT_DATE)/net-1/ \
-	    $$LOCAL_TRUST_KIT_DIR/net-1/ && \
+	    $$TRUST_KIT_DIR/net-1/ && \
 	  echo "" && \
-	  echo "  # Deploy the Flower participant kit (staged at $$LOCAL_TRUST_KIT_DIR):" && \
+	  echo "  # Deploy the Flower participant kit (staged at $$TRUST_KIT_DIR):" && \
 	  echo "  sudo mkdir -p /opt/flip/services/net-1" && \
-	  echo "  sudo rsync -av --delete $$LOCAL_TRUST_KIT_DIR/net-1/ /opt/flip/services/net-1/" && \
+	  echo "  sudo rsync -av --delete $$TRUST_KIT_DIR/net-1/ /opt/flip/services/net-1/" && \
 	  echo "✅ Flower kit staged"
 endif
 	@echo ""
@@ -506,7 +505,7 @@ endif
 	@echo ""
 	@echo "⚠️  REMAINING MANUAL STEPS:"
 	@echo "   1. Deploy the staged FL kit into /opt/flip (run the commands printed above)."
-	@echo "   2. Start the trust stack: cd ../../.. && env PROD=$(PROD) make up-local-trust LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME)"
+	@echo "   2. Start the trust stack: cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
 	@echo "   3. Report this host's public IP to the FLIP admin — they run:"
 	@echo "      make allow-local-trust-nlb LOCAL_TRUST_IP=<this-host-public-ip>"
 
@@ -616,7 +615,7 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
 
 .PHONY: full-deploy-with-local-trust
-full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem local trust (requires LOCAL_TRUST_IP=<public-ip>)
+full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem trust provisioning (requires LOCAL_TRUST_IP=<public-ip>)
 	## Works against either PROD=true or PROD=stag — PROD is inherited from the environment.
 	## Step order:
 	## 1. login + init + import: auth, Terraform init, import pre-existing persistent resources
@@ -626,9 +625,9 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 5. ssh-config + ansible-init: configure SSH aliases, provision EC2s with Docker + FL kit
 	## 6. deploy-centralhub: bring up the Central Hub
 	## 7. register-trusts: register the TRUST_<n>_* trusts on the hub and distribute kit files
-	## 8. deploy-trust + provision-local-trust + status: bring up cloud + local trust hosts and verify
+	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
 	## NOTE: After this completes you must manually:
-	##   - Start local trust stack: cd ../../.. && env PROD=$(PROD) make up-local-trust LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME)
+	##   - Start the on-prem trust stack: cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)
 	@[ -n "$(LOCAL_TRUST_IP)" ] || (echo ""; echo "❌  ERROR: LOCAL_TRUST_IP is required."; echo "   Usage: make full-deploy-with-local-trust LOCAL_TRUST_IP=<public-ip>"; echo ""; exit 1)
 # The one on-prem trust IP this all-in-one run opens the NLB to — the chain's `apply`
 # step creates the SG rule. For multiple trusts use the async flow instead: set
@@ -637,11 +636,11 @@ full-deploy-with-local-trust: LOCAL_TRUST_PUBLIC_IPS := ["$(LOCAL_TRUST_IP)"]
 full-deploy-with-local-trust: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust provision-local-trust status
 
 .PHONY: full-deploy-hybrid
-full-deploy-hybrid: ## Full hybrid deployment including local trust provisioning + hub redeploy (honours PROD)
+full-deploy-hybrid: ## Full hybrid deployment including on-prem trust provisioning + hub redeploy (honours PROD)
 	## This wraps full-deploy-with-local-trust and then redeploys the Central Hub so the hub
-	## picks up any env/secret changes made while registering the local trust.
+	## picks up any env/secret changes made while registering the on-prem trust.
 	## Works against either PROD=true or PROD=stag — PROD is inherited from the environment.
-	## You still need to start the local trust stack on the trust host.
+	## You still need to start the on-prem trust stack on the trust host.
 	## If LOCAL_TRUST_IP is not provided, it will be auto-detected using curl (operator machine is the trust host).
 	@if [ -z "$(LOCAL_TRUST_IP)" ]; then \
 		echo "🔍 Detecting public IP for LOCAL_TRUST_IP..."; \
@@ -650,9 +649,9 @@ full-deploy-hybrid: ## Full hybrid deployment including local trust provisioning
 	else \
 		LOCAL_TRUST_IP="$(LOCAL_TRUST_IP)"; \
 	fi && \
-	$(MAKE) full-deploy-with-local-trust LOCAL_TRUST_IP=$$LOCAL_TRUST_IP LOCAL_TRUST_NAME="$(LOCAL_TRUST_NAME)" && \
+	$(MAKE) full-deploy-with-local-trust LOCAL_TRUST_IP=$$LOCAL_TRUST_IP KIT="$(KIT)" && \
 	$(MAKE) deploy-centralhub PROD=$(PROD) && \
 	echo "" && \
 	echo "✅ Hybrid deployment complete (PROD=$(PROD))." && \
-	echo "➡️  Final manual step: start the local trust stack on the trust host:" && \
-	echo "   cd ../../.. && env PROD=$(PROD) make up-local-trust LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME)"
+	echo "➡️  Final manual step: start the on-prem trust stack on the trust host:" && \
+	echo "   cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"

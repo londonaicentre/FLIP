@@ -53,13 +53,12 @@ for EC2; encrypted channel for on-prem).
 
 | File | Purpose |
 |------|---------|
-| `Makefile` | Trust stack orchestration (parameterized `up-trust KIT=<name>`, plus local) |
+| `Makefile` | Trust stack orchestration (parameterized `up-trust KIT=<name>`) |
 | `deploy/compose_trust.development.yml` | Dev Docker Compose (builds from source) |
-| `deploy/compose_trust.production.yml` | Prod Docker Compose (GHCR images) |
+| `deploy/compose_trust.production.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
 | `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
-| `deploy/compose_trust.local.yml` | On-prem trust override |
 | `deploy/compose_trust-1_override.yml` | Dev trust-1 host-port bindings |
-| `.env.Trust_1` / `.env.Trust_2` | Per-trust kit file (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID, host-local ports/dirs); gitignored. Templates: `.env.Trust_1.example`, `.env.Trust_2.example` for dev defaults; `.env.Trust_2.production.example` for the prod on-prem flavor (selected by `LOCAL_TRUST_NAME=Trust_2`, the FLIP-prod BDMS slot). The on-prem trust path is decoupled from the kit-file name only by `LOCAL_TRUST_NAME` — same kit-file schema everywhere |
+| `.env.Trust_1` / `.env.Trust_2` / `.env.<slot>` | Per-trust kit file (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID, host-local ports/dirs); gitignored. Templates: `.env.Trust_1.example`, `.env.Trust_2.example` for dev defaults; `.env.Trust_2.production.example` for the prod on-prem flavor (FLIP-prod BDMS slot; copy to `.env.Trust_2` for a dedicated host or `.env.Trust_2_prod` to coexist with a dev Trust_2 on the same laptop). Same kit-file schema everywhere — `make -C trust up-trust KIT=<slot> PROD=<env>` is the only dispatch |
 
 ## Commands (from `trust/`)
 
@@ -70,7 +69,7 @@ make up-trust KIT=Trust_1      # Start one trust stack (also brings up its XNAT)
 make down-trust KIT=Trust_1    # Stop one trust stack
 make restart-trust KIT=Trust_1 # Restart one trust stack
 make up-trust-ec2 KIT=Trust_1  # Start one trust stack on a cloud EC2 host
-make up-local-trust            # Start on-prem local trust
+make up-trust KIT=Trust_2 PROD=true  # Start a trust pointing at a remote hub (e.g. on-prem)
 make debug                     # Trust-1 in debug mode
 make debug-trust-api           # Debug trust-api only
 make debug-imaging-api         # Debug imaging-api only
