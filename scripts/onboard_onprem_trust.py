@@ -351,15 +351,29 @@ def check_unrotated_passwords(
     """
     if not kit_present:
         return Check("Trust-local passwords", Status.PENDING, "pending — needs kit file")
+    # Use FL_KIT_SLOT (the canonical slot name minted by the hub) to find the
+    # template — not the KIT argument. They CAN differ: the coexistence flow
+    # uses `cp .env.Trust_2.production.example .env.Trust_2_prod`, leaving the
+    # kit file named Trust_2_prod but its FL_KIT_SLOT still set to Trust_2.
+    # Without this fall-through the check would silently skip on every
+    # custom-named kit. Falls back to KIT when the slot isn't filled in yet
+    # (the kit-credentials check below will already be failing in that case).
+    canonical = kit_vars.get("FL_KIT_SLOT") or kit
+    if not canonical or "<run-make-" in canonical:
+        canonical = kit
     # Prefer the production template (closer to what an on-prem operator copied);
     # fall back to the dev template; skip silently if neither exists.
     candidates = [
-        repo_root / "trust" / f".env.{kit}.production.example",
-        repo_root / "trust" / f".env.{kit}.example",
+        repo_root / "trust" / f".env.{canonical}.production.example",
+        repo_root / "trust" / f".env.{canonical}.example",
     ]
     template = next((c for c in candidates if c.is_file()), None)
     if template is None:
-        return Check("Trust-local passwords", Status.PASS, "no template to compare against (skipped)")
+        names = " or ".join(c.name for c in candidates)
+        return Check(
+            "Trust-local passwords", Status.PASS,
+            f"skipped — no template found ({names})",
+        )
     template_vars = read_kit_vars(template)
     unchanged = [
         key for key in TRUST_LOCAL_PASSWORD_KEYS
