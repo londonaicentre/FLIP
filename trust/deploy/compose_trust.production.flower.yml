@@ -58,7 +58,7 @@ services:
       - --clientappio-api-address
       - ${SUPERNODE_1_CLIENTAPPIO_API_ADDRESS:-127.0.0.1:9094}
     shm_size: '8gb'
-    # gpus: all
+    # GPU passthrough via compose_trust.production.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 
 networks:
   default:

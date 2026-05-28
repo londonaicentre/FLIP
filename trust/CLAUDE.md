@@ -88,6 +88,7 @@ the operator does not have.
 | `deploy/compose_trust.development.yml` | Dev Docker Compose (builds from source) |
 | `deploy/compose_trust.production.yml` | Prod Docker Compose (GHCR images; declares the `trust-local-{loki,grafana}-data` named volumes as defaults) |
 | `deploy/compose_trust.{env}.{flower\|nvflare}.yml` | FL backend variants |
+| `deploy/compose_trust.{env}.gpu.yml` | GPU passthrough overlay — added by `up-trust` / `up-fl-clients-kit` via `GPU_OVERRIDE` only when the kit's `NUM_AVAILABLE_GPUS > 0`; reserves host NVIDIA GPU(s) for the fl-client. `up-trust-ec2` never applies it (the EC2 t3.xlarge is GPU-less, so the fl-client is CPU-only there regardless of the kit) |
 | `deploy/compose_trust-1_override.yml` | Dev trust-1 host-port bindings |
 | `.env.Trust_1` / `.env.Trust_2` / `.env.<slot>` | Per-trust kit file (TRUST_API_KEY, TRUST_INTERNAL_SERVICE_KEY, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER, EXPECTED_TRUST_ID, host-local ports/dirs, **FL_KIT_DIR** — root of the FL participant kit, default `/opt/flip/fl-kit` matching the Ansible-staged EC2 path); gitignored. Templates: `.env.Trust_1.example`, `.env.Trust_2.example` for dev defaults; `.env.Trust_2.production.example` for the prod on-prem flavor (FLIP-prod BDMS slot; copy to `.env.Trust_2` for a dedicated host or `.env.Trust_2_prod` to coexist with a dev Trust_2 on the same laptop). Same kit-file schema everywhere — `make -C trust up-trust KIT=<slot> PROD=<env>` is the only dispatch |
 

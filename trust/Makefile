@@ -114,6 +114,15 @@ TRUST_PROJECT := trust$(TRUST_NUM)
 # convention, matching the old up-trust-1.
 TRUST_OVERRIDE := $(if $(filter Trust_1,$(KIT)),-f deploy/compose_trust-1_override.yml,)
 
+# GPU passthrough: apply the device-reservation overlay (compose_trust.<env>.gpu.yml)
+# only when the kit declares NUM_AVAILABLE_GPUS > 0. A GPU-less host (the AWS EC2
+# t3.xlarge test trust, or a CPU-only dev/CI box) leaves it 0/unset, so the overlay
+# is skipped and the fl-client comes up CPU-only instead of failing with "could not
+# select device driver". The same value feeds the fl-client app's own GPU hint, so
+# Docker exposure and the app stay in lockstep. Mirrors the TRUST_OVERRIDE pattern.
+GPU_OVERRIDE := $(if $(filter-out 0,$(strip $(NUM_AVAILABLE_GPUS))),-f deploy/compose_trust.$(__DCKR_SUFFIX).gpu.yml,)
+GPU_STATUS_MSG := $(if $(GPU_OVERRIDE),🖥️  GPU passthrough on — fl-client will reserve $(NUM_AVAILABLE_GPUS) NVIDIA GPU(s),⚠️  fl-client starting CPU-only — NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset). Set it >0 on a GPU host to enable passthrough.)
+
 TRUST_VARS = \
 	TRUST_NETWORK_NAME=deploy_trust-network-$(TRUST_NUM) \
 	TRUST_NUMBER=$(TRUST_NUM) \
@@ -202,7 +211,8 @@ up-trust: update-omop-data update-orthanc-data create-networks
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(KIT)/db_data))
 	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
+	@echo "$(GPU_STATUS_MSG)"
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
 
@@ -218,11 +228,17 @@ restart-trust: down-trust up-trust
 # EC2 variant — no host-port override, --pull always. Networks and OMOP data
 # are provisioned on the instance by deploy/providers/AWS/site.yml, so the
 # update-omop-data / create-networks prerequisites are intentionally omitted.
+# GPU_OVERRIDE is intentionally NOT applied here: the EC2 t3.xlarge is GPU-less,
+# so the fl-client is pinned to CPU regardless of the kit's NUM_AVAILABLE_GPUS.
+# This defends the deploy against a kit seeded NUM_AVAILABLE_GPUS=1 (the template
+# default) — unlike up-trust, a stale value can't make `up` fail with "could not
+# select device driver". A GPU-equipped EC2 instance would add $(GPU_OVERRIDE) back.
 up-trust-ec2:
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
+	@echo "🖥️  EC2 trust runs CPU-only by design — GPU overlay not applied (t3.xlarge has no GPU)."
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
@@ -257,7 +273,8 @@ up-fl-clients:
 
 up-fl-clients-kit:
 	$(require_kit_file)
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) fl-client-net-1 fl-client-net-2
+	@echo "$(GPU_STATUS_MSG)"
+	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d --no-deps $(UP_PULL_FLAGS) fl-client-net-1 fl-client-net-2
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."

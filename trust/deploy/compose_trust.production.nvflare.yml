@@ -48,7 +48,7 @@ services:
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
     shm_size: '8gb'
-    # gpus: all
+    # GPU passthrough via compose_trust.production.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 
   # TODO add second FL network when needed
   # fl-client-net-2:
@@ -72,7 +72,7 @@ services:
   #     - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
   #     - IMAGING_API_URL=${IMAGING_API_URL}
   #   shm_size: '8gb'
-  #   # gpus: all
+  #   # GPU passthrough: add fl-client-net-2 to compose_trust.production.gpu.yml when enabling this net
 
 networks:
   default:
