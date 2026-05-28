@@ -6,7 +6,7 @@ Create a FLIP app from a FLARE app
 
    This page is a placeholder. The NVIDIA FLARE walkthrough is still being written.
    For the FLARE-specific SDK calls and app layout, see the
-   `flip-fl-base <https://github.com/londonaicentre/flip-fl-base>`_ repository in
+   `fl-apps/tutorials <https://github.com/londonaicentre/FLIP/tree/main/fl-apps/tutorials>`_ in this repository in
    the meantime.
 
    The Flower equivalent is available now — see

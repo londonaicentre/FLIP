@@ -251,7 +251,7 @@ The following XNAT Event Service API endpoints are used by FLIP for managing per
 FLIP XNAT methods
 *****************
 
-The following methods are available to be used in training, located in the `flip-utils package <https://flip-fl-base.readthedocs.io/en/latest/index.html>`_:
+The following methods are available to be used in training, located in the `flip-utils package <https://github.com/londonaicentre/FLIP/tree/main/flip-utils/flip>`_ (in-tree documentation coming soon):
 
 - ``get_dataframe(self, project_id: str, query: str) -> DataFrame``
     This retrieves data in the form of a Dataframe containing, at the minimum, accession IDs. The method takes in the project ID and the project query as parameters. These values are already passed in as parameters to the trainer to be used.

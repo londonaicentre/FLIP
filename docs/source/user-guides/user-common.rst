@@ -314,7 +314,7 @@ Additional files may be uploaded, especially if these are referenced by the vali
 
 **For Flower apps**, the required files differ (e.g. ``client_app.py``, ``pyproject.toml``). See the :ref:`FL nodes documentation <flip-fl-nodes>` for Flower-specific file requirements and job types.
 
-For more information on model training and model files, please see the `FLIP tutorials <https://github.com/londonaicentre/flip-fl-base/tree/main/tutorials>`_.
+For more information on model training and model files, please see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/main/fl-apps/tutorials>`_ in this repository.
 
 .. warning::
 
