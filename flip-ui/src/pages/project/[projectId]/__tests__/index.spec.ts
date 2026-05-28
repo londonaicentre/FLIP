@@ -19,9 +19,7 @@ import type { IProject } from "@/services/project-service";
 
 import ProjectPage from "../index.vue";
 
-const mockRoute = {
-    params: { projectId: "p-123" } as Record<string, string>
-};
+const mockRoute = { params: { projectId: "p-123" } as Record<string, string> };
 vi.mock("vue-router", async (importOriginal) => {
     const actual = await importOriginal<typeof import("vue-router")>();
 
@@ -115,7 +113,12 @@ function mountProjectPage({
                 stubActions: false,
                 initialState: {
                     project: { project },
-                    auth: { user: { userId, permissions } }
+                    auth: {
+                        user: {
+                            userId,
+                            permissions
+                        }
+                    }
                 }
             })],
             stubs
@@ -181,8 +184,18 @@ describe("Project page (/project/[id]/index.vue)", () => {
         const approvedProject = baseProject();
         approvedProject.status = "APPROVED";
         approvedProject.approvedTrusts = [
-            { id: "t1", name: "KCH", approved: true, approvedAt: "2026-05-01T10:00:00Z" },
-            { id: "t2", name: "UCLH", approved: true, approvedAt: "2026-05-15T10:00:00Z" }
+            {
+                id: "t1",
+                name: "KCH",
+                approved: true,
+                approvedAt: "2026-05-01T10:00:00Z"
+            },
+            {
+                id: "t2",
+                name: "UCLH",
+                approved: true,
+                approvedAt: "2026-05-15T10:00:00Z"
+            }
         ];
         const approvedWrapper = mountProjectPage({ project: approvedProject });
         const step04 = approvedWrapper.find("[data-test=step-04]");
@@ -236,8 +249,16 @@ describe("Project page (/project/[id]/index.vue)", () => {
 
         const project = baseProject();
         project.users = [
-            { id: "u1", email: "a@x", isDisabled: false },
-            { id: "u2", email: "b@x", isDisabled: false }
+            {
+                id: "u1",
+                email: "a@x",
+                isDisabled: false
+            },
+            {
+                id: "u2",
+                email: "b@x",
+                isDisabled: false
+            }
         ];
         const wrapper2 = mountProjectPage({ project });
         // owner + 2 = 3 Users

@@ -227,7 +227,10 @@ describe("user-service", () => {
 
     describe("updateUserProfile", () => {
         it("PUTs profile fields to /users/{userId}", async () => {
-            const profile = { name: "New Name", organisation: "New Org" };
+            const profile = {
+                name: "New Name",
+                organisation: "New Org"
+            };
             vi.mocked(_http.put).mockResolvedValue({ data: profile } as never);
 
             const result = await updateUserProfile("u-1", profile);

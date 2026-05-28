@@ -138,7 +138,10 @@ interface IAiUserDropdownProps {
 }
 
 const props = withDefaults(
-    defineProps<IAiUserDropdownProps>(), { emailAddress: "", displayName: "" }
+    defineProps<IAiUserDropdownProps>(), {
+        emailAddress: "",
+        displayName: ""
+    }
 );
 
 const emit = defineEmits(["signOut", "toggleDarkMode"]);

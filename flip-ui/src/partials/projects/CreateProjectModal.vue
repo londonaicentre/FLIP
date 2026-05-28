@@ -203,7 +203,7 @@ const submitForm = async(v: unknown) => {
         });
 
         routeChange.viewProject(projectId);
-    } catch (e) {
+    } catch {
         modalStore.toggleCreateProject();
 
         Snackbar.show({

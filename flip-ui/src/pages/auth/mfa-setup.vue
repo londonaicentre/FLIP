@@ -32,10 +32,12 @@ meta:
                 alt="TOTP QR code"
                 class="w-48 h-48 border border-gray-200 rounded"
                 data-test="mfa-qr-code"
-            />
+            >
         </div>
         <details v-if="sharedSecret" class="mb-4 text-sm">
-            <summary class="cursor-pointer">Can't scan? Enter this secret manually</summary>
+            <summary class="cursor-pointer">
+                Can't scan? Enter this secret manually
+            </summary>
             <code
                 class="block px-2 py-1 mt-2 font-mono break-all bg-gray-100 rounded dark:bg-gray-800"
                 data-test="mfa-shared-secret"
@@ -120,7 +122,10 @@ const renderQr = async (uri: string) => {
             // Soft neutral grey (tailwind gray-200) instead of the default
             // solid white block — works on both the light and dark
             // AuthLayout cards without introducing a harsh contrast edge.
-            color: { dark: "#000000ff", light: "#e5e7ebff" }
+            color: {
+                dark: "#000000ff",
+                light: "#e5e7ebff"
+            }
         });
     } catch {
         qrDataUrl.value = null;
@@ -132,9 +137,11 @@ onMounted(async () => {
         // Sign-in-chain: data already populated by signIn/changePassword.
         if (!setupUri.value) {
             routeChange.gotoLogin();
+
             return;
         }
         await renderQr(setupUri.value);
+
         return;
     }
 
@@ -142,10 +149,12 @@ onMounted(async () => {
     // session — if we don't have one, bounce to login.
     if (authStore.mfaEnabled === true) {
         routeChange.viewProjects();
+
         return;
     }
     if (!authStore.user) {
         routeChange.gotoLogin();
+
         return;
     }
     try {

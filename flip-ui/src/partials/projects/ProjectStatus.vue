@@ -305,7 +305,7 @@ import { useRoute } from "vue-router";
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiSkeleton from "@/components/AiSkeleton/AiSkeleton.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
-import { getImagingProjectsStatus, IImagingProjectStatus } from "@/services/project-service";
+import { getImagingProjectsStatus } from "@/services/project-service";
 import { useSiteDetailsStore } from "@/store/siteDetailsStore";
 
 interface IImagingProjectStatusProps {

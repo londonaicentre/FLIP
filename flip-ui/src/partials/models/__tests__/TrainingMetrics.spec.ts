@@ -73,7 +73,10 @@ function mountTrainingMetrics({ inProgress = false, approvedTrusts = [] }: Mount
                     stubActions: false,
                     initialState: {
                         project: {
-                            project: { id: "p-1", approvedTrusts }
+                            project: {
+                                id: "p-1",
+                                approvedTrusts
+                            }
                         }
                     }
                 })
@@ -86,14 +89,32 @@ const TRAIN_LOSS = {
     yLabel: "TRAIN_LOSS",
     xLabel: "globalRound",
     metrics: [
-        { seriesLabel: "Kings College Hospital", data: [{ xValue: 1, yValue: 0.5 }] },
-        { seriesLabel: "UCLH", data: [{ xValue: 1, yValue: 0.6 }] }
+        {
+            seriesLabel: "Kings College Hospital",
+            data: [{
+                xValue: 1,
+                yValue: 0.5
+            }]
+        },
+        {
+            seriesLabel: "UCLH",
+            data: [{
+                xValue: 1,
+                yValue: 0.6
+            }]
+        }
     ]
 };
 const VAL_F1 = {
     yLabel: "VAL-F1-SCORE",
     xLabel: "globalRound",
-    metrics: [{ seriesLabel: "Kings College Hospital", data: [{ xValue: 1, yValue: 0.8 }] }]
+    metrics: [{
+        seriesLabel: "Kings College Hospital",
+        data: [{
+            xValue: 1,
+            yValue: 0.8
+        }]
+    }]
 };
 
 describe("TrainingMetrics", () => {
@@ -144,8 +165,14 @@ describe("TrainingMetrics", () => {
         setData([TRAIN_LOSS]);
         const wrapper = mountTrainingMetrics({
             approvedTrusts: [
-                { name: "Kings College Hospital", code: "KCH" },
-                { name: "UCLH", code: "UCH" }
+                {
+                    name: "Kings College Hospital",
+                    code: "KCH"
+                },
+                {
+                    name: "UCLH",
+                    code: "UCH"
+                }
             ]
         });
         await flushPromises();
@@ -158,7 +185,10 @@ describe("TrainingMetrics", () => {
     test("falls back to the raw seriesLabel when no code is mapped", async () => {
         setData([TRAIN_LOSS]);
         const wrapper = mountTrainingMetrics({
-            approvedTrusts: [{ name: "Kings College Hospital", code: "KCH" }]
+            approvedTrusts: [{
+                name: "Kings College Hospital",
+                code: "KCH"
+            }]
             // UCLH intentionally omitted: no code mapping → renders the raw name.
         });
         await flushPromises();

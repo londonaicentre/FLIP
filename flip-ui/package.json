@@ -16,7 +16,7 @@
         "postbuild:deploy": "sh scripts/generate-window-js.sh > dist/js/window.js",
         "serve": "vite preview",
         "test:unit": "vitest run --silent --coverage",
-        "lint": "npx eslint ./src/**/*.vue ./src/**/*.ts",
+        "lint": "npx eslint \"./src/**/*.vue\" \"./src/**/*.ts\"",
         "prepare": "husky install",
         "test:unit:update": "vitest run -u --silent --coverage",
         "test:unit:watch": "vitest watch --silent",

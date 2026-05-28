@@ -21,7 +21,10 @@ import ProjectApproval from "../ProjectApproval.vue";
 // stub it to always render the slot so the button gate's other conditions
 // (canApprove, !projectApproved) are what we test here.
 vi.mock("@/components/AiGuard/AiGuard.vue", () => ({
-    default: { name: "AiGuard", template: "<div><slot /></div>" }
+    default: {
+        name: "AiGuard",
+        template: "<div><slot /></div>"
+    }
 }));
 
 // AiSwitch internally calls vee-validate's useField, which needs a Form
@@ -58,8 +61,16 @@ interface MountOptions {
 
 function mountProjectApproval({
     approvedTrusts = [
-        { id: "t1", name: "Kings College Hospital", code: "KCH" },
-        { id: "t2", name: "UCLH", code: "UCH" }
+        {
+            id: "t1",
+            name: "Kings College Hospital",
+            code: "KCH"
+        },
+        {
+            id: "t2",
+            name: "UCLH",
+            code: "UCH"
+        }
     ],
     projectApproved = false,
     approving = false,
@@ -67,17 +78,18 @@ function mountProjectApproval({
     permissions = ["CanApproveProjects"]
 }: MountOptions = {}) {
     return mount(ProjectApproval, {
-        props: { approvedTrusts, projectApproved, approving, canApprove },
+        props: {
+            approvedTrusts,
+            projectApproved,
+            approving,
+            canApprove
+        },
         global: {
             plugins: [
                 createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false,
-                    initialState: {
-                        auth: {
-                            user: { permissions }
-                        }
-                    }
+                    initialState: { auth: { user: { permissions } } }
                 })
             ]
         }
@@ -88,8 +100,16 @@ describe("ProjectApproval", () => {
     test("sorts trusts alphabetically by code (KCH before UCH)", async () => {
         const wrapper = mountProjectApproval({
             approvedTrusts: [
-                { id: "t1", name: "UCLH", code: "UCH" },
-                { id: "t2", name: "Kings College Hospital", code: "KCH" }
+                {
+                    id: "t1",
+                    name: "UCLH",
+                    code: "UCH"
+                },
+                {
+                    id: "t2",
+                    name: "Kings College Hospital",
+                    code: "KCH"
+                }
             ]
         });
         await flushPromises();
@@ -103,8 +123,14 @@ describe("ProjectApproval", () => {
     test("falls back to trust.name when no code is set, and still sorts by the fallback label", async () => {
         const wrapper = mountProjectApproval({
             approvedTrusts: [
-                { id: "t1", name: "Zeta Trust" },
-                { id: "t2", name: "Alpha Trust" }
+                {
+                    id: "t1",
+                    name: "Zeta Trust"
+                },
+                {
+                    id: "t2",
+                    name: "Alpha Trust"
+                }
             ]
         });
         await flushPromises();
@@ -115,7 +141,10 @@ describe("ProjectApproval", () => {
     });
 
     test("shows the staged-toggle (AiSwitch) and the Approve button while the project is awaiting approval", async () => {
-        const wrapper = mountProjectApproval({ projectApproved: false, canApprove: true });
+        const wrapper = mountProjectApproval({
+            projectApproved: false,
+            canApprove: true
+        });
         await flushPromises();
 
         expect(wrapper.find("[data-test=trust-staged-0]").exists()).toBe(true);
@@ -140,7 +169,13 @@ describe("ProjectApproval", () => {
         const wrapper = mountProjectApproval({
             projectApproved: true,
             approvedTrusts: [
-                { id: "t1", name: "Kings College Hospital", code: "KCH", approved: true, approvedAt: "2026-05-26T10:00:00Z" }
+                {
+                    id: "t1",
+                    name: "Kings College Hospital",
+                    code: "KCH",
+                    approved: true,
+                    approvedAt: "2026-05-26T10:00:00Z"
+                }
             ]
         });
         await flushPromises();
@@ -158,7 +193,12 @@ describe("ProjectApproval", () => {
         const wrapper = mountProjectApproval({
             projectApproved: true,
             approvedTrusts: [
-                { id: "t1", name: "UCLH", code: "UCH", approved: false }
+                {
+                    id: "t1",
+                    name: "UCLH",
+                    code: "UCH",
+                    approved: false
+                }
             ]
         });
         await flushPromises();
@@ -175,7 +215,10 @@ describe("ProjectApproval", () => {
     });
 
     test("renders no form at all when the project is neither approvable nor approved", async () => {
-        const wrapper = mountProjectApproval({ canApprove: false, projectApproved: false });
+        const wrapper = mountProjectApproval({
+            canApprove: false,
+            projectApproved: false
+        });
         await flushPromises();
 
         expect(wrapper.find("form").exists()).toBe(false);
@@ -185,7 +228,12 @@ describe("ProjectApproval", () => {
     test("falls back to 'Approved' on the chip when no approvedAt is set", async () => {
         const wrapper = mountProjectApproval({
             projectApproved: true,
-            approvedTrusts: [{ id: "t1", name: "UCLH", code: "UCH", approved: true }]
+            approvedTrusts: [{
+                id: "t1",
+                name: "UCLH",
+                code: "UCH",
+                approved: true
+            }]
         });
         await flushPromises();
 

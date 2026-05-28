@@ -54,6 +54,7 @@ const { FileTooLargeError } = vi.hoisted(() => {
             this.actualBytes = actualBytes;
         }
     }
+
     return { FileTooLargeError };
 });
 vi.mock("@/utils/file", () => ({
@@ -92,10 +93,15 @@ const jszipAddedFiles: string[] = [];
 vi.mock("jszip", () => {
     return {
         default: class FakeJSZip {
-            file(name: string, _blob: Blob) {
+            // Real JSZip signature is `file(name, data)` / `generateAsync(options)` — the
+            // mock drops the extra args silently (JS doesn't enforce arity on method
+            // calls), so the call sites in ModelUpload.vue work unchanged against the
+            // shim. Trimmed here so `@typescript-eslint/no-unused-vars` stays clean
+            // without an inline ignore.
+            file(name: string) {
                 jszipAddedFiles.push(name);
             }
-            async generateAsync(_options: unknown) {
+            async generateAsync() {
                 return new Blob(["zip-bytes"], { type: "application/zip" });
             }
         }
@@ -653,8 +659,18 @@ describe("ModelUpload", () => {
             const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockReturnValue();
 
             const files: FileInfo[] = [
-                { id: "1", name: "a.py", size: 10, status: FileUploadStatus.COMPLETED },
-                { id: "2", name: "b.py", size: 12, status: FileUploadStatus.COMPLETED }
+                {
+                    id: "1",
+                    name: "a.py",
+                    size: 10,
+                    status: FileUploadStatus.COMPLETED
+                },
+                {
+                    id: "2",
+                    name: "b.py",
+                    size: 12,
+                    status: FileUploadStatus.COMPLETED
+                }
             ];
             const wrapper = mountModelUpload({ files }, { hasPermissions: true });
             await flushPromises();
@@ -683,7 +699,12 @@ describe("ModelUpload", () => {
                 .spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
 
             const files: FileInfo[] = [
-                { id: "1", name: "a.py", size: 10, status: FileUploadStatus.COMPLETED }
+                {
+                    id: "1",
+                    name: "a.py",
+                    size: 10,
+                    status: FileUploadStatus.COMPLETED
+                }
             ];
             const wrapper = mountModelUpload({ files }, { hasPermissions: true });
             await flushPromises();
@@ -708,7 +729,12 @@ describe("ModelUpload", () => {
             );
 
             const files: FileInfo[] = [
-                { id: "1", name: "a.py", size: 10, status: FileUploadStatus.COMPLETED }
+                {
+                    id: "1",
+                    name: "a.py",
+                    size: 10,
+                    status: FileUploadStatus.COMPLETED
+                }
             ];
             const wrapper = mountModelUpload({ files }, { hasPermissions: true });
             await flushPromises();

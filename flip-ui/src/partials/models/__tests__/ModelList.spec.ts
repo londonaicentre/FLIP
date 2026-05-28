@@ -21,21 +21,33 @@ import ModelList from "../ModelList.vue";
 const mockRoute = { params: { projectId: "project-1" } as Record<string, string> };
 vi.mock("vue-router", async (importOriginal) => {
     const actual = await importOriginal<typeof import("vue-router")>();
-    return { ...actual, useRoute: () => mockRoute };
+
+    return {
+        ...actual,
+        useRoute: () => mockRoute
+    };
 });
 
 const mockData = vi.hoisted(() => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const vue = require("vue") as typeof import("vue");
+
     return { ref: vue.ref<unknown>(undefined) };
 });
 vi.mock("swrv", () => ({
-    default: () => ({ data: mockData.ref, error: ref(null) })
+    default: () => ({
+        data: mockData.ref,
+        error: ref(null)
+    })
 }));
 
 vi.mock("@/services/model-service", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/services/model-service")>();
-    return { ...actual, getModels: vi.fn(async () => undefined) };
+
+    return {
+        ...actual,
+        getModels: vi.fn(async () => undefined)
+    };
 });
 
 vi.mock("@/composables/useErrorHandler", () => ({ default: vi.fn() }));
@@ -56,7 +68,10 @@ function mountModelList() {
                             user: {
                                 username: "u",
                                 userId: "id",
-                                attributes: { sub: "s", email: "u@e.com" },
+                                attributes: {
+                                    sub: "s",
+                                    email: "u@e.com"
+                                },
                                 permissions: ["CanCreateProjects"]
                             },
                             signInStep: "DONE",
@@ -78,7 +93,10 @@ function mountModelList() {
                     template: "<table><slot name=\"head\" /><tbody><slot name=\"body\" :rows=\"data ?? []\" /></tbody></table>",
                     props: ["data"]
                 },
-                "router-link": { template: "<a><slot /></a>", props: ["to"] }
+                "router-link": {
+                    template: "<a><slot /></a>",
+                    props: ["to"]
+                }
             }
         }
     });
@@ -90,7 +108,14 @@ describe("ModelList — Status column", () => {
     });
 
     test("renders a Status column header after Description", async () => {
-        setData({ data: [{ id: "m1", name: "A", description: "d", status: "PENDING" }] });
+        setData({
+            data: [{
+                id: "m1",
+                name: "A",
+                description: "d",
+                status: "PENDING"
+            }]
+        });
         const wrapper = mountModelList();
         await flushPromises();
 
@@ -102,7 +127,14 @@ describe("ModelList — Status column", () => {
     });
 
     test("PENDING renders 'Model Created' with a tick icon", async () => {
-        setData({ data: [{ id: "m1", name: "A", description: "", status: "PENDING" }] });
+        setData({
+            data: [{
+                id: "m1",
+                name: "A",
+                description: "",
+                status: "PENDING"
+            }]
+        });
         const wrapper = mountModelList();
         await flushPromises();
 
@@ -114,7 +146,14 @@ describe("ModelList — Status column", () => {
     });
 
     test("INITIATED renders 'Model Queued' with a tick", async () => {
-        setData({ data: [{ id: "m1", name: "A", description: "", status: "INITIATED" }] });
+        setData({
+            data: [{
+                id: "m1",
+                name: "A",
+                description: "",
+                status: "INITIATED"
+            }]
+        });
         const wrapper = mountModelList();
         await flushPromises();
 
@@ -124,7 +163,14 @@ describe("ModelList — Status column", () => {
     });
 
     test("PREPARED renders 'Model Prepared' with a tick", async () => {
-        setData({ data: [{ id: "m1", name: "A", description: "", status: "PREPARED" }] });
+        setData({
+            data: [{
+                id: "m1",
+                name: "A",
+                description: "",
+                status: "PREPARED"
+            }]
+        });
         const wrapper = mountModelList();
         await flushPromises();
 
@@ -134,7 +180,14 @@ describe("ModelList — Status column", () => {
     });
 
     test("TRAINING_STARTED renders 'Training Started' with a tick", async () => {
-        setData({ data: [{ id: "m1", name: "A", description: "", status: "TRAINING_STARTED" }] });
+        setData({
+            data: [{
+                id: "m1",
+                name: "A",
+                description: "",
+                status: "TRAINING_STARTED"
+            }]
+        });
         const wrapper = mountModelList();
         await flushPromises();
 
@@ -144,7 +197,14 @@ describe("ModelList — Status column", () => {
     });
 
     test("RESULTS_UPLOADED renders 'Results Uploaded' with a tick", async () => {
-        setData({ data: [{ id: "m1", name: "A", description: "", status: "RESULTS_UPLOADED" }] });
+        setData({
+            data: [{
+                id: "m1",
+                name: "A",
+                description: "",
+                status: "RESULTS_UPLOADED"
+            }]
+        });
         const wrapper = mountModelList();
         await flushPromises();
 
@@ -154,7 +214,14 @@ describe("ModelList — Status column", () => {
     });
 
     test("ERROR renders 'Error' with a red cross", async () => {
-        setData({ data: [{ id: "m1", name: "A", description: "", status: "ERROR" }] });
+        setData({
+            data: [{
+                id: "m1",
+                name: "A",
+                description: "",
+                status: "ERROR"
+            }]
+        });
         const wrapper = mountModelList();
         await flushPromises();
 
@@ -165,7 +232,14 @@ describe("ModelList — Status column", () => {
     });
 
     test("STOPPED renders 'Stopped' with a red cross", async () => {
-        setData({ data: [{ id: "m1", name: "A", description: "", status: "STOPPED" }] });
+        setData({
+            data: [{
+                id: "m1",
+                name: "A",
+                description: "",
+                status: "STOPPED"
+            }]
+        });
         const wrapper = mountModelList();
         await flushPromises();
 
@@ -178,7 +252,13 @@ describe("ModelList — Status column", () => {
         // Defensive: an older API response (or a stale cache from before the
         // backend started returning status) leaves the cell with neither a
         // tick nor a cross — and shouldn't blow up the row.
-        setData({ data: [{ id: "m1", name: "A", description: "" }] });
+        setData({
+            data: [{
+                id: "m1",
+                name: "A",
+                description: ""
+            }]
+        });
         const wrapper = mountModelList();
         await flushPromises();
 
