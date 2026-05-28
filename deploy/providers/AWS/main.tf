@@ -757,6 +757,11 @@ output "DbSecretArn" {
   value       = module.flip_db.db_instance_master_user_secret_arn
 }
 
+output "DbProxyEndpoint" {
+  description = "RDS Proxy endpoint (flip-api connects here with IAM auth)"
+  value       = aws_db_proxy.flip_db.endpoint
+}
+
 output "CognitoUserPoolId" {
   description = "Cognito User Pool ID"
   value       = module.cognito.user_pool_id

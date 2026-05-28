@@ -11,33 +11,109 @@
 #
 
 from collections.abc import Generator
+from typing import Any
 from urllib.parse import quote_plus
 
+import boto3
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 from sqlmodel import Session, create_engine
 
-from flip_api.config import get_settings
+from flip_api.config import DevSettings, ProdSettings, get_settings
 from flip_api.utils.get_secrets import get_secret
 
-# Get database settings
-stt = get_settings()
+# RDS Proxy drops idle client connections after `idle_client_timeout` (1800s by
+# default — see deploy/providers/AWS/rds_proxy.tf). Recycle pooled connections
+# comfortably below that so we never hand out a connection the proxy has already
+# closed; pool_pre_ping is the belt-and-braces liveness check on top.
+_POOL_RECYCLE_SECONDS = 1500
 
-# Construct the database URL based on environment
-if stt.ENV == "production":
-    # In production, get password from AWS Secrets Manager
-    db_password = get_secret(secret_key="password", secret_name=stt.POSTGRES_SECRET_ARN)
+# Lazily-created, reused RDS client for minting IAM auth tokens. boto3 clients
+# are not free to construct (service-model load), and the do_connect hook can
+# fire on every new physical connection, so we cache one. Typed Any because the
+# bare boto3-stubs install has no rds service stub.
+_rds_client: Any = None
 
-else:
-    # In dev, password is provided via env variable (not secrets manager)
-    db_password = stt.POSTGRES_PASSWORD
 
-# URL-encode the password to handle special characters like @, #, %, etc.
-# Remove leading/trailing whitespace in case there is a comment in the env file next to the password
-encoded_password = quote_plus(db_password.strip())
+def _get_rds_client() -> Any:
+    """Return a cached boto3 RDS client for the configured region."""
+    global _rds_client  # noqa: PLW0603
+    if _rds_client is None:
+        _rds_client = boto3.session.Session().client(service_name="rds", region_name=get_settings().AWS_REGION)
+    return _rds_client
 
-db_url = f"postgresql+psycopg2://{stt.POSTGRES_USER}:{encoded_password}@{stt.DB_HOST}:{stt.DB_PORT}/{stt.POSTGRES_DB}"
 
-# Create a synchronous engine
-engine = create_engine(db_url, echo=False)
+def _generate_db_auth_token() -> str:
+    """Mint a short-lived (~15 min) IAM auth token to use as the DB password.
+
+    ``generate_db_auth_token`` is a local SigV4 signing operation (no network
+    round-trip), so it is cheap to call on the connection path. A fresh token
+    is produced for every new physical connection, so token expiry and RDS
+    secret rotation are both handled transparently — the app holds no static
+    DB credential.
+
+    Returns:
+        str: IAM authentication token for the configured DB user and host.
+    """
+    stt = get_settings()
+    return _get_rds_client().generate_db_auth_token(
+        DBHostname=stt.DB_HOST,
+        Port=stt.DB_PORT,
+        DBUsername=stt.POSTGRES_USER,
+        Region=stt.AWS_REGION,
+    )
+
+
+def _do_connect_listener(_dialect: object, _conn_rec: object, _cargs: object, cparams: dict[str, Any]) -> None:
+    """SQLAlchemy ``do_connect`` hook: inject a freshly-minted IAM token as the password.
+
+    The token is passed as a connection parameter (not embedded in the engine
+    URL), so it never needs URL-encoding and is regenerated on each new
+    physical connection.
+    """
+    cparams["password"] = _generate_db_auth_token()
+
+
+def _resolve_static_password(stt: DevSettings | ProdSettings) -> str:
+    """Resolve the static DB password: Secrets Manager in prod, env var in dev."""
+    if stt.ENV == "production":
+        return get_secret(secret_key="password", secret_name=stt.POSTGRES_SECRET_ARN)
+    return stt.POSTGRES_PASSWORD
+
+
+def _build_engine() -> Engine:
+    """Build the SQLAlchemy engine for the active settings.
+
+    IAM-auth mode (production, via RDS Proxy) builds a passwordless URL and
+    attaches a ``do_connect`` hook that mints an IAM token per connection.
+    Otherwise it falls back to the static-password URL (dev env var, or legacy
+    production Secrets Manager fetch).
+    """
+    stt = get_settings()
+
+    if stt.DB_IAM_AUTH:
+        # No static password in the URL — the do_connect hook supplies a
+        # short-lived IAM token per connection. IAM auth mandates TLS.
+        db_url = f"postgresql+psycopg2://{stt.POSTGRES_USER}@{stt.DB_HOST}:{stt.DB_PORT}/{stt.POSTGRES_DB}"
+        engine = create_engine(
+            db_url,
+            echo=False,
+            pool_pre_ping=True,
+            pool_recycle=_POOL_RECYCLE_SECONDS,
+            connect_args={"sslmode": "require"},
+        )
+        event.listen(engine, "do_connect", _do_connect_listener)
+        return engine
+
+    # URL-encode the password to handle special characters like @, #, %, etc.
+    # Remove leading/trailing whitespace in case there is a comment in the env
+    # file next to the password.
+    encoded_password = quote_plus(_resolve_static_password(stt).strip())
+    db_url = f"postgresql+psycopg2://{stt.POSTGRES_USER}:{encoded_password}@{stt.DB_HOST}:{stt.DB_PORT}/{stt.POSTGRES_DB}"
+    return create_engine(db_url, echo=False, pool_pre_ping=True)
+
+
+engine = _build_engine()
 
 
 def get_session() -> Generator[Session, None, None]:

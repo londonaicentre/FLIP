@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     POSTGRES_USER: str
     POSTGRES_DB: str
 
+    # When true, flip-api authenticates to Postgres with a short-lived AWS IAM
+    # token minted per-connection (via RDS Proxy) instead of a static password.
+    # This removes the password that was cached at boot and went stale on every
+    # RDS secret rotation, causing prod DB outages (issue #556). Production-only
+    # — wired on by the ECS task env (deploy/providers/AWS/locals.tf); dev keeps
+    # the static POSTGRES_PASSWORD path. See flip_api/db/database.py.
+    DB_IAM_AUTH: bool = False
+
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
     TRUST_NAMES: list[str]
@@ -111,6 +119,21 @@ class Settings(BaseSettings):
         if isinstance(v, bool):
             return v
         return v.lower() in ("true", "1")    # type: ignore[union-attr]
+
+    @field_validator("DB_IAM_AUTH", mode="before")
+    @classmethod
+    def coerce_empty_db_iam_auth(cls, v: str | bool | None) -> bool:
+        """Treat empty-string or None DB_IAM_AUTH as the default False.
+
+        GitHub Actions / ECS inject empty-string env vars for unset vars, which
+        Pydantic would otherwise reject against ``bool``. Same shape as
+        ``coerce_empty_mfa`` (but defaulting to the secure-by-omission False).
+        """
+        if v is None or v == "":
+            return False
+        if isinstance(v, bool):
+            return v
+        return v.lower() in ("true", "1")
 
     @field_validator("LOG_LEVEL", mode="before")
     @classmethod

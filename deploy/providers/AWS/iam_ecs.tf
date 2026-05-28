@@ -114,6 +114,17 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
     ]
   }
 
+  # Mint IAM auth tokens to connect through RDS Proxy (FLIP#556). Scoped to the
+  # one proxy + the single DB user flip-api connects as — the proxy itself uses
+  # the master secret to reach RDS, so no static DB password lives in the app.
+  statement {
+    sid     = "RdsProxyIamConnect"
+    actions = ["rds-db:connect"]
+    resources = [
+      "arn:aws:rds-db:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:dbuser:${local.rds_proxy_resource_id}/${var.POSTGRES_USER}",
+    ]
+  }
+
   statement {
     sid = "CognitoUserPool"
     actions = [
