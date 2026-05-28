@@ -148,7 +148,10 @@ const stubs = {
         props: ["id", "show", "name", "description", "modelPending", "updating", "ownerId"],
         emits: ["close", "save"],
         template: "<div data-test='edit-model-drawer' :data-show='show' />"
-    }
+    },
+    // Render the slot so the breadcrumb copy is exercised (the real RouterLink
+    // is never registered in these tests).
+    "router-link": { template: "<a><slot /></a>" }
 };
 
 function makeModel(
@@ -465,6 +468,57 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
         const training = wrapper.find("[data-test='training']");
         // Empty string ↔ absent for the attribute coercion of `undefined`.
         expect(training.attributes("data-fl-backend-label")).toBeFalsy();
+    });
+
+    it("renders the Projects / project-name breadcrumb above the model header", async () => {
+        mockSwrvData.value = makeModel([
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
+        ]);
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+
+        // Breadcrumb: "Projects" link + the parent project's name ("P").
+        expect(wrapper.text()).toContain("Projects");
+        expect(wrapper.text()).toContain("P");
+    });
+
+    it("clicking Initiate Training while ready fires the Training form's submit", async () => {
+        resolveModelConfigStateMock.mockResolvedValue({
+            changed: true,
+            configStatus: FileUploadStatus.COMPLETED,
+            jobType: "standard",
+            requiredFiles: jobTypes.standard
+        });
+        // PENDING + all required files COMPLETED + a query present → readyToTrain,
+        // so the button is enabled and the click handler can fire.
+        mockSwrvData.value = makeModel(
+            [
+                {
+                    name: "trainer.py",
+                    status: FileUploadStatus.COMPLETED
+                },
+                {
+                    name: "config.json",
+                    status: FileUploadStatus.COMPLETED
+                }
+            ],
+            { status: "PENDING" }
+        );
+        const wrapper = await mountPage();
+        await flushPromises();
+        await wrapper.vm.$nextTick();
+        await flushPromises();
+
+        const button = wrapper.find("[data-test='initiate-training-btn']");
+        expect(button.exists()).toBe(true);
+        expect(button.attributes("disabled")).toBeUndefined();
+
+        await button.trigger("click");
+        expect(initiateTrainingSpy).toHaveBeenCalled();
     });
 
     it("shows TrainingActionsMenu instead of Initiate Training once status leaves PENDING", async () => {

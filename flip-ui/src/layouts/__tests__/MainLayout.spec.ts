@@ -38,11 +38,17 @@ vi.mock("vue-router", async (importOriginal) => {
 });
 
 vi.mock("swrv", () => ({
-    default: () => ({
-        data: ref(null),
-        mutate: vi.fn(),
-        error: ref(null)
-    })
+    // Invoke the key function like real swrv does, so the page's key builders
+    // (e.g. the `/users/${email}` lookup) are exercised rather than skipped.
+    default: (keyFn?: unknown) => {
+        if (typeof keyFn === "function") keyFn();
+
+        return {
+            data: ref(null),
+            mutate: vi.fn(),
+            error: ref(null)
+        };
+    }
 }));
 
 vi.mock("@vueuse/core", () => ({

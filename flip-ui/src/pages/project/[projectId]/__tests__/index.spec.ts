@@ -79,7 +79,10 @@ const stubs = {
     ProjectApproval: { template: "<div data-test=\"stub-project-approval\" />" },
     ProjectStaging: { template: "<div data-test=\"stub-project-staging\" />" },
     ProjectStatus: { template: "<div data-test=\"stub-project-status\" />" },
-    Transition: { template: "<div><slot /></div>" }
+    Transition: { template: "<div><slot /></div>" },
+    // Render the slot so breadcrumb copy is exercised (the real RouterLink is
+    // never registered in these tests).
+    "router-link": { template: "<a><slot /></a>" }
 };
 
 interface MountOptions {
@@ -133,6 +136,12 @@ describe("Project page (/project/[id]/index.vue)", () => {
     test("hides the page chrome when projectStore.project is null", () => {
         const wrapper = mountProjectPage({ project: null as unknown as IProject });
         expect(wrapper.find("[data-test=stub-lifecycle]").exists()).toBe(false);
+    });
+
+    test("renders the Projects breadcrumb link back to the project list", () => {
+        const wrapper = mountProjectPage();
+        expect(wrapper.find("a").exists()).toBe(true);
+        expect(wrapper.text()).toContain("Projects");
     });
 
     test("renders 4 lifecycle steps and marks only step 01 complete on a fresh UNSTAGED project", () => {

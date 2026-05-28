@@ -285,6 +285,35 @@ describe("admin/users", () => {
         expect(mockSnackbarSuccess).toHaveBeenCalledWith(expect.objectContaining({ title: "User updated" }));
     });
 
+    it("editing the organisation marks the profile dirty and saveUser persists the new value", async () => {
+        mockUpdateUserProfile.mockResolvedValue({});
+        const wrapper = mountPage();
+        await nextTick();
+        await wrapper.findAll("[data-test='user']")[0].trigger("click");
+
+        await wrapper.find("[data-test='selected-user-organisation-field']").setValue("New Org");
+        await wrapper.find("[data-test='save-user-btn']").trigger("click");
+        await flushPromises();
+
+        expect(mockUpdateUserProfile).toHaveBeenCalledWith(
+            "u1",
+            expect.objectContaining({ organisation: "New Org" })
+        );
+    });
+
+    it("Reset Password button opens its confirmation dialog", async () => {
+        const wrapper = mountPage();
+        await nextTick();
+        await wrapper.findAll("[data-test='user']")[0].trigger("click");
+
+        const resetModal = () => wrapper.findAllComponents({ name: "AiConfirmModal" })
+            .find(c => c.props("confirmationText")?.includes("reset this user's password"))!;
+        expect(resetModal().props("dialog")).toBe(false);
+
+        await wrapper.find("[data-test='reset-password-btn']").trigger("click");
+        expect(resetModal().props("dialog")).toBe(true);
+    });
+
     it("selectRole marks the user dirty and saveUser persists the new role", async () => {
         mockUpdateUserRoles.mockResolvedValue([]);
         const wrapper = mountPage();

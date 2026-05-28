@@ -159,7 +159,11 @@ function mountCohortQueryPage(options: {
     const { project, permissions = ["CanCreateProjects"] } = options;
     const pageStubs = {
         ...stubs,
-        CohortQuery: { template: "<div data-test='cohort-query-partial-stub' />" },
+        CohortQuery: {
+            name: "CohortQuery",
+            emits: ["update-project", "submitting-change"],
+            template: "<div data-test='cohort-query-partial-stub' />"
+        },
         "router-link": { template: "<a><slot /></a>" }
     };
 
@@ -230,6 +234,29 @@ describe("CohortQuery", () => {
             const wrapper = mountCohortQueryPage({ project: stagedProjectWithQuery });
 
             expect(wrapper.text()).toContain("locked and can not be edited");
+        });
+
+        it("disables the Run button while CohortQuery reports a submission in flight", async () => {
+            const wrapper = mountCohortQueryPage({ project: unstagedProject });
+            const runButton = wrapper.find("[data-test='view-cohort-query-results-btn']");
+            // Idle: the button is enabled.
+            expect(runButton.attributes("disabled")).toBeUndefined();
+
+            const partial = wrapper.findComponent({ name: "CohortQuery" });
+            await partial.vm.$emit("submitting-change", true);
+            expect(runButton.attributes("disabled")).toBeDefined();
+
+            await partial.vm.$emit("submitting-change", false);
+            expect(runButton.attributes("disabled")).toBeUndefined();
+        });
+
+        it("re-emits UpdateProject when CohortQuery emits update-project", async () => {
+            const wrapper = mountCohortQueryPage({ project: unstagedProject });
+
+            const partial = wrapper.findComponent({ name: "CohortQuery" });
+            await partial.vm.$emit("update-project");
+
+            expect(wrapper.emitted("UpdateProject")).toBeTruthy();
         });
     });
 

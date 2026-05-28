@@ -333,6 +333,30 @@ describe("ConnectionStatus", () => {
         expect(kitModal.props("dialog")).toBe(false);
     });
 
+    it("returns to the table view when the List tab is clicked after switching to radial", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+        await wrapper.find("[data-test='view-toggle-radial']").trigger("click");
+        expect(wrapper.find("[data-test='connection-radial-svg']").exists()).toBe(true);
+
+        await wrapper.find("[data-test='view-toggle-list']").trigger("click");
+        // Back to the table: rows are mounted again and the radial SVG is gone.
+        expect(wrapper.findAll("[data-test='trust-row']").length).toBe(3);
+        expect(wrapper.find("[data-test='connection-radial-svg']").exists()).toBe(false);
+    });
+
+    it("closes the Add Trust modal when AddTrustModal emits close-modal (dismiss without creating)", async () => {
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage();
+
+        await wrapper.find("[data-test='add-trust-btn']").trigger("click");
+        const addModal = wrapper.findComponent({ name: "AddTrustModal" });
+        expect(addModal.props("dialog")).toBe(true);
+
+        await addModal.vm.$emit("close-modal");
+        expect(addModal.props("dialog")).toBe(false);
+    });
+
     it("sets hoverTrustId on radial mouseenter and clears it on mouseleave", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();
