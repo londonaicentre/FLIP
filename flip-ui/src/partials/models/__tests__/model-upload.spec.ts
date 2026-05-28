@@ -54,6 +54,7 @@ const { FileTooLargeError } = vi.hoisted(() => {
             this.actualBytes = actualBytes;
         }
     }
+
     return { FileTooLargeError };
 });
 vi.mock("@/utils/file", () => ({

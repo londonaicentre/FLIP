@@ -13,12 +13,11 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
-import { nextTick } from "vue";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-
-import { useAuthStore } from "@/store/auth";
+import { nextTick } from "vue";
 
 import MfaSetup from "@/pages/auth/mfa-setup.vue";
+import { useAuthStore } from "@/store/auth";
 
 // Route/router mocks — the page calls routeChange.* and we need to assert
 // on which navigation target it picked.
@@ -46,9 +45,7 @@ vi.mock("@/utils/snackbar", () => ({
 // QR rendering is a canvas side-effect; stub it so we can verify the URI
 // passed in without running anything in jsdom.
 const mockToDataURL = vi.fn().mockResolvedValue("data:image/png;base64,STUB");
-vi.mock("qrcode", () => ({
-    default: { toDataURL: (...args: unknown[]) => mockToDataURL(...args) }
-}));
+vi.mock("qrcode", () => ({ default: { toDataURL: (...args: unknown[]) => mockToDataURL(...args) } }));
 
 const SIGN_IN_CHAIN_STEP = "CONTINUE_SIGN_IN_WITH_TOTP_SETUP";
 
@@ -126,11 +123,14 @@ describe("mfa-setup page", () => {
         expect(wrapper.find("[data-test='mfa-setup-signout-btn']").exists()).toBe(false);
     });
 
-describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", () => {
+    describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", () => {
         test("does not call beginMfaEnrolment — the setup details are already in the store", async () => {
             const wrapper = mountMfaSetup({
                 signInStep: SIGN_IN_CHAIN_STEP,
-                totpSetup: { sharedSecret: "ABCD1234", setupUri: "otpauth://totp/FLIP" }
+                totpSetup: {
+                    sharedSecret: "ABCD1234",
+                    setupUri: "otpauth://totp/FLIP"
+                }
             });
             await flushPromises();
             const authStore = useAuthStore();
@@ -144,7 +144,10 @@ describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", (
             // If we somehow reach the page mid-sign-in-chain with no
             // totpSetupDetails in the store, there's nothing to render;
             // sending the user back to login is the only safe recovery.
-            mountMfaSetup({ signInStep: SIGN_IN_CHAIN_STEP, totpSetup: null });
+            mountMfaSetup({
+                signInStep: SIGN_IN_CHAIN_STEP,
+                totpSetup: null
+            });
             await flushPromises();
 
             expect(mockGotoLogin).toHaveBeenCalledTimes(1);
@@ -155,7 +158,10 @@ describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", (
         test("submit routes through confirmTotpSetup (not completeMfaEnrolment)", async () => {
             const wrapper = mountMfaSetup({
                 signInStep: SIGN_IN_CHAIN_STEP,
-                totpSetup: { sharedSecret: "ABCD1234", setupUri: "otpauth://totp/FLIP" }
+                totpSetup: {
+                    sharedSecret: "ABCD1234",
+                    setupUri: "otpauth://totp/FLIP"
+                }
             });
             await flushPromises();
             const authStore = useAuthStore();
@@ -173,7 +179,10 @@ describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", (
         const signedInUser = {
             username: "u",
             userId: "u",
-            attributes: { sub: "s", email: "u@e.com" },
+            attributes: {
+                sub: "s",
+                email: "u@e.com"
+            },
             permissions: []
         };
 
@@ -221,7 +230,10 @@ describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", (
                 signInStep: "DONE",
                 user: signedInUser,
                 mfaEnabled: false,
-                totpSetup: { sharedSecret: "ABCD1234", setupUri: "otpauth://totp/FLIP" }
+                totpSetup: {
+                    sharedSecret: "ABCD1234",
+                    setupUri: "otpauth://totp/FLIP"
+                }
             });
             await flushPromises();
             const authStore = useAuthStore();
@@ -297,10 +309,14 @@ describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", (
                             inheritAttrs: false,
                             emits: ["submit"]
                         },
-                        AiInput: { template: "<input />",
-                            props: ["name", "type", "label", "preIcon", "inputProps"] },
-                        AiButton: { template: "<button><slot /></button>",
-                            props: ["primary", "clear", "block", "loading", "disabled"] }
+                        AiInput: {
+                            template: "<input />",
+                            props: ["name", "type", "label", "preIcon", "inputProps"]
+                        },
+                        AiButton: {
+                            template: "<button><slot /></button>",
+                            props: ["primary", "clear", "block", "loading", "disabled"]
+                        }
                     }
                 }
             });
@@ -318,12 +334,19 @@ describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", (
             mount(MfaSetup, {
                 global: {
                     stubs: {
-                        Form: { template: "<form><slot /></form>",
-                            inheritAttrs: false, emits: ["submit"] },
-                        AiInput: { template: "<input />",
-                            props: ["name", "type", "label", "preIcon", "inputProps"] },
-                        AiButton: { template: "<button><slot /></button>",
-                            props: ["primary", "clear", "block", "loading", "disabled"] }
+                        Form: {
+                            template: "<form><slot /></form>",
+                            inheritAttrs: false,
+                            emits: ["submit"]
+                        },
+                        AiInput: {
+                            template: "<input />",
+                            props: ["name", "type", "label", "preIcon", "inputProps"]
+                        },
+                        AiButton: {
+                            template: "<button><slot /></button>",
+                            props: ["primary", "clear", "block", "loading", "disabled"]
+                        }
                     }
                 }
             });
@@ -341,7 +364,10 @@ describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", (
     describe("submit error handling", () => {
         const buildSigninChainState = (): Partial<AuthStoreState> => ({
             signInStep: SIGN_IN_CHAIN_STEP,
-            totpSetup: { sharedSecret: "ABCD1234", setupUri: "otpauth://totp/FLIP" }
+            totpSetup: {
+                sharedSecret: "ABCD1234",
+                setupUri: "otpauth://totp/FLIP"
+            }
         });
 
         test("CodeMismatchException shows the 'Invalid code' snackbar (user retry will help)", async () => {
@@ -350,9 +376,7 @@ describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", (
             const authStore = useAuthStore();
             // Cognito's canonical name for a wrong TOTP digit; the page
             // treats this as a retryable user error, not an infra error.
-            const mismatch = Object.assign(new Error("Invalid code passed"), {
-                name: "CodeMismatchException"
-            });
+            const mismatch = Object.assign(new Error("Invalid code passed"), { name: "CodeMismatchException" });
             (authStore.confirmTotpSetup as unknown as ReturnType<typeof vi.fn>)
                 .mockRejectedValueOnce(mismatch);
 
@@ -376,9 +400,7 @@ describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", (
             const wrapper = mountMfaSetup(buildSigninChainState());
             await flushPromises();
             const authStore = useAuthStore();
-            const expired = Object.assign(new Error("Your software token has expired."), {
-                name: "ExpiredCodeException"
-            });
+            const expired = Object.assign(new Error("Your software token has expired."), { name: "ExpiredCodeException" });
             (authStore.confirmTotpSetup as unknown as ReturnType<typeof vi.fn>)
                 .mockRejectedValueOnce(expired);
 
@@ -438,17 +460,21 @@ describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", (
                 user: {
                     username: "u",
                     userId: "u",
-                    attributes: { sub: "s", email: "u@e.com" },
+                    attributes: {
+                        sub: "s",
+                        email: "u@e.com"
+                    },
                     permissions: []
                 },
                 mfaEnabled: false,
-                totpSetup: { sharedSecret: "ABCD1234", setupUri: "otpauth://totp/FLIP" }
+                totpSetup: {
+                    sharedSecret: "ABCD1234",
+                    setupUri: "otpauth://totp/FLIP"
+                }
             });
             await flushPromises();
             const authStore = useAuthStore();
-            const mismatch = Object.assign(new Error("Invalid code passed"), {
-                name: "CodeMismatchException"
-            });
+            const mismatch = Object.assign(new Error("Invalid code passed"), { name: "CodeMismatchException" });
             (authStore.completeMfaEnrolment as unknown as ReturnType<typeof vi.fn>)
                 .mockRejectedValueOnce(mismatch);
 
@@ -470,7 +496,10 @@ describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", (
             mockToDataURL.mockRejectedValueOnce(new Error("invalid URI"));
             const wrapper = mountMfaSetup({
                 signInStep: SIGN_IN_CHAIN_STEP,
-                totpSetup: { sharedSecret: "ABCD1234", setupUri: "not-a-valid-uri" }
+                totpSetup: {
+                    sharedSecret: "ABCD1234",
+                    setupUri: "not-a-valid-uri"
+                }
             });
             await flushPromises();
 
@@ -485,7 +514,10 @@ describe("Sign-in-chain flow (signInStep = CONTINUE_SIGN_IN_WITH_TOTP_SETUP)", (
             const setupUri = "otpauth://totp/FLIP:user?secret=ABCD1234";
             mountMfaSetup({
                 signInStep: SIGN_IN_CHAIN_STEP,
-                totpSetup: { sharedSecret: "ABCD1234", setupUri }
+                totpSetup: {
+                    sharedSecret: "ABCD1234",
+                    setupUri
+                }
             });
             await flushPromises();
 

@@ -52,9 +52,7 @@ describe("Ai Alert", () => {
         const comp = mount(AiAlert, {
             global: { plugins: [createPinia()] },
             props: { variant: "info" },
-            slots: {
-                default: "<strong data-test=\"slot-marker\">authored content</strong>"
-            }
+            slots: { default: "<strong data-test=\"slot-marker\">authored content</strong>" }
         });
 
         const html = comp.html();

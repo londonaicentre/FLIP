@@ -102,6 +102,7 @@ function mountProjectStatus(canLoad = true, ...maxOverride: [number | undefined]
     });
     const store = useSiteDetailsStore(pinia);
     store.maxReimportCount = maxReimportCount;
+
     return mount(ProjectStatus, {
         props: { canLoad },
         global: {

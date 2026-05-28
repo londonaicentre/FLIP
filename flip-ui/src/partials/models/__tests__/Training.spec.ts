@@ -11,7 +11,7 @@
  * limitations under the License.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
@@ -20,29 +20,28 @@ import Training from "@/partials/models/Training.vue";
 
 vi.mock("vue-router", async (importOriginal) => {
     const actual = await importOriginal<typeof import("vue-router")>();
+
     return {
         ...actual,
-        useRoute: () => ({ params: { modelId: "model-1" }, query: {} })
+        useRoute: () => ({
+            params: { modelId: "model-1" },
+            query: {}
+        })
     };
 });
 
 vi.mock("@/services/model-service", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/services/model-service")>();
+
     return {
         ...actual,
         initialiseTraining: vi.fn()
     };
 });
 
-const alertStub = {
-    template: "<div data-test=\"alert-stub\"><slot /></div>"
-};
-const buttonStub = {
-    template: "<button data-test=\"initiate-training-btn\"><slot /></button>"
-};
-const actionsMenuStub = {
-    template: "<div data-test=\"training-actions-menu\" />"
-};
+const alertStub = { template: "<div data-test=\"alert-stub\"><slot /></div>" };
+const buttonStub = { template: "<button data-test=\"initiate-training-btn\"><slot /></button>" };
+const actionsMenuStub = { template: "<div data-test=\"training-actions-menu\" />" };
 
 interface MountOpts {
     permissions?: string[];
@@ -74,7 +73,10 @@ function mountTraining(options: MountOpts = {}) {
                             user: {
                                 username: "testuser",
                                 userId: "1",
-                                attributes: { sub: "1", email: "t@e.co" },
+                                attributes: {
+                                    sub: "1",
+                                    email: "t@e.co"
+                                },
                                 permissions
                             },
                             signInStep: "DONE"

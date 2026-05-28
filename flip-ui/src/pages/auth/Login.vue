@@ -154,7 +154,7 @@ const submit = async (v: unknown): Promise<void> => {
                     routeChange.viewProjects();
                 }
         }
-    } catch (e) {
+    } catch {
         Snackbar.show({
             type: "error",
             title: "Error",

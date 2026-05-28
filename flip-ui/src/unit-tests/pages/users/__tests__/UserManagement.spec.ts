@@ -15,8 +15,8 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
-import { ref } from "vue";
 import { beforeEach, describe, expect, it, test, vi } from "vitest";
+import { ref } from "vue";
 
 import UserManagement from "@/pages/admin/users.vue";
 
@@ -33,8 +33,15 @@ vi.mock("swrv", () => {
                 .then((d) => { data.value = d; })
                 .catch((e) => { error.value = e; });
         }
-        return { data, error, mutate: vi.fn(), isValidating: ref(false) };
+
+        return {
+            data,
+            error,
+            mutate: vi.fn(),
+            isValidating: ref(false)
+        };
     };
+
     return { default: useSWRV };
 });
 
@@ -54,9 +61,7 @@ vi.mock("@/services/user-service", () => ({
     updateUserRoles: (...args: unknown[]) => mockUpdateUserRoles(...args)
 }));
 
-vi.mock("@/services/role-service", () => ({
-    getRoles: (...args: unknown[]) => mockGetRoles(...args)
-}));
+vi.mock("@/services/role-service", () => ({ getRoles: (...args: unknown[]) => mockGetRoles(...args) }));
 
 const mockRouteNotAllowed = vi.fn();
 const mockViewProjects = vi.fn();
@@ -84,14 +89,16 @@ vi.mock("@/utils/snackbar", () => ({
 // Authorised by default — tests that need the 403 branch override with
 // mockResolvedValueOnce(false).
 const mockCanAccessRoute = vi.fn().mockResolvedValue(true);
-vi.mock("@/utils/route-validator", () => ({
-    canAccessRoute: (...args: unknown[]) => mockCanAccessRoute(...args)
-}));
+vi.mock("@/utils/route-validator", () => ({ canAccessRoute: (...args: unknown[]) => mockCanAccessRoute(...args) }));
 
 const SAMPLE_USER = {
     id: "user-1",
     email: "user@example.com",
-    roles: [{ id: "role-1", rolename: "admin", roledescription: "Administrator" }],
+    roles: [{
+        id: "role-1",
+        rolename: "admin",
+        roledescription: "Administrator"
+    }],
     isDisabled: false
 };
 
@@ -161,8 +168,16 @@ describe("User Management", () => {
         });
         mockGetRoles.mockResolvedValue({
             roles: [
-                { id: "role-1", rolename: "admin", roledescription: "Administrator" },
-                { id: "role-2", rolename: "viewer", roledescription: "View-only" }
+                {
+                    id: "role-1",
+                    rolename: "admin",
+                    roledescription: "Administrator"
+                },
+                {
+                    id: "role-2",
+                    rolename: "viewer",
+                    roledescription: "View-only"
+                }
             ]
         });
     });
@@ -204,6 +219,7 @@ describe("User Management", () => {
             // Select the sample user so the action panel renders.
             await wrapper.find("[data-test='user']").trigger("click");
             await flushPromises();
+
             return wrapper;
         }
 
@@ -282,7 +298,11 @@ describe("User Management", () => {
             return {
                 id: "user-1",
                 email: "user@example.com",
-                roles: [{ id: "role-1", rolename: "admin", roledescription: "Administrator" }],
+                roles: [{
+                    id: "role-1",
+                    rolename: "admin",
+                    roledescription: "Administrator"
+                }],
                 isDisabled: false
             };
         }
@@ -303,6 +323,7 @@ describe("User Management", () => {
             await flushPromises();
             await flushPromises();
             await wrapper.find("[data-test='add-viewer-btn']").trigger("click");
+
             return wrapper;
         }
 
