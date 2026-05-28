@@ -122,6 +122,64 @@ Options:
 
 Recommendation: Keep local verification minimal (ruff passed). Proceed to Phase 2 (CI dedup/enrich) and schedule full test runs in CI where appropriate runtime exists.
 
-Next step: start Phase 2 — deduplicate GitHub workflows, merge enhanced pr_acceptance_criteria behaviour, and add path-scoped triggers. 
+Next step: start Phase 2 — deduplicate GitHub workflows, merge enhanced pr_acceptance_criteria behaviour, and add path-scoped triggers.
 
+PROGRESS (iteration 6)
 
+- [x] 19. Add path scoping to push-app-to-s3 workflows (dev/stag/prod) -> now trigger only on fl-apps/**
+- [x] 20. Remove duplicate PR source-branch validation workflow (validate_pr_source_branch_fl.yml) — keep project canonical validate_branch_origin.yml
+
+Notes:
+- Unit / package CI workflows path-scoped where applicable. Docs and secret scanning remain global.
+
+Next: continue Phase 2 — scan workflows for any remaining broad triggers that should be scoped (e.g. push to main on files unrelated to service), and decide merges for overlapping build workflows.
+
+PROGRESS (iteration 7)
+
+- [x] 21. Scan all .github/workflows for broad triggers (push/pull_request without paths)
+
+Findings (broad workflows):
+- docs.yml (push to main/develop, no paths) — candidate to scope to docs/** but acceptable global.
+- release-pypi.yml (push to main, no paths) — intentionally global (publish guard uses tag/version check).
+- release.yml (push to main, no paths) — intentionally global (tag+release management).
+- secret-scanning.yml (push & PR, no paths) — must remain global.
+- validate_branch_origin.yml, pr_acceptance_criteria.yml, pr-release-notes-preview.yml, cleanup-pr-s3.yml — PR-scoped logically and intentionally broad.
+
+Recommendations:
+- Keep release workflows and secret-scanning global.
+- Optionally scope docs.yml to ["docs/**", ".readthedocs.yaml", ".github/RELEASE_NOTES_TEMPLATE.md"] to avoid unnecessary builds; defer unless we observe noise.
+- No merges required for docker/build workflows — they are service-scoped and non-overlapping.
+
+Next steps:
+1. Apply docs.yml scoping only if you want immediate CI quiet — ask if you want.
+2. Start Phase 2b: deduplicate/merge cross-repo PR acceptance logic into central PR workflow set (pr_acceptance_criteria has been replaced but may need small adaptions).
+3. Run CI smoke locally if desired (not live here).
+
+Call ralph_done to continue iterations.
+
+PROGRESS (iteration 8)
+
+- [x] 22. Merge/pr_acceptance_criteria workflow validated and integrated into `.github/workflows/` — includes "Set PR title from linked issue" + "Import Acceptance Criteria" steps.
+- [x] 23. Verified no duplicate PR-acceptance logic elsewhere.
+
+Notes:
+- pr_acceptance_criteria.yml left intentionally broad (runs on pull_request opened/edited/reopened) because it must run for all PRs.
+- No further dedup required now.
+
+Next: Phase 2c — run lightweight CI policy checks and prepare PR that documents migration (changes in .github/workflows/*, fl-apps/, flip-utils/). After PR, run CI in GitHub to validate workflows.
+
+PROGRESS (iteration 9)
+
+- [x] 24. Prepared commit plan at `.plans/455-migration-commit-plan.md` with ordered commits, conventional messages, and PR draft.
+- [x] 25. Created commits and opened PR: https://github.com/londonaicentre/FLIP/pull/559
+
+Actions performed:
+1. Created commit (migration snapshot) containing migrated code and config.
+2. Pushed branch `455-feature-unify-flip-fl-base-into-the-flip-monorepo` to origin.
+3. Opened PR #559 against `develop` with migration plan and summary.
+
+Next steps:
+- Monitor CI runs on PR. Address failures (heavy nvflare tests may require torch; consider marking or adding dependencies in CI).
+- After CI green, Phase 3: docs consolidation + Sphinx merge.
+
+If you want a different commit grouping or additional changes before merging, tell me which groups to split or which files to reassign to new commits.
