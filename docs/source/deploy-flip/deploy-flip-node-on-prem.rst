@@ -134,7 +134,7 @@ a. In the prod UI, open Connection Status → Add Trust → fill in the trust's
    before closing the modal.
 
 b. Run ``make sync-trust-kit KIT=Trust_2 PROD=true`` (from the repo root) to populate the
-   Hub-shared block (14 keys), replacing the ``<run-make-sync-trust-kit>``
+   Hub-shared block (12 keys), replacing the ``<run-make-sync-trust-kit>``
    placeholders.
 
 **2. Package the kit (FLIP admin).** Tarball the populated kit file + the
@@ -199,7 +199,10 @@ under ``$HOME`` instead — the trust kit file points at the FL kit root via
 ``make onboard-onprem-trust KIT=Trust_2`` prints a ✅/❌ checklist (your IP,
 docker swarm state, Hub-shared / Kit credentials populated, FL_KIT_DIR set
 and on disk, FL kit contents present) — fix any ❌ rows before
-``up-onprem-trust``, which gates on the same checks.
+``up-onprem-trust``, which gates on the same checks. The checklist is
+read-only, so you can run it on its own at any point — including before the
+kit is fully staged — just to read off the ``Your public IP`` row and report
+it to the FLIP admin for step 6, letting them open the firewall in parallel.
 
 The prod trust compose mounts ``${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/…``
 (nvflare) or ``${FL_KIT_DIR}/net-1/{certificates,keys}`` (flower) into the
@@ -207,7 +210,8 @@ fl-client container, so the ``net-1/`` hierarchy must be preserved as
 extracted.
 
 **6. Open the AWS firewall (FLIP admin).** Once the operator reports their
-host's public IP, add it to ``LOCAL_TRUST_PUBLIC_IPS`` (an HCL list) in the env
+host's public IP (the ``Your public IP`` row from ``make onboard-onprem-trust``
+in step 5), add it to ``LOCAL_TRUST_PUBLIC_IPS`` (an HCL list) in the env
 file ``.env.<stag|production>``, then apply:
 
 .. code-block:: shell

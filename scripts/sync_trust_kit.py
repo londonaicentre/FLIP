@@ -17,10 +17,10 @@
 Usage:
     uv run scripts/sync_trust_kit.py <KIT>
 
-Picks the 14 Hub-shared values out of the caller's environment and upserts each
+Picks the 12 Hub-shared values out of the caller's environment and upserts each
 into trust/.env.<KIT>, under the sentinel header that distribute-trust-kits and
 package-onprem-trust-kit both byte-match. Credentials are never touched — only
-the 14 Hub-shared keys.
+the 12 Hub-shared keys.
 
 The caller (the root Makefile) is responsible for sourcing the right env file:
 `include $(MAIN_ENV_FILE)` + `export $(shell sed ...)` populates os.environ
