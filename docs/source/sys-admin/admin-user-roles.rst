@@ -78,3 +78,7 @@ The following table summarises the permissions assigned to each role:
 .. note::
 
    ``ProjectUserAccess`` membership grants different write capabilities depending on the user's role: a Researcher member may contribute their own models on the project, while an Observer member retains read-only access. Project-level writes (editing, staging, or deleting the project itself) remain restricted to the project owner and admins regardless of membership.
+
+.. warning::
+
+   Project ownership is not revoked by a role change. A user who created a project keeps project-level write access to it (editing, staging, deleting, and submitting cohort queries) even after being demoted to Observer — ownership, not the current role, is the authority for owned projects. Demotion still removes the user's ability to create new projects or write to projects they do not own. To fully revoke a former owner's access to a project they own, transfer ownership to another user or delete the project.

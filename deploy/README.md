@@ -229,20 +229,21 @@ This runbook is for the case where **you** have lost access to your TOTP device 
 
 ## Service Authentication
 
-FLIP uses three separate authentication mechanisms for service-to-service communication. Generate all keys
-in one go with:
+FLIP uses three separate authentication mechanisms for service-to-service communication. The single
+hub-internal key is generated standalone; the two per-trust keys are minted together when you register each
+trust:
 
 ```bash
-make generate-trust-api-keys
-make generate-internal-service-key
-make generate-trust-internal-service-keys
+make generate-internal-service-key   # fl-server → flip-api (single hub-internal secret)
+make register-trusts                 # mints each trust's TRUST_API_KEY + TRUST_INTERNAL_SERVICE_KEY into its kit file
 ```
 
 ### Trust API Keys (trust-api → flip-api)
 
-Each trust has a unique API key stored in the `TRUST_API_KEYS` JSON dict and sent in the `TRUST_API_KEY_HEADER` header.
-The hub stores only SHA-256 hashes of these keys in `TRUST_API_KEY_HASHES`. Used for task polling, cohort result
-submission, and heartbeat endpoints.
+Each trust has a single `TRUST_API_KEY` (plaintext) minted by `register_trust` (`make register-trusts`) and held
+only in that trust's kit file (`trust/.env.<slot>`), sent in the `TRUST_API_KEY_HEADER` header. The hub stores
+only the SHA-256 hash, in the `trust` table's `api_key_hash` column — there is no hub-side env dict of trust keys.
+Used for task polling, cohort result submission, and heartbeat endpoints.
 
 ### Internal Service Key (fl-server → flip-api)
 
@@ -255,14 +256,15 @@ is a **single, hub-internal** secret and is separate from the per-trust internal
 
 Inside each trust, every call from trust-api / imaging-api / fl-client to imaging-api or data-access-api
 carries a shared-secret header. The header name comes from `TRUST_INTERNAL_SERVICE_KEY_HEADER` (default
-`X-Trust-Internal-Service-Key`); the value is the per-trust plaintext key from `TRUST_INTERNAL_SERVICE_KEYS`
-(a JSON dict keyed by trust name). Receivers compare the header against their own copy with a constant-time
-compare. `/health` is intentionally exempt so liveness probes still work.
+`X-Trust-Internal-Service-Key`); the value is the per-trust plaintext `TRUST_INTERNAL_SERVICE_KEY`, minted by
+`register_trust` into the trust's kit file (`trust/.env.<slot>`) alongside `TRUST_API_KEY`. Receivers compare
+the header against their own copy with a constant-time compare. `/health` is intentionally exempt so liveness
+probes still work.
 
 Each trust gets a distinct key — a leak in `Trust_1` cannot drive operations on `Trust_2`'s APIs. The hub
-never sees these keys: they live only in trust-side env (extracted by `trust/Makefile` via `get_json_value`
-at deploy time, exactly like `TRUST_API_KEYS`). See the **Trust-internal Service Authentication** section
-in the repo-root [`CLAUDE.md`](../CLAUDE.md) for the full threat model.
+never sees these keys: they live only in trust-side env (the trust's kit file `trust/.env.<slot>`, which
+`trust/Makefile` `-include`s so every trust-internal container inherits it). See the **Trust-internal Service
+Authentication** section in the repo-root [`CLAUDE.md`](../CLAUDE.md) for the full threat model.
 
 FL clients (trust side) **do not** have Central Hub API credentials. Only the fl-server communicates with flip-api.
 FL clients relay metrics and exceptions to the fl-server, which forwards them to the Central Hub.
@@ -277,13 +279,12 @@ outside the hub's Docker network.
 | Variable | Where used | Purpose |
 |---|---|---|
 | `TRUST_API_KEY_HEADER` | flip-api, trust-api | Header name for trust auth |
-| `TRUST_API_KEYS` | trust-api | JSON dict of trust name → plaintext key |
-| `TRUST_API_KEY_HASHES` | flip-api | JSON dict of trust name → SHA-256 hash |
+| `TRUST_API_KEY` | trust-side kit file | Per-trust plaintext key (hub stores its SHA-256 in the `trust` table's `api_key_hash`) |
 | `INTERNAL_SERVICE_KEY_HEADER` | flip-api, fl-server | Header name for internal service auth |
 | `INTERNAL_SERVICE_KEY` | fl-server | Internal service plaintext key (plain string) |
 | `INTERNAL_SERVICE_KEY_HASH` | flip-api | SHA-256 hash of internal service key (plain string) |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | trust-api, imaging-api, data-access-api, fl-client | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
-| `TRUST_INTERNAL_SERVICE_KEYS` | trust-side only | JSON dict of trust name → per-trust plaintext key. The hub never sees these. |
+| `TRUST_INTERNAL_SERVICE_KEY` | trust-side kit file | Per-trust plaintext key, minted by `register_trust`. The hub never sees it. |
 | `CENTRAL_HUB_API_URL` | flip-ui, trust-api | Public base URL of flip-api (in prod: CloudFront URL) |
 | `FLIP_API_INTERNAL_URL` | fl-server | Docker-network URL of flip-api on the Central Hub (e.g. `http://flip-api:8000/api`) |
 

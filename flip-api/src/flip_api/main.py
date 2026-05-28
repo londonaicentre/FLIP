@@ -39,7 +39,6 @@ from flip_api.fl_services import (
     get_net_status,
     get_status,
     initiate_training,
-    run_jobs,
     stop_training,
 )
 from flip_api.model_services import (
@@ -190,7 +189,6 @@ ROUTERS: tuple[APIRouter, ...] = (
     get_net_status.router,
     get_status.router,
     initiate_training.router,
-    run_jobs.router,
     stop_training.router,
     # Model job types endpoint (moved from FL)
     get_job_types.router,

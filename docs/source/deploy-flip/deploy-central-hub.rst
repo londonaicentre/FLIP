@@ -158,6 +158,76 @@ for full details):
 (``.env.stag`` or ``.env.production``) and preserves any keys that already
 exist; ``make register-trusts`` writes the per-trust keys into the kit files.
 
+***********************
+Applying schema changes
+***********************
+
+The hub has **no migration framework** (no Alembic). On startup the entrypoint runs
+``seed_essential_data.py``, which calls ``SQLModel.metadata.create_all()`` — this only creates
+*missing* tables. It never alters an existing table, so a release that adds a non-nullable column,
+changes a column type, or drops/renames a column is **not** applied to a database that already has
+those tables; the new code then fails at runtime against the old schema.
+
+The Central Hub database is treated as **recreatable**: it holds platform state (projects, queries,
+FL job / metrics / audit rows, the trust registry), not a system of record that must be migrated in
+place. To apply a schema-changing release, recreate the database so the entrypoint rebuilds it.
+
+**Development** (docker-compose, disposable volume):
+
+.. code-block:: shell
+
+   make down
+   docker compose -f deploy/compose.development.yml down -v   # drop the postgres volume
+   make up                                                    # entrypoint reruns create_all + seeders
+
+**Staging** (RDS is not deletion-protected):
+
+.. code-block:: shell
+
+   cd deploy/providers/AWS
+   make destroy PROD=stag && make full-deploy PROD=stag
+
+**Production** (RDS has deletion protection + a final snapshot):
+
+1. Take a manual RDS snapshot first.
+2. Connect to the database (SSM port-forward) and reset the schema so the entrypoint can rebuild it —
+   do **not** delete the RDS instance (deletion protection blocks it, and recreating churns the
+   endpoint and secrets):
+
+   .. code-block:: sql
+
+      DROP SCHEMA public CASCADE;
+      CREATE SCHEMA public;
+
+3. Force a new ``flip-api`` deploy so the entrypoint reruns ``create_all`` and the seeders.
+4. Re-register the trusts (``make register-trusts``) and redistribute the refreshed kit files — the
+   ``trust`` table and FL kit-slot pool come back empty.
+
+.. warning::
+
+   Recreation is destructive: every project, cohort query, model, FL result, and trust registration
+   is lost. Confirm the database genuinely holds no data that must be preserved before recreating a
+   production hub. If in-place preservation is ever required, a real migration (Alembic or
+   hand-written ``ALTER`` / backfill SQL) must be introduced instead.
+
+**********************************
+FL image compatibility on upgrade
+**********************************
+
+The hub and the trust-side FL base images (``flip-fl-base`` for NVFLARE, ``flip-fl-base-flower`` for
+Flower) share a wire contract for training metrics and logs. The metrics and logs endpoints now
+**require** an ``fl_client_name`` field, so the hub and the FL images must be upgraded together:
+
+- An **old** FL base image that omits ``fl_client_name`` is rejected (HTTP 422) by the new hub. FL
+  clients historically swallow that failure, so training appears to complete while the metrics chart
+  and logs stay empty.
+- Deploy the hub and bump the trust-side FL image tag in the same maintenance window; do not run
+  training in the gap.
+
+This pairs with the ``flip-fl-base`` follow-up that adds the trust-internal service-key header to the
+``flip`` client wrappers (see the **Trust-internal Service Authentication** section in the repo-root
+``CLAUDE.md``).
+
 ************
 Email setup
 ************

@@ -313,7 +313,9 @@ def _load_latest_audit_at_per_project(
     for pid, audit_date in rows:
         if pid is None or audit_date is None or pid in latest:
             continue
-        latest[pid] = audit_date.isoformat(timespec="milliseconds")
+        # `Z` suffix so the browser parses the naive UTC value as UTC, matching
+        # creation_timestamp / query.created above (audit_date defaults to datetime.utcnow).
+        latest[pid] = audit_date.isoformat(timespec="milliseconds") + "Z"
 
     return latest
 

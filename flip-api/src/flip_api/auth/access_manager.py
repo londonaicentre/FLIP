@@ -85,6 +85,12 @@ def can_modify_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
     does NOT unlock project-level writes — see :func:`can_contribute_to_project` for the looser
     check used by model-write endpoints.
 
+    Ownership is deliberately NOT re-checked against the owner's current role: a user who created a
+    project keeps project-level writes (edit / stage / delete, and cohort-submit via
+    ``submit_cohort_query``) even if later demoted to Observer. Ownership is the authority here, not the
+    active role. This is an accepted gap — to fully revoke an owner's access, transfer ownership or
+    delete the project. See the Observer role notes in ``docs/source/sys-admin/admin-user-roles.rst``.
+
     Args:
         user_id (UUID): ID of the user
         project_id (UUID): ID of the project

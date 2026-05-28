@@ -73,7 +73,7 @@ const stubs = {
     LatestModels: { template: "<div data-test=\"stub-latest-models\" />" },
     EditProjectDrawer: { template: "<div />" },
     LifecycleTrack: {
-        template: "<ol data-test=\"stub-lifecycle\"><li v-for=\"s in steps\" :key=\"s.id\" :data-test=\"`step-${s.id}`\" :data-completed=\"s.completed\">{{ s.name }}</li></ol>",
+        template: "<ol data-test=\"stub-lifecycle\"><li v-for=\"s in steps\" :key=\"s.id\" :data-test=\"`step-${s.id}`\" :data-completed=\"s.completed\" :data-date=\"s.date\">{{ s.name }}</li></ol>",
         props: ["steps"]
     },
     ProjectApproval: { template: "<div data-test=\"stub-project-approval\" />" },
@@ -187,6 +187,26 @@ describe("Project page (/project/[id]/index.vue)", () => {
         const approvedWrapper = mountProjectPage({ project: approvedProject });
         const step04 = approvedWrapper.find("[data-test=step-04]");
         expect(step04.attributes("data-completed")).toBe("true");
+    });
+
+    test("surfaces the staged date on the Staged step once the project is staged", () => {
+        const staged = baseProject();
+        staged.status = "STAGED";
+        staged.stagedAt = "2026-03-01T10:00:00.000Z";
+        const wrapper = mountProjectPage({ project: staged });
+        expect(wrapper.find("[data-test=step-03]").attributes("data-date")).toBe("2026-03-01T10:00:00.000Z");
+    });
+
+    test("does not surface a stale staged date on the Staged step when the project is UNSTAGED", () => {
+        // staged_at is the most-recent STAGE audit and persists after an unstage. Once a project
+        // is back to UNSTAGED the Staged step is incomplete again, so it must not show the old date.
+        const project = baseProject();
+        project.status = "UNSTAGED";
+        project.stagedAt = "2026-03-01T10:00:00.000Z";
+        const wrapper = mountProjectPage({ project });
+        const step03 = wrapper.find("[data-test=step-03]");
+        expect(step03.attributes("data-completed")).toBe("false");
+        expect(step03.attributes("data-date")).toBeFalsy();
     });
 
     test("shows ProjectStaging while UNSTAGED and switches to ProjectApproval once staged", () => {

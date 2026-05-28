@@ -29,14 +29,13 @@ def _trust(name: str) -> Trust:
 
 @pytest.fixture
 def mock_db():
-    with patch("flip_api.fl_services.run_jobs.get_session") as mock_get_session:
-        mock_db = MagicMock()
-        # Default: the single trust name `client1` resolves to a Trust row. Tests that
-        # exercise other shapes (unknown trust, multiple trusts) override
-        # `mock_db.exec(...).all` themselves.
-        mock_db.exec.return_value.all.side_effect = lambda: [_trust("client1")]
-        mock_get_session.return_value = mock_db
-        yield mock_db
+    # initiate_training receives the session as an argument, so the test passes a plain mock.
+    mock_db = MagicMock()
+    # Default: the single trust name `client1` resolves to a Trust row. Tests that
+    # exercise other shapes (unknown trust, multiple trusts) override
+    # `mock_db.exec(...).all` themselves.
+    mock_db.exec.return_value.all.side_effect = lambda: [_trust("client1")]
+    return mock_db
 
 
 @pytest.fixture

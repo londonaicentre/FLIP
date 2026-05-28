@@ -28,10 +28,8 @@ TRUST_2_ID = uuid4()
 
 @pytest.fixture
 def mock_db():
-    with patch("flip_api.fl_services.run_jobs.get_session") as mock_get_session:
-        mock_db = MagicMock()
-        mock_get_session.return_value = mock_db
-        yield mock_db
+    # get_status_endpoint receives the session as an argument, so the test passes a plain mock.
+    return MagicMock()
 
 
 @pytest.fixture

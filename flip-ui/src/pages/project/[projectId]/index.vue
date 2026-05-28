@@ -209,7 +209,9 @@ const steps = computed((): IStep[] => [
         id: "03",
         name: "Project Staged",
         completed: project?.value?.status !== "UNSTAGED",
-        date: project?.value?.stagedAt ?? null
+        // stagedAt persists after an unstage (it's the most-recent STAGE audit), so only surface it
+        // while the project is actually staged — otherwise the now-incomplete step shows a stale date.
+        date: project?.value?.status !== "UNSTAGED" ? (project?.value?.stagedAt ?? null) : null
     },
     {
         id: "04",

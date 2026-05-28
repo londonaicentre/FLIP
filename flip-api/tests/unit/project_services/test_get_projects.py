@@ -437,4 +437,6 @@ def test_get_projects_paginated_orm_picks_latest_audit_per_project(user_id):
     )
 
     assert len(response.data) == 1
-    assert response.data[0].staged_at == newer.isoformat(timespec="milliseconds")
+    # `Z`-suffixed so the browser parses the naive UTC audit_date as UTC, matching creation_timestamp.
+    assert response.data[0].staged_at == newer.isoformat(timespec="milliseconds") + "Z"
+    assert response.data[0].staged_at.endswith("Z")

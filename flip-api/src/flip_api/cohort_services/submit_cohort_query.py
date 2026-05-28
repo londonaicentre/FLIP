@@ -179,6 +179,10 @@ def submit_cohort_query(
                 )
 
             except Exception as e:
+                # Per-trust failures are isolated: the bad trust is reported with a 500 in its
+                # own result entry and the batch keeps queuing the rest. db.add is in-memory, so
+                # there is nothing to roll back here; a failure at db.commit() below is handled by
+                # the outer except (which rolls back the whole submit).
                 logger.error(
                     f"Unable to queue cohort query task for trust {trust.name}: {str(e)}"
                 )
@@ -193,6 +197,15 @@ def submit_cohort_query(
         query_row = db.exec(select(Queries).where(Queries.id == cohort_query.query_id)).first()
         if query_row is not None:
             query_row.queried_trust_ids = queried_trust_ids
+        else:
+            # No Queries row means save_cohort_query never persisted (or was rolled back). The
+            # per-trust tasks are still queued, but queried_trust_ids stays empty, so the
+            # cohort-results UI can't surface trusts that never responded. Surface the upstream
+            # gap instead of committing silently.
+            logger.warning(
+                "No Queries row for query_id %s; cohort tasks were queued but queried_trust_ids was not persisted.",
+                cohort_query.query_id,
+            )
 
         db.commit()
 
