@@ -350,7 +350,7 @@ const stageProject = async (trustIds: string[]) => {
     try {
         await stageProjectWithTrusts(`/projects/${project?.value?.id}/stage`, trustIds);
         emit("UpdateProject");
-    } catch (e) {
+    } catch {
         Snackbar.error({
             title: "Unable to stage project",
             text: "There was a problem staging this project, please try again."
@@ -379,7 +379,7 @@ const unstageCurrentProject = async () => {
             text: "The project has been unstaged."
         });
 
-    } catch (e) {
+    } catch {
         Snackbar.error({
             title: "Unable to unstage project",
             text: "There was a problem unstaging this project, please try again."
