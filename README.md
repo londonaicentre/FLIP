@@ -44,13 +44,12 @@ FLIP spans several repositories:
 
 | Repository | Description |
 | --- | --- |
-| [FLIP](https://github.com/londonaicentre/FLIP) | This repo: Central Hub API, Trust APIs, UI, and Docker deployment |
-| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | NVIDIA FLARE federated learning base application library, workflows, and tutorials |
-| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower federated learning base application library, workflows, and tutorials |
+| [FLIP](https://github.com/londonaicentre/FLIP) | Mono-repo: Central Hub API, Trust APIs, FL library, UI, and deployment |
+| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower federated learning base application library, workflows, and tutorials (not yet merged) |
 
-This repository consolidates all FLIP services in a mono-repo that can be deployed together via Docker Compose. The
-federated learning images are pulled from [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) and
-[flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower).
+This repository is a mono-repo consolidating all FLIP services. The NVIDIA FLARE base library
+(`flip-utils`), FL Docker services (`fl_services/`), and FL app templates/tutorials (`fl-apps/`)
+are now in-tree. The Flower counterpart remains in flip-fl-base-flower (separate repo, future merge).
 
 ## Deployment
 
@@ -200,12 +199,12 @@ docker compose -f deploy/compose.development.yml run --rm < service name >
 
 ### Federated Learning Setup
 
-The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for federated learning. FLARE requires provisioned certificates and configuration files that are generated in the separate repository [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) (see that repository for instructions on how to provision the workspace).
+The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for federated learning. FLARE requires provisioned certificates and configuration files that are generated via `make nvflare-provision` and stored in `deploy/workspace/`.
 
-1. **Path Resolution**: `FL_PROVISIONED_DIR` is derived from the `FL_BACKEND` selection inside [`deploy/fl_backend.mk`](deploy/fl_backend.mk) (no longer set in `.env.development`):
+1. **Path Resolution**: `FL_PROVISIONED_DIR` is derived from the `FL_BACKEND` selection inside [`deploy/fl_backend.mk`](deploy/fl_backend.mk):
 
-   - `FL_BACKEND=flower` → `../flip-fl-base-flower/certs`
-   - `FL_BACKEND=nvflare` → `../flip-fl-base/workspace`
+   - `FL_BACKEND=flower` → `../flip-fl-base-flower/certs` (sibling repo, not yet merged)
+   - `FL_BACKEND=nvflare` → `deploy/workspace` (in-tree)
 
    The Makefile then converts the relative value to an absolute path so Docker volume mounts work correctly. You can override the resolved path at the command line for a one-off, e.g. `make up FL_PROVISIONED_DIR=/tmp/my-workspace`.
 
@@ -213,9 +212,9 @@ The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flo
 
 If you see errors like "fed_client.json does not exist" or "missing startup folder", verify that:
 
-- The [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) repository is cloned as a sibling directory
-- The workspace has been properly provisioned with NVFLARE certificates
+- The workspace has been properly provisioned (`make nvflare-provision`)
 - The `FL_PROVISIONED_DIR` path is correctly resolved (check Makefile output)
+- For NVFLARE: the workspace is at `deploy/workspace/`
 
 ## AWS Deployment
 
@@ -232,6 +231,9 @@ The repository is organised as follows:
 - `docs`: Contains the documentation files
 - `flip-api`: Contains the central hub API service
 - `flip-ui`: Contains the UI service
+- `flip-utils`: Contains the pip-installable flip-utils Python library
+- `fl_services`: Contains the FL Docker services (server, client, admin API)
+- `fl-apps`: Contains FL app templates, tutorials, and utility scripts
 - `trust`: Contains the services that would be deployed in individual trust environments.
   - `data-access-api`: Contains the data access API service
   - `imaging-api`: Contains the imaging API service

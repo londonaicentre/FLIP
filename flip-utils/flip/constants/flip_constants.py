@@ -1,0 +1,188 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+"""
+FLIP Constants and Configuration.
+
+This module provides:
+    - Environment-aware settings (DevSettings, ProdSettings)
+    - Enumerations for resource types, model statuses, tasks, and events
+"""
+
+from enum import Enum
+from typing import Union
+
+from pydantic import HttpUrl, PositiveInt, field_validator
+from pydantic_settings import BaseSettings
+
+
+class _Common(BaseSettings):
+    """Base settings shared by both development and production environments."""
+
+    LOCAL_DEV: bool = True  # Defaults to dev mode
+    MIN_CLIENTS: PositiveInt = 1
+
+
+class DevSettings(_Common):
+    """Development environment configuration.
+
+    Used when LOCAL_DEV=true. Requires local paths for test data.
+    """
+
+    LOCAL_DEV: bool = True
+
+    DEV_DATAFRAME: str = ""
+    DEV_IMAGES_DIR: str = ""
+
+
+class ProdSettings(_Common):
+    """Production environment configuration.
+
+    Used when LOCAL_DEV=false. Settings are grouped by which FL role uses them:
+    - **Server-only** (fl-server on Central Hub): FLIP_API_INTERNAL_URL, INTERNAL_SERVICE_KEY*
+    - **Client-only** (fl-client on trust side): DATA_ACCESS_API_URL, IMAGING_API_URL,
+      TRUST_INTERNAL_SERVICE_KEY*
+    - **Shared**: IMAGES_DIR, NET_ID, UPLOADED_FEDERATED_DATA_BUCKET
+    """
+
+    LOCAL_DEV: bool = False
+
+    # -- Server-only: fl-server on Central Hub calls flip-api using these.
+    # FLIP_API_INTERNAL_URL must point at flip-api over the shared Docker network
+    # (e.g. http://flip-api:8000/api), never at the public CloudFront URL — the
+    # CloudFront distribution whitelists only Authorization/Content-Type/Origin
+    # and strips X-Internal-Service-Key at the edge, which would break auth.
+    FLIP_API_INTERNAL_URL: HttpUrl = "http://localhost:8000"  # type: ignore[assignment]
+    INTERNAL_SERVICE_KEY_HEADER: str = "X-Internal-Service-Key"
+    INTERNAL_SERVICE_KEY: str = ""
+
+    # -- Client-only: fl-client on trust side calls local APIs using these --
+    DATA_ACCESS_API_URL: HttpUrl = "http://localhost:8001"  # type: ignore[assignment]
+    IMAGING_API_URL: HttpUrl = "http://localhost:8002"  # type: ignore[assignment]
+    # Trust-internal service auth — protects imaging-api and data-access-api on the
+    # trust Docker network from unauthenticated callers. The fl-client container is
+    # injected with the per-trust plaintext key in TRUST_INTERNAL_SERVICE_KEY by the
+    # trust compose stack (see trust/compose_trust.*.flower.yml / *.nvflare.yml in
+    # the FLIP repo). The flip package forwards it on every call to imaging-api or
+    # data-access-api; user training code does not deal with the header directly.
+    TRUST_INTERNAL_SERVICE_KEY_HEADER: str = "X-Trust-Internal-Service-Key"
+    TRUST_INTERNAL_SERVICE_KEY: str = ""
+
+    # -- Shared --
+    IMAGES_DIR: str = ""
+    NET_ID: str = "default"
+    UPLOADED_FEDERATED_DATA_BUCKET: str = "s3://default-bucket"
+
+    @field_validator("UPLOADED_FEDERATED_DATA_BUCKET")
+    @classmethod
+    def _validate_s3_url(cls, v: str) -> str:
+        if not v.startswith("s3://"):
+            raise ValueError(f"Invalid S3 URL: {v}")
+        return v
+
+
+_flip_constants_instance: Union[DevSettings, ProdSettings, None] = None
+
+
+def get_flip_constants() -> Union[DevSettings, ProdSettings]:
+    """Get FlipConstants singleton instance.
+
+    Lazy initialization ensures environment variables are only required
+    when the instance is actually used, not at import time.
+    """
+    global _flip_constants_instance
+    if _flip_constants_instance is None:
+        _flip_constants_instance = (
+            DevSettings() if _Common().LOCAL_DEV else ProdSettings()  # type: ignore[call-arg]
+        )
+    return _flip_constants_instance
+
+
+# For backward compatibility, provide FlipConstants as a property-like access
+# Users should migrate to get_flip_constants() for better lazy loading
+class _FlipConstantsProxy:
+    """Proxy to provide lazy loading via attribute access."""
+
+    def __getattribute__(self, name: str):
+        if name.startswith("_"):
+            return object.__getattribute__(self, name)
+        return getattr(get_flip_constants(), name)
+
+
+FlipConstants = _FlipConstantsProxy()  # type: ignore[assignment]
+
+
+class ResourceType(str, Enum):
+    """Types of imaging resources available in XNAT."""
+
+    DICOM = "DICOM"
+    NIFTI = "NIFTI"
+    SEGMENTATION = "SEG"
+    ALL = "ALL"
+
+
+class FlipTasks(str, Enum):
+    """Task names used in FLIP workflows."""
+
+    # Common tasks (all job types)
+    INIT_TRAINING = "init_training"
+    POST_VALIDATION = "post_validation"
+    CLEANUP = "cleanup"
+
+    # Evaluation-specific tasks
+    INIT_TASK = "init_task"
+    POST_TASK = "post_task"
+
+
+class FlipEvents:
+    """Event names used in FLIP workflows.
+
+    Note: This is a class with class attributes rather than an Enum
+    because NVFLARE events are string constants.
+    """
+
+    # Common events (all job types)
+    TRAINING_INITIATED = "_training_initiated"
+    RESULTS_UPLOAD_STARTED = "_results_upload_started"
+    RESULTS_UPLOAD_COMPLETED = "_results_upload_completed"
+    SEND_RESULT = "_send_result"
+    LOG_EXCEPTION = "_log_exception"
+    ABORTED = "_aborted"
+
+    # Evaluation-specific events
+    TASK_INITIATED = "_task_initiated"
+
+
+class ModelStatus(str, Enum):
+    """Model training status values."""
+
+    PENDING = "PENDING"
+    INITIATED = "INITIATED"
+    PREPARED = "PREPARED"
+    TRAINING_STARTED = "TRAINING_STARTED"
+    RESULTS_UPLOADED = "RESULTS_UPLOADED"
+    ERROR = "ERROR"
+    STOPPED = "STOPPED"
+
+
+class FlipMetricsLabel(str, Enum):
+    """Standard metric labels for FLIP metrics reporting."""
+
+    LOSS_FUNCTION = "LOSS_FUNCTION"
+    DL_RESULT = "DL_RESULT"
+    AVERAGE_SCORE = "AVERAGE_SCORE"
+
+
+class FlipMetaKey(str, Enum):
+    """Metadata keys used in FLIP (diffusion model specific)."""
+
+    STAGE = "stage"

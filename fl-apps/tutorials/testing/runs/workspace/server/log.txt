@@ -1,0 +1,147 @@
+2026-03-05 14:51:29,217 - SimulatorRunner - INFO - Create the Simulator Server.
+2026-03-05 14:51:29,218 - CoreCell - INFO - server: creating listener on tcp://0:33013
+2026-03-05 14:51:29,479 - CoreCell - INFO - server: created backbone external listener for tcp://0:33013
+2026-03-05 14:51:29,480 - CoreCell - INFO - server: creating listener on tcp://0:55197
+2026-03-05 14:51:29,480 - CoreCell - INFO - server: created backbone external listener for tcp://0:55197
+2026-03-05 14:51:29,480 - conn_manager - INFO - Connector [CH00003 PASSIVE tcp://0:51183] is starting
+2026-03-05 14:51:29,981 - CoreCell - INFO - server: created backbone internal listener for tcp://localhost:51183
+2026-03-05 14:51:29,981 - conn_manager - INFO - Connector [CH00001 PASSIVE tcp://0:33013] is starting
+2026-03-05 14:51:29,982 - conn_manager - INFO - Connector [CH00002 PASSIVE tcp://0:55197] is starting
+2026-03-05 14:51:29,983 - AuxRunner - INFO - registered aux handler for topic ObjectStreamer.Request
+2026-03-05 14:51:29,983 - AuxRunner - INFO - registered aux handler for topic ObjectStreamer.Abort
+2026-03-05 14:51:29,983 - Cell - INFO - Register blob CB for channel='aux_communication', topic='*'
+2026-03-05 14:51:29,983 - SimulatorServer - INFO - max_reg_duration=60.0
+2026-03-05 14:51:29,986 - Cell - INFO - Register blob CB for channel='hci_channel', topic='*'
+2026-03-05 14:51:29,986 - hci - INFO - Admin Server is started
+2026-03-05 14:51:29,986 - SimulatorRunner - INFO - Deploy the Apps.
+2026-03-05 14:51:30,022 - SimulatorRunner - INFO - Create the simulate clients.
+2026-03-05 14:51:30,023 - Cell - INFO - Register blob CB for channel='server_command', topic='get_task'
+2026-03-05 14:51:30,023 - Cell - INFO - Register blob CB for channel='server_command', topic='submit_update'
+2026-03-05 14:51:30,023 - AuxRunner - INFO - registered aux handler for topic ObjectStreamer.Request
+2026-03-05 14:51:30,024 - AuxRunner - INFO - registered aux handler for topic ObjectStreamer.Abort
+2026-03-05 14:51:30,027 - ClientManager - INFO - Client: New client site-1@172.24.0.2 joined. Sent token: 20fa349a-61aa-41a5-8617-e30ee1e01b28.  Total clients: 1
+2026-03-05 14:51:30,028 - FederatedClient - INFO - Successfully registered client:site-1 for project simulator_server. Token:20fa349a-61aa-41a5-8617-e30ee1e01b28 SSID:
+2026-03-05 14:51:30,028 - Cell - INFO - Register blob CB for channel='server_command', topic='get_task'
+2026-03-05 14:51:30,028 - Cell - INFO - Register blob CB for channel='server_command', topic='submit_update'
+2026-03-05 14:51:30,028 - AuxRunner - INFO - registered aux handler for topic ObjectStreamer.Request
+2026-03-05 14:51:30,028 - AuxRunner - INFO - registered aux handler for topic ObjectStreamer.Abort
+2026-03-05 14:51:30,029 - ClientManager - INFO - Client: New client site-2@172.24.0.2 joined. Sent token: e1d35ff9-6944-4c78-b5fe-5675527e09d9.  Total clients: 2
+2026-03-05 14:51:30,029 - FederatedClient - INFO - Successfully registered client:site-2 for project simulator_server. Token:e1d35ff9-6944-4c78-b5fe-5675527e09d9 SSID:
+2026-03-05 14:51:30,029 - SimulatorRunner - INFO - Set the client status ready.
+2026-03-05 14:51:30,029 - SimulatorRunner - INFO - Deploy and start the Server App.
+2026-03-05 14:51:30,031 - Cell - INFO - Register blob CB for channel='server_command', topic='*'
+2026-03-05 14:51:30,031 - Cell - INFO - Register blob CB for channel='aux_communication', topic='*'
+2026-03-05 14:51:30,031 - ServerCommandAgent - INFO - ServerCommandAgent cell register_request_cb: server.simulate_job
+2026-03-05 14:51:32,958 - AuxRunner - INFO - registered aux handler for topic ObjectStreamer.Request
+2026-03-05 14:51:32,958 - AuxRunner - INFO - registered aux handler for topic ObjectStreamer.Abort
+2026-03-05 14:51:32,958 - AuxRunner - INFO - registered aux handler for topic __sync_runner__
+2026-03-05 14:51:32,958 - AuxRunner - INFO - registered aux handler for topic __job_heartbeat__
+2026-03-05 14:51:32,958 - AuxRunner - INFO - registered aux handler for topic __task_check__
+2026-03-05 14:51:32,959 - AuxRunner - INFO - registered aux handler for topic RM.RELIABLE_REQUEST
+2026-03-05 14:51:32,959 - AuxRunner - INFO - registered aux handler for topic RM.RELIABLE_REPLY
+2026-03-05 14:51:32,960 - ReliableMessage - INFO - enabled reliable message: max_request_workers=20 query_interval=2.0
+2026-03-05 14:51:32,960 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job] - Server runner starting ...
+2026-03-05 14:51:32,960 - ServerEventHandler - INFO - [identity=simulator_server, run=simulate_job] - Start run event received
+2026-03-05 14:51:32,960 - AuxRunner - INFO - registered aux handler for topic fed.event
+2026-03-05 14:51:32,960 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job] - starting workflow init_evaluation (<class 'flip.nvflare.controllers.init_evaluation.InitEvaluation'>) ...
+2026-03-05 14:51:32,961 - InitEvaluation - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation] - Initializing InitTraining workflow.
+2026-03-05 14:51:32,961 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation] - Workflow init_evaluation (<class 'flip.nvflare.controllers.init_evaluation.InitEvaluation'>) started
+2026-03-05 14:51:32,961 - InitEvaluation - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation] - Beginning InitEvaluation control flow phase...
+2026-03-05 14:51:32,961 - InitEvaluation - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation] - Attempting to start the step to initialise evaluation...
+2026-03-05 14:51:32,961 - InitEvaluation - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation] - Beginning initial evaluation cleanup task...
+2026-03-05 14:51:32,961 - WFCommServer - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation] - scheduled task init_task
+2026-03-05 14:51:33,034 - SimulatorClientRunner - INFO - Start the clients run simulation.
+2026-03-05 14:51:34,035 - SimulatorClientRunner - INFO - Simulate Run client: site-1 on GPU group: None
+2026-03-05 14:51:34,035 - SimulatorClientRunner - INFO - Simulate Run client: site-2 on GPU group: None
+2026-03-05 14:51:36,371 - conn_manager - INFO - Connection [CN00005 127.0.0.1:33013 <= 127.0.0.1:49900] is created: PID: 56
+2026-03-05 14:51:36,377 - conn_manager - INFO - Connection [CN00006 127.0.0.1:33013 <= 127.0.0.1:49916] is created: PID: 56
+2026-03-05 14:51:39,791 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation, peer=site-2, peer_run=simulate_job, task_name=init_task, task_id=7caef455-63a9-4de8-b38f-787972c87aff] - assigned task to client site-2: name=init_task, id=7caef455-63a9-4de8-b38f-787972c87aff
+2026-03-05 14:51:39,792 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation, peer=site-2, peer_run=simulate_job, task_name=init_task, task_id=7caef455-63a9-4de8-b38f-787972c87aff] - sent task assignment to client. client_name:site-2 task_id:7caef455-63a9-4de8-b38f-787972c87aff
+2026-03-05 14:51:39,792 - GetTaskCommand - INFO - return task to client.  client_name: site-2  task_name: init_task   task_id: 7caef455-63a9-4de8-b38f-787972c87aff  sharable_header_task_id: 7caef455-63a9-4de8-b38f-787972c87aff
+2026-03-05 14:51:39,797 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation, peer=site-1, peer_run=simulate_job, task_name=init_task, task_id=60b2f15f-fb6a-4c28-881e-ae5f955507e6] - assigned task to client site-1: name=init_task, id=60b2f15f-fb6a-4c28-881e-ae5f955507e6
+2026-03-05 14:51:39,798 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation, peer=site-1, peer_run=simulate_job, task_name=init_task, task_id=60b2f15f-fb6a-4c28-881e-ae5f955507e6] - sent task assignment to client. client_name:site-1 task_id:60b2f15f-fb6a-4c28-881e-ae5f955507e6
+2026-03-05 14:51:39,798 - GetTaskCommand - INFO - return task to client.  client_name: site-1  task_name: init_task   task_id: 60b2f15f-fb6a-4c28-881e-ae5f955507e6  sharable_header_task_id: 60b2f15f-fb6a-4c28-881e-ae5f955507e6
+2026-03-05 14:51:39,799 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation, peer=site-2, peer_run=simulate_job] - got result from client site-2 for task: name=init_task, id=7caef455-63a9-4de8-b38f-787972c87aff
+2026-03-05 14:51:39,800 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation, peer=site-2, peer_run=simulate_job, peer_rc=OK, task_name=init_task, task_id=7caef455-63a9-4de8-b38f-787972c87aff] - finished processing client result by init_evaluation
+2026-03-05 14:51:39,800 - SubmitUpdateCommand - INFO - submit_update process. client_name:site-2   task_id:7caef455-63a9-4de8-b38f-787972c87aff
+2026-03-05 14:51:39,804 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation, peer=site-1, peer_run=simulate_job] - got result from client site-1 for task: name=init_task, id=60b2f15f-fb6a-4c28-881e-ae5f955507e6
+2026-03-05 14:51:39,805 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation, peer=site-1, peer_run=simulate_job, peer_rc=OK, task_name=init_task, task_id=60b2f15f-fb6a-4c28-881e-ae5f955507e6] - finished processing client result by init_evaluation
+2026-03-05 14:51:39,805 - SubmitUpdateCommand - INFO - submit_update process. client_name:site-1   task_id:60b2f15f-fb6a-4c28-881e-ae5f955507e6
+2026-03-05 14:51:39,969 - WFCommServer - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation] - task init_task exit with status TaskCompletionStatus.OK
+2026-03-05 14:51:40,167 - InitEvaluation - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation] - Initial cleanup task completed
+2026-03-05 14:51:40,168 - InitEvaluation - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation] - Checking config.json file...
+2026-03-05 14:51:40,168 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation] - Workflow: init_evaluation finalizing ...
+2026-03-05 14:51:40,169 - InitEvaluation - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation] - Stopping InitTraining controller
+2026-03-05 14:51:40,169 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=init_evaluation] - starting workflow site_validate (<class 'flip.nvflare.controllers.fed_evaluation.ModelEval'>) ...
+2026-03-05 14:51:40,170 - ModelEval - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Formatter not found. Stats will not be printed.
+2026-03-05 14:51:40,170 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Workflow site_validate (<class 'flip.nvflare.controllers.fed_evaluation.ModelEval'>) started
+2026-03-05 14:51:40,171 - ModelEval - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Beginning model validation with clients: ['site-1', 'site-2'].
+2026-03-05 14:51:40,171 - ModelEval - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Locating server models.
+2026-03-05 14:51:44,944 - ModelEval - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Server models loaded: dict_keys(['monai_spleen_unet']).
+2026-03-05 14:51:44,944 - WFCommServer - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - scheduled task evaluation
+2026-03-05 14:51:45,414 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-1, peer_run=simulate_job, task_name=evaluation, task_id=23031ce7-15e2-497a-86a0-08da8e93e2ab] - assigned task to client site-1: name=evaluation, id=23031ce7-15e2-497a-86a0-08da8e93e2ab
+2026-03-05 14:51:45,415 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-1, peer_run=simulate_job, task_name=evaluation, task_id=23031ce7-15e2-497a-86a0-08da8e93e2ab] - sent task assignment to client. client_name:site-1 task_id:23031ce7-15e2-497a-86a0-08da8e93e2ab
+2026-03-05 14:51:45,415 - GetTaskCommand - INFO - return task to client.  client_name: site-1  task_name: evaluation   task_id: 23031ce7-15e2-497a-86a0-08da8e93e2ab  sharable_header_task_id: 23031ce7-15e2-497a-86a0-08da8e93e2ab
+2026-03-05 14:51:45,459 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-2, peer_run=simulate_job, task_name=evaluation, task_id=2ac181ee-e3e9-4b24-be02-99f6b1359412] - assigned task to client site-2: name=evaluation, id=2ac181ee-e3e9-4b24-be02-99f6b1359412
+2026-03-05 14:51:45,466 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-2, peer_run=simulate_job, task_name=evaluation, task_id=2ac181ee-e3e9-4b24-be02-99f6b1359412] - sent task assignment to client. client_name:site-2 task_id:2ac181ee-e3e9-4b24-be02-99f6b1359412
+2026-03-05 14:51:45,466 - GetTaskCommand - INFO - return task to client.  client_name: site-2  task_name: evaluation   task_id: 2ac181ee-e3e9-4b24-be02-99f6b1359412  sharable_header_task_id: 2ac181ee-e3e9-4b24-be02-99f6b1359412
+2026-03-05 14:51:57,278 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-2, peer_run=simulate_job] - got result from client site-2 for task: name=evaluation, id=2ac181ee-e3e9-4b24-be02-99f6b1359412
+2026-03-05 14:51:57,278 - ModelEval - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-2, peer_run=simulate_job, peer_rc=OK, task_name=evaluation, task_id=2ac181ee-e3e9-4b24-be02-99f6b1359412] - Receiving validation result from client: site-2: {'__headers__': {'__content_type__': 'DXO', '__audit_event_id__': None, '__cookie_jar__': {'__workflow__': 'site_validate', '__task_id__': '2ac181ee-e3e9-4b24-be02-99f6b1359412'}, '__task_name__': 'evaluation', '__task_id__': '2ac181ee-e3e9-4b24-be02-99f6b1359412', '__msg_root_id__': '7cff3fa8-7af0-47e4-990e-ac4c83f004b2', '__peer_ctx__': <nvflare.apis.fl_context.FLContext object at 0x7ce997443f80>, 'fl_client': <nvflare.apis.client.Client object at 0x7cebb57ac4a0>, '__peer_props__': {'__run_num__': 'simulate_job', '__identity_name__': 'site-2', '__fqsn__': 'site-2', '__is_leaf__': True, '__client_name__': 'site-2', '__current_job_id__': 'simulate_job'}}, 'DXO': {'kind': <DataKind.METRICS: 'METRICS'>, 'data': {'monai_spleen_unet': {'spleen': {'mean_dice': 0.9436285495758057, 'raw_dice': [0.9289430975914001, 0.9468039870262146, 0.955138623714447]}}}, 'meta': {}}}
+2026-03-05 14:51:57,279 - ModelEval - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-2, peer_run=simulate_job, peer_rc=OK, task_name=evaluation, task_id=2ac181ee-e3e9-4b24-be02-99f6b1359412] - Client site-2 sent results for validating model.
+2026-03-05 14:51:57,279 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-2, peer_run=simulate_job, peer_rc=OK, task_name=evaluation, task_id=2ac181ee-e3e9-4b24-be02-99f6b1359412] - finished processing client result by site_validate
+2026-03-05 14:51:57,279 - SubmitUpdateCommand - INFO - submit_update process. client_name:site-2   task_id:2ac181ee-e3e9-4b24-be02-99f6b1359412
+2026-03-05 14:51:57,336 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-1, peer_run=simulate_job] - got result from client site-1 for task: name=evaluation, id=23031ce7-15e2-497a-86a0-08da8e93e2ab
+2026-03-05 14:51:57,337 - ModelEval - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-1, peer_run=simulate_job, peer_rc=OK, task_name=evaluation, task_id=23031ce7-15e2-497a-86a0-08da8e93e2ab] - Receiving validation result from client: site-1: {'__headers__': {'__content_type__': 'DXO', '__audit_event_id__': None, '__cookie_jar__': {'__workflow__': 'site_validate', '__task_id__': '23031ce7-15e2-497a-86a0-08da8e93e2ab'}, '__task_name__': 'evaluation', '__task_id__': '23031ce7-15e2-497a-86a0-08da8e93e2ab', '__msg_root_id__': '77c199c9-0fde-4fd1-b404-0fdfd150a022', '__peer_ctx__': <nvflare.apis.fl_context.FLContext object at 0x7ceb401a4d70>, 'fl_client': <nvflare.apis.client.Client object at 0x7cebbab3d370>, '__peer_props__': {'__run_num__': 'simulate_job', '__identity_name__': 'site-1', '__fqsn__': 'site-1', '__is_leaf__': True, '__client_name__': 'site-1', '__current_job_id__': 'simulate_job'}}, 'DXO': {'kind': <DataKind.METRICS: 'METRICS'>, 'data': {'monai_spleen_unet': {'spleen': {'mean_dice': 0.9436285495758057, 'raw_dice': [0.9289430975914001, 0.9468039870262146, 0.955138623714447]}}}, 'meta': {}}}
+2026-03-05 14:51:57,337 - ModelEval - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-1, peer_run=simulate_job, peer_rc=OK, task_name=evaluation, task_id=23031ce7-15e2-497a-86a0-08da8e93e2ab] - Client site-1 sent results for validating model.
+2026-03-05 14:51:57,337 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-1, peer_run=simulate_job, peer_rc=OK, task_name=evaluation, task_id=23031ce7-15e2-497a-86a0-08da8e93e2ab] - finished processing client result by site_validate
+2026-03-05 14:51:57,337 - SubmitUpdateCommand - INFO - submit_update process. client_name:site-1   task_id:23031ce7-15e2-497a-86a0-08da8e93e2ab
+2026-03-05 14:51:57,527 - WFCommServer - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - task evaluation exit with status TaskCompletionStatus.OK
+2026-03-05 14:51:57,966 - ModelEval - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Beginning post validation cleanup task...
+2026-03-05 14:51:57,967 - WFCommServer - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - scheduled task post_task
+2026-03-05 14:51:59,284 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-2, peer_run=simulate_job, task_name=post_task, task_id=f34aa8a8-492f-4194-adfe-c93cdd574460] - assigned task to client site-2: name=post_task, id=f34aa8a8-492f-4194-adfe-c93cdd574460
+2026-03-05 14:51:59,285 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-2, peer_run=simulate_job, task_name=post_task, task_id=f34aa8a8-492f-4194-adfe-c93cdd574460] - sent task assignment to client. client_name:site-2 task_id:f34aa8a8-492f-4194-adfe-c93cdd574460
+2026-03-05 14:51:59,285 - GetTaskCommand - INFO - return task to client.  client_name: site-2  task_name: post_task   task_id: f34aa8a8-492f-4194-adfe-c93cdd574460  sharable_header_task_id: f34aa8a8-492f-4194-adfe-c93cdd574460
+2026-03-05 14:51:59,292 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-2, peer_run=simulate_job] - got result from client site-2 for task: name=post_task, id=f34aa8a8-492f-4194-adfe-c93cdd574460
+2026-03-05 14:51:59,293 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-2, peer_run=simulate_job, peer_rc=OK, task_name=post_task, task_id=f34aa8a8-492f-4194-adfe-c93cdd574460] - finished processing client result by site_validate
+2026-03-05 14:51:59,293 - SubmitUpdateCommand - INFO - submit_update process. client_name:site-2   task_id:f34aa8a8-492f-4194-adfe-c93cdd574460
+2026-03-05 14:51:59,341 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-1, peer_run=simulate_job, task_name=post_task, task_id=b8c037f0-db8d-4c8c-ba8c-9c011140f4f5] - assigned task to client site-1: name=post_task, id=b8c037f0-db8d-4c8c-ba8c-9c011140f4f5
+2026-03-05 14:51:59,342 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-1, peer_run=simulate_job, task_name=post_task, task_id=b8c037f0-db8d-4c8c-ba8c-9c011140f4f5] - sent task assignment to client. client_name:site-1 task_id:b8c037f0-db8d-4c8c-ba8c-9c011140f4f5
+2026-03-05 14:51:59,342 - GetTaskCommand - INFO - return task to client.  client_name: site-1  task_name: post_task   task_id: b8c037f0-db8d-4c8c-ba8c-9c011140f4f5  sharable_header_task_id: b8c037f0-db8d-4c8c-ba8c-9c011140f4f5
+2026-03-05 14:51:59,350 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-1, peer_run=simulate_job] - got result from client site-1 for task: name=post_task, id=b8c037f0-db8d-4c8c-ba8c-9c011140f4f5
+2026-03-05 14:51:59,350 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-1, peer_run=simulate_job, peer_rc=OK, task_name=post_task, task_id=b8c037f0-db8d-4c8c-ba8c-9c011140f4f5] - finished processing client result by site_validate
+2026-03-05 14:51:59,351 - SubmitUpdateCommand - INFO - submit_update process. client_name:site-1   task_id:b8c037f0-db8d-4c8c-ba8c-9c011140f4f5
+2026-03-05 14:51:59,532 - WFCommServer - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - task post_task exit with status TaskCompletionStatus.OK
+2026-03-05 14:51:59,569 - ModelEval - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Post validation cleanup completed
+2026-03-05 14:51:59,569 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Workflow: site_validate finalizing ...
+2026-03-05 14:51:59,570 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - ABOUT_TO_END_RUN fired
+2026-03-05 14:51:59,571 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Firing CHECK_END_RUN_READINESS ...
+2026-03-05 14:51:59,572 - ServerEventHandler - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - End run event received
+2026-03-05 14:51:59,572 - PersistToS3AndCleanup - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Initializing PersistToS3AndCleanup
+2026-03-05 14:51:59,572 - PersistToS3AndCleanup - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Beginning PersistToS3AndCleanup
+2026-03-05 14:51:59,572 - PersistToS3AndCleanup - WARNING - [identity=simulator_server, run=simulate_job, wf=site_validate] - Unable to retrieve the details of the aggregated model. Will attempt to zip everything within the final run using a manual path.
+2026-03-05 14:51:59,573 - PersistToS3AndCleanup - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Attempting to upload the final aggregated model to the s3 bucket...
+2026-03-05 14:51:59,573 - PersistToS3AndCleanup - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Removing app_server directory: /app/runs/workspace/server/simulate_job/app_server
+2026-03-05 14:51:59,573 - ServerEventHandler - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Results upload completed event received
+2026-03-05 14:51:59,574 - PersistToS3AndCleanup - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Attempting to delete the zip file containing the final aggregated run on disk...
+2026-03-05 14:51:59,574 - PersistToS3AndCleanup - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Zip file has been deleted successfully
+2026-03-05 14:51:59,574 - PersistToS3AndCleanup - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - PersistToS3AndCleanup completed
+2026-03-05 14:51:59,574 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - END_RUN fired
+2026-03-05 14:51:59,574 - ReliableMessage - INFO - ReliableMessage is shutdown
+2026-03-05 14:51:59,574 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - Server runner finished.
+2026-03-05 14:51:59,969 - SimulatorServer - INFO - Server app stopped.
+
+
+2026-03-05 14:51:59,972 - hci - INFO - Admin Server is stopped!
+2026-03-05 14:51:59,972 - SimulatorServer - INFO - shutting down server
+2026-03-05 14:51:59,972 - SimulatorServer - INFO - canceling sync locks
+2026-03-05 14:51:59,972 - SimulatorServer - INFO - server off
+2026-03-05 14:52:01,297 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-2, peer_run=simulate_job] - server runner is finalizing - asked client to end the run
+2026-03-05 14:52:01,297 - GetTaskCommand - INFO - return task to client.  client_name: site-2  task_name: __end_run__   task_id:   sharable_header_task_id: 
+2026-03-05 14:52:01,354 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate, peer=site-1, peer_run=simulate_job] - server runner is finalizing - asked client to end the run
+2026-03-05 14:52:01,355 - GetTaskCommand - INFO - return task to client.  client_name: site-1  task_name: __end_run__   task_id:   sharable_header_task_id: 
+2026-03-05 14:52:01,442 - conn_manager - INFO - Connection [CN00006 Not Connected] is closed PID: 56
+2026-03-05 14:52:01,504 - conn_manager - INFO - Connection [CN00005 Not Connected] is closed PID: 56
+2026-03-05 14:52:01,563 - FederatedClient - INFO - Shutting down client run: site-1
+2026-03-05 14:52:01,563 - FederatedClient - INFO - Shutting down client run: site-2
+2026-03-05 14:52:01,564 - ServerRunner - INFO - [identity=simulator_server, run=simulate_job, wf=site_validate] - asked to abort - triggered abort_signal to stop the RUN
+2026-03-05 14:52:05,610 - MPM - INFO - MPM: Good Bye!

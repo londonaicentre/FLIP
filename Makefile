@@ -286,6 +286,20 @@ integration_test:
 	$(MAKE) -C flip-api integration_test
 	$(MAKE) -C trust integration_test
 
+# NVFLARE provisioning targets — delegates to deploy/scripts/
+# The project YML files live in deploy/providers/
+NET_NUMBER ?= 1
+
+nvflare-provision:
+	deploy/scripts/provision-network.sh deploy/providers/net-${NET_NUMBER}_project.yml $(NET_NUMBER)
+
+nvflare-provision-2-nets:
+	NET_NUMBER=1 $(MAKE) nvflare-provision
+	NET_NUMBER=2 $(MAKE) nvflare-provision
+
+nvflare-provision-additional-client:
+	deploy/scripts/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT)
+
 # Drives a fresh project end-to-end against a running `make up` stack:
 # create → approve → upload model → wait for image pull → start training.
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND (flower or

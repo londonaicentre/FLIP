@@ -1,0 +1,22 @@
+{
+  "job_type": "evaluation",
+  "LOCAL_ROUNDS": 2,
+  "LEARNING_RATE": 1e-4,
+  "num_classes": 2,
+  "TEST_SPLIT": 0.25,
+  "net_config": {
+    "spatial_dims": 3
+  },
+  "models": {
+    "monai_spleen_unet": {
+      "checkpoint": "model.pt",
+      "path": "unet"
+    }
+  },
+  "evaluation_output": {
+    "spleen": {
+      "mean_dice": 0.0,
+      "raw_dice": []
+    }
+  }
+}
