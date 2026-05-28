@@ -30,6 +30,8 @@ sys.path.insert(0, os.path.abspath("../../flip-api/src"))
 sys.path.insert(0, os.path.abspath("../../trust/data-access-api"))
 sys.path.insert(0, os.path.abspath("../../trust/imaging-api"))
 sys.path.insert(0, os.path.abspath("../../trust/trust-api"))
+# Include flip-utils package (migrated from flip-fl-base)
+sys.path.insert(0, os.path.abspath("../../flip-utils/flip"))
 
 # sys.path.insert(0, os.path.abspath('.'))
 
@@ -72,6 +74,8 @@ autoapi_dirs = [
     "../../trust/data-access-api",
     "../../trust/imaging-api",
     "../../trust/trust-api",
+    # include flip-utils package for API docs
+    "../../flip-utils/flip",
 ]
 autoapi_ignore = [
     "*/.venv/*",
