@@ -48,8 +48,10 @@ jobs:
             - name: Run linter
               run: uv run ruff check .
 
-            - name: Run tests with coverage
-              run: uv run pytest --cov=flip --cov-report=xml
+            - name: Run tests with coverage (skip heavy NVFLARE tests)
+              # NVFLARE tests import torch transitively; skip them in default job to keep CI fast.
+              run: |
+                uv run pytest --cov=flip --cov-report=xml -k "not nvflare"
 
             - name: Upload coverage to Codecov
               uses: codecov/codecov-action@v4
