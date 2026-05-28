@@ -73,6 +73,7 @@ def admin_create_trust(
             code=body.code,
             region=body.region,
             session=db,
+            audit_user_id=token_id,
         )
     except EmptyTrustNameError as e:
         db.rollback()

@@ -26,11 +26,15 @@ once for distribution to the trust host (then unrecoverable).
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from uuid import UUID
 
 from sqlmodel import Session, col, select
 
+from flip_api.auth import trust_key_cache
 from flip_api.db.models.main_models import FLKitSlot, Trust
+from flip_api.domain.schemas.actions import TrustAuditAction
 from flip_api.scripts.generate_trust_key import generate_trust_key
+from flip_api.trusts_services.utils.audit_helper import audit_trust_action
 
 
 class TrustRegistrationError(Exception):
@@ -69,6 +73,7 @@ def register_trust(
     code: str | None,
     region: str | None,
     session: Session,
+    audit_user_id: UUID | None = None,
 ) -> RegisteredTrust:
     """Atomically register a trust: mint keys, claim an FL kit slot, insert the row.
 
@@ -77,6 +82,10 @@ def register_trust(
         code (str | None): Optional short code (e.g. ``GSTT``).
         region (str | None): Optional NHS region.
         session (Session): SQLModel session; the function commits before returning.
+        audit_user_id (UUID | None): Cognito sub of the authenticated admin from
+            the UI path, or ``None`` for the deploy-CLI path (which runs under
+            operator IAM, not a FLIP user). Stamped on the ``trusts_audit`` row
+            written in the same transaction as the trust insert.
 
     Returns:
         RegisteredTrust: The persisted trust, its assigned FL kit slot, and the
@@ -131,9 +140,24 @@ def register_trust(
     session.flush()  # populate trust.id before binding the slot
     slot.assigned_to_trust_id = trust.id
     slot.assigned_at = datetime.now(timezone.utc)
+
+    # Write the audit row in the same transaction as the insert: if commit
+    # rolls back (e.g. unique-name race), no orphan audit entry is left.
+    audit_trust_action(
+        trust_id=trust.id,
+        trust_name=trust.name,
+        action=TrustAuditAction.REGISTERED,
+        user_id=audit_user_id,
+        session=session,
+    )
+
     session.commit()
     session.refresh(trust)
     session.refresh(slot)
+
+    # Bust the in-process auth cache so the new trust authenticates immediately
+    # in this worker. Cross-process eviction is bounded by the cache TTL.
+    trust_key_cache.invalidate()
 
     return RegisteredTrust(
         trust=trust,

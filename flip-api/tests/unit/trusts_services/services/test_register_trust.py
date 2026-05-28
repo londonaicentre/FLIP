@@ -54,9 +54,56 @@ def test_register_trust_creates_trust_and_claims_slot(mock_gen_key):
     assert result.trust_api_key == "plain-api"
     assert result.trust_internal_service_key == "plain-internal"
     assert result.fl_kit_slot.slot_name == "Trust_007"
-    # Atomic: one flush (to populate trust.id), one commit.
-    session.flush.assert_called_once()
+    # Atomic: one commit covering the trust insert + the audit row write.
+    # Two flushes: one to populate trust.id before slot binding, one inside
+    # audit_trust_action.
+    assert session.flush.call_count == 2
     session.commit.assert_called_once()
+
+
+@patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
+def test_register_trust_writes_audit_row_with_user_id(mock_gen_key):
+    """The UI path passes ``audit_user_id`` — the audit row's
+    ``modified_by_user_id`` matches the authenticated admin's id.
+    """
+    from flip_api.db.models.main_models import TrustsAudit
+    from flip_api.domain.schemas.actions import TrustAuditAction
+
+    mock_gen_key.side_effect = [("k", "h"), ("k", "h")]
+    slot = FLKitSlot(slot_name="Trust_007", slot_number=7)
+    session = _mock_session(existing_trust=None, free_slot=slot)
+    admin_id = uuid4()
+
+    register_trust(name="GSTT", code=None, region=None, session=session, audit_user_id=admin_id)
+
+    audit_calls = [
+        call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)
+    ]
+    assert len(audit_calls) == 1
+    audit_row = audit_calls[0].args[0]
+    assert audit_row.action == TrustAuditAction.REGISTERED
+    assert audit_row.modified_by_user_id == admin_id
+    assert audit_row.trust_name == "GSTT"
+
+
+@patch("flip_api.trusts_services.services.register_trust.generate_trust_key")
+def test_register_trust_writes_audit_row_with_null_user_for_cli(mock_gen_key):
+    """The deploy-CLI path passes no ``audit_user_id`` — the audit row's
+    ``modified_by_user_id`` is NULL.
+    """
+    from flip_api.db.models.main_models import TrustsAudit
+
+    mock_gen_key.side_effect = [("k", "h"), ("k", "h")]
+    slot = FLKitSlot(slot_name="Trust_007", slot_number=7)
+    session = _mock_session(existing_trust=None, free_slot=slot)
+
+    register_trust(name="GSTT", code=None, region=None, session=session)
+
+    audit_calls = [
+        call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)
+    ]
+    assert len(audit_calls) == 1
+    assert audit_calls[0].args[0].modified_by_user_id is None
 
 
 @patch("flip_api.trusts_services.services.register_trust.generate_trust_key")

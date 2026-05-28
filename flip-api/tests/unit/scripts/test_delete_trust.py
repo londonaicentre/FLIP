@@ -139,6 +139,9 @@ def test_delete_one_trust_proceeds_when_no_slot_is_assigned():
     """A trust without an FL kit slot assignment still gets cleanly removed —
     `freed_fl_kit_slot` is None in the returned payload.
     """
+    from flip_api.db.models.main_models import FLKitSlot as _FLKitSlot
+    from flip_api.db.models.main_models import TrustsAudit
+
     trust = _make_trust("ORPHAN")
     session = _make_session(trust=trust, slot=None)
 
@@ -146,9 +149,36 @@ def test_delete_one_trust_proceeds_when_no_slot_is_assigned():
 
     assert result["status"] == "deleted"
     assert result["freed_fl_kit_slot"] is None
-    # Nothing was added because there's no slot to mutate before the dependents/delete.
-    session.add.assert_not_called()
+    # The only `session.add` call is the TrustsAudit row — no slot to mutate.
+    for call in session.add.call_args_list:
+        added = call.args[0]
+        assert isinstance(added, TrustsAudit), (
+            f"Unexpected session.add({added!r}) — only TrustsAudit + FLKitSlot are allowed"
+        )
+        assert not isinstance(added, _FLKitSlot)
     session.delete.assert_called_once_with(trust)
+
+
+def test_delete_one_trust_writes_audit_row_with_null_user():
+    """The deploy-CLI path stamps the audit row with ``modified_by_user_id=None``
+    (operator identity lives in CloudTrail, not in the FLIP user table)."""
+    from flip_api.db.models.main_models import TrustsAudit
+    from flip_api.domain.schemas.actions import TrustAuditAction
+
+    trust = _make_trust("GSTT")
+    session = _make_session(trust=trust, slot=None)
+
+    delete_one_trust("GSTT", session)
+
+    audit_calls = [
+        call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)
+    ]
+    assert len(audit_calls) == 1
+    audit_row = audit_calls[0].args[0]
+    assert audit_row.action == TrustAuditAction.DELETED
+    assert audit_row.modified_by_user_id is None
+    assert audit_row.trust_name == "GSTT"
+    assert audit_row.trust_id == trust.id
 
 
 # ---------------------------------------------------------------------------

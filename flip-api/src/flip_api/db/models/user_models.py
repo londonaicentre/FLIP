@@ -75,7 +75,16 @@ class UserRole(SQLModel, table=True):
 
 
 class UserProfile(SQLModel, table=True):
-    """DB-backed profile data for a Cognito user."""
+    """DB-backed profile data for a Cognito user.
+
+    `name` and `organisation` are operator-supplied strings rendered to other
+    users via Vue `{{ }}` interpolation (project card `owner_name`, audit log
+    actor labels, etc.). Vue escapes `{{ }}` by default, so the current UI is
+    safe. Treat both fields as UNTRUSTED CONTENT — if you ever render them via
+    `v-html`, export them to PDF/CSV, or paste them into an email template,
+    re-escape at that boundary. The 255-char cap is a length bound, not a
+    content filter.
+    """
 
     __tablename__ = "user_profile"
 

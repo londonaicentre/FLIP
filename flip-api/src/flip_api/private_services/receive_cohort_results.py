@@ -32,6 +32,40 @@ from flip_api.utils.logger import logger
 router = APIRouter(tags=["private_services"])
 
 
+# Whitelist of error categories the trust side may set on a failed cohort task.
+# Anything outside this set is collapsed to ``internal_error`` so a future
+# code path that accidentally leaks raw psycopg / SQLAlchemy text never
+# reaches the cohort UI. The trust-side mapping happens at source in
+# trust/data-access-api/data_access_api/services/cohort.py — this is
+# belt-and-braces only. Update both lists together.
+_ALLOWED_TRUST_ERROR_CATEGORIES: frozenset[str] = frozenset(
+    {"query_failed", "query_timeout", "internal_error"}
+)
+
+
+def _redact_trust_error(raw: str | None) -> str:
+    """Collapse a trust-side error string to a safe enum category.
+
+    Args:
+        raw (str | None): The error string the trust reported on the failed
+            cohort task, if any.
+
+    Returns:
+        str: One of ``_ALLOWED_TRUST_ERROR_CATEGORIES``. ``internal_error``
+        is the default for anything unrecognised — including ``None``, raw
+        psycopg traceback fragments, and wrapped ``"500: ..."`` strings the
+        trust-api gateway constructs from upstream HTTPException bodies.
+    """
+    if not raw:
+        return "internal_error"
+    # Trust-api wraps upstream HTTPException details as "<status>: <detail>";
+    # the trailing token is what data-access-api set as the category.
+    candidate = raw.split(":", 1)[-1].strip().lower()
+    if candidate in _ALLOWED_TRUST_ERROR_CATEGORIES:
+        return candidate
+    return "internal_error"
+
+
 def _save_individual_result(db: Session, cohort_results: OmopCohortResults) -> None:
     """
     Saves the individual cohort results from a single trust for a specific query.
@@ -164,7 +198,9 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
         for i, ptd in enumerate(parsed_trust_data_list):
             trust_id_str = fetched_data.trust_id[i]
             if ptd.error:
-                trust_errors[trust_id_str] = ptd.error
+                # S-8: redact to a safe category before storing. Raw psycopg
+                # text could otherwise reach project members via the UI.
+                trust_errors[trust_id_str] = _redact_trust_error(ptd.error)
             else:
                 trust_record_counts[trust_id_str] = ptd.record_count
 

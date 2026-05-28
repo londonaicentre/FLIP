@@ -23,6 +23,11 @@
 # preserved on the skip path (only written on first registration).
 
 set -eo pipefail
+# Default file mode 077 so any tempfile / redirect this script (or sourced
+# utils.sh) creates is owner-only by construction. write_kit_file already
+# chmod 600s the final kit, but a global umask defuses any earlier write
+# that bypasses it — e.g. mktemp outputs, accidental `>` redirects.
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
@@ -167,8 +172,17 @@ register_one() {
     fi
 
     log_info "Registering trust $idx ('$name') via a one-off ECS task..."
+    # Mint an ephemeral SSM parameter for the kit handoff (S-1). The ECS
+    # task PUTs the kit JSON here as a SecureString; we GET + DELETE it
+    # after the task completes. This keeps the plaintext kit out of
+    # CloudWatch — only the parameter NAME ever transits stdout/awslogs,
+    # which is non-sensitive (it's an ASCII identifier).
+    local ssm_param uuid
+    uuid="$(uuidgen 2>/dev/null || python3 -c 'import uuid;print(uuid.uuid4())')"
+    ssm_param="/flip/trust-kits/ephemeral/${uuid}"
+
     local cmd_args
-    cmd_args=(uv run python -m flip_api.scripts.register_trust --name "$name")
+    cmd_args=(uv run python -m flip_api.scripts.register_trust --name "$name" --out-ssm-parameter "$ssm_param")
     [ -n "$code" ] && cmd_args+=(--code "$code")
     [ -n "$region" ] && cmd_args+=(--region "$region")
     local overrides
@@ -189,16 +203,20 @@ register_one() {
     task_id="${task_arn##*/}"
     aws_cmd ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$task_id"
 
-    local log_events kit
-    log_events="$(aws_cmd logs get-log-events --log-group-name "$LOG_GROUP" \
-        --log-stream-name "flip-api/flip-api/$task_id" --start-from-head \
-        --query 'events[].message' --output text)"
-    # register_trust prints one JSON array on stdout — the last line starting with '['.
-    # `aws ... --output text` joins the events[] list with TABs, so the kit message
-    # arrives TAB-prefixed; split on TAB and trim before matching the leading '['.
-    kit="$(echo "$log_events" | tr '\t' '\n' | sed 's/^[[:space:]]*//' | awk 'NF' | grep -E '^\[' | tail -n 1 || true)"
-    if [ -z "$kit" ]; then
-        log_warn "Trust '$name': no JSON array found in task logs — registration may have failed."
+    # Read the kit from SSM (out-of-band), then delete the parameter. We
+    # ALSO delete the CloudWatch log stream as belt-and-braces: if a future
+    # code path or operator runs register_trust without --out-ssm-parameter,
+    # or if a logger line accidentally captures a kit field on stderr,
+    # this nukes the CloudWatch copy at the earliest opportunity.
+    local kit
+    kit="$(aws_cmd ssm get-parameter --name "$ssm_param" --with-decryption \
+        --query 'Parameter.Value' --output text 2>/dev/null || true)"
+    aws_cmd ssm delete-parameter --name "$ssm_param" >/dev/null 2>&1 || true
+    aws_cmd logs delete-log-stream --log-group-name "$LOG_GROUP" \
+        --log-stream-name "flip-api/flip-api/$task_id" >/dev/null 2>&1 || true
+
+    if [ -z "$kit" ] || [ "$kit" = "None" ]; then
+        log_warn "Trust '$name': no kit found in SSM parameter '$ssm_param' — registration may have failed."
         return 0
     fi
     if [ "$(echo "$kit" | jq 'length')" = "0" ]; then
@@ -219,25 +237,40 @@ register_one() {
             log_success "Wrote kit for '$name' → trust/.env.${slot}"
             ;;
         ec2)
-            local tmp_kit scp_rc
+            local tmp_kit probe_rc
             tmp_kit="$(mktemp)"
             # Preserve existing credentials on the trust host by fetching the
-            # current kit file first. On first-time registration the remote
-            # file does not yet exist (scp exits 1); any other non-zero exit
-            # code indicates a genuine transport error — abort rather than
-            # clobber prod credentials with a credentials-less file.
-            if scp -q "flip-trust:/opt/flip/trust/.env.${slot}" "$tmp_kit"; then
-                :  # got the remote file; tempfile holds the current kit
-            else
-                scp_rc=$?
-                if [ "$scp_rc" -eq 1 ]; then
+            # current kit file first. Probe for the file's existence with
+            # `ssh test -f` rather than relying on `scp` exit codes: scp
+            # returns 1 for "file not found" but ALSO for transport errors
+            # like permission denied, host-key mismatch, or a transient SSH
+            # disconnect. Conflating those would silently overwrite prod
+            # credentials with a credentials-less file (the hub stores only
+            # hashes, so recovery means delete-trust + re-register).
+            #
+            # `ssh test -f` exit codes we care about:
+            #   0 — file exists; scp it.
+            #   1 — `test` itself returned non-zero (file absent / not regular).
+            #   *anything else* — transport error (ssh's own failure space).
+            probe_rc=0
+            ssh -q flip-trust "test -f /opt/flip/trust/.env.${slot}" || probe_rc=$?
+            case "$probe_rc" in
+                0)
+                    if ! scp -q "flip-trust:/opt/flip/trust/.env.${slot}" "$tmp_kit"; then
+                        log_error "scp from flip-trust failed after positive ssh probe — aborting kit distribution for '$name'."
+                        rm -f "$tmp_kit"
+                        return 1
+                    fi
+                    ;;
+                1)
                     : > "$tmp_kit"  # first-time registration; remote file absent
-                else
-                    log_error "scp from flip-trust failed (exit=$scp_rc) — aborting kit distribution for '$name'."
+                    ;;
+                *)
+                    log_error "ssh probe to flip-trust failed (transport error, exit=$probe_rc) — aborting kit distribution for '$name'."
                     rm -f "$tmp_kit"
                     return 1
-                fi
-            fi
+                    ;;
+            esac
             write_kit_file "$tmp_kit" "$kit"
             if ! scp -q "$tmp_kit" "flip-trust:/opt/flip/trust/.env.${slot}"; then
                 log_error "scp to flip-trust failed — kit was NOT installed. Tempfile $tmp_kit retained for retry."

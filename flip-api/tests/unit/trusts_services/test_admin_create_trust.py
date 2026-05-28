@@ -64,7 +64,9 @@ def test_admin_create_trust_returns_registered_kit(mock_register, mock_perms, ad
         token_id=admin_id,
     )
 
-    mock_register.assert_called_once_with(name="GSTT", code="GSTT", region="London", session=db)
+    mock_register.assert_called_once_with(
+        name="GSTT", code="GSTT", region="London", session=db, audit_user_id=admin_id
+    )
     assert result.name == "GSTT"
     assert result.fl_kit_slot == "Trust_007"
     assert result.fl_kit_slot_number == 7

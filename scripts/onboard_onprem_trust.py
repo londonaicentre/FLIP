@@ -285,6 +285,36 @@ def check_kit_credentials(kit_vars: dict[str, str], kit_present: bool, kit: str)
     )
 
 
+def check_expected_trust_id_self_check(kit_vars: dict[str, str], kit_present: bool, kit: str) -> Check:
+    """Enforce that the kit declares EXPECTED_TRUST_ID for the wrong-host self-check.
+
+    trust-api's task_poller compares the trust id the hub returns on first
+    heartbeat against EXPECTED_TRUST_ID and exits if they differ — the loud
+    fail-stop that catches a wrong-kit-to-wrong-host deployment. The guard is
+    opt-in (it only fires when the env var is set), so missing or placeholder
+    EXPECTED_TRUST_ID silently disables the safety net.
+
+    check_kit_credentials already flags this as part of its 5-key bundle, but
+    we surface it as its own check so the operator sees the specific risk in
+    the readiness output rather than "1 of 5 keys missing".
+    """
+    if not kit_present:
+        return Check("EXPECTED_TRUST_ID self-check", Status.PENDING, "pending — needs kit file")
+    raw = kit_vars.get("EXPECTED_TRUST_ID", "")
+    if not is_filled(raw):
+        return Check(
+            "EXPECTED_TRUST_ID self-check", Status.FAIL,
+            "unset — wrong-host safety check disabled",
+            hints=[
+                "Without EXPECTED_TRUST_ID, a kit deployed to the wrong host will",
+                "  silently act as the wrong trust until something downstream breaks.",
+                f"Re-register on the hub side and re-send the kit, OR ask the admin to",
+                f"  fill the value into trust/.env.{kit} before bringing the stack up.",
+            ],
+        )
+    return Check("EXPECTED_TRUST_ID self-check", Status.PASS, f"set to {raw}")
+
+
 def check_fl_kit_dir_set(kit_vars: dict[str, str], kit_present: bool, kit: str) -> Check:
     if not kit_present:
         return Check("FL_KIT_DIR set", Status.PENDING, "pending — needs kit file")
@@ -553,6 +583,7 @@ def run_checks(kit: str, repo_root: Path) -> list[Check]:
         check_kit_file(kit, kit_file),
         check_hub_shared(kit_vars, kit_present),
         check_kit_credentials(kit_vars, kit_present, kit),
+        check_expected_trust_id_self_check(kit_vars, kit_present, kit),
         check_fl_kit_dir_set(kit_vars, kit_present, kit),
         check_fl_kit_dir_exists(fl_kit_dir, kit_present),
         check_fl_kit_contents(kit_vars, kit_present),

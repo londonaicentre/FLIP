@@ -17,13 +17,14 @@ The ``register_trust`` *service* is covered in
 thin CLI wrapper — the idempotent skip and the kit-dict shaping.
 """
 
-from unittest.mock import MagicMock
+import json
+from unittest.mock import ANY, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
 from flip_api.db.models.main_models import FLKitSlot, Trust
-from flip_api.scripts.register_trust import register_one_trust
+from flip_api.scripts.register_trust import _write_kit_to_ssm, register_one_trust
 from flip_api.trusts_services.services.register_trust import (
     NoFreeKitSlotError,
     RegisteredTrust,
@@ -369,3 +370,106 @@ def test_skip_path_also_emits_hub_shared(monkeypatch, session):
     assert kit["hub_shared"]["AES_KEY_BASE64"] == "Zm9vYmFy"
     assert "trust_api_key" not in kit  # creds are NOT in the skip-path kit
     assert "trust_internal_service_key" not in kit
+
+
+def test_write_kit_to_ssm_uses_securestring_and_overwrites():
+    """The SSM handoff path must write SecureString (encrypted at rest) and
+    allow ``Overwrite=True`` so that a retried deploy run isn't blocked by
+    a leftover parameter from a previous attempt.
+
+    Locks in S-1's transport: the kit body must NEVER go to stdout in the
+    SSM mode — the deploy script consumes it out-of-band via the parameter
+    name, and CloudWatch only ever sees the name.
+    """
+    fake_client = MagicMock()
+    with patch("flip_api.scripts.register_trust.boto3.session.Session") as session_cls:
+        session_cls.return_value.client.return_value = fake_client
+        kits = [{"trust_id": str(uuid4()), "trust_api_key": "super-secret"}]
+
+        _write_kit_to_ssm(kits, "/flip/trust-kits/ephemeral/abc")
+
+    session_cls.return_value.client.assert_called_once_with("ssm", region_name=ANY)
+    fake_client.put_parameter.assert_called_once()
+    kwargs = fake_client.put_parameter.call_args.kwargs
+    assert kwargs["Name"] == "/flip/trust-kits/ephemeral/abc"
+    assert kwargs["Type"] == "SecureString"
+    assert kwargs["Overwrite"] is True
+    assert json.loads(kwargs["Value"]) == kits
+
+
+def test_write_kit_to_ssm_exits_on_put_failure():
+    """A failed PUT must exit non-zero — the deploy script must NOT proceed
+    on a partial write (the credentials block is unrecoverable from the hub).
+    """
+    fake_client = MagicMock()
+    fake_client.put_parameter.side_effect = RuntimeError("ssm down")
+    with patch("flip_api.scripts.register_trust.boto3.session.Session") as session_cls:
+        session_cls.return_value.client.return_value = fake_client
+
+        with pytest.raises(SystemExit) as exc_info:
+            _write_kit_to_ssm([{"x": 1}], "/flip/trust-kits/ephemeral/abc")
+
+    assert exc_info.value.code == 1
+
+
+def test_hub_shared_keys_in_lockstep():
+    """All three definitions of ``HUB_SHARED_KEYS`` must list exactly the same keys
+    in the same order.
+
+    The list is consumed by:
+      - flip_api/scripts/register_trust.py:HUB_SHARED_ENV_KEYS — emits these env
+        values into the kit JSON written to the trust.
+      - scripts/sync_trust_kit.py:HUB_SHARED_KEYS — refreshes the kit's hub-shared
+        block from the admin's local env file.
+      - deploy/providers/AWS/scripts/register-trusts.sh:HUB_SHARED_KEYS — strip-regex
+        that prevents duplicate entries when rewriting an existing kit file.
+
+    Drift between the three has produced silent half-syncs in the past (a key
+    added to the python tuple but not the bash array survives a register-trust
+    run but vanishes on the next sync-trust-kits). This test catches that on
+    PR review rather than at next-deploy time.
+    """
+    import re
+    from pathlib import Path
+
+    from flip_api.scripts.register_trust import HUB_SHARED_ENV_KEYS
+
+    # Walk up from this test file to find the FLIP repo root (the directory
+    # that contains both `flip-api/` and `deploy/`).
+    repo_root = Path(__file__).resolve()
+    while repo_root.name and not (repo_root / "flip-api").is_dir():
+        repo_root = repo_root.parent
+    assert repo_root.name, "Could not locate FLIP repo root from test file"
+
+    sync_path = repo_root / "scripts" / "sync_trust_kit.py"
+    deploy_path = repo_root / "deploy" / "providers" / "AWS" / "scripts" / "register-trusts.sh"
+
+    # Parse scripts/sync_trust_kit.py:HUB_SHARED_KEYS — a tuple of string
+    # literals. Take the first such tuple after the constant name.
+    sync_src = sync_path.read_text()
+    match = re.search(
+        r"HUB_SHARED_KEYS\s*:[^=]*=\s*\((?P<body>[^)]*)\)",
+        sync_src,
+    )
+    assert match, f"HUB_SHARED_KEYS tuple not found in {sync_path}"
+    sync_keys = tuple(re.findall(r'"([A-Z0-9_]+)"', match.group("body")))
+
+    # Parse register-trusts.sh:HUB_SHARED_KEYS — a bash array of bare words.
+    deploy_src = deploy_path.read_text()
+    match = re.search(
+        r"HUB_SHARED_KEYS=\(\s*(?P<body>[^)]+)\)",
+        deploy_src,
+    )
+    assert match, f"HUB_SHARED_KEYS array not found in {deploy_path}"
+    deploy_keys = tuple(re.findall(r"[A-Z0-9_]+", match.group("body")))
+
+    assert HUB_SHARED_ENV_KEYS == sync_keys, (
+        f"flip-api register_trust.py and scripts/sync_trust_kit.py disagree:\n"
+        f"  register_trust.py:HUB_SHARED_ENV_KEYS = {HUB_SHARED_ENV_KEYS}\n"
+        f"  sync_trust_kit.py:HUB_SHARED_KEYS     = {sync_keys}"
+    )
+    assert HUB_SHARED_ENV_KEYS == deploy_keys, (
+        f"flip-api register_trust.py and register-trusts.sh disagree:\n"
+        f"  register_trust.py:HUB_SHARED_ENV_KEYS = {HUB_SHARED_ENV_KEYS}\n"
+        f"  register-trusts.sh:HUB_SHARED_KEYS    = {deploy_keys}"
+    )

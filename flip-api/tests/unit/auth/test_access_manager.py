@@ -11,6 +11,7 @@
 #
 
 import hashlib
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ import pytest
 from fastapi import HTTPException, status
 from sqlmodel import Session
 
+from flip_api.auth import trust_key_cache
 from flip_api.auth.access_manager import (
     _get_internal_service_key_hash,
     authenticate_internal_service,
@@ -50,11 +52,30 @@ PATCH_INTERNAL_KEY_HASH_CACHE = "flip_api.auth.access_manager._internal_service_
 def _db_with_trust_rows(rows: list[Trust]) -> MagicMock:
     """Build a Session mock whose ``exec(...).all()`` returns the given Trust rows.
 
-    Mirrors ``authenticate_trust``'s query — ``select(Trust).where(api_key_hash IS NOT NULL)``.
+    Mirrors ``authenticate_trust``'s query —
+    ``select(Trust).where(api_key_hash IS NOT NULL, disabled_at IS NULL)``.
+    Soft-disabled rows are filtered here just like the real SQL does so unit
+    tests exercise the same candidate set the production query yields.
     """
     db = MagicMock(spec=Session)
-    db.exec.return_value.all.return_value = [t for t in rows if t.api_key_hash is not None]
+    db.exec.return_value.all.return_value = [
+        t for t in rows if t.api_key_hash is not None and t.disabled_at is None
+    ]
+    db.get.return_value = None  # default: cache-hit path treated as stale
     return db
+
+
+@pytest.fixture(autouse=True)
+def _clear_trust_key_cache():
+    """Reset the trust-auth in-process cache before every test in this module.
+
+    Without this, an earlier test that populated the cache (e.g. via a
+    successful authenticate_trust call) would leak its entry into the next
+    test, making the cache-stale and cache-hit assertions order-dependent.
+    """
+    trust_key_cache.invalidate()
+    yield
+    trust_key_cache.invalidate()
 
 
 class TestAuthenticateTrust:
@@ -125,6 +146,80 @@ class TestAuthenticateTrust:
         result = authenticate_trust(api_key=VALID_TEST_KEY, db=db)
 
         assert result.name == "match"
+
+    def test_disabled_trust_with_matching_key_returns_401(self):
+        """A trust whose `disabled_at` is set must not authenticate, even when its
+        ``api_key_hash`` matches. Locks in S-2: the candidate query filters disabled
+        rows, so setting `disabled_at` alone is a complete credential-revocation lever.
+        """
+        disabled_trust = Trust(
+            id=uuid4(),
+            name="disabled-trust",
+            api_key_hash=VALID_TEST_KEY_HASH,
+            disabled_at=datetime.now(timezone.utc),
+        )
+        db = _db_with_trust_rows([disabled_trust])
+
+        with pytest.raises(HTTPException) as exc_info:
+            authenticate_trust(api_key=VALID_TEST_KEY, db=db)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_cache_hit_skips_candidate_sweep(self):
+        """After a successful auth, the next call resolves via the in-process cache:
+        a single ``db.get`` PK fetch, no ``db.exec`` sweep. Locks in the perf path.
+        """
+        trust = Trust(id=uuid4(), name=TRUST_NAME, api_key_hash=VALID_TEST_KEY_HASH)
+        db = _db_with_trust_rows([trust])
+
+        first = authenticate_trust(api_key=VALID_TEST_KEY, db=db)
+        assert first is trust
+        sweep_calls_after_first = db.exec.call_count
+
+        db.get.return_value = trust  # cache hit fetches via PK
+        second = authenticate_trust(api_key=VALID_TEST_KEY, db=db)
+
+        assert second is trust
+        assert db.exec.call_count == sweep_calls_after_first  # no new sweep
+        db.get.assert_called_once_with(Trust, trust.id)
+
+    def test_cache_stale_after_delete_falls_through_to_sweep_and_401s(self):
+        """If the cached trust id has since been deleted (db.get returns None), the
+        request must not 401 immediately on the cache hit — it must fall through to
+        the full sweep, which finds no match, and only THEN 401.
+        """
+        trust = Trust(id=uuid4(), name=TRUST_NAME, api_key_hash=VALID_TEST_KEY_HASH)
+        db = _db_with_trust_rows([trust])
+        authenticate_trust(api_key=VALID_TEST_KEY, db=db)  # populate cache
+
+        empty_db = _db_with_trust_rows([])
+        empty_db.get.return_value = None  # cached id no longer resolves
+
+        with pytest.raises(HTTPException) as exc_info:
+            authenticate_trust(api_key=VALID_TEST_KEY, db=empty_db)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        empty_db.exec.assert_called()  # sweep ran
+
+    def test_cache_stale_after_disable_falls_through_to_sweep_and_401s(self):
+        """A cached entry pointing at a now-disabled trust must not bypass the sweep:
+        the hot path checks `disabled_at is None`, falls through, and the sweep's
+        ``disabled_at IS NULL`` filter rejects.
+        """
+        trust = Trust(id=uuid4(), name=TRUST_NAME, api_key_hash=VALID_TEST_KEY_HASH)
+        db = _db_with_trust_rows([trust])
+        authenticate_trust(api_key=VALID_TEST_KEY, db=db)  # populate cache
+
+        disabled_trust = Trust(
+            id=trust.id,
+            name=trust.name,
+            api_key_hash=VALID_TEST_KEY_HASH,
+            disabled_at=datetime.now(timezone.utc),
+        )
+        stale_db = _db_with_trust_rows([disabled_trust])
+        stale_db.get.return_value = disabled_trust
+
+        with pytest.raises(HTTPException) as exc_info:
+            authenticate_trust(api_key=VALID_TEST_KEY, db=stale_db)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 class TestAuthenticateInternalService:

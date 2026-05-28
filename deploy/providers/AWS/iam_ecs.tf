@@ -172,6 +172,21 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
     ]
     resources = [aws_kms_key.flip_app_key.arn]
   }
+
+  # Ephemeral SSM parameter handoff for register_trust (S-1 fix).
+  # `register-trusts.sh` mints a one-off parameter under this prefix before
+  # spawning the ECS task; the task writes the kit JSON here as a
+  # SecureString (encrypted with the AWS-managed `alias/aws/ssm`, no extra
+  # KMS grant needed); the deploy script reads + deletes it immediately
+  # after. Scope is intentionally narrow — only the ephemeral prefix.
+  statement {
+    sid = "SsmTrustKitEphemeralWrite"
+    actions = [
+      "ssm:PutParameter",
+      "ssm:DeleteParameter",
+    ]
+    resources = ["arn:aws:ssm:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:parameter/flip/trust-kits/ephemeral/*"]
+  }
 }
 
 resource "aws_iam_role_policy" "ecs_flip_api_task" {

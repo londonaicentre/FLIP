@@ -18,6 +18,7 @@ from fastapi import Depends, HTTPException, Security, status
 from fastapi.security.api_key import APIKeyHeader
 from sqlmodel import Session, select
 
+from flip_api.auth import trust_key_cache
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
@@ -428,19 +429,60 @@ def authenticate_trust(
     # CodeQL flags this as `py/weak-sensitive-data-hashing` but the rule targets
     # password hashing — false positive for API-key storage.
     provided_hash = hashlib.sha256(api_key.encode()).hexdigest()
-    candidates = db.exec(select(Trust).where(Trust.api_key_hash.is_not(None))).all()  # type: ignore[union-attr]
+
+    # Hot path: cache lookup, then a single PK fetch and constant-time compare.
+    # On stale (deleted / disabled / hash rotated) the live row check fails and
+    # we fall through to the sweep — the cache can never grant access the DB
+    # denies. See trust_key_cache.py.
+    cached_trust_id = trust_key_cache.lookup(provided_hash)
+    if cached_trust_id is not None:
+        cached = db.get(Trust, cached_trust_id)
+        if (
+            cached is not None
+            and cached.api_key_hash is not None
+            and cached.disabled_at is None
+            and hmac.compare_digest(provided_hash, cached.api_key_hash)
+        ):
+            logger.debug("Trust authenticated via cache.")
+            return cached
+        # Stale entry — fall through to the full sweep below. Don't 401 here;
+        # the row may have been replaced (key rotated, trust re-registered).
+
+    # Filter `disabled_at IS NULL` so a soft-disabled trust cannot authenticate.
+    # Today nothing sets `disabled_at` (it's a future-soft-delete placeholder),
+    # but adding the filter now means a future "Disable trust" admin action that
+    # only stamps `disabled_at` is automatically a credential-revocation lever
+    # — no need to also clear `api_key_hash` to revoke.
+    candidates = db.exec(
+        select(Trust).where(
+            Trust.api_key_hash.is_not(None),  # type: ignore[union-attr]
+            Trust.disabled_at.is_(None),  # type: ignore[union-attr]
+        )
+    ).all()
 
     matched: Trust | None = None
+    # SECURITY INVARIANTS — do not "optimise" any of these away:
+    #   1. NO `break` on match. The full sweep is the timing property: per-key
+    #      response time must not depend on which trust matched (or whether any
+    #      trust matched). A `break` would leak match-position via timing.
+    #   2. `hmac.compare_digest` is constant-time ONLY over equal-length hex
+    #      strings. Every `api_key_hash` is a SHA-256 hex digest (64 chars) —
+    #      if the column type or hash algorithm ever changes, re-check this.
+    #   3. The trust_key_cache hot path above must preserve both invariants
+    #      (single compare_digest over equal-length digests; no early-exit
+    #      shortcuts that depend on the cached match).
     for candidate in candidates:
-        # Walk every candidate (not short-circuit) so the comparison time does
-        # not depend on which trust matched.
         if candidate.api_key_hash is not None and hmac.compare_digest(
             provided_hash, candidate.api_key_hash
         ):
             matched = candidate
 
     if matched is not None:
-        logger.debug("Trust authenticated successfully.")
+        # Cache the resolved id so the next request short-circuits to the hot
+        # path. Done only after a sweep match — never after the cache-stale
+        # fall-through, where the candidate set may have shifted under us.
+        trust_key_cache.remember(provided_hash, matched.id)
+        logger.debug("Trust authenticated successfully (cache miss).")
         return matched
 
     logger.warning("Trust authentication failed: no matching trust for provided key")

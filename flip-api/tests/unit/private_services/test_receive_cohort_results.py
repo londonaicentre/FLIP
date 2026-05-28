@@ -283,8 +283,10 @@ class TestAggregateAndSaveResults:
             record_count=5,
             data=[OmopData(name="age", results=[Results(value="<50", count=5)])],
         ).model_dump_json()
+        # Raw trust-side error text — must be redacted to a safe category
+        # (S-8) before the UI sees it.
         trust_b_data = TrustSpecificData(
-            record_count=0, data=[], error="Database connection failed"
+            record_count=0, data=[], error="psycopg2.errors.UndefinedColumn ..."
         ).model_dump_json()
 
         rows = [
@@ -303,7 +305,48 @@ class TestAggregateAndSaveResults:
         # must not appear in trust_record_counts (otherwise UI would render "0").
         assert saved["record_count"] == 5
         assert saved["trust_record_counts"] == {str(trust_a_id): 5}
-        assert saved["trust_errors"] == {str(trust_b_id): "Database connection failed"}
+        # Unknown raw text collapses to ``internal_error``.
+        assert saved["trust_errors"] == {str(trust_b_id): "internal_error"}
+
+    def test_aggregate_passes_through_known_error_categories(
+        self, mock_db_session: MagicMock, query_id_for_agg: UUID
+    ):
+        """A trust-side error that already arrives as one of the known
+        categories (``query_failed`` / ``query_timeout`` / ``internal_error``)
+        is preserved verbatim — no information loss when the source is
+        already redacted.
+        """
+        trust_id = uuid.uuid4()
+        trust_data = TrustSpecificData(
+            record_count=0, data=[], error="query_failed"
+        ).model_dump_json()
+        existing_stats_mock = MagicMock()
+        mock_db_session.exec.return_value.all.return_value = [("T", trust_id, trust_data)]
+        mock_db_session.exec.return_value.first.return_value = existing_stats_mock
+
+        _aggregate_and_save_results(mock_db_session, query_id_for_agg)
+
+        saved = json.loads(existing_stats_mock.stats)
+        assert saved["trust_errors"] == {str(trust_id): "query_failed"}
+
+    def test_aggregate_strips_status_prefix_from_wrapped_error(
+        self, mock_db_session: MagicMock, query_id_for_agg: UUID
+    ):
+        """trust-api wraps upstream HTTPException details as ``"500: <detail>"``.
+        The redactor must recognise the trailing category and keep it.
+        """
+        trust_id = uuid.uuid4()
+        trust_data = TrustSpecificData(
+            record_count=0, data=[], error="500: query_failed"
+        ).model_dump_json()
+        existing_stats_mock = MagicMock()
+        mock_db_session.exec.return_value.all.return_value = [("T", trust_id, trust_data)]
+        mock_db_session.exec.return_value.first.return_value = existing_stats_mock
+
+        _aggregate_and_save_results(mock_db_session, query_id_for_agg)
+
+        saved = json.loads(existing_stats_mock.stats)
+        assert saved["trust_errors"] == {str(trust_id): "query_failed"}
 
 
 class TestReceiveCohortResultsEndpointAuth:

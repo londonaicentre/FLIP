@@ -65,6 +65,7 @@ from typing import Any
 
 from sqlmodel import Session, delete, select
 
+from flip_api.auth import trust_key_cache
 from flip_api.db.database import engine
 from flip_api.db.models.main_models import (
     FLJobTrust,
@@ -78,6 +79,8 @@ from flip_api.db.models.main_models import (
     TrustTask,
     XNATProjectStatus,
 )
+from flip_api.domain.schemas.actions import TrustAuditAction
+from flip_api.trusts_services.utils.audit_helper import audit_trust_action
 from flip_api.utils.logger import logger
 
 # (model class, FK field name) for each table that references trust.id.
@@ -144,8 +147,29 @@ def delete_one_trust(name: str, session: Session) -> dict[str, Any]:
         table_name: str = getattr(model, "__tablename__")
         deleted_counts[table_name] = result.rowcount  # type: ignore[attr-defined]
 
+    # Write the audit row in the same transaction as the delete so a partial
+    # cascade failure rolls back the audit too. `audit_user_id` is None — the
+    # deploy CLI runs under bastion IAM, not an authenticated FLIP user. The
+    # operator identity lives in CloudTrail (ecs:RunTask issuer), not here.
+    audit_trust_action(
+        trust_id=trust_id,
+        trust_name=trust_name,
+        action=TrustAuditAction.DELETED,
+        user_id=None,
+        session=session,
+    )
+
     session.delete(trust)
     session.commit()
+
+    # Bust the in-process auth cache so a stale entry can't keep the deleted
+    # trust authenticating in this worker. Cross-process eviction is bounded
+    # by the TTL; the verify-against-live-row step in authenticate_trust
+    # closes the residual window safely (db.get returns None → fall-through →
+    # 401). The CLI runs in its own process so this call is a no-op locally,
+    # but the same service function is also called from the admin endpoint
+    # path where invalidation matters.
+    trust_key_cache.invalidate()
 
     logger.info(
         "Hard-deleted trust %r (id=%s) — freed FL kit slot %r, dependent rows: %s.",

@@ -182,6 +182,14 @@ def get_records(
         set_cached_result(query, df, params)
         return df
 
+    # Error responses are deliberately category-only (S-8): the trust forwards
+    # this HTTPException detail to the central hub, which surfaces it through
+    # the cohort UI to every project member. Raw psycopg / SQLAlchemy text can
+    # leak row values, constraint names, and connection-pool internals — so we
+    # log the full error here for ops and return only a category to the caller.
+    # UndefinedTable / UndefinedColumn are an intentional exception: they echo
+    # back identifiers the OPERATOR typed in their own SQL (against the public
+    # OMOP CDM schema), so they leak no data while remaining a useful diagnostic.
     except DBAPIError as e:
         orig = e.orig
         error_msg = str(orig).strip()
@@ -198,14 +206,14 @@ def get_records(
 
         else:
             logger.error(f"Database error: {error_msg}")
-            raise HTTPException(status_code=500, detail=f"Database error: {error_msg}") from e
+            raise HTTPException(status_code=500, detail="query_failed") from e
 
     except SQLAlchemyError as e:
         logger.error(f"SQLAlchemy error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"SQLAlchemy error: {str(e)}") from e
+        raise HTTPException(status_code=500, detail="internal_error") from e
     except Exception as e:
         logger.error(f"Unexpected error executing query: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error executing query: {str(e)}") from e
+        raise HTTPException(status_code=500, detail="internal_error") from e
 
 
 def get_counts(df: pd.DataFrame) -> dict:

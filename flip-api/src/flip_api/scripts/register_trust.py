@@ -19,23 +19,36 @@ of its own; the deploy tooling decides what to register.
 
 Idempotent: if a trust with ``--name`` already exists it is skipped.
 
-Contract:
+Output transports — two contracts depending on ``--out-ssm-parameter``:
 
-- **stdout** — a JSON array of exactly one kit object in both cases:
+- *Default (dev pipe / docker compose exec)* — the kit JSON array prints on
+  **stdout**. Consumed locally by ``scripts/distribute-trust-kits.sh``. The
+  pipe is local: no remote storage involved.
 
-  - *New registration*: full kit (``trust_id``, ``trust_name``,
-    ``trust_api_key``, ``trust_internal_service_key``, ``fl_kit_slot``,
-    ``fl_kit_slot_number``, ``hub_shared``).
-  - *Idempotent skip* (trust already existed): metadata-only kit (same keys
-    minus ``trust_api_key`` / ``trust_internal_service_key``). The hub stores
-    only the SHA-256 hashes of those keys and cannot re-emit plaintext, so
-    credentials are intentionally absent on the skip path.
+- *``--out-ssm-parameter <name>`` (prod ECS one-off task)* — the kit JSON is
+  written to an SSM Parameter Store SecureString at ``<name>``; **stdout**
+  receives only that parameter name (one ASCII line, safe to capture in
+  CloudWatch). The deploy script then ``ssm:GetParameter --with-decryption``
+  reads the kit out-of-band and ``ssm:DeleteParameter`` immediately deletes
+  it. This is the S-1 fix: it keeps plaintext API keys, internal-service
+  keys, and ``hub_shared.AES_KEY_BASE64`` out of CloudWatch entirely (the
+  awslogs driver only sees the parameter name, never the kit body).
 
-  Both shapes include ``hub_shared`` so ``distribute-trust-kits.sh`` can sync
-  shared env values without rotating credentials.
+Kit shape (both transports):
 
-- **stderr** — human-readable logging.
-- Exit code 0 on success or skip; 1 on a registration failure.
+- *New registration*: full kit (``trust_id``, ``trust_name``,
+  ``trust_api_key``, ``trust_internal_service_key``, ``fl_kit_slot``,
+  ``fl_kit_slot_number``, ``hub_shared``).
+- *Idempotent skip* (trust already existed): metadata-only kit (same keys
+  minus ``trust_api_key`` / ``trust_internal_service_key``). The hub stores
+  only the SHA-256 hashes of those keys and cannot re-emit plaintext, so
+  credentials are intentionally absent on the skip path.
+
+Both shapes include ``hub_shared`` so the deploy distributor can sync shared
+env values without rotating credentials.
+
+- **stderr** — human-readable logging (does not contain the kit body).
+- Exit code 0 on success or skip; 1 on a registration or transport failure.
 """
 
 import argparse
@@ -44,8 +57,10 @@ import os
 import sys
 from typing import Any
 
+import boto3
 from sqlmodel import Session, select
 
+from flip_api.config import get_settings
 from flip_api.db.database import engine
 from flip_api.db.models.main_models import FLKitSlot, Trust
 from flip_api.trusts_services.services.register_trust import (
@@ -58,7 +73,19 @@ from flip_api.utils.logger import logger
 #   - scripts/distribute-trust-kits.sh (dev-side kit distributor)
 #   - deploy/providers/AWS/scripts/register-trusts.sh (HUB_SHARED_KEYS array)
 #   - scripts/sync_trust_kit.py (HUB_SHARED_KEYS tuple)
-# All three upsert exactly these keys.
+# All three upsert exactly these keys. The lockstep is asserted by
+# tests/unit/scripts/test_register_trust.py::test_hub_shared_keys_in_lockstep.
+#
+# WARNING — exfil whitelist. Every key listed here is:
+#   1. Forwarded to every trust host (written into trust/.env.<slot>).
+#   2. Captured by the awslogs driver into CloudWatch /ecs/flip-api when
+#      this CLI runs as a one-off ECS task (see S-1 in CLAUDE.md; the
+#      `--out-ssm-parameter` flag closes that path but stderr / stdout
+#      logger output can still leak if a value lands there by mistake).
+# NEVER add a secret here without first proving the trust needs it AND
+# choosing a non-CloudWatch transport for it. `AES_KEY_BASE64` is the
+# pre-existing exception: it MUST be on the trust to encrypt payloads, but
+# its presence is exactly why register_trust supports `--out-ssm-parameter`.
 HUB_SHARED_ENV_KEYS = (
     "AES_KEY_BASE64",
     "CENTRAL_HUB_API_URL",
@@ -152,8 +179,45 @@ def register_one_trust(
     ]
 
 
+def _write_kit_to_ssm(kits: list[dict[str, Any]], parameter_name: str) -> None:
+    """Write the kit JSON to an SSM Parameter Store SecureString.
+
+    The deploy script (``register-trusts.sh``) mints the parameter name before
+    spawning this CLI as a one-off ECS task, then reads + deletes it after the
+    task completes. The ECS task role only needs ``ssm:PutParameter`` on this
+    path; SecureString encryption uses the AWS-managed ``alias/aws/ssm`` so
+    no extra KMS permissions are required.
+
+    ``Overwrite=True`` is intentional — re-runs of ``register-trusts.sh`` may
+    reuse a parameter name on retry. Idempotent registration emits the same
+    metadata-only kit, so overwriting is safe.
+
+    Args:
+        kits (list[dict[str, Any]]): The kit list to persist (always length 1).
+        parameter_name (str): SSM parameter name (must start with ``/``).
+
+    Raises:
+        SystemExit: If the SSM put fails — the deploy script must NOT proceed
+            on a partial write, since the credentials block in ``kits`` is
+            unrecoverable from the hub side once the session is committed.
+    """
+    region = get_settings().AWS_REGION
+    client = boto3.session.Session().client("ssm", region_name=region)
+    try:
+        client.put_parameter(
+            Name=parameter_name,
+            Value=json.dumps(kits),
+            Type="SecureString",
+            Overwrite=True,
+            Description="Ephemeral trust-kit handoff; deleted by register-trusts.sh after read.",
+        )
+    except Exception as e:  # noqa: BLE001 — boto3 surfaces many ClientError subclasses; uniform fail-loud
+        logger.error("Failed to write kit to SSM parameter %r: %s", parameter_name, e)
+        sys.exit(1)
+
+
 def main() -> None:
-    """CLI entry point: register one trust, emit its kit JSON to stdout."""
+    """CLI entry point: register one trust, emit its kit JSON to the chosen output."""
     parser = argparse.ArgumentParser(description="Register one trust on the hub.")
     parser.add_argument("--name", required=True, help="Trust display name.")
     parser.add_argument("--code", default=None, help="Optional short code (e.g. GSTT).")
@@ -167,6 +231,17 @@ def main() -> None:
             "Used by sync-trust-kit-N to prevent silently minting credentials on an unregistered trust."
         ),
     )
+    parser.add_argument(
+        "--out-ssm-parameter",
+        default=None,
+        metavar="NAME",
+        help=(
+            "If set, write the kit JSON to this SSM Parameter Store SecureString name "
+            "(must start with '/') and print only the parameter name on stdout. Use this "
+            "in the prod ECS one-off task path to keep plaintext credentials out of "
+            "CloudWatch — see S-1 in flip-api/src/flip_api/scripts/register_trust.py."
+        ),
+    )
     args = parser.parse_args()
 
     with Session(engine) as session:
@@ -177,11 +252,25 @@ def main() -> None:
         except TrustRegistrationError as e:
             logger.error("Failed to register trust %r: %s", args.name, e)
             session.rollback()
-            print("[]")
+            if args.out_ssm_parameter:
+                # Empty array signals "no kit" to the deploy script regardless of
+                # transport — keep behaviour symmetric.
+                _write_kit_to_ssm([], args.out_ssm_parameter)
+                print(args.out_ssm_parameter)
+            else:
+                print("[]")
             sys.exit(1)
 
-    # JSON array on stdout — the deploy distributor writes it to the per-trust
-    # kit file. Logging went to stderr.
+    if args.out_ssm_parameter:
+        # SSM path: stdout gets only the parameter name; the kit body never
+        # touches CloudWatch. Logger output on stderr is unaffected and still
+        # captured by awslogs — that's intentional (operator visibility into
+        # registration outcome) and contains no credentials.
+        _write_kit_to_ssm(kits, args.out_ssm_parameter)
+        print(args.out_ssm_parameter)
+        return
+
+    # Dev pipe: JSON array on stdout for ``scripts/distribute-trust-kits.sh``.
     print(json.dumps(kits))
 
 

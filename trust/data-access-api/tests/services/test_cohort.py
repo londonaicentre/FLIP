@@ -193,35 +193,44 @@ def test_get_records_other_dbapi_error(mock_read_sql):
 
     query = "SELECT * FROM test_table"
 
-    with pytest.raises(Exception, match="Database error: some database error"):
+    # S-8: error details are category-only — raw psycopg text stays in trust
+    # logs but never reaches the HTTPException body (which the hub forwards
+    # to every project member via the cohort UI).
+    with pytest.raises(HTTPException) as exc_info:
         get_records(query)
+    assert exc_info.value.detail == "query_failed"
+    assert "some database error" not in str(exc_info.value.detail)
 
 
 @patch("pandas.read_sql")
 def test_get_records_sqlalchemy_error(mock_read_sql):
-    """
-    Test get_records with SQLAlchemyError.
+    """SQLAlchemy errors collapse to ``internal_error`` — the raw text
+    (which can include connection strings, pool internals) stays in logs.
     """
     mock_sqlalchemy_error = SQLAlchemyError("SQLAlchemy connection error")
     mock_read_sql.side_effect = mock_sqlalchemy_error
 
     query = "SELECT * FROM test_table"
 
-    with pytest.raises(Exception, match="SQLAlchemy error: SQLAlchemy connection error"):
+    with pytest.raises(HTTPException) as exc_info:
         get_records(query)
+    assert exc_info.value.detail == "internal_error"
+    assert "SQLAlchemy connection error" not in str(exc_info.value.detail)
 
 
 @patch("pandas.read_sql")
 def test_get_records_generic_exception(mock_read_sql):
+    """Any other exception collapses to ``internal_error`` — defence in depth
+    against a future code path that lets a row value bubble up via ``str(e)``.
     """
-    Test get_records with generic Exception.
-    """
-    mock_read_sql.side_effect = Exception("Unexpected error")
+    mock_read_sql.side_effect = Exception("Unexpected error with row value 12345")
 
     query = "SELECT * FROM test_table"
 
-    with pytest.raises(Exception, match="Unexpected error executing query: Unexpected error"):
+    with pytest.raises(HTTPException) as exc_info:
         get_records(query)
+    assert exc_info.value.detail == "internal_error"
+    assert "12345" not in str(exc_info.value.detail)
 
 
 @patch("data_access_api.services.cohort.extract_missing_identifier")

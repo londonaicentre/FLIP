@@ -19,7 +19,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlmodel import Field, Relationship, SQLModel
 
-from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction
+from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction, TrustAuditAction
 from flip_api.domain.schemas.file import FileUploadStatus
 from flip_api.domain.schemas.status import (
     JobStatus,
@@ -234,14 +234,55 @@ class Trust(SQLModel, table=True):
     # region/geography (e.g. "London"). Both stay nullable because they are
     # optional inputs to register_trust. `api_key_hash` is nullable only so a
     # row can briefly exist mid-insert; every registered trust has it set —
-    # register_trust mints the key and stores its SHA-256 here. `disabled_at`
-    # is NULL while the trust is active — it is a soft-delete marker.
+    # register_trust mints the key and stores its SHA-256 here.
+    #
+    # `disabled_at` is NULL while the trust is active. It is the future
+    # soft-disable marker — when set, `authenticate_trust` (in
+    # auth/access_manager.py) excludes the row from the candidate set, so a
+    # disabled trust cannot authenticate even if its API key is replayed.
+    # NOTE: no caller currently SETS this column; the column + name-uniqueness
+    # check are wired so that when a "Disable trust" admin action lands later,
+    # toggling `disabled_at` is on its own a complete credential-revocation
+    # lever (the api_key_hash row is left intact so the action is reversible).
+    # If you add a setter, also decide whether soft-disabled names should be
+    # reusable: today register_trust's name-uniqueness check does NOT filter on
+    # `disabled_at`, so a disabled name is permanently reserved.
+    #
     # `created_at` is always set (register_trust stamps it).
     code: str | None = Field(default=None)
     region: str | None = Field(default=None)
     api_key_hash: str | None = Field(default=None)
     disabled_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class TrustsAudit(SQLModel, table=True):
+    """Audit log for trust-registry mutations (register / delete).
+
+    Captures lifecycle events on `trust`: admin-UI `POST /admin/trusts`,
+    deploy-CLI `register_trust.py`, and deploy-CLI `delete_trust.py`. Rows
+    survive a hard delete of the underlying trust — `trust_id` is a bare
+    UUID with NO foreign key, so the audit row remains queryable after the
+    `trust` row is gone (delete_trust.py hard-deletes; an FK would either
+    block that delete or null this column out).
+
+    `modified_by_user_id` is nullable because the deploy-CLI path runs on
+    a bastion under operator IAM, not an authenticated FLIP user: both
+    `register_trust.py` and `delete_trust.py` write NULL. The UI path
+    (`admin_create_trust`) stamps the Cognito sub of the authenticated
+    admin.
+
+    `trust_name` is denormalised here on purpose: it lets audit queries
+    show a human-readable name long after the trust row was hard-deleted.
+    """
+
+    __tablename__ = "trusts_audit"  # type: ignore
+    id: UUID = Field(default_factory=uuid4, primary_key=True)
+    trust_id: UUID = Field(index=True)
+    trust_name: str = Field()
+    action: TrustAuditAction = Field()
+    modified_by_user_id: UUID | None = Field(default=None)
+    audit_date: Annotated[datetime, Field(default_factory=datetime.utcnow)]
 
 
 class FLKitSlot(SQLModel, table=True):

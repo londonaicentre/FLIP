@@ -31,3 +31,16 @@ class ModelAuditAction(str, Enum):
     PREPARED = "PREPARED"
     TRAINING_STARTED = "TRAINING_STARTED"
     RESULTS_UPLOADED = "RESULTS_UPLOADED"
+
+
+class TrustAuditAction(str, Enum):
+    """Lifecycle events for the trust registry.
+
+    Captured by `trusts_services.utils.audit_helper.audit_trust_action`:
+    `register_trust` writes REGISTERED, `delete_trust` writes DELETED. The
+    audit row is stored in `trusts_audit` with no FK to `trust.id`, so it
+    persists past a hard delete.
+    """
+
+    REGISTERED = "REGISTERED"
+    DELETED = "DELETED"
