@@ -550,7 +550,7 @@ const { data: trusts, mutate: refresh } = useSWRV<IAdminTrust[]>(
     }
 );
 
-type TrustState = "online" | "degraded" | "offline" | "disabled";
+type TrustState = "online" | "degraded" | "offline";
 
 // A heartbeat newer than HEARTBEAT_FRESH_S is "online"; older than HEARTBEAT_DEGRADED_S
 // (or absent) is "offline"; in between is "degraded". Trust-side poll interval
@@ -559,7 +559,6 @@ const HEARTBEAT_FRESH_S = 30;
 const HEARTBEAT_DEGRADED_S = 5 * 60;
 
 const trustState = (t: IAdminTrust): TrustState => {
-    if (t.disabled_at) return "disabled";
     if (!t.last_heartbeat) return "offline";
     const ageS = (Date.now() - new Date(t.last_heartbeat).getTime()) / 1000;
     if (ageS < HEARTBEAT_FRESH_S) return "online";
@@ -571,24 +570,21 @@ const trustState = (t: IAdminTrust): TrustState => {
 const STATE_LABELS: Record<TrustState, string> = {
     online: "Online",
     degraded: "Degraded",
-    offline: "Offline",
-    disabled: "Disabled"
+    offline: "Offline"
 };
 const stateLabel = (s: TrustState): string => STATE_LABELS[s];
 
 const DOT_CLASSES: Record<TrustState, string> = {
     online: "bg-emerald-600",
     degraded: "bg-amber-500",
-    offline: "bg-red-500",
-    disabled: "bg-gray-400"
+    offline: "bg-red-500"
 };
 const dotClass = (s: TrustState): string => DOT_CLASSES[s];
 
 const PILL_CLASSES: Record<TrustState, string> = {
     online: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100",
     degraded: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-    offline: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200",
-    disabled: "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+    offline: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-200"
 };
 const pillClass = (s: TrustState): string => PILL_CLASSES[s];
 
@@ -609,8 +605,7 @@ const heartbeatText = (iso: string | null): string => {
 const UPTIME_BY_STATE: Record<TrustState, number[]> = {
     online: [1, 1, 1, 1, 1, 1, 1],
     degraded: [1, 1, 0.4, 1, 1, 1, 0.7],
-    offline: [1, 1, 1, 0.5, 0, 0, 0],
-    disabled: [0.4, 0.4, 0.4, 0.4, 0.4, 0.4, 0.4]
+    offline: [1, 1, 1, 0.5, 0, 0, 0]
 };
 const uptimeSvg = {
     w: 72,
@@ -621,16 +616,14 @@ const uptimeTitle = "7-day uptime (placeholder — backend tracking pending)";
 const STROKE_BY_STATE: Record<TrustState, string> = {
     online: "#059669",
     degraded: "#f59e0b",
-    offline: "#ef4444",
-    disabled: "#9ca3af"
+    offline: "#ef4444"
 };
 const uptimeStroke = (s: TrustState): string => STROKE_BY_STATE[s];
 
 const STATE_RANK: Record<TrustState, number> = {
     offline: 0,
     degraded: 1,
-    disabled: 2,
-    online: 3
+    online: 2
 };
 
 interface IRenderedTrust extends IAdminTrust {
@@ -736,8 +729,7 @@ const summaryCells = computed(() => {
     const counts: Record<TrustState, number> = {
         online: 0,
         degraded: 0,
-        offline: 0,
-        disabled: 0
+        offline: 0
     };
     for (const t of trusts.value ?? []) counts[trustState(t)]++;
 
@@ -762,13 +754,6 @@ const summaryCells = computed(() => {
             count: counts.offline,
             dotClass: "bg-red-500",
             warnTextClass: "text-red-600 dark:text-red-400"
-        },
-        {
-            key: "disabled",
-            label: "Disabled",
-            count: counts.disabled,
-            dotClass: "bg-gray-400",
-            warnTextClass: "text-gray-600 dark:text-gray-400"
         }
     ];
 });
@@ -790,8 +775,7 @@ const subtitle = computed(() => {
 const DOT_HEX: Record<TrustState, string> = {
     online: "#059669",
     degraded: "#f59e0b",
-    offline: "#ef4444",
-    disabled: "#9ca3af"
+    offline: "#ef4444"
 };
 
 const radial = {
@@ -868,11 +852,6 @@ const radialLegend = computed(() => [
         state: "offline" as TrustState,
         label: "Offline",
         dotClass: "bg-red-500"
-    },
-    {
-        state: "disabled" as TrustState,
-        label: "Disabled",
-        dotClass: "bg-gray-400"
     }
 ]);
 

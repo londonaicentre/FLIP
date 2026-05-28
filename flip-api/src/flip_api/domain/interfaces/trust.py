@@ -37,7 +37,6 @@ class IAdminTrust(BaseModel):
     # values are written via datetime.now(timezone.utc), so they're already
     # UTC — we just need to tag them on the wire.
     created_at: str | None = None
-    disabled_at: str | None = None
     last_heartbeat: str | None = None
     project_count: int = 0
 

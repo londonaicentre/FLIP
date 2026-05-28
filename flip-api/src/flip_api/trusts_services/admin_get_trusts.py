@@ -54,7 +54,7 @@ def admin_get_trusts(
         token_id (UUID): Authenticated user ID, used for the admin permission check.
 
     Returns:
-        list[IAdminTrust]: Every trust with name, created_at, disabled_at, last_heartbeat,
+        list[IAdminTrust]: Every trust with name, created_at, last_heartbeat,
         and project_count (count of rows in ``project_trust_intersect``).
 
     Raises:
@@ -86,7 +86,6 @@ def admin_get_trusts(
                 code=t.code,
                 region=t.region,
                 created_at=_as_utc_iso(t.created_at),
-                disabled_at=_as_utc_iso(t.disabled_at),
                 last_heartbeat=_as_utc_iso(t.last_heartbeat),
                 project_count=counts.get(t.id, 0),
             )

@@ -133,7 +133,7 @@ class ModelsAudit(SQLModel, table=True):
     model_id: UUID | None = Field(default=None, foreign_key="model.id", index=True)
     action: ModelAuditAction = Field()
     user_id: UUID | None = Field(default=None)
-    audit_date: Annotated[datetime, Field(default_factory=datetime.utcnow)]
+    audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
 
 
 class ProjectTrustIntersect(SQLModel, table=True):
@@ -163,7 +163,7 @@ class ProjectsAudit(SQLModel, table=True):
     project_id: UUID | None = Field(default=None, foreign_key="projects.id", index=True)
     action: ProjectAuditAction = Field()
     user_id: UUID = Field()
-    audit_date: Annotated[datetime, Field(default_factory=datetime.utcnow)]
+    audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
 
 
 class ProjectUserAccess(SQLModel, table=True):
@@ -236,23 +236,10 @@ class Trust(SQLModel, table=True):
     # row can briefly exist mid-insert; every registered trust has it set —
     # register_trust mints the key and stores its SHA-256 here.
     #
-    # `disabled_at` is NULL while the trust is active. It is the future
-    # soft-disable marker — when set, `authenticate_trust` (in
-    # auth/access_manager.py) excludes the row from the candidate set, so a
-    # disabled trust cannot authenticate even if its API key is replayed.
-    # NOTE: no caller currently SETS this column; the column + name-uniqueness
-    # check are wired so that when a "Disable trust" admin action lands later,
-    # toggling `disabled_at` is on its own a complete credential-revocation
-    # lever (the api_key_hash row is left intact so the action is reversible).
-    # If you add a setter, also decide whether soft-disabled names should be
-    # reusable: today register_trust's name-uniqueness check does NOT filter on
-    # `disabled_at`, so a disabled name is permanently reserved.
-    #
     # `created_at` is always set (register_trust stamps it).
     code: str | None = Field(default=None)
     region: str | None = Field(default=None)
     api_key_hash: str | None = Field(default=None)
-    disabled_at: datetime | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -282,7 +269,7 @@ class TrustsAudit(SQLModel, table=True):
     trust_name: str = Field()
     action: TrustAuditAction = Field()
     modified_by_user_id: UUID | None = Field(default=None)
-    audit_date: Annotated[datetime, Field(default_factory=datetime.utcnow)]
+    audit_date: Annotated[datetime, Field(default_factory=lambda: datetime.now(timezone.utc))]
 
 
 class FLKitSlot(SQLModel, table=True):

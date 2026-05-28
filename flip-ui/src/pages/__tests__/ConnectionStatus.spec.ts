@@ -67,7 +67,6 @@ const fixture: IAdminTrust[] = [
         code: "ZNT",
         region: "London",
         created_at: null,
-        disabled_at: null,
         last_heartbeat: seconds(10),
         project_count: 1
     },
@@ -77,7 +76,6 @@ const fixture: IAdminTrust[] = [
         code: "ANT",
         region: "South West",
         created_at: null,
-        disabled_at: null,
         last_heartbeat: null,
         project_count: 7
     },
@@ -87,7 +85,6 @@ const fixture: IAdminTrust[] = [
         code: "MNT",
         region: "North East",
         created_at: null,
-        disabled_at: null,
         last_heartbeat: seconds(120),
         project_count: 3
     }
@@ -287,19 +284,6 @@ describe("ConnectionStatus", () => {
         const heartbeats = wrapper.findAll("[data-test='trust-heartbeat']").map(h => h.text());
         expect(heartbeats.some(t => t.includes("h ago"))).toBe(true);
         expect(heartbeats.some(t => t.includes("d ago"))).toBe(true);
-    });
-
-    it("flags a disabled trust regardless of last_heartbeat", async () => {
-        mockSwrvData.value = [{
-            ...fixture[0],
-            disabled_at: seconds(60),
-            last_heartbeat: seconds(5)
-        }];
-        const wrapper = mountPage();
-        // Disabled appears in the status pill — assert the row carries the
-        // gray "disabled" dot class rather than the green "online" one.
-        const row = wrapper.find("[data-test='trust-row']");
-        expect(row.html()).toContain("bg-gray-400");
     });
 
     it("opens the Add Trust modal when an admin clicks the button", async () => {

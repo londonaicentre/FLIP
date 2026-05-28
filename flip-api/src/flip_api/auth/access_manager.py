@@ -431,16 +431,15 @@ def authenticate_trust(
     provided_hash = hashlib.sha256(api_key.encode()).hexdigest()
 
     # Hot path: cache lookup, then a single PK fetch and constant-time compare.
-    # On stale (deleted / disabled / hash rotated) the live row check fails and
-    # we fall through to the sweep — the cache can never grant access the DB
-    # denies. See trust_key_cache.py.
+    # On stale (deleted / hash rotated) the live row check fails and we fall
+    # through to the sweep — the cache can never grant access the DB denies.
+    # See trust_key_cache.py.
     cached_trust_id = trust_key_cache.lookup(provided_hash)
     if cached_trust_id is not None:
         cached = db.get(Trust, cached_trust_id)
         if (
             cached is not None
             and cached.api_key_hash is not None
-            and cached.disabled_at is None
             and hmac.compare_digest(provided_hash, cached.api_key_hash)
         ):
             logger.debug("Trust authenticated via cache.")
@@ -448,15 +447,11 @@ def authenticate_trust(
         # Stale entry — fall through to the full sweep below. Don't 401 here;
         # the row may have been replaced (key rotated, trust re-registered).
 
-    # Filter `disabled_at IS NULL` so a soft-disabled trust cannot authenticate.
-    # Today nothing sets `disabled_at` (it's a future-soft-delete placeholder),
-    # but adding the filter now means a future "Disable trust" admin action that
-    # only stamps `disabled_at` is automatically a credential-revocation lever
-    # — no need to also clear `api_key_hash` to revoke.
+    # Only rows with an api_key_hash are auth candidates — a row can briefly
+    # exist mid-insert before register_trust stamps the hash.
     candidates = db.exec(
         select(Trust).where(
             Trust.api_key_hash.is_not(None),  # type: ignore[union-attr]
-            Trust.disabled_at.is_(None),  # type: ignore[union-attr]
         )
     ).all()
 
