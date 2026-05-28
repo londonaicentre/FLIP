@@ -34,7 +34,10 @@
 # all — a compromise of this image cannot affect any deployed FLIP
 # environment. Reassess if this image is ever repurposed for stag/prod or
 # exposed beyond localhost.
-FROM node:22-alpine
+# Node 24 LTS ships npm >=11.10, which honours `.npmrc min-release-age`. Node
+# 22 LTS bundles npm 10.x which silently ignores the key, leaving the supply-
+# chain cooldown a documentation artefact.
+FROM node:24-alpine
 
 # Install dependencies for building node modules
 RUN apk add --no-cache python3 make g++ xdg-utils
@@ -49,8 +52,9 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install
+# Install dependencies strictly from the lockfile so a CI build cannot resolve
+# a fresh, un-vetted version even when the lockfile pins an older one.
+RUN npm ci
 
 ARG UI_PORT
 # Expose port

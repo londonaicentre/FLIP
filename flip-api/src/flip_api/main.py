@@ -100,6 +100,7 @@ from flip_api.user_services import (
 )
 from flip_api.utils.cognito_helpers import get_cors_allowed_origins
 from flip_api.utils.rate_limiter import limiter
+from flip_api.utils.security_headers import SecurityHeadersMiddleware
 
 # Module-level holder for the CORS allowlist. Populated from Cognito at app startup (see
 # `lifespan`). CORSMiddleware stores this list by reference and reads it per-request via
@@ -139,6 +140,7 @@ app = FastAPI(
     docs_url=f"{API_PREFIX}/docs" if _docs_enabled else None,
     openapi_url=f"{API_PREFIX}/openapi.json" if _docs_enabled else None,
     redoc_url=f"{API_PREFIX}/redoc" if _docs_enabled else None,
+    swagger_ui_oauth2_redirect_url=f"{API_PREFIX}/docs/oauth2-redirect" if _docs_enabled else None,
 )
 
 # Rate limiter — keyed by trust_name path parameter (falls back to client IP)
@@ -161,6 +163,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Security headers — applies to ALL responses (API JSON, health, error pages).
+# CSP is only injected on text/html responses; the SPA primarily relies on
+# CloudFront edge CSP for HTML assets.
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 ROUTERS: tuple[APIRouter, ...] = (

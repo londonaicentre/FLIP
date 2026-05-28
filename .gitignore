@@ -369,3 +369,4 @@ deploy/providers/AWS/dev/.terraform.lock.hcl
 
 .claude/scheduled_tasks.lock
 pi-session-*.html
+CONTEXT.md

@@ -24,6 +24,7 @@ dependencies = [
     "cryptography>=46.0.7",
     "fastapi[standard]>=0.115.11",
     "greenlet>=3.1.1",
+    "idna>=3.15",
     "pandas>=2.2.3",
     "pydicom>=2.4.5",
     "pydantic-settings>=2.9.1",
@@ -48,6 +49,8 @@ dev = [
 ]
 
 [tool.uv]
+# 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
+exclude-newer = "3 days"
 constraint-dependencies = [
     "python-dotenv>=1.2.2",  # GHSA: symlink-following file overwrite; transitive via pydantic-settings
 ]

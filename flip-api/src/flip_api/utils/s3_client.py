@@ -62,7 +62,7 @@ def hash_s3_key(key: str) -> str:
 class S3Client:
     """S3 client wrapper for S3 operations."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize S3 client with AWS credentials."""
         self.client = boto3.client("s3", region_name=get_settings().AWS_REGION)
 

@@ -23,6 +23,7 @@ dependencies = [
     "ansible-core>=2.19.2",
     "click>=8.0.0",
     "cryptography>=46.0.5",
+    "idna>=3.15",
     "requests>=2.33.0",
     "urllib3>=2.7.0",
 ]
@@ -81,3 +82,7 @@ exclude = [
 
 [tool.setuptools]
 packages = []
+
+[tool.uv]
+# 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
+exclude-newer = "3 days"
