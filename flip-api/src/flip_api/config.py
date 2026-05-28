@@ -79,14 +79,6 @@ class Settings(BaseSettings):
     POSTGRES_USER: str
     POSTGRES_DB: str
 
-    # When true, flip-api authenticates to Postgres with a short-lived AWS IAM
-    # token minted per-connection (via RDS Proxy) instead of a static password.
-    # This removes the password that was cached at boot and went stale on every
-    # RDS secret rotation, causing prod DB outages (issue #556). Production-only
-    # — wired on by the ECS task env (deploy/providers/AWS/locals.tf); dev keeps
-    # the static POSTGRES_PASSWORD path. See flip_api/db/database.py.
-    DB_IAM_AUTH: bool = False
-
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
     TRUST_NAMES: list[str]
@@ -119,21 +111,6 @@ class Settings(BaseSettings):
         if isinstance(v, bool):
             return v
         return v.lower() in ("true", "1")    # type: ignore[union-attr]
-
-    @field_validator("DB_IAM_AUTH", mode="before")
-    @classmethod
-    def coerce_empty_db_iam_auth(cls, v: str | bool | None) -> bool:
-        """Treat empty-string or None DB_IAM_AUTH as the default False.
-
-        GitHub Actions / ECS inject empty-string env vars for unset vars, which
-        Pydantic would otherwise reject against ``bool``. Same shape as
-        ``coerce_empty_mfa`` (but defaulting to the secure-by-omission False).
-        """
-        if v is None or v == "":
-            return False
-        if isinstance(v, bool):
-            return v
-        return v.lower() in ("true", "1")
 
     @field_validator("LOG_LEVEL", mode="before")
     @classmethod
@@ -200,10 +177,13 @@ class DevSettings(Settings):
 
 
 class ProdSettings(Settings):
-    """Settings specific to production environment."""
+    """Settings specific to production environment.
+
+    Production authenticates to Postgres via RDS Proxy with per-connection IAM
+    tokens (see db/database.py), so there is no static DB password setting here.
+    """
 
     ENV: Literal["production"] = "production"
-    POSTGRES_SECRET_ARN: str  # in prod, get DB password from secrets manager, using this ARN
 
 
 # Eager load once (for app use)

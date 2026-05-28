@@ -22,14 +22,12 @@ def _fake_settings(**overrides: object) -> SimpleNamespace:
     """Build a settings stub with all attributes database.py reads."""
     base: dict[str, object] = {
         "ENV": "development",
-        "DB_IAM_AUTH": False,
         "POSTGRES_USER": "local_user",
         "POSTGRES_DB": "flip",
         "DB_HOST": "db.example.com",
         "DB_PORT": 5432,
         "AWS_REGION": "eu-west-2",
         "POSTGRES_PASSWORD": "devpass",
-        "POSTGRES_SECRET_ARN": "arn:aws:secretsmanager:eu-west-2:123456789012:secret:rds-db-abc",
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -44,8 +42,8 @@ def _reset_rds_client_cache():
 
 
 def test_build_engine_dev_uses_env_password():
-    """Dev (no IAM) embeds the env-var password in the URL."""
-    with patch.object(database, "get_settings", return_value=_fake_settings(ENV="development", DB_IAM_AUTH=False)):
+    """Dev embeds the env-var password in the URL and wires no IAM hook."""
+    with patch.object(database, "get_settings", return_value=_fake_settings(ENV="development")):
         engine = database._build_engine()
 
     assert engine.url.username == "local_user"
@@ -55,23 +53,9 @@ def test_build_engine_dev_uses_env_password():
     assert not event.contains(engine, "do_connect", database._do_connect_listener)
 
 
-def test_build_engine_prod_password_path_reads_secret():
-    """Legacy prod (IAM off) resolves the password from Secrets Manager."""
-    stt = _fake_settings(ENV="production", DB_IAM_AUTH=False)
-    with (
-        patch.object(database, "get_settings", return_value=stt),
-        patch.object(database, "get_secret", return_value="s3cret-from-asm") as mock_get_secret,
-    ):
-        engine = database._build_engine()
-
-    mock_get_secret.assert_called_once_with(secret_key="password", secret_name=stt.POSTGRES_SECRET_ARN)
-    assert engine.url.password == "s3cret-from-asm"
-
-
-def test_build_engine_iam_omits_password_and_attaches_hook():
-    """IAM mode builds a passwordless URL, enables pre-ping, and wires the do_connect hook."""
-    stt = _fake_settings(ENV="production", DB_IAM_AUTH=True)
-    with patch.object(database, "get_settings", return_value=stt):
+def test_build_engine_prod_omits_password_and_attaches_hook():
+    """Prod builds a passwordless URL, enables pre-ping, and wires the do_connect hook."""
+    with patch.object(database, "get_settings", return_value=_fake_settings(ENV="production")):
         engine = database._build_engine()
 
     assert engine.url.username == "local_user"
@@ -95,7 +79,7 @@ def test_do_connect_listener_injects_iam_token():
 
 def test_generate_db_auth_token_calls_rds_client():
     """The token is minted via the RDS client with the configured host/user/region."""
-    stt = _fake_settings(DB_IAM_AUTH=True)
+    stt = _fake_settings(ENV="production")
     mock_client = MagicMock()
     mock_client.generate_db_auth_token.return_value = "iam-token"
 
@@ -118,9 +102,8 @@ def test_generate_db_auth_token_calls_rds_client():
 
 def test_get_rds_client_is_cached():
     """The RDS client is constructed once and reused across calls."""
-    stt = _fake_settings(DB_IAM_AUTH=True)
     with (
-        patch.object(database, "get_settings", return_value=stt),
+        patch.object(database, "get_settings", return_value=_fake_settings(ENV="production")),
         patch("boto3.session.Session") as mock_session,
     ):
         first = database._get_rds_client()

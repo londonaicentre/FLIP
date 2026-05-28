@@ -49,7 +49,7 @@ make aws-login                                # AWS SSO login
 - **VPC**: 10.0.0.0/16, 2 AZs, public + private subnets
 - **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1)
 - **EC2**: Trust host (t3.xlarge, private subnet, SSM-only access)
-- **RDS**: PostgreSQL in private subnets. flip-api connects through **RDS Proxy** using **IAM auth** (short-lived per-connection tokens, `DB_IAM_AUTH=true`); the proxy uses the RDS-managed master secret to reach the DB, so secret rotation no longer takes flip-api down (FLIP#556). No `rds_iam` Postgres grant is needed.
+- **RDS**: PostgreSQL in private subnets. In production flip-api connects through **RDS Proxy** using **IAM auth** (short-lived per-connection tokens); the proxy uses the RDS-managed master secret to reach the DB, so secret rotation no longer takes flip-api down (FLIP#556). No `rds_iam` Postgres grant is needed.
 - **ALB**: Internal (`internal = true`, private subnets); HTTPS termination for `/api/*` reached via CloudFront VPC origin (no public IP)
 - **NLB**: gRPC for FL server traffic
 - **CloudFront + S3**: flip-ui static hosting

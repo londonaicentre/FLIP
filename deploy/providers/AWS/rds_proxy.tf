@@ -84,9 +84,8 @@ resource "aws_security_group_rule" "rds_proxy_egress_rds" {
   security_group_id        = aws_security_group.rds_proxy.id
 }
 
-# Let the proxy's connections into RDS. The existing direct ECS→RDS rule
-# (main.tf::rds_ingress_ecs_flip_api) is kept so a rollback to the static-
-# password path (DB_IAM_AUTH=false + DB_HOST back to the instance) still works.
+# Let the proxy's connections into RDS. This is flip-api's only path to the
+# database — the direct ECS→RDS ingress rule was removed (see main.tf).
 resource "aws_security_group_rule" "rds_ingress_proxy" {
   type                     = "ingress"
   from_port                = 5432

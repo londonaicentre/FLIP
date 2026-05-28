@@ -97,12 +97,9 @@ locals {
       AWS_COGNITO_APP_CLIENT_ID = module.cognito.app_client_id
       POSTGRES_USER             = var.POSTGRES_USER
       POSTGRES_DB               = var.POSTGRES_DB
-      # DB password is no longer read by the app under IAM auth; POSTGRES_SECRET_ARN
-      # is kept injected only so a rollback (DB_IAM_AUTH=false) still has a source.
-      POSTGRES_SECRET_ARN = module.flip_db.db_instance_master_user_secret_arn
-      # Authenticate to Postgres (via RDS Proxy) with per-connection IAM tokens
-      # instead of a cached static password — fixes the rotation outage (FLIP#556).
-      DB_IAM_AUTH                    = "true"
+      # No DB password: flip-api authenticates to Postgres via RDS Proxy with
+      # per-connection IAM tokens (DB_HOST = proxy endpoint, see ecs_tasks.tf),
+      # which fixes the secret-rotation outage (FLIP#556).
       TRUST_API_KEY_HEADER           = var.TRUST_API_KEY_HEADER
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
       AWS_SECRET_NAME                = "FLIP_API" # pragma: allowlist secret

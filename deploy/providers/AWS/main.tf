@@ -145,15 +145,9 @@ resource "aws_ec2_tag" "rds_security_group_flip_sg" {
   value       = "true"
 }
 
-resource "aws_security_group_rule" "rds_ingress_ecs_flip_api" {
-  type                     = "ingress"
-  from_port                = 5432
-  to_port                  = 5432
-  protocol                 = "tcp"
-  description              = "PostgreSQL from ECS flip-api"
-  source_security_group_id = aws_security_group.ecs_flip_api.id
-  security_group_id        = module.rds_security_group.security_group.id
-}
+# flip-api reaches Postgres only through RDS Proxy (rds_proxy.tf), never
+# directly — so RDS ingress comes from the proxy SG (rds_proxy.tf), not the
+# flip-api task SG.
 
 ############################
 # RDS PostgreSQL Database

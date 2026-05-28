@@ -57,12 +57,9 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_managed" {
 # never Resource = "*".
 data "aws_iam_policy_document" "ecs_task_execution_secrets" {
   statement {
-    sid     = "ReadFlipApiSecret"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      module.flip_api_secret.secret_arn,
-      module.flip_db.db_instance_master_user_secret_arn,
-    ]
+    sid       = "ReadFlipApiSecret"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [module.flip_api_secret.secret_arn]
   }
 
   statement {
@@ -106,12 +103,9 @@ resource "aws_iam_role" "ecs_flip_api_task" {
 
 data "aws_iam_policy_document" "ecs_flip_api_task" {
   statement {
-    sid     = "ReadFlipApiSecret"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      module.flip_api_secret.secret_arn,
-      module.flip_db.db_instance_master_user_secret_arn,
-    ]
+    sid       = "ReadFlipApiSecret"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [module.flip_api_secret.secret_arn]
   }
 
   # Mint IAM auth tokens to connect through RDS Proxy (FLIP#556). Scoped to the

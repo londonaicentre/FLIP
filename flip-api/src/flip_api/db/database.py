@@ -19,8 +19,7 @@ from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, create_engine
 
-from flip_api.config import DevSettings, ProdSettings, get_settings
-from flip_api.utils.get_secrets import get_secret
+from flip_api.config import get_settings
 
 # RDS Proxy drops idle client connections after `idle_client_timeout` (1800s by
 # default — see deploy/providers/AWS/rds_proxy.tf). Recycle pooled connections
@@ -74,24 +73,17 @@ def _do_connect_listener(_dialect: object, _conn_rec: object, _cargs: object, cp
     cparams["password"] = _generate_db_auth_token()
 
 
-def _resolve_static_password(stt: DevSettings | ProdSettings) -> str:
-    """Resolve the static DB password: Secrets Manager in prod, env var in dev."""
-    if stt.ENV == "production":
-        return get_secret(secret_key="password", secret_name=stt.POSTGRES_SECRET_ARN)
-    return stt.POSTGRES_PASSWORD
-
-
 def _build_engine() -> Engine:
-    """Build the SQLAlchemy engine for the active settings.
+    """Build the SQLAlchemy engine for the active environment.
 
-    IAM-auth mode (production, via RDS Proxy) builds a passwordless URL and
-    attaches a ``do_connect`` hook that mints an IAM token per connection.
-    Otherwise it falls back to the static-password URL (dev env var, or legacy
-    production Secrets Manager fetch).
+    Production authenticates to Postgres through RDS Proxy with a per-connection
+    IAM token (passwordless URL + a ``do_connect`` hook), so the app holds no
+    static credential and RDS secret rotation is a non-event (FLIP#556). Dev
+    uses the static ``POSTGRES_PASSWORD`` from the environment.
     """
     stt = get_settings()
 
-    if stt.DB_IAM_AUTH:
+    if stt.ENV == "production":
         # No static password in the URL — the do_connect hook supplies a
         # short-lived IAM token per connection. IAM auth mandates TLS.
         db_url = f"postgresql+psycopg2://{stt.POSTGRES_USER}@{stt.DB_HOST}:{stt.DB_PORT}/{stt.POSTGRES_DB}"
@@ -105,12 +97,11 @@ def _build_engine() -> Engine:
         event.listen(engine, "do_connect", _do_connect_listener)
         return engine
 
-    # URL-encode the password to handle special characters like @, #, %, etc.
-    # Remove leading/trailing whitespace in case there is a comment in the env
-    # file next to the password.
-    encoded_password = quote_plus(_resolve_static_password(stt).strip())
+    # Dev: password from env var. URL-encode to handle special characters like
+    # @, #, %, etc.; strip in case there is a trailing comment in the env file.
+    encoded_password = quote_plus(stt.POSTGRES_PASSWORD.strip())
     db_url = f"postgresql+psycopg2://{stt.POSTGRES_USER}:{encoded_password}@{stt.DB_HOST}:{stt.DB_PORT}/{stt.POSTGRES_DB}"
-    return create_engine(db_url, echo=False, pool_pre_ping=True)
+    return create_engine(db_url, echo=False)
 
 
 engine = _build_engine()
