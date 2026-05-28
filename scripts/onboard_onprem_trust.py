@@ -39,6 +39,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 import urllib.error
@@ -508,7 +509,24 @@ def check_data_dir(
                 f"Otherwise point {var_name} at the host path holding your real data.",
             ],
         )
-    if not any(resolved.iterdir()):
+    try:
+        is_empty = not any(resolved.iterdir())
+    except PermissionError:
+        # Dir exists but isn't readable by us — almost always because a
+        # container took ownership on a previous `up` (the omop-db postgres
+        # image forces PGDATA to 0700 owned by its own uid). It's therefore
+        # in use and populated; we just can't introspect it, so don't block
+        # a re-run of onboarding after the stack has come up.
+        try:
+            owner = f"uid {resolved.stat().st_uid}"
+        except OSError:
+            owner = "another user"
+        return Check(
+            label, Status.WARN,
+            f"{resolved} (owned by {owner}, not readable as uid {os.getuid()} "
+            f"— assumed populated; expected after the stack has run once)",
+        )
+    if is_empty:
         return Check(
             label, Status.FAIL, f"{resolved} (dir is empty)",
             hints=[
