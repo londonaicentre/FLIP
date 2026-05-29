@@ -138,6 +138,12 @@ class IClientStatus(BaseModel):
 
     name: str
     status: str
+    # The FL kit slot backing this client (the pre-provisioned participant
+    # identity, e.g. "Trust_1"). The trust's display name (`name`) can differ
+    # from the slot once a trust is registered under an arbitrary name, so the
+    # slot is surfaced for the connection-status detailed view. None for raw
+    # FL-server client statuses (which are already keyed by slot).
+    fl_kit_slot: str | None = None
 
     # set the online status based on the client status
     # This property will be included in dumps / JSON schemas

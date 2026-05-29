@@ -116,10 +116,14 @@ def get_status_endpoint(
                 matched = next((c for c in clients if slot_name and c.name == slot_name), None)
                 if matched is None:
                     logger.warning(f"Trust {trust.name} (slot={slot_name}) not found in client statuses")
-                    trust_client_statuses.append(IClientStatus(name=trust.name, status=ClientStatus.NO_REPLY.value))
+                    trust_client_statuses.append(
+                        IClientStatus(name=trust.name, status=ClientStatus.NO_REPLY.value, fl_kit_slot=slot_name)
+                    )
                     continue
                 logger.debug(f"Trust {trust.name} matched slot {slot_name} → status {matched.status}")
-                trust_client_statuses.append(IClientStatus(name=trust.name, status=matched.status))
+                trust_client_statuses.append(
+                    IClientStatus(name=trust.name, status=matched.status, fl_kit_slot=slot_name)
+                )
 
             # Create net status response
             net_statuses.append(

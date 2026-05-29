@@ -128,6 +128,8 @@ def test_get_net_status_matches_client_via_slot_name_when_trust_renamed(
     online = [c for c in result.clients if c.online]
     assert len(online) == 1
     assert online[0].name == "(Mock) GSTT"
+    # The client also exposes its FL kit slot so the UI can surface name≠slot.
+    assert online[0].fl_kit_slot == "Trust_1"
 
 
 def test_get_net_status_reports_flower_backend(
