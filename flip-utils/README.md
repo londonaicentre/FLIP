@@ -277,6 +277,7 @@ To test a PR on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo
 | `make test-spleen-standard` | Test standard job with spleen data |
 | `make test-spleen-evaluation` | Test evaluation job with spleen data |
 | `make test-spleen-diffusion` | Test diffusion model with spleen data |
+| `make test-spleen-fedopt` | Test federated optimization with spleen data |
 | `make test` | Run all integration tests |
 
 ---
