@@ -413,21 +413,17 @@ def test_write_kit_to_ssm_exits_on_put_failure():
 
 
 def test_hub_shared_keys_in_lockstep():
-    """All three definitions of ``HUB_SHARED_KEYS`` must list exactly the same keys
-    in the same order.
+    """flip-api ``HUB_SHARED_ENV_KEYS`` and ``trust_kit_lib.HUB_SHARED_KEYS`` must match.
 
-    The list is consumed by:
-      - flip_api/scripts/register_trust.py:HUB_SHARED_ENV_KEYS — emits these env
-        values into the kit JSON written to the trust.
-      - scripts/sync_trust_kit.py:HUB_SHARED_KEYS — refreshes the kit's hub-shared
-        block from the admin's local env file.
-      - deploy/providers/AWS/scripts/register-trusts.sh:HUB_SHARED_KEYS — strip-regex
-        that prevents duplicate entries when rewriting an existing kit file.
-
-    Drift between the three has produced silent half-syncs in the past (a key
-    added to the python tuple but not the bash array survives a register-trust
-    run but vanishes on the next sync-trust-kits). This test catches that on
-    PR review rather than at next-deploy time.
+    ``register_trust.py`` (the emitter) runs inside the flip-api container and
+    cannot import the root ``scripts/`` package, so the hub-shared key set is
+    defined in two places. ``scripts/trust_kit_lib.py`` is the single
+    operator-side definition — ``sync_trust_kit.py`` and
+    ``distribute_trust_kits.py`` both import it, and the prod
+    ``register-trusts.sh`` delegates kit writing to the distributor. Drift
+    between the emitter and the writer produces silent half-syncs (a key added
+    to one but not the other survives a register run but vanishes on sync); this
+    test catches that on PR review rather than at next-deploy time.
     """
     import re
     from pathlib import Path
@@ -435,41 +431,22 @@ def test_hub_shared_keys_in_lockstep():
     from flip_api.scripts.register_trust import HUB_SHARED_ENV_KEYS
 
     # Walk up from this test file to find the FLIP repo root (the directory
-    # that contains both `flip-api/` and `deploy/`).
+    # that contains both `flip-api/` and `scripts/`).
     repo_root = Path(__file__).resolve()
     while repo_root.name and not (repo_root / "flip-api").is_dir():
         repo_root = repo_root.parent
     assert repo_root.name, "Could not locate FLIP repo root from test file"
 
-    sync_path = repo_root / "scripts" / "sync_trust_kit.py"
-    deploy_path = repo_root / "deploy" / "providers" / "AWS" / "scripts" / "register-trusts.sh"
+    lib_path = repo_root / "scripts" / "trust_kit_lib.py"
 
-    # Parse scripts/sync_trust_kit.py:HUB_SHARED_KEYS — a tuple of string
-    # literals. Take the first such tuple after the constant name.
-    sync_src = sync_path.read_text()
-    match = re.search(
-        r"HUB_SHARED_KEYS\s*:[^=]*=\s*\((?P<body>[^)]*)\)",
-        sync_src,
-    )
-    assert match, f"HUB_SHARED_KEYS tuple not found in {sync_path}"
-    sync_keys = tuple(re.findall(r'"([A-Z0-9_]+)"', match.group("body")))
+    # Parse scripts/trust_kit_lib.py:HUB_SHARED_KEYS — a tuple of string literals.
+    lib_src = lib_path.read_text()
+    match = re.search(r"HUB_SHARED_KEYS\s*:[^=]*=\s*\((?P<body>[^)]*)\)", lib_src)
+    assert match, f"HUB_SHARED_KEYS tuple not found in {lib_path}"
+    lib_keys = tuple(re.findall(r'"([A-Z0-9_]+)"', match.group("body")))
 
-    # Parse register-trusts.sh:HUB_SHARED_KEYS — a bash array of bare words.
-    deploy_src = deploy_path.read_text()
-    match = re.search(
-        r"HUB_SHARED_KEYS=\(\s*(?P<body>[^)]+)\)",
-        deploy_src,
-    )
-    assert match, f"HUB_SHARED_KEYS array not found in {deploy_path}"
-    deploy_keys = tuple(re.findall(r"[A-Z0-9_]+", match.group("body")))
-
-    assert HUB_SHARED_ENV_KEYS == sync_keys, (
-        f"flip-api register_trust.py and scripts/sync_trust_kit.py disagree:\n"
+    assert HUB_SHARED_ENV_KEYS == lib_keys, (
+        f"flip-api register_trust.py and scripts/trust_kit_lib.py disagree:\n"
         f"  register_trust.py:HUB_SHARED_ENV_KEYS = {HUB_SHARED_ENV_KEYS}\n"
-        f"  sync_trust_kit.py:HUB_SHARED_KEYS     = {sync_keys}"
-    )
-    assert HUB_SHARED_ENV_KEYS == deploy_keys, (
-        f"flip-api register_trust.py and register-trusts.sh disagree:\n"
-        f"  register_trust.py:HUB_SHARED_ENV_KEYS = {HUB_SHARED_ENV_KEYS}\n"
-        f"  register-trusts.sh:HUB_SHARED_KEYS    = {deploy_keys}"
+        f"  trust_kit_lib.py:HUB_SHARED_KEYS      = {lib_keys}"
     )

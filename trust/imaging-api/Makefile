@@ -12,7 +12,7 @@
 
 # Pull defaults from the per-trust kit example (the only tracked env source —
 # the real kit file is gitignored and may not exist on a dev box).
-KIT_ENV_FILE=../.env.Trust_1.example
+KIT_ENV_FILE=../.env.GSTT.development.example
 ifneq ("$(wildcard $(KIT_ENV_FILE))","")
 include $(KIT_ENV_FILE)
 export $(shell sed 's/=.*//' $(KIT_ENV_FILE))

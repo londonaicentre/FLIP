@@ -22,7 +22,7 @@ Idempotent: if a trust with ``--name`` already exists it is skipped.
 Output transports — two contracts depending on ``--out-ssm-parameter``:
 
 - *Default (dev pipe / docker compose exec)* — the kit JSON array prints on
-  **stdout**. Consumed locally by ``scripts/distribute-trust-kits.sh``. The
+  **stdout**. Consumed locally by ``scripts/distribute_trust_kits.py``. The
   pipe is local: no remote storage involved.
 
 - *``--out-ssm-parameter <name>`` (prod ECS one-off task)* — the kit JSON is
@@ -69,12 +69,13 @@ from flip_api.trusts_services.services.register_trust import (
 )
 from flip_api.utils.logger import logger
 
-# Keep this list in sync with:
-#   - scripts/distribute-trust-kits.sh (dev-side kit distributor)
-#   - deploy/providers/AWS/scripts/register-trusts.sh (HUB_SHARED_KEYS array)
-#   - scripts/sync_trust_kit.py (HUB_SHARED_KEYS tuple)
-# All three upsert exactly these keys. The lockstep is asserted by
-# tests/unit/scripts/test_register_trust.py::test_hub_shared_keys_in_lockstep.
+# Keep this list in lockstep with scripts/trust_kit_lib.py:HUB_SHARED_KEYS —
+# the single operator-side definition (scripts/sync_trust_kit.py and
+# scripts/distribute_trust_kits.py both import it; register-trusts.sh delegates
+# kit writing to the distributor). This CLI runs inside the flip-api container
+# and cannot import the root scripts/ package, so the key set lives in two
+# places. The lockstep is asserted by
+# tests/unit/scripts/test_register_trust_cli.py::test_hub_shared_keys_in_lockstep.
 #
 # WARNING — exfil whitelist. Every key listed here is:
 #   1. Forwarded to every trust host (written into trust/.env.<slot>).
@@ -270,7 +271,7 @@ def main() -> None:
         print(args.out_ssm_parameter)
         return
 
-    # Dev pipe: JSON array on stdout for ``scripts/distribute-trust-kits.sh``.
+    # Dev pipe: JSON array on stdout for ``scripts/distribute_trust_kits.py``.
     print(json.dumps(kits))
 
 

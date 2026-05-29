@@ -14,13 +14,18 @@
 	up-fl-clients up-fl-clients-kit down-fl-clients down-fl-clients-kit \
 	create-networks remove-networks recreate-networks tests \
 	update-omop-data update-orthanc-data integration_test
-# if tag PROD=true is passed, set PROD=true
+# PROD selects the compose-file suffix (__DCKR_SUFFIX: stag collapses to the
+# production compose) and the kit-file env token (ENV: stag stays distinct, so
+# a stag kit is .env.<CODE>.stag, never confused with .env.<CODE>.production).
 ifeq ($(PROD),true)
 __DCKR_SUFFIX=production
+ENV=production
 else ifeq ($(PROD),stag)
 __DCKR_SUFFIX=production
+ENV=stag
 else
 __DCKR_SUFFIX=development
+ENV=development
 endif
 
 # The trust stack runs against the per-trust kit file (trust/.env.<KIT>) as the
@@ -33,8 +38,26 @@ endif
 # etc.) — see HUB_SHARED_ENV_KEYS in flip_api/scripts/register_trust.py.
 # Kit includes must come BEFORE fl_backend.mk so its $(FL_BACKEND)-derived
 # vars resolve against the kit's value, not fl_backend.mk's fallback default.
-KIT_FILE := .env.$(KIT)
+# Kit file is named by the trust CODE + env: trust/.env.<CODE>.<env>. The
+# legacy fallback to .env.<KIT> keeps the not-yet-migrated EC2/on-prem path
+# (KIT=<slot>, no env suffix) working during the two-phase rollout; remove it
+# once the prod-deploy phase migrates those kits to the CODE+env naming.
+KIT_FILE := $(if $(wildcard .env.$(KIT).$(ENV)),.env.$(KIT).$(ENV),.env.$(KIT))
 -include $(KIT_FILE)
+
+# Dev only: the kit's Hub-shared block is commented out (inert) — those values
+# are inherited from the hub's .env.development (the single source) to avoid a
+# drifting copy. Include + export them here so they resolve both via `make up`
+# (the root Makefile already exports .env.development) AND a direct
+# `make -C trust up-trust …`. Must precede fl_backend.mk so FL_BACKEND is set.
+# Prod kits carry Hub-shared live, so prod stays kit-only (no hub .env include —
+# a remote operator never has the hub env).
+ifeq ($(ENV),development)
+-include ../.env.development
+export AES_KEY_BASE64 CENTRAL_HUB_API_URL TRUST_API_KEY_HEADER FL_BACKEND \
+       FLOWER_KIT_DATE FLARE_KIT_DATE DOCKER_TAG DOCKER_REGISTRY \
+       DOCKER_FL_TAG DOCKER_FL_REGISTRY NLB_SUBDOMAIN FL_SERVER_PORT
+endif
 
 include ../deploy/fl_backend.mk
 
@@ -105,14 +128,16 @@ endif
 # customise paths/ports there, not via make-side overrides — so the
 # previous PROD-keyed fallbacks and per-key passthroughs are gone.
 
-# Numeric suffix of the kit (Trust_1 -> 1) — drives the per-trust overlay
-# network and compose project name, preserving the deploy_trust-network-N scheme.
-TRUST_NUM := $(subst Trust_,,$(KIT))
+# Numeric suffix of the ASSIGNED FL kit slot (Trust_1 -> 1), read from the
+# included kit file — drives both the per-trust overlay network
+# (deploy_trust-network-<N>) and the compose project name (trust<N>), preserving
+# the existing scheme. Decoupled from the kit FILENAME (now the trust CODE) so
+# the slot the hub assigned governs the runtime topology, not the handle.
+TRUST_NUM := $(FL_KIT_SLOT_NUMBER)
 TRUST_PROJECT := trust$(TRUST_NUM)
 # Dev only: expose this trust's APIs on the host. The override binds a single
-# fixed host-port set, so only one dev trust can claim it — Trust_1 by
-# convention, matching the old up-trust-1.
-TRUST_OVERRIDE := $(if $(filter Trust_1,$(KIT)),-f deploy/compose_trust-1_override.yml,)
+# fixed host-port set, so only the trust assigned slot Trust_1 claims it.
+TRUST_OVERRIDE := $(if $(filter Trust_1,$(FL_KIT_SLOT)),-f deploy/compose_trust-1_override.yml,)
 
 # GPU passthrough: apply the device-reservation overlay (compose_trust.<env>.gpu.yml)
 # only when the kit declares NUM_AVAILABLE_GPUS > 0. A GPU-less host (the AWS EC2
@@ -123,10 +148,18 @@ TRUST_OVERRIDE := $(if $(filter Trust_1,$(KIT)),-f deploy/compose_trust-1_overri
 GPU_OVERRIDE := $(if $(filter-out 0,$(strip $(NUM_AVAILABLE_GPUS))),-f deploy/compose_trust.$(__DCKR_SUFFIX).gpu.yml,)
 GPU_STATUS_MSG := $(if $(GPU_OVERRIDE),🖥️  GPU passthrough on — fl-client will reserve $(NUM_AVAILABLE_GPUS) NVIDIA GPU(s),⚠️  fl-client starting CPU-only — NUM_AVAILABLE_GPUS=$(or $(strip $(NUM_AVAILABLE_GPUS)),unset). Set it >0 on a GPU host to enable passthrough.)
 
+# TRUST_NAME (passed to trust-api for display/logging) prefers the kit's
+# registered name, falling back to the assigned slot then the CODE so a
+# not-yet-migrated kit (no TRUST_NAME) still resolves. nvflare's FL-material
+# path and flower's SUPERNODE_NAME key on ${FL_KIT_SLOT} (the slot), not this.
+# Double-quoted because a registered name may contain spaces AND apostrophes
+# (e.g. "Guy's and St Thomas' Trust") — unquoted it splits in the recipe's
+# `VAR=val cmd` shell prefix ("EC2: not found"); single-quoted it breaks on the
+# apostrophe. Double quotes handle both (trust names never contain $/backtick/").
 TRUST_VARS = \
 	TRUST_NETWORK_NAME=deploy_trust-network-$(TRUST_NUM) \
 	TRUST_NUMBER=$(TRUST_NUM) \
-	TRUST_NAME=$(or $(FL_KIT_SLOT),$(KIT))
+	TRUST_NAME="$(or $(TRUST_NAME),$(FL_KIT_SLOT),$(KIT))"
 
 
 # Guard: refuse to bring a trust up if its OMOP DB data dir is empty or missing.
@@ -141,7 +174,8 @@ TRUST_VARS = \
 # Pass the resolved path (matching what the compose file will mount) as $1.
 define check_omop_data_dir
 	@dir="$(1)"; \
-	if [ -f "$$dir/PG_VERSION" ]; then populated=1; else populated=0; fi; \
+	owner="$$(stat -c %u "$$dir" 2>/dev/null)"; \
+	if [ -f "$$dir/PG_VERSION" ] || { [ -n "$$owner" ] && [ "$$owner" != "$$(id -u)" ]; }; then populated=1; else populated=0; fi; \
 	if [ "$$populated" -eq 0 ]; then \
 	    echo "❌ OMOP DB data dir is empty or missing: $$dir"; \
 	    echo "   The omop-db container would start with no schema and no"; \
@@ -209,7 +243,7 @@ up-trust: update-omop-data update-orthanc-data create-networks
 	@echo "🚢 Starting Trust services (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/$(KIT)/db_data))
+	$(call check_omop_data_dir,$(or $(OMOP_DATA_DIR),./omop-db/volumes/Trust_$(TRUST_NUM)/db_data))
 	mkdir -p $(or $(BASE_IMAGES_DOWNLOAD_DIR),./data/$(KIT))
 	@echo "$(GPU_STATUS_MSG)"
 	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} $(GPU_OVERRIDE) $(TRUST_OVERRIDE) -p $(TRUST_PROJECT) up -d $(UP_PULL_FLAGS)
@@ -228,18 +262,25 @@ restart-trust: down-trust up-trust
 # EC2 variant — no host-port override, --pull always. Networks and OMOP data
 # are provisioned on the instance by deploy/providers/AWS/site.yml, so the
 # update-omop-data / create-networks prerequisites are intentionally omitted.
-# GPU_OVERRIDE is intentionally NOT applied here: the EC2 t3.xlarge is GPU-less,
-# so the fl-client is pinned to CPU regardless of the kit's NUM_AVAILABLE_GPUS.
-# This defends the deploy against a kit seeded NUM_AVAILABLE_GPUS=1 (the template
-# default) — unlike up-trust, a stale value can't make `up` fail with "could not
-# select device driver". A GPU-equipped EC2 instance would add $(GPU_OVERRIDE) back.
+# The EC2 t3.xlarge is GPU-less, so the fl-client is pinned to CPU regardless of
+# the kit's NUM_AVAILABLE_GPUS. Two mechanisms must BOTH be neutralised:
+#   1. GPU_OVERRIDE (the docker GPU-passthrough overlay) is omitted — otherwise
+#      `up` fails with "could not select device driver".
+#   2. NUM_AVAILABLE_GPUS is forced to 0 in the env prefix (shell env beats the
+#      kit's --env-file) — otherwise the fl-client's generated nvflare
+#      resources.json keeps num_of_gpus=1 and the client dies at startup with
+#      "num_of_gpus specified (1) exceeds available GPUs: 0". Omitting the
+#      overlay alone (mechanism 1) does NOT cover this.
+# Together these defend the deploy against a kit seeded NUM_AVAILABLE_GPUS=1 (the
+# template default). A GPU-equipped EC2 instance would drop the override and add
+# $(GPU_OVERRIDE) back.
 up-trust-ec2:
 	$(require_kit_file)
 	@echo "🚢 Starting Trust services on EC2 (KIT=$(KIT))..."
 	@echo "⚙️ Using kit file trust/$(KIT_FILE)"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	@echo "🖥️  EC2 trust runs CPU-only by design — GPU overlay not applied (t3.xlarge has no GPU)."
-	$(TRUST_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
+	@echo "🖥️  EC2 trust runs CPU-only by design — GPU overlay omitted + NUM_AVAILABLE_GPUS forced to 0 (t3.xlarge has no GPU)."
+	$(TRUST_VARS) NUM_AVAILABLE_GPUS=0 DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -p $(TRUST_PROJECT) up -d --pull always
 	@echo "🩻 Starting XNAT for $(KIT)..."
 	$(MAKE) -C xnat up-xnat KIT=$(KIT) PROD=$(PROD)
 
@@ -250,15 +291,23 @@ down-trust-ec2:
 	@echo "🩻 Stopping XNAT for $(KIT)..."
 	$(MAKE) -C xnat down-xnat KIT=$(KIT) PROD=$(PROD)
 
-# Dev convenience: bring up both standard trust stacks. Each is a separate
-# sub-make so its `-include trust/.env.<KIT>` loads only that trust's kit.
+# Dev convenience: bring up every registered dev trust. The kit files
+# (trust/.env.<CODE>.$(ENV), written by `make register-trusts`) ARE the list —
+# each is a separate sub-make so its `-include` loads only that trust's kit.
 up: create-networks
-	$(MAKE) up-trust KIT=Trust_1
-	$(MAKE) up-trust KIT=Trust_2
+	@found=0; for f in .env.*.$(ENV); do \
+	  [ -e "$$f" ] || continue; \
+	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; found=1; \
+	  $(MAKE) up-trust KIT=$$kit; \
+	done; \
+	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
 
 down:
-	$(MAKE) down-trust KIT=Trust_1
-	$(MAKE) down-trust KIT=Trust_2
+	@for f in .env.*.$(ENV); do \
+	  [ -e "$$f" ] || continue; \
+	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; \
+	  $(MAKE) down-trust KIT=$$kit; \
+	done
 
 # Start / stop only the FL client containers, leaving the rest of each trust stack up.
 # Each dev trust project (trust1, trust2) runs a client per FL net, hence both
@@ -268,8 +317,11 @@ down:
 # and Trust_2 stays on the network ports from its kit file.
 up-fl-clients:
 	@echo "🚢 Starting FL clients..."
-	$(MAKE) up-fl-clients-kit KIT=Trust_1
-	$(MAKE) up-fl-clients-kit KIT=Trust_2
+	@for f in .env.*.$(ENV); do \
+	  [ -e "$$f" ] || continue; \
+	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; \
+	  $(MAKE) up-fl-clients-kit KIT=$$kit; \
+	done
 
 up-fl-clients-kit:
 	$(require_kit_file)
@@ -278,8 +330,11 @@ up-fl-clients-kit:
 
 down-fl-clients:
 	@echo "🛑 Stopping and removing FL clients..."
-	$(MAKE) down-fl-clients-kit KIT=Trust_1
-	$(MAKE) down-fl-clients-kit KIT=Trust_2
+	@for f in .env.*.$(ENV); do \
+	  [ -e "$$f" ] || continue; \
+	  kit=$${f#.env.}; kit=$${kit%.$(ENV)}; \
+	  $(MAKE) down-fl-clients-kit KIT=$$kit; \
+	done
 
 down-fl-clients-kit:
 	$(require_kit)
@@ -322,25 +377,29 @@ remove-networks:
 recreate-networks: remove-networks create-networks
 	@echo "✅ All trust networks recreated with swarm support!"
 
-# Debug targets operate on the Trust_1 stack. They recurse so the sub-make's
-# `-include trust/.env.Trust_1` loads that kit (the -include is parse-time, so
-# KIT must be set at make-invocation, not as a target-local variable).
+# First registered dev trust — the default KIT for the debug targets when none
+# is given (pass KIT=<CODE> to debug a specific trust).
+FIRST_DEV_KIT := $(firstword $(patsubst .env.%.$(ENV),%,$(wildcard .env.*.$(ENV))))
+
+# Debug targets operate on one trust stack (KIT=<CODE>, default the first dev
+# kit). They recurse so the sub-make's `-include` loads that kit (the -include
+# is parse-time, so KIT must be set at make-invocation, not target-local).
 debug:
-	$(MAKE) DEBUG=true restart-trust KIT=Trust_1
+	$(MAKE) DEBUG=true restart-trust KIT=$(or $(KIT),$(FIRST_DEV_KIT))
 debug-off:
-	$(MAKE) DEBUG=false restart-trust KIT=Trust_1
+	$(MAKE) DEBUG=false restart-trust KIT=$(or $(KIT),$(FIRST_DEV_KIT))
 debug-data-access-api:
-	$(MAKE) _debug-service KIT=Trust_1 DEBUG=true SVC=data-access-api
+	$(MAKE) _debug-service KIT=$(or $(KIT),$(FIRST_DEV_KIT)) DEBUG=true SVC=data-access-api
 debug-imaging-api:
-	$(MAKE) _debug-service KIT=Trust_1 DEBUG=true SVC=imaging-api
+	$(MAKE) _debug-service KIT=$(or $(KIT),$(FIRST_DEV_KIT)) DEBUG=true SVC=imaging-api
 debug-trust-api:
-	$(MAKE) _debug-service KIT=Trust_1 DEBUG=true SVC=trust-api
+	$(MAKE) _debug-service KIT=$(or $(KIT),$(FIRST_DEV_KIT)) DEBUG=true SVC=trust-api
 debug-data-access-api-off:
-	$(MAKE) _debug-service KIT=Trust_1 DEBUG=false SVC=data-access-api
+	$(MAKE) _debug-service KIT=$(or $(KIT),$(FIRST_DEV_KIT)) DEBUG=false SVC=data-access-api
 debug-imaging-api-off:
-	$(MAKE) _debug-service KIT=Trust_1 DEBUG=false SVC=imaging-api
+	$(MAKE) _debug-service KIT=$(or $(KIT),$(FIRST_DEV_KIT)) DEBUG=false SVC=imaging-api
 debug-trust-api-off:
-	$(MAKE) _debug-service KIT=Trust_1 DEBUG=false SVC=trust-api
+	$(MAKE) _debug-service KIT=$(or $(KIT),$(FIRST_DEV_KIT)) DEBUG=false SVC=trust-api
 
 # Internal helper — brings one service up under the debug compose override.
 _debug-service:

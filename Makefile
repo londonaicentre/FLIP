@@ -13,18 +13,21 @@
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
 		check-aws-access generate-internal-service-key \
-		register-trust-1 register-trust-2 register-trusts _wait-for-hub integration_test \
+		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
 __DCKR_SUFFIX=production
+ENV=production
 else ifeq ($(PROD),stag)
 MAIN_ENV_FILE=.env.stag
 __DCKR_SUFFIX=production
+ENV=stag
 else
 MAIN_ENV_FILE=.env.development
 __DCKR_SUFFIX=development
+ENV=development
 endif
 
 # Print which environment files are being used
@@ -139,7 +142,7 @@ up-trust-ec2: create-networks
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting Trust services..."
-	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=Trust_1 PROD=${PROD}
+	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
 
 central-hub: create-networks-centralhub
@@ -370,51 +373,80 @@ _wait-for-hub:
 	  sleep 2; \
 	done
 
-# Register one trust on the running hub (idempotent — a trust whose name already
-# exists is skipped, its kit file left untouched) and write/refresh its kit file
-# under trust/.env.<slot>. TRUST_<n>_* come from the env file; the hub is never
-# told the list. register-trusts runs both in order so trust 1 claims the first
-# free FL kit slot, trust 2 the next.
-register-trust-1: _wait-for-hub
-	@echo "🔑 Registering trust 1 ($(TRUST_1_NAME))..."
-	@$(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust \
-		--name "$(TRUST_1_NAME)" $(if $(TRUST_1_CODE),--code "$(TRUST_1_CODE)") $(if $(TRUST_1_REGION),--region "$(TRUST_1_REGION)") \
-		| bash scripts/distribute-trust-kits.sh
+# Register one trust on the running hub from its kit file. KIT is the trust
+# CODE (the kit-file handle). Seeds trust/.env.<CODE>.<env> from its .example on
+# first run, reads TRUST_NAME/CODE/REGION from it, registers (idempotent — an
+# already-registered name is skipped, credentials preserved), then writes the
+# minted credentials + assigned FL kit slot + hub-shared block back into the
+# kit. The hub keeps no trust list — the kit files ARE the list.
+register-trust: _wait-for-hub
+	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
+	@kit="trust/.env.$(KIT).$(ENV)"; ex="$$kit.example"; \
+	  if [ ! -f "$$kit" ]; then \
+	    [ -f "$$ex" ] || { echo "❌ Neither $$kit nor $$ex exists — run 'make new-trust TRUST_CODE=$(KIT) TRUST_NAME=...' first."; exit 1; }; \
+	    cp "$$ex" "$$kit"; chmod 600 "$$kit"; echo "📋 Seeded $$kit from $$(basename "$$ex")"; \
+	  fi; \
+	  name="$$(sed -n 's/^TRUST_NAME=//p' "$$kit" | head -1)"; \
+	  code="$$(sed -n 's/^TRUST_CODE=//p' "$$kit" | head -1)"; \
+	  region="$$(sed -n 's/^TRUST_REGION=//p' "$$kit" | head -1)"; \
+	  [ -n "$$name" ] || { echo "❌ TRUST_NAME not set in $$kit"; exit 1; }; \
+	  echo "🔑 Registering trust '$$name' (KIT=$(KIT))..."; \
+	  set -- --name "$$name"; \
+	  [ -n "$$code" ] && set -- "$$@" --code "$$code"; \
+	  [ -n "$$region" ] && set -- "$$@" --region "$$region"; \
+	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust "$$@")" \
+	    || { echo "❌ register_trust failed for KIT=$(KIT)"; exit 1; }; \
+	  printf '%s\n' "$$kitjson" | uv run --no-config scripts/distribute_trust_kits.py --target "$$kit"
 
-register-trust-2: _wait-for-hub
-	@echo "🔑 Registering trust 2 ($(TRUST_2_NAME))..."
-	@$(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust \
-		--name "$(TRUST_2_NAME)" $(if $(TRUST_2_CODE),--code "$(TRUST_2_CODE)") $(if $(TRUST_2_REGION),--region "$(TRUST_2_REGION)") \
-		| bash scripts/distribute-trust-kits.sh
+# Register every dev trust: the shipped trust/.env.<CODE>.<env>.example kits ARE
+# the roster (each is seeded to a live kit + registered). Used by `make up`.
+register-trusts:
+	@rc=0; found=0; for ex in trust/.env.*.$(ENV).example; do \
+	  [ -e "$$ex" ] || continue; \
+	  code="$${ex#trust/.env.}"; code="$${code%.$(ENV).example}"; \
+	  found=1; $(MAKE) register-trust KIT="$$code" || rc=1; \
+	done; \
+	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV).example kits found — nothing to register."; \
+	[ "$$rc" = 0 ] || echo "❌ One or more trust registrations failed."; \
+	exit $$rc
 
-register-trusts: register-trust-1 register-trust-2
+# Scaffold a new trust kit (trust/.env.<CODE>.<env>) from the base template.
+# e.g. make new-trust TRUST_CODE=KCL TRUST_NAME="Kings College" PROD=true
+new-trust:
+	@[ -n "$(TRUST_CODE)" ] || { echo "❌ TRUST_CODE=<code> required (e.g. TRUST_CODE=KCL)"; exit 1; }
+	@[ -n "$(TRUST_NAME)" ] || { echo "❌ TRUST_NAME=<name> required (e.g. TRUST_NAME='Kings College')"; exit 1; }
+	@uv run --no-config scripts/new_trust.py --code "$(TRUST_CODE)" --name "$(TRUST_NAME)" \
+		$(if $(TRUST_REGION),--region "$(TRUST_REGION)") --env $(ENV)
 
-# Refresh the Hub-shared block in trust/.env.<KIT> with current $(MAIN_ENV_FILE)
-# values. Preserves credentials. Safe to run repeatedly. Use after rotating
-# AES_KEY_BASE64 or bumping image tags on the hub side — does NOT redistribute
-# the updated kit file to remote operators (that step is still out-of-band).
+# Refresh the Hub-shared block in trust/.env.<CODE>.<env> with current
+# $(MAIN_ENV_FILE) values. Preserves credentials. Safe to run repeatedly. Use
+# after rotating AES_KEY_BASE64 or bumping image tags on the hub side — does NOT
+# redistribute the updated kit file to remote operators (still out-of-band).
+# On prod this is REQUIRED after `register-trust`: register fills only the
+# hub-shared vars present in the flip-api task env (AES_KEY_BASE64,
+# TRUST_API_KEY_HEADER, FL_BACKEND); the rest come from the admin's local env here.
 #
 # Works identically for dev/stag/prod: the Hub-shared values live in
 # $(MAIN_ENV_FILE), which the root Makefile already `include`s + exports.
 # No docker compose exec, no ECS round-trip, no per-trust TRUST_<n>_NAME
 # lookup — just a file→file copy keyed on KIT.
 sync-trust-kit:
-	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> required (e.g. KIT=Trust_2)"; exit 1)
-	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py $(KIT)
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1)
+	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py $(KIT).$(ENV)
 
-# Sync every locally-present kit file. Globs trust/.env.* and drops the
-# .example / .production.example templates.
+# Sync every locally-present kit for this env. Globs trust/.env.*.$(ENV) and
+# drops the .example templates (which don't match the bare-env suffix).
 sync-trust-kits:
 	@found=0; \
-	for f in trust/.env.*; do \
+	for f in trust/.env.*.$(ENV); do \
 	    case "$$f" in *.example) continue;; esac; \
 	    [ -f "$$f" ] || continue; \
-	    kit="$${f#trust/.env.}"; \
+	    code="$${f#trust/.env.}"; code="$${code%.$(ENV)}"; \
 	    found=$$((found + 1)); \
-	    $(MAKE) sync-trust-kit KIT="$$kit"; \
+	    $(MAKE) sync-trust-kit KIT="$$code"; \
 	done; \
 	if [ "$$found" = "0" ]; then \
-	    echo "ℹ️  No trust/.env.<kit> files found — nothing to sync."; \
+	    echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."; \
 	fi
 
 check-aws-access:

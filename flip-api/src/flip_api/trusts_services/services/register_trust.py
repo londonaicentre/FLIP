@@ -16,8 +16,9 @@ Two callers:
 
 - ``POST /admin/trusts`` (``trusts_services.admin_create_trust``) for one-off
   admin-driven registrations from the UI.
-- ``flip_api.scripts.register_deploy_trusts`` CLI, invoked by the deploy
-  Makefile to seed the trusts listed in ``settings.DEPLOY_TRUSTS``.
+- ``flip_api.scripts.register_trust`` CLI, invoked once per trust by the deploy
+  Makefile's ``register-trust`` target (the trust's name comes from its kit
+  file; the hub keeps no trust list of its own).
 
 Both produce the same on-disk state: one ``Trust`` row with ``api_key_hash``
 set, one ``FLKitSlot`` assigned, plaintext api/internal-service keys returned

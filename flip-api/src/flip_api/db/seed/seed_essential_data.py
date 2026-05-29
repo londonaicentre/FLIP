@@ -48,8 +48,9 @@ def main() -> None:
             logger.debug("Creating Users")
             seed_main_users(session)
             # Trust registration is intentionally NOT seeded here — the deploy invokes
-            # ``register_deploy_trusts`` (CLI) so plaintext keys can be captured and
-            # distributed to trust hosts as kit files. See plan for the deploy flow.
+            # the ``register_trust`` CLI once per trust (via the ``register-trust``
+            # Makefile target) so plaintext keys can be captured and distributed to
+            # trust hosts as kit files.
             logger.debug("Seeding FL kit slot pool")
             seed_fl_kit_slots(session)
             logger.debug("Creating Banner")

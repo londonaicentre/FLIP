@@ -140,7 +140,7 @@ def integration_engine(pg_container: PostgresContainer):
 
     Only the env-independent seed steps (permissions, roles, role-permissions) run.
     Trust rows are created on demand by tests via the ``trust_factory``; there is no
-    seed-time trust registration anymore (deploy-time ``register_deploy_trusts`` is the
+    seed-time trust registration anymore (the deploy-time ``register_trust`` CLI is the
     one writer outside the admin endpoint).
     """
     engine = create_engine(

@@ -45,13 +45,24 @@ export XNAT_TAG
 # wins over the make-side default.
 
 # ── Per-trust XNAT stack ──────────────────────────────────────────────────
-# KIT selects the trust — the kit-file name under trust/.env.<KIT>. That kit
-# file carries this trust's XNAT_PORT / PACS_UI_PORT (unsuffixed), the same
-# host-local profile trust/Makefile reads. KIT has no default so non-KIT
-# targets (build, test) don't spuriously -include a file. The XNAT swarm
-# stack name and overlay network are derived from the kit's trust number so
-# the existing xnat<N> / deploy_trust-network-<N> scheme is preserved.
-KIT_FILE := ../.env.$(KIT)
+# KIT selects the trust — now the trust CODE; the kit file is
+# trust/.env.<CODE>.<env> (ENV derived from PROD, mirroring trust/Makefile),
+# with a legacy fallback to trust/.env.<KIT> for the not-yet-migrated
+# EC2/on-prem path (KIT=<slot>, no env suffix). That kit file carries this
+# trust's XNAT_PORT / PACS_UI_PORT (unsuffixed) and its hub-assigned
+# FL_KIT_SLOT_NUMBER — the same host-local profile trust/Makefile reads. KIT
+# has no default so non-KIT targets (build, test) don't spuriously -include a
+# file. The XNAT swarm stack name and overlay network are derived from the
+# assigned slot NUMBER (not the CODE), so XNAT co-resides on the same
+# deploy_trust-network-<N> as the slot-numbered trust core services.
+ifeq ($(PROD),true)
+ENV := production
+else ifeq ($(PROD),stag)
+ENV := stag
+else
+ENV := development
+endif
+KIT_FILE := $(if $(wildcard ../.env.$(KIT).$(ENV)),../.env.$(KIT).$(ENV),../.env.$(KIT))
 -include $(KIT_FILE)
 # Kit-file values must reach the shell env, not just Make vars. docker stack
 # deploy (unlike docker compose) has no --env-file flag; it substitutes
@@ -64,7 +75,12 @@ KIT_FILE := ../.env.$(KIT)
 ifneq ("$(wildcard $(KIT_FILE))","")
 export $(shell sed 's/=.*//' $(KIT_FILE))
 endif
-TRUST_NUM := $(subst Trust_,,$(KIT))
+# Slot NUMBER the hub assigned this trust, read from the kit file — NOT a
+# substring of the CODE. Drives the stack name (xnat<N>) and overlay network
+# (deploy_trust-network-<N>); trust/Makefile derives TRUST_NUM from
+# FL_KIT_SLOT_NUMBER identically, so XNAT and the trust core services land on
+# the same network.
+TRUST_NUM := $(FL_KIT_SLOT_NUMBER)
 XNAT_STACK := xnat$(TRUST_NUM)
 XNAT_NETWORK := deploy_trust-network-$(TRUST_NUM)
 # Defaults are the Trust_1 allocation, so a single-trust host (EC2 / on-prem)
@@ -140,15 +156,21 @@ build:
 		nginx/
 	@echo "✅ XNAT Docker images built successfully!"
 
-# Bring up both dev XNAT stacks. Each is a separate sub-make so its
-# `-include ../.env.<KIT>` loads only that trust's kit file. `up-xnat` first
-# blocks on `down-xnat` (via `xnat-stack-down`) before `xnat-reset` — otherwise
-# a still-running xnat-web container holds the bind-mounted data dir's inode
-# and the `sudo rm -rf` in `xnat-reset` silently leaves archive writes broken
-# ("Source ... does not exist") so DICOM import fails on the next boot.
+# Bring up every registered dev XNAT stack — the trust/.env.*.$(ENV) kits ARE
+# the list (mirrors trust/Makefile's `up`). Each is a separate sub-make so its
+# `-include ../.env.<CODE>.<env>` loads only that trust's kit file. `up-xnat`
+# first blocks on `down-xnat` (via `xnat-stack-down`) before `xnat-reset` —
+# otherwise a still-running xnat-web container holds the bind-mounted data
+# dir's inode and the `sudo rm -rf` in `xnat-reset` silently leaves archive
+# writes broken ("Source ... does not exist") so DICOM import fails on the
+# next boot.
 up:
-	$(MAKE) up-xnat KIT=Trust_1
-	$(MAKE) up-xnat KIT=Trust_2
+	@found=0; for f in ../.env.*.$(ENV); do \
+	  [ -e "$$f" ] || continue; \
+	  kit=$${f#../.env.}; kit=$${kit%.$(ENV)}; found=1; \
+	  $(MAKE) up-xnat KIT=$$kit; \
+	done; \
+	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV) kits found — run 'make register-trusts' (from repo root) first."
 
 # Bring up the XNAT swarm stack for one trust (KIT=Trust_1 / Trust_2).
 # trust/Makefile's up-trust calls this so a trust comes up complete.
@@ -164,8 +186,11 @@ up-xnat: create-xnat-network
 	$(MAKE) xnat-configure XNAT_PROJECT=$(XNAT_STACK)
 
 down:
-	$(MAKE) down-xnat KIT=Trust_1
-	$(MAKE) down-xnat KIT=Trust_2
+	@for f in ../.env.*.$(ENV); do \
+	  [ -e "$$f" ] || continue; \
+	  kit=$${f#../.env.}; kit=$${kit%.$(ENV)}; \
+	  $(MAKE) down-xnat KIT=$$kit; \
+	done
 
 down-xnat:
 	$(require_kit)

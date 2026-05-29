@@ -464,9 +464,9 @@ def check_unrotated_passwords(
     if not kit_present:
         return Check("Trust-local passwords", Status.PENDING, "pending — needs kit file")
     # Use FL_KIT_SLOT (the canonical slot name minted by the hub) to find the
-    # template — not the KIT argument. They CAN differ: the coexistence flow
-    # uses `cp .env.Trust_2.production.example .env.Trust_2_prod`, leaving the
-    # kit file named Trust_2_prod but its FL_KIT_SLOT still set to Trust_2.
+    # template — not the KIT argument. They CAN differ: a kit is named by its
+    # trust CODE (e.g. .env.<CODE>.production) while its FL_KIT_SLOT is the
+    # hub-assigned slot (e.g. Trust_2) — the two are independent.
     # Without this fall-through the check would silently skip on every
     # custom-named kit. Falls back to KIT when the slot isn't filled in yet
     # (the kit-credentials check below will already be failing in that case).

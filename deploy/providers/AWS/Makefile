@@ -63,6 +63,10 @@ endif
 # Map the Make-level PROD flag (true|stag) onto a Terraform-friendly environment name.
 # Used in main.tf to gate prod-only RDS hardening (deletion protection, final snapshot).
 export TF_VAR_environment=$(if $(filter true,$(PROD)),prod,stag)
+
+# Kit-file env suffix: PROD=true → .production kits, otherwise → .stag. Selects
+# the trust kit file trust/.env.<KIT>.<suffix> for the trust-deploy targets.
+KIT_ENV_SUFFIX := $(if $(filter true,$(PROD)),production,stag)
 export TF_VAR_max_azs=2
 export TF_VAR_vpc_cidr=10.0.0.0/16
 export TF_VAR_public_subnets=["10.0.1.0/24", "10.0.2.0/24"]
@@ -394,16 +398,15 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 		--paths "/*" >/dev/null
 	@echo "✅ deploy-ui complete."
 
-# Identity of the on-prem trust kit being provisioned — selects its kit
-# file trust/.env.<KIT> and its trust-local data dirs. In the FLIP prod
-# environment this is Trust_2 (BDMS, TRUST_2_HOST=local). Template:
-# trust/.env.Trust_2.production.example.
-KIT ?= Trust_2
+# Identity of the trust kit being deployed/provisioned — a trust CODE that
+# selects its kit file trust/.env.<KIT>.<env> and its trust-local data dirs.
+# REQUIRED on the command line for trust targets (no default, so a prod op
+# can't silently target the wrong trust). Scaffold one with `make new-trust`.
 # FL participant kit slot the trust's fl-client mounts — names the
 # services/<slot>/ dir in the S3 participant-kit bundle and under /opt/flip.
 # Read from the trust's kit file (the single source of truth: the kit file's
 # FL_KIT_SLOT is also what trust/Makefile mounts), not duplicated here.
-FL_KIT_SLOT := $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT) 2>/dev/null)
+FL_KIT_SLOT := $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
 
 .PHONY: deploy-trust
 deploy-trust: ssh-config update-env ## Deploy trust relationships after central hub is deployed
@@ -435,7 +438,7 @@ deploy-trust: ssh-config update-env ## Deploy trust relationships after central 
 	@docker rm $$(docker ps -aq) 2>/dev/null || true
 	@docker image prune -af
 	@echo "🚀 Deploying Trust services..."
-	$(MAKE) -C ../../../ up-trust-ec2 PROD=${PROD}
+	$(MAKE) -C ../../../ up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust deployment complete!"
 
 .PHONY: provision-local-trust
@@ -473,7 +476,7 @@ provision-local-trust: ## Provision the on-prem (local) trust host: install Dock
 		exit $$PLAY_RC
 	@echo "📦 Downloading the FL participant kit for the on-prem trust from S3..."
 ifeq ($(FL_BACKEND),nvflare)
-	@[ -n "$(FL_KIT_SLOT)" ] || (echo ""; echo "❌  FL_KIT_SLOT not found — is trust/.env.$(KIT) present with FL_KIT_SLOT set?"; echo ""; exit 1)
+	@[ -n "$(FL_KIT_SLOT)" ] || (echo ""; echo "❌  FL_KIT_SLOT not found — is trust/.env.$(KIT).$(KIT_ENV_SUFFIX) present with FL_KIT_SLOT set?"; echo ""; exit 1)
 	@TRUST_KIT_DIR=/tmp/$(FL_KIT_SLOT)_kit && \
 	  rm -rf $$TRUST_KIT_DIR && mkdir -p $$TRUST_KIT_DIR && \
 	  AWS_PROFILE=$(AWS_PROFILE) aws s3 sync \
@@ -587,16 +590,15 @@ generate-internal-service-key: ## Generate a new internal service key (fl-server
 	@$(MAKE) -C ../../../flip-api generate-internal-service-key ENV_FILE=$(abspath $(MAIN_ENV_FILE))
 
 .PHONY: register-trusts
-register-trusts: ## Register the TRUST_<n>_* trusts on the hub and distribute kit files
-	## Idempotent: for each TRUST_<n>_* in the env file, a one-off ECS task runs register_trust
-	## (mints API + internal-service keys, claims an FL kit slot) unless the trust already exists.
-	## The plaintext kit JSON is captured from the hub's CloudWatch log stream and written to a
-	## per-trust kit file on the destination host (TRUST_<n>_HOST):
-	##   - "ec2"   → scp to /opt/flip/trust/.env.<slot> on the trust EC2 via the flip-trust SSM context
-	##   - "local" → write ../../../trust/.env.<slot> in the working tree
-	## Pre-existing trusts produce no kit output (their hosts retain the original kit), so
-	## re-running is safe.
-	@bash scripts/register-trusts.sh
+register-trusts: ## Register CODE-named trust kit(s) on the hub and write trust/.env.<CODE>.<env>
+	## Mirrors the dev `make register-trusts` (same register_trust CLI + kit-writer); the only
+	## difference is transport — a one-off ECS task + SSM SecureString handoff (not CloudWatch).
+	## Idempotent: an already-registered trust returns a metadata-only kit (no creds; the hub
+	## stores only the SHA-256 hash), so re-running is safe. Delivery is command-driven
+	## (deploy-trust pushes to the EC2 host; package-onprem-trust-kit tarballs for on-prem).
+	##   KIT=<CODE> → register that one kit (trust/.env.<CODE>.<env>)
+	##   (no KIT)   → register every live trust/.env.*.<env> kit
+	@KIT=$(KIT) bash scripts/register-trusts.sh
 
 .PHONY: package-onprem-trust-kit
 package-onprem-trust-kit: ## Tarball trust/.env.<KIT> + FL kit slice for an on-prem operator
@@ -633,7 +635,7 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure SSH aliases and provision EC2s with Docker
 	## 6. deploy-centralhub: bring up the Central Hub (seeds run, fl_kit_slot pool is populated)
-	## 7. register-trusts: register every TRUST_<n>_* trust on the hub and distribute kit files
+	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + status: bring up cloud Trust container stack and verify
 full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
 
@@ -647,7 +649,7 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 4. update-env: refresh .env.{PROD} with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure SSH aliases, provision EC2s with Docker + FL kit
 	## 6. deploy-centralhub: bring up the Central Hub
-	## 7. register-trusts: register the TRUST_<n>_* trusts on the hub and distribute kit files
+	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
 	## NOTE: After this completes you must manually:
 	##   - Start the on-prem trust stack: cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)

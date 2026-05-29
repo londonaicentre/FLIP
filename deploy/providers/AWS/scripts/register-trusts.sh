@@ -10,21 +10,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Register each deploy trust (TRUST_1_*, TRUST_2_*, ...) on the hub and
-# distribute its kit file. Per trust:
-#   1. Run `flip_api.scripts.register_trust --name <name> [--code] [--region]`
-#      as a one-off ECS task against the running flip-api task definition.
-#      register_trust is idempotent — an already-registered trust returns a
-#      metadata-only kit (no credentials; hub stores only the SHA-256 hash).
-#   2. Read the kit JSON from the task's CloudWatch log stream.
-#   3. Route the kit by TRUST_<n>_HOST: "ec2" → scp to the trust EC2 via the
-#      SSM-backed `flip-trust` ssh alias; "local" → write trust/.env.<slot>.
-# Re-runs refresh the hub-shared block in the kit file; credentials are
-# preserved on the skip path (only written on first registration).
+# Register prod trust(s) on the hub and write each CODE-named kit file. Mirrors
+# the dev `make register-trusts` contract — kits are trust/.env.<CODE>.<env> and
+# the trust's identity is read from the kit, not from env vars. The ONLY
+# difference from dev is transport: a one-off ECS Fargate task + SSM
+# SecureString handoff (S-1) instead of `docker compose exec`. Per trust:
+#   1. Read TRUST_NAME / TRUST_CODE / TRUST_REGION from trust/.env.<CODE>.<env>.
+#   2. Run `flip_api.scripts.register_trust` as a one-off ECS task. Idempotent —
+#      an already-registered trust returns a metadata-only kit (no credentials;
+#      the hub stores only the SHA-256 hash), so re-running is safe.
+#   3. Write the kit back into trust/.env.<CODE>.<env> via
+#      scripts/distribute_trust_kits.py (credentials on first registration,
+#      hub-shared refreshed every run; operator host-local edits preserved).
+# Delivery to a host is command-driven, NOT done here: `make deploy-trust`
+# pushes the kit to the EC2 host; `make package-onprem-trust-kit` tarballs it
+# for an on-prem operator.
+#
+# Usage:
+#   KIT=<CODE> register-trusts.sh   # register one kit (trust/.env.<CODE>.<env>)
+#   register-trusts.sh              # register every live trust/.env.*.<env> kit
+# PROD=true selects .production kits; anything else selects .stag.
 
 set -eo pipefail
 # Default file mode 077 so any tempfile / redirect this script (or sourced
-# utils.sh) creates is owner-only by construction. write_kit_file already
+# utils.sh) creates is owner-only by construction. The kit writer already
 # chmod 600s the final kit, but a global umask defuses any earlier write
 # that bypasses it — e.g. mktemp outputs, accidental `>` redirects.
 umask 077
@@ -41,8 +50,10 @@ ECS_SERVICE="${ECS_SERVICE:-flip-api}"
 TASK_FAMILY="${TASK_FAMILY:-flip-api}"
 LOG_GROUP="${LOG_GROUP:-/ecs/flip-api}"
 
-# How many TRUST_<n>_* slots to consider.
-TRUST_SLOT_COUNT="${TRUST_SLOT_COUNT:-2}"
+# Kit-file env suffix: PROD=true → .production kits, otherwise → .stag. Matches
+# the env file the deploy Makefile included (.env.production / .env.stag).
+ENV_SUFFIX="production"
+[ "${PROD:-stag}" = "true" ] || ENV_SUFFIX="stag"
 
 log_info "Discovering live $ECS_SERVICE service network config..."
 SVC_JSON="$(aws_cmd ecs describe-services --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0]')"
@@ -54,124 +65,40 @@ if [ -z "$SUBNETS" ] || [ -z "$SGS" ]; then
     exit 1
 fi
 
-# Wait for the service to be stable — its task entrypoint seeds the DB (incl. the
-# FL kit-slot pool register_trust claims from); stable means that seed completed.
+# Best-effort wait for the service to be stable — its task entrypoint seeds the
+# DB (incl. the FL kit-slot pool register_trust claims from); stable means that
+# seed completed. Advisory, NOT a hard gate: services-stable is a 10-minute
+# waiter that fails spuriously when the service is functionally healthy but
+# mid-rollout (force-redeploy, RDS-secret-rotation flap). A running task already
+# implies the seed finished, so on a timeout we warn + proceed rather than abort.
 log_info "Waiting for the $ECS_SERVICE service to reach a stable state..."
-aws_cmd ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
-log_success "$ECS_SERVICE service is stable."
+if aws_cmd ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"; then
+    log_success "$ECS_SERVICE service is stable."
+else
+    log_warn "services-stable did not complete in time — service may be mid-rollout. Proceeding anyway."
+fi
 
-# Hub-shared keys emitted by register_trust — keep in sync with
-# flip_api/scripts/register_trust.py:HUB_SHARED_ENV_KEYS and
-# scripts/distribute-trust-kits.sh.
-HUB_SHARED_KEYS=(
-    AES_KEY_BASE64
-    CENTRAL_HUB_API_URL
-    TRUST_API_KEY_HEADER
-    FL_BACKEND
-    FLOWER_KIT_DATE
-    FLARE_KIT_DATE
-    DOCKER_TAG
-    DOCKER_REGISTRY
-    DOCKER_FL_TAG
-    DOCKER_FL_REGISTRY
-    NLB_SUBDOMAIN
-    FL_SERVER_PORT
-)
+# Kit-file writing is delegated to scripts/distribute_trust_kits.py (the single
+# in-place-upsert writer shared with the dev path and sync). It seeds the
+# host-local profile from the .example on first write, writes credentials only
+# on a new registration, and upserts metadata + the hub-shared block under the
+# managed sentinel — preserving operator edits on re-runs. The hub-shared key
+# set and sentinel live in scripts/trust_kit_lib.py.
 
-# Sentinel comment that delimits the machine-managed section of each kit file.
-HUB_SHARED_HEADER='# ── Hub-shared (managed by register-trust / sync-trust-kits — do not edit) ──'
-
-write_kit_file() {
-    local path="$1" kit="$2"
-    # Preserve any host-local profile (LOKI_PORT, GRAFANA_PORT, OMOP_DB_PORT, …)
-    # from the existing kit file, or seed it from the matching .example on first
-    # run. Without this, a second register-trusts run wipes the per-trust port
-    # overrides that let two dev trusts coexist on one host — both stacks then
-    # fall back to the trust/Makefile defaults (LOKI_PORT=3100, …) and the
-    # second `make up-trust` fails to bind. The ec2 path pre-populates the
-    # tempfile by fetching the remote kit first, so credentials + hub-shared
-    # are both preserved and refreshed correctly on re-runs.
-    local source=""
-    if [ -f "$path" ]; then
-        source="$path"
-    elif [ -f "${path}.example" ]; then
-        source="${path}.example"
-    fi
-
-    # Build the regex for all keys that this function manages — they will be
-    # stripped from the source before we re-emit them, preventing duplication.
-    # Credentials are stripped only on the new-registration path (see below).
-    local hub_keys_re
-    hub_keys_re="$(IFS='|'; echo "${HUB_SHARED_KEYS[*]}")"
-
-    # Determine whether this kit carries credentials (new registration) or not
-    # (idempotent skip — hub stores only the SHA-256 hashes, cannot re-emit plaintext).
-    local has_creds=false
-    if echo "$kit" | jq -e '.trust_api_key' >/dev/null 2>&1; then
-        has_creds=true
-    fi
-
-    # Build strip_re in pieces to stay within the 120-char line limit.
-    # Managed keys are always stripped from the source so we can re-emit them
-    # without duplication. On new-registration the credential lines are also
-    # stripped (they are about to be replaced). On skip, they are left in
-    # place — the hub cannot re-emit plaintext credentials.
-    # EXPECTED_TRUST_ID is stripped on both paths because it is re-emitted
-    # unconditionally (it is metadata, present on both new-registration and skip).
-    local strip_re
-    local tail_re='^# Generated by register-trusts\.sh'
-    tail_re="${tail_re}|^# Plaintext credentials"
-    if [ "$has_creds" = true ]; then
-        strip_re='^(TRUST_API_KEY|TRUST_INTERNAL_SERVICE_KEY|EXPECTED_TRUST_ID'
-        strip_re="${strip_re}|FL_KIT_SLOT|FL_KIT_SLOT_NUMBER|${hub_keys_re})="
-        strip_re="${strip_re}|${tail_re}"
-    else
-        strip_re='^(EXPECTED_TRUST_ID|FL_KIT_SLOT|FL_KIT_SLOT_NUMBER|'"${hub_keys_re}"')='
-        strip_re="${strip_re}|${tail_re}"
-    fi
-
-    # Write to a sibling tempfile, then atomically rename into place. This
-    # avoids the self-clobber that occurs when source == path: opening $path
-    # for output truncates it before grep can read it.
-    local tmp_out
-    tmp_out="$(mktemp)"
-    {
-        if [ -n "$source" ]; then
-            grep -vE "$strip_re" "$source" | grep -vF "$HUB_SHARED_HEADER"
-        fi
-        echo "# Generated by register-trusts.sh on $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-        echo "# Plaintext credentials — keep this file secret. Never commit it."
-        # Credentials — only on new registration; skip path preserves the source lines.
-        if [ "$has_creds" = true ]; then
-            echo "TRUST_API_KEY=$(echo "$kit" | jq -r '.trust_api_key')"
-            echo "TRUST_INTERNAL_SERVICE_KEY=$(echo "$kit" | jq -r '.trust_internal_service_key')"
-        fi
-        # EXPECTED_TRUST_ID, FL_KIT_SLOT, FL_KIT_SLOT_NUMBER are metadata — present on both
-        # paths. Emitted unconditionally so operators who missed EXPECTED_TRUST_ID on first
-        # registration can recover it via a subsequent run without re-registering.
-        echo "EXPECTED_TRUST_ID=$(echo "$kit" | jq -r '.trust_id')"
-        echo "FL_KIT_SLOT=$(echo "$kit" | jq -r '.fl_kit_slot')"
-        echo "FL_KIT_SLOT_NUMBER=$(echo "$kit" | jq -r '.fl_kit_slot_number')"
-        # Hub-shared block — present on both paths.
-        echo "$HUB_SHARED_HEADER"
-        echo "$kit" | jq -r '.hub_shared // {} | to_entries[] | "\(.key)=\(.value)"'
-    } > "$tmp_out"
-    mv "$tmp_out" "$path"
-    chmod 600 "$path"
-}
-
-# Register one trust (by TRUST_<idx>_* env vars) via a one-off ECS task.
-register_one() {
-    local idx="$1"
-    local nv cv rv hv name code region host
-    nv="TRUST_${idx}_NAME"; cv="TRUST_${idx}_CODE"; rv="TRUST_${idx}_REGION"; hv="TRUST_${idx}_HOST"
-    name="${!nv:-}"; code="${!cv:-}"; region="${!rv:-}"; host="${!hv:-}"
+# Register one trust (identified by its CODE-named kit file) via a one-off ECS
+# task, then write the returned kit back into that same file.
+register_one_kit() {
+    local kit_file="$1"
+    local name code region
+    name="$(sed -n 's/^TRUST_NAME=//p' "$kit_file" | head -1)"
+    code="$(sed -n 's/^TRUST_CODE=//p' "$kit_file" | head -1)"
+    region="$(sed -n 's/^TRUST_REGION=//p' "$kit_file" | head -1)"
     if [ -z "$name" ]; then
-        log_info "TRUST_${idx}_NAME unset — skipping slot $idx."
+        log_warn "No TRUST_NAME in $kit_file — skipping."
         return 0
     fi
 
-    log_info "Registering trust $idx ('$name') via a one-off ECS task..."
+    log_info "Registering trust '$name' (kit $(basename "$kit_file")) via a one-off ECS task..."
     # Mint an ephemeral SSM parameter for the kit handoff (S-1). The ECS
     # task PUTs the kit JSON here as a SecureString; we GET + DELETE it
     # after the task completes. This keeps the plaintext kit out of
@@ -224,70 +151,39 @@ register_one() {
         return 0
     fi
     kit="$(echo "$kit" | jq -c '.[0]')"
-
-    local slot
-    slot="$(echo "$kit" | jq -r '.fl_kit_slot')"
     # Detect skip path: kit present but credentials absent (hub stores only hashes).
     if ! echo "$kit" | jq -e '.trust_api_key' >/dev/null 2>&1; then
-        log_info "Trust '$name' already registered — refreshing hub-shared block in trust/.env.${slot}."
+        log_info "Trust '$name' already registered — refreshing hub-shared block in $(basename "$kit_file")."
     fi
-    case "$host" in
-        local)
-            write_kit_file "$REPO_ROOT/trust/.env.${slot}" "$kit"
-            log_success "Wrote kit for '$name' → trust/.env.${slot}"
-            ;;
-        ec2)
-            local tmp_kit probe_rc
-            tmp_kit="$(mktemp)"
-            # Preserve existing credentials on the trust host by fetching the
-            # current kit file first. Probe for the file's existence with
-            # `ssh test -f` rather than relying on `scp` exit codes: scp
-            # returns 1 for "file not found" but ALSO for transport errors
-            # like permission denied, host-key mismatch, or a transient SSH
-            # disconnect. Conflating those would silently overwrite prod
-            # credentials with a credentials-less file (the hub stores only
-            # hashes, so recovery means delete-trust + re-register).
-            #
-            # `ssh test -f` exit codes we care about:
-            #   0 — file exists; scp it.
-            #   1 — `test` itself returned non-zero (file absent / not regular).
-            #   *anything else* — transport error (ssh's own failure space).
-            probe_rc=0
-            ssh -q flip-trust "test -f /opt/flip/trust/.env.${slot}" || probe_rc=$?
-            case "$probe_rc" in
-                0)
-                    if ! scp -q "flip-trust:/opt/flip/trust/.env.${slot}" "$tmp_kit"; then
-                        log_error "scp from flip-trust failed after positive ssh probe — aborting kit distribution for '$name'."
-                        rm -f "$tmp_kit"
-                        return 1
-                    fi
-                    ;;
-                1)
-                    : > "$tmp_kit"  # first-time registration; remote file absent
-                    ;;
-                *)
-                    log_error "ssh probe to flip-trust failed (transport error, exit=$probe_rc) — aborting kit distribution for '$name'."
-                    rm -f "$tmp_kit"
-                    return 1
-                    ;;
-            esac
-            write_kit_file "$tmp_kit" "$kit"
-            if ! scp -q "$tmp_kit" "flip-trust:/opt/flip/trust/.env.${slot}"; then
-                log_error "scp to flip-trust failed — kit was NOT installed. Tempfile $tmp_kit retained for retry."
-                return 1
-            fi
-            rm -f "$tmp_kit"
-            log_success "Distributed kit for '$name' to the trust EC2 (.env.${slot})."
-            ;;
-        *)
-            log_warn "TRUST_${idx}_HOST='$host' unknown for trust '$name'; kit not distributed:"
-            echo "$kit" >&2
-            ;;
-    esac
+
+    # Write the kit back into its CODE-named file. The target is a
+    # .production/.stag kit, so distribute_trust_kits.py writes the hub-shared
+    # block LIVE (the remote operator has no hub .env). Credentials are written
+    # only on first registration; operator host-local edits are preserved.
+    echo "$kit" | uv run --no-config "$REPO_ROOT/scripts/distribute_trust_kits.py" --target "$kit_file"
+    log_success "Wrote kit for '$name' → $kit_file"
 }
 
-for idx in $(seq 1 "$TRUST_SLOT_COUNT"); do
-    register_one "$idx"
-done
+# Select kits: explicit KIT=<CODE> registers one; otherwise register every live
+# prod kit (trust/.env.*.<suffix>). .example templates are not matched by the
+# glob (they end in .example, not the env suffix).
+if [ -n "${KIT:-}" ]; then
+    kit_file="$REPO_ROOT/trust/.env.${KIT}.${ENV_SUFFIX}"
+    if [ ! -f "$kit_file" ]; then
+        log_error "Kit $kit_file not found — scaffold it with 'make new-trust TRUST_CODE=${KIT} TRUST_NAME=... PROD=${PROD:-stag}' first."
+        exit 1
+    fi
+    register_one_kit "$kit_file"
+else
+    found=0
+    for kit_file in "$REPO_ROOT"/trust/.env.*."${ENV_SUFFIX}"; do
+        [ -e "$kit_file" ] || continue
+        found=1
+        register_one_kit "$kit_file"
+    done
+    if [ "$found" != 1 ]; then
+        log_warn "No trust/.env.*.${ENV_SUFFIX} kits found — scaffold one with 'make new-trust ... PROD=${PROD:-stag}' first."
+    fi
+fi
 
 log_success "register-trusts complete."

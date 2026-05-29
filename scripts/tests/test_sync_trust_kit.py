@@ -33,6 +33,7 @@ from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 SYNC_SCRIPT = SCRIPTS_DIR / "sync_trust_kit.py"
+LIB_SCRIPT = SCRIPTS_DIR / "trust_kit_lib.py"
 
 # Minimal valid env: every HUB_SHARED_KEYS value populated.
 HUB_SHARED_DEFAULTS: dict[str, str] = {
@@ -78,6 +79,10 @@ def _run(repo_root: Path, kit: str, env_overrides: dict[str, str] | None = None)
     copy = scripts_dir / "sync_trust_kit.py"
     if not copy.exists():
         shutil.copy2(SYNC_SCRIPT, copy)
+    # sync_trust_kit.py imports trust_kit_lib (sibling) — copy it alongside.
+    lib_copy = scripts_dir / "trust_kit_lib.py"
+    if not lib_copy.exists():
+        shutil.copy2(LIB_SCRIPT, lib_copy)
     return subprocess.run(
         ["uv", "run", "--no-config", str(copy), kit],
         cwd=repo_root,
@@ -152,10 +157,18 @@ def test_4_missing_env_var_is_error() -> None:
         kit = root / "trust" / ".env.Trust_1"
         kit.write_text("TRUST_API_KEY=preserved\n")
 
+        # Copy the script into the temp repo so Path(__file__).parent.parent
+        # resolves here (not the real repo); otherwise it errors on the real
+        # repo's (absent) trust/.env.Trust_1 before reaching the env check.
+        scripts_dir = root / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        copy = scripts_dir / "sync_trust_kit.py"
+        shutil.copy2(SYNC_SCRIPT, copy)
+        shutil.copy2(LIB_SCRIPT, scripts_dir / "trust_kit_lib.py")
         env = {k: v for k, v in HUB_SHARED_DEFAULTS.items() if k != "AES_KEY_BASE64"}
         env["PATH"] = os.environ.get("PATH", "")
         result = subprocess.run(
-            ["uv", "run", "--no-config", str(SYNC_SCRIPT), "Trust_1"],
+            ["uv", "run", "--no-config", str(copy), "Trust_1"],
             cwd=root,
             env=env,
             capture_output=True,
@@ -190,6 +203,42 @@ def test_5_in_place_replacement_on_template() -> None:
         _assert("TRUST_API_KEY=preserved" in lines, "creds preserved")
 
 
+def test_6_optional_key_absent_is_tolerated() -> None:
+    """An absent OPTIONAL hub-shared key (DOCKER_FL_REGISTRY) is tolerated, not fatal.
+
+    DOCKER_FL_REGISTRY defaults to DOCKER_REGISTRY downstream (deploy/fl_backend.mk),
+    so prod env files legitimately omit it. Sync must write the keys that ARE
+    present and skip the absent optional one, rather than aborting.
+    """
+    print("▶ sync tolerates an absent optional key (DOCKER_FL_REGISTRY), syncs the rest")
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "trust").mkdir()
+        kit = root / "trust" / ".env.Trust_1"
+        kit.write_text("TRUST_API_KEY=preserved\n")
+
+        # Copy the script into the temp repo so Path(__file__).parent.parent
+        # resolves to THIS temp root (not the real repo). Mirrors _run().
+        scripts_dir = root / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        copy = scripts_dir / "sync_trust_kit.py"
+        shutil.copy2(SYNC_SCRIPT, copy)
+        shutil.copy2(LIB_SCRIPT, scripts_dir / "trust_kit_lib.py")
+        env = {k: v for k, v in HUB_SHARED_DEFAULTS.items() if k != "DOCKER_FL_REGISTRY"}
+        env["PATH"] = os.environ.get("PATH", "")
+        result = subprocess.run(
+            ["uv", "run", "--no-config", str(copy), "Trust_1"],
+            cwd=root, env=env, capture_output=True, text=True,
+        )
+        _assert(result.returncode == 0, "exit 0 despite absent DOCKER_FL_REGISTRY", result.stderr)
+        content = kit.read_text()
+        _assert("AES_KEY_BASE64=v1==" in content, "present keys still synced")
+        _assert("CENTRAL_HUB_API_URL=http://localhost:8080/api" in content, "other present keys synced")
+        live_fl_reg = [ln for ln in content.splitlines()
+                       if not ln.lstrip().startswith("#") and ln.split("=", 1)[0] == "DOCKER_FL_REGISTRY"]
+        _assert(not live_fl_reg, "absent optional key not written", str(live_fl_reg))
+
+
 def main() -> None:
     if not SYNC_SCRIPT.is_file():
         sys.exit(f"❌ {SYNC_SCRIPT} not found")
@@ -201,6 +250,7 @@ def main() -> None:
     test_3_missing_kit_file_is_error()
     test_4_missing_env_var_is_error()
     test_5_in_place_replacement_on_template()
+    test_6_optional_key_absent_is_tolerated()
 
     print("—")
     print(f"PASS={PASS}  FAIL={FAIL}")
