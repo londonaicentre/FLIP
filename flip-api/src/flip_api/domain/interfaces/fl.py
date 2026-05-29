@@ -137,6 +137,9 @@ class IClientStatus(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     name: str
+    # The trust's short code (e.g. "GSTT"). None for raw FL-server client
+    # statuses; set when the client is resolved to a registered trust.
+    code: str | None = None
     status: str
     # The FL kit slot backing this client (the pre-provisioned participant
     # identity, e.g. "Trust_1"). The trust's display name (`name`) can differ

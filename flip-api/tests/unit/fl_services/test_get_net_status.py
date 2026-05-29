@@ -61,9 +61,10 @@ def mock_fetch_client_status():
 @pytest.fixture
 def mock_get_trusts():
     class Trust:
-        def __init__(self, trust_id, name):
+        def __init__(self, trust_id, name, code=None):
             self.id = trust_id
             self.name = name
+            self.code = code
 
     with patch("flip_api.fl_services.get_net_status.get_trusts") as mock:
         mock.return_value = [
@@ -117,6 +118,7 @@ def test_get_net_status_matches_client_via_slot_name_when_trust_renamed(
     # Trust display name overrides leave the FL identity on the slot, not the trust.
     # Matching must therefore use slot_name; the UI keeps showing the trust's friendly name.
     mock_get_trusts.return_value[0].name = "(Mock) GSTT"
+    mock_get_trusts.return_value[0].code = "GSTT"
     mock_get_slot_names_by_trust_ids.return_value = {
         TRUST_1_ID: "Trust_1",
         TRUST_2_ID: "client2",
@@ -128,8 +130,10 @@ def test_get_net_status_matches_client_via_slot_name_when_trust_renamed(
     online = [c for c in result.clients if c.online]
     assert len(online) == 1
     assert online[0].name == "(Mock) GSTT"
-    # The client also exposes its FL kit slot so the UI can surface name≠slot.
+    # The client also exposes its FL kit slot + trust code so the UI can surface
+    # "name (code)" and the slot (name≠slot).
     assert online[0].fl_kit_slot == "Trust_1"
+    assert online[0].code == "GSTT"
 
 
 def test_get_net_status_reports_flower_backend(

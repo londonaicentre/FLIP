@@ -54,9 +54,10 @@ def mock_get_nets():
 @pytest.fixture
 def mock_get_trusts():
     class Trust:
-        def __init__(self, trust_id, name):
+        def __init__(self, trust_id, name, code=None):
             self.id = trust_id
             self.name = name
+            self.code = code
 
     with patch("flip_api.fl_services.get_status.get_trusts") as mock:
         mock.return_value = [Trust(TRUST_1_ID, "trust-1"), Trust(TRUST_2_ID, "trust-2")]

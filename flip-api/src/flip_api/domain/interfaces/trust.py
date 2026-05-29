@@ -84,6 +84,7 @@ class ITrustHealth(BaseModel):
 class ITrust(BaseModel):
     id: UUID
     name: str
+    code: str | None = Field(default=None, description="Short trust code, e.g. GSTT")
     fl_client_endpoint: str | None = Field(default=None, description="FL Client Endpoint URL")
 
 
