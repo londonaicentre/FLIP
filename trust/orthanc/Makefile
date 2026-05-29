@@ -59,7 +59,9 @@ shell:
 
 # Sync mock orthanc DICOM data (used in development / staging environments where real data is not available)
 # Fetched anonymously from the public Hugging Face dataset (no AWS CLI / credentials needed)
+# Pass TRUST=1 or TRUST=2 to update only a single trust; defaults to all.
 update-orthanc-data:
+	TRUST=$(TRUST) \
 	CLEAN_AFTER_UPDATE=True \
 	ORTHANC_STORAGE_DIR_TRUST_1=$(ORTHANC_STORAGE_DIR_TRUST_1) \
 	ORTHANC_STORAGE_DIR_TRUST_2=$(ORTHANC_STORAGE_DIR_TRUST_2) \

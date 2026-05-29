@@ -20,11 +20,12 @@ set -euo pipefail
 # appropriate data archives from the public Hugging Face dataset and extracts them
 # into the local volumes directory.
 # NOTE this is only intended for use in development / test environments where real OMOP data is not available.
+#
+# Set TRUST=1 or TRUST=2 to update only a single trust; defaults to "all" (both trusts).
 
 # These paths are relative to the location of this script
-REPO_DATA_VERSION_FILE=".data_version"                        # committed in repo
-VOLUMES_DIR="./volumes"                                       # local dir for omop-db volumes
-LOCAL_DATA_VERSION_FILE="${VOLUMES_DIR}/.local_data_version"  # tracks local version
+REPO_DATA_VERSION_FILE=".data_version"  # committed in repo
+VOLUMES_DIR="./volumes"                  # local dir for omop-db volumes
 
 # Mock data is fetched anonymously over HTTPS from a public Hugging Face dataset
 # (no AWS CLI or credentials required). The dataset is laid out per trust:
@@ -34,71 +35,73 @@ HF_TRUST_DATA_REPO="${HF_TRUST_DATA_REPO:-aicentreflip/trust-data}"
 HF_TRUST_DATA_REVISION="${HF_TRUST_DATA_REVISION:-main}"
 HF_BASE_URL="https://huggingface.co/datasets/${HF_TRUST_DATA_REPO}/resolve/${HF_TRUST_DATA_REVISION}"
 
+# TRUST controls which trust(s) to update: "1", "2", or "all" (default).
+TRUST="${TRUST:-all}"
+if [[ "${TRUST}" != "1" && "${TRUST}" != "2" && "${TRUST}" != "all" ]]; then
+  echo "❌ Invalid TRUST value '${TRUST}'. Must be 1, 2, or all." >&2
+  exit 1
+fi
+
 # --- read desired data version from repo file ---
 DATA_VERSION="$(tr -d ' \n\r\t' < "${REPO_DATA_VERSION_FILE}")"
 
 mkdir -p "${VOLUMES_DIR}"
 
-# Local version of OMOP data
-LOCAL_VERSION=""
-if [[ -f "${LOCAL_DATA_VERSION_FILE}" ]]; then
-  LOCAL_VERSION="$(tr -d ' \n\r\t' < "${LOCAL_DATA_VERSION_FILE}" || true)"
-fi
-
-# If local version matches desired version, we're done - no need to download/extract again
-if [[ "${LOCAL_VERSION}" == "${DATA_VERSION}" ]]; then
-  echo "✅ OMOP data already up to date at version ${DATA_VERSION}."
-  exit 0
-fi
-
-# If we reach here, we need to update the local OMOP data
-if [[ -z "${LOCAL_VERSION}" ]]; then
-  echo "❓ Local OMOP data version unknown. Will update to version ${DATA_VERSION} just to be safe."
-else
-  echo "🔄 Updating OMOP data: ${LOCAL_VERSION} -> ${DATA_VERSION}"
-fi
-
 # Archives are gzip-compressed tarballs named .tar on Hugging Face (the .gz is
 # dropped from the name, not the content), grouped under per-trust dirs.
 # tar auto-detects the gzip on extraction, so -xf (no -z) handles them.
-TRUST1_ARCHIVE="trust1_pgdata_${DATA_VERSION}.tar"
-TRUST2_ARCHIVE="trust2_pgdata_${DATA_VERSION}.tar"
 
-HF_TRUST1_ARCHIVE="${HF_BASE_URL}/trust1/${TRUST1_ARCHIVE}"
-HF_TRUST2_ARCHIVE="${HF_BASE_URL}/trust2/${TRUST2_ARCHIVE}"
-LOCAL_TRUST1_ARCHIVE="${VOLUMES_DIR}/${TRUST1_ARCHIVE}"
-LOCAL_TRUST2_ARCHIVE="${VOLUMES_DIR}/${TRUST2_ARCHIVE}"
+update_trust() {
+  local trust_num="$1"
+  local local_version_file="${VOLUMES_DIR}/.local_data_version_trust${trust_num}"
+  local archive="trust${trust_num}_pgdata_${DATA_VERSION}.tar"
+  local hf_url="${HF_BASE_URL}/trust${trust_num}/${archive}"
+  local local_archive="${VOLUMES_DIR}/${archive}"
+  local dest_dir="${VOLUMES_DIR}/Trust_${trust_num}/db_data"
 
-# If the files do not exist locally, download them.
-# -f: fail on HTTP errors, -S: show errors, -L: follow LFS redirects.
-if [[ ! -f "${LOCAL_TRUST1_ARCHIVE}" ]]; then
-  echo "📦 Downloading ${HF_TRUST1_ARCHIVE}"
-  curl -fSL "${HF_TRUST1_ARCHIVE}" -o "${LOCAL_TRUST1_ARCHIVE}"
-else
-  echo "📦 ${LOCAL_TRUST1_ARCHIVE} already exists, skipping download"
+  local local_version=""
+  if [[ -f "${local_version_file}" ]]; then
+    local_version="$(tr -d ' \n\r\t' < "${local_version_file}" || true)"
+  fi
+
+  if [[ "${local_version}" == "${DATA_VERSION}" ]]; then
+    echo "✅ OMOP data for Trust ${trust_num} already up to date at version ${DATA_VERSION}."
+    return
+  fi
+
+  if [[ -z "${local_version}" ]]; then
+    echo "❓ Local OMOP data version for Trust ${trust_num} unknown. Will update to version ${DATA_VERSION} just to be safe."
+  else
+    echo "🔄 Updating OMOP data for Trust ${trust_num}: ${local_version} -> ${DATA_VERSION}"
+  fi
+
+  if [[ ! -f "${local_archive}" ]]; then
+    echo "📦 Downloading ${hf_url}"
+    curl -fSL "${hf_url}" -o "${local_archive}"
+  else
+    echo "📦 ${local_archive} already exists, skipping download"
+  fi
+
+  echo "🗑️  Removing existing db_data dir for Trust ${trust_num}..."
+  sudo rm -rf "${dest_dir}"
+  mkdir -p "${dest_dir}"
+
+  echo "📁 Extracting archive for Trust ${trust_num}..."
+  tar -xf "${local_archive}" -C "${dest_dir}"
+
+  echo "${DATA_VERSION}" > "${local_version_file}"
+  echo "✅ Done. Local OMOP data for Trust ${trust_num} is now at version ${DATA_VERSION}"
+
+  if [[ "${CLEAN_AFTER_UPDATE:-False}" == "True" ]]; then
+    rm -f "${local_archive}"
+    echo "🧹 Cleaned up downloaded archive for Trust ${trust_num}."
+  fi
+}
+
+if [[ "${TRUST}" == "1" || "${TRUST}" == "all" ]]; then
+  update_trust 1
 fi
 
-if [[ ! -f "${LOCAL_TRUST2_ARCHIVE}" ]]; then
-  echo "📦 Downloading ${HF_TRUST2_ARCHIVE}"
-  curl -fSL "${HF_TRUST2_ARCHIVE}" -o "${LOCAL_TRUST2_ARCHIVE}"
-else
-  echo "📦 ${LOCAL_TRUST2_ARCHIVE} already exists, skipping download"
-fi
-
-echo "🗑️ Removing existing db_data dirs..."
-sudo rm -rf "${VOLUMES_DIR}/Trust_1/db_data" "${VOLUMES_DIR}/Trust_2/db_data"
-mkdir -p "${VOLUMES_DIR}/Trust_1/db_data" "${VOLUMES_DIR}/Trust_2/db_data"
-
-echo "📁 Extracting archives (will replace existing db_data dirs)..."
-tar -xf "${LOCAL_TRUST1_ARCHIVE}" -C "${VOLUMES_DIR}/Trust_1/db_data"
-tar -xf "${LOCAL_TRUST2_ARCHIVE}" -C "${VOLUMES_DIR}/Trust_2/db_data"
-
-# Record the new local data version
-echo "${DATA_VERSION}" > "${LOCAL_DATA_VERSION_FILE}"
-echo "✅ Done. Local OMOP data version is now ${DATA_VERSION}"
-
-# Delete the downloaded archives once extracted
-if [[ "${CLEAN_AFTER_UPDATE:-False}" == "True" ]]; then
-  rm -f "${LOCAL_TRUST1_ARCHIVE}" "${LOCAL_TRUST2_ARCHIVE}"
-  echo "🧹 Cleaned up downloaded archives."
+if [[ "${TRUST}" == "2" || "${TRUST}" == "all" ]]; then
+  update_trust 2
 fi

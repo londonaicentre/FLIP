@@ -42,6 +42,7 @@ orthanc/orthanc-storage
 orthanc/orthanc-storage-2
 orthanc/orthanc-storage-local
 xnat/plugins/*.jar
+.env.*
 
 # Image data folder
 data/**/*.dcm
