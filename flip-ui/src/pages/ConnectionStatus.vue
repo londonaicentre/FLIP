@@ -125,6 +125,7 @@
                                     class="px-4 py-3 text-xs font-mono uppercase tracking-widest text-gray-500 font-medium select-none"
                                     :class="[
                                         col.align === 'right' ? 'text-right' : 'text-left',
+                                        col.width ?? '',
                                         col.key ? 'cursor-pointer hover:text-gray-700 dark:hover:text-gray-300' : ''
                                     ]"
                                     @click="col.key ? toggleSort(col.key) : undefined"
@@ -160,15 +161,18 @@
                                 </td>
                                 <td class="px-4 py-4 align-middle">
                                     <div class="flex flex-col">
-                                        <span class="font-semibold font-heading text-base text-gray-900 dark:text-gray-100">
-                                            {{ t.code || t.name }}
+                                        <span
+                                            class="font-semibold font-heading text-base text-gray-900 dark:text-gray-100"
+                                            data-test="trust-name"
+                                        >
+                                            {{ t.name }}
                                         </span>
                                         <span
                                             v-if="t.code && t.code !== t.name"
                                             class="font-mono text-xs text-gray-500 dark:text-gray-400 mt-0.5"
-                                            data-test="trust-name"
+                                            data-test="trust-code"
                                         >
-                                            {{ t.name }}
+                                            {{ t.code }}
                                         </span>
                                     </div>
                                 </td>
@@ -639,6 +643,9 @@ interface IColumn {
     key?: SortKey;
     label: string;
     align?: "left" | "right";
+    // Optional Tailwind width class applied to the <th> to bias column sizing
+    // (narrow Status/Projects so the Trust column can breathe).
+    width?: string;
 }
 
 // Header config drives both the rendered <th>s and the per-column sort handler.
@@ -647,11 +654,13 @@ interface IColumn {
 const columns: IColumn[] = [
     {
         key: "severity",
-        label: "Status"
+        label: "Status",
+        width: "w-28"
     },
     {
         key: "name",
-        label: "Trust"
+        label: "Trust",
+        width: "min-w-[18rem]"
     },
     {
         key: "region",
@@ -664,7 +673,8 @@ const columns: IColumn[] = [
     {
         key: "projects",
         label: "Projects",
-        align: "right"
+        align: "right",
+        width: "w-20"
     },
     { label: "7d uptime" },
     { label: "" }

@@ -116,6 +116,36 @@ describe("FLNetsCard", () => {
         expect(net2Title!.text()).toContain("(Flower)");
     });
 
+    it("shows each client's FL kit slot when it differs from the display name", () => {
+        mockSwrvData.value = [
+            {
+                name: "net-1",
+                fl_backend: "nvflare",
+                clients: [
+                    { name: "Demo EC2 Trust", code: "DEMO", online: true, status: "no_jobs", fl_kit_slot: "Trust_1" }
+                ]
+            }
+        ];
+        const wrapper = mountFLNetsCard();
+        const slot = wrapper.find("[data-test='client-fl-kit-slot']");
+        expect(slot.exists()).toBe(true);
+        expect(slot.text()).toContain("Trust_1");
+    });
+
+    it("shows 'name (code)' for each client above the FL kit slot", () => {
+        mockSwrvData.value = [
+            {
+                name: "net-1",
+                fl_backend: "nvflare",
+                clients: [
+                    { name: "Demo EC2 Trust", code: "DEMO", online: true, status: "no_jobs", fl_kit_slot: "Trust_1" }
+                ]
+            }
+        ];
+        const wrapper = mountFLNetsCard();
+        expect(wrapper.find("[data-test='project-name']").text()).toContain("Demo EC2 Trust (DEMO)");
+    });
+
     it("omits parentheses when fl_backend is absent", () => {
         mockSwrvData.value = [
             {

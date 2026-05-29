@@ -99,7 +99,17 @@
                                                                 class="text-sm font-bold text-primary-600 dark:text-gray-400 shrink line-clamp-1"
                                                                 data-test="project-name"
                                                             >
-                                                                {{ client.name }}
+                                                                {{ client.name }}<span
+                                                                    v-if="client.code"
+                                                                    class="font-normal text-gray-500 dark:text-gray-500"
+                                                                > ({{ client.code }})</span>
+                                                            </p>
+                                                            <p
+                                                                v-if="client.fl_kit_slot"
+                                                                class="text-xs font-normal text-gray-400 dark:text-gray-500 shrink line-clamp-1"
+                                                                data-test="client-fl-kit-slot"
+                                                            >
+                                                                FL kit slot: {{ client.fl_kit_slot }}
                                                             </p>
                                                         </span>
                                                     </span>

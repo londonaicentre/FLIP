@@ -107,11 +107,14 @@ function mountPage({ permissions = ["CanAccessAdminPanel"] }: MountOptions = {})
     });
 }
 
+// The TRUST column shows the name prominently with the code in a small span
+// below (data-test="trust-code"). These sort tests verify row ORDER by code,
+// which mirrors name order in the fixture, so read the code span.
 const codesInOrder = (wrapper: ReturnType<typeof mountPage>): string[] =>
     wrapper.findAll("[data-test='trust-row']").map(r => {
-        const heading = r.find("td:nth-child(2) span.font-semibold");
+        const code = r.find("[data-test='trust-code']");
 
-        return heading.text();
+        return code.exists() ? code.text() : "";
     });
 
 beforeEach(() => {
@@ -191,20 +194,22 @@ describe("ConnectionStatus", () => {
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(true);
     });
 
-    it("renders one row per trust with each trust's code (or name when no code)", async () => {
+    it("renders the trust name prominently with the code beneath it (code hidden when absent)", async () => {
         mockSwrvData.value = [
             {
                 ...fixture[0],
                 code: undefined as unknown as string
-            }, // codeless trust falls back to name
+            }, // codeless trust → name only, no code line
             fixture[1]
         ];
         const wrapper = mountPage();
         await wrapper.vm.$nextTick();
-        const codes = codesInOrder(wrapper);
-        // Sorted alphabetically by display label — "Acme NHS Trust" (ANT code) before
-        // "Zebra NHS Trust" (no code → name).
-        expect(codes).toEqual(["ANT", "Zebra NHS Trust"]);
+        const rows = wrapper.findAll("[data-test='trust-row']");
+        // Sorted alphabetically by name: "Acme NHS Trust" (ANT) before "Zebra NHS Trust" (no code).
+        expect(rows[0].find("[data-test='trust-name']").text()).toBe("Acme NHS Trust");
+        expect(rows[0].find("[data-test='trust-code']").text()).toBe("ANT");
+        expect(rows[1].find("[data-test='trust-name']").text()).toBe("Zebra NHS Trust");
+        expect(rows[1].find("[data-test='trust-code']").exists()).toBe(false);
     });
 
     it("flags an offline trust (null heartbeat) and surfaces it via the red row background", async () => {
