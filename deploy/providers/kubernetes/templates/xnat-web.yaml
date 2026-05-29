@@ -79,6 +79,7 @@ spec:
         app.kubernetes.io/component: xnat-web
     spec:
       enableServiceLinks: false
+      serviceAccountName: {{ include "flip-trust.fullname" . }}-xnat-web
       {{- if .Values.imagePullSecrets }}
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}

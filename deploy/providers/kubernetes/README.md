@@ -401,10 +401,16 @@ Include:
 
 ## Known Limitations
 
-1. **XNAT Docker socket**: The XNAT container service plugin that uses
-   `/var/run/docker.sock` does not work in Kubernetes. The Docker socket mount
-   is not included in the K8s deployment. XNAT features relying on container
-   management (e.g., launching pipelines in Docker containers) will not function.
+1. **XNAT Container Service — Job execution not yet wired**: The Container
+   Service plugin's native Kubernetes compute backend (available since plugin
+   3.2.0) is registered at init time and the `dcm2niix` command is available
+   for per-project event subscriptions. However, the storage path for spawned
+   container Jobs is not yet plumbed: XNAT's data PVC is `ReadWriteOnce`, so a
+   dcm2niix Job would need either `nodeAffinity` onto the XNAT pod's node or a
+   `ReadWriteMany` storage class (e.g. NFS/EFS) to mount the same archive/build
+   data. Subscriptions are created successfully, but DICOM-to-NIfTI conversion
+   will not yet run end-to-end on the K8s deployment until the PVC topology
+   for Jobs is finalised.
 
 2. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
    shared across multiple pod replicas. The chart configures Orthanc with

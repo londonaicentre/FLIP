@@ -189,6 +189,251 @@ spec:
             limits:
               memory: "128Mi"
               cpu: "200m"
+        # Configures the XNAT Container Service plugin to use the native
+        # Kubernetes compute backend (available since container-service 3.2.0),
+        # registers the dcm2niix command, and enables the Event Service so
+        # imaging-api can create per-project event subscriptions. Mirrors what
+        # configure-dcm2niix.sh does in the Compose deployment, but speaks to
+        # the K8s backend instead of the Docker socket.
+        - name: configure-dcm2niix
+          image: alpine/curl:8.12.1
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              apk add --no-cache jq >/dev/null
+              XNAT_URL="http://xnat-web:8080"
+              CREDS="${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASS}"
+              DCM2NIIX_NAME="dcm2niix"
+
+              echo "Waiting for XNAT to be ready..."
+              for i in $(seq 1 60); do
+                if curl -sf -o /dev/null "${XNAT_URL}/xapi/siteConfig" 2>/dev/null; then
+                  echo "XNAT is ready!"
+                  break
+                fi
+                sleep 10
+              done
+
+              # The sibling configure-xnat-web container activates the site
+              # ({"initialized": true} on /xapi/siteConfig). Wait for that before
+              # touching the Container Service plugin so we don't race it.
+              echo "Waiting for XNAT site activation..."
+              for i in $(seq 1 60); do
+                INIT=$(curl -sf -u "${CREDS}" "${XNAT_URL}/xapi/siteConfig" 2>/dev/null \
+                  | jq -r '.initialized // false')
+                if [ "${INIT}" = "true" ]; then
+                  echo "XNAT site is activated."
+                  break
+                fi
+                sleep 5
+              done
+
+              echo "Registering Kubernetes backend with the Container Service plugin..."
+              curl -sf -X POST "${XNAT_URL}/xapi/docker/server" \
+                -u "${CREDS}" \
+                -H "Content-Type: application/json" \
+                -d @/cs-config/container-service-backend-configuration.kubernetes.json
+              echo ""
+
+              echo "Checking for an existing ${DCM2NIIX_NAME} command..."
+              EXISTING_ID=$(curl -sf "${XNAT_URL}/xapi/commands?name=${DCM2NIIX_NAME}" \
+                -u "${CREDS}" | jq -r '.[0].id // empty')
+              if [ -n "${EXISTING_ID}" ]; then
+                echo "Deleting existing command id=${EXISTING_ID}..."
+                curl -sf -X DELETE "${XNAT_URL}/xapi/commands/${EXISTING_ID}" -u "${CREDS}" || true
+              fi
+
+              echo "Registering ${DCM2NIIX_NAME} command..."
+              curl -sf -X POST "${XNAT_URL}/xapi/commands" \
+                -u "${CREDS}" \
+                -H "Content-Type: application/json" \
+                -d @/cs-config/dcm2niix_command.json
+              echo ""
+
+              echo "Looking up registered command id and wrapper name..."
+              RESPONSE=$(curl -sf "${XNAT_URL}/xapi/commands?name=${DCM2NIIX_NAME}" -u "${CREDS}")
+              CMD_ID=$(echo "${RESPONSE}" | jq -r '.[0].id')
+              WRAPPER_NAME=$(echo "${RESPONSE}" | jq -r '.[0].xnat[0].name')
+              echo "Command id=${CMD_ID}, wrapper=${WRAPPER_NAME}"
+
+              echo "Enabling ${DCM2NIIX_NAME} command site-wide..."
+              curl -sf -X PUT "${XNAT_URL}/xapi/commands/${CMD_ID}/wrappers/${WRAPPER_NAME}/enabled" \
+                -u "${CREDS}"
+
+              echo "Enabling the Event Service..."
+              curl -sf -X PUT "${XNAT_URL}/xapi/events/prefs" \
+                -u "${CREDS}" \
+                -H "Content-Type: application/json" \
+                -d '{"enabled": true}'
+
+              echo "Container Service + dcm2niix configuration complete."
+          env:
+            - name: XNAT_ADMIN_USER
+              value: {{ .Values.xnat.web.adminUser | quote }}
+            - name: XNAT_ADMIN_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-admin-password
+          volumeMounts:
+            - name: cs-config
+              mountPath: /cs-config
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+      volumes:
+        - name: cs-config
+          configMap:
+            name: {{ include "flip-trust.fullname" . }}-xnat-cs-config
+---
+# Container Service plugin configuration (K8s backend) + dcm2niix command JSON.
+# The two `data:` entries are sourced verbatim from:
+#   trust/xnat/xnat/config/container-service-backend-configuration.kubernetes.json
+#   trust/xnat/xnat/config/dcm2niix_command.json
+# Keep them in sync with those source files until the chart can read them via
+# Helm `.Files.Get` (blocked by the source files living outside the chart dir).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-xnat-cs-config
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: xnat-init
+data:
+  container-service-backend-configuration.kubernetes.json: |
+    {
+        "name": "Kubernetes",
+        "backend": "kubernetes",
+        "host": "",
+        "cert-path": "",
+        "swarm-mode": false,
+        "pull-images-on-xnat-init": true,
+        "container-user": "",
+        "auto-cleanup": true
+    }
+  dcm2niix_command.json: |
+    {
+        "name": "dcm2niix",
+        "label": "dcm2niix",
+        "description": "Runs dcm2niix",
+        "version": "1.6",
+        "schema-version": "1.0",
+        "info-url": "https://github.com/rordenlab/dcm2niix",
+        "image": "xnat/dcm2niix:latest",
+        "type": "docker",
+        "command-line": "dcm2niix [BIDS] [GZIP] [OTHER_OPTIONS] -o /output /input",
+        "mounts": [
+          {
+            "name": "dicom-in",
+            "writable": false,
+            "path": "/input"
+          },
+          {
+            "name": "nifti-out",
+            "writable": true,
+            "path": "/output"
+          }
+        ],
+        "environment-variables": {},
+        "ports": {},
+        "inputs": [
+          {
+            "name": "bids",
+            "description": "Create BIDS metadata file",
+            "type": "boolean",
+            "default-value": "false",
+            "required": false,
+            "replacement-key": "[BIDS]",
+            "command-line-flag": "-b",
+            "true-value": "y",
+            "false-value": "n",
+            "select-values": []
+          },
+          {
+            "name": "gzip",
+            "description": "Compress output files with gzip",
+            "type": "boolean",
+            "default-value": "true",
+            "required": false,
+            "replacement-key": "[GZIP]",
+            "command-line-flag": "-z",
+            "true-value": "y",
+            "false-value": "n",
+            "select-values": []
+          },
+          {
+            "name": "other-options",
+            "description": "Other command-line flags to pass to dcm2niix",
+            "type": "string",
+            "required": false,
+            "replacement-key": "[OTHER_OPTIONS]",
+            "select-values": []
+          }
+        ],
+        "outputs": [
+          {
+            "name": "nifti",
+            "description": "The nifti files",
+            "required": true,
+            "mount": "nifti-out"
+          }
+        ],
+        "xnat": [
+          {
+            "name": "dcm2niix-scan",
+            "label": "dcm2niix",
+            "description": "Run dcm2niix on a Scan",
+            "contexts": [
+              "xnat:imageScanData"
+            ],
+            "external-inputs": [
+              {
+                "name": "scan",
+                "description": "Input scan",
+                "type": "Scan",
+                "matcher": "'DICOM' in @.resources[*].label",
+                "required": true,
+                "load-children": true
+              }
+            ],
+            "derived-inputs": [
+              {
+                "name": "scan-dicoms",
+                "description": "The dicom resource on the scan",
+                "type": "Resource",
+                "matcher": "@.label == 'DICOM'",
+                "required": true,
+                "provides-files-for-command-mount": "dicom-in",
+                "load-children": true,
+                "derived-from-wrapper-input": "scan",
+                "multiple": false
+              }
+            ],
+            "output-handlers": [
+              {
+                "name": "nifti-resource",
+                "accepts-command-output": "nifti",
+                "as-a-child-of": "scan",
+                "type": "Resource",
+                "label": "NIFTI",
+                "tags": []
+              }
+            ]
+          }
+        ],
+        "reserve-memory": 1000,
+        "limit-cpu": 1,
+        "container-labels": {},
+        "generic-resources": {},
+        "ulimits": {}
+    }
 ---
 # ConfigMap with helper scripts for XNAT configuration
 apiVersion: v1
