@@ -16,17 +16,11 @@ import { describe, expect, it } from "vitest";
 
 import DeploymentMode from "@/partials/admin/deployments/DeploymentMode.vue";
 
-const confirmModalStub = {
-    template: "<div data-test=\"confirm-modal-stub\"><slot name=\"confirmation\" /></div>"
-};
+const confirmModalStub = { template: "<div data-test=\"confirm-modal-stub\"><slot name=\"confirmation\" /></div>" };
 
 describe("DeploymentMode", () => {
     it("wires the confirmation slot into AiConfirmModal with the deployment-mode warning", () => {
-        const wrapper = mountComponent(DeploymentMode, {
-            global: {
-                stubs: { AiConfirmModal: confirmModalStub }
-            }
-        });
+        const wrapper = mountComponent(DeploymentMode, { global: { stubs: { AiConfirmModal: confirmModalStub } } });
 
         const html = wrapper.html();
 

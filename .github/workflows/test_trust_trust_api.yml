@@ -17,7 +17,7 @@ on:
     branches: [main, develop]
     paths:
       - "trust/trust-api/**"
-      - "trust/compose.test.yml"
+      - "trust/deploy/compose.test.yml"
       - "trust/data-access-api/**"
       - "trust/observability/**"
       - ".github/workflows/test_trust_trust_api.yml"
@@ -89,7 +89,7 @@ jobs:
           postgres-password: ${{ secrets.POSTGRES_PASSWORD || 'test_password' }}
 
       - name: Sync trust-api venv (incl. testcontainers)
-        run: uv sync --frozen
+        run: uv sync --locked
 
       - name: Lint (ruff)
         env:
@@ -104,7 +104,7 @@ jobs:
         run: uv run mypy . --ignore-missing-imports
 
       - name: Validate compose file
-        working-directory: ./trust
+        working-directory: ./trust/deploy
         run: docker compose -f compose.test.yml config --quiet
 
       - name: Pre-pull base images
@@ -113,7 +113,7 @@ jobs:
           docker pull --quiet python:3.12-slim-bookworm
 
       - name: Build compose stack (data-access-api image)
-        working-directory: ./trust
+        working-directory: ./trust/deploy
         # Built up-front so build failures aren't bundled into the test run; the
         # subsequent test step can then start the stack from a hot cache.
         run: docker compose -f compose.test.yml build
@@ -126,7 +126,7 @@ jobs:
 
       - name: Show data-access-api container logs on failure
         if: failure()
-        working-directory: ./trust
+        working-directory: ./trust/deploy
         run: |
           echo "::group::data-access-api-test logs"
           docker compose -f compose.test.yml logs data-access-api-test || true

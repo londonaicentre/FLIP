@@ -23,6 +23,13 @@ include $(MAIN_ENV_FILE)
 export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
 endif
 
+# Derive backend-specific DOCKER_FL_{API,SERVER,CLIENT}_NAME and FL_PROVISIONED_DIR
+# from FL_BACKEND. The root Makefile and trust/Makefile already include this
+# after their .env* block; running `make plan/apply` directly from this directory
+# would otherwise leave the DOCKER_FL_* names empty and produce invalid ECS image
+# references like `ghcr.io/londonaicentre/:stag`.
+include ../../fl_backend.mk
+
 LOCK ?= true
 PRESERVE_VPC ?= true
 
@@ -82,13 +89,18 @@ export TF_VAR_AES_KEY_BASE64=${AES_KEY_BASE64}
 export TF_VAR_TRUST_API_KEY_HASHES=${TRUST_API_KEY_HASHES}
 export TF_VAR_INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
 export TF_VAR_INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
+export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 # Fail fast with a useful message when these are missing — the variable is
 # `sensitive` with no default, so otherwise Terraform errors out mid-plan
 # with a generic "no value for required variable" that gives no hint about
 # where the value should come from.
 $(if $(INTERNAL_SERVICE_KEY),,$(error 🔑 INTERNAL_SERVICE_KEY must be set in $(MAIN_ENV_FILE) — generate with `make -C ../../../flip-api generate-internal-service-key`))
 $(if $(INTERNAL_SERVICE_KEY_HASH),,$(error 🔑 INTERNAL_SERVICE_KEY_HASH must be set in $(MAIN_ENV_FILE) — must be sha256 of INTERNAL_SERVICE_KEY))
+$(if $(INTERNAL_SERVICE_KEY_HEADER),,$(error 📨 INTERNAL_SERVICE_KEY_HEADER must be set in $(MAIN_ENV_FILE)))
 export TF_VAR_MIN_CLIENTS=${MIN_CLIENTS}
+# Uncomment to enable ECS Exec on Fargate tasks for debugging:
+# export TF_VAR_ecs_exec_enabled=true
+
 export TF_VAR_docker_image_tag=${DOCKER_TAG}
 export TF_VAR_flip_fl_image_tag=${DOCKER_FL_TAG}
 export TF_VAR_docker_registry=${DOCKER_REGISTRY}
@@ -149,9 +161,8 @@ check-ssm-ready: ## Verify SSM Session Manager prerequisites are installed
 	@[ -f ~/.ssh/host-aws ] || { echo "⚠️  SSH key ~/.ssh/host-aws not found (will be needed for Ansible)"; }
 	@echo "✅ SSM prerequisites verified!"
 
-prettier:
+prettier: ## Format Terraform files. YAML files are formatted by the prettier pre-commit hook.
 	terraform fmt -recursive
-	npx prettier --write "**/*.{yml,yaml}"
 
 .PHONY: create-backend
 create-backend: ## Create Terraform backend S3 bucket - Only run once
@@ -272,18 +283,17 @@ destroy-cert: ## Destroy only the ACM certificate (use with caution - will break
 	@echo "✅ Certificate destroyed! Now run 'make plan' and 'make apply' to remove DNS validation."
 
 .PHONY: plan-cloudfront-certs
-plan-cloudfront-certs: ## Plan the CloudFront viewer cert (us-east-1) and ALB API-origin cert
-	@echo "📋 Planning CloudFront + API-origin certificates..."
+plan-cloudfront-certs: ## Plan the CloudFront viewer cert (us-east-1)
+	@echo "📋 Planning CloudFront viewer certificate..."
 	@terraform plan \
 		-target=aws_acm_certificate.flip_cloudfront \
-		-target=aws_acm_certificate.flip_api \
 		-out=plan-cloudfront-certs.tfplan
 
 .PHONY: apply-cloudfront-certs
-apply-cloudfront-certs: ## Apply the CloudFront viewer cert (us-east-1) and ALB API-origin cert
-	@echo "🔒 Applying CloudFront + API-origin certificates (Step 1/2 for CloudFront)..."
-	@terraform apply -target=aws_acm_certificate.flip_cloudfront -target=aws_acm_certificate.flip_api -auto-approve
-	@echo "✅ Certificates created. Run 'make plan' and 'make apply' to deploy DNS validation + CloudFront."
+apply-cloudfront-certs: ## Apply the CloudFront viewer cert (us-east-1)
+	@echo "🔒 Applying CloudFront viewer certificate (Step 1/2 for CloudFront)..."
+	@terraform apply -target=aws_acm_certificate.flip_cloudfront -auto-approve
+	@echo "✅ Certificate created. Run 'make plan' and 'make apply' to deploy DNS validation + CloudFront."
 
 .PHONY: refresh
 refresh: ## Refresh Terraform state to sync with actual AWS resources

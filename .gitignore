@@ -368,3 +368,4 @@ deploy/providers/AWS/email_previews/
 deploy/providers/AWS/dev/.terraform.lock.hcl
 
 .claude/scheduled_tasks.lock
+CONTEXT.md

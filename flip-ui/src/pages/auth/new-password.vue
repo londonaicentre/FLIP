@@ -144,7 +144,7 @@ const submit = async (v: unknown): Promise<void> => {
 
     try {
         await authStore.changePassword(values.password);
-    } catch (e) {
+    } catch {
         Snackbar.show({
             type: "error",
             title: "Error",
@@ -171,6 +171,7 @@ const submit = async (v: unknown): Promise<void> => {
     ) {
         buttonLoader.value = false;
         routeChange.mfaSetup();
+
         return;
     }
 

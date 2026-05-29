@@ -29,7 +29,7 @@ network1 = deploy_trust-network-1
 # network2 = deploy_trust-network-2
 
 service_name = omop-db
-docker_command = docker compose -f ../compose_trust.development.yml
+docker_command = docker compose --project-directory .. -f ../deploy/compose_trust.development.yml
 run_clean = run --rm --remove-orphans
 
 # Using the run command ignores the port mapping
@@ -53,6 +53,6 @@ shell:
 	docker exec -it $$(docker ps -qf "name=$(service_name)") /bin/bash
 
 # Sync mock omop data (used in development / staging environments where real data is not available)
-# Needs AWS account credentials configured to run S3 commands
+# Fetched anonymously from the public Hugging Face dataset (no AWS CLI / credentials needed)
 update-omop-data:
-	CLEAN_AFTER_UPDATE=True AICENTRE_BUCKET_NAME=$(AICENTRE_BUCKET_NAME) ./update_omop_data.sh
+	CLEAN_AFTER_UPDATE=True ./update_omop_data.sh

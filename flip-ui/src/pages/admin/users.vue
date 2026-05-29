@@ -393,7 +393,7 @@ const saveUser = async () => {
             text: "The user's permissions have been updated.",
             title: "User updated"
         });
-    } catch (e) {
+    } catch {
         Snackbar.error({
             text: "The user could not be updated, please try again.",
             title: "Update failed"
@@ -424,7 +424,7 @@ const updateUserState = async (disabled: boolean) => {
         const state: IUserDisabledStateDto = { disabled: disabled };
         await updateUserDisabledState(selectedUser.value?.id as string, state);
         await refreshUsers();
-    } catch (e) {
+    } catch {
         Snackbar.error({
             text: "There was an error, please try again.",
             title: "User not updated"
@@ -456,7 +456,7 @@ const resetMfa = async () => {
             text: "The user's authenticator has been cleared. They will enrol a new one on next sign-in.",
             title: "MFA reset"
         });
-    } catch (e) {
+    } catch {
         Snackbar.error({
             text: "There was an error resetting MFA, please try again.",
             title: "MFA reset failed"

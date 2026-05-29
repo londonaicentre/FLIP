@@ -76,6 +76,11 @@ In addition to the [deployment prerequisites](README.md#prerequisites), you'll n
 - [Python 3.12+](https://www.python.org/downloads/)
 - [UV](https://docs.astral.sh/uv) - Python environment management tool (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - [act](https://github.com/nektos/act) - Run GitHub Actions locally (install via [Homebrew](https://brew.sh/): `brew install act`)
+- **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
+  ```bash
+  echo "$GHCR_PAT" | docker login ghcr.io -u <your-github-username> --password-stdin
+  ```
+  Building everything locally instead (no GHCR access needed) is `make up BUILD=true` — see [Running the stack](#running-the-stack-pull-vs-build) below.
 
 ### Recommended IDE Setup
 
@@ -118,6 +123,50 @@ uv add <package-name> --group <group>  # dependency in a named group
 
 The `pyproject.toml` file is the source of truth for dependencies. The Python version in `.python-version` must match
 the version used in the service's Dockerfile.
+
+### Dependency cooldown (supply-chain protection)
+
+Recent npm and PyPI supply-chain attacks follow a consistent pattern: a maintainer's credentials are compromised, a
+malicious release is published, the community detects it, and the package is yanked — usually within a few hours. To
+keep poisoned releases out of FLIP's CI, developer machines, and Trust-side containers, FLIP enforces a **72-hour
+cooldown** on dependency installs:
+
+> No FLIP build, CI or local, may install a Python or JavaScript package whose release timestamp on its upstream
+> registry (PyPI / npm) is less than 72 hours old. This applies to direct **and** transitive dependencies.
+
+The policy is enforced through native package-manager configuration:
+
+- **uv (Python)** — every `pyproject.toml` sets `tool.uv.exclude-newer = "3 days"`, so `uv lock` and `uv add` never
+  resolve a release younger than 72 hours (the `uv.lock` records this as a rolling `exclude-newer-span`). The
+  **Dependency Cooldown Check** job in [`secret-scanning.yml`](.github/workflows/secret-scanning.yml) runs
+  `uv lock --check` on every project, failing CI if a lockfile drifts from its manifest or was generated under a
+  wider `exclude-newer` window than the committed manifest allows.
+- **npm (JavaScript)** — `flip-ui/.npmrc` sets `min-release-age=3`, so `npm install` refuses to resolve a release
+  younger than 72 hours. This key was introduced in npm 11.10, so `flip-ui/Dockerfile` and the `test_flip_ui.yml`
+  workflow use Node 24 LTS (which ships npm >= 11.10); Node 22 LTS bundles npm 10.x and silently ignores the key.
+  CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only enforces
+  `min-release-age` at lockfile-write time (`npm install <pkg>`), not when installing from a pinned
+  `package-lock.json`, so the npm cooldown rests on `.npmrc` rather than a CI gate.
+
+There is no automated dependency-update bot wired into the repo today. Dependency bumps are hand-rolled PRs; the
+two layers above (uv `exclude-newer` and npm `min-release-age` at install time, `uv lock --check` in CI) catch a
+too-fresh package regardless of how it arrived in the lockfile.
+
+The cooldown applies automatically when you run `uv add <package>` or `npm install <package>` — a release younger
+than 72 hours is simply not selected. Run `make lock` to refresh every `uv.lock` after a dependency change.
+
+#### Emergency override
+
+For a genuine same-day patch of an active CVE, the cooldown can be bypassed for the single package that needs it:
+
+- **uv** — add an `exclude-newer-package` entry under `[tool.uv]` for that package (for example
+  `exclude-newer-package = { "<package>" = "<recent-timestamp>" }`) and re-run `uv lock`. The entry is committed, so
+  the exception is visible in the pull request and `uv lock --check` still passes.
+- **npm** — run `npm install <package> --min-release-age=0`, which overrides the `.npmrc` setting for that one
+  command.
+
+Any override must be justified in the pull-request description. Use it only for security patches that genuinely
+cannot wait 72 hours.
 
 ### Environment variables
 
@@ -215,6 +264,26 @@ make ci
 ```
 
 This runs all jobs defined in `.github/workflows/` locally.
+
+### Running the stack (pull vs. build)
+
+In development (`PROD` unset), `make up` **pulls** the repo-built service images
+(`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`) from GHCR
+instead of building them — each carries `image:` + `pull_policy: always` in the dev
+compose, and your local `src/` is bind-mounted on top, so editing a `.py` still
+hot-reloads against the pulled image. Startup is fast and matches the published
+`:stag` artifact's environment.
+
+```bash
+make up                # pull GHCR images (default; requires `docker login ghcr.io`)
+make up BUILD=true     # rebuild the repo-built services from local source instead
+```
+
+Use `BUILD=true` when you've changed **dependencies** (`uv.lock`/`pyproject.toml`),
+system packages, or a `Dockerfile` — those live in the image layer, so a plain
+`make up` (which pulls) won't pick them up. `flip-ui` always builds locally (it has
+no GHCR image). Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
+compose with baked images and no bind-mounts.
 
 ## The contribution process
 
@@ -390,6 +459,77 @@ The new branch should be based on the latest `develop` branch.
 1. Reviewer and contributor may have discussions back and forth until all comments are addressed.
 1. Wait for the pull request to be merged.
 
+## Cutting a release
+
+Releases are cut from `main`. The version is set in the root `pyproject.toml`, and merging to `main` triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which reads that version, creates a `v<MAJOR.MINOR.PATCH>` git tag, and publishes a GitHub Release with auto-generated notes. On the same merge, the per-service `.github/workflows/docker_build_*.yml` workflows rebuild every service and push the `:prod` image tag (alongside `:<sha>`) to GHCR. There is no separate release-publishing step beyond merging to `main`.
+
+### Versioning
+
+FLIP follows [Semantic Versioning](https://semver.org/). The version in the **root** [`pyproject.toml`](pyproject.toml) is the FLIP release version — it is what `release.yml` reads to create the git tag.
+
+Each service has its own version string:
+
+- [`flip-api/pyproject.toml`](flip-api/pyproject.toml)
+- [`flip-ui/package.json`](flip-ui/package.json)
+- [`trust/trust-api/pyproject.toml`](trust/trust-api/pyproject.toml)
+- [`trust/imaging-api/pyproject.toml`](trust/imaging-api/pyproject.toml)
+- [`trust/data-access-api/pyproject.toml`](trust/data-access-api/pyproject.toml)
+
+These are **independent**. Bump a service's version only when *that service* has user-visible changes, applying SemVer to the service alone. Services are not aligned with the root version on every release — a release where only `flip-ui` changed bumps the root and `flip-ui/package.json`, and nothing else. Per-service versions are informational today (deployments select images by branch via `:prod` / `:stag` tags, not by version string), but keeping them honest makes them useful for audit and changelog scope.
+
+### Pre-release checklist
+
+Before opening the release PR from `develop` to `main`:
+
+- `develop` is green in [CI](https://github.com/londonaicentre/FLIP/actions).
+- All PRs intended for this release are merged into `develop` and carry an appropriate label. The release-notes categories come from [`.github/release.yml`](.github/release.yml): `enhancement` / `feature`, `bug` / `fix`, `documentation` / `docs`, `ci` / `build`, `chore` / `dependencies`. PRs labelled `ignore-for-release` are excluded.
+- Bump the `version` in the root `pyproject.toml` to the new release version. Additionally bump the `version` in any service file (`flip-api/pyproject.toml`, `flip-ui/package.json`, `trust/*/pyproject.toml`) whose code changed in this release, per the independent-SemVer rule above. Leave unchanged services alone.
+- Run `make unit_test` and `make integration_test` locally.
+
+### Cutting the release
+
+1. From a branch off `develop`, commit the version bumps above and open a PR targeting `develop` with title `Release v<X.Y.Z>`.
+1. Once that merges and CI is green, open a PR from `develop` to `main`.
+1. On merge to `main`:
+   - [`release.yml`](.github/workflows/release.yml) creates the `v<X.Y.Z>` git tag and publishes the GitHub Release with auto-generated notes.
+   - Every `docker_build_*.yml` workflow under [`.github/workflows/`](.github/workflows/) rebuilds its service and pushes the `:prod` and `:<sha>` tags to GHCR.
+1. Verify on the [Releases page](https://github.com/londonaicentre/FLIP/releases) that the new release exists and the notes look right. Verify on [GHCR](https://github.com/orgs/londonaicentre/packages) that the `:prod` tags on `flip-api`, `trust-api`, `imaging-api`, and `data-access-api` were updated by the latest build.
+
+### Release notes
+
+There is no `CHANGELOG.md` — the GitHub Releases page is the changelog. Release notes are generated automatically from PR titles and labels via [`.github/release.yml`](.github/release.yml). To curate the notes for a release, ensure each PR going into `develop` has the right label before it is merged.
+
+### Deploying the release
+
+Once the `:prod` images are in GHCR, deploy with:
+
+```bash
+cd deploy/providers/AWS
+make full-deploy PROD=true
+```
+
+See [`deploy/providers/AWS/README.md`](deploy/providers/AWS/README.md) for full deployment instructions. For staging, no release tag is required: merging to `develop` publishes `:stag` images automatically, and `make full-deploy PROD=stag` rolls them out.
+
+### Hotfixes
+
+For an urgent fix on `main` without pulling in unrelated `develop` work:
+
+1. Branch from `main`, apply the fix, bump the patch version in the root `pyproject.toml` (and any affected service).
+1. Open a PR targeting `main`. On merge, the same automation kicks in — `release.yml` tags `v<X.Y.Z+1>` and `docker_build_*.yml` rebuilds `:prod`.
+1. Forward-port the fix to `develop` so the next regular release includes it.
+
+### Testing a release candidate before merge to main
+
+Branch builds **do not** auto-publish to GHCR. To deploy a release-candidate branch for testing, manually trigger the relevant build workflows first:
+
+```bash
+gh workflow run docker_build_flip_api.yml --ref <branch-name>
+gh workflow run docker_build_trust_trust_api.yml --ref <branch-name>
+# ...one per service whose image you want to test
+```
+
+Wait for green completion, then point your `.env` file's `DOCKER_TAG` at the sanitized branch name (the per-service workflows publish a `:<branch>` tag on every push).
+
 ## Adding a new service
 
 To extend the platform with a new service, add a definition to the appropriate Docker Compose file:
@@ -447,3 +587,28 @@ make -C flip-api delete_testing_projects
 
 These are also available as VS Code tasks via **Terminal > Run Task** — look for `Create testing projects` and
 `Delete testing projects`.
+
+## Documentation GIFs
+
+The admin user-action GIFs under `docs/source/assets/admin/` (referenced from
+`docs/source/sys-admin/admin-project-and-user-management.rst`) are
+auto-regenerated on every push to `main` by
+`.github/workflows/regenerate_docs_gifs.yml`. The workflow records the demo
+Cypress specs under `flip-ui/test/cypress/docs/admin/` against a fully mocked
+backend, converts the resulting videos to GIFs with `ffmpeg`, and opens a PR
+against `develop` for human review.
+
+To regenerate locally:
+
+```bash
+cd flip-ui
+npm run docs:record   # records videos under test/cypress/videos/docs/admin/
+npm run docs:gifs     # ffmpeg → docs/source/assets/admin/*.gif (requires ffmpeg on PATH)
+```
+
+The demo specs reuse the functional suite's fixtures and `globalIntercepts`,
+and layer a CSS cursor overlay (`flip-ui/test/cypress/docs/support/demoCursor.ts`)
+on top so the recorded GIFs read as visible user actions. When adding a new
+admin-area UI flow that should be documented, add one demo spec under
+`flip-ui/test/cypress/docs/admin/<gif-basename>.spec.ts` — the filename maps
+1:1 to the output GIF name.

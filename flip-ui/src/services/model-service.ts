@@ -95,6 +95,18 @@ export interface IPreSignedUrlBody {
     contentType: string | null;
 }
 
+/**
+ * Server-issued presigned POST policy. ``fields`` must be appended to a
+ * ``multipart/form-data`` body verbatim, with the file last under the field
+ * name ``file``. ``maxBytes`` mirrors the size cap baked into the policy so
+ * the UI can fail fast on oversized files.
+ */
+export interface IPreSignedUploadPolicy {
+    url: string;
+    fields: Record<string, string>;
+    maxBytes: number;
+}
+
 export type ModelStatus =
     "PENDING" |
     "INITIATED" |
@@ -309,17 +321,32 @@ export async function deleteModel(url: string): Promise<void> {
     await _http.delete<never>(url);
 }
 
-export async function uploadModelFile(url: string, file: Blob): Promise<void> {
-    await fetch(url, {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": file.type }
+export async function uploadModelFile(policy: IPreSignedUploadPolicy, file: File): Promise<void> {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(policy.fields)) {
+        form.append(key, value);
+    }
+    form.append("file", file);
+
+    const response = await fetch(policy.url, {
+        method: "POST",
+        body: form
     });
+
+    if (!response.ok) {
+        // S3 rejects oversized or policy-violating uploads at the edge —
+        // surface that as a thrown error so the caller can mark the file
+        // ERROR rather than silently treating an HTML/XML 4xx body as a
+        // successful upload.
+        throw new Error(`Upload rejected by storage (status ${response.status})`);
+    }
 }
 
-export async function getPreSignedUrl(url: string, body: IPreSignedUrlBody): Promise<string | null> {
-
-    const response = await _http.post<string>(url, body);
+export async function getPreSignedUrl(
+    url: string,
+    body: IPreSignedUrlBody
+): Promise<IPreSignedUploadPolicy | null> {
+    const response = await _http.post<IPreSignedUploadPolicy>(url, body);
 
     return response.data ?? null;
 }

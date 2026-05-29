@@ -233,28 +233,77 @@ describe("model-service", () => {
             global.fetch = originalFetch;
         });
 
-        it("PUTs the blob to the pre-signed URL with the blob's content type", async () => {
-            // Pinned to PUT + the file's own content type because S3's
-            // pre-signed URLs sign the method and Content-Type header — a
-            // POST or a default `application/octet-stream` would be
-            // rejected by the bucket policy.
+        it("POSTs multipart/form-data with the policy fields then the file last", async () => {
+            // S3 presigned POST signs the policy fields, so the form body
+            // must carry every server-issued field verbatim and the file
+            // must come last under the field name `file` — anything else
+            // is rejected by the bucket policy at the edge.
             const fetchMock = vi.fn().mockResolvedValue({ ok: true });
             global.fetch = fetchMock as unknown as typeof fetch;
-            const blob = new Blob(["payload"], { type: "application/json" });
+            const file = new File(["payload"], "trainer.py", { type: "text/x-python" });
+            const policy = {
+                url: "https://signed.example/upload",
+                fields: {
+                    key: "models/m-1/trainer.py",
+                    "Content-Type": "text/x-python",
+                    policy: "base64-policy",
+                    "x-amz-signature": "sig"
+                },
+                maxBytes: 100 * 1024 * 1024
+            };
 
-            await uploadModelFile("https://signed.example/upload", blob);
+            await uploadModelFile(policy, file);
 
-            expect(fetchMock).toHaveBeenCalledWith("https://signed.example/upload", {
-                method: "PUT",
-                body: blob,
-                headers: { "Content-Type": "application/json" }
-            });
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            const [calledUrl, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+            expect(calledUrl).toBe("https://signed.example/upload");
+            expect(init.method).toBe("POST");
+            expect(init.body).toBeInstanceOf(FormData);
+            const form = init.body as FormData;
+            expect(Array.from(form.keys())).toEqual([
+                "key",
+                "Content-Type",
+                "policy",
+                "x-amz-signature",
+                "file"
+            ]);
+            expect(form.get("key")).toBe("models/m-1/trainer.py");
+            expect(form.get("Content-Type")).toBe("text/x-python");
+            expect(form.get("file")).toBe(file);
+        });
+
+        it("throws when the storage backend rejects the upload", async () => {
+            // S3 returns 4xx (with an XML body) for policy violations such
+            // as oversized objects. Surfacing this as a thrown error lets
+            // the caller mark the file ERROR instead of silently treating
+            // a rejection as success.
+            global.fetch = vi.fn().mockResolvedValue({
+                ok: false,
+                status: 403
+            }) as unknown as typeof fetch;
+            const policy = {
+                url: "https://signed.example/upload",
+                fields: { key: "models/m-1/trainer.py" },
+                maxBytes: 100 * 1024 * 1024
+            };
+
+            await expect(
+                uploadModelFile(policy, new File(["payload"], "trainer.py"))
+            ).rejects.toThrow(/status 403/);
         });
     });
 
     describe("getPreSignedUrl", () => {
-        it("returns the presigned URL string from the response", async () => {
-            vi.mocked(_http.post).mockResolvedValue({ data: "https://signed/upload" } as never);
+        it("returns the presigned POST policy from the response", async () => {
+            const policy = {
+                url: "https://signed/upload",
+                fields: {
+                    key: "models/m-1/trainer.py",
+                    "Content-Type": "text/x-python"
+                },
+                maxBytes: 100 * 1024 * 1024
+            };
+            vi.mocked(_http.post).mockResolvedValue({ data: policy } as never);
 
             const result = await getPreSignedUrl(
                 "/files/upload",
@@ -271,7 +320,7 @@ describe("model-service", () => {
                     contentType: "text/x-python"
                 }
             );
-            expect(result).toBe("https://signed/upload");
+            expect(result).toEqual(policy);
         });
 
         it("returns null when the backend returns no body", async () => {

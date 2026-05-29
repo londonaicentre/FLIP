@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import Enum, StrEnum
 
 # ---------------------------
 # Enums
@@ -173,3 +173,19 @@ class XNATImageStatus(str, Enum):
     RETRIEVE_ERROR = "RETRIEVE_ERROR"
     CREATED = "CREATED"
     DELETED = "DELETED"
+
+
+class FLJobStatus(StrEnum):
+    """Normalized FL-backend job lifecycle status.
+
+    The shared job-metadata contract (GitHub issue #490): every FL-API adapter
+    (fl-api-flower, fl-api-base) maps its native runtime status into one of these
+    values, and flip-api consumes only these. Distinct from ``JobStatus`` above,
+    which tracks the FL scheduler queue state.
+    """
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    FINISHED = "FINISHED"
+    FAILED = "FAILED"
+    STOPPED = "STOPPED"

@@ -50,4 +50,4 @@ Security and IAM
 
 Troubleshooting
 
-- If the stack doesn't start, connect via SSM (`ssh flip-trust`) and inspect `/home/ubuntu/compose_trust.development.yml`, `/home/ubuntu/.env.development` and the command `docker compose -f compose_trust.development.yml up -d`.
+- If the stack doesn't start, connect via SSM (`ssh flip-trust`) and inspect `/home/ubuntu/deploy/compose_trust.development.yml`, `/home/ubuntu/.env.development` and the command `docker compose --project-directory . -f deploy/compose_trust.development.yml up -d`.

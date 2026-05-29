@@ -38,7 +38,7 @@ class OmopCohortResults(BaseModel):
     data: list[OmopData]
 
     @validator("data", pre=True, always=True)
-    def ensure_data_is_list(cls, value):
+    def ensure_data_is_list(cls, value: Any) -> list[Any]:
         if value is None:
             return []
         return value

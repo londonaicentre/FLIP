@@ -42,9 +42,12 @@ jobs:
       - name: Set Node.js version
         uses: actions/setup-node@v5 #
         with:
-          node-version: "22" # Specify the Node.js version you need
+          # Node 24 LTS bundles npm >=11.10 (active LTS since Oct 2025). Node
+          # 22 LTS bundles npm 10.x which silently ignores `.npmrc
+          # min-release-age`, leaving the supply-chain cooldown unenforced.
+          node-version: "24"
       - name: Install dependencies
-        run: npm install
+        run: npm ci
 
       - name: Run lint
         run: npm run lint
@@ -113,7 +116,10 @@ jobs:
       - name: Set Node.js version
         uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          # Node 24 LTS bundles npm >=11.10; see the comment in the flip-ui
+          # job above. The default `npm ci` run by cypress-io/github-action
+          # then honours `.npmrc min-release-age`.
+          node-version: "24"
           cache: npm
           cache-dependency-path: flip-ui/package-lock.json
 

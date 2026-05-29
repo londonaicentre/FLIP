@@ -16,17 +16,11 @@ import { describe, expect, it } from "vitest";
 
 import SiteBanner from "@/partials/admin/banner/SiteBanner.vue";
 
-const confirmModalStub = {
-    template: "<div data-test=\"confirm-modal-stub\"><slot name=\"confirmation\" /></div>"
-};
+const confirmModalStub = { template: "<div data-test=\"confirm-modal-stub\"><slot name=\"confirmation\" /></div>" };
 
 describe("SiteBanner", () => {
     it("wires the confirmation slot into AiConfirmModal with the site-banner warning", () => {
-        const wrapper = mountComponent(SiteBanner, {
-            global: {
-                stubs: { AiConfirmModal: confirmModalStub }
-            }
-        });
+        const wrapper = mountComponent(SiteBanner, { global: { stubs: { AiConfirmModal: confirmModalStub } } });
 
         const html = wrapper.html();
 

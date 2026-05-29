@@ -45,7 +45,10 @@ const stubs = {
 function mountConnectionStatus() {
     return mount(ConnectionStatus, {
         global: {
-            plugins: [createTestingPinia({ createSpy: vi.fn, stubActions: false })],
+            plugins: [createTestingPinia({
+                createSpy: vi.fn,
+                stubActions: false
+            })],
             stubs,
             directives: { highlightjs: () => {} }
         }
@@ -64,7 +67,11 @@ describe("ConnectionStatus", () => {
 
     it("renders nvflare backend as 'NVFlare' next to the NET title", () => {
         mockSwrvData.value = [
-            { name: "net-1", fl_backend: "nvflare", clients: [] }
+            {
+                name: "net-1",
+                fl_backend: "nvflare",
+                clients: []
+            }
         ];
         const wrapper = mountConnectionStatus();
         const titles = wrapper.findAll("h3");
@@ -75,7 +82,11 @@ describe("ConnectionStatus", () => {
 
     it("renders flower backend as 'Flower' next to the NET title", () => {
         mockSwrvData.value = [
-            { name: "net-2", fl_backend: "flower", clients: [] }
+            {
+                name: "net-2",
+                fl_backend: "flower",
+                clients: []
+            }
         ];
         const wrapper = mountConnectionStatus();
         const titles = wrapper.findAll("h3");
@@ -86,7 +97,10 @@ describe("ConnectionStatus", () => {
 
     it("omits parentheses when fl_backend is absent", () => {
         mockSwrvData.value = [
-            { name: "net-1", clients: [] }
+            {
+                name: "net-1",
+                clients: []
+            }
         ];
         const wrapper = mountConnectionStatus();
         const titles = wrapper.findAll("h3");

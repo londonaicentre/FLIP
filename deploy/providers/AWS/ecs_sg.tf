@@ -25,6 +25,10 @@ resource "aws_security_group" "ecs_flip_api" {
   name        = "ecs-flip-api"
   description = "ECS flip-api task - inbound HTTP from ALB"
   vpc_id      = module.flip_vpc.vpc_id
+
+  tags = {
+    FlipSG = "true"
+  }
 }
 
 resource "aws_security_group_rule" "ecs_flip_api_ingress_alb_http" {
@@ -65,6 +69,10 @@ resource "aws_security_group" "ecs_fl_api" {
   name        = "ecs-fl-api"
   description = "ECS fl-api-net-1 task - inbound HTTP from VPC"
   vpc_id      = module.flip_vpc.vpc_id
+
+  tags = {
+    FlipSG = "true"
+  }
 }
 
 resource "aws_security_group_rule" "ecs_fl_api_ingress_vpc_http" {
@@ -95,6 +103,10 @@ resource "aws_security_group" "ecs_fl_server" {
   name        = "ecs-fl-server"
   description = "ECS fl-server-net-1 task - inbound gRPC from NLB + HTTP from VPC"
   vpc_id      = module.flip_vpc.vpc_id
+
+  tags = {
+    FlipSG = "true"
+  }
 }
 
 resource "aws_security_group_rule" "ecs_fl_server_ingress_nlb_grpc" {

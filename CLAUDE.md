@@ -53,12 +53,14 @@ Service-specific details are in `flip-api/CLAUDE.md`, `trust/CLAUDE.md`, `trust/
 ### Running Services
 
 ```bash
-make up                    # Start all services (requires AWS access)
+make up                    # Start all services (requires AWS access) — pulls images from GHCR
+make up BUILD=true         # Same, but rebuild repo-built services from local source instead of pulling
 make up-no-trust           # Start central hub only
 make up-trusts             # Start trust services only
 make down                  # Stop all services
 make restart               # Stop and restart all
-make build                 # Build all Docker images
+make build                 # Build all Docker images (standalone, --no-cache; does not start)
+make lock                  # Regenerate every uv.lock from its pyproject.toml
 make ui                    # Start UI only
 make clean                 # Remove all stopped containers, networks, and images
 make ci                    # Run CI pipeline locally using act
@@ -69,17 +71,53 @@ make debug-all             # Debug all API services
 make debug-off-all         # Remove all debug modes
 ```
 
+#### Dev image sourcing: pull-by-default
+
+In development (`PROD` unset), `make up` **pulls** the repo-built services
+(`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`) from GHCR
+rather than building them — they carry `image:` + `pull_policy: always` in the dev
+compose, with local `src/` bind-mounted on top so live reload still runs your
+working copy. Pass `BUILD=true` (e.g. `make up BUILD=true`) to rebuild from source
+instead — required after a dependency (`uv.lock`/`pyproject.toml`) or Dockerfile
+change, since those live in the image layer, not the mounted `src/`.
+
+- **Prerequisite:** be logged into GHCR (`docker login ghcr.io`) and have the
+  `${DOCKER_TAG}` tag published (dev defaults to `:stag`, the `develop` build).
+  A failed pull no longer silently falls back to a build.
+- **`flip-ui` is the exception** — it has no published GHCR image, so it always
+  builds locally. `make build` remains the standalone `--no-cache` builder.
+- Stag/prod are unchanged: `PROD=stag|true` selects the prod compose (baked
+  `image:`-only services, no mounts).
+
 ### Testing
 
 ```bash
 make unit_test             # All unit tests across all services (from root)
 make integration_test      # flip-api + trust integration tests (from root)
 make tests                 # flip-ui + flip-api tests (from root)
+make e2e_smoke             # End-to-end smoke against a running stack (see below)
 # From a service directory (e.g., flip-api/):
 make test                  # ruff + mypy + pytest (unit + integration)
 make unit_test             # Unit tests only
 make integration_test      # Integration tests only (also available from root and trust/)
 make local_test            # Tests without Docker
+```
+
+### End-to-End Smoke Test
+
+`make e2e_smoke` (from root) drives a full project lifecycle against an **already-running stack**: create project → submit cohort query → wait for image pull → run FL training → download results. It is the scripted form of the manual UI sanity-check and is **not run in CI**. Long-running (image pull + FL training) — run it in the background.
+
+Prerequisites:
+- Stack up via `make up` (central hub + trusts + XNAT) with trusts registered; Orthanc PACS seeded with DICOM data so image pull has something to pull.
+- Sibling repo `../flip-fl-base-flower` (Flower) or `../flip-fl-base` (NVFLARE) checked out — its chest-xray tutorial supplies the model files and `query.sql`.
+
+Defaults track `FL_BACKEND` (default `flower`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `../../flip-fl-base-flower/tutorials/xray_classification/`. Common overrides:
+
+```bash
+make e2e_smoke FL_BACKEND=nvflare                              # use the NVFLARE tutorial
+make e2e_smoke MODEL_FILES_DIR=/path/app QUERY_FILE=/path/q.sql
+make e2e_smoke EXTRA_ARGS="--abort-midway"                     # exercise the FL stop-training path
+make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
 ```
 
 ### Linting & Type Checking
@@ -147,16 +185,16 @@ After changes, evaluate if docs need updating:
 
 | Change Type | Documentation to Review |
 |-------------|------------------------|
-| New service/component | `README.md`, `CONTRIBUTING.md`, `docs/source/2_components.rst` |
-| New API endpoints | `docs/source/5_api_reference.rst`, service `README.md` |
-| Changed env vars | `.env.development.example`, `CONTRIBUTING.md`, `docs/source/3_sys-admin.rst` |
+| New service/component | `README.md`, `CONTRIBUTING.md`, `docs/source/components.rst` |
+| New API endpoints | `docs/source/api-reference.rst`, service `README.md` |
+| Changed env vars | `.env.development.example`, `CONTRIBUTING.md`, `docs/source/sys-admin.rst` |
 | New dependencies | `CONTRIBUTING.md`, service `README.md` |
-| Changed deployment config | `deploy/README.md`, `docs/source/3_sys-admin.rst` |
+| Changed deployment config | `deploy/README.md`, `docs/source/sys-admin.rst` |
 | New Make targets | `README.md`, this file |
-| User-facing workflow changes | `docs/source/4_user-guides.rst` |
+| User-facing workflow changes | `docs/source/user-guides.rst` |
 | FL framework features | `docs/source/components/component-fl-nodes.rst` |
 | Trust service changes | `trust/README.md`, relevant `trust/*/README.md` |
-| Auth/role changes | `docs/source/components/component-user-roles.rst` |
+| Auth/role changes | `docs/source/sys-admin/admin-user-roles.rst` |
 
 ## Code Style & Conventions
 
@@ -200,6 +238,8 @@ After changes, evaluate if docs need updating:
 - `CENTRAL_HUB_API_URL` — public base URL of flip-api (with `/api`); read by flip-ui and trust-api. In prod this is the CloudFront URL.
 - `FLIP_API_INTERNAL_URL` — Central-Hub-internal base URL of flip-api (with `/api`); read **only** by fl-server. Must resolve over the Docker network (e.g. `http://flip-api:8000/api`), never the CloudFront URL — CloudFront strips `X-Internal-Service-Key` at the edge.
 - `ENFORCE_MFA` — `true` (the `Settings` default; do **not** set in `.env*` files for stag/prod) gates every authenticated route on TOTP enrolment via the app-layer MFA check in `verify_token`. The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator app. Production compose (`compose.production.yml`) passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so the env var can be overridden from `.env.stag`/`.env.prod` for testing, but falls back to the secure `true` default when unset. Intentionally not in `.env.development.example` or AWS Secrets Manager — the Settings default (`true`) is the canonical secure anchor. The UI mirrors this flag from `/users/me/mfa/status` and skips the enrolment redirect when it's false.
+- `MAX_MODEL_FILE_BYTES` — Hard cap on the file size of a single model-file upload, in bytes. Bound on the presigned POST policy so S3 rejects oversized payloads at the edge — the hub never sees them. Default `104857600` (100 MiB). The S3 policy condition allows a small fixed overhead above this for multipart/form-data framing (see `_MULTIPART_OVERHEAD_BUFFER_BYTES` in `flip_api/utils/s3_client.py`); the UI guard at `flip-ui/src/utils/file.ts` compares against this raw value so a file at exactly the cap is accepted on both sides.
+- `PRE_SIGNED_URL_EXPIRATION_SECONDS` — Setting default for the model-file presigned POST policy TTL, in seconds. The hub silently clamps to the 600s security ceiling encoded as `MAX_PUT_PRESIGNED_URL_TTL_SECONDS` in `flip_api/utils/s3_client.py` (a leaked policy is a writable capability against the upload bucket, so the leak window must stay tight). Setting default is `3600`; effective ceiling 600. Over-ceiling callers leave a warning in the logs.
 
 ## Deployment Architecture
 
@@ -212,9 +252,13 @@ After changes, evaluate if docs need updating:
 
 GitHub Actions: `test_flip_api.yml`, `test_flip_ui.yml`, `test_trust_*.yml`, `docker_build_*.yml`, `validate_terraform.yml`, `secret-scanning.yml`, `docs.yml`, `pr_acceptance_criteria.yml`. Run locally: `make ci` (uses `act`).
 
-### Docker image builds: manual trigger required for branches
+### Docker image builds: gated on tests, manual trigger for branches
 
-**The `docker_build_*.yml` workflows only auto-publish to GHCR on merges to `develop` and `main`.** Branch pushes do NOT build images. If you pin a branch-named tag in a compose file (e.g. `ghcr.io/londonaicentre/flip-api:my-feature-branch`) for prod testing, you must manually trigger the relevant build workflow first via `workflow_dispatch`:
+**The application `docker_build_*.yml` workflows (`flip_api`, `trust_trust_api`, `trust_imaging_api`, `trust_data_access_api`) auto-publish to GHCR only after their service's test workflow passes on `develop` or `main`.** They trigger via `workflow_run` on the matching test workflow (`FLIP API CI`, `Trust - Trust API CI`, etc.) and a job-level `if` gates on `workflow_run.conclusion == 'success'` — a red test suite never publishes. Path filtering is inherited from the test workflow, so a build still only fires when that service changed. (`orthanc`, `xnat_*` keep their direct push trigger — they have no test suite to gate on; `flip-ui` is a CI smoke test that never publishes.)
+
+> **Note:** `workflow_run` triggers only take effect once these workflow files are on the repo's **default branch**. The first merge that introduces them won't retroactively publish; subsequent qualifying pushes will.
+
+Branch pushes do NOT build images. If you pin a branch-named tag in a compose file (e.g. `ghcr.io/londonaicentre/flip-api:my-feature-branch`) for prod testing, manually trigger the relevant build workflow via `workflow_dispatch` (which bypasses the test gate):
 
 ```bash
 gh workflow run docker_build_flip_api.yml --ref <branch-name>
@@ -227,7 +271,7 @@ Wait for green completion (`gh run list --workflow=docker_build_flip_api.yml --b
 
 ## Pre-commit Hooks
 
-TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict markers, YAML validation, private key detection, env var validation. Install: `pre-commit install`.
+TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict markers, YAML validation, private key detection, env var validation, uv lockfile sync (`uv-lock`, one entry per uv project). Install: `pre-commit install`.
 
 ## Security Rules
 
@@ -240,6 +284,7 @@ TruffleHog, detect-secrets, large file check (max 1000KB), merge conflict marker
 - Trust-internal service key for trust-api / imaging-api / fl-client → imaging-api / data-access-api auth (per-trust, never leaves trust env). See **Trust-internal Service Authentication** below.
 - FL clients intentionally have no Central Hub credentials.
 - Do not hardcode env values in Dockerfiles or compose files.
+- 72-hour supply-chain cooldown on Python/npm package installs — enforced by uv `exclude-newer` (`[tool.uv]` in every `pyproject.toml`) and npm `min-release-age` (`flip-ui/.npmrc`, requires npm >= 11.10 which Node 24 LTS ships), backstopped by a `uv lock --check` CI gate in `secret-scanning.yml`. See CONTRIBUTING.md ("Dependency cooldown").
 
 ## Trust-internal Service Authentication
 
@@ -281,8 +326,8 @@ The senders construct the header inline at call sites:
 ## Documentation Files
 
 Key docs (read on demand):
-- Auth/deployment: `docs/source/3_sys-admin.rst`
-- Components: `docs/source/2_components.rst`
-- API reference: `docs/source/5_api_reference.rst`
-- User guides: `docs/source/4_user-guides.rst`
+- Auth/deployment: `docs/source/sys-admin.rst`
+- Components: `docs/source/components.rst`
+- API reference: `docs/source/api-reference.rst`
+- User guides: `docs/source/user-guides.rst`
 - AWS deployment: `deploy/providers/AWS/README.md`

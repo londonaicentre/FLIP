@@ -31,6 +31,9 @@ services:
       - ./omop-db/volumes/${TRUST_NAME}/db_data:/var/lib/postgresql/data
 
   orthanc:
+    # Pull from GHCR by default; `make up BUILD=true` rebuilds from build: below.
+    image: ghcr.io/londonaicentre/orthanc:${DOCKER_TAG}
+    pull_policy: always
     build:
       context: ./orthanc
       dockerfile: Dockerfile
@@ -47,6 +50,10 @@ services:
           {"XNAT": {"AET": "XNAT", "Host": "xnat-web", "Port": "${XNAT_PORT}"}}
 
   imaging-api:
+    # Pull from GHCR by default; local imaging_api/ bind-mount overlays it for
+    # live reload. `make up BUILD=true` rebuilds from the build: block instead.
+    image: ghcr.io/londonaicentre/imaging-api:${DOCKER_TAG}
+    pull_policy: always
     build:
       args:
         UID: ${UID}
@@ -82,6 +89,10 @@ services:
       - ./observability/log_config:/app/log_config:ro
 
   data-access-api:
+    # Pull from GHCR by default; local data_access_api/ bind-mount overlays it for
+    # live reload. `make up BUILD=true` rebuilds from the build: block instead.
+    image: ghcr.io/londonaicentre/data-access-api:${DOCKER_TAG}
+    pull_policy: always
     build:
       args:
         UID: ${UID}
@@ -111,6 +122,10 @@ services:
       - ./observability/log_config:/app/log_config:ro
 
   trust-api:
+    # Pull from GHCR by default; local trust_api/ bind-mount overlays it for live
+    # reload. `make up BUILD=true` rebuilds from the build: block instead.
+    image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}
+    pull_policy: always
     build:
       args:
         UID: ${UID}
@@ -124,7 +139,7 @@ services:
     # debugging purposes
     environment:
       # Dev-only override: the env-file value of CENTRAL_HUB_API_URL is the browser-facing
-      # URL (host port 8080 published by flip-ui's nginx) and is unreachable from inside
+      # URL (host port 8080, where flip-api is published) and is unreachable from inside
       # this container, so trust-api dials flip-api directly over the docker network here.
       # In prod compose files the env-file value is the shared public CloudFront URL and
       # works for both browser and trust-api, so this override is dev-only.
