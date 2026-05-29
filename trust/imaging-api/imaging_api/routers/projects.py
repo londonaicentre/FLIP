@@ -149,13 +149,9 @@ async def create_project_from_central_hub_project(
 
     # Create a project-scoped event subscription for automatic DICOM-to-NIfTI conversion
     # Active when dicom_to_nifti=True, deactivated when False (can be toggled later via XNAT API)
-    # If the Container Service plugin is not installed, skip gracefully (e.g. K8s trusts without Docker)
-    try:
-        create_project_event_subscription(
-            project.ID, "xnat/dcm2niix:latest", central_hub_project.dicom_to_nifti, headers
-        )
-    except Exception:
-        logger.warning("Container plugin not available, skipping event subscription")
+    create_project_event_subscription(
+        project.ID, "xnat/dcm2niix:latest", central_hub_project.dicom_to_nifti, headers
+    )
 
     # Add central hub users to imaging project
     # Will create XNAT users if they do not exist, and add them to the XNAT project
