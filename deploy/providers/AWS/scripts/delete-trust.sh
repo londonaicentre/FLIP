@@ -50,11 +50,19 @@ if [ -z "$SUBNETS" ] || [ -z "$SGS" ]; then
     exit 1
 fi
 
-# Wait for the service to be stable so we know the freshest task image (the
-# one carrying delete_trust.py) is what our one-off task will run.
+# Best-effort wait for the service to be stable so we know the freshest task
+# image (the one carrying delete_trust.py) is what our one-off task will run.
+# Advisory, NOT a hard gate: services-stable is a 10-minute waiter that fails
+# spuriously when the service is functionally healthy but mid-rollout (e.g.
+# right after a force-redeploy, or during RDS-secret-rotation flap). A running
+# task already implies the task-def is live, so on a timeout we warn + proceed
+# rather than abort the delete.
 log_info "Waiting for the $ECS_SERVICE service to reach a stable state..."
-aws_cmd ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
-log_success "$ECS_SERVICE service is stable."
+if aws_cmd ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"; then
+    log_success "$ECS_SERVICE service is stable."
+else
+    log_warn "services-stable did not complete in time — service may be mid-rollout. Proceeding anyway."
+fi
 
 log_info "Hard-deleting trust '$NAME' via a one-off ECS task..."
 cmd_args=(uv run python -m flip_api.scripts.delete_trust --name "$NAME")
