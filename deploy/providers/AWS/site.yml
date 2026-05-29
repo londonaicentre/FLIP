@@ -14,6 +14,9 @@
 - name: create EC2 Ansible inventory hosts on-the-fly
   hosts: localhost
   gather_facts: false
+  # `always` so the inventory (add_host for flip-trust) is built even when a
+  # tag filter like `--tags flkit` selects only a later play.
+  tags: always
   tasks:
     - name: ensure flip_aicentre_bucket variable is defined
       assert:
@@ -201,6 +204,10 @@
 - name: download NVFLARE participant kit services to Trust EC2
   hosts: trust_ec2
   become: true
+  # `flkit` so this kit-staging play can be run on its own (e.g. re-staging a
+  # kit after re-registration) via `--tags flkit`, without the host reboot /
+  # OMOP+Orthanc data restore the full playbook performs.
+  tags: flkit
   vars:
     # FL_KIT_DIR on the trust host — kit root containing net-1/services/<slot>/
     # for nvflare and net-1/{certificates,keys} for flower. The trust kit file
@@ -250,6 +257,7 @@
 - name: download Flower participant kit to Trust EC2
   hosts: trust_ec2
   become: true
+  tags: flkit
   vars:
     # See the NVFLARE play above for the rationale on fl_kit_dir / the
     # preserved net-1/ hierarchy. For flower the compose mounts are
