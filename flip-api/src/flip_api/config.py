@@ -83,8 +83,11 @@ class Settings(BaseSettings):
     NET_ENDPOINTS: dict[str, str]
     TRUST_NAMES: list[str]
 
-    # FL settings
-    FL_BACKEND: Literal["nvflare", "flower"] = "nvflare"
+    # NOTE: The active FL backend is no longer a flip-api setting. It is self-reported by
+    # each fl-api net on /check_server_status and persisted on the FLNets row, so switching
+    # frameworks (make restart-fl) needs no flip-api restart. The FL_BACKEND env var still
+    # exists at the deploy layer (compose/Makefile use it to pick which fl-* images to run)
+    # but is intentionally not read here — see fl_scheduler_service.resolve_backend.
 
     # MFA enforcement gate. Defaults to True so every unknown environment
     # (prod, stag, any new deploy) requires TOTP enrolment. Dev compose

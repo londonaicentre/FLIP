@@ -11,42 +11,41 @@
 #
 
 import json
-from pathlib import Path
 
 from flip_api.config import get_settings
-from flip_api.utils.constants import JOB_TYPES_REQUIRED_FILES_FILE
+from flip_api.domain.interfaces.fl import required_job_types_file
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import S3Client
 
-# Path to the JSON file containing job types and required files (relative to this file)
-REQUIRED_JOB_TYPES_FILE = Path(__file__).parent.parent.parent / "assets" / JOB_TYPES_REQUIRED_FILES_FILE
 
+def pull_required_files_json_to_assets(fl_backend: FLBackend) -> None:
+    """Pulls the per-backend ``required_files.json`` from S3 into the local assets folder.
 
-# TODO Review: This is disruptive for development if the file on the s3 bucket is not in sync with the current codebase.
-def pull_required_files_json_to_assets() -> None:
-    """
-    Pulls required_files.json from S3 and saves it to the local assets folder.
+    S3 is the single source of truth — there is no checked-in or in-code fallback. If the
+    download fails the error is logged and re-raised; callers decide whether to proceed
+    (model creation treats this as best-effort). This mirrors the base-application contract:
+    without S3 there is nothing to bundle.
+
+    Args:
+        fl_backend (FLBackend): The FL backend whose manifest to pull (``nvflare`` or ``flower``).
+
+    Raises:
+        Exception: If the object cannot be fetched from S3 or is not valid JSON.
     """
     s3 = S3Client()
-    bucket_path = f"{get_settings().FL_APP_BASE_BUCKET}/required_files.json"
+    bucket_path = f"{get_settings().FL_APP_BASE_BUCKET}/{fl_backend}/required_files.json"
+    dest = required_job_types_file(fl_backend)
 
     try:
         s3_obj = s3.get_object(bucket_path)
         content = s3_obj["Body"].read()
-        # Validate JSON
+        # Validate JSON before writing so we never persist a corrupt manifest
         json.loads(content)
-        with open(REQUIRED_JOB_TYPES_FILE, "wb") as f:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with open(dest, "wb") as f:
             f.write(content)
-        logger.info(f"Downloaded required_files.json from S3 to {REQUIRED_JOB_TYPES_FILE}")
+        logger.info(f"Downloaded required_files.json for [{fl_backend}] from {bucket_path} to {dest}")
     except Exception as e:
-        logger.error(f"Failed to download {JOB_TYPES_REQUIRED_FILES_FILE}: {e}")
-        # Fallback to default JSON
-        if get_settings().FL_BACKEND == "nvflare":
-            fallback = {"standard": ["trainer.py", "validator.py", "models.py", "config.json"]}
-        elif get_settings().FL_BACKEND == "flower":
-            fallback = {"standard": ["client_app.py", "models.py"]}
-        else:
-            fallback = {}
-        with open(REQUIRED_JOB_TYPES_FILE, "w") as f:
-            json.dump(fallback, f, indent=4)
-        logger.info(f"Wrote fallback to {REQUIRED_JOB_TYPES_FILE}")
+        logger.error(f"Failed to download required_files.json for [{fl_backend}] from {bucket_path}: {e}")
+        raise

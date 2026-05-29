@@ -13,42 +13,53 @@
 import json
 from enum import Enum
 from pathlib import Path
-from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, computed_field, field_validator
 
 from flip_api.domain.schemas.status import ClientStatus, FLJobStatus
-from flip_api.domain.schemas.types import TrimStr
-from flip_api.utils.constants import JOB_TYPES_REQUIRED_FILES_FILE
+from flip_api.domain.schemas.types import FLBackend, TrimStr
+from flip_api.utils.constants import job_types_required_files_name
+from flip_api.utils.logger import logger
 
-# Path to the JSON file containing job types and required files (relative to this file)
-REQUIRED_JOB_TYPES_FILE = Path(__file__).parent.parent.parent / "assets" / JOB_TYPES_REQUIRED_FILES_FILE
+# Directory where the per-backend required-files manifests are downloaded at runtime.
+# The manifests themselves are never committed to source control (gitignored) — S3 is the
+# single source of truth, pulled per FL backend on model creation. See pull_required_files.py.
+ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"
 
 
-def _load_job_types_config() -> dict[str, list[str]]:
-    """Loads the job types configuration from the JSON file.
+def required_job_types_file(fl_backend: FLBackend) -> Path:
+    """Local path of the per-backend job-types/required-files manifest.
+
+    Args:
+        fl_backend (FLBackend): The FL backend the manifest belongs to (``nvflare`` or ``flower``).
 
     Returns:
-        dict[str, list[str]]: A dictionary mapping job type names to their required files.
-
-    Raises:
-        FileNotFoundError: If the JOB_TYPES_REQUIRED_FILES_FILE file is not found.
-        json.JSONDecodeError: If the JSON file is malformed.
+        Path: Absolute path to the per-backend manifest under the assets directory.
     """
+    return ASSETS_DIR / job_types_required_files_name(fl_backend)
+
+
+def _load_job_types_config(fl_backend: FLBackend) -> dict[str, list[str]]:
+    """Loads the job types configuration for a backend from its on-disk manifest.
+
+    The manifest is pulled from S3 at runtime; if it is missing (e.g. S3 was unreachable
+    when the model was created) an empty mapping is returned so the API does not crash.
+
+    Args:
+        fl_backend (FLBackend): The FL backend whose manifest to load (``nvflare`` or ``flower``).
+
+    Returns:
+        dict[str, list[str]]: A dictionary mapping job type names to their required files,
+        or an empty dict if the manifest is absent or malformed.
+    """
+    path = required_job_types_file(fl_backend)
     try:
-        with open(REQUIRED_JOB_TYPES_FILE, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
-        # Log error and return empty dict so the API doesn't crash
-        import sys
-
-        print(f"[ERROR] Could not load {JOB_TYPES_REQUIRED_FILES_FILE}: {e}", file=sys.stderr)
+        logger.warning(f"Could not load required-files manifest {path}: {e}")
         return {}
-
-
-# Load job types configuration at module level
-_JOB_TYPES_CONFIG = _load_job_types_config()
 
 
 class IStartTrainingBody(BaseModel):
@@ -102,6 +113,9 @@ class IInitiateTrainingInputPayload(BaseModel):
 class INetDetails(BaseModel):
     name: str
     endpoint: str
+    # The FL backend this net runs, as self-reported by its fl-api and persisted on the
+    # FLNets row. None until the net has reported (or on an older fl-api that does not).
+    fl_backend: FLBackend | None = None
 
 
 class IServerStatus(BaseModel):
@@ -110,6 +124,9 @@ class IServerStatus(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     status: str
+    # The FL backend the server runs, self-reported by fl-api on /check_server_status.
+    # Optional so older fl-api responses (pre backend self-report) still validate.
+    fl_backend: FLBackend | None = None
 
 
 class IClientStatus(BaseModel):
@@ -134,7 +151,8 @@ class IClientStatus(BaseModel):
 
 class INetStatus(BaseModel):
     name: str
-    fl_backend: Literal["nvflare", "flower"]
+    # None when the net has not yet reported its backend (e.g. offline and never polled).
+    fl_backend: FLBackend | None = None
     online: bool | None = None
     registered_clients: int | None = None
     net_in_use: bool | None = None
@@ -161,43 +179,53 @@ class AggregationWeights:
     MaximumAggregationWeight = 1
 
 
-# Dynamically create JobTypes enum from the JSON configuration
-JobTypes = Enum("JobTypes", {job_type: job_type for job_type in _JOB_TYPES_CONFIG.keys()})  # type: ignore[misc]
+class JobTypes(Enum):
+    """The fixed vocabulary of FL job types.
+
+    The job-type *names* are a stable, backend-agnostic concept defined in code; the
+    *required files* for each type are data, pulled per-backend from S3 at runtime (the
+    file lists differ between nvflare and flower). Keeping the enum static decouples it
+    from the on-disk manifest, which may be absent at import time (gitignored, pulled lazily).
+    """
+
+    standard = "standard"
+    evaluation = "evaluation"
+    fed_opt = "fed_opt"
+    diffusion_model = "diffusion_model"
 
 
 class JobRequiredFiles(BaseModel):
-    model_config = {"extra": "allow"}
-
-    def __init__(self, **data: object) -> None:
-        """Initialize with required files from JSON configuration."""
-        super().__init__(**data)
-        config = _load_job_types_config()
-        for job_type, files in config.items():
-            setattr(self, job_type, files)
-
     @classmethod
-    def get_required_files(cls, job_type: JobTypes) -> list[str]:
-        """Returns the list of required files for a specific job type (always reloads from disk).
+    def get_required_files(cls, job_type: JobTypes, fl_backend: FLBackend) -> list[str]:
+        """Returns the list of required files for a job type on a given backend.
+
+        Always reloads from the per-backend on-disk manifest.
 
         Args:
             job_type (JobTypes): The job type to look up.
+            fl_backend (FLBackend): The FL backend whose manifest to read (``nvflare`` or ``flower``).
 
         Returns:
-            list[str]: Required file names for ``job_type``, or an empty list if the job type is
-            not present in the on-disk configuration.
+            list[str]: Required file names for ``job_type``, or an empty list if the job type
+            (or the manifest) is not present on disk.
         """
-        config = _load_job_types_config()
+        config = _load_job_types_config(fl_backend)
         return config.get(job_type.value, [])
 
     @classmethod
-    def get_all_job_types_with_files(cls) -> dict[str, list[str]]:
-        """Returns all job types with their required files (always reloads from disk).
+    def get_all_job_types_with_files(cls, fl_backend: FLBackend) -> dict[str, list[str]]:
+        """Returns all job types with their required files for a given backend.
+
+        Always reloads from the per-backend on-disk manifest.
+
+        Args:
+            fl_backend (FLBackend): The FL backend whose manifest to read (``nvflare`` or ``flower``).
 
         Returns:
             dict[str, list[str]]: A copy of the on-disk mapping of job type names to their
             required files.
         """
-        return _load_job_types_config().copy()
+        return _load_job_types_config(fl_backend).copy()
 
     @classmethod
     def get_job_type_names(cls) -> list[str]:
@@ -206,4 +234,4 @@ class JobRequiredFiles(BaseModel):
         Returns:
             list[str]: List of job type names.
         """
-        return list(_JOB_TYPES_CONFIG.keys())
+        return [job_type.value for job_type in JobTypes]

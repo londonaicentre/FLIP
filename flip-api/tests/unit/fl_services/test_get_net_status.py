@@ -38,7 +38,8 @@ def fake_request():
 @pytest.fixture
 def mock_get_net_by_name():
     with patch("flip_api.fl_services.get_net_status.get_net_by_name") as mock:
-        mock.return_value = MagicMock(endpoint="endpoint", name="net-name")
+        # The net carries its self-reported backend; the endpoint reads it off net_info.
+        mock.return_value = MagicMock(endpoint="endpoint", name="net-name", fl_backend="nvflare")
         yield mock
 
 
@@ -64,15 +65,8 @@ def mock_get_trusts():
         yield mock
 
 
-@pytest.fixture
-def mock_get_settings():
-    with patch("flip_api.fl_services.get_net_status.get_settings") as mock:
-        mock.return_value.FL_BACKEND = "nvflare"
-        yield mock
-
-
 def test_get_net_status_success(
-    fake_request, mock_db, mock_get_net_by_name, mock_fetch_client_status, mock_get_trusts, mock_get_settings
+    fake_request, mock_db, mock_get_net_by_name, mock_fetch_client_status, mock_get_trusts
 ):
     result = get_net_status("net-name", fake_request, mock_db)
     assert result.name == "net-name"
@@ -84,9 +78,9 @@ def test_get_net_status_success(
 
 
 def test_get_net_status_reports_flower_backend(
-    fake_request, mock_db, mock_get_net_by_name, mock_fetch_client_status, mock_get_trusts, mock_get_settings
+    fake_request, mock_db, mock_get_net_by_name, mock_fetch_client_status, mock_get_trusts
 ):
-    mock_get_settings.return_value.FL_BACKEND = "flower"
+    mock_get_net_by_name.return_value = MagicMock(endpoint="endpoint", name="net-name", fl_backend="flower")
     result = get_net_status("net-name", fake_request, mock_db)
     assert result.fl_backend == "flower"
 

@@ -13,22 +13,27 @@
 """Endpoint for retrieving available job types and their required files (moved to model_services)."""
 
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlmodel import Session
 
+from flip_api.db.database import get_session
 from flip_api.domain.interfaces.fl import JobRequiredFiles
+from flip_api.fl_services.services.fl_scheduler_service import resolve_backend
 from flip_api.utils.logger import logger
 
 router = APIRouter(prefix="/model", tags=["model_services"])
 
 
 @router.get("/job-types", response_model=dict[str, list[str]])
-def get_job_types_endpoint() -> dict[str, list[str]]:
+def get_job_types_endpoint(db: Session = Depends(get_session)) -> dict[str, list[str]]:
     """
     Retrieve all available job types and their required files.
 
     This endpoint returns a dictionary mapping each job type name to its
     list of required files. This allows the UI to dynamically determine
     which files are required for training based on the config.json job_type.
+    The required files are read from the manifest of whichever FL backend the
+    nets currently report.
 
     Returns:
         dict[str, list[str]]: A dictionary where keys are job type names
@@ -49,6 +54,6 @@ def get_job_types_endpoint() -> dict[str, list[str]]:
     """
 
     logger.info("[API] /model/job-types endpoint called")
-    job_types = JobRequiredFiles.get_all_job_types_with_files()
+    job_types = JobRequiredFiles.get_all_job_types_with_files(resolve_backend(db))
     logger.info(f"[API] /model/job-types response: {job_types}")
     return job_types

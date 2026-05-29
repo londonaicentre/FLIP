@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+from flip_api.domain.schemas.types import FLBackend
+
 SERVICE_UNAVAILABLE_MESSAGE = "The server is unable to process any requests at the moment, please try again later."
 
 # AWS SES email templates
@@ -17,8 +19,21 @@ ACCESS_REQUEST_TEMPLATE_NAME = "flip-access-request"
 IMAGING_CREDENTIALS_TEMPLATE_NAME = "flip-xnat-credentials"
 IMAGING_PROJECT_ACCESS_TEMPLATE_NAME = "flip-xnat-added-to-project"
 
-# File containing job types and their required files
-JOB_TYPES_REQUIRED_FILES_FILE = "job_types_and_required_files.json"
+
+# File containing job types and their required files. The manifest is per-backend:
+# each FL backend (nvflare/flower) has its own copy pulled from S3 at runtime (never
+# committed to source control), so the two frameworks never clobber each other's file.
+def job_types_required_files_name(fl_backend: FLBackend) -> str:
+    """Local filename for the per-backend job-types/required-files manifest.
+
+    Args:
+        fl_backend (FLBackend): The FL backend the manifest belongs to (``nvflare`` or ``flower``).
+
+    Returns:
+        str: The manifest filename, e.g. ``job_types_and_required_files.nvflare.json``.
+    """
+    return f"job_types_and_required_files.{fl_backend}.json"
+
 
 # Testing constants
 BASE_URL = "http://localhost:8080/api"

@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from flip_api.domain.interfaces.fl import ClientStatus, IClientStatus, JobRequiredFiles
+from flip_api.domain.interfaces.fl import ClientStatus, IClientStatus, JobRequiredFiles, JobTypes
 
 
 class TestIClientStatusSchema:
@@ -68,16 +68,26 @@ class TestJobRequiredFiles:
         # on the class and would raise AttributeError if anything ever instantiated the model.
         JobRequiredFiles()
 
-    def test_init_sets_attribute_per_job_type_from_config(self):
+    def test_get_required_files_reads_per_backend_config(self):
+        # Required files are data, loaded per-backend from the on-disk manifest at call time.
+        fake_config = {"standard": ["trainer.py", "config.json"], "evaluation": ["evaluator.py"]}
+        with patch("flip_api.domain.interfaces.fl._load_job_types_config", return_value=fake_config) as mock_load:
+            assert JobRequiredFiles.get_required_files(JobTypes.standard, "nvflare") == [
+                "trainer.py",
+                "config.json",
+            ]
+            assert JobRequiredFiles.get_required_files(JobTypes.evaluation, "nvflare") == ["evaluator.py"]
+
+        # The backend is forwarded to the manifest loader.
+        assert mock_load.call_args[0][0] == "nvflare"
+
+    def test_get_all_job_types_with_files_returns_config_copy(self):
         fake_config = {"standard": ["trainer.py", "config.json"], "evaluation": ["evaluator.py"]}
         with patch("flip_api.domain.interfaces.fl._load_job_types_config", return_value=fake_config):
-            instance = JobRequiredFiles()
+            result = JobRequiredFiles.get_all_job_types_with_files("flower")
 
-        assert instance.standard == ["trainer.py", "config.json"]
-        assert instance.evaluation == ["evaluator.py"]
+        assert result == fake_config
 
-    def test_init_with_empty_config_sets_no_job_type_attributes(self):
+    def test_get_required_files_empty_config_returns_empty_list(self):
         with patch("flip_api.domain.interfaces.fl._load_job_types_config", return_value={}):
-            instance = JobRequiredFiles()
-
-        assert not hasattr(instance, "standard")
+            assert JobRequiredFiles.get_required_files(JobTypes.standard, "nvflare") == []

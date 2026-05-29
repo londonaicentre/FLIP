@@ -16,15 +16,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
-from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
     INetStatus,
-    IServerStatus,
 )
 from flip_api.domain.schemas.status import ClientStatus, ServerEngineStatus
-from flip_api.fl_services.services.fl_scheduler_service import get_nets
+from flip_api.fl_services.services.fl_scheduler_service import get_nets, set_net_backend
 from flip_api.fl_services.services.fl_service import fetch_client_status, fetch_server_status
 from flip_api.trusts_services.services.trust import get_trusts
 from flip_api.utils.logger import logger
@@ -59,7 +57,6 @@ def get_status_endpoint(
 
     try:
         nets = get_nets(db)
-        fl_backend = get_settings().FL_BACKEND
 
         net_statuses: list[INetStatus] = []
 
@@ -72,7 +69,7 @@ def get_status_endpoint(
                 net_statuses.append(
                     INetStatus(
                         name=net.name,
-                        fl_backend=fl_backend,
+                        fl_backend=net.fl_backend,
                         online=False,
                         registered_clients=0,
                         clients=[],
@@ -85,7 +82,11 @@ def get_status_endpoint(
             # We assume the server is online if we get a response
             online = True
 
-            server_status = IServerStatus(status=server_status.status)
+            # Prefer the live self-reported backend, and persist it so a framework switch
+            # (make restart-fl) is reflected without a flip-api restart.
+            fl_backend = server_status.fl_backend or net.fl_backend
+            if server_status.fl_backend:
+                set_net_backend(net.endpoint, server_status.fl_backend, db)
 
             # Fetch client statuses
             clients = fetch_client_status(net.endpoint)

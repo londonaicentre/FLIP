@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import JSON, Column, String
 from sqlmodel import Field, Relationship, SQLModel
 
 from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction
@@ -29,6 +29,7 @@ from flip_api.domain.schemas.status import (
     TrustIntersectStatus,
     XNATImageStatus,
 )
+from flip_api.domain.schemas.types import FLBackend
 
 
 # Tables
@@ -37,6 +38,11 @@ class FLNets(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(unique=True)
     endpoint: str = Field(unique=True)
+    # FL backend ("nvflare"/"flower") this net runs, self-reported by its fl-api on
+    # /check_server_status and persisted by the background poll. None until first reported.
+    # Typed as FLBackend for callers/validation; stored as a plain varchar since SQLAlchemy
+    # cannot map a Literal to a column type (hence the explicit sa_column).
+    fl_backend: FLBackend | None = Field(default=None, sa_column=Column(String, nullable=True))
 
     schedulers: list["FLScheduler"] = Relationship(back_populates="net")
 

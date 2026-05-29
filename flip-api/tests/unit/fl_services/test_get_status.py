@@ -40,12 +40,13 @@ def fake_request():
 @pytest.fixture
 def mock_get_nets():
     class Net:
-        def __init__(self, name, endpoint):
+        def __init__(self, name, endpoint, fl_backend):
             self.name = name
             self.endpoint = endpoint
+            self.fl_backend = fl_backend
 
     with patch("flip_api.fl_services.get_status.get_nets") as mock:
-        mock.return_value = [Net("net-1", "endpoint1")]
+        mock.return_value = [Net("net-1", "endpoint1", "nvflare")]
         yield mock
 
 
@@ -79,9 +80,9 @@ def mock_fetch_client_status():
 
 
 @pytest.fixture
-def mock_get_settings():
-    with patch("flip_api.fl_services.get_status.get_settings") as mock:
-        mock.return_value.FL_BACKEND = "nvflare"
+def mock_set_net_backend():
+    # The endpoint persists the live self-reported backend; stub it so no DB write happens.
+    with patch("flip_api.fl_services.get_status.set_net_backend") as mock:
         yield mock
 
 
@@ -92,12 +93,13 @@ def test_get_status_endpoint_success(
     mock_get_trusts,
     mock_fetch_server_status,
     mock_fetch_client_status,
-    mock_get_settings,
+    mock_set_net_backend,
 ):
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
     assert len(result) == 1
     net = result[0]
     assert net.name == "net-1"
+    # No live backend reported by the server status, so we fall back to the net's stored backend.
     assert net.fl_backend == "nvflare"
     assert net.online is True
     assert net.net_in_use is True
@@ -114,11 +116,13 @@ def test_get_status_endpoint_reports_flower_backend(
     mock_get_trusts,
     mock_fetch_server_status,
     mock_fetch_client_status,
-    mock_get_settings,
+    mock_set_net_backend,
 ):
-    mock_get_settings.return_value.FL_BACKEND = "flower"
+    # The server self-reports flower at runtime; this takes precedence and is persisted.
+    mock_fetch_server_status.return_value = IServerStatus(status="started", fl_backend="flower")
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
     assert result[0].fl_backend == "flower"
+    mock_set_net_backend.assert_called_once_with("endpoint1", "flower", mock_db)
 
 
 def test_get_status_endpoint_error(fake_request, mock_db):
@@ -129,7 +133,7 @@ def test_get_status_endpoint_error(fake_request, mock_db):
 
 
 def test_get_status_endpoint_server_status_none(
-    fake_request, mock_db, mock_get_nets, mock_get_trusts, mock_fetch_server_status, mock_get_settings
+    fake_request, mock_db, mock_get_nets, mock_get_trusts, mock_fetch_server_status, mock_set_net_backend
 ):
     mock_fetch_server_status.return_value = None
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
@@ -146,7 +150,7 @@ def test_get_status_endpoint_client_status_none(
     mock_get_trusts,
     mock_fetch_server_status,
     mock_fetch_client_status,
-    mock_get_settings,
+    mock_set_net_backend,
 ):
     mock_fetch_server_status.return_value = IServerStatus(
         status="stopped",

@@ -29,6 +29,7 @@ from flip_api.domain.interfaces.fl import (
     JobTypes,
 )
 from flip_api.domain.schemas.status import FLJobStatus, FLTargets
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.encryption import encrypt
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
@@ -226,7 +227,7 @@ def is_client_available(client_name: str, client_statuses: list[IClientStatus]) 
     return False
 
 
-def validate_client_availability(clients: list[str], endpoint: str) -> None:
+def validate_client_availability(clients: list[str], endpoint: str, fl_backend: FLBackend) -> None:
     """
     Validate the availability of clients by checking their status.
     It sends a GET request to the FL API service to check the status of the clients.
@@ -236,6 +237,7 @@ def validate_client_availability(clients: list[str], endpoint: str) -> None:
     Args:
         clients (list[str]): A list of client names to check the availability of.
         endpoint (str): The endpoint of the FL API service.
+        fl_backend (FLBackend): The FL backend of the net being validated (``nvflare`` or ``flower``).
 
     Returns:
         None
@@ -243,7 +245,7 @@ def validate_client_availability(clients: list[str], endpoint: str) -> None:
     Raises:
         ValueError: If any client is unavailable (NVFLARE backend only).
     """
-    is_flower = get_settings().FL_BACKEND == "flower"
+    is_flower = fl_backend == "flower"
 
     client_statuses = check_client_status(endpoint)
     if not client_statuses:
@@ -321,7 +323,7 @@ def start_training(
     submit_job(fl_job_id, endpoint, model_id, session)
 
 
-def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> str:  # type: ignore[attr-defined]
+def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> str:
     """
     Creates the app folder from the base application files and the uploaded files.
 
@@ -435,8 +437,9 @@ def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.sta
                 raise UnknownJobTypeError(f"Unknown job_type argument found in config.json: {jt}")
             logger.info(f"job_type in config.json: {job_type.value}. Using it to select base application.")
 
-    # List base files for that job_type
-    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/{job_type.value}"
+    # List base files for that job_type. This bundler is the nvflare-specific path, so the
+    # backend segment is fixed: <base>/nvflare/<job_type>.
+    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/nvflare/{job_type.value}"
     logger.debug(f"Base bucket: {base_bucket_s3_path}")
     base_files = s3.list_objects(base_bucket_s3_path)
     if not base_files:
@@ -470,13 +473,13 @@ def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.sta
     logger.debug(f"App folders found: {sorted(app_folders)}")
 
     # Validate required model files exist for the job type
-    required_files = JobRequiredFiles.get_required_files(job_type)
+    required_files = JobRequiredFiles.get_required_files(job_type, "nvflare")
     model_rel = {
         k.replace(f"{model_bucket_s3_path}/", "", 1) for k in model_files
     }  # relative paths of model files (i.e. without the bucket prefix)
     missing_files = [f for f in required_files if f not in model_rel]
     if len(missing_files) > 0:
-        raise FileNotFoundError(f"Missing required files for job type {job_type.value}: {', '.join(missing_files)}. ")  # type: ignore[attr-defined]
+        raise FileNotFoundError(f"Missing required files for job type {job_type.value}: {', '.join(missing_files)}. ")
 
     # Copy base application files to the destination bucket
     for file in base_files:
@@ -528,7 +531,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.sta
     return dest_bucket_s3_path
 
 
-def bundle_flower_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> str:  # type: ignore[attr-defined]
+def bundle_flower_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> str:
     """
     Creates the app folder from the base application files and the uploaded files.
 
@@ -617,8 +620,9 @@ def bundle_flower_application(model_id: UUID, job_type: JobTypes = JobTypes.stan
                 raise UnknownJobTypeError(f"Unknown job_type argument found in config.json: {jt}")
             logger.info(f"job_type in config.json: {job_type.value}. Using it to select base application.")
 
-    # List base files for that job_type
-    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/{job_type.value}"
+    # List base files for that job_type. This bundler is the flower-specific path, so the
+    # backend segment is fixed: <base>/flower/<job_type>.
+    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/flower/{job_type.value}"
     logger.debug(f"Base bucket: {base_bucket_s3_path}")
     base_files = s3.list_objects(base_bucket_s3_path)
     if not base_files:
@@ -637,13 +641,13 @@ def bundle_flower_application(model_id: UUID, job_type: JobTypes = JobTypes.stan
         s3.copy_object(src_key, dst_key)
 
     # Validate required model files exist for the job type
-    required_files = JobRequiredFiles.get_required_files(job_type)
+    required_files = JobRequiredFiles.get_required_files(job_type, "flower")
     model_rel = {
         k.replace(f"{model_bucket_s3_path}/", "", 1) for k in model_files
     }  # relative paths of model files (i.e. without the bucket prefix)
     missing_files = [f for f in required_files if f not in model_rel]
     if len(missing_files) > 0:
-        raise FileNotFoundError(f"Missing required files for job type {job_type.value}: {', '.join(missing_files)}. ")  # type: ignore[attr-defined]
+        raise FileNotFoundError(f"Missing required files for job type {job_type.value}: {', '.join(missing_files)}. ")
 
     # Copy base application files to the destination bucket
     for file in base_files:
@@ -931,16 +935,21 @@ def keep_fl_api_session_alive() -> None:
 
     logger.info("🛟 Keeping FL API session alive ...")
 
-    with Session(engine) as db:
-        nets = fl_scheduler_service.get_nets(db)
-
-    # For each FL Net in the database, call its check_server_status endpoint to keep the session alive.
+    # For each FL Net in the database, call its check_server_status endpoint to keep the session alive
+    # and persist the backend it self-reports. This background path is what lets `make restart-fl` into
+    # a different framework take effect without a flip-api restart — the next bundling reads the updated
+    # FLNets.fl_backend rather than a stale boot-time env var.
     # NOTE this was created for FLARE and might need to be revisited for Flower, depending on session management.
     # NOTE In the old implementation, we had 3 'nets' in the database, each with its own FLAdminAPI. So each net had a
     # separate FLAdminAPI endpoint. Here, there should just be 1 net for now. If we add more nets in the future, they
     # might all have the same FLARE_API endpoint, if the FLARE_API controls all controllers/clients.
-    for net in nets:
-        try:
-            fetch_server_status(net.endpoint)
-        except Exception as e:
-            logger.error(f"Failed to send check request: {e}")
+    with Session(engine) as db:
+        nets = fl_scheduler_service.get_nets(db)
+
+        for net in nets:
+            try:
+                server_status = fetch_server_status(net.endpoint)
+                if server_status and server_status.fl_backend:
+                    fl_scheduler_service.set_net_backend(net.endpoint, server_status.fl_backend, db)
+            except Exception as e:
+                logger.error(f"Failed to send check request: {e}")
