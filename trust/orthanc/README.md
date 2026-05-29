@@ -20,7 +20,9 @@ Orthanc username and password are set by `ORTHANC_USERNAME` and `ORTHANC_PASSWOR
 You'll need to populate Orthanc with DICOM files in order to test FLIP locally. We have prepared mock DICOM data for each of the 2 dev trusts (Trust_1 and Trust_2) as Orthanc storage volumes, published to the public Hugging Face dataset [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data). In order to set up the storage locally, these data volumes need to be downloaded/extracted. They are fetched anonymously over HTTPS — no AWS CLI or credentials required. This is handled automatically when bringing up the trust containers via `make up` / `make up-trusts` (from the repository root) or `make -C trust up-trust-1` / `make -C trust up-trust-2` for a single trust, and similarly they will be updated locally when the desired version changes (note for devs: this is controlled by the `.data_version` file in this directory).
 
 ```sh
-make update-orthanc-data
+make update-orthanc-data           # both trusts (default)
+make update-orthanc-data TRUST=1   # Trust_1 only
+make update-orthanc-data TRUST=2   # Trust_2 only
 ```
 
 <!-- TODO add instructions to generate mock data using the MSD dataset. -->
