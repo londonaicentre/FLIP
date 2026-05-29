@@ -147,9 +147,9 @@ describe("Model Dashboard - Pre Training", () => {
         cy.wait("@initialiseTraining");
 
         cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
-            "trusts": [
-                "KCH",
-                "UCLH"
+            "trust_ids": [
+                "SOMEIDFORKCH",
+                "SOMEIDFORUCLH"
             ]
         });
 
@@ -176,9 +176,9 @@ describe("Model Dashboard - Pre Training", () => {
         cy.wait("@initialiseTraining");
 
         cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
-            "trusts": [
-                "KCH",
-                "UCLH"
+            "trust_ids": [
+                "SOMEIDFORKCH",
+                "SOMEIDFORUCLH"
             ]
         });
 
@@ -252,8 +252,8 @@ describe("Model Dashboard - Pre Training with only one approved trust", () => {
         cy.wait("@initialiseTraining");
 
         cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
-            "trusts": [
-                "KCH"
+            "trust_ids": [
+                "SOMEIDFORKCH"
             ]
         });
 
@@ -278,8 +278,8 @@ describe("Model Dashboard - Pre Training with only one approved trust", () => {
         cy.wait("@initialiseTraining");
 
         cy.get("@initialiseTraining").its("request.body").should("deep.equal", {
-            "trusts": [
-                "KCH"
+            "trust_ids": [
+                "SOMEIDFORKCH"
             ]
         });
 
