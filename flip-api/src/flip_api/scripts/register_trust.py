@@ -119,7 +119,9 @@ def register_one_trust(
 
     Args:
         name (str): Trust display name.
-        code (str | None): Optional short code.
+        code (str | None): Short code (e.g. ``GSTT``). Required when registering a new
+            trust — ``register_trust`` raises ``EmptyTrustCodeError`` on a blank code.
+            Unused on the idempotent-skip / ``require_existing`` paths.
         region (str | None): Optional NHS region.
         session (Session): SQLModel session.
         require_existing (bool): When True, exit with an error if the trust has not yet
@@ -221,7 +223,15 @@ def main() -> None:
     """CLI entry point: register one trust, emit its kit JSON to the chosen output."""
     parser = argparse.ArgumentParser(description="Register one trust on the hub.")
     parser.add_argument("--name", required=True, help="Trust display name.")
-    parser.add_argument("--code", default=None, help="Optional short code (e.g. GSTT).")
+    parser.add_argument(
+        "--code",
+        default=None,
+        help=(
+            "Short code (e.g. GSTT). Required to register a NEW trust — the service "
+            "rejects a blank code. Not needed on the idempotent-skip / --require-existing "
+            "paths (the trust already exists)."
+        ),
+    )
     parser.add_argument("--region", default=None, help="Optional NHS region (e.g. London).")
     parser.add_argument(
         "--require-existing",

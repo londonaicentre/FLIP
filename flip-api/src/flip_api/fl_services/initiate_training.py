@@ -45,7 +45,7 @@ def initiate_training(
 
     Args:
         model_id (UUID): The ID of the model to initiate training for.
-        payload (IInitiateTrainingInputPayload): The payload containing trusts to be used for training.
+        payload (IInitiateTrainingInputPayload): The payload containing the ids of the trusts to train on.
         request (Request): The FastAPI request object.
         db (Session): Database session.
         user_id (UUID): User ID from authentication.
@@ -64,9 +64,9 @@ def initiate_training(
             status_code=status.HTTP_403_FORBIDDEN, detail=f"User with ID: {user_id} is not allowed to modify this model"
         )
 
-    trusts = db.exec(select(Trust).where(col(Trust.name).in_(payload.trusts))).all()
-    known_names = {t.name for t in trusts}
-    missing = [name for name in payload.trusts if name not in known_names]
+    trusts = db.exec(select(Trust).where(col(Trust.id).in_(payload.trust_ids))).all()
+    known_ids = {t.id for t in trusts}
+    missing = [str(trust_id) for trust_id in payload.trust_ids if trust_id not in known_ids]
     if missing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

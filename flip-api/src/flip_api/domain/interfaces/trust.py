@@ -43,7 +43,7 @@ class IAdminTrust(BaseModel):
 
 class ICreateTrust(BaseModel):
     name: str
-    code: str | None = None
+    code: str = Field(min_length=1, description="Short trust code, e.g. GSTT. Required.")
     region: str | None = None
 
 

@@ -390,9 +390,9 @@ register-trust: _wait-for-hub
 	  code="$$(sed -n 's/^TRUST_CODE=//p' "$$kit" | head -1)"; \
 	  region="$$(sed -n 's/^TRUST_REGION=//p' "$$kit" | head -1)"; \
 	  [ -n "$$name" ] || { echo "❌ TRUST_NAME not set in $$kit"; exit 1; }; \
+	  [ -n "$$code" ] || { echo "❌ TRUST_CODE not set in $$kit — code is required to register a trust"; exit 1; }; \
 	  echo "🔑 Registering trust '$$name' (KIT=$(KIT))..."; \
-	  set -- --name "$$name"; \
-	  [ -n "$$code" ] && set -- "$$@" --code "$$code"; \
+	  set -- --name "$$name" --code "$$code"; \
 	  [ -n "$$region" ] && set -- "$$@" --region "$$region"; \
 	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust "$$@")" \
 	    || { echo "❌ register_trust failed for KIT=$(KIT)"; exit 1; }; \

@@ -15,7 +15,6 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-from flip_api.config import get_settings
 from flip_api.db.models.main_models import FLKitSlot, FLLogs, FLMetrics, Model, ModelTrustIntersect, Trust
 from flip_api.domain.interfaces.model import (
     IDetailedModelStatus,
@@ -265,42 +264,6 @@ def get_model_status(model_id: UUID, session: Session) -> IDetailedModelStatus |
         return None
 
     return IDetailedModelStatus(status=model.status, deleted=model.deleted)
-
-
-def validate_trusts(model_id: UUID, trusts: list[str], session: Session) -> bool:
-    """
-    Validate whether the trusts are associated with the model.
-
-    Args:
-        model_id (UUID): The ID of the model.
-        trusts (list[str]): A list of trust names to validate.
-        session (Session): The database session.
-
-    Returns:
-        bool: True if all trusts are associated with the model, False otherwise.
-    """
-    logger.debug(f"Attempting to validate whether the trusts: {trusts} are associated with the model: {model_id} ...")
-
-    # Get all trusts associated with the model
-    stmt = (
-        select(Trust.name)
-        .join(ModelTrustIntersect, Trust.id == ModelTrustIntersect.trust_id)  # type: ignore[arg-type]
-        .where(ModelTrustIntersect.model_id == model_id)
-    )
-
-    result = session.exec(stmt).all()
-    associated_trusts = set(result)
-
-    logger.debug(f"Trusts associated with model {model_id}: {associated_trusts}")
-
-    # Check if all input trusts are in the associated trusts
-    missing_trusts = set(trusts) - associated_trusts
-    if missing_trusts:
-        logger.debug(f"Trusts not associated with model {model_id}: {missing_trusts}")
-        logger.error(f"One or more trusts in: {trusts} are not an approved trust(s)")
-        return False
-
-    return True
 
 
 def resolve_trust_from_fl_client_name(fl_client_name: str, session: Session) -> Trust | None:

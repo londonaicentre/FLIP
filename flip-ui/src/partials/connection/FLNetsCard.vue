@@ -62,7 +62,7 @@
                                     </div>
                                     <div class="flex-shrink-0 mt-2 ml-4">
                                         <AiButton small @click="setAndShowDetails(net.name)">
-                                            View Detailed Response
+                                            View details
                                         </AiButton>
                                     </div>
                                 </div>

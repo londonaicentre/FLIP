@@ -18,6 +18,7 @@ import pytest
 from flip_api.db.models.main_models import FLKitSlot, Trust
 from flip_api.trusts_services.services.register_trust import (
     DuplicateTrustError,
+    EmptyTrustCodeError,
     EmptyTrustNameError,
     NoFreeKitSlotError,
     register_trust,
@@ -74,7 +75,7 @@ def test_register_trust_writes_audit_row_with_user_id(mock_gen_key):
     session = _mock_session(existing_trust=None, free_slot=slot)
     admin_id = uuid4()
 
-    register_trust(name="GSTT", code=None, region=None, session=session, audit_user_id=admin_id)
+    register_trust(name="GSTT", code="GSTT", region=None, session=session, audit_user_id=admin_id)
 
     audit_calls = [
         call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)
@@ -97,7 +98,7 @@ def test_register_trust_writes_audit_row_with_null_user_for_cli(mock_gen_key):
     slot = FLKitSlot(slot_name="Trust_007", slot_number=7)
     session = _mock_session(existing_trust=None, free_slot=slot)
 
-    register_trust(name="GSTT", code=None, region=None, session=session)
+    register_trust(name="GSTT", code="GSTT", region=None, session=session)
 
     audit_calls = [
         call for call in session.add.call_args_list if isinstance(call.args[0], TrustsAudit)
@@ -122,8 +123,18 @@ def test_register_trust_strips_whitespace(mock_gen_key):
 def test_register_trust_rejects_blank_name():
     session = MagicMock()
     with pytest.raises(EmptyTrustNameError):
-        register_trust(name="   ", code=None, region=None, session=session)
+        register_trust(name="   ", code="GSTT", region=None, session=session)
     # Validation fires before any DB work.
+    session.exec.assert_not_called()
+
+
+@pytest.mark.parametrize("code", ["   ", "", None])
+def test_register_trust_rejects_blank_or_missing_code(code):
+    # code is now required at registration — a blank/None code is rejected before
+    # any DB work, so a trust can never be registered without one.
+    session = MagicMock()
+    with pytest.raises(EmptyTrustCodeError):
+        register_trust(name="GSTT", code=code, region=None, session=session)
     session.exec.assert_not_called()
 
 
@@ -132,7 +143,7 @@ def test_register_trust_409_on_duplicate_name():
     session = _mock_session(existing_trust=existing, free_slot=None)
 
     with pytest.raises(DuplicateTrustError, match="already exists"):
-        register_trust(name="GSTT", code=None, region=None, session=session)
+        register_trust(name="GSTT", code="GSTT", region=None, session=session)
 
     # The slot lookup never runs — duplicate is checked first.
     assert session.exec.call_count == 1
@@ -145,7 +156,7 @@ def test_register_trust_409_when_pool_exhausted(mock_gen_key):
     session = _mock_session(existing_trust=None, free_slot=None)
 
     with pytest.raises(NoFreeKitSlotError, match="No FL kit slots available"):
-        register_trust(name="GSTT", code=None, region=None, session=session)
+        register_trust(name="GSTT", code="GSTT", region=None, session=session)
 
     session.commit.assert_not_called()
     # No trust insert without a slot to back it.

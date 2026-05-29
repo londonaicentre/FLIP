@@ -28,7 +28,6 @@ from flip_api.model_services.services.model_service import (
     resolve_trust_from_fl_client_name,
     update_model_status,
     validate_trust_ids,
-    validate_trusts,
 )
 
 
@@ -149,30 +148,7 @@ def test_get_model_status_not_found():
     assert result is None
 
 
-def test_validate_trusts_all_valid():
-    session = MagicMock()
-    model_id = uuid4()
-    trusts = ["Trust A", "Trust B"]
-    session.exec.return_value.all.return_value = ["Trust A", "Trust B", "Trust C"]
-
-    result = validate_trusts(model_id, trusts, session)
-    assert result is True
-
-
-def test_validate_trusts_some_invalid():
-    session = MagicMock()
-    model_id = uuid4()
-    trusts = ["Trust A", "Trust B"]
-    # Simulate that Trust B is not in the database
-    session.exec.return_value.all.return_value = ["Trust A", "Trust C"]
-
-    result = validate_trusts(model_id, trusts, session)
-    assert result is False
-
-
-@patch("flip_api.model_services.services.model_service.get_settings")
-def test_resolve_trust_nvflare_resolves_kit_slot(mock_get_settings):
-    mock_get_settings.return_value.FL_BACKEND = "nvflare"
+def test_resolve_trust_resolves_kit_slot():
     mock_trust = MagicMock()
     session = MagicMock()
     session.exec.return_value.first.return_value = mock_trust
@@ -181,9 +157,7 @@ def test_resolve_trust_nvflare_resolves_kit_slot(mock_get_settings):
     assert result is mock_trust
 
 
-@patch("flip_api.model_services.services.model_service.get_settings")
-def test_resolve_trust_nvflare_unassigned_slot(mock_get_settings):
-    mock_get_settings.return_value.FL_BACKEND = "nvflare"
+def test_resolve_trust_unassigned_slot():
     session = MagicMock()
     # No slot row matches, or the slot is not assigned to a trust.
     session.exec.return_value.first.return_value = None
@@ -192,24 +166,23 @@ def test_resolve_trust_nvflare_unassigned_slot(mock_get_settings):
     assert result is None
 
 
-@patch("flip_api.model_services.services.model_service.get_settings")
-def test_resolve_trust_resolves_by_kit_slot_both_backends(mock_get_settings):
-    """Both backends report the FL kit slot as the client name → resolved via FLKitSlot.slot_name.
+def test_resolve_trust_resolves_by_kit_slot():
+    """The FL kit slot (the client name) resolves via FLKitSlot.slot_name.
 
-    NVFLARE uses the certificate CN; Flower uses SUPERNODE_NAME (set to FL_KIT_SLOT in the
-    trust compose). Neither depends on the operator-chosen trust display name (see #538).
+    Resolution is uniform across backends and independent of the operator-chosen
+    trust display name (see #538): NVFLARE reports the certificate CN, Flower the
+    SUPERNODE_NAME (set to FL_KIT_SLOT) — both are the slot, so no backend branch
+    (and no get_settings()) is involved.
     """
-    for backend in ("nvflare", "flower"):
-        mock_get_settings.return_value.FL_BACKEND = backend
-        session = MagicMock()
-        mock_trust = MagicMock()
-        session.exec.return_value.first.return_value = mock_trust
+    session = MagicMock()
+    mock_trust = MagicMock()
+    session.exec.return_value.first.return_value = mock_trust
 
-        result = resolve_trust_from_fl_client_name("Trust_1", session)
+    result = resolve_trust_from_fl_client_name("Trust_1", session)
 
-        assert result is mock_trust
-        stmt_sql = str(session.exec.call_args[0][0]).lower()
-        assert "slot_name" in stmt_sql, f"{backend}: expected slot-based resolution, got: {stmt_sql}"
+    assert result is mock_trust
+    stmt_sql = str(session.exec.call_args[0][0]).lower()
+    assert "slot_name" in stmt_sql, f"expected slot-based resolution, got: {stmt_sql}"
 
 
 def test_get_metrics():

@@ -137,8 +137,8 @@ const missingFiles = computed(() => {
 
 const schema = object().shape({
     enriched: string().required("Please confirm data enrichment."),
-    trusts: lazy(trusts =>
-        (Array.isArray(trusts)
+    trust_ids: lazy(trustIds =>
+        (Array.isArray(trustIds)
             ?
             array()
                 .of(string().required())
@@ -198,11 +198,11 @@ const initTraining = async (formData: unknown): Promise<void> => {
 
     formSubmitting.value = true;
 
-    const { trusts } = formData as IInitTraining;
+    const { trust_ids } = formData as IInitTraining;
 
     // If it is only one trust, add to an array
     const arr: string[] = [];
-    const requestData: IInitTraining = { trusts: arr.concat(trusts) };
+    const requestData: IInitTraining = { trust_ids: arr.concat(trust_ids) };
 
     try {
         await initialiseTraining(

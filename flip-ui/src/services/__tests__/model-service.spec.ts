@@ -340,14 +340,14 @@ describe("model-service", () => {
     });
 
     describe("training control", () => {
-        it("initialiseTraining POSTs to /fl/initiate/{modelId} with the trust list", async () => {
+        it("initialiseTraining POSTs to /fl/initiate/{modelId} with the trust id list", async () => {
             vi.mocked(_http.post).mockResolvedValue({ data: undefined } as never);
 
-            await initialiseTraining("m-1", { trusts: ["t-1", "t-2"] });
+            await initialiseTraining("m-1", { trust_ids: ["t-1", "t-2"] });
 
             expect(_http.post).toHaveBeenCalledWith(
                 "/fl/initiate/m-1",
-                { trusts: ["t-1", "t-2"] }
+                { trust_ids: ["t-1", "t-2"] }
             );
         });
 

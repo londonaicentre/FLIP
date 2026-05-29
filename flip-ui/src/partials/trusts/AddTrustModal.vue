@@ -55,7 +55,7 @@
                                     type="text"
                                     name="name"
                                     label="Trust name"
-                                    hint="Identifier used by the trust to authenticate with the hub. Letters, digits, underscore, hyphen."
+                                    hint="Full display name shown across the platform. Any characters allowed."
                                     placeholder="e.g. Guy's & St Thomas' NHS Foundation Trust"
                                     :required="true"
                                 />
@@ -64,8 +64,9 @@
                                     type="text"
                                     name="code"
                                     label="Short code"
-                                    hint="Short display label shown in tables and dashboards."
+                                    hint="Short, stable identifier shown in tables and dashboards. Letters, digits, underscore, hyphen."
                                     placeholder="e.g. GSTT"
+                                    :required="true"
                                 />
                                 <AiInput
                                     data-test="trust-region-field"
@@ -106,11 +107,11 @@
 import { Dialog, DialogTitle, TransitionChild, TransitionRoot } from "@headlessui/vue";
 import { useField, useForm } from "vee-validate";
 import { ref } from "vue";
-import { object, string } from "yup";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
 import AiInput from "@/components/AiInput/AiInput.vue";
+import { addTrustSchema } from "@/partials/trusts/addTrustSchema";
 import { createAdminTrust, ICreatedTrust } from "@/services/admin-trusts-service";
 import { useErrorStore } from "@/store/error";
 import { extractErrorDetail } from "@/utils/api-errors";
@@ -127,20 +128,10 @@ const emit = defineEmits<{
     (e: "onSuccess", created: ICreatedTrust): void;
 }>();
 
-const schema = object().shape({
-    name: string()
-        .required("Trust name is required")
-        .max(120, "Trust name must be 120 characters or fewer"),
-    code: string()
-        .matches(/^[A-Za-z0-9_-]*$/, "Use letters, digits, underscore, or hyphen only")
-        .max(16, "Short code must be 16 characters or fewer"),
-    region: string().max(60, "Region must be 60 characters or fewer")
-});
-
 const errorStore = useErrorStore();
 const isSubmitting = ref(false);
 
-const { resetForm, validate } = useForm<{ name: string; code: string; region: string }>({ validationSchema: schema });
+const { resetForm, validate } = useForm<{ name: string; code: string; region: string }>({ validationSchema: addTrustSchema });
 const name = useField<string>("name");
 const code = useField<string>("code");
 const region = useField<string>("region");
@@ -158,7 +149,7 @@ const submitAction = async () => {
 
         const created = await createAdminTrust({
             name: name.value.value.trim(),
-            code: code.value.value?.trim() || undefined,
+            code: code.value.value.trim(),
             region: region.value.value?.trim() || undefined
         });
         Snackbar.success({

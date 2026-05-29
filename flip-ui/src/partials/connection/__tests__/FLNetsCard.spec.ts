@@ -122,7 +122,13 @@ describe("FLNetsCard", () => {
                 name: "net-1",
                 fl_backend: "nvflare",
                 clients: [
-                    { name: "Demo EC2 Trust", code: "DEMO", online: true, status: "no_jobs", fl_kit_slot: "Trust_1" }
+                    {
+                        name: "Demo EC2 Trust",
+                        code: "DEMO",
+                        online: true,
+                        status: "no_jobs",
+                        fl_kit_slot: "Trust_1"
+                    }
                 ]
             }
         ];
@@ -138,7 +144,13 @@ describe("FLNetsCard", () => {
                 name: "net-1",
                 fl_backend: "nvflare",
                 clients: [
-                    { name: "Demo EC2 Trust", code: "DEMO", online: true, status: "no_jobs", fl_kit_slot: "Trust_1" }
+                    {
+                        name: "Demo EC2 Trust",
+                        code: "DEMO",
+                        online: true,
+                        status: "no_jobs",
+                        fl_kit_slot: "Trust_1"
+                    }
                 ]
             }
         ];
@@ -234,7 +246,7 @@ describe("FLNetsCard", () => {
             });
 
             const wrapper = mountFLNetsCard();
-            const detailsBtn = wrapper.findAll("button").find(b => b.text().includes("View Detailed Response"))!;
+            const detailsBtn = wrapper.findAll("button").find(b => b.text().includes("View details"))!;
             await detailsBtn.trigger("click");
             await vi.waitFor(() =>
                 expect(mockGetNetDetailedStatus).toHaveBeenCalledWith("/fl/net-1/status")
@@ -256,7 +268,7 @@ describe("FLNetsCard", () => {
             mockGetNetDetailedStatus.mockRejectedValue(new Error("nope"));
 
             const wrapper = mountFLNetsCard();
-            const detailsBtn = wrapper.findAll("button").find(b => b.text().includes("View Detailed Response"))!;
+            const detailsBtn = wrapper.findAll("button").find(b => b.text().includes("View details"))!;
             await detailsBtn.trigger("click");
             await vi.waitFor(() => expect(mockGetNetDetailedStatus).toHaveBeenCalled());
             // Let the rejected promise settle.
@@ -281,7 +293,7 @@ describe("FLNetsCard", () => {
                 mockGetNetDetailedStatus.mockResolvedValue({ status: "OK" });
 
                 const wrapper = mountFLNetsCard();
-                const detailsBtn = wrapper.findAll("button").find(b => b.text().includes("View Detailed Response"))!;
+                const detailsBtn = wrapper.findAll("button").find(b => b.text().includes("View details"))!;
                 await detailsBtn.trigger("click");
 
                 // Drain the resolved promise queue so the JSON renders before close.

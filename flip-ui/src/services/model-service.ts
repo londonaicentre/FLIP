@@ -31,7 +31,7 @@ export interface IModelMetricData {
 }
 
 export interface IInitTraining {
-    trusts: string[];
+    trust_ids: string[];
 }
 
 export interface IModel {

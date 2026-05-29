@@ -17,7 +17,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
 
 vi.mock("@/utils/snackbar", () => ({
-    Snackbar: { success: vi.fn(), error: vi.fn() }
+    Snackbar: {
+        success: vi.fn(),
+        error: vi.fn()
+    }
 }));
 
 const trust = {
@@ -42,7 +45,13 @@ const stubs = {
 };
 
 function mountModal() {
-    return mount(TrustKitModal, { props: { dialog: true, trust }, global: { stubs } });
+    return mount(TrustKitModal, {
+        props: {
+            dialog: true,
+            trust
+        },
+        global: { stubs }
+    });
 }
 
 describe("TrustKitModal — copy all credentials", () => {

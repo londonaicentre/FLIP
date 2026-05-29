@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from flip_api.db.models.main_models import FLKitSlot, Trust
@@ -25,6 +26,7 @@ from flip_api.domain.interfaces.trust import ICreateTrust
 from flip_api.trusts_services.admin_create_trust import admin_create_trust
 from flip_api.trusts_services.services.register_trust import (
     DuplicateTrustError,
+    EmptyTrustCodeError,
     EmptyTrustNameError,
     NoFreeKitSlotError,
     RegisteredTrust,
@@ -79,7 +81,7 @@ def test_admin_create_trust_returns_registered_kit(mock_register, mock_perms, ad
 @patch("flip_api.trusts_services.admin_create_trust.has_permissions", return_value=False)
 def test_admin_create_trust_403_without_admin_permission(mock_perms, admin_id):
     with pytest.raises(HTTPException) as exc_info:
-        admin_create_trust(body=ICreateTrust(name="GSTT"), db=MagicMock(), token_id=admin_id)
+        admin_create_trust(body=ICreateTrust(name="GSTT", code="GSTT"), db=MagicMock(), token_id=admin_id)
     assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
     mock_perms.assert_called_once()
 
@@ -91,10 +93,34 @@ def test_admin_create_trust_400_on_empty_name(mock_register, mock_perms, admin_i
     db = MagicMock()
 
     with pytest.raises(HTTPException) as exc_info:
-        admin_create_trust(body=ICreateTrust(name="GSTT"), db=db, token_id=admin_id)
+        admin_create_trust(body=ICreateTrust(name="GSTT", code="GSTT"), db=db, token_id=admin_id)
 
     assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
     db.rollback.assert_called_once()
+
+
+@patch("flip_api.trusts_services.admin_create_trust.has_permissions", return_value=True)
+@patch("flip_api.trusts_services.admin_create_trust.register_trust")
+def test_admin_create_trust_400_on_empty_code(mock_register, mock_perms, admin_id):
+    # A whitespace-only code passes the schema's min_length but the service strips
+    # it to empty and rejects it — the wrapper maps that to 400, like an empty name.
+    mock_register.side_effect = EmptyTrustCodeError("Trust code is required.")
+    db = MagicMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        admin_create_trust(body=ICreateTrust(name="GSTT", code=" "), db=db, token_id=admin_id)
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    db.rollback.assert_called_once()
+
+
+def test_create_trust_schema_requires_code():
+    # The request body must carry a non-empty code — FastAPI returns 422 for these
+    # before the handler runs, so the UI cannot register a trust without a code.
+    with pytest.raises(ValidationError):
+        ICreateTrust(name="GSTT")
+    with pytest.raises(ValidationError):
+        ICreateTrust(name="GSTT", code="")
 
 
 @patch("flip_api.trusts_services.admin_create_trust.has_permissions", return_value=True)
@@ -104,7 +130,7 @@ def test_admin_create_trust_409_on_duplicate(mock_register, mock_perms, admin_id
     db = MagicMock()
 
     with pytest.raises(HTTPException) as exc_info:
-        admin_create_trust(body=ICreateTrust(name="GSTT"), db=db, token_id=admin_id)
+        admin_create_trust(body=ICreateTrust(name="GSTT", code="GSTT"), db=db, token_id=admin_id)
 
     assert exc_info.value.status_code == status.HTTP_409_CONFLICT
     assert "already exists" in exc_info.value.detail
@@ -118,7 +144,7 @@ def test_admin_create_trust_409_when_pool_exhausted(mock_register, mock_perms, a
     db = MagicMock()
 
     with pytest.raises(HTTPException) as exc_info:
-        admin_create_trust(body=ICreateTrust(name="GSTT"), db=db, token_id=admin_id)
+        admin_create_trust(body=ICreateTrust(name="GSTT", code="GSTT"), db=db, token_id=admin_id)
 
     assert exc_info.value.status_code == status.HTTP_409_CONFLICT
     assert "FL kit slots" in exc_info.value.detail
@@ -132,7 +158,7 @@ def test_admin_create_trust_500_on_db_error(mock_register, mock_perms, admin_id)
     db = MagicMock()
 
     with pytest.raises(HTTPException) as exc_info:
-        admin_create_trust(body=ICreateTrust(name="GSTT"), db=db, token_id=admin_id)
+        admin_create_trust(body=ICreateTrust(name="GSTT", code="GSTT"), db=db, token_id=admin_id)
 
     assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     db.rollback.assert_called_once()

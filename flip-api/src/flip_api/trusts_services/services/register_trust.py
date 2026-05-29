@@ -46,6 +46,10 @@ class EmptyTrustNameError(TrustRegistrationError):
     """Caller supplied a blank trust name."""
 
 
+class EmptyTrustCodeError(TrustRegistrationError):
+    """Caller supplied a blank (or missing) trust code — code is required."""
+
+
 class DuplicateTrustError(TrustRegistrationError):
     """A trust with the given name already exists."""
 
@@ -80,7 +84,9 @@ def register_trust(
 
     Args:
         name (str): Friendly display name (any non-empty string after strip).
-        code (str | None): Optional short code (e.g. ``GSTT``).
+        code (str | None): Short code (e.g. ``GSTT``). Required — must be non-empty
+            after strip. Names are arbitrary/non-unique, so the code is the stable
+            short handle used in kit filenames and operator tooling.
         region (str | None): Optional NHS region.
         session (Session): SQLModel session; the function commits before returning.
         audit_user_id (UUID | None): Cognito sub of the authenticated admin from
@@ -95,13 +101,16 @@ def register_trust(
 
     Raises:
         EmptyTrustNameError: ``name.strip()`` is empty.
+        EmptyTrustCodeError: ``code`` is missing or empty after strip.
         DuplicateTrustError: A trust with this name already exists.
         NoFreeKitSlotError: The ``fl_kit_slot`` pool has no unassigned rows.
     """
     name = name.strip()
     if not name:
         raise EmptyTrustNameError("Trust name is required.")
-    code = code.strip() if code else None
+    code = code.strip() if code else ""
+    if not code:
+        raise EmptyTrustCodeError("Trust code is required.")
     region = region.strip() if region else None
 
     if session.exec(select(Trust).where(Trust.name == name)).first() is not None:

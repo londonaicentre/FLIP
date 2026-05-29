@@ -42,7 +42,7 @@ export interface ICreatedTrust {
 
 export interface ICreateTrustPayload {
     name: string;
-    code?: string;
+    code: string;
     region?: string;
 }
 

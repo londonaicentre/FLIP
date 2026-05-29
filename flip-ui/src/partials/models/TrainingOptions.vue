@@ -48,7 +48,7 @@
                             <dl class="divide-y divide-gray-200 dark:divide-gray-700">
                                 <div
                                     v-for="(trust, i) in trustsToSelect"
-                                    :key="trust.trustName"
+                                    :key="trust.trustId"
                                     class="flex items-center justify-between py-2 text-sm font-medium"
                                 >
                                     <dt class="flex items-center font-semibold text-gray-500 dark:text-primary-200">
@@ -60,16 +60,19 @@
                                     </dt>
                                     <dd class="font-semibold">
                                         <AiSwitch
-                                            name="trusts"
+                                            name="trust_ids"
                                             :data-test="`trust-selection-${i}`"
-                                            :value="trust.trustName"
+                                            :value="trust.trustId"
                                             hide-error
                                             :label="{ enabled: 'Trust Included', disabled: 'Trust Excluded' }"
                                         />
                                     </dd>
                                 </div>
-                                <div v-if="errors.trusts" class="py-2 text-sm text-right text-red-600 dark:text-red-400">
-                                    {{ errors.trusts }}
+                                <div
+                                    v-if="errors.trust_ids"
+                                    class="py-2 text-sm text-right text-red-600 dark:text-red-400"
+                                >
+                                    {{ errors.trust_ids }}
                                 </div>
                             </dl>
                         </div>
@@ -91,7 +94,10 @@ interface ITrainingOptionsProps {
 }
 
 interface ITrustsToTrain {
+    // Display label only — names are admin-chosen and non-unique.
     trustName: string;
+    // Stable identity sent to the training-init endpoint.
+    trustId: string;
 }
 
 defineProps<ITrainingOptionsProps>();
@@ -103,7 +109,10 @@ const approvedTrusts = projectStore.project?.approvedTrusts;
 const trustsToSelect: ComputedRef<ITrustsToTrain[] | undefined> = computed(() =>
     approvedTrusts?.filter(t => t.approved)
         .map(t =>
-            ({ trustName: t.name })
+            ({
+                trustName: t.name,
+                trustId: t.id
+            })
         )
         .sort((a, b) => a.trustName.localeCompare(b.trustName))
 );

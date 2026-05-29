@@ -456,10 +456,13 @@ def upload_files(
 
 
 def initiate_training(
-    client: requests.Session, headers: dict[str, str], model_id: str, trust_names: list[str]
+    client: requests.Session, headers: dict[str, str], model_id: str, trusts: list[dict[str, Any]]
 ) -> None:
-    _log(f"🚀 Initiating training across trusts: {trust_names}")
-    resp = _post(client, f"/fl/initiate/{model_id}", {"trusts": trust_names}, headers)
+    trust_ids = [t["id"] for t in trusts]
+    # Log the human-friendly trust codes (fall back to name, then id) but send the stable ids.
+    labels = [t.get("code") or t.get("name") or t["id"] for t in trusts]
+    _log(f"🚀 Initiating training across trusts: {labels}")
+    resp = _post(client, f"/fl/initiate/{model_id}", {"trust_ids": trust_ids}, headers)
     if resp.status_code != 204:
         raise SmokeFailure(f"initiate training failed: HTTP {resp.status_code} {resp.text}")
     _log("  ✅ training initiated (model status now INITIATED)")
@@ -742,7 +745,7 @@ def main(argv: list[str] | None = None) -> int:
         wait_for_image_pull(
             client, headers, project_id, args.image_pull_threshold, args.image_pull_timeout
         )
-        initiate_training(client, headers, model_id, [t["name"] for t in trusts])
+        initiate_training(client, headers, model_id, trusts)
         wait_for_training_started(client, headers, model_id, args.training_start_timeout)
         if args.abort_midway:
             # #490: exercise the FL "stop training" path instead of running to completion.

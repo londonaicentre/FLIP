@@ -19,7 +19,6 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from flip_api.domain.schemas.status import ClientStatus, FLJobStatus
-from flip_api.domain.schemas.types import TrimStr
 from flip_api.utils.constants import JOB_TYPES_REQUIRED_FILES_FILE
 
 # Path to the JSON file containing job types and required files (relative to this file)
@@ -98,23 +97,25 @@ class IRequiredTrainingInformation(BaseModel):
 class IInitiateTrainingInputPayload(BaseModel):
     """Request body for `POST /fl/initiate/{model_id}`.
 
-    The selected trusts are the FL participants for this training run. Names
+    The selected trusts are the FL participants for this training run. Trusts are
+    identified by their UUID `id` (not name): names are admin-chosen, non-unique,
+    and may contain arbitrary characters, so they are unsafe to match on. The ids
     are looked up against the `trust` table at request time — see
     `initiate_training` for the existence check.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    trusts: list[TrimStr] = Field(
+    trust_ids: list[UUID] = Field(
         min_length=1,
-        description="Names of trusts to participate in training. Must be non-empty and unique.",
+        description="IDs of trusts to participate in training. Must be non-empty and unique.",
     )
 
-    @field_validator("trusts")
+    @field_validator("trust_ids")
     @classmethod
-    def must_be_unique(cls, v: list[TrimStr]) -> list[TrimStr]:
+    def must_be_unique(cls, v: list[UUID]) -> list[UUID]:
         if len(set(v)) != len(v):
-            raise ValueError("'trusts' must all be unique entries")
+            raise ValueError("'trust_ids' must all be unique entries")
         return v
 
 
