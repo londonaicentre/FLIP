@@ -304,35 +304,27 @@ def validate_trusts(model_id: UUID, trusts: list[str], session: Session) -> bool
 
 
 def resolve_trust_from_fl_client_name(fl_client_name: str, session: Session) -> Trust | None:
-    """Resolve an FL client name (as reported by the FL server) to its Trust.
+    """Resolve an FL client name (its FL kit slot) to its Trust.
 
-    The FL client name depends on FL_BACKEND, so this hides that discrepancy
-    behind a single contract (see issue #538):
+    Both backends report the FL kit slot as the client name, so resolution is
+    uniform — the slot is mapped to its assigned trust via the FLKitSlot table,
+    independent of the operator-chosen trust display name (closes the #538 drift
+    from Flower's previous free-form name lookup):
 
-    - NVFLARE: the FL client name is the FL kit slot — the certificate CN baked
-      in at provisioning time (e.g. ``Trust_2``). It is resolved to the assigned
-      trust via the FLKitSlot table.
-    - Flower: the FL client name is the SUPERNODE_NAME env var, which is the
-      trust's name; the trust is looked up by name.
+    - NVFLARE: the slot is the certificate CN baked in at provisioning time
+      (e.g. ``Trust_2``).
+    - Flower: the slot is the ``SUPERNODE_NAME`` env var, set to ``FL_KIT_SLOT``
+      in the trust compose so the FL identity is the slot, not the trust name.
 
     Args:
-        fl_client_name (str): The FL client name reported by the FL server.
+        fl_client_name (str): The FL kit slot name reported by the FL server.
         session (Session): The database session.
 
     Returns:
-        Trust | None: The resolved trust, or None when the FL client name matches
-            no trust (an unknown/unassigned NVFLARE kit slot, or a Flower
-            SUPERNODE_NAME that is not a known trust name).
+        Trust | None: The resolved trust, or None when the slot name matches no
+            assigned slot (an unknown / unassigned FL kit slot).
     """
-    if get_settings().FL_BACKEND != "nvflare":
-        # Flower: SUPERNODE_NAME is the trust name — look the trust up by name.
-        # FUTURE: rather than trust the operator-set SUPERNODE_NAME env var, derive the
-        # FL client's node_id for the federation and convert that to the trust — a
-        # node_id -> trust registry already exists for the connection-status feature
-        # (the /register_node flow). That removes the free-form env var as a drift source (#538).
-        return session.exec(select(Trust).where(Trust.name == fl_client_name)).first()
-
-    logger.debug(f"Resolving NVFLARE FL kit slot '{fl_client_name}' to its assigned trust ...")
+    logger.debug(f"Resolving FL kit slot '{fl_client_name}' to its assigned trust ...")
 
     stmt = (
         select(Trust)

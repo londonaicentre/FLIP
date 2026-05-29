@@ -25,7 +25,7 @@ services:
       - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
     environment:
       - NET_ID=net-1
-      - SUPERNODE_NAME=${TRUST_NAME}
+      - SUPERNODE_NAME=${FL_KIT_SLOT}
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
       - LOCAL_DEV=false
@@ -65,7 +65,7 @@ services:
       - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro
     environment:
       - NET_ID=net-2
-      - SUPERNODE_NAME=${TRUST_NAME}
+      - SUPERNODE_NAME=${FL_KIT_SLOT}
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
       - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
       - LOCAL_DEV=false

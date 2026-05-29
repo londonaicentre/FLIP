@@ -193,15 +193,23 @@ def test_resolve_trust_nvflare_unassigned_slot(mock_get_settings):
 
 
 @patch("flip_api.model_services.services.model_service.get_settings")
-def test_resolve_trust_flower_looks_up_by_name(mock_get_settings):
-    mock_get_settings.return_value.FL_BACKEND = "flower"
-    mock_trust = MagicMock()
-    session = MagicMock()
-    session.exec.return_value.first.return_value = mock_trust
+def test_resolve_trust_resolves_by_kit_slot_both_backends(mock_get_settings):
+    """Both backends report the FL kit slot as the client name → resolved via FLKitSlot.slot_name.
 
-    # Flower's SUPERNODE_NAME is the trust name — the trust is looked up by name.
-    result = resolve_trust_from_fl_client_name("Some Trust", session)
-    assert result is mock_trust
+    NVFLARE uses the certificate CN; Flower uses SUPERNODE_NAME (set to FL_KIT_SLOT in the
+    trust compose). Neither depends on the operator-chosen trust display name (see #538).
+    """
+    for backend in ("nvflare", "flower"):
+        mock_get_settings.return_value.FL_BACKEND = backend
+        session = MagicMock()
+        mock_trust = MagicMock()
+        session.exec.return_value.first.return_value = mock_trust
+
+        result = resolve_trust_from_fl_client_name("Trust_1", session)
+
+        assert result is mock_trust
+        stmt_sql = str(session.exec.call_args[0][0]).lower()
+        assert "slot_name" in stmt_sql, f"{backend}: expected slot-based resolution, got: {stmt_sql}"
 
 
 def test_get_metrics():

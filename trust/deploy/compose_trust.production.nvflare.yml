@@ -25,12 +25,15 @@ services:
       # /opt/flip/fl-kit on the AWS EC2 trust (see site.yml), or wherever
       # the on-prem operator extracted their selectively-synced kit (see
       # the `make onboard-onprem-trust` checklist). The
-      # net-1/services/${TRUST_NAME}/ prefix mirrors the S3 bundle's own
+      # net-1/services/${FL_KIT_SLOT}/ prefix mirrors the S3 bundle's own
       # layout — no Ansible-side flattening so EC2 and on-prem hosts
-      # share the same compose mount shape.
-      - ${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/local:/app/local
-      - ${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/startup:/app/startup
-      - ${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/transfer:/app/transfer
+      # share the same compose mount shape. Keyed on the FL kit SLOT (the
+      # pre-provisioned participant identity, e.g. Trust_1), NOT the trust's
+      # display name — the two differ once a trust is registered under an
+      # arbitrary name (name≠slot), and the nvflare material is slot-keyed.
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/local:/app/local
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/startup:/app/startup
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/transfer:/app/transfer
     environment:
       - NET_ID=net-1
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
@@ -57,9 +60,9 @@ services:
   #     # Mount the base images download directory to share images downloaded from XNAT with FL clients
   #     - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
   #     # Provisioned NVFLARE secrets (certificates, fed_client.json)
-  #     - ${FL_KIT_DIR}/net-2/services/${TRUST_NAME}/local:/app/local
-  #     - ${FL_KIT_DIR}/net-2/services/${TRUST_NAME}/startup:/app/startup
-  #     - ${FL_KIT_DIR}/net-2/services/${TRUST_NAME}/transfer:/app/transfer
+  #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/local:/app/local
+  #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
+  #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/transfer:/app/transfer
   #   environment:
   #     - NET_ID=net-2
   #     - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
