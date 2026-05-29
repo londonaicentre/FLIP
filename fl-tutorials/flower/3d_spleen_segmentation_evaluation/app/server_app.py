@@ -18,7 +18,6 @@ import os
 import shutil
 from logging import ERROR, INFO
 from pathlib import Path
-from typing import Dict, Type
 
 import torch
 from flip import FLIP
@@ -29,43 +28,6 @@ from flwr.serverapp import Grid, ServerApp
 
 from app.models import get_model
 from app.strategy import EvaluationStrategy
-
-
-def parse_metrics_config(metrics_config: Dict[str, str]) -> Dict[str, Type]:
-    """Parse metrics configuration from pyproject.toml.
-
-    Converts string type names (\"float\", \"int\") to actual Python types.
-    Only native numeric types are allowed - no lists or complex types.
-
-    Args:
-        metrics_config: Dictionary mapping metric names to type strings.
-
-    Returns:
-        Dictionary mapping metric names to Python type objects.
-
-    Raises:
-        ValueError: If an unsupported type string is encountered.
-
-    """
-    # Only allow native numeric types (float, int) - no lists or other types
-    type_mapping = {
-        "float": float,
-        "int": int,
-    }
-
-    metrics_spec = {}
-    for metric_name, type_str in metrics_config.items():
-        if type_str not in type_mapping:
-            msg = (
-                f"Unsupported type '{type_str}' for metric '{metric_name}'. "
-                f"Only native numeric types are allowed: {list(type_mapping.keys())}"
-            )
-            log(ERROR, msg)
-            raise ValueError(msg)
-        metrics_spec[metric_name] = type_mapping[type_str]
-
-    return metrics_spec
-
 
 # Create ServerApp
 app = ServerApp()
@@ -122,22 +84,10 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # Pack the model weights into an ArrayRecord for distribution to clients.
     arrays = ArrayRecord(model.state_dict())
 
-    # Parse metrics specification from config
-    # TOML nested tables are flattened in run_config, so extract keys starting with "metrics."
-    metrics_config = {
-        key.split(".", 1)[1]: value for key, value in run_config.items() if key.startswith("metrics.")
-    }
-    if not metrics_config:
-        msg = "No metrics configuration found in pyproject.toml. Please define [tool.flwr.app.config.metrics]."
-        log(ERROR, msg)
-        raise ValueError(msg)
-
-    metrics_spec = parse_metrics_config(metrics_config)
-    log(INFO, f"Metrics specification: {metrics_spec}")
-
-    # Use custom evaluation strategy
+    # Federated evaluation strategy. FedAvg aggregates whatever metrics the
+    # clients return in their MetricRecord (weighted by num-examples);
+    # EvaluationStrategy adds only the FLIP Central Hub forwarding.
     strategy = EvaluationStrategy(
-        metrics_spec=metrics_spec,
         flip=flip,
         model_id=model_id,
         fraction_train=0.0,  # No training
@@ -162,7 +112,6 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # Prepare evaluation results
     evaluation_results = {
         "num_rounds": num_rounds,
-        "metrics_spec": {k: v.__name__ for k, v in metrics_spec.items()},
         "results": strategy.per_client_results,
     }
 

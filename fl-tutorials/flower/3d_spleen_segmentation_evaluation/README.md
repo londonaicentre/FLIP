@@ -25,7 +25,7 @@ This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only 
 ## Key Features
 
 - **Evaluation-only**: No training, only evaluation of a pre-trained model
-- **Type-safe metrics**: Metrics validation ensures proper data types (no strings allowed)
+- **Customisable metrics**: the metrics are whatever `client_app`/`task.py` compute and return (this tutorial reports Dice and IoU); the server aggregates them natively
 - **FLIP integration**: Uploads results to S3 and updates job status
 - **WORKING_DIR environment variable**: Configurable output directory (default: `/app/runs`)
 
@@ -42,7 +42,7 @@ This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only 
 │   ├── data_loading.py # MONAI transforms + datalist (test data only)
 │   ├── models.py       # Defines model creation
 │   ├── server_app.py   # Defines your ServerApp with checkpoint loading
-│   ├── strategy.py     # Custom EvaluationStrategy with MetricsValidator
+│   ├── strategy.py     # EvaluationStrategy: native FedAvg aggregation + FLIP forwarding
 │   ├── task.py         # Defines evaluation functions
 │   └── transforms.py   # MONAI transforms for preprocessing
 ├── pyproject.toml      # Project metadata like dependencies and configs
@@ -141,36 +141,44 @@ By default, the app reads from:
 
 ### Strategy Pattern
 
-The `EvaluationStrategy` in [strategy.py](tutorials/3d_spleen_segmentation_evaluation/app/strategy.py) handles:
+`EvaluationStrategy` in [strategy.py](app/strategy.py) is a thin subclass of Flower's
+`FedAvg`. `FedAvg` already distributes the model and aggregates every metric the clients
+return — a weighted average by `num-examples` — so the subclass adds only:
 
-1. **Metrics Validation**: `MetricsValidator` checks that all client metrics match the `metrics_spec` type definitions
-2. **Distribution**: Sends the model parameters to all clients
-3. **Aggregation**: Collects and validates metrics from each client
-4. **Results Formatting**: Structures output as `{client_name: {metric_name: value}}`
+1. **FLIP forwarding**: `handle_client_metrics` / `handle_client_exception` push each
+   client's metrics and any exceptions to the Central Hub. These need the full reply
+   message, so they live in the `aggregate_evaluate` override.
+2. **Per-client breakdown**: captures `{client_name: {metric_name: value}}` for the
+   `evaluation_results.json` artifact uploaded to S3.
+
+The metrics themselves are simply whatever `client_app.py` puts in its `MetricRecord` —
+there is no metric declaration or validation.
 
 ## Notes
 
 - **Evaluation only** (no training or parameter updates)
-- **Type-safe metrics**: Only `float` or `int` types allowed - strings are rejected
+- **Metrics**: `MetricRecord` only accepts numeric values; the server aggregates whatever metric keys the client returns
 - **FLIP integration**: Automatically uploads results and updates job status
 - **Environment-agnostic**: Uses `WORKING_DIR` instead of hardcoded paths
 
 ## Configuration
 
-The evaluation metrics specification is defined using a type-based approach in `server_app.py`:
+### Metrics
+
+Metrics are not declared in config. The client computes them in [`task.py`](app/task.py)
+and returns them in its `MetricRecord`; the server's `FedAvg` strategy averages whatever
+keys arrive (weighted by `num-examples`). To change which metrics are reported, edit the
+`_METRICS` registry in `task.py`:
 
 ```python
-metrics_spec = {
-    "mean_dice": float,  # Single aggregated Dice score
-    "raw_dice": list,  # List of per-slice Dice scores
+_METRICS = {
+    "mean_dice": lambda: DiceMetric(include_background=False, reduction="mean_batch"),
+    "mean_iou": lambda: MeanIoU(include_background=False, reduction="mean_batch"),
 }
 ```
 
-The `MetricsValidator` class in `strategy.py` enforces that:
-
-- All metrics match the specified types (float, int, or list)
-- Strings are NOT allowed as metric values
-- Each client returns metrics matching this specification
+Each metric name becomes a key in the aggregated results and a `LABEL` on the FLIP
+Central Hub (e.g. `MEAN_DICE`, `MEAN_IOU`). No server or `pyproject.toml` change is needed.
 
 ### Environment Variables
 
@@ -192,5 +200,3 @@ checkpoint = "model.pt"
 ```
 
 The ServerApp loads that file from `flip-job-dir` and distributes its weights to the clients.
-
-This template defines the structure of metrics that clients must return. The server validates that all returned metrics match this structure and contain the correct types (float or list of floats).

@@ -68,11 +68,6 @@ flip-project-id = "uuid"
 flip-cohort-query = "*"
 flip-job-dir = "job-dir"
 
-# Metrics specification for evaluation
-# Define metric names and their expected types ("float" or "int" only - native numeric types).
-[tool.flwr.app.config.metrics]
-mean_dice = "float"
-
 # Linter
 [tool.ruff]
 line-length = 120

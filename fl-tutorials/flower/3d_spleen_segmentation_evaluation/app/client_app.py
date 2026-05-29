@@ -69,30 +69,27 @@ def evaluate(msg: Message, context: Context) -> Message:
     model.load_state_dict(arrays.to_torch_state_dict())
     model.to(device)
 
-    # evaluate_func sweeps the whole test_loader once and returns one dice
-    # score per subject; with deterministic eval transforms and model.eval(),
-    # repeating the sweep would produce identical numbers.
-    dice_scores = evaluate_func(
+    # evaluate_func sweeps the whole test_loader once and returns the mean of
+    # each segmentation metric across subjects; with deterministic eval
+    # transforms and model.eval(), repeating the sweep produces identical numbers.
+    metrics = evaluate_func(
         model=model,
         test_loader=test_loader,
         device=device,
     )
+    log(INFO, "Evaluation metrics: %s", metrics)
 
-    overall_mean_dice = sum(dice_scores) / len(dice_scores) if dice_scores else 0.0
-    log(INFO, f"Mean dice: {overall_mean_dice:.4f}")
-
-    # Flatten evaluation results for MetricRecord (which only accepts flat key-value pairs).
-    # The strategy reconstructs metrics from the "evaluation.<metric_name>" prefix.
-    flattened_metrics = {
+    # Return the metrics in a flat MetricRecord. The server's FedAvg strategy
+    # weights by "num-examples" and averages every other key across clients, so
+    # whatever metrics evaluate_func returns flow through unchanged.
+    metric_values = {
         "num-examples": int(len(test_loader.dataset)),
-        "evaluation.mean_dice": float(overall_mean_dice),
+        **{name: float(value) for name, value in metrics.items()},
     }
-
-    log(INFO, f"DEBUG: Sending flattened_metrics: {flattened_metrics}")
 
     # Construct and return the reply Message
     # Send client_name in ConfigRecord (MetricRecord only accepts numeric types)
-    metric_record = MetricRecord(flattened_metrics)
+    metric_record = MetricRecord(metric_values)
     config_record = ConfigRecord({"client_name": client_name})
     content = RecordDict({"metrics": metric_record, "config": config_record})
     return Message(content=content, reply_to=msg)
