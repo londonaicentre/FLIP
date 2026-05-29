@@ -44,10 +44,11 @@ Use this flow when you want a trust whose identity (keys, FL kit slot) came from
 
 ### 1. Register the trust on the hub
 
-A trust is registered on the **running hub** rather than configured via env-file key dicts. Either:
+A trust is registered on the **running hub** rather than configured via env-file key dicts. The kit files (`trust/.env.<CODE>.<env>`) ARE the roster. Either:
 
-* **`make register-trusts`** (from the repo root) — registers the `TRUST_<n>_*` trusts configured in `.env.development`, or
-* the **Add Trust** button on the **Connection status** page — enter the friendly name, code, and region.
+* **`make register-trusts`** (from the repo root) — registers the shipped dev roster (every `trust/.env.*.development.example`, currently GSTT and KCH; run automatically by `make up`), or
+* **`make register-trust KIT=<CODE>`** — registers one trust (after `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."` scaffolds its kit), or
+* the **Add Trust** button on the **Connection status** page — enter the friendly name, code, and region. This registers the trust on the hub; to produce a deliverable kit file use the `make register-trust` flow above.
 
 Registration (`register_trust` service, `POST /admin/trusts`):
 
@@ -55,11 +56,11 @@ Registration (`register_trust` service, `POST /admin/trusts`):
 * stores only the SHA-256 of the API key on `trust.api_key_hash`,
 * claims the next free `fl_kit_slot` row and binds it to the new trust id.
 
-`make register-trusts` is idempotent and writes the resulting kit straight into the per-trust kit file. The Add-Trust UI surfaces the kit (`TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`, `FL_KIT_SLOT`, `FL_KIT_SLOT_NUMBER`) in a modal **once** — the hub never stores either plaintext again, so copy it out before closing the modal and hand it to the trust operator over a secure channel.
+`make register-trust` / `register-trusts` are idempotent and write the resulting credentials straight into the per-trust kit file — the hub never stores either plaintext again.
 
 ### 2. The per-trust kit file
 
-Each trust stack reads a per-trust kit file `trust/.env.Trust_1` / `trust/.env.Trust_2` (gitignored; templates `.env.Trust_*.example`), auto-included by `trust/Makefile`. `make register-trusts` writes it. It carries:
+Each trust stack reads a per-trust kit file `trust/.env.<CODE>.<env>` (e.g. `trust/.env.GSTT.development`, `trust/.env.<CODE>.production`; gitignored; dev templates `trust/.env.<CODE>.development.example` for GSTT/KCH, generic base `trust/.env.example`), auto-included by `trust/Makefile`. `make register-trust KIT=<CODE>` writes the managed blocks. It carries:
 
 ```sh
 TRUST_API_KEY=<from kit>
@@ -69,13 +70,13 @@ FL_KIT_SLOT_NUMBER=<from kit>
 EXPECTED_TRUST_ID=<from kit>
 ```
 
-plus that trust's host-local ports and data directories. There is no `TRUST_NAME` — the hub identifies the trust by its API key; the optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup. The same schema serves dev trusts (`Trust_1`/`Trust_2` against a local hub), on-prem trusts (any slot name against a prod hub), and laptop-against-prod testing — operator picks the kit name (`trust/.env.<KIT>`) and `make -C trust up-trust KIT=<KIT> PROD=<env>` handles the rest.
+plus the trust's identity (`TRUST_NAME` / `TRUST_CODE` / `TRUST_REGION`, read by `register-trust`) and its host-local ports and data directories. The optional `EXPECTED_TRUST_ID` lets trust-api self-check the hub-resolved id at startup. The same schema serves dev trusts (GSTT/KCH against a local hub), on-prem trusts (against a prod hub), and laptop-against-prod testing — operator picks the kit code (`trust/.env.<CODE>.<env>`) and `make -C trust up-trust KIT=<CODE> PROD=<env>` handles the rest.
 
 ### 3. Start the trust against the hub
 
 ```sh
-make -C trust down-trust KIT=Trust_2   # if a previous Trust_2 stack is running
-make -C trust up-trust KIT=Trust_2
+make -C trust down-trust KIT=GSTT   # if a previous GSTT stack is running
+make -C trust up-trust KIT=GSTT
 ```
 
 The trust-api container authenticates with its `TRUST_API_KEY` and posts a heartbeat to `POST /trust/heartbeat` (no name segment — the hub resolves the trust's identity from the API key). The Connection status page flips the row online within ~30s.
@@ -85,7 +86,7 @@ The trust-api container authenticates with its `TRUST_API_KEY` and posts a heart
 The plaintext keys aren't recoverable — only the hash is on disk. If you didn't save the kit, the only options are:
 
 * delete the row (`DELETE FROM trust WHERE name='<name>';` against `flip-db`, after freeing the slot: `UPDATE fl_kit_slot SET assigned_to_trust_id = NULL, assigned_at = NULL WHERE assigned_to_trust_id = '<trust-id>';`) and re-register, or
-* re-register with `make register-trusts`, which mints fresh keys and rewrites the kit file — this also rotates the keys.
+* re-register with `make register-trust KIT=<CODE>`, which mints fresh keys and rewrites the kit file — this also rotates the keys.
 
 ## OMOP Database
 
@@ -99,40 +100,39 @@ See dedicated README under [omop-db/README.md](omop-db/README.md) for instructio
 
 If you are operating a trust on a host that does not have the hub's
 `.env.<env>` file (e.g. an on-prem deployment or a third-party trust), you
-need only your trust's kit file (`trust/.env.<KIT>`) — typically
-`trust/.env.Trust_2` for the second registered trust (also the on-prem
-slot in the FLIP prod environment, where it represents BDMS; see
-`trust/.env.Trust_2.production.example` for the prod-flavor template).
+need only your trust's kit file (`trust/.env.<CODE>.<env>`).
 
 ### One-time setup
 
-1. The hub admin runs `make register-trust-<N>` on their box. The output
-   is a complete kit file at `trust/.env.<KIT>` containing credentials,
-   the AES key, the hub URL, image tags, and your host-local profile.
+1. The hub admin scaffolds and registers your kit
+   (`make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." PROD=true`
+   then `make register-trust KIT=<CODE> PROD=true`). The result is a complete
+   kit file at `trust/.env.<CODE>.production` containing credentials, the AES
+   key, the hub URL, image tags, and a host-local profile.
 2. The hub admin transmits the file to you out-of-band (SCP-via-SSM for an
    EC2 trust; encrypted channel for on-prem).
-3. Drop it at `trust/.env.<KIT>` in your checkout.
+3. Drop it at `trust/.env.<CODE>.production` in your checkout.
 4. Fill in the **Trust-local credentials** block (Orthanc / OMOP / XNAT /
    Grafana passwords) — these are your secrets, the hub never sees them.
 5. Start the stack:
-   - EC2 trust: `make -C trust up-trust-ec2 KIT=<KIT> PROD=true`
-   - On-prem trust (or laptop-against-prod): `make -C trust up-trust KIT=<KIT> PROD=true`
+   - EC2 trust: `make -C trust up-trust-ec2 KIT=<CODE> PROD=true`
+   - On-prem trust (or laptop-against-prod): `make -C trust up-trust KIT=<CODE> PROD=true`
 
    The on-prem path skips the dev-only `update-omop-data` / `update-orthanc-data`
    steps (which pull test fixtures from S3 and need hub AWS credentials) —
-   real on-prem operators populate `./omop-db/volumes/<KIT>/db_data` and
+   real on-prem operators populate `./omop-db/volumes/<CODE>/db_data` and
    `./orthanc/orthanc-storage-<…>` themselves.
 
 ### Refreshing shared values (when the hub admin rotates an AES key etc.)
 
 When the hub admin rotates a shared value (AES key, FL backend, image tag),
-they will run `make sync-trust-kit-<N>` on their side. That produces an
-updated kit file with the new Hub-shared block; credentials are preserved.
-The updated file is transmitted to you using the same out-of-band channel.
-Replace your local copy and restart the stack:
+they will run `make sync-trust-kit KIT=<CODE> PROD=true` on their side. That
+produces an updated kit file with the new Hub-shared block; credentials are
+preserved. The updated file is transmitted to you using the same out-of-band
+channel. Replace your local copy and restart the stack:
 
 ```bash
-make -C trust restart-trust KIT=<KIT> PROD=true
+make -C trust restart-trust KIT=<CODE> PROD=true
 ```
 
 ## Integration tests (cohort-query end-to-end)

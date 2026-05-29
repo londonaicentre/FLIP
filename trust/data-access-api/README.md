@@ -85,7 +85,7 @@ from the [`flip` Python package](https://github.com/londonaicentre/flip-fl-base/
 and user-uploaded `client_app.py` / `server_app.py` do not deal with the header directly.
 
 Each trust has a distinct key. A trust's `TRUST_INTERNAL_SERVICE_KEY` is minted by `register_trust`
-(`make register-trusts`) and written into that trust's kit file (`trust/.env.<slot>`), which
+(`make register-trusts`) and written into that trust's kit file (`trust/.env.<CODE>.<env>`), which
 `trust/Makefile` `-include`s so every trust-internal container inherits it.
 
 For the threat model, see the **Trust-internal Service Authentication** section in

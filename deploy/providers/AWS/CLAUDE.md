@@ -40,7 +40,7 @@ make ssh-config                               # Generate SSH config with SSM Pro
 make forward-trust                            # SSM port forward all trust UIs
 make provision-local-trust                     # Provision an on-prem trust host (run ON the host)
 make allow-local-trust-nlb LOCAL_TRUST_IP=<ip>  # Open the FL-server NLB to a trust's reported IP
-make package-onprem-trust-kit KIT=<slot>      # Tarball a filled-in trust/.env.<slot> + FL kit slice for an on-prem operator
+make package-onprem-trust-kit KIT=<CODE>      # Tarball a filled-in trust/.env.<CODE>.<env> + FL kit slice for an on-prem operator
 make delete-trust NAME=<name>                 # Hard-delete a trust on the hub (frees the slot)
 make destroy                                  # Selective destroy (preserves Cognito, Secrets, S3)
 make aws-login                                # AWS SSO login

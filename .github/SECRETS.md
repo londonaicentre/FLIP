@@ -68,7 +68,7 @@ make register-trusts
 - `imaging_api.yml`
 - `data_access_api.yml`
 
-> **Note**: The central hub (`flip-api`) validates per-trust keys against the SHA-256 hash in the `trust` table's `api_key_hash` column. The plaintext key lives only in the trust's kit file (`trust/.env.<slot>`), never on the hub.
+> **Note**: The central hub (`flip-api`) validates per-trust keys against the SHA-256 hash in the `trust` table's `api_key_hash` column. The plaintext key lives only in the trust's kit file (`trust/.env.<CODE>.<env>`), never on the hub.
 
 ---
 

@@ -48,7 +48,7 @@ Each local Trust host runs:
 | data-access-api | 8000 | HTTP (internal) |
 | fl-client | â€” | TCP (connects outbound to FL server via NLB) |
 
-The on-prem trust kit (e.g. `trust/.env.Trust_2.production.example`) defaults `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the dev Trust_1 allocation (`8005` / `8014` / `8024` vs Trust_1's `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose dev `trust1` instance binds the original ports via `trust/deploy/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
+The on-prem trust kit (`trust/.env.<CODE>.production`) can default `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the first dev trust's allocation (`8005` / `8014` / `8024` vs the dev `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose first dev trust binds the original ports via `trust/deploy/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
 
 ## Prerequisites
 
@@ -85,10 +85,10 @@ You still need to start the on-prem trust stack on the trust host:
 
 ```bash
 cd ../../..
-env PROD=<stag|true> make -C trust up-trust KIT=Trust_2
+env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
 ```
 
-Replace `Trust_2` with whichever slot name your `register-trusts` wrote into `trust/.env.<slot>` (defaults to `Trust_2` for the FLIP-prod BDMS on-prem flow).
+Use the trust code you registered, whose kit file is `trust/.env.<CODE>.production`.
 
 ### Provision the trust host
 
@@ -116,7 +116,7 @@ Opening the AWS FL-server NLB to the trust's public IP is a **separate** step â€
 
    ```bash
    cd ../../..
-   env PROD=stag make -C trust up-trust KIT=Trust_2   # or whichever slot register-trusts wrote
+   env PROD=stag make -C trust up-trust KIT=<CODE>   # the trust code you registered
    ```
 
 2. **Verify** the trust can poll the hub (check trust-api logs for successful task polling).

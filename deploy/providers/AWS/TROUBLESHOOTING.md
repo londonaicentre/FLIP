@@ -202,8 +202,8 @@ ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage-trust1
 
 The trust kit `.example` templates carry this key in their **Host-local
 profile** section; if you bootstrapped a kit before the refactor, copy the
-key from `trust/.env.Trust_1.example` and adjust the path for the trust
-host.
+key from a current template (e.g. `trust/.env.GSTT.development.example` or the
+base `trust/.env.example`) and adjust the path for the trust host.
 
 ---
 

@@ -84,8 +84,10 @@ For example:
 | `make restart-no-trust` | Stop and start all services except the trust services related services |
 | `make clean` | Remove all stopped containers, networks, and images |
 | `make ci` | Run the CI pipeline locally using `act` |
-| `make -C trust up-trust KIT=<slot> PROD=<env>` | Run a trust on the local host pointing at a remote hub (kit file `trust/.env.<slot>`; in FLIP prod the on-prem slot is `Trust_2` — template `trust/.env.Trust_2.production.example`) |
-| `make register-trusts` | Register the `TRUST_<n>_*` trusts on the running hub and write per-trust kit files `trust/.env.Trust_*` (run automatically by `make up`) |
+| `make -C trust up-trust KIT=<CODE> PROD=<env>` | Run a trust on the local host pointing at a remote hub (kit file `trust/.env.<CODE>.<env>`; the on-prem trust kit is `trust/.env.<CODE>.production`) |
+| `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."` | Scaffold a new trust kit file `trust/.env.<CODE>.<env>` from the base template |
+| `make register-trusts` | Register the shipped dev roster (`trust/.env.*.development.example`, currently GSTT + KCH) on the running hub and write per-trust kit files (run automatically by `make up`) |
+| `make register-trust KIT=<CODE>` | Register one trust on the running hub and fill its kit file (creds + hub-shared block) |
 | `make unit_test` | Run unit tests across all services |
 | `make tests` | Run flip-ui unit tests and the full flip-api test suite (lint + mypy + pytest) |
 | `make lock` | Regenerate every service's `uv.lock` from its `pyproject.toml` |
@@ -159,7 +161,7 @@ Trusts are registered on the **running hub** rather than configured via env-file
 make register-trusts
 ```
 
-`register-trusts` registers the `TRUST_<n>_*` trusts (configured in `.env.development`) on the hub: each call inserts a `trust` row with its `api_key_hash`, claims an FL kit slot, and writes that trust's per-trust kit file `trust/.env.Trust_*` (containing `TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`, `FL_KIT_SLOT`, `FL_KIT_SLOT_NUMBER`, `EXPECTED_TRUST_ID`). `make up` runs `register-trusts` automatically once the hub is up. See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the trust-internal auth threat model.
+`register-trusts` registers the shipped dev roster — every `trust/.env.*.development.example` kit (currently GSTT and KCH) — on the hub: for each, it inserts a `trust` row with its `api_key_hash`, claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.development` (with `TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`, `FL_KIT_SLOT`, `FL_KIT_SLOT_NUMBER`, `EXPECTED_TRUST_ID`). The kit files ARE the roster — trusts are not enumerated in the hub env file. To add another, run `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."` then `make register-trust KIT=<CODE>`. `make up` runs `register-trusts` automatically once the hub is up. See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the trust-internal auth threat model.
 
 ### Basic Usage
 

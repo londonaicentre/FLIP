@@ -56,7 +56,7 @@ make generate-internal-service-key            # from repo root (also invoked aut
 
 `generate-internal-service-key` writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` to `.env.development` (used for fl-server-to-hub authentication).
 
-Trusts are registered on the **running hub** with `make register-trusts` (from the repo root). Each call inserts a `trust` row with its `api_key_hash`, claims an FL kit slot, and writes that trust's per-trust kit file `trust/.env.Trust_*` carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY` — neither plaintext is stored on the hub. `make up` runs `register-trusts` automatically once the hub is up.
+Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster; from the repo root) or `make register-trust KIT=<CODE>` (one trust). Each inserts a `trust` row with its `api_key_hash`, claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>` carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY` — neither plaintext is stored on the hub. `make up` runs `register-trusts` automatically once the hub is up.
 See [`.env.development.example`](../.env.development.example) for the expected format.
 
 The API is served on the port defined by `API_PORT` in [`.env.development.example`](../.env.development.example)

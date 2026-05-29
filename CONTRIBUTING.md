@@ -188,10 +188,11 @@ make generate-internal-service-key
 This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into `.env.development` for
 fl-server-to-hub authentication.
 
-Trusts are registered on the **running hub** with `make register-trusts`, which inserts each
-`trust` row (with its `api_key_hash`), claims an FL kit slot, and writes that trust's per-trust kit
-file `trust/.env.Trust_*` carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up`
-runs `register-trusts` automatically once the hub is up.
+Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster) or
+`make register-trust KIT=<CODE>` (one trust), which inserts each `trust` row (with its
+`api_key_hash`), claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>`
+carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up` runs `register-trusts`
+automatically once the hub is up.
 
 Docker services receive these variables via the `env_file` directive in the
 compose file — avoid hardcoding values in Dockerfiles or compose files directly.
@@ -200,7 +201,7 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 
 - `TRUST_API_KEY_HEADER` — HTTP header name for trust-to-hub authentication.
 - `TRUST_API_KEY` — single per-trust plaintext API key. Lives only in that trust's kit file
-  (`trust/.env.<slot>`), written by `make register-trusts`; never on the hub.
+  (`trust/.env.<CODE>.<env>`), written by `make register-trusts`; never on the hub.
 - `INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for fl-server-to-hub authentication.
 - `INTERNAL_SERVICE_KEY` — internal service key used by the fl-server on the Central Hub.
 - `INTERNAL_SERVICE_KEY_HASH` — hub-side SHA-256 hash of the internal service key.
@@ -208,7 +209,7 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
   `X-Trust-Internal-Service-Key`). Sent by every caller (trust-api, imaging-api, fl-client) on every
   call to imaging-api or data-access-api.
 - `TRUST_INTERNAL_SERVICE_KEY` — single per-trust plaintext key, in that trust's kit file
-  (`trust/.env.<slot>`), minted by `register_trust`. Read by every trust-internal container. The hub
+  (`trust/.env.<CODE>.<env>`), minted by `register_trust`. Read by every trust-internal container. The hub
   never sees it. Distinct from `INTERNAL_SERVICE_KEY*` (which protects fl-server → flip-api on the
   Central Hub). See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the threat model.
 

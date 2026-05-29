@@ -241,7 +241,7 @@ make register-trusts                 # mints each trust's TRUST_API_KEY + TRUST_
 ### Trust API Keys (trust-api → flip-api)
 
 Each trust has a single `TRUST_API_KEY` (plaintext) minted by `register_trust` (`make register-trusts`) and held
-only in that trust's kit file (`trust/.env.<slot>`), sent in the `TRUST_API_KEY_HEADER` header. The hub stores
+only in that trust's kit file (`trust/.env.<CODE>.<env>`), sent in the `TRUST_API_KEY_HEADER` header. The hub stores
 only the SHA-256 hash, in the `trust` table's `api_key_hash` column — there is no hub-side env dict of trust keys.
 Used for task polling, cohort result submission, and heartbeat endpoints.
 
@@ -257,12 +257,12 @@ is a **single, hub-internal** secret and is separate from the per-trust internal
 Inside each trust, every call from trust-api / imaging-api / fl-client to imaging-api or data-access-api
 carries a shared-secret header. The header name comes from `TRUST_INTERNAL_SERVICE_KEY_HEADER` (default
 `X-Trust-Internal-Service-Key`); the value is the per-trust plaintext `TRUST_INTERNAL_SERVICE_KEY`, minted by
-`register_trust` into the trust's kit file (`trust/.env.<slot>`) alongside `TRUST_API_KEY`. Receivers compare
+`register_trust` into the trust's kit file (`trust/.env.<CODE>.<env>`) alongside `TRUST_API_KEY`. Receivers compare
 the header against their own copy with a constant-time compare. `/health` is intentionally exempt so liveness
 probes still work.
 
 Each trust gets a distinct key — a leak in `Trust_1` cannot drive operations on `Trust_2`'s APIs. The hub
-never sees these keys: they live only in trust-side env (the trust's kit file `trust/.env.<slot>`, which
+never sees these keys: they live only in trust-side env (the trust's kit file `trust/.env.<CODE>.<env>`, which
 `trust/Makefile` `-include`s so every trust-internal container inherits it). See the **Trust-internal Service
 Authentication** section in the repo-root [`CLAUDE.md`](../CLAUDE.md) for the full threat model.
 
