@@ -26,7 +26,7 @@ from flip.constants import FlipConstants, PTConstants
 
 
 class PTModelLocator(ModelLocator):
-    def __init__(self, exclude_vars=None, model=None):
+    def __init__(self, exclude_vars=None, model=None) -> None:
         super(PTModelLocator, self).__init__()
 
         if model is None:
@@ -40,7 +40,7 @@ class PTModelLocator(ModelLocator):
     def get_model_names(self, fl_ctx: FLContext) -> List[str]:
         return [PTConstants.PTServerName]
 
-    def locate_model(self, model_name, fl_ctx: FLContext) -> Union[DXO, None]:
+    def locate_model(self, model_name: str, fl_ctx: FLContext) -> Union[DXO, None]:
         if model_name == PTConstants.PTServerName:
             try:
                 server_run_dir = fl_ctx.get_engine().get_workspace().get_app_dir(fl_ctx.get_job_id())
@@ -79,7 +79,7 @@ class PTModelLocator(ModelLocator):
 
 
 class InitialPTModelLocator(ModelLocator):
-    def __init__(self, exclude_vars=None, model=None):
+    def __init__(self, exclude_vars=None, model=None) -> None:
         super(InitialPTModelLocator, self).__init__()
 
         if model is None:
@@ -93,7 +93,7 @@ class InitialPTModelLocator(ModelLocator):
     def get_model_names(self, fl_ctx: FLContext) -> List[str]:
         return [PTConstants.PTServerName]
 
-    def locate_model(self, model_name, fl_ctx: FLContext) -> Union[DXO, None]:
+    def locate_model(self, model_name: str, fl_ctx: FLContext) -> Union[DXO, None]:
         # We look for existing models
         self.log_info(fl_ctx, f"Trying to locate the model {model_name}")
         if model_name == PTConstants.PTServerName:
@@ -147,7 +147,7 @@ class InitialPTModelLocator(ModelLocator):
 
 
 class EvaluationPTModelLocator(ModelLocator):
-    def __init__(self, exclude_vars=None):
+    def __init__(self, exclude_vars=None) -> None:
         super(EvaluationPTModelLocator, self).__init__()
         self.models = None
         self.exclude_vars = exclude_vars
