@@ -79,8 +79,13 @@ evaluation ServerApp reads it (via the `flip-job-dir` run-config value).
 Submit the evaluation run against the `fl-api` control plane:
 
 ```bash
-curl -X POST http://localhost:8000/submit_run/3d_spleen_segmentation_evaluation
+make submit APP=3d_spleen_segmentation_evaluation
 ```
+
+The default stack publishes no host ports; `make submit` execs into the fl-api
+container and POSTs to its loopback API. Use `make up-debug` instead if you want
+to POST from the host (`curl -X POST http://localhost:8000/submit_run/3d_spleen_segmentation_evaluation`)
+or open the Swagger UI.
 
 The FLIP API will:
 

@@ -28,7 +28,7 @@ Standalone FastAPI service for Flower deployment runtime.
 
 ## API docs
 
-With the FL API running on `localhost:8000`, access:
+With the FL API running and its host port published (`make up-debug`; the default `make up` keeps it internal), access on `localhost:8000`:
 
 - Swagger UI: `http://localhost:8000/docs`
 - OpenAPI JSON: `http://localhost:8000/openapi.json`
