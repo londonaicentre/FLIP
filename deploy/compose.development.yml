@@ -56,6 +56,11 @@ services:
     # image (its workflow is a CI smoke test; prod serves it from S3/CloudFront).
     image: ${DOCKER_REGISTRY}flip-api:${DOCKER_TAG}
     pull_policy: always
+    # Dev-on-pull: the GHCR image bakes uid 1000 (flip); run the pulled image as
+    # the HOST uid so it can write the host-owned bind mounts (src/, ~/.aws).
+    # Paired with the HOME/UV_* env below so it never writes the image-owned
+    # .venv. No effect under BUILD=true (the image is already host-uid).
+    user: "${UID}:${GID}"
     build:
       args:
         UID: ${UID}
@@ -83,6 +88,18 @@ services:
       - shared-net-2
     environment:
       - ENV=development
+      # Dev-on-pull (see `user:` above): import flip_api via PYTHONPATH and skip
+      # the runtime editable install (UV_NO_SYNC) so the host-uid process never
+      # writes the image-owned .venv; keep uv's cache + HOME writable. HOME
+      # matches the ~/.aws mount path below so boto3 still finds credentials.
+      - HOME=/home/${UNAME}
+      - UV_CACHE_DIR=/tmp/uv-cache
+      - UV_NO_SYNC=1
+      - PYTHONPATH=/app/src
+      # Under user-mapping the host uid has no /etc/passwd entry, so libpq's
+      # getpwuid fails and the entrypoint's `pg_isready` gate returns "no
+      # attempt". PGUSER lets it skip the user lookup (it doesn't authenticate).
+      - PGUSER=${POSTGRES_USER}
       # Disable the app-layer MFA gate for local dev so developers aren't
       # forced through TOTP enrolment on a burner authenticator app just
       # to click around. Stag/prod compose files don't pass this through;
