@@ -130,8 +130,7 @@ class IServerStatus(BaseModel):
 
     status: str
     # The FL backend the server runs, self-reported by fl-api on /check_server_status.
-    # Optional so older fl-api responses (pre backend self-report) still validate.
-    fl_backend: FLBackend | None = None
+    fl_backend: FLBackend
 
 
 class IClientStatus(BaseModel):

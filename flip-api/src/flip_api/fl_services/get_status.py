@@ -82,11 +82,10 @@ def get_status_endpoint(
             # We assume the server is online if we get a response
             online = True
 
-            # Prefer the live self-reported backend, and persist it so a framework switch
+            # Use the live self-reported backend, and persist it so a framework switch
             # (make restart-fl) is reflected without a flip-api restart.
-            fl_backend = server_status.fl_backend or net.fl_backend
-            if server_status.fl_backend:
-                set_net_backend(net.endpoint, server_status.fl_backend, db)
+            fl_backend = server_status.fl_backend
+            set_net_backend(net.endpoint, fl_backend, db)
 
             # Fetch client statuses
             clients = fetch_client_status(net.endpoint)

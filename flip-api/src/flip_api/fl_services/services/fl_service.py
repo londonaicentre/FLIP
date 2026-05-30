@@ -947,7 +947,7 @@ def keep_fl_api_session_alive() -> None:
         for net in nets:
             try:
                 server_status = fetch_server_status(net.endpoint)
-                if server_status and server_status.fl_backend:
+                if server_status:
                     fl_scheduler_service.set_net_backend(net.endpoint, server_status.fl_backend, db)
             except Exception as e:
                 logger.error(f"Failed to send check request: {e}")

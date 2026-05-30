@@ -66,6 +66,7 @@ def mock_fetch_server_status():
     with patch("flip_api.fl_services.get_status.fetch_server_status") as mock:
         mock.return_value = IServerStatus(
             status="started",
+            fl_backend="nvflare",
         )
         yield mock
 
@@ -154,6 +155,7 @@ def test_get_status_endpoint_client_status_none(
 ):
     mock_fetch_server_status.return_value = IServerStatus(
         status="stopped",
+        fl_backend="nvflare",
     )
     mock_fetch_client_status.return_value = []
 
