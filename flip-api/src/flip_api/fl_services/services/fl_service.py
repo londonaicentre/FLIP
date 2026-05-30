@@ -21,12 +21,12 @@ from flip_api.config import get_settings
 from flip_api.db.database import engine
 from flip_api.db.models.main_models import FLJob
 from flip_api.domain.interfaces.fl import (
+    DEFAULT_JOB_TYPE,
     IClientStatus,
     IJobMetaData,
     IServerStatus,
     IStartTrainingBody,
     JobRequiredFiles,
-    JobTypes,
 )
 from flip_api.domain.schemas.status import FLJobStatus, FLTargets
 from flip_api.domain.schemas.types import FLBackend
@@ -323,7 +323,7 @@ def start_training(
     submit_job(fl_job_id, endpoint, model_id, session)
 
 
-def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> str:
+def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) -> str:
     """
     Creates the app folder from the base application files and the uploaded files.
 
@@ -385,7 +385,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.sta
 
     Args:
         model_id (UUID): model ID, which will give the name to the app folder.
-        job_type (JobTypes, optional): type of job (e.g. 'standard', 'evaluation', etc.). This will cause
+        job_type (str, optional): type of job (e.g. 'standard', 'evaluation', etc.). This will cause
         a specific base application to be selected. Defaults to 'standard'.
 
     Raises:
@@ -431,15 +431,14 @@ def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.sta
         if not jt:
             logger.info("No 'job_type' found in config.json. Using job_type=standard.")
         else:
-            try:
-                job_type = JobTypes(jt)
-            except ValueError:
+            if not JobRequiredFiles.is_valid_job_type(jt, "nvflare"):
                 raise UnknownJobTypeError(f"Unknown job_type argument found in config.json: {jt}")
-            logger.info(f"job_type in config.json: {job_type.value}. Using it to select base application.")
+            job_type = jt
+            logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
 
     # List base files for that job_type. This bundler is the nvflare-specific path, so the
     # backend segment is fixed: <base>/nvflare/<job_type>.
-    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/nvflare/{job_type.value}"
+    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/nvflare/{job_type}"
     logger.debug(f"Base bucket: {base_bucket_s3_path}")
     base_files = s3.list_objects(base_bucket_s3_path)
     if not base_files:
@@ -479,7 +478,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.sta
     }  # relative paths of model files (i.e. without the bucket prefix)
     missing_files = [f for f in required_files if f not in model_rel]
     if len(missing_files) > 0:
-        raise FileNotFoundError(f"Missing required files for job type {job_type.value}: {', '.join(missing_files)}. ")
+        raise FileNotFoundError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
 
     # Copy base application files to the destination bucket
     for file in base_files:
@@ -531,7 +530,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: JobTypes = JobTypes.sta
     return dest_bucket_s3_path
 
 
-def bundle_flower_application(model_id: UUID, job_type: JobTypes = JobTypes.standard) -> str:
+def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) -> str:
     """
     Creates the app folder from the base application files and the uploaded files.
 
@@ -568,7 +567,7 @@ def bundle_flower_application(model_id: UUID, job_type: JobTypes = JobTypes.stan
 
     Args:
         model_id (UUID): model ID, which will give the name to the app folder.
-        job_type (JobTypes, optional): type of job (e.g. 'standard', 'evaluation', etc.). This will cause
+        job_type (str, optional): type of job (e.g. 'standard', 'evaluation', etc.). This will cause
         a specific base application to be selected. Defaults to 'standard'.
 
     Raises:
@@ -614,15 +613,14 @@ def bundle_flower_application(model_id: UUID, job_type: JobTypes = JobTypes.stan
         if not jt:
             logger.info("No 'job_type' found in config.json. Using job_type=standard.")
         else:
-            try:
-                job_type = JobTypes(jt)
-            except ValueError:
+            if not JobRequiredFiles.is_valid_job_type(jt, "flower"):
                 raise UnknownJobTypeError(f"Unknown job_type argument found in config.json: {jt}")
-            logger.info(f"job_type in config.json: {job_type.value}. Using it to select base application.")
+            job_type = jt
+            logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
 
     # List base files for that job_type. This bundler is the flower-specific path, so the
     # backend segment is fixed: <base>/flower/<job_type>.
-    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/flower/{job_type.value}"
+    base_bucket_s3_path = f"{get_settings().FL_APP_BASE_BUCKET}/flower/{job_type}"
     logger.debug(f"Base bucket: {base_bucket_s3_path}")
     base_files = s3.list_objects(base_bucket_s3_path)
     if not base_files:
@@ -647,7 +645,7 @@ def bundle_flower_application(model_id: UUID, job_type: JobTypes = JobTypes.stan
     }  # relative paths of model files (i.e. without the bucket prefix)
     missing_files = [f for f in required_files if f not in model_rel]
     if len(missing_files) > 0:
-        raise FileNotFoundError(f"Missing required files for job type {job_type.value}: {', '.join(missing_files)}. ")
+        raise FileNotFoundError(f"Missing required files for job type {job_type}: {', '.join(missing_files)}. ")
 
     # Copy base application files to the destination bucket
     for file in base_files:

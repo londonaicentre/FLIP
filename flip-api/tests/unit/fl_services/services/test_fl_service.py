@@ -57,10 +57,9 @@ def mocked_settings():
 def mock_job_types_file(tmp_path, monkeypatch):
     """Provide the set of valid job types for the parametrized bundler tests.
 
-    ``JobTypes`` is now a static enum (the per-backend required-files manifest is data pulled
-    from S3 at runtime, not the source of the enum), so there is nothing to monkeypatch — the
-    enum already covers standard/diffusion_model/fed_opt/evaluation. This fixture is retained
-    so the parametrized tests can assert against a known job-type mapping.
+    Job types are data (the per-backend manifest keys), not an enum. The bundler tests drive
+    ``JobRequiredFiles.is_valid_job_type`` from this mapping so a name absent from it (e.g.
+    "invalid") is rejected with ``UnknownJobTypeError``.
     """
     return {
         "standard": ["trainer.py", "validator.py", "models.py", "config.json"],
@@ -238,10 +237,13 @@ def test_start_training_with_config(
     mock_submit.assert_called_once()
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_nvflare_application_success(mock_s3, mock_required, mock_verify, model_id, mocked_settings):
+def test_bundle_nvflare_application_success(
+    mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
+):
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
@@ -281,12 +283,13 @@ def test_bundle_nvflare_application_success(mock_s3, mock_required, mock_verify,
     )
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 @patch("flip_api.fl_services.services.fl_service.logger")
 def test_bundle_nvflare_application_model_files_overwrite(
-    mock_logger, mock_s3, mock_required, mock_verify, model_id, mocked_settings
+    mock_logger, mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
 ):
     """
     Test that if a file in the model files has the same name as a file in the base application, the model file is not
@@ -351,6 +354,7 @@ def test_bundle_nvflare_application_model_files_overwrite(
             )
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type")
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
@@ -368,6 +372,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
     mock_s3,
     mock_required,
     mock_verify,
+    mock_is_valid,
     model_id,
     mocked_settings,
     job_type,
@@ -378,11 +383,13 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
     job types does not.
 
     Mocks the required files to be consistent with the job type provided in the config, so that the only reason for
-    failure in the invalid case is the wrong job type.
+    failure in the invalid case is the wrong job type. Validity is driven by the manifest keys
+    (mock_job_types_file), so "invalid" is rejected.
     """
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
+    mock_is_valid.side_effect = lambda jt, backend: jt in mock_job_types_file
     mock_client = mock_s3.return_value
     # Return a config.json containing the job_type string for this parametrized run
     mock_client.get_object.return_value = {
@@ -442,9 +449,10 @@ def test_bundle_nvflare_application_wrong_files(mock_s3, mock_required, mock_ver
         _ = fl_service.bundle_nvflare_application(model_id)
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_flower_application_success(mock_s3, mock_required, model_id, mocked_settings):
+def test_bundle_flower_application_success(mock_s3, mock_required, mock_is_valid, model_id, mocked_settings):
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
@@ -482,11 +490,12 @@ def test_bundle_flower_application_success(mock_s3, mock_required, model_id, moc
     )
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 @patch("flip_api.fl_services.services.fl_service.logger")
 def test_bundle_flower_application_model_files_overwrite(
-    mock_logger, mock_s3, mock_required, model_id, mocked_settings
+    mock_logger, mock_s3, mock_required, mock_is_valid, model_id, mocked_settings
 ):
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
@@ -539,6 +548,7 @@ def test_bundle_flower_application_model_files_overwrite(
             )
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type")
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
@@ -556,6 +566,7 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
     mock_s3,
     mock_required,
     mock_verify,
+    mock_is_valid,
     model_id,
     mocked_settings,
     job_type,
@@ -566,11 +577,13 @@ def test_bundle_flower_application_file_wrong_job_type_in_config(
     job types does not.
 
     Mocks the required files to be consistent with the job type provided in the config, so that the only reason for
-    failure in the invalid case is the wrong job type.
+    failure in the invalid case is the wrong job type. Validity is driven by the manifest keys
+    (mock_job_types_file), so "invalid" is rejected.
     """
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
+    mock_is_valid.side_effect = lambda jt, backend: jt in mock_job_types_file
     mock_client = mock_s3.return_value
     # Return a config.json containing the job_type string for this parametrized run
     mock_client.get_object.return_value = {

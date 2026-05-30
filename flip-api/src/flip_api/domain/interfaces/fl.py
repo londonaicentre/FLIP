@@ -22,6 +22,11 @@ from flip_api.domain.schemas.types import FLBackend, TrimStr
 from flip_api.utils.constants import job_types_required_files_name
 from flip_api.utils.logger import logger
 
+# Default job type used when config.json declares none. The job-type vocabulary itself is data
+# (the per-backend manifest keys); this is the one name that legitimately lives in code, as the
+# fallback. Mirrors the UI's DEFAULT_JOB_TYPE.
+DEFAULT_JOB_TYPE = "standard"
+
 # Directory where the per-backend required-files manifests are downloaded at runtime.
 # The manifests themselves are never committed to source control (gitignored) — S3 is the
 # single source of truth, pulled per FL backend on model creation. See pull_required_files.py.
@@ -179,30 +184,15 @@ class AggregationWeights:
     MaximumAggregationWeight = 1
 
 
-class JobTypes(Enum):
-    """The fixed vocabulary of FL job types.
-
-    The job-type *names* are a stable, backend-agnostic concept defined in code; the
-    *required files* for each type are data, pulled per-backend from S3 at runtime (the
-    file lists differ between nvflare and flower). Keeping the enum static decouples it
-    from the on-disk manifest, which may be absent at import time (gitignored, pulled lazily).
-    """
-
-    standard = "standard"
-    evaluation = "evaluation"
-    fed_opt = "fed_opt"
-    diffusion_model = "diffusion_model"
-
-
 class JobRequiredFiles(BaseModel):
     @classmethod
-    def get_required_files(cls, job_type: JobTypes, fl_backend: FLBackend) -> list[str]:
+    def get_required_files(cls, job_type: str, fl_backend: FLBackend) -> list[str]:
         """Returns the list of required files for a job type on a given backend.
 
         Always reloads from the per-backend on-disk manifest.
 
         Args:
-            job_type (JobTypes): The job type to look up.
+            job_type (str): The job type to look up.
             fl_backend (FLBackend): The FL backend whose manifest to read (``nvflare`` or ``flower``).
 
         Returns:
@@ -210,7 +200,23 @@ class JobRequiredFiles(BaseModel):
             (or the manifest) is not present on disk.
         """
         config = _load_job_types_config(fl_backend)
-        return config.get(job_type.value, [])
+        return config.get(job_type, [])
+
+    @classmethod
+    def is_valid_job_type(cls, job_type: str, fl_backend: FLBackend) -> bool:
+        """Whether ``job_type`` is defined in the backend's on-disk manifest.
+
+        The set of valid job types is data (the manifest keys), not a hard-coded enum, so adding
+        a job type is purely an S3 manifest + base-application change.
+
+        Args:
+            job_type (str): The job type to validate.
+            fl_backend (FLBackend): The FL backend whose manifest to read (``nvflare`` or ``flower``).
+
+        Returns:
+            bool: True if ``job_type`` is a key in the backend's manifest.
+        """
+        return job_type in _load_job_types_config(fl_backend)
 
     @classmethod
     def get_all_job_types_with_files(cls, fl_backend: FLBackend) -> dict[str, list[str]]:
@@ -226,12 +232,3 @@ class JobRequiredFiles(BaseModel):
             required files.
         """
         return _load_job_types_config(fl_backend).copy()
-
-    @classmethod
-    def get_job_type_names(cls) -> list[str]:
-        """Returns a list of all valid job type names.
-
-        Returns:
-            list[str]: List of job type names.
-        """
-        return [job_type.value for job_type in JobTypes]
