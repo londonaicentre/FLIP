@@ -187,7 +187,7 @@ def get_net_by_model_id(model_id: UUID, session: Session) -> INetDetails:
 
         endpoint, name, fl_backend = result
         # The fl_backend column is a plain varchar at the DB layer; narrow it to FLBackend.
-        return INetDetails(endpoint=endpoint, name=name, fl_backend=cast("FLBackend | None", fl_backend))
+        return INetDetails(endpoint=endpoint, name=name, fl_backend=cast("FLBackend", fl_backend))
 
     except SQLAlchemyError as e:
         logger.error(f"Error getting net by model ID: {e}")
@@ -221,7 +221,7 @@ def get_net_by_name(name: str, session: Session) -> INetDetails | None:
             return None
 
         endpoint, net_name, fl_backend = result
-        return INetDetails(endpoint=endpoint, name=net_name, fl_backend=cast("FLBackend | None", fl_backend))
+        return INetDetails(endpoint=endpoint, name=net_name, fl_backend=cast("FLBackend", fl_backend))
 
     except SQLAlchemyError as e:
         logger.error(f"Database error while getting net by name: {e}")
@@ -253,7 +253,7 @@ def get_nets(session: Session) -> list[INetDetails]:
             raise NotFoundError(error_message)
 
         return [
-            INetDetails(endpoint=endpoint, name=name, fl_backend=cast("FLBackend | None", fl_backend))
+            INetDetails(endpoint=endpoint, name=name, fl_backend=cast("FLBackend", fl_backend))
             for endpoint, name, fl_backend in results
         ]
 
@@ -285,33 +285,32 @@ def set_net_backend(endpoint: str, fl_backend: FLBackend, session: Session) -> N
 def resolve_backend(session: Session, net: INetDetails | None = None) -> FLBackend:
     """Resolve the active FL backend at runtime from the nets (never from a static env var).
 
-    The backend is whatever the fl-api nets self-report. There is no env fallback: a wrong
-    guess would bundle for the wrong framework, so an unknown backend is a hard error.
+    Every net carries a non-null ``fl_backend`` (seeded from FL_BACKEND, reconciled to its
+    self-report by the background poll), so resolution always reads the DB, never the boot env.
 
     Args:
-        session (Session): SQLModel session (used to look up reported backends).
-        net (INetDetails | None): When given, use this net's reported backend (the job is
-            already pinned to it). When ``None`` (e.g. at model creation, before scheduling),
-            fall back to the backend reported by any net — all nets run the same backend.
+        session (Session): SQLModel session (used when no net is given).
+        net (INetDetails | None): When given, use this net's backend (the job is already pinned
+            to it). When ``None`` (e.g. at model creation, before scheduling), use any net's
+            backend — all nets run the same backend in single-backend mode.
 
     Returns:
         FLBackend: The resolved backend (``nvflare`` or ``flower``).
 
     Raises:
-        ValueError: If no net has reported a backend yet.
+        ValueError: If no FL nets are registered at all (empty NET_ENDPOINTS / misconfig).
     """
-    if net is not None and net.fl_backend is not None:
+    if net is not None:
         return net.fl_backend
 
-    if net is None:
-        reported = session.exec(select(FLNets.fl_backend).where(FLNets.fl_backend.is_not(None))).first()  # type: ignore[union-attr]
-        if reported is not None:
-            # Column is a plain varchar at the DB layer; narrow it to FLBackend.
-            return cast("FLBackend", reported)
+    reported = session.exec(select(FLNets.fl_backend)).first()
+    if reported is not None:
+        # Column is a plain varchar at the DB layer; narrow it to FLBackend.
+        return cast("FLBackend", reported)
 
     raise ValueError(
-        "Cannot determine the active FL backend: no FL net has reported one yet. "
-        "Ensure an fl-api net is running and reporting its backend via /check_server_status."
+        "Cannot determine the active FL backend: no FL nets are registered. "
+        "Check NET_ENDPOINTS and that seeding ran."
     )
 
 

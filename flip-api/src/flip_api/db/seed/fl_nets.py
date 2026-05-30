@@ -40,22 +40,33 @@ def seed_fl_nets(session: Session) -> list[FLNets]:
     Returns:
         list[FLNets]: All FL net rows present after seeding.
     """
-    nets = get_settings().NET_ENDPOINTS
+    settings = get_settings()
+    nets = settings.NET_ENDPOINTS
+    backend = settings.FL_BACKEND
     existing_by_name = {net.name: net for net in session.exec(select(FLNets)).all()}
 
     for name, endpoint in nets.items():
         existing = existing_by_name.get(name)
         if existing is None:
-            session.add(FLNets(name=name, endpoint=endpoint))
-            logger.info(f"FL Net '{name}' created with endpoint '{endpoint}'.")
-        elif existing.endpoint != endpoint:
-            logger.info(
-                f"FL Net '{name}' endpoint changed from '{existing.endpoint}' to '{endpoint}'; reconciling."
-            )
-            existing.endpoint = endpoint
-            session.add(existing)
+            # Bootstrap fl_backend from the declared FL_BACKEND. The background poll reconciles
+            # it to each net's self-reported backend at runtime; we only seed the initial value.
+            session.add(FLNets(name=name, endpoint=endpoint, fl_backend=backend))
+            logger.info(f"FL Net '{name}' created with endpoint '{endpoint}' and backend '{backend}'.")
         else:
-            logger.info(f"FL Net '{name}' already matches NET_ENDPOINTS. Skipping.")
+            if existing.endpoint != endpoint:
+                logger.info(
+                    f"FL Net '{name}' endpoint changed from '{existing.endpoint}' to '{endpoint}'; reconciling."
+                )
+                existing.endpoint = endpoint
+                session.add(existing)
+            # Backfill backend for rows created before fl_backend existed. Do NOT overwrite a
+            # value that is already set — the self-report poll is the runtime authority for it.
+            if existing.fl_backend is None:
+                logger.info(f"FL Net '{name}' backfilling backend '{backend}'.")
+                existing.fl_backend = backend
+                session.add(existing)
+            if existing.endpoint == endpoint and existing.fl_backend is not None:
+                logger.info(f"FL Net '{name}' already matches NET_ENDPOINTS. Skipping.")
     session.commit()
 
     return list(session.exec(select(FLNets)).all())

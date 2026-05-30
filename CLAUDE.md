@@ -225,7 +225,7 @@ After changes, evaluate if docs need updating:
 6. `make create-networks`
 
 ### Key Environment Variables
-- `FL_BACKEND` — `flower` (default) or `nvflare`
+- `FL_BACKEND` — `flower` (default) or `nvflare`. Two roles: (1) deploy layer — selects which fl-* images run (compose/Makefile); (2) flip-api — **bootstraps** the `FLNets.fl_backend` column at seed time only. flip-api never reads it at runtime: the active backend is each net's self-report on `/check_server_status`, which the background poll reconciles onto the row, so `make restart-fl` into a different framework needs no flip-api restart.
 - `PROD` — `true` (production), `stag` (staging), unset (development)
 - `AES_KEY_BASE64` — encryption key for trust communication
 - `TRUST_API_KEYS` — JSON dict of per-trust plaintext API keys for trust-to-hub auth

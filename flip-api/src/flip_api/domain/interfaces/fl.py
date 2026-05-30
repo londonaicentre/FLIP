@@ -118,9 +118,9 @@ class IInitiateTrainingInputPayload(BaseModel):
 class INetDetails(BaseModel):
     name: str
     endpoint: str
-    # The FL backend this net runs, as self-reported by its fl-api and persisted on the
-    # FLNets row. None until the net has reported (or on an older fl-api that does not).
-    fl_backend: FLBackend | None = None
+    # The FL backend this net runs. Derived from the non-null FLNets.fl_backend column (seeded
+    # from FL_BACKEND, reconciled by the self-report poll), so it is always set.
+    fl_backend: FLBackend
 
 
 class IServerStatus(BaseModel):
@@ -156,8 +156,8 @@ class IClientStatus(BaseModel):
 
 class INetStatus(BaseModel):
     name: str
-    # None when the net has not yet reported its backend (e.g. offline and never polled).
-    fl_backend: FLBackend | None = None
+    # Always set: derived from the non-null FLNets.fl_backend column (seeded + reconciled).
+    fl_backend: FLBackend
     online: bool | None = None
     registered_clients: int | None = None
     net_in_use: bool | None = None

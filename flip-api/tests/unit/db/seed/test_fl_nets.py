@@ -27,10 +27,11 @@ def mock_session():
 
 @pytest.fixture
 def mock_fl_net():
-    """Create a mock FLNets instance."""
+    """Create a mock FLNets instance with a backend already set (no backfill needed)."""
     net = Mock(spec=FLNets)
     net.name = "existing_net"
     net.endpoint = "http://existing.com"
+    net.fl_backend = "flower"
     return net
 
 
@@ -40,9 +41,9 @@ def sample_net_endpoints():
     return {"net1": "http://net1.com", "net2": "http://net2.com"}
 
 
-def _mock_settings(net_endpoints: dict) -> SimpleNamespace:
+def _mock_settings(net_endpoints: dict, fl_backend: str = "nvflare") -> SimpleNamespace:
     """Helper to build a settings-like object."""
-    return SimpleNamespace(NET_ENDPOINTS=net_endpoints)
+    return SimpleNamespace(NET_ENDPOINTS=net_endpoints, FL_BACKEND=fl_backend)
 
 
 @patch("flip_api.db.seed.fl_nets.get_settings")
@@ -62,6 +63,9 @@ def test_seed_fl_nets_creates_new_nets_when_none_exist(mock_get_settings, mock_s
     assert isinstance(added_net2, FLNets)
     assert {added_net1.name, added_net2.name} == {"net1", "net2"}
     assert {added_net1.endpoint, added_net2.endpoint} == {"http://net1.com", "http://net2.com"}
+    # New rows are bootstrapped with the declared FL_BACKEND.
+    assert added_net1.fl_backend == "nvflare"
+    assert added_net2.fl_backend == "nvflare"
 
 
 @patch("flip_api.db.seed.fl_nets.get_settings")
@@ -119,3 +123,35 @@ def test_seed_fl_nets_with_empty_endpoints(mock_get_settings, mock_session):
 
     mock_session.add.assert_not_called()
     assert result == []
+
+
+@patch("flip_api.db.seed.fl_nets.get_settings")
+def test_seed_fl_nets_backfills_null_backend(mock_get_settings, mock_session):
+    """A pre-existing row with fl_backend=None (created before the column existed) is backfilled."""
+    legacy = Mock(spec=FLNets)
+    legacy.name = "existing_net"
+    legacy.endpoint = "http://existing.com"
+    legacy.fl_backend = None
+    mock_get_settings.return_value = _mock_settings({"existing_net": "http://existing.com"}, fl_backend="nvflare")
+    mock_session.exec.return_value.all.side_effect = [[legacy], [legacy]]
+
+    seed_fl_nets(mock_session)
+
+    assert legacy.fl_backend == "nvflare"
+    mock_session.add.assert_called_once_with(legacy)
+
+
+@patch("flip_api.db.seed.fl_nets.get_settings")
+def test_seed_fl_nets_does_not_overwrite_existing_backend(mock_get_settings, mock_session, mock_fl_net):
+    """A row that already has a backend keeps it — self-report owns runtime reconciliation, not the seed.
+
+    The mock net already matches endpoint and has fl_backend='flower'; seeding with FL_BACKEND='nvflare'
+    must leave it untouched (no add()).
+    """
+    mock_get_settings.return_value = _mock_settings({"existing_net": "http://existing.com"}, fl_backend="nvflare")
+    mock_session.exec.return_value.all.side_effect = [[mock_fl_net], [mock_fl_net]]
+
+    seed_fl_nets(mock_session)
+
+    assert mock_fl_net.fl_backend == "flower"
+    mock_session.add.assert_not_called()

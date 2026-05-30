@@ -38,11 +38,12 @@ class FLNets(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(unique=True)
     endpoint: str = Field(unique=True)
-    # FL backend ("nvflare"/"flower") this net runs, self-reported by its fl-api on
-    # /check_server_status and persisted by the background poll. None until first reported.
-    # Typed as FLBackend for callers/validation; stored as a plain varchar since SQLAlchemy
-    # cannot map a Literal to a column type (hence the explicit sa_column).
-    fl_backend: FLBackend | None = Field(default=None, sa_column=Column(String, nullable=True))
+    # FL backend ("nvflare"/"flower") this net runs. Bootstrapped at seed time from FL_BACKEND
+    # (seed_fl_nets) and reconciled at runtime by the background poll from each net's
+    # /check_server_status self-report (set_net_backend). Non-null: every net has a declared
+    # backend from creation. Typed as FLBackend for callers/validation; stored as a plain varchar
+    # since SQLAlchemy cannot map a Literal to a column type (hence the explicit sa_column).
+    fl_backend: FLBackend = Field(sa_column=Column(String, nullable=False))
 
     schedulers: list["FLScheduler"] = Relationship(back_populates="net")
 

@@ -15,6 +15,8 @@ from typing import Literal
 from pydantic import EmailStr, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from flip_api.domain.schemas.types import FLBackend
+
 
 class Settings(BaseSettings):
     """Common settings shared across all environments (development and production)."""
@@ -83,11 +85,13 @@ class Settings(BaseSettings):
     NET_ENDPOINTS: dict[str, str]
     TRUST_NAMES: list[str]
 
-    # NOTE: The active FL backend is no longer a flip-api setting. It is self-reported by
-    # each fl-api net on /check_server_status and persisted on the FLNets row, so switching
-    # frameworks (make restart-fl) needs no flip-api restart. The FL_BACKEND env var still
-    # exists at the deploy layer (compose/Makefile use it to pick which fl-* images to run)
-    # but is intentionally not read here — see fl_scheduler_service.resolve_backend.
+    # FL backend used to BOOTSTRAP the FLNets.fl_backend column at seed time (seed_fl_nets).
+    # This is the only place flip-api reads it: it is never consulted at runtime. The runtime
+    # authority is each net's self-report on /check_server_status, which the background poll
+    # reconciles onto the row — so switching frameworks (make restart-fl) needs no flip-api
+    # restart and never trusts this (possibly stale) boot value. Also used at the deploy layer
+    # (compose/Makefile) to pick which fl-* images to run. See fl_scheduler_service.resolve_backend.
+    FL_BACKEND: FLBackend = "flower"
 
     # MFA enforcement gate. Defaults to True so every unknown environment
     # (prod, stag, any new deploy) requires TOTP enrolment. Dev compose
