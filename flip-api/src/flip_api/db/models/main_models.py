@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Optional
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, Column, String
+from sqlalchemy import JSON, Column
 from sqlmodel import Field, Relationship, SQLModel
 
 from flip_api.domain.schemas.actions import ModelAuditAction, ProjectAuditAction
@@ -41,10 +41,10 @@ class FLNets(SQLModel, table=True):
     # FL backend ("nvflare"/"flower") this net runs. Set at seed time from FL_BACKEND
     # (seed_fl_nets) and canonical — never reconciled at runtime. A framework switch happens by
     # re-seeding (make restart-fl recreates flip-api). Non-null: every net has a declared backend
-    # from creation. FLBackend is a StrEnum, so it persists as its lowercase value ("flower") via a
-    # plain varchar column — keeping existing rows and the env/wire format byte-identical, and
-    # avoiding the native-enum mapping (which would store member names and need a migration).
-    fl_backend: FLBackend = Field(sa_column=Column(String, nullable=False))
+    # from creation. Mapped like the other enum columns (status, task_type, ...): SQLModel infers a
+    # SQLAlchemy Enum column from FLBackend, so the DB persists the member name and reads return a
+    # real FLBackend member.
+    fl_backend: FLBackend = Field(nullable=False)
 
     schedulers: list["FLScheduler"] = Relationship(back_populates="net")
 

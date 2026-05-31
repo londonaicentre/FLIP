@@ -186,8 +186,9 @@ def get_net_by_model_id(model_id: UUID, session: Session) -> INetDetails:
             raise NotFoundError(f"Net not found for model ID: {model_id}")
 
         endpoint, name, fl_backend = result
-        # fl_backend comes back from the varchar column as a plain str; parse it into the enum.
-        return INetDetails(endpoint=endpoint, name=name, fl_backend=FLBackend(fl_backend))
+        # The auto-mapped Enum column yields a real FLBackend at runtime; sqlmodel just types a
+        # single-column select as str, so assert the type back.
+        return INetDetails(endpoint=endpoint, name=name, fl_backend=cast("FLBackend", fl_backend))
 
     except SQLAlchemyError as e:
         logger.error(f"Error getting net by model ID: {e}")
@@ -221,7 +222,7 @@ def get_net_by_name(name: str, session: Session) -> INetDetails | None:
             return None
 
         endpoint, net_name, fl_backend = result
-        return INetDetails(endpoint=endpoint, name=net_name, fl_backend=FLBackend(fl_backend))
+        return INetDetails(endpoint=endpoint, name=net_name, fl_backend=cast("FLBackend", fl_backend))
 
     except SQLAlchemyError as e:
         logger.error(f"Database error while getting net by name: {e}")
@@ -253,7 +254,7 @@ def get_nets(session: Session) -> list[INetDetails]:
             raise NotFoundError(error_message)
 
         return [
-            INetDetails(endpoint=endpoint, name=name, fl_backend=FLBackend(fl_backend))
+            INetDetails(endpoint=endpoint, name=name, fl_backend=cast("FLBackend", fl_backend))
             for endpoint, name, fl_backend in results
         ]
 
@@ -285,8 +286,8 @@ def resolve_backend(session: Session, net: INetDetails | None = None) -> FLBacke
 
     backend = session.exec(select(FLNets.fl_backend)).first()
     if backend is not None:
-        # Stored as a plain str in the varchar column; parse it back into the enum.
-        return FLBackend(backend)
+        # Auto-mapped Enum column; sqlmodel types the single-column select as str, assert it back.
+        return cast("FLBackend", backend)
 
     raise ValueError(
         "Cannot determine the active FL backend: no FL nets are registered. "
