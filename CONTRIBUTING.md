@@ -372,8 +372,8 @@ To run unit tests across all services in the main repository from the root:
 make unit_test
 ```
 
-`make tests` is a narrower target that runs `flip-ui` unit tests followed by the full `flip-api` test suite (ruff,
-mypy, and pytest).
+`make tests` is a narrower target that runs `flip-ui` unit and Cypress e2e tests followed by the full `flip-api`
+test suite (ruff, mypy, and pytest).
 
 For the `flip-fl-base` repository, unit tests can be run with:
 

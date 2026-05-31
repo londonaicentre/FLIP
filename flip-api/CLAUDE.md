@@ -8,7 +8,7 @@ Central Hub REST API. FastAPI + asyncpg + SQLModel. Handles user auth (Cognito),
 
 | File | Purpose |
 |------|---------|
-| `src/flip_api/__init__.py` | FastAPI app factory, middleware, router registration |
+| `src/flip_api/main.py` | FastAPI app factory, middleware, router registration |
 | `src/flip_api/config.py` | Pydantic settings, env var loading |
 | `src/flip_api/db/database.py` | asyncpg async session, DB connection |
 | `src/flip_api/db/models/main_models.py` | SQLModel ORM: Project, Trust, Model, File, etc. |
@@ -41,7 +41,7 @@ Central Hub REST API. FastAPI + asyncpg + SQLModel. Handles user auth (Cognito),
 
 ```bash
 make test          # ruff + mypy + pytest (unit + integration)
-make unit_test     # ruff + mypy + pytest unit + step function tests (--skip-client --skip-db)
+make unit_test     # ruff + mypy + pytest unit + step function tests (--skip-client)
 make integration_test  # Integration tests only
 make local_test    # Tests without Docker (--skip-client --skip-db)
 make lint          # ruff check --fix (in Docker)

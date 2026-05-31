@@ -79,7 +79,7 @@ def register_user(
     request: Request,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
-):
+) -> IUserResponse:
     """
     Register a new user in Cognito.
 
