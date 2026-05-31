@@ -10,7 +10,8 @@
 # limitations under the License.
 #
 
-from typing import Annotated, Literal
+from enum import StrEnum
+from typing import Annotated
 from uuid import UUID
 
 from pydantic import Field, StringConstraints
@@ -19,7 +20,19 @@ TrimStr = Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]
 
 NonEmptyUUIDList = Annotated[list[UUID], Field(min_length=1)]
 
-# The set of supported federated-learning backends. Defined once here so the value flows
-# consistently through the DB column (FLNets.fl_backend), the FL interfaces, and every
-# helper that resolves/bundles/pulls per backend. Add a new backend in this one place.
-FLBackend = Literal["nvflare", "flower"]
+
+class FLBackend(StrEnum):
+    """The set of supported federated-learning backends.
+
+    Defined once here so the value flows consistently through the DB column
+    (``FLNets.fl_backend``), the FL interfaces, and every helper that
+    resolves/bundles/pulls per backend. Add a new backend in this one place.
+
+    ``StrEnum`` (not a bare ``Enum``) so each member *is* its lowercase string
+    value: ``str(FLBackend.FLOWER) == "flower"``. That keeps env (``FL_BACKEND``),
+    JSON API fields, S3 path segments and the varchar DB column all using the
+    plain backend string, exactly as the previous ``Literal`` did.
+    """
+
+    NVFLARE = "nvflare"
+    FLOWER = "flower"

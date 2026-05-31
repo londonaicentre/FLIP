@@ -245,7 +245,7 @@ def validate_client_availability(clients: list[str], endpoint: str, fl_backend: 
     Raises:
         ValueError: If any client is unavailable (NVFLARE backend only).
     """
-    is_flower = fl_backend == "flower"
+    is_flower = fl_backend == FLBackend.FLOWER
 
     client_statuses = check_client_status(endpoint)
     if not client_statuses:
@@ -431,7 +431,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
         if not jt:
             logger.info("No 'job_type' found in config.json. Using job_type=standard.")
         else:
-            if not JobRequiredFiles.is_valid_job_type(jt, "nvflare"):
+            if not JobRequiredFiles.is_valid_job_type(jt, FLBackend.NVFLARE):
                 raise UnknownJobTypeError(f"Unknown job_type argument found in config.json: {jt}")
             job_type = jt
             logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
@@ -472,7 +472,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     logger.debug(f"App folders found: {sorted(app_folders)}")
 
     # Validate required model files exist for the job type
-    required_files = JobRequiredFiles.get_required_files(job_type, "nvflare")
+    required_files = JobRequiredFiles.get_required_files(job_type, FLBackend.NVFLARE)
     model_rel = {
         k.replace(f"{model_bucket_s3_path}/", "", 1) for k in model_files
     }  # relative paths of model files (i.e. without the bucket prefix)
@@ -613,7 +613,7 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
         if not jt:
             logger.info("No 'job_type' found in config.json. Using job_type=standard.")
         else:
-            if not JobRequiredFiles.is_valid_job_type(jt, "flower"):
+            if not JobRequiredFiles.is_valid_job_type(jt, FLBackend.FLOWER):
                 raise UnknownJobTypeError(f"Unknown job_type argument found in config.json: {jt}")
             job_type = jt
             logger.info(f"job_type in config.json: {job_type}. Using it to select base application.")
@@ -639,7 +639,7 @@ def bundle_flower_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE) 
         s3.copy_object(src_key, dst_key)
 
     # Validate required model files exist for the job type
-    required_files = JobRequiredFiles.get_required_files(job_type, "flower")
+    required_files = JobRequiredFiles.get_required_files(job_type, FLBackend.FLOWER)
     model_rel = {
         k.replace(f"{model_bucket_s3_path}/", "", 1) for k in model_files
     }  # relative paths of model files (i.e. without the bucket prefix)

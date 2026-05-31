@@ -41,8 +41,9 @@ class FLNets(SQLModel, table=True):
     # FL backend ("nvflare"/"flower") this net runs. Set at seed time from FL_BACKEND
     # (seed_fl_nets) and canonical — never reconciled at runtime. A framework switch happens by
     # re-seeding (make restart-fl recreates flip-api). Non-null: every net has a declared backend
-    # from creation. Typed as FLBackend for callers/validation; stored as a plain varchar
-    # since SQLAlchemy cannot map a Literal to a column type (hence the explicit sa_column).
+    # from creation. FLBackend is a StrEnum, so it persists as its lowercase value ("flower") via a
+    # plain varchar column — keeping existing rows and the env/wire format byte-identical, and
+    # avoiding the native-enum mapping (which would store member names and need a migration).
     fl_backend: FLBackend = Field(sa_column=Column(String, nullable=False))
 
     schedulers: list["FLScheduler"] = Relationship(back_populates="net")

@@ -186,8 +186,8 @@ def get_net_by_model_id(model_id: UUID, session: Session) -> INetDetails:
             raise NotFoundError(f"Net not found for model ID: {model_id}")
 
         endpoint, name, fl_backend = result
-        # The fl_backend column is a plain varchar at the DB layer; narrow it to FLBackend.
-        return INetDetails(endpoint=endpoint, name=name, fl_backend=cast("FLBackend", fl_backend))
+        # fl_backend comes back from the varchar column as a plain str; parse it into the enum.
+        return INetDetails(endpoint=endpoint, name=name, fl_backend=FLBackend(fl_backend))
 
     except SQLAlchemyError as e:
         logger.error(f"Error getting net by model ID: {e}")
@@ -221,7 +221,7 @@ def get_net_by_name(name: str, session: Session) -> INetDetails | None:
             return None
 
         endpoint, net_name, fl_backend = result
-        return INetDetails(endpoint=endpoint, name=net_name, fl_backend=cast("FLBackend", fl_backend))
+        return INetDetails(endpoint=endpoint, name=net_name, fl_backend=FLBackend(fl_backend))
 
     except SQLAlchemyError as e:
         logger.error(f"Database error while getting net by name: {e}")
@@ -253,7 +253,7 @@ def get_nets(session: Session) -> list[INetDetails]:
             raise NotFoundError(error_message)
 
         return [
-            INetDetails(endpoint=endpoint, name=name, fl_backend=cast("FLBackend", fl_backend))
+            INetDetails(endpoint=endpoint, name=name, fl_backend=FLBackend(fl_backend))
             for endpoint, name, fl_backend in results
         ]
 
@@ -283,10 +283,10 @@ def resolve_backend(session: Session, net: INetDetails | None = None) -> FLBacke
     if net is not None:
         return net.fl_backend
 
-    reported = session.exec(select(FLNets.fl_backend)).first()
-    if reported is not None:
-        # Column is a plain varchar at the DB layer; narrow it to FLBackend.
-        return cast("FLBackend", reported)
+    backend = session.exec(select(FLNets.fl_backend)).first()
+    if backend is not None:
+        # Stored as a plain str in the varchar column; parse it back into the enum.
+        return FLBackend(backend)
 
     raise ValueError(
         "Cannot determine the active FL backend: no FL nets are registered. "
@@ -417,8 +417,8 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
     try:
         logger.debug("Attempting to prepare and start training...")
 
-        # Resolve the backend from the net this job is pinned to (self-reported, not from a
-        # boot-time env var) so switching frameworks needs no flip-api restart.
+        # Resolve the backend from the net this job is pinned to. The value is the net's
+        # canonical seeded backend (FLNets.fl_backend), read from the DB, never a boot-time env var.
         net_details = get_net_by_model_id(model_id, session)
         if not net_details.endpoint:
             raise Exception("Failed to get the net endpoint")
@@ -426,12 +426,12 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
         fl_backend = resolve_backend(session, net_details)
 
         # NOTE folder structure of the bundle will be different depending on whether it's a FLARE / Flower app
-        if fl_backend == "nvflare":
+        if fl_backend == FLBackend.NVFLARE:
             # Copies base application + user-uploaded model files into a destination bucket on S3
             dest_bucket_s3_path = bundle_nvflare_application(model_id)
             logger.info(f"Bundled the app for [nvflare] to '{dest_bucket_s3_path}'.")
 
-        elif fl_backend == "flower":
+        elif fl_backend == FLBackend.FLOWER:
             # Copies base application + user-uploaded model files into a destination bucket on S3
             dest_bucket_s3_path = bundle_flower_application(model_id)
             logger.info(f"Bundled the app for [flower] to '{dest_bucket_s3_path}'.")
