@@ -34,6 +34,7 @@ def send_metrics_value(
         value: The value of the metric.
         fl_ctx: The federated learning context.
         round: The round number (default: None).
+        flip: FLIP instance used for logging (default: FLIP()).
     """
     if not isinstance(label, str):
         raise TypeError(f"expect label to be string, but got {type(label)}")
@@ -78,6 +79,7 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
         event_data: The event data containing the metrics.
         global_round: The global round number (aka _current_round in scatter_and_gather scripts).
         model_id: The ID of the model.
+        flip: FLIP instance used to forward metrics to the Central Hub (default: FLIP()).
     """
     if Utils.is_valid_uuid(model_id) is False:
         raise ValueError(f"Invalid model ID: {model_id}, cant update model status")
