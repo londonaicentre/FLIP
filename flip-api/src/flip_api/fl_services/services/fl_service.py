@@ -933,10 +933,7 @@ def keep_fl_api_session_alive() -> None:
 
     logger.info("🛟 Keeping FL API session alive ...")
 
-    # For each FL Net in the database, call its check_server_status endpoint to keep the session alive
-    # and persist the backend it self-reports. This background path is what lets `make restart-fl` into
-    # a different framework take effect without a flip-api restart — the next bundling reads the updated
-    # FLNets.fl_backend rather than a stale boot-time env var.
+    # For each FL Net in the database, call its check_server_status endpoint to keep the session alive.
     # NOTE this was created for FLARE and might need to be revisited for Flower, depending on session management.
     # NOTE In the old implementation, we had 3 'nets' in the database, each with its own FLAdminAPI. So each net had a
     # separate FLAdminAPI endpoint. Here, there should just be 1 net for now. If we add more nets in the future, they
@@ -946,8 +943,6 @@ def keep_fl_api_session_alive() -> None:
 
         for net in nets:
             try:
-                server_status = fetch_server_status(net.endpoint)
-                if server_status:
-                    fl_scheduler_service.set_net_backend(net.endpoint, server_status.fl_backend, db)
+                fetch_server_status(net.endpoint)
             except Exception as e:
                 logger.error(f"Failed to send check request: {e}")

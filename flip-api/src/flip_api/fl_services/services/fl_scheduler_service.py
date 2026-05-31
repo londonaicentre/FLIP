@@ -262,31 +262,11 @@ def get_nets(session: Session) -> list[INetDetails]:
         raise DatabaseError("Error getting nets") from e
 
 
-def set_net_backend(endpoint: str, fl_backend: FLBackend, session: Session) -> None:
-    """Persist a net's self-reported FL backend onto its FLNets row.
-
-    No-op if the row is missing or already holds ``fl_backend``. Called from the background
-    poll so a ``make restart-fl`` into a different framework takes effect without a flip-api
-    restart.
-
-    Args:
-        endpoint (str): The net endpoint identifying the FLNets row.
-        fl_backend (FLBackend): The backend the net reported (``nvflare`` or ``flower``).
-        session (Session): SQLModel session.
-    """
-    net = session.exec(select(FLNets).where(FLNets.endpoint == endpoint)).first()
-    if net is not None and net.fl_backend != fl_backend:
-        logger.info(f"Net '{net.name}' backend updated: {net.fl_backend} -> {fl_backend}")
-        net.fl_backend = fl_backend
-        session.add(net)
-        session.commit()
-
-
 def resolve_backend(session: Session, net: INetDetails | None = None) -> FLBackend:
     """Resolve the active FL backend at runtime from the nets (never from a static env var).
 
-    Every net carries a non-null ``fl_backend`` (seeded from FL_BACKEND, reconciled to its
-    self-report by the background poll), so resolution always reads the DB, never the boot env.
+    Every net carries a non-null ``fl_backend`` set at seed time from FL_BACKEND. That seeded
+    value is canonical — there is no runtime reconciliation — so resolution always reads the DB.
 
     Args:
         session (Session): SQLModel session (used when no net is given).

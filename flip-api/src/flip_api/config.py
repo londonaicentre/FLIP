@@ -85,11 +85,10 @@ class Settings(BaseSettings):
     NET_ENDPOINTS: dict[str, str]
     TRUST_NAMES: list[str]
 
-    # FL backend used to BOOTSTRAP the FLNets.fl_backend column at seed time (seed_fl_nets).
-    # This is the only place flip-api reads it: it is never consulted at runtime. The runtime
-    # authority is each net's self-report on /check_server_status, which the background poll
-    # reconciles onto the row — so switching frameworks (make restart-fl) needs no flip-api
-    # restart and never trusts this (possibly stale) boot value. Also used at the deploy layer
+    # FL backend written onto the FLNets.fl_backend column at seed time (seed_fl_nets). This is
+    # canonical: flip-api reads it only at seeding, and the seeded value is never reconciled at
+    # runtime. To switch frameworks, `make restart-fl FL_BACKEND=...` recreates flip-api so this
+    # seeding re-runs and overwrites the backend on every net. Also used at the deploy layer
     # (compose/Makefile) to pick which fl-* images to run. See fl_scheduler_service.resolve_backend.
     FL_BACKEND: FLBackend = "flower"
 

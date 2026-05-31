@@ -64,10 +64,7 @@ def mock_get_trusts():
 @pytest.fixture
 def mock_fetch_server_status():
     with patch("flip_api.fl_services.get_status.fetch_server_status") as mock:
-        mock.return_value = IServerStatus(
-            status="started",
-            fl_backend="nvflare",
-        )
+        mock.return_value = IServerStatus(status="started")
         yield mock
 
 
@@ -80,13 +77,6 @@ def mock_fetch_client_status():
         yield mock
 
 
-@pytest.fixture
-def mock_set_net_backend():
-    # The endpoint persists the live self-reported backend; stub it so no DB write happens.
-    with patch("flip_api.fl_services.get_status.set_net_backend") as mock:
-        yield mock
-
-
 def test_get_status_endpoint_success(
     fake_request,
     mock_db,
@@ -94,13 +84,12 @@ def test_get_status_endpoint_success(
     mock_get_trusts,
     mock_fetch_server_status,
     mock_fetch_client_status,
-    mock_set_net_backend,
 ):
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
     assert len(result) == 1
     net = result[0]
     assert net.name == "net-1"
-    # No live backend reported by the server status, so we fall back to the net's stored backend.
+    # Backend always comes from the net's seeded (canonical) value, not the server self-report.
     assert net.fl_backend == "nvflare"
     assert net.online is True
     assert net.net_in_use is True
@@ -110,20 +99,18 @@ def test_get_status_endpoint_success(
     assert any(c.name == "trust-2" and not c.online for c in net.clients)
 
 
-def test_get_status_endpoint_reports_flower_backend(
+def test_get_status_endpoint_reports_seeded_backend(
     fake_request,
     mock_db,
     mock_get_nets,
     mock_get_trusts,
     mock_fetch_server_status,
     mock_fetch_client_status,
-    mock_set_net_backend,
 ):
-    # The server self-reports flower at runtime; this takes precedence and is persisted.
-    mock_fetch_server_status.return_value = IServerStatus(status="started", fl_backend="flower")
+    # The status reflects the net's seeded backend regardless of the live server status —
+    # there is no runtime self-report reconciliation anymore.
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
-    assert result[0].fl_backend == "flower"
-    mock_set_net_backend.assert_called_once_with("endpoint1", "flower", mock_db)
+    assert result[0].fl_backend == "nvflare"
 
 
 def test_get_status_endpoint_error(fake_request, mock_db):
@@ -134,7 +121,7 @@ def test_get_status_endpoint_error(fake_request, mock_db):
 
 
 def test_get_status_endpoint_server_status_none(
-    fake_request, mock_db, mock_get_nets, mock_get_trusts, mock_fetch_server_status, mock_set_net_backend
+    fake_request, mock_db, mock_get_nets, mock_get_trusts, mock_fetch_server_status
 ):
     mock_fetch_server_status.return_value = None
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
@@ -151,12 +138,8 @@ def test_get_status_endpoint_client_status_none(
     mock_get_trusts,
     mock_fetch_server_status,
     mock_fetch_client_status,
-    mock_set_net_backend,
 ):
-    mock_fetch_server_status.return_value = IServerStatus(
-        status="stopped",
-        fl_backend="nvflare",
-    )
+    mock_fetch_server_status.return_value = IServerStatus(status="stopped")
     mock_fetch_client_status.return_value = []
 
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")

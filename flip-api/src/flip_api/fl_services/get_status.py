@@ -22,7 +22,7 @@ from flip_api.domain.interfaces.fl import (
     INetStatus,
 )
 from flip_api.domain.schemas.status import ClientStatus, ServerEngineStatus
-from flip_api.fl_services.services.fl_scheduler_service import get_nets, set_net_backend
+from flip_api.fl_services.services.fl_scheduler_service import get_nets
 from flip_api.fl_services.services.fl_service import fetch_client_status, fetch_server_status
 from flip_api.trusts_services.services.trust import get_trusts
 from flip_api.utils.logger import logger
@@ -82,10 +82,8 @@ def get_status_endpoint(
             # We assume the server is online if we get a response
             online = True
 
-            # Use the live self-reported backend, and persist it so a framework switch
-            # (make restart-fl) is reflected without a flip-api restart.
-            fl_backend = server_status.fl_backend
-            set_net_backend(net.endpoint, fl_backend, db)
+            # Report the canonical seeded backend (set from FL_BACKEND, never reconciled at runtime).
+            fl_backend = net.fl_backend
 
             # Fetch client statuses
             clients = fetch_client_status(net.endpoint)

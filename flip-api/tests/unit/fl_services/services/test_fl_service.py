@@ -109,7 +109,7 @@ def test_submit_job_raises_when_no_job_id(mock_post, fl_job_id, model_id, fake_s
 # TODO add tests for fetch_server_status, fetch_client_status
 @patch("flip_api.fl_services.services.fl_service.check_server_status")
 def test_fetch_server_status_success(mock_check_server):
-    mock_check_server.return_value = IServerStatus(status="running", fl_backend="nvflare")
+    mock_check_server.return_value = IServerStatus(status="running")
     status = fl_service.fetch_server_status("endpoint")
     assert status.status == "running"
 

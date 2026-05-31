@@ -118,8 +118,8 @@ class IInitiateTrainingInputPayload(BaseModel):
 class INetDetails(BaseModel):
     name: str
     endpoint: str
-    # The FL backend this net runs. Derived from the non-null FLNets.fl_backend column (seeded
-    # from FL_BACKEND, reconciled by the self-report poll), so it is always set.
+    # The FL backend this net runs. Derived from the non-null FLNets.fl_backend column, seeded
+    # from FL_BACKEND and canonical (no runtime reconciliation), so it is always set.
     fl_backend: FLBackend
 
 
@@ -129,8 +129,6 @@ class IServerStatus(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     status: str
-    # The FL backend the server runs, self-reported by fl-api on /check_server_status.
-    fl_backend: FLBackend
 
 
 class IClientStatus(BaseModel):

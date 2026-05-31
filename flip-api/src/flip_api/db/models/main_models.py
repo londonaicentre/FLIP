@@ -38,10 +38,10 @@ class FLNets(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(unique=True)
     endpoint: str = Field(unique=True)
-    # FL backend ("nvflare"/"flower") this net runs. Bootstrapped at seed time from FL_BACKEND
-    # (seed_fl_nets) and reconciled at runtime by the background poll from each net's
-    # /check_server_status self-report (set_net_backend). Non-null: every net has a declared
-    # backend from creation. Typed as FLBackend for callers/validation; stored as a plain varchar
+    # FL backend ("nvflare"/"flower") this net runs. Set at seed time from FL_BACKEND
+    # (seed_fl_nets) and canonical — never reconciled at runtime. A framework switch happens by
+    # re-seeding (make restart-fl recreates flip-api). Non-null: every net has a declared backend
+    # from creation. Typed as FLBackend for callers/validation; stored as a plain varchar
     # since SQLAlchemy cannot map a Literal to a column type (hence the explicit sa_column).
     fl_backend: FLBackend = Field(sa_column=Column(String, nullable=False))
 

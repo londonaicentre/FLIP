@@ -70,8 +70,10 @@ def test_seed_fl_nets_creates_new_nets_when_none_exist(mock_get_settings, mock_s
 
 @patch("flip_api.db.seed.fl_nets.get_settings")
 def test_seed_fl_nets_skips_matching_existing_nets(mock_get_settings, mock_session, mock_fl_net):
-    """Existing row whose endpoint already matches NET_ENDPOINTS is left alone."""
-    mock_get_settings.return_value = _mock_settings({"existing_net": "http://existing.com", "new_net": "http://new.com"})
+    """Existing row whose endpoint and backend already match is left alone."""
+    mock_get_settings.return_value = _mock_settings(
+        {"existing_net": "http://existing.com", "new_net": "http://new.com"}, fl_backend="flower"
+    )
     mock_session.exec.return_value.all.side_effect = [[mock_fl_net], [mock_fl_net, Mock(spec=FLNets)]]
 
     seed_fl_nets(mock_session)
@@ -91,7 +93,9 @@ def test_seed_fl_nets_reconciles_stale_endpoint(mock_get_settings, mock_session,
     rows seeded with the old docker-compose hostname stranded `/api/fl/status` with
     `Name or service not known`.
     """
-    mock_get_settings.return_value = _mock_settings({"existing_net": "http://fl-api-net-1.flip.local:8000"})
+    mock_get_settings.return_value = _mock_settings(
+        {"existing_net": "http://fl-api-net-1.flip.local:8000"}, fl_backend="flower"
+    )
     mock_session.exec.return_value.all.side_effect = [[mock_fl_net], [mock_fl_net]]
 
     seed_fl_nets(mock_session)
@@ -127,7 +131,7 @@ def test_seed_fl_nets_with_empty_endpoints(mock_get_settings, mock_session):
 
 @patch("flip_api.db.seed.fl_nets.get_settings")
 def test_seed_fl_nets_backfills_null_backend(mock_get_settings, mock_session):
-    """A pre-existing row with fl_backend=None (created before the column existed) is backfilled."""
+    """A pre-existing row with fl_backend=None (created before the column existed) is set from FL_BACKEND."""
     legacy = Mock(spec=FLNets)
     legacy.name = "existing_net"
     legacy.endpoint = "http://existing.com"
@@ -142,16 +146,16 @@ def test_seed_fl_nets_backfills_null_backend(mock_get_settings, mock_session):
 
 
 @patch("flip_api.db.seed.fl_nets.get_settings")
-def test_seed_fl_nets_does_not_overwrite_existing_backend(mock_get_settings, mock_session, mock_fl_net):
-    """A row that already has a backend keeps it — self-report owns runtime reconciliation, not the seed.
+def test_seed_fl_nets_overwrites_existing_backend(mock_get_settings, mock_session, mock_fl_net):
+    """FL_BACKEND is canonical: an existing row's backend is overwritten on every seed.
 
     The mock net already matches endpoint and has fl_backend='flower'; seeding with FL_BACKEND='nvflare'
-    must leave it untouched (no add()).
+    must overwrite it (this is how `make restart-fl FL_BACKEND=...` switches frameworks).
     """
     mock_get_settings.return_value = _mock_settings({"existing_net": "http://existing.com"}, fl_backend="nvflare")
     mock_session.exec.return_value.all.side_effect = [[mock_fl_net], [mock_fl_net]]
 
     seed_fl_nets(mock_session)
 
-    assert mock_fl_net.fl_backend == "flower"
-    mock_session.add.assert_not_called()
+    assert mock_fl_net.fl_backend == "nvflare"
+    mock_session.add.assert_called_once_with(mock_fl_net)

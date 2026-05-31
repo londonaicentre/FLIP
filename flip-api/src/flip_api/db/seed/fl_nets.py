@@ -20,7 +20,7 @@ from flip_api.db.seed.seed_logger import logger
 
 
 def seed_fl_nets(session: Session) -> list[FLNets]:
-    """Upsert FL nets in the database from ``NET_ENDPOINTS``.
+    """Upsert FL nets in the database from ``NET_ENDPOINTS`` and ``FL_BACKEND``.
 
     Rows are matched by ``name`` and their ``endpoint`` reconciled to the value
     in ``NET_ENDPOINTS`` on every startup. The previous behaviour was
@@ -32,6 +32,11 @@ def seed_fl_nets(session: Session) -> list[FLNets]:
     not known`). NET_ENDPOINTS is the canonical source — operator changes to
     the row's endpoint via SQL would also be overwritten on the next start,
     which is the intended behaviour.
+
+    ``fl_backend`` is likewise canonical: every row is set to the current
+    ``FL_BACKEND`` on every startup. There is no runtime reconciliation — the
+    way to switch frameworks is ``make restart-fl FL_BACKEND=...``, which
+    recreates flip-api so this seeding re-runs and overwrites the backend.
 
     Args:
         session (Session): The SQLModel session used to read existing FL nets and upsert
@@ -48,25 +53,28 @@ def seed_fl_nets(session: Session) -> list[FLNets]:
     for name, endpoint in nets.items():
         existing = existing_by_name.get(name)
         if existing is None:
-            # Bootstrap fl_backend from the declared FL_BACKEND. The background poll reconciles
-            # it to each net's self-reported backend at runtime; we only seed the initial value.
+            # Seed fl_backend from the declared FL_BACKEND. This value is canonical and never
+            # reconciled at runtime; re-seeding (make restart-fl) is the only way it changes.
             session.add(FLNets(name=name, endpoint=endpoint, fl_backend=backend))
             logger.info(f"FL Net '{name}' created with endpoint '{endpoint}' and backend '{backend}'.")
         else:
+            changed = False
             if existing.endpoint != endpoint:
                 logger.info(
                     f"FL Net '{name}' endpoint changed from '{existing.endpoint}' to '{endpoint}'; reconciling."
                 )
                 existing.endpoint = endpoint
-                session.add(existing)
-            # Backfill backend for rows created before fl_backend existed. Do NOT overwrite a
-            # value that is already set — the self-report poll is the runtime authority for it.
-            if existing.fl_backend is None:
-                logger.info(f"FL Net '{name}' backfilling backend '{backend}'.")
+                changed = True
+            # FL_BACKEND is authoritative: always overwrite so `make restart-fl FL_BACKEND=...`
+            # (which recreates flip-api) re-applies the declared backend onto every net.
+            if existing.fl_backend != backend:
+                logger.info(f"FL Net '{name}' backend changed from '{existing.fl_backend}' to '{backend}'.")
                 existing.fl_backend = backend
+                changed = True
+            if changed:
                 session.add(existing)
-            if existing.endpoint == endpoint and existing.fl_backend is not None:
-                logger.info(f"FL Net '{name}' already matches NET_ENDPOINTS. Skipping.")
+            else:
+                logger.info(f"FL Net '{name}' already matches NET_ENDPOINTS and FL_BACKEND. Skipping.")
     session.commit()
 
     return list(session.exec(select(FLNets)).all())
