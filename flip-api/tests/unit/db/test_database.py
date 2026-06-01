@@ -154,10 +154,12 @@ def test_generate_db_auth_token_logs_and_reraises_on_failure(caplog):
 
     assert "Failed to mint RDS IAM auth token" in caplog.text
     # Diagnostic context is logged so the failure is distinguishable from a
-    # plain DB outage; the token and any secret are never logged.
-    assert "db.example.com" in caplog.text
-    assert "local_user" in caplog.text
-    assert "eu-west-2" in caplog.text
+    # plain DB outage; the token and any secret are never logged. Assert against
+    # the stub's attributes rather than host/user literals so the containment
+    # check isn't misread as URL-substring sanitization (CodeQL CWE-020).
+    assert stt.DB_HOST in caplog.text
+    assert stt.POSTGRES_USER in caplog.text
+    assert stt.AWS_REGION in caplog.text
 
 
 def test_get_rds_client_is_cached():
