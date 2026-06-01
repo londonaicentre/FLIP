@@ -19,9 +19,7 @@ import { useAuthStore } from "@/store/auth";
 import { authCheck, isUserUnconfirmedCheck, NO_FORCED_SIGNOUT_PATHS } from "@/utils/auth";
 import { Snackbar } from "@/utils/snackbar";
 
-vi.mock("aws-amplify/auth", () => ({
-    fetchAuthSession: vi.fn()
-}));
+vi.mock("aws-amplify/auth", () => ({ fetchAuthSession: vi.fn() }));
 
 // The module eagerly calls Hub.listen at import time; stub the utils to
 // keep the listener registration cheap and side-effect-free. Use
@@ -29,9 +27,7 @@ vi.mock("aws-amplify/auth", () => ({
 // (vi.mock is lifted to the top of the module at transform time). Tests
 // below read `capturedListener.fn` to invoke the real callback even
 // after vi.clearAllMocks() wipes mock.calls history.
-const capturedListener = vi.hoisted(() => ({
-    fn: null as ((data: { payload: { event: string } }) => void) | null
-}));
+const capturedListener = vi.hoisted(() => ({ fn: null as ((data: { payload: { event: string } }) => void) | null }));
 
 vi.mock("aws-amplify/utils", () => ({
     Hub: {
@@ -45,7 +41,15 @@ vi.mock("aws-amplify/utils", () => ({
 }));
 
 vi.mock("@/router", () => ({
-    default: { push: vi.fn(), currentRoute: { value: { path: "/", fullPath: "/" } } },
+    default: {
+        push: vi.fn(),
+        currentRoute: {
+            value: {
+                path: "/",
+                fullPath: "/"
+            }
+        }
+    },
     routeChange: { gotoLogin: vi.fn() }
 }));
 
@@ -65,7 +69,11 @@ function makeNext(): { next: Next; calls: (string | undefined)[] } {
     const next: Next = (path?: string) => {
         calls.push(path);
     };
-    return { next, calls };
+
+    return {
+        next,
+        calls
+    };
 }
 
 // Minimal RouteLocationNormalized stand-in — authCheck only reads `path`.
@@ -110,7 +118,10 @@ describe("authCheck", () => {
         auth.user = {
             username: "u",
             userId: "id",
-            attributes: { sub: "s", email: "u@e.com" },
+            attributes: {
+                sub: "s",
+                email: "u@e.com"
+            },
             permissions: []
         };
         auth.signInStep = "DONE";
@@ -187,7 +198,10 @@ describe("authCheck", () => {
             auth.user = {
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "u@e.com" },
+                attributes: {
+                    sub: "s",
+                    email: "u@e.com"
+                },
                 permissions: []
             };
             auth.mfaEnabled = true;
@@ -209,7 +223,10 @@ describe("authCheck", () => {
         auth.user = {
             username: "u",
             userId: "id",
-            attributes: { sub: "s", email: "u@e.com" },
+            attributes: {
+                sub: "s",
+                email: "u@e.com"
+            },
             permissions: []
         };
         auth.mfaEnabled = false;
@@ -231,7 +248,10 @@ describe("authCheck", () => {
         auth.user = {
             username: "u",
             userId: "id",
-            attributes: { sub: "s", email: "u@e.com" },
+            attributes: {
+                sub: "s",
+                email: "u@e.com"
+            },
             permissions: []
         };
         auth.mfaEnabled = false;
@@ -254,7 +274,10 @@ describe("authCheck", () => {
         auth.user = {
             username: "u",
             userId: "id",
-            attributes: { sub: "s", email: "u@e.com" },
+            attributes: {
+                sub: "s",
+                email: "u@e.com"
+            },
             permissions: []
         };
         auth.mfaEnabled = false;
@@ -319,7 +342,10 @@ describe("authCheck — Cypress hook (VITE_E2E build flag)", () => {
         const user = {
             username: "u",
             userId: "id",
-            attributes: { sub: "s", email: "u@e.com" },
+            attributes: {
+                sub: "s",
+                email: "u@e.com"
+            },
             permissions: ["CanManageProjects"]
         };
         window.localStorage.setItem("cypress.auth.user", JSON.stringify(user));
@@ -400,12 +426,20 @@ describe("authCheck — Cypress hook (VITE_E2E build flag)", () => {
         auth.user = {
             username: "preloaded",
             userId: "p",
-            attributes: { sub: "p", email: "p@e.com" },
+            attributes: {
+                sub: "p",
+                email: "p@e.com"
+            },
             permissions: []
         };
         window.localStorage.setItem(
             "cypress.auth.user",
-            JSON.stringify({ username: "fromStorage", userId: "x", attributes: {}, permissions: [] })
+            JSON.stringify({
+                username: "fromStorage",
+                userId: "x",
+                attributes: {},
+                permissions: []
+            })
         );
         const { next, calls } = makeNext();
 
@@ -431,7 +465,10 @@ describe("__cypressTriggerSessionExpiry", () => {
         // re-imported auth.ts captures *our* Hub.dispatch reference.
         const dispatch = vi.fn();
         vi.doMock("aws-amplify/utils", () => ({
-            Hub: { listen: vi.fn(), dispatch }
+            Hub: {
+                listen: vi.fn(),
+                dispatch
+            }
         }));
 
         await import("@/utils/auth");
@@ -456,7 +493,10 @@ describe("__cypressTriggerSessionExpiry", () => {
         vi.stubEnv("VITE_E2E", "");
         vi.resetModules();
         vi.doMock("aws-amplify/utils", () => ({
-            Hub: { listen: vi.fn(), dispatch: vi.fn() }
+            Hub: {
+                listen: vi.fn(),
+                dispatch: vi.fn()
+            }
         }));
         // Make sure we're starting from a clean state.
         delete (window as unknown as { __cypressTriggerSessionExpiry?: unknown })
@@ -491,7 +531,10 @@ describe("isUserUnconfirmedCheck", () => {
         auth.user = {
             username: "u",
             userId: "id",
-            attributes: { sub: "s", email: "u@e.com" },
+            attributes: {
+                sub: "s",
+                email: "u@e.com"
+            },
             permissions: []
         };
         auth.signInStep = "DONE";
@@ -530,6 +573,7 @@ describe("Hub listener (tokenRefresh_failure)", () => {
         if (!capturedListener.fn) {
             throw new Error("Hub listener was not captured at module load");
         }
+
         return capturedListener.fn;
     }
 
@@ -570,7 +614,10 @@ describe("Hub listener (tokenRefresh_failure)", () => {
         auth.user = {
             username: "u",
             userId: "id",
-            attributes: { sub: "s", email: "u@e.com" },
+            attributes: {
+                sub: "s",
+                email: "u@e.com"
+            },
             permissions: []
         };
 

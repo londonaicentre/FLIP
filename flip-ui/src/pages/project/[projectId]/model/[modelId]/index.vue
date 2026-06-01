@@ -199,7 +199,7 @@ function getStatusEnumValue(status: string | undefined): number {
     // Map string status (e.g. "PENDING") to ModelStatusEnum value
     if (!status || !(status in ModelStatusEnum)) return ModelStatusEnum.ERROR;
 
-    // @ts-ignore
+    // @ts-expect-error indexing the enum by a string key already guarded by the `status in ModelStatusEnum` check above
     return ModelStatusEnum[status];
 }
 

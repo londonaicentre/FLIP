@@ -102,6 +102,21 @@ export default defineConfigWithVueTs(
     },
 
     {
+        name: "flip-ui/legacy-single-word-components",
+        // Grandfathered single-word component names that predate the multi-word rule.
+        // Renaming them ripples across imports and templates app-wide, so the exception is
+        // scoped to these specific files; the rule still applies to every other partial.
+        files: [
+            "src/partials/models/Timeline.vue",
+            "src/partials/models/Training.vue",
+            "src/partials/projects/Filter.vue",
+        ],
+        rules: {
+            "vue/multi-word-component-names": "off",
+        },
+    },
+
+    {
         name: "flip-ui/tests",
         files: [
             "**/__tests__/**/*.{js,ts,jsx,tsx}",

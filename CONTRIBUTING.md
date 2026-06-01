@@ -76,6 +76,11 @@ In addition to the [deployment prerequisites](README.md#prerequisites), you'll n
 - [Python 3.12+](https://www.python.org/downloads/)
 - [UV](https://docs.astral.sh/uv) - Python environment management tool (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - [act](https://github.com/nektos/act) - Run GitHub Actions locally (install via [Homebrew](https://brew.sh/): `brew install act`)
+- **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
+  ```bash
+  echo "$GHCR_PAT" | docker login ghcr.io -u <your-github-username> --password-stdin
+  ```
+  Building everything locally instead (no GHCR access needed) is `make up BUILD=true` — see [Running the stack](#running-the-stack-pull-vs-build) below.
 
 ### Recommended IDE Setup
 
@@ -259,6 +264,26 @@ make ci
 ```
 
 This runs all jobs defined in `.github/workflows/` locally.
+
+### Running the stack (pull vs. build)
+
+In development (`PROD` unset), `make up` **pulls** the repo-built service images
+(`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`) from GHCR
+instead of building them — each carries `image:` + `pull_policy: always` in the dev
+compose, and your local `src/` is bind-mounted on top, so editing a `.py` still
+hot-reloads against the pulled image. Startup is fast and matches the published
+`:stag` artifact's environment.
+
+```bash
+make up                # pull GHCR images (default; requires `docker login ghcr.io`)
+make up BUILD=true     # rebuild the repo-built services from local source instead
+```
+
+Use `BUILD=true` when you've changed **dependencies** (`uv.lock`/`pyproject.toml`),
+system packages, or a `Dockerfile` — those live in the image layer, so a plain
+`make up` (which pulls) won't pick them up. `flip-ui` always builds locally (it has
+no GHCR image). Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
+compose with baked images and no bind-mounts.
 
 ## The contribution process
 

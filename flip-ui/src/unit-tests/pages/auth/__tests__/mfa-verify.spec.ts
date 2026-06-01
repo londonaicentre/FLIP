@@ -15,9 +15,8 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import { useAuthStore } from "@/store/auth";
-
 import MfaVerify from "@/pages/auth/mfa-verify.vue";
+import { useAuthStore } from "@/store/auth";
 
 // Route/router mocks — the page calls routeChange.* and we need to assert
 // on which navigation target it picked.
@@ -149,9 +148,7 @@ describe("mfa-verify page", () => {
             await flushPromises();
             const authStore = useAuthStore();
             (authStore.confirmTotpChallenge as unknown as ReturnType<typeof vi.fn>)
-                .mockRejectedValueOnce(Object.assign(new Error("Code mismatch"), {
-                    name: "CodeMismatchException"
-                }));
+                .mockRejectedValueOnce(Object.assign(new Error("Code mismatch"), { name: "CodeMismatchException" }));
 
             await wrapper.find("form").trigger("submit");
             await flushPromises();
@@ -167,9 +164,7 @@ describe("mfa-verify page", () => {
             await flushPromises();
             const authStore = useAuthStore();
             (authStore.confirmTotpChallenge as unknown as ReturnType<typeof vi.fn>)
-                .mockRejectedValueOnce(Object.assign(new Error("Token has expired"), {
-                    name: "ExpiredCodeException"
-                }));
+                .mockRejectedValueOnce(Object.assign(new Error("Token has expired"), { name: "ExpiredCodeException" }));
 
             await wrapper.find("form").trigger("submit");
             await flushPromises();
@@ -209,7 +204,10 @@ describe("mfa-verify page", () => {
 
             expect(mockSnackbarError).toHaveBeenCalledTimes(1);
             const [payload] = mockSnackbarError.mock.calls[0];
-            expect(payload).toMatchObject({ title: "Sign-in failed", text: "Network Error" });
+            expect(payload).toMatchObject({
+                title: "Sign-in failed",
+                text: "Network Error"
+            });
             expect(mockViewProjects).not.toHaveBeenCalled();
         });
 
@@ -240,7 +238,10 @@ describe("mfa-verify page", () => {
             await wrapper.find("form").trigger("submit");
             await flushPromises();
 
-            const btn = wrapper.findComponent({ ref: undefined, name: "AiButton" });
+            const btn = wrapper.findComponent({
+                ref: undefined,
+                name: "AiButton"
+            });
             // AiButton is stubbed — just verify the page didn't get
             // stuck: the store action completed (rejected) and the page
             // moved on to the error branch, so submitting again should
