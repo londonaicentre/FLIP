@@ -23,7 +23,7 @@ else
 	VALUES_OPTS := -f $(VALUES_FILE)
 endif
 
-.PHONY: help lint template deploy undeploy test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps register-trust
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps register-trust
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -48,6 +48,12 @@ deploy: ## Deploy the Helm chart to the cluster
 
 undeploy: ## Remove the Helm release from the cluster
 	$(HELM) uninstall $(RELEASE_NAME) --namespace $(NAMESPACE)
+
+up: deploy ## Deploy the trust K8s release (alias for deploy)
+	@true
+
+down: undeploy ## Tear down the trust K8s release (alias for undeploy)
+	@true
 
 deploy-trust-k8s: deploy ## Deploy trust services to K8s (alias for deploy)
 	@true
