@@ -122,7 +122,8 @@
         "fast-xml-builder": ">=1.1.7",
         "qs": ">=6.15.2",
         "js-cookie": ">=3.0.7",
-        "@babel/plugin-transform-modules-systemjs": ">=7.29.4"
+        "@babel/plugin-transform-modules-systemjs": ">=7.29.4",
+        "tmp": ">=0.2.6"
     },
     "babel": {
         "presets": [
