@@ -170,7 +170,7 @@ def delete_imaging_project(imaging_project: ImagingProject, db: Session) -> bool
         statement = (
             update(XNATProjectStatus)
             .where(col(XNATProjectStatus.id) == imaging_project.id)
-            .values(retrieve_image_status=XNATImageStatus.DELETED.value)
+            .values(retrieve_image_status=XNATImageStatus.DELETED)
         )
         db.execute(statement)
         db.commit()
