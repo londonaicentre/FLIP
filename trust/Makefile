@@ -241,10 +241,10 @@ down-fl-clients:
 	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} rm -fs fl-client-net-1 fl-client-net-2
 
 update-omop-data:
-	$(OMOP_DB_CMD) update-omop-data
+	$(OMOP_DB_CMD) update-omop-data TRUST=$(TRUST)
 
 update-orthanc-data:
-	$(ORTHANC_CMD) update-orthanc-data
+	$(ORTHANC_CMD) update-orthanc-data TRUST=$(TRUST)
 
 tests:
 	cd data-access-api && make test && \
