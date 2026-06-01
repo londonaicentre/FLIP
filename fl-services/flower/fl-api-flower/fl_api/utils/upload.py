@@ -3,6 +3,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+from fastapi import HTTPException
 from tomlkit import dumps, parse
 
 from fl_api.schemas import UploadAppRequest
@@ -30,8 +31,22 @@ def _key_after_model_id(url: str, model_id: str) -> Path:
 
 
 def upsert_flwr_run_config(config_path: Path, model_id: str, project_id: str, cohort_query: str) -> None:
-    """Update config.toml with the provided model_id, project_id and cohort_query."""
-    doc = parse(config_path.read_text())
+    """Insert or update the FLIP runtime parameters as top-level keys in config.toml.
+
+    config.toml is the Flower ``--run-config`` override file: Flower reads the full app
+    config from pyproject.toml and applies these keys on top of it. Any other content the
+    researcher placed in config.toml is preserved.
+
+    ``flip-job-dir`` is not set here — ``submit_run`` (in app.py) passes it as an
+    inline ``--run-config`` override at submission time.
+
+    Args:
+        config_path: Path to the app's config.toml file.
+        model_id: Model ID to inject as ``flip-model-id``.
+        project_id: Project ID to inject as ``flip-project-id``.
+        cohort_query: Cohort query to inject as ``flip-cohort-query``.
+    """
+    doc = parse(config_path.read_text()) if config_path.exists() else parse("")
 
     # run config values must be top-level key/value pairs in config.toml
     doc["flip-model-id"] = model_id
@@ -77,10 +92,9 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     for url in bundle_urls:
         logger.info(f"Downloading file from {url}")
 
-        # Reconstruct structure under app_dir using the URL path after model_id
+        # Reconstruct structure under job_dir using the URL path after model_id
         relative_path = _key_after_model_id(url, model_id)  # e.g. app/config.toml
-        dest_path = job_dir / relative_path  # job_dir/app/config.toml
-
+        dest_path = job_dir / relative_path  # e.g. job_dir/app/config.toml
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
@@ -91,8 +105,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
                         if chunk:
                             f.write(chunk)
         except Exception as e:
-            logger.error(f"Failed to download from URL {url} with error: {e}")
-            raise
+            logger.error(f"Failed to download file from {url} with error: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to download file from {url}: {e}")
 
         logger.info(f"Downloaded file {dest_path}")
 
@@ -100,13 +114,17 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     # among the uploaded files, there may be an override config.toml file
     # populate the config.toml file with the FLIP configuration parameters (model_id, project_id, cohort_query)
     config_toml = job_dir / "app" / "config.toml"
+
+    # Create an empty config.toml if the researcher did not upload one (needed to inject FLIP runtime parameters)
     if not config_toml.exists():
-        # If config.toml is not found, we create a default empty one to add FLIP configuration
         logger.warning(f"config.toml not found at expected location: {config_toml}. Will create an empty one.")
+        config_toml.parent.mkdir(parents=True, exist_ok=True)
         config_toml.write_text("")
 
     # Now we add FLIP configuration as top-level run-config key/value pairs in config.toml
     upsert_flwr_run_config(config_toml, model_id, body.project_id, body.cohort_query)
+
+    logger.info("config.toml updated with FLIP runtime parameters")
 
     response = {"message": f"Application uploaded successfully to: {job_dir}"}
 

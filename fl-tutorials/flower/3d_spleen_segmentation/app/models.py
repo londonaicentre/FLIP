@@ -11,7 +11,13 @@
 # limitations under the License.
 #
 
-"""Training utilities for the MONAI Flower app."""
+"""Model definition for the MONAI training app.
+
+Kept in lock-step with the evaluation tutorial's ``models.py`` (and the
+flip-fl-base reference) so that the ``FL_global_model.pt`` produced by this
+tutorial is a state-dict drop-in for the evaluation tutorial's ``model.pt``.
+Any config change here must mirror the eval tutorial's UNet args.
+"""
 
 import torch
 from monai.networks.nets import UNet
@@ -19,10 +25,11 @@ from torch import nn
 
 
 class SegmentationNetwork(nn.Module):
-    """
-    Wraps a MONAI BasicUNet allowing the choice of returning the logits or sigmoided logits. This is useful
-    because we train on patches, but evaluate on full images using a sliding window approach. We need to return
-    logits for the sliding window approach, but sigmoided logits for the patch training approach.
+    """Wraps a MONAI UNet that returns raw logits.
+
+    The sliding-window inferer used for evaluation feeds logits straight in,
+    and the training loss (``DiceLoss(softmax=True)``) applies its own softmax,
+    so the network itself doesn't need to sigmoid/softmax internally.
     """
 
     def __init__(self, num_classes: int = 1):
@@ -32,22 +39,21 @@ class SegmentationNetwork(nn.Module):
             spatial_dims=3,
             in_channels=1,
             out_channels=num_classes + 1,
+            num_res_units=2,
+            norm="batch",
             channels=(16, 32, 64, 128, 256),
             strides=(2, 2, 2, 2),
         )
 
-    def forward(self, x: torch.Tensor, do_sigmoid: bool = True):
-        logits = self.net(x)
-        if do_sigmoid:
-            return torch.sigmoid(logits)
-        else:
-            return logits
+    def forward(self, x: torch.Tensor):
+        return self.net(x)
 
 
 def get_model() -> nn.Module:
-    """
-    Returns a new instance of the model defined in this file.
-    NOTE: This function needs to exist and cannot take any input arguments. If you would like to parameterize the
-    configuration of your model, for example loaded from a config file, do it when instantiating the model.
+    """Create a fresh model instance.
+
+    NOTE: this function takes no arguments — Flower's checkpoint plumbing
+    instantiates the model via a zero-arg call. Bake any model config into
+    the constructor above.
     """
     return SegmentationNetwork()

@@ -33,4 +33,4 @@ insecure = true
 EOF
 fi
 
-exec uv run python -m uvicorn fl_api.app:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fl_api
+exec python -m uvicorn fl_api.app:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/fl_api

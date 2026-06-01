@@ -20,13 +20,12 @@ framework: [monai]
 
 # Federated Evaluation with MONAI and Flower
 
-This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only mode. It loads pre-trained model checkpoints and performs federated evaluation across multiple client nodes. This app supports evaluating multiple models simultaneously.
+This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only mode. It loads a pre-trained model checkpoint and performs federated evaluation across multiple client nodes.
 
 ## Key Features
 
-- **Evaluation-only**: No training, only evaluation of pre-trained models
-- **Multi-model support**: Evaluate multiple models in a single run
-- **Type-safe metrics**: Metrics validation ensures proper data types (no strings allowed)
+- **Evaluation-only**: No training, only evaluation of a pre-trained model
+- **Customisable metrics**: the metrics are whatever `client_app`/`task.py` compute and return (this tutorial reports Dice and IoU); the server aggregates them natively
 - **FLIP integration**: Uploads results to S3 and updates job status
 - **WORKING_DIR environment variable**: Configurable output directory (default: `/app/runs`)
 
@@ -43,7 +42,7 @@ This example uses a MONAI UNet for 3D spleen segmentation in an evaluation-only 
 │   ├── data_loading.py # MONAI transforms + datalist (test data only)
 │   ├── models.py       # Defines model creation
 │   ├── server_app.py   # Defines your ServerApp with checkpoint loading
-│   ├── strategy.py     # Custom EvaluationStrategy with MetricsValidator
+│   ├── strategy.py     # EvaluationStrategy: native FedAvg aggregation + FLIP forwarding
 │   ├── task.py         # Defines evaluation functions
 │   └── transforms.py   # MONAI transforms for preprocessing
 ├── pyproject.toml      # Project metadata like dependencies and configs
@@ -70,18 +69,27 @@ From the repository root:
 
 ```bash
 make build                # build the fl-base / superlink / supernode images
+make -C tutorials/3d_spleen_segmentation_evaluation download-checkpoints  # fetch model.pt into the app
 make up                   # start fl-api, superlink, supernode-1, supernode-2
 ```
+
+`download-checkpoints` places `model.pt` in the `app/` folder, where the
+evaluation ServerApp reads it (via the `flip-job-dir` run-config value).
 
 Submit the evaluation run against the `fl-api` control plane:
 
 ```bash
-curl -X POST http://localhost:8000/submit_run/3d_spleen_segmentation_evaluation
+make submit APP=3d_spleen_segmentation_evaluation
 ```
+
+The default stack publishes no host ports; `make submit` execs into the fl-api
+container and POSTs to its loopback API. Use `make up-debug` instead if you want
+to POST from the host (`curl -X POST http://localhost:8000/submit_run/3d_spleen_segmentation_evaluation`)
+or open the Swagger UI.
 
 The FLIP API will:
 
-1. Load model checkpoints from the `model-checkpoints` directory
+1. Load the model checkpoint named by the `checkpoint` run-config value
 2. Run evaluation across all connected SuperNodes
 3. Aggregate metrics using the `EvaluationStrategy`
 4. Save results to `WORKING_DIR/{model_id}/evaluation_outputs/`
@@ -90,13 +98,17 @@ The FLIP API will:
 
 The compose file (`deploy/compose.yml`) wires everything correctly:
 
-- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`, `MODEL_CHECKPOINTS_DIR`
+- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`
   are resolved from `.env.flwr.development` via `${VAR}` substitutions in each
   service's `volumes:` block and bind-mounted into the containers.
 - Inside the containers the mounts land at stable locations
-  (`/images`, `/dataframe_file`, `/app/runs`, `/app/model_checkpoints`), and
+  (`/images`, `/dataframe_file`, `/app/runs`), and
   the `environment:` blocks point the app at those paths, so paths in the
   app resolve consistently regardless of your host layout.
+- Uploaded app bundles (sources + model checkpoint) live under
+  `/app/src/<model_id>`; the FL API and the SuperLink share the `/app/src`
+  volume, and the evaluation ServerApp reads the checkpoint from the path in the
+  `flip-job-dir` run-config value the FL API injects at submission time.
 
 ### Not recommended: Flower Simulation Engine (`flwr run`)
 
@@ -134,61 +146,62 @@ By default, the app reads from:
 
 ### Strategy Pattern
 
-The `EvaluationStrategy` in [strategy.py](tutorials/3d_spleen_segmentation_evaluation/app/strategy.py) handles:
+`EvaluationStrategy` in [strategy.py](app/strategy.py) is a thin subclass of Flower's
+`FedAvg`. `FedAvg` already distributes the model and aggregates every metric the clients
+return — a weighted average by `num-examples` — so the subclass adds only:
 
-1. **Metrics Validation**: `MetricsValidator` checks that all client metrics match the `metrics_spec` type definitions
-2. **Distribution**: Sends packed model parameters to all clients
-3. **Aggregation**: Collects and validates metrics from each client for each model
-4. **Results Formatting**: Structures output as `{client_id: {model_name: {metric_name: value}}}`
+1. **FLIP forwarding**: `handle_client_metrics` / `handle_client_exception` push each
+   client's metrics and any exceptions to the Central Hub. These need the full reply
+   message, so they live in the `aggregate_evaluate` override.
+2. **Per-client breakdown**: captures `{client_name: {metric_name: value}}` for the
+   `evaluation_results.json` artifact uploaded to S3.
 
-### Multi-Model Evaluation
-
-The server packs multiple models into a single `Parameters` object using the `pack_models()` function. Each model's weights are prefixed with `{model_name}/` to create unique keys. Clients use `unpack_model()` to extract weights for each model separately.
+The metrics themselves are simply whatever `client_app.py` puts in its `MetricRecord` —
+there is no metric declaration or validation.
 
 ## Notes
 
 - **Evaluation only** (no training or parameter updates)
-- **Type-safe metrics**: Only `float`, `int`, or `list` types allowed - strings are rejected
-- **Multi-model support**: Can evaluate multiple models in a single run
+- **Metrics**: `MetricRecord` only accepts numeric values; the server aggregates whatever metric keys the client returns
 - **FLIP integration**: Automatically uploads results and updates job status
 - **Environment-agnostic**: Uses `WORKING_DIR` instead of hardcoded paths
 
 ## Configuration
 
-The evaluation metrics specification is defined using a type-based approach in `server_app.py`:
+### Metrics
+
+Metrics are not declared in config. The client computes them in [`task.py`](app/task.py)
+and returns them in its `MetricRecord`; the server's `FedAvg` strategy averages whatever
+keys arrive (weighted by `num-examples`). To change which metrics are reported, edit the
+`_METRICS` registry in `task.py`:
 
 ```python
-metrics_spec = {
-    "mean_dice": float,  # Single aggregated Dice score
-    "raw_dice": list,  # List of per-slice Dice scores
+_METRICS = {
+    "mean_dice": lambda: DiceMetric(include_background=False, reduction="mean_batch"),
+    "mean_iou": lambda: MeanIoU(include_background=False, reduction="mean_batch"),
 }
 ```
 
-The `MetricsValidator` class in `strategy.py` enforces that:
-
-- All metrics match the specified types (float, int, or list)
-- Strings are NOT allowed as metric values
-- Each client returns metrics matching this specification for each model
+Each metric name becomes a key in the aggregated results and a `LABEL` on the FLIP
+Central Hub (e.g. `MEAN_DICE`, `MEAN_IOU`). No server or `pyproject.toml` change is needed.
 
 ### Environment Variables
 
-- `MODEL_CHECKPOINTS_DIR`: Directory containing pre-trained model `.pt` files (mounted at `/app/model_checkpoints` on the SuperLink)
+- `flip-job-dir`: run-config value (in `config.toml`, not an env var) injected by the FL API at submission time; points at the app directory (`/app/src/<model_id>/app` on the shared volume) where the evaluation ServerApp reads the pre-trained model `.pt` file
 - `WORKING_DIR`: Output directory for evaluation results (default: `/app/runs`)
 - `LOCAL_DEV`: Set to `"true"` to skip S3 uploads during local development
 - `DEV_DATAFRAME`: Path to CSV file with test data metadata
 - `DEV_IMAGES_DIR`: Path to directory containing NIfTI images
 
-### Multi-Model Configuration
+### Checkpoint Configuration
 
-Models are specified in `pyproject.toml` using flattened keys:
+The checkpoint to evaluate is set with a single `checkpoint` key under
+`[tool.flwr.app.config]` — a dummy placeholder in `pyproject.toml`, overridden
+per run in `app/config.toml`:
 
 ```toml
 [tool.flwr.app.config]
-"models.spleen.checkpoint" = "model.pt"
-"models.spleen.image_key" = "image"
-"models.spleen.label_key" = "label"
+checkpoint = "model.pt"
 ```
 
-The server automatically loads all models and packs them into a single parameters object for distribution to clients.
-
-This template defines the structure of metrics that clients must return. The server validates that all returned metrics match this structure and contain the correct types (float or list of floats).
+The ServerApp loads that file from `flip-job-dir` and distributes its weights to the clients.

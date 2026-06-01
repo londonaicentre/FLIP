@@ -9,9 +9,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ROOT_DIR := $(abspath $(CURDIR)/../..)
-TESTING_DIR := $(ROOT_DIR)/testing
-APP_DIR := $(ROOT_DIR)/data/model_checkpoints
+# Download the checkpoint into the app/ folder, alongside config.toml and the
+# app sources -- where the evaluation ServerApp reads it via flip-job-dir.
+APP_DIR := $(CURDIR)/app
 
 # --- Load app-specific env ---
 ifneq ("$(wildcard .env.app)","")

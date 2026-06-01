@@ -13,9 +13,9 @@
 
 .PHONY: local_lint local_mypy local_test
 
-test_coverage_html_command = uv run pytest --tb=short --disable-warnings --cov=fl_api/ --cov-report=html --cov-report=term-missing
-lint_command = uv run ruff check . --fix
-mypy_command = uv run mypy . --ignore-missing-imports
+test_coverage_html_command = uv run --locked pytest --tb=short --disable-warnings --cov=fl_api/ --cov-report=html --cov-report=term-missing
+lint_command = uv run --locked ruff check . --fix
+mypy_command = uv run --locked mypy . --ignore-missing-imports
 
 local_lint:
 	$(lint_command)

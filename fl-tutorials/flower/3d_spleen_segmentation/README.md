@@ -57,12 +57,16 @@ make up                   # start fl-api, superlink, supernode-1, supernode-2
 Then submit the run against the `fl-api` control plane:
 
 ```bash
-curl -X POST http://localhost:8000/submit_run/3d_spleen_segmentation
+make submit APP=3d_spleen_segmentation
 ```
+
+The default stack publishes no host ports; `make submit` execs into the fl-api
+container. Use `make up-debug` if you want to POST from the host
+(`curl -X POST http://localhost:8000/submit_run/3d_spleen_segmentation`) instead.
 
 The compose file (`deploy/compose.yml`) wires everything correctly:
 
-- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`, `MODEL_CHECKPOINTS_DIR`
+- `DEV_DATAFRAME`, `DEV_IMAGES_DIR`, `WORKING_DIR`
   are resolved from `.env.flwr.development` (read by Docker Compose as the
   `${VAR}` substitutions in each service's `volumes:` block) and bind-mounted
   into the SuperNode and SuperLink containers — one source of truth for paths.

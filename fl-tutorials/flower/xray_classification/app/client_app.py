@@ -72,7 +72,11 @@ def _load_model_on_device(msg: Message) -> tuple[torch.nn.Module, torch.device]:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log(INFO, "Using device: %s", device)
     model = get_model()
-    model.load_state_dict(msg.content["arrays"].to_torch_state_dict(), strict=False)
+    # strict=True (default) — server and client build get_model() from the same
+    # factory, so any missing/unexpected key means the wire format has drifted
+    # from the architecture; fail loudly instead of running with random weights
+    # in mismatched layers.
+    model.load_state_dict(msg.content["arrays"].to_torch_state_dict())
     model.to(device)
     return model, device
 

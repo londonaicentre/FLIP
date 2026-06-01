@@ -13,3 +13,4 @@
 .flwr/
 .venv/
 uv.lock
+*.pt

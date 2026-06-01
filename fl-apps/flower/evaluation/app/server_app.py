@@ -15,9 +15,9 @@
 
 import json
 import os
+import shutil
 from logging import ERROR, INFO
 from pathlib import Path
-from typing import Dict, Type
 
 import torch
 from flip import FLIP
@@ -26,86 +26,8 @@ from flwr.app import ArrayRecord, Context
 from flwr.common import log
 from flwr.serverapp import Grid, ServerApp
 
-from app.models import get_model_for_path
+from app.models import get_model
 from app.strategy import EvaluationStrategy
-
-
-def parse_models_config(run_config: Dict) -> Dict:
-    """Reconstruct the models dict from Flower's flattened dot-separated run_config keys.
-
-    Flower flattens ``[tool.flwr.app.config.models.foo]`` into keys like
-    ``"models.foo.checkpoint"`` and ``"models.foo.path"`` in run_config.
-    This function reconstructs the expected nested structure:
-
-        {
-            "foo": {"checkpoint": "...", "path": "..."}
-        }
-    """
-    models: Dict[str, Dict] = {}
-    prefix = "models."
-    for key, value in run_config.items():
-        if key.startswith(prefix):
-            rest = key[len(prefix) :]  # e.g. "monai_spleen_unet.checkpoint"
-            parts = rest.split(".", 1)
-            if len(parts) == 2:
-                model_name, field = parts
-                models.setdefault(model_name, {})[field] = value
-    return models
-
-
-def parse_metrics_config(metrics_config: Dict[str, str]) -> Dict[str, Type]:
-    """Parse metrics configuration from pyproject.toml.
-
-    Converts string type names (\"float\", \"int\") to actual Python types.
-    Only native numeric types are allowed - no lists or complex types.
-
-    Args:
-        metrics_config: Dictionary mapping metric names to type strings.
-
-    Returns:
-        Dictionary mapping metric names to Python type objects.
-
-    Raises:
-        ValueError: If an unsupported type string is encountered.
-
-    """
-    # Only allow native numeric types (float, int) - no lists or other types
-    type_mapping = {
-        "float": float,
-        "int": int,
-    }
-
-    metrics_spec = {}
-    for metric_name, type_str in metrics_config.items():
-        if type_str not in type_mapping:
-            msg = (
-                f"Unsupported type '{type_str}' for metric '{metric_name}'. "
-                f"Only native numeric types are allowed: {list(type_mapping.keys())}"
-            )
-            log(ERROR, msg)
-            raise ValueError(msg)
-        metrics_spec[metric_name] = type_mapping[type_str]
-
-    return metrics_spec
-
-
-# Separator used to namespace per-model parameter keys inside a single ArrayRecord.
-# Must not appear in any PyTorch state-dict key.
-_MODEL_KEY_SEP = "/"
-
-
-def pack_models(models: Dict[str, torch.nn.Module]) -> ArrayRecord:
-    """Pack multiple models' state dicts into one ArrayRecord.
-
-    Each tensor key is prefixed with ``<model_name><sep><original_key>``
-    so that the client can extract per-model state dicts by filtering on the prefix.
-    """
-    combined: Dict[str, torch.Tensor] = {}
-    for model_name, model in models.items():
-        for layer_key, tensor in model.state_dict().items():
-            combined[f"{model_name}{_MODEL_KEY_SEP}{layer_key}"] = tensor
-    return ArrayRecord(combined)
-
 
 # Create ServerApp
 app = ServerApp()
@@ -122,67 +44,50 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     flip.update_status(model_id, ModelStatus.INITIATED)
 
     # ------------------------------------------------------------------
-    # Load all models listed in the run config.
+    # Locate and load the model checkpoint.
     #
-    # Expected config structure:
-    #   "models": {
-    #     "<model_name>": {
-    #       "checkpoint": "<filename.pt>",   # relative to MODEL_CHECKPOINTS_DIR
-    #       "path": "<architecture_key>"     # key in models.model_paths
-    #     },
-    #     ...
-    #   }
+    # ``flip-job-dir`` is injected as a run-config override by the FL API at
+    # submission time and points at the app directory on the shared volume,
+    # where the uploaded .pt checkpoint lives next to config.toml and the app
+    # sources. ``checkpoint`` is the checkpoint filename within that directory.
     # ------------------------------------------------------------------
-    models_config: Dict = parse_models_config(run_config)
-    if not models_config:
-        msg = "No models specified. Set 'models' in pyproject.toml under [tool.flwr.app.config]."
+    app_dir = run_config.get("flip-job-dir")
+    if not app_dir:
+        msg = "flip-job-dir is not set in the run config"
         log(ERROR, msg)
         raise ValueError(msg)
 
-    checkpoints_dir = os.getenv("MODEL_CHECKPOINTS_DIR")
-    if not checkpoints_dir:
-        msg = "MODEL_CHECKPOINTS_DIR environment variable is not set"
+    checkpoint_name = run_config.get("checkpoint")
+    if not checkpoint_name:
+        msg = "checkpoint is not set in the run config"
         log(ERROR, msg)
         raise ValueError(msg)
 
-    loaded_models: Dict[str, torch.nn.Module] = {}
-    for model_name, model_cfg in models_config.items():
-        arch_path = model_cfg["path"]
-        checkpoint_file = os.path.join(checkpoints_dir, model_cfg["checkpoint"])
+    checkpoint_file = os.path.join(app_dir, checkpoint_name)
+    if not os.path.exists(checkpoint_file):
+        msg = f"Checkpoint not found at: {checkpoint_file}"
+        log(ERROR, msg)
+        raise FileNotFoundError(msg)
 
-        if not os.path.exists(checkpoint_file):
-            msg = f"Checkpoint for model '{model_name}' not found at: {checkpoint_file}"
-            log(ERROR, msg)
-            raise FileNotFoundError(msg)
-
-        model = get_model_for_path(arch_path)
-        checkpoint = torch.load(checkpoint_file, map_location="cpu", weights_only=True)
-        model.load_state_dict(checkpoint, strict=False)
-        loaded_models[model_name] = model
-        log(INFO, f"Loaded model '{model_name}' (arch='{arch_path}') from {checkpoint_file}")
+    model = get_model()
+    # Load to CPU: the SuperLink runs CPU-only and only repacks the weights for distribution to SuperNodes.
+    state_dict = torch.load(checkpoint_file, map_location="cpu", weights_only=True)
+    # strict=True (default) — a missing/unexpected key means the on-disk checkpoint
+    # doesn't match get_model()'s architecture, and the eval would otherwise run
+    # with the mismatched layers still at random init and report a plausible-but-
+    # meaningless dice. Fail loudly here instead.
+    model.load_state_dict(state_dict)
+    log(INFO, f"Loaded model from {checkpoint_file}")
 
     flip.update_status(model_id, ModelStatus.PREPARED)
 
-    # Pack all models into a single ArrayRecord with namespaced keys.
-    arrays = pack_models(loaded_models)
+    # Pack the model weights into an ArrayRecord for distribution to clients.
+    arrays = ArrayRecord(model.state_dict())
 
-    # Parse metrics specification from config
-    # TOML nested tables are flattened in run_config, so extract keys starting with "metrics."
-    metrics_config = {
-        key.split(".", 1)[1]: value for key, value in context.run_config.items() if key.startswith("metrics.")
-    }
-    if not metrics_config:
-        msg = "No metrics configuration found in pyproject.toml. Please define [tool.flwr.app.config.metrics]."
-        log(ERROR, msg)
-        raise ValueError(msg)
-
-    metrics_spec = parse_metrics_config(metrics_config)
-    log(INFO, f"Metrics specification: {metrics_spec}")
-
-    # Use custom evaluation strategy
+    # Federated evaluation strategy. FedAvg aggregates whatever metrics the
+    # clients return in their MetricRecord (weighted by num-examples);
+    # EvaluationStrategy adds only the FLIP Central Hub forwarding.
     strategy = EvaluationStrategy(
-        metrics_spec=metrics_spec,
-        model_names=list(models_config.keys()),
         flip=flip,
         model_id=model_id,
         fraction_train=0.0,  # No training
@@ -207,8 +112,6 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
     # Prepare evaluation results
     evaluation_results = {
         "num_rounds": num_rounds,
-        "models_evaluated": list(models_config.keys()),
-        "metrics_spec": {k: v.__name__ for k, v in metrics_spec.items()},
         "results": strategy.per_client_results,
     }
 
@@ -233,3 +136,18 @@ def main(grid: Grid, context: Context, flip: FLIP = FLIP()) -> None:
 
     log(INFO, "\n✓ Evaluation complete. All outputs saved to %s", output_dir)
     log(INFO, "  - Results JSON: evaluation_results.json")
+
+    # Clean up the job folder once evaluation is done. flip-job-dir points at the
+    # app directory on the shared volume; its parent is the job folder (the
+    # uploaded bundle: sources + checkpoint). Removing it frees the upload.
+    job_dir = Path(app_dir).parent
+    if job_dir.exists():
+        # Only delete if the path contains the model_id (safety check)
+        if model_id in str(job_dir):
+            try:
+                shutil.rmtree(job_dir)
+                log(INFO, "✓ Cleaned up job folder: %s", job_dir)
+            except Exception as e:
+                log(INFO, "Warning: Failed to clean up job folder %s: %s", job_dir, str(e))
+        else:
+            log(INFO, "Skipping cleanup: job folder %s does not contain model_id", job_dir)

@@ -11,7 +11,7 @@
 # limitations under the License.
 #
 
-"""Model definitions and registry for the MONAI evaluation app."""
+"""Model definition for the MONAI evaluation app."""
 
 import torch
 from monai.networks.nets import UNet
@@ -43,24 +43,10 @@ class SegmentationNetwork(nn.Module):
         return logits
 
 
-_net = SegmentationNetwork()
+def get_model() -> nn.Module:
+    """Create a fresh, uninitialised model instance for evaluation.
 
-# Maps the "path" key from the models config to a model instance.
-# Add new architectures here as needed.
-model_paths = {"unet": _net}
-
-
-def get_model_for_path(path: str) -> nn.Module:
-    """Create a fresh model instance for the given path key.
-
-    Args:
-        path: The "path" key from the models config (e.g. "unet").
-
-    Returns:
-        A new, uninitialised model instance of the matching architecture.
+    The evaluation app evaluates a single model; the checkpoint loaded into it
+    is named by the ``checkpoint`` run-config value.
     """
-    if path not in model_paths:
-        raise ValueError(f"Unknown model path '{path}'. Available paths: {list(model_paths.keys())}")
-    template = model_paths[path]
-    # Instantiate a fresh copy of the same class so each model has its own weights.
-    return type(template)()
+    return SegmentationNetwork()

@@ -27,14 +27,14 @@ description = "Evaluation app"
 license = "Apache-2.0"
 # Dependencies for your Flower App
 dependencies = [
-    "flip-utils>=0.1.7",
+    "flip-utils>=0.1.8",
     "flwr[simulation]>=1.27.0",
     "monai>=1.5.2",
     "nibabel>=5.3.3",
     "numpy>=2.4.2",
     "pandas>=3.0.0",
     "pydicom>=3.0.1",
-    "torch>=2.10.0",
+    "torch>=2.10.0,<2.12",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -51,14 +51,16 @@ clientapp = "app.client_app:app"
 
 # Custom config values accessible via `context.run_config`
 [tool.flwr.app.config]
-num-server-rounds = 3 # Equivalent to global_rounds
-local-epochs = 1      # Equivalent to local_rounds
+num-server-rounds = 1 # Evaluation only needs 1 round
+local-epochs = 1      # Number of evaluation rounds per model
 learning-rate = 1e-4
-val-split = 0.3
-test-split = 0.3
 batch-size = 2
 # Model configuration
-spatial-dims = 3 # This is currently unused but can be passed to get_model()
+spatial-dims = 3
+num-classes = 2
+# Checkpoint filename to evaluate, relative to flip-job-dir.
+# Dummy placeholder -- the real value is supplied per run via config.toml.
+checkpoint = "dummy.pt"
 # FLIP configuration - needs to be set here so it can be overridden by flwr run command
 # See https://flower.ai/docs/framework/ref-api-cli.html#flwr-run for more details
 flip-model-id = "uuid"

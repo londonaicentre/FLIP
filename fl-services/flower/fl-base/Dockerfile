@@ -21,10 +21,18 @@ WORKDIR /app
 COPY --chown=app:app tutorials/3d_spleen_segmentation/pyproject.toml .
 
 # Only the non-Flower dependencies are needed.
-# Remove the flwr[simulation] dependency from pyproject.toml before installing, since it's only needed for the 
+# Remove the flwr[simulation] dependency from pyproject.toml before installing, since it's only needed for the
 # simulation service, and would pull in extra dependencies that aren't needed for the API service.
+#
+# --extra-index-url points pip at PyTorch's CUDA-12.8 wheel index. Combined with
+# the pyproject pin "torch>=2.10.0,<2.12", pip picks torch 2.11.0+cu128 (the
+# highest cu128 build, and the highest torch that runs on the host NVIDIA
+# driver 575.x — CUDA-13 wheels need driver >=580). All other deps still
+# resolve from PyPI as normal. Re-evaluate the upper bound when the trust
+# hosts upgrade their drivers and a newer cu12x or cu13x build becomes safe.
 RUN sed -i 's/.*flwr\[simulation\].*//' pyproject.toml \
-  && python -m pip install -U --no-cache-dir .
+  && python -m pip install -U --no-cache-dir . \
+       --extra-index-url https://download.pytorch.org/whl/cu128
 
 # Copy register-supernode-keys.sh
 COPY --chown=app:app fl_services/register-supernode-keys.sh /scripts/register-supernode-keys.sh

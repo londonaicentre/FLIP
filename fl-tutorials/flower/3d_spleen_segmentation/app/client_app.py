@@ -28,7 +28,7 @@ from flwr.app import ArrayRecord, ConfigRecord, Context, Message, MetricRecord, 
 from flwr.clientapp import ClientApp
 from flwr.common import log
 from monai.data import DataLoader, Dataset
-from monai.losses import DiceLoss
+from monai.losses import DiceCELoss
 
 from app.data_loading import FLIP_BASE
 from app.models import get_model
@@ -88,11 +88,27 @@ def train(msg: Message, context: Context) -> Message:
     # Initialize model and load received weights
     model = get_model()
     state_dict = msg.content["arrays"].to_torch_state_dict()
-    model.load_state_dict(state_dict=state_dict, strict=False)
+    # strict=True (default) — server and client build get_model() from the same
+    # factory, so any missing/unexpected key means the wire format has drifted
+    # from the architecture; better to fail than train with random weights in
+    # mismatched layers.
+    model.load_state_dict(state_dict=state_dict)
     model.to(device)
 
     # Initialize optimizer and loss function
-    loss_fn = DiceLoss(to_onehot_y=True, softmax=True)
+    # DiceCELoss recipe mirrors the flip-fl-base reference trainer (line 205 of
+    # its trainer.py). The 0.2*CE component pushes argmax predictions off the
+    # all-background baseline that pure DiceLoss gets stuck on with this dataset
+    # (spleen is <1% of voxels); batch=True aggregates the loss across the whole
+    # batch so a single sample with few foreground voxels doesn't dominate.
+    loss_fn = DiceCELoss(
+        to_onehot_y=True,
+        softmax=True,
+        squared_pred=False,
+        batch=True,
+        lambda_ce=0.2,
+        lambda_dice=0.8,
+    )
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
     # Perform training
@@ -188,11 +204,25 @@ def evaluate(msg: Message, context: Context) -> Message:
     # Initialize model and load received weights
     model = get_model()
     state_dict = msg.content["arrays"].to_torch_state_dict()
-    model.load_state_dict(state_dict=state_dict, strict=False)
+    # strict=True (default) — see note in the train handler above; same wire
+    # contract applies to the test path.
+    model.load_state_dict(state_dict=state_dict)
     model.to(device)
 
     # Initialize loss function
-    loss_fn = DiceLoss(to_onehot_y=True, softmax=True)
+    # DiceCELoss recipe mirrors the flip-fl-base reference trainer (line 205 of
+    # its trainer.py). The 0.2*CE component pushes argmax predictions off the
+    # all-background baseline that pure DiceLoss gets stuck on with this dataset
+    # (spleen is <1% of voxels); batch=True aggregates the loss across the whole
+    # batch so a single sample with few foreground voxels doesn't dominate.
+    loss_fn = DiceCELoss(
+        to_onehot_y=True,
+        softmax=True,
+        squared_pred=False,
+        batch=True,
+        lambda_ce=0.2,
+        lambda_dice=0.8,
+    )
 
     # Perform evaluation
     if len(test_loader.dataset) == 0:
