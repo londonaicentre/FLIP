@@ -422,8 +422,8 @@ class TestFLIPStandardProdSendMetrics:
             url = mock_post.call_args[0][0]
             assert url == f"https://hub.example.com/model/{model_id}/metrics"
             assert mock_post.call_args.kwargs["json"] == {
-                "trust": "client-1",
-                "globalRound": 3,
+                "fl_client_name": "client-1",
+                "global_round": 3,
                 "label": "LOSS_FUNCTION",
                 "result": 0.42,
             }

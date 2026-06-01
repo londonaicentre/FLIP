@@ -39,6 +39,7 @@ from requests import HTTPError
 from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
 from flip.core.base import FLIPBase
 from flip.exceptions import ResultsUploadError
+from flip.schemas import TrainingLog, TrainingMetrics
 from flip.utils.utils import Utils
 
 
@@ -307,12 +308,12 @@ class FLIPStandardProd(FLIPBase):
             value (float): The value of the metric.
             round (int): The round number.
         """
-        payload = {
-            "trust": client_name,
-            "globalRound": round,
-            "label": label,
-            "result": value,
-        }
+        payload = TrainingMetrics(
+            fl_client_name=client_name,
+            global_round=round,
+            label=label,
+            result=value,
+        ).model_dump()
 
         endpoint = f"{FlipConstants.FLIP_API_INTERNAL_URL}/model/{model_id}/metrics"
 
@@ -357,10 +358,10 @@ class FLIPStandardProd(FLIPBase):
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, unable to send exception")
 
-        payload = {
-            "trust": client_name,
-            "log": formatted_exception,
-        }
+        payload = TrainingLog(
+            fl_client_name=client_name,
+            log=formatted_exception,
+        ).model_dump()
 
         endpoint = f"{FlipConstants.FLIP_API_INTERNAL_URL}/model/{model_id}/logs"
 

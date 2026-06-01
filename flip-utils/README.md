@@ -137,10 +137,14 @@ DEV mode lets you test FL applications locally before deploying to production.
 
 2. Place your application files in `src/<JOB_TYPE>/app/custom/`.
 
-3. Run the simulator in Docker:
+3. Run the NVFLARE simulator in Docker with the appropriate tutorial target:
 
    ```bash
-   make run-container
+   make test-xrays-standard    # X-ray classification
+   make test-spleen-standard   # 3D spleen segmentation
+   make test-spleen-evaluation # Evaluation job
+   make test-spleen-diffusion  # Diffusion model
+   make test-spleen-fedopt     # Federated optimisation
    ```
 
 ### Unit Tests
@@ -179,7 +183,7 @@ The [`fl_services/`](./fl_services/README.md) directory contains Docker-based NV
 
 - Docker and Docker Compose
 - [uv](https://github.com/astral-sh/uv) (Python package manager)
-- AWS CLI configured (for downloading test data)
+- AWS CLI configured (for provisioning kit uploads to S3)
 
 ### Provisioning the 2 Networks
 
@@ -223,7 +227,7 @@ make clean NET_NUMBER=1   # Remove containers and images
 
 ### Integration Testing
 
-Download test data (requires AWS S3 access) then run the relevant target:
+Download test data (requires HuggingFace Hub access) then run the relevant target:
 
 ```bash
 make download-test-data
@@ -256,17 +260,11 @@ To test a PR on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo
 | `make down NET_NUMBER=X` | Stop FL network X |
 | `make clean NET_NUMBER=X` | Remove containers and images |
 
-#### Development
-
-| Command | Description |
-| --------- | ------------- |
-| `make run-container` | Run NVFLARE simulator in Docker |
-
 #### Data Management
 
 | Command | Description |
 | --------- | ------------- |
-| `make download-test-data` | Download all test data (x-ray and spleen images, model checkpoints) from S3 |
+| `make download-test-data` | Download all test data (x-ray and spleen images, model checkpoints) from HuggingFace Hub |
 
 #### Testing
 
@@ -277,6 +275,7 @@ To test a PR on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo
 | `make test-spleen-standard` | Test standard job with spleen data |
 | `make test-spleen-evaluation` | Test evaluation job with spleen data |
 | `make test-spleen-diffusion` | Test diffusion model with spleen data |
+| `make test-spleen-fedopt` | Test federated optimization with spleen data |
 | `make test` | Run all integration tests |
 
 ---
