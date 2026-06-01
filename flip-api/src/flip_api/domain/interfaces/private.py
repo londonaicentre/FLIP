@@ -101,7 +101,7 @@ class IUpdateRetrieveImageStatus(TypedDict):
 class ITrainingMetrics(TypedDict):
     """Training metrics."""
 
-    trust: str
+    fl_client_name: str
     global_round: int
     label: str
     result: float

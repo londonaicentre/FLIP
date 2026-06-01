@@ -18,18 +18,17 @@ import pytest
 from fastapi import HTTPException, status
 from sqlmodel import Session
 
-# Module to be tested
+from flip_api.auth import trust_key_cache
 from flip_api.auth.access_manager import (
     _get_internal_service_key_hash,
-    _get_trust_api_key_hashes,
     authenticate_internal_service,
     authenticate_trust,
     can_access_project,
     can_contribute_to_project,
     can_modify_model,
     can_modify_project,
-    verify_trust_identity,
 )
+from flip_api.db.models.main_models import Trust
 
 VALID_TEST_KEY = "test_secret_key_12345_valid"
 VALID_TEST_KEY_HASH = hashlib.sha256(VALID_TEST_KEY.encode()).hexdigest()
@@ -45,62 +44,142 @@ PATCH_CAN_CONTRIBUTE_TO_PROJECT = "flip_api.auth.access_manager.can_contribute_t
 PATCH_GET_SETTINGS = "flip_api.auth.access_manager.get_settings"
 
 
-PATCH_HASH_CACHE = "flip_api.auth.access_manager._trust_api_key_hashes_cache"
 PATCH_INTERNAL_KEY_HASH = "flip_api.auth.access_manager._get_internal_service_key_hash"
 PATCH_INTERNAL_KEY_HASH_CACHE = "flip_api.auth.access_manager._internal_service_key_hash_cache"
 
 
-@pytest.fixture
-def mocked_settings():
-    mock = MagicMock()
-    mock.TRUST_API_KEY_HASHES = {TRUST_NAME: VALID_TEST_KEY_HASH}
-    with patch(PATCH_GET_SETTINGS, return_value=mock), patch(PATCH_HASH_CACHE, None):
-        yield mock
+def _db_with_trust_rows(rows: list[Trust]) -> MagicMock:
+    """Build a Session mock whose ``exec(...).all()`` returns the given Trust rows.
+
+    Mirrors ``authenticate_trust``'s query —
+    ``select(Trust).where(api_key_hash IS NOT NULL)``. Rows without an
+    api_key_hash are filtered here just like the real SQL does so unit tests
+    exercise the same candidate set the production query yields.
+    """
+    db = MagicMock(spec=Session)
+    db.exec.return_value.all.return_value = [
+        t for t in rows if t.api_key_hash is not None
+    ]
+    db.get.return_value = None  # default: cache-hit path treated as stale
+    return db
 
 
-@pytest.fixture
-def mocked_settings_empty():
-    mock = MagicMock()
-    mock.TRUST_API_KEY_HASHES = {}
-    with patch(PATCH_GET_SETTINGS, return_value=mock), patch(PATCH_HASH_CACHE, None):
-        yield mock
+@pytest.fixture(autouse=True)
+def _clear_trust_key_cache():
+    """Reset the trust-auth in-process cache before every test in this module.
+
+    Without this, an earlier test that populated the cache (e.g. via a
+    successful authenticate_trust call) would leak its entry into the next
+    test, making the cache-stale and cache-hit assertions order-dependent.
+    """
+    trust_key_cache.invalidate()
+    yield
+    trust_key_cache.invalidate()
 
 
 class TestAuthenticateTrust:
-    def test_valid_api_key_returns_trust_name(self, mocked_settings):
-        assert authenticate_trust(api_key=VALID_TEST_KEY) == TRUST_NAME
+    def test_valid_api_key_returns_trust_row(self):
+        """The dependency returns the resolved Trust row (id + name + everything)."""
+        trust = Trust(id=uuid4(), name=TRUST_NAME, api_key_hash=VALID_TEST_KEY_HASH)
+        db = _db_with_trust_rows([trust])
 
-    def test_invalid_api_key_returns_401(self, mocked_settings):
+        result = authenticate_trust(api_key=VALID_TEST_KEY, db=db)
+
+        assert result is trust
+        assert result.name == TRUST_NAME
+
+    def test_invalid_api_key_returns_401(self):
+        db = _db_with_trust_rows(
+            [Trust(id=uuid4(), name=TRUST_NAME, api_key_hash=VALID_TEST_KEY_HASH)]
+        )
         with pytest.raises(HTTPException) as exc_info:
-            authenticate_trust(api_key=WRONG_TEST_KEY)
+            authenticate_trust(api_key=WRONG_TEST_KEY, db=db)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc_info.value.detail == "Invalid API Key."
 
-    def test_missing_api_key_returns_401(self, mocked_settings):
+    def test_missing_api_key_returns_401(self):
+        db = _db_with_trust_rows([])
         with pytest.raises(HTTPException) as exc_info:
-            authenticate_trust(api_key=None)
+            authenticate_trust(api_key=None, db=db)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc_info.value.detail == "Not authenticated: API key is missing."
 
-    def test_empty_api_key_returns_401(self, mocked_settings):
+    def test_empty_api_key_returns_401(self):
+        db = _db_with_trust_rows([])
         with pytest.raises(HTTPException) as exc_info:
-            authenticate_trust(api_key="")
+            authenticate_trust(api_key="", db=db)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
         assert exc_info.value.detail == "Not authenticated: API key is missing."
 
-    def test_no_trust_keys_configured_returns_401(self, mocked_settings_empty):
+    def test_no_trust_rows_returns_401(self):
+        """A fresh hub with no registered trusts rejects every key."""
+        db = _db_with_trust_rows([])
         with pytest.raises(HTTPException) as exc_info:
-            authenticate_trust(api_key=VALID_TEST_KEY)
+            authenticate_trust(api_key=VALID_TEST_KEY, db=db)
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_multiple_trusts_returns_correct_name(self):
-        second_key = "second_trust_key_xyz"
-        second_hash = hashlib.sha256(second_key.encode()).hexdigest()
-        mock = MagicMock()
-        mock.TRUST_API_KEY_HASHES = {TRUST_NAME: VALID_TEST_KEY_HASH, "Trust_2": second_hash}
-        with patch(PATCH_GET_SETTINGS, return_value=mock), patch(PATCH_HASH_CACHE, None):
-            assert authenticate_trust(api_key=VALID_TEST_KEY) == TRUST_NAME
-            assert authenticate_trust(api_key=second_key) == "Trust_2"
+    def test_arbitrary_display_name_resolves_through_key(self):
+        """A trust with spaces and parens in its name authenticates by key alone."""
+        named_trust = Trust(
+            id=uuid4(),
+            name="(Mock) Guys and St Thomas NHS Trust",
+            api_key_hash=VALID_TEST_KEY_HASH,
+        )
+        db = _db_with_trust_rows([named_trust])
+
+        result = authenticate_trust(api_key=VALID_TEST_KEY, db=db)
+
+        assert result.name == "(Mock) Guys and St Thomas NHS Trust"
+
+    def test_walks_all_candidates_to_avoid_timing_side_channel(self):
+        """The implementation must not short-circuit on first non-match — every candidate
+        is checked so total comparison time is independent of which trust matched.
+        """
+        trusts = [
+            Trust(id=uuid4(), name=f"T_{i}", api_key_hash=hashlib.sha256(f"k{i}".encode()).hexdigest())
+            for i in range(5)
+        ]
+        trusts.append(Trust(id=uuid4(), name="match", api_key_hash=VALID_TEST_KEY_HASH))
+        db = _db_with_trust_rows(trusts)
+
+        result = authenticate_trust(api_key=VALID_TEST_KEY, db=db)
+
+        assert result.name == "match"
+
+    def test_cache_hit_skips_candidate_sweep(self):
+        """After a successful auth, the next call resolves via the in-process cache:
+        a single ``db.get`` PK fetch, no ``db.exec`` sweep. Locks in the perf path.
+        """
+        trust = Trust(id=uuid4(), name=TRUST_NAME, api_key_hash=VALID_TEST_KEY_HASH)
+        db = _db_with_trust_rows([trust])
+
+        first = authenticate_trust(api_key=VALID_TEST_KEY, db=db)
+        assert first is trust
+        sweep_calls_after_first = db.exec.call_count
+
+        db.get.return_value = trust  # cache hit fetches via PK
+        second = authenticate_trust(api_key=VALID_TEST_KEY, db=db)
+
+        assert second is trust
+        assert db.exec.call_count == sweep_calls_after_first  # no new sweep
+        db.get.assert_called_once_with(Trust, trust.id)
+
+    def test_cache_stale_after_delete_falls_through_to_sweep_and_401s(self):
+        """If the cached trust id has since been deleted (db.get returns None), the
+        request must not 401 immediately on the cache hit — it must fall through to
+        the full sweep, which finds no match, and only THEN 401.
+        """
+        trust = Trust(id=uuid4(), name=TRUST_NAME, api_key_hash=VALID_TEST_KEY_HASH)
+        db = _db_with_trust_rows([trust])
+        authenticate_trust(api_key=VALID_TEST_KEY, db=db)  # populate cache
+
+        empty_db = _db_with_trust_rows([])
+        empty_db.get.return_value = None  # cached id no longer resolves
+
+        with pytest.raises(HTTPException) as exc_info:
+            authenticate_trust(api_key=VALID_TEST_KEY, db=empty_db)
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        empty_db.exec.assert_called()  # sweep ran
 
 
 class TestAuthenticateInternalService:
@@ -511,44 +590,6 @@ class TestCanModifyModel:
             result = can_modify_model(user_id, model_id, db)
 
         assert result is False
-
-
-class TestVerifyTrustIdentity:
-    def test_matching_trust_names_succeeds(self):
-        """No exception when authenticated trust matches the URL trust name."""
-        verify_trust_identity("Trust_1", "Trust_1")
-
-    def test_mismatched_trust_names_raises_403(self):
-        """Should raise 403 when authenticated trust does not match the expected name."""
-        with pytest.raises(HTTPException) as exc_info:
-            verify_trust_identity("Trust_1", "Trust_2")
-        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-        assert "Trust_2" in exc_info.value.detail
-        assert "Trust_1" in exc_info.value.detail
-
-
-class TestGetTrustApiKeyHashes:
-    def test_dev_returns_hashes_from_settings(self):
-        """In dev, should return hashes from TRUST_API_KEY_HASHES setting."""
-        expected = {"Trust_1": "abc123"}
-        mock = MagicMock()
-        mock.ENV = "development"
-        mock.TRUST_API_KEY_HASHES = expected
-        with patch(PATCH_GET_SETTINGS, return_value=mock), patch(PATCH_HASH_CACHE, None):
-            result = _get_trust_api_key_hashes()
-        assert result == expected
-
-    def test_production_retrieves_from_secrets_manager(self):
-        """In production, should load hashes from AWS Secrets Manager."""
-        mock = MagicMock()
-        mock.ENV = "production"
-        with (
-            patch(PATCH_GET_SETTINGS, return_value=mock),
-            patch(PATCH_HASH_CACHE, None),
-            patch("flip_api.auth.access_manager.get_secret", return_value='{"Trust_1": "hash1"}'),
-        ):
-            result = _get_trust_api_key_hashes()
-        assert result == {"Trust_1": "hash1"}
 
 
 class TestGetInternalServiceKeyHash:

@@ -35,7 +35,7 @@ describe("session expiry tests", () => {
         });
 
         cy.url({ timeout: 10_000 }).should("not.include", "/connectionstatus");
-        cy.contains("Log into your account").should("be.visible");
+        cy.contains("Sign in to FLIP").should("be.visible");
         cy.getBySel("snackbar-text")
             .contains("Your session has expired. Please log in again.")
             .should("be.visible");

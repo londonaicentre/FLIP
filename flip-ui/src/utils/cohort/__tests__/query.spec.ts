@@ -14,7 +14,7 @@
 
 
 
-import { containsForbiddenCommands } from "@/utils/cohort/query";
+import { containsForbiddenCommands, filterByQueriedTrustIds } from "@/utils/cohort/query";
 
 describe("Query", () => {
     describe("containsForbiddenCommands", () => {
@@ -74,6 +74,22 @@ describe("Query", () => {
 
             expect(result1).toBeTruthy();
             expect(result2).toBeTruthy();
+        });
+    });
+
+    describe("filterByQueriedTrustIds", () => {
+        const trusts = [{ id: "a" }, { id: "b" }, { id: "c" }];
+
+        it("returns input unchanged when ids are undefined (project still loading)", () => {
+            expect(filterByQueriedTrustIds(trusts, undefined)).toEqual(trusts);
+        });
+
+        it("filters to the queried subset", () => {
+            expect(filterByQueriedTrustIds(trusts, ["a", "c"])).toEqual([{ id: "a" }, { id: "c" }]);
+        });
+
+        it("filters everything out when the queried list is empty", () => {
+            expect(filterByQueriedTrustIds(trusts, [])).toEqual([]);
         });
     });
 });

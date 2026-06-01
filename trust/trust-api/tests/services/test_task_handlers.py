@@ -104,8 +104,13 @@ async def test_handle_cohort_query_invalid_payload():
 
 @pytest.mark.asyncio
 async def test_handle_cohort_query_error(mock_make_request):
-    """Should return failure on HTTP error."""
-    mock_make_request.side_effect = Exception("Connection refused")
+    """When data-access-api fails, the trust still reports an error result to
+    the hub so the per-trust UI status leaves "running" and shows "error"."""
+    # First call (to data-access-api) fails; second call (to hub) succeeds.
+    mock_make_request.side_effect = [
+        Exception("Connection refused"),
+        {"message": "ok"},
+    ]
 
     payload = {
         "query": "SELECT 1",
@@ -118,6 +123,39 @@ async def test_handle_cohort_query_error(mock_make_request):
 
     assert result["success"] is False
     assert "Connection refused" in result["error"]
+
+    # An error report must have been posted to the hub.
+    assert mock_make_request.call_count == 2
+    hub_call = mock_make_request.call_args_list[1]
+    assert "/cohort/results" in hub_call.kwargs["url"]
+    body = hub_call.kwargs["json_body"]
+    assert body["query_id"] == "q1"
+    assert body["trust_id"] == "t1"
+    assert body["record_count"] == 0
+    assert body["data"] == []
+    assert body["error"] == "Connection refused"
+
+
+@pytest.mark.asyncio
+async def test_handle_cohort_query_error_swallows_hub_post_failure(mock_make_request):
+    """If reporting the error to the hub also fails, the handler still returns
+    the original error rather than masking it with the hub-post failure."""
+    mock_make_request.side_effect = [
+        Exception("Database connection failed"),
+        Exception("Hub unreachable"),
+    ]
+
+    payload = {
+        "query": "SELECT 1",
+        "query_name": "Test",
+        "encrypted_project_id": "enc123",
+        "query_id": "q1",
+        "trust_id": "t1",
+    }
+    result = await handle_cohort_query(payload)
+
+    assert result["success"] is False
+    assert "Database connection failed" in result["error"]
 
 
 # ---- Create imaging handler ----

@@ -22,6 +22,7 @@ from starlette.status import HTTP_400_BAD_REQUEST, HTTP_500_INTERNAL_SERVER_ERRO
 from flip_api.domain.schemas.users import CognitoUser
 from flip_api.utils.cognito_helpers import (
     _origin_from_url,
+    apply_user_profile,
     create_cognito_user,
     filter_enabled_users,
     get_cognito_users,
@@ -1885,3 +1886,56 @@ class TestGetUserByEmailOrId:
 
             params = mock_list.call_args.args[0]
             assert params["Filter"] == f'sub = "{user1}"'
+
+
+class TestApplyUserProfile:
+    """`apply_user_profile` merges DB profile fields onto a Cognito user."""
+
+    def _make_user(self):
+        return CognitoUser(
+            id=uuid4(),
+            email="alice@example.com",
+            is_disabled=False,
+        )  # type: ignore[call-arg]
+
+    def test_returns_user_unchanged_when_session_has_no_get(self):
+        """Duck-typed guard: list-listing call-sites pass `None` for `session`
+        when they don't have one. Don't blow up — just return the input.
+        """
+        user = self._make_user()
+
+        result = apply_user_profile(user, session=None)  # type: ignore[arg-type]
+
+        assert result is user
+
+    def test_returns_user_unchanged_when_no_profile_row_exists(self):
+        """No UserProfile row → no fields to apply; return the input verbatim."""
+        user = self._make_user()
+        session = Mock()
+        session.get.return_value = None
+
+        result = apply_user_profile(user, session=session)
+
+        # session.get was probed with the user id under UserProfile.
+        assert session.get.call_count == 1
+        assert result is user
+
+    def test_merges_profile_fields_when_available(self):
+        """A matching UserProfile row supplies the name + organisation that
+        Cognito doesn't carry. is_disabled is preserved verbatim.
+        """
+        user = self._make_user()
+        profile = Mock(name="…", organisation="London AI Centre")
+        # Mock(name=…) on a stock Mock is reserved — use side-effect attrs.
+        profile.name = "Alice Example"
+        profile.organisation = "London AI Centre"
+        session = Mock()
+        session.get.return_value = profile
+
+        result = apply_user_profile(user, session=session)
+
+        assert result.id == user.id
+        assert result.email == user.email
+        assert result.is_disabled is False
+        assert result.name == "Alice Example"
+        assert result.organisation == "London AI Centre"

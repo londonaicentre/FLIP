@@ -10,14 +10,11 @@
 # limitations under the License.
 #
 
-from uuid import UUID
-
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import HTTPException, status
 from sqlalchemy import text
 from sqlmodel import Session
 
-from flip_api.auth.dependencies import verify_token
-from flip_api.db.database import engine, get_session
+from flip_api.db.database import engine
 from flip_api.domain.schemas.status import NetStatus
 from flip_api.fl_services.services.fl_scheduler_service import (
     check_for_available_net,
@@ -25,8 +22,6 @@ from flip_api.fl_services.services.fl_scheduler_service import (
     prepare_and_start_training,
 )
 from flip_api.utils.logger import logger
-
-router = APIRouter(prefix="/fl", tags=["fl_services"])
 
 
 def _recover_stale_busy_schedulers(db: Session) -> int:
@@ -60,22 +55,6 @@ def _recover_stale_busy_schedulers(db: Session) -> int:
         db.commit()
         logger.info("Recovered %d stale BUSY scheduler(s)", recovered)
     return recovered
-
-
-# [#114] ✅
-@router.post("/jobs", response_model=None)
-def run_jobs(db: Session = Depends(get_session), user_id: UUID = Depends(verify_token)) -> None:
-    """
-    Endpoint to run FL jobs. Calls the core logic to check for available nets, retrieve queued jobs, and start training.
-
-    Args:
-        db (Session): Database session.
-        user_id (UUID): User ID from authentication.
-
-    Returns:
-        None
-    """
-    return run_jobs_core(db)
 
 
 def run_jobs_core(db: Session) -> None:
@@ -112,7 +91,7 @@ def run_jobs_core(db: Session) -> None:
             "model": job.model_id,
         })
 
-        prepare_and_start_training(job.model_id, job.id, job.clients, db)
+        prepare_and_start_training(job.model_id, job.id, job.trust_ids, db)
 
         logger.info({
             "message": "Training started successfully! 🚀",
