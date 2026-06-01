@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import mimetypes
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -549,6 +550,27 @@ def download_results(
     return paths
 
 
+def run_data_enrichment(cwd: Path, cmd: str, project_id: str) -> None:
+    """Run an optional data-enrichment step between image pull and training initiation.
+
+    Generic hook -- the shell command runs in ``cwd`` with ``FLIP_PROJECT_ID``
+    exported, so any project-aware enrichment (e.g. the spleen segmentation
+    tutorial's upload-labels-to-XNAT step) can resolve the per-trust XNAT id from
+    the central-hub project id. Non-zero exit raises ``SmokeFailure``.
+
+    ``cwd`` existence and the cwd/cmd pairing are validated upfront in
+    :func:`parse_args` so misuse fails before the multi-minute image-pull wait.
+    """
+    _log(f"🧪 Data enrichment: running `{cmd}` in {cwd} (FLIP_PROJECT_ID={project_id})")
+    env = {**os.environ, "FLIP_PROJECT_ID": project_id}
+    result = subprocess.run(cmd, shell=True, cwd=str(cwd), env=env)
+    if result.returncode != 0:
+        raise SmokeFailure(
+            f"Data-enrichment command failed (exit {result.returncode}): {cmd}"
+        )
+    _log("  ✅ data enrichment complete")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
@@ -616,7 +638,31 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Directory to download FL results into (default: a fresh tempdir, kept after exit).",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--data-enrichment-cwd",
+        type=Path,
+        default=None,
+        help="With --data-enrichment-cmd, run that shell command in this directory "
+        "between image pull and training initiation, with FLIP_PROJECT_ID exported. "
+        "Generic hook for project-specific steps (e.g. the spleen segmentation "
+        "tutorial's upload-labels-to-XNAT step).",
+    )
+    parser.add_argument(
+        "--data-enrichment-cmd",
+        default=None,
+        help="Shell command for the data-enrichment step (paired with --data-enrichment-cwd).",
+    )
+    args = parser.parse_args(argv)
+
+    # Validate the data-enrichment pair upfront so a typo doesn't surface only
+    # after the 5–15 min image-pull wait. Both flags are required together;
+    # the cwd must exist.
+    if bool(args.data_enrichment_cmd) != bool(args.data_enrichment_cwd):
+        parser.error("--data-enrichment-cmd and --data-enrichment-cwd must be used together")
+    if args.data_enrichment_cwd is not None and not args.data_enrichment_cwd.exists():
+        parser.error(f"--data-enrichment-cwd does not exist: {args.data_enrichment_cwd}")
+
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -658,6 +704,8 @@ def main(argv: list[str] | None = None) -> int:
         wait_for_image_pull(
             client, headers, project_id, args.image_pull_threshold, args.image_pull_timeout
         )
+        if args.data_enrichment_cmd:
+            run_data_enrichment(args.data_enrichment_cwd, args.data_enrichment_cmd, project_id)
         initiate_training(client, headers, model_id, [t["name"] for t in trusts])
         wait_for_training_started(client, headers, model_id, args.training_start_timeout)
         if args.abort_midway:
