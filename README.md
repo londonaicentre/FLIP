@@ -89,7 +89,8 @@ For example:
 | `make register-trusts` | Register the shipped dev roster (`trust/.env.*.development.example`, currently GSTT + KCH) on the running hub and write per-trust kit files (run automatically by `make up`) |
 | `make register-trust KIT=<CODE>` | Register one trust on the running hub and fill its kit file (creds + hub-shared block) |
 | `make unit_test` | Run unit tests across all services |
-| `make tests` | Run flip-ui unit tests and the full flip-api test suite (lint + mypy + pytest) |
+| `make tests` | Run flip-ui unit and e2e tests followed by the full flip-api test suite (lint + mypy + pytest) |
+| `make e2e_smoke` | Drive a full project lifecycle (create → upload → train → download) against an already-running stack (not run in CI) |
 | `make lock` | Regenerate every service's `uv.lock` from its `pyproject.toml` |
 | `make debug SERVICE=<name>` | Restart one service in debug mode (waits for a debugger on port 5678). Services: `flip-api`, `fl-api-net-1`, `trust-api`, `imaging-api`, `data-access-api` |
 | `make debug-off SERVICE=<name>` | Take a single service back out of debug mode |

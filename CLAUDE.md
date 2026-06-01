@@ -94,7 +94,7 @@ change, since those live in the image layer, not the mounted `src/`.
 ```bash
 make unit_test             # All unit tests across all services (from root)
 make integration_test      # flip-api + trust integration tests (from root)
-make tests                 # flip-ui + flip-api tests (from root)
+make tests                 # flip-ui unit + e2e tests, then flip-api test suite (from root)
 make e2e_smoke             # End-to-end smoke against a running stack (see below)
 # From a service directory (e.g., flip-api/):
 make test                  # ruff + mypy + pytest (unit + integration)

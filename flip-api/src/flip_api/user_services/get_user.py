@@ -32,7 +32,7 @@ def get_user(
     request: Request,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
-):
+) -> CognitoUser:
     """
     Get user details by ID or email.
 

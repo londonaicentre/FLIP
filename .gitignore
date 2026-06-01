@@ -382,3 +382,6 @@ deploy/providers/AWS/dev/.terraform.lock.hcl
 
 design_handoff*
 CONTEXT.md
+
+# Federated learning runtime directories (at repo root, same pattern as flip-fl-base-flower)
+jobs/

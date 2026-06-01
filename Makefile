@@ -48,6 +48,7 @@ FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 # Docker requires absolute paths for volume mounts; the .env value may be relative
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 override FL_PROVISIONED_DIR := $(abspath $(MAKEFILE_DIR)/$(FL_PROVISIONED_DIR))
+override FL_JOBS_DIR := $(abspath $(MAKEFILE_DIR)/$(FL_JOBS_DIR))
 
 # Service configuration
 define SERVICE_CONFIG
@@ -103,7 +104,7 @@ build:
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: check-aws-access generate-internal-service-key create-networks
+up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jobs-dir
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -114,8 +115,31 @@ up: check-aws-access generate-internal-service-key create-networks
 	$(MAKE) -C trust up
 	@echo "✅ All services started successfully!"
 
+# Ensure jobs/<net> dirs exist with writable perms before starting containers,
+# so Docker doesn't create them root-owned and lock out the fl-api container
+# (which runs as a non-root `app` user).
+#
+# Net IDs come from NET_ENDPOINTS (the per-env single source of truth — prod
+# has only net-1; dev has net-1 + net-2). A new net is just an NET_ENDPOINTS
+# entry plus a compose service block; this target picks it up automatically.
+# Only needed for the Flower backend (NVFLARE doesn't use FL_JOBS_DIR).
+_ensure-fl-jobs-dir:
+	@if [ "$(FL_BACKEND)" = "flower" ]; then \
+		nets=$$(printf '%s' '$(NET_ENDPOINTS)' | python3 -c "import json,sys; d=sys.stdin.read().strip(); print(' '.join(json.loads(d).keys()) if d else '')"); \
+		if [ -z "$$nets" ]; then \
+			echo "❌ _ensure-fl-jobs-dir: NET_ENDPOINTS is empty or unparseable; cannot derive net IDs" >&2; \
+			exit 1; \
+		fi; \
+		mkdir -p jobs; \
+		chmod 777 jobs; \
+		for net in $$nets; do \
+			mkdir -p jobs/$$net; \
+			chmod 777 jobs/$$net; \
+		done; \
+	fi
+
 # Minimal $(MAKE) up
-up-no-trust: generate-internal-service-key create-networks
+up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
@@ -128,7 +152,7 @@ up-trusts: create-networks
 	@echo "✅ Trust services started successfully!"
 
 # Uses --pull always to ensure the latest FL images and 'stag'/'prod' version are used
-up-centralhub-ec2: create-networks-centralhub
+up-centralhub-ec2: create-networks-centralhub _ensure-fl-jobs-dir
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting central hub API services..."
