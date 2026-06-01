@@ -209,10 +209,12 @@ Network requirements
 tasks, and FL clients connect outbound to the FL server via the NLB. All
 communication is trust-initiated.
 
-The trust host must be able to make outbound connections to:
+The trust host must be able to make outbound connections to two **separate** Central Hub
+endpoints — different hostnames behind different load balancers, so both must be allowlisted:
 
-- The Central Hub FLIP API over HTTPS (port 443).
-- The FL Server endpoint over gRPC or HTTP (configurable port; e.g. 8002).
+- The Central Hub FLIP API over HTTPS (port 443) — the ALB (e.g. ``app.flip.aicentre.co.uk``).
+- The FL Server endpoint over gRPC or HTTP (configurable port; e.g. 8002) — the NLB
+  (e.g. ``fl.app.flip.aicentre.co.uk``).
 
 If the trust's public IP changes (common with residential broadband), update
 the NLB security group:

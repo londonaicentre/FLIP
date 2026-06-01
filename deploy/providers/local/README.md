@@ -190,6 +190,11 @@ uv run ansible-galaxy install -r deploy/providers/local/requirements.yml
 
 **No inbound port forwarding is needed.** Trusts poll the hub outbound for tasks, and FL clients connect outbound to the FL server via the NLB. All communication is trust-initiated.
 
+The host/network firewall must allow outbound to **two separate Central Hub hosts** (different load balancers — both must be allowlisted):
+
+- **`app.flip.aicentre.co.uk`** — the ALB (HTTPS API, port 443).
+- **`fl.app.flip.aicentre.co.uk`** — the NLB (FL gRPC, default port 8002).
+
 ### Dynamic Public IP
 
 The NLB security group allowlists the trust's public IP for FL traffic. If the public IP changes (common with residential broadband), update it:
