@@ -64,8 +64,9 @@ locals {
   # ecs_task_env map below can stay byte-identical with the prior single-bucket
   # layout — only the value behind each local changes.
   # fl_app_base_uri is the backend-agnostic root: flip-api appends the per-backend
-  # segment (.../base-application/{nvflare,flower}/...) in code from the backend each
-  # net self-reports, so a framework switch needs no flip-api restart.
+  # segment (.../base-application/{nvflare,flower}/...) in code from each net's seeded
+  # (canonical) backend. A framework switch is applied via `make restart-fl`, which
+  # recreates flip-api so seeding re-applies the backend onto every net.
   uploaded_federated_data_uri = "${local.flip_fl_results_bucket_uri}/results"
   uploaded_model_files_uri    = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
   scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/uploaded"

@@ -14,6 +14,7 @@ import json
 
 import pytest
 
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import pull_required_files
 from flip_api.utils.constants import job_types_required_files_name
 
@@ -45,12 +46,12 @@ def test_pull_required_files_json_to_assets_success(tmp_path, monkeypatch):
         lambda fl_backend: assets_dir / job_types_required_files_name(fl_backend),
     )
 
-    pull_required_files.pull_required_files_json_to_assets("nvflare")
+    pull_required_files.pull_required_files_json_to_assets(FLBackend.NVFLARE)
 
     # Pulled from the per-backend S3 prefix
     assert captured["bucket_path"] == "bucket/nvflare/required_files.json"
     # Written to the per-backend local file
-    dest = assets_dir / job_types_required_files_name("nvflare")
+    dest = assets_dir / job_types_required_files_name(FLBackend.NVFLARE)
     with open(dest) as f:
         data = json.load(f)
     assert data["standard"] == ["trainer.py", "validator.py", "models.py", "config.json"]
@@ -76,7 +77,7 @@ def test_pull_required_files_json_to_assets_raises_on_s3_failure(tmp_path, monke
     )
 
     with pytest.raises(Exception, match="S3 unavailable"):
-        pull_required_files.pull_required_files_json_to_assets("nvflare")
+        pull_required_files.pull_required_files_json_to_assets(FLBackend.NVFLARE)
 
     # Nothing was written
-    assert not (assets_dir / job_types_required_files_name("nvflare")).exists()
+    assert not (assets_dir / job_types_required_files_name(FLBackend.NVFLARE)).exists()
