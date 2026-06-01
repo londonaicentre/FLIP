@@ -12,7 +12,7 @@
 
 from collections.abc import Generator
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote
 
 import boto3
 from sqlalchemy import event
@@ -73,13 +73,15 @@ def _generate_db_auth_token() -> str:
         # operator as an opaque SQLAlchemy connection error indistinguishable
         # from a DB outage. Re-raise unchanged so the pool's pre-ping/invalidate
         # logic still sees the native exception. Never log the token or a secret
-        # — only the non-sensitive host/user/region.
+        # — only the non-sensitive host/user/region, plus the original exception
+        # via exc_info (a mint failure's traceback carries no token/secret).
         logger.warning(
             "Failed to mint RDS IAM auth token for DB connection (host=%s, user=%s, region=%s); "
             "check the flip-api task role's rds-db:connect grant and AWS_REGION.",
             stt.DB_HOST,
             stt.POSTGRES_USER,
             stt.AWS_REGION,
+            exc_info=True,
         )
         raise
 
@@ -119,8 +121,12 @@ def _build_engine() -> Engine:
         return engine
 
     # Dev: password from env var. URL-encode to handle special characters like
-    # @, #, %, etc.; strip in case there is a trailing comment in the env file.
-    encoded_password = quote_plus(stt.POSTGRES_PASSWORD.strip())
+    # @, #, %, /, etc.; strip in case there is a trailing comment in the env file.
+    # quote(safe="") — not quote_plus — so a space encodes as %20 (which the
+    # SQLAlchemy URL parser decodes back to a space) rather than '+' (which it
+    # would leave as a literal '+', corrupting the password). safe="" keeps '/'
+    # encoded, which the default quote(safe="/") would not.
+    encoded_password = quote(stt.POSTGRES_PASSWORD.strip(), safe="")
     db_url = f"postgresql+psycopg2://{stt.POSTGRES_USER}:{encoded_password}@{stt.DB_HOST}:{stt.DB_PORT}/{stt.POSTGRES_DB}"
     return create_engine(db_url, echo=False)
 

@@ -57,6 +57,20 @@ def test_build_engine_dev_uses_env_password():
     assert engine.pool._recycle == -1
 
 
+def test_build_engine_dev_url_encodes_special_chars_in_password():
+    """A dev password with space/'/'/'@'/'+' round-trips intact through the URL.
+
+    quote_plus would encode the space as '+', which SQLAlchemy's URL parser
+    decodes back as a literal '+', silently corrupting the password (the
+    Copilot/FLIP#558 finding). quote(safe="") encodes it as %20 instead.
+    """
+    pw = "p@ss / word+1"
+    with patch.object(database, "get_settings", return_value=_fake_settings(ENV="development", POSTGRES_PASSWORD=pw)):
+        engine = database._build_engine()
+
+    assert engine.url.password == pw
+
+
 def test_build_engine_prod_omits_password_and_attaches_hook():
     """Prod builds a passwordless URL, enables pre-ping, and wires the do_connect hook."""
     with patch.object(database, "get_settings", return_value=_fake_settings(ENV="production")):
@@ -160,6 +174,9 @@ def test_generate_db_auth_token_logs_and_reraises_on_failure(caplog):
     assert stt.DB_HOST in caplog.text
     assert stt.POSTGRES_USER in caplog.text
     assert stt.AWS_REGION in caplog.text
+    # exc_info=True preserves the original exception/traceback in the log record
+    # so IAM-auth failures are diagnosable from CloudWatch (the FLIP#558 finding).
+    assert "sts unavailable" in caplog.text
 
 
 def test_get_rds_client_is_cached():
