@@ -4,8 +4,8 @@
 
 | File | Resources |
 |------|-----------|
-| `main.tf` | Provider config, VPC, subnets, IGW, NAT, route tables, RDS instance, Secrets Manager |
-| `services.tf` | S3 buckets, Cognito, SES |
+| `main.tf` | Provider config, VPC, subnets, IGW, NAT, route tables, RDS instance, Secrets Manager, SES |
+| `services.tf` | S3 buckets, Cognito |
 | `rds_proxy.tf` | RDS Proxy + IAM DB auth (proxy, IAM role/policy, SG, `rds-db:connect`) — see FLIP#556 |
 | `ecs.tf` | ECS cluster, task definitions, IAM execution roles |
 | `ecs_services.tf` | ECS Fargate services (flip-api, FL services) |

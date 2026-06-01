@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -51,6 +52,9 @@ def test_build_engine_dev_uses_env_password():
     assert engine.url.host == "db.example.com"
     assert engine.url.database == "flip"
     assert not event.contains(engine, "do_connect", database._do_connect_listener)
+    # The prod-only pooling knobs must not leak into the dev engine.
+    assert engine.pool._pre_ping is False
+    assert engine.pool._recycle == -1
 
 
 def test_build_engine_prod_omits_password_and_attaches_hook():
@@ -66,6 +70,26 @@ def test_build_engine_prod_omits_password_and_attaches_hook():
     # pool_pre_ping is the staleness guard that lets a recycled/rotated
     # connection self-heal without a redeploy.
     assert engine.pool._pre_ping is True
+    # pool_recycle must stay below the proxy's idle_client_timeout (1800s).
+    assert engine.pool._recycle == database._POOL_RECYCLE_SECONDS
+
+
+def test_build_engine_prod_requires_tls():
+    """Prod passes sslmode=require to the driver — IAM auth mandates TLS."""
+    real_create_engine = database.create_engine
+    captured: dict[str, object] = {}
+
+    def _spy(url, **kwargs):
+        captured.update(kwargs)
+        return real_create_engine(url, **kwargs)
+
+    with (
+        patch.object(database, "get_settings", return_value=_fake_settings(ENV="production")),
+        patch.object(database, "create_engine", side_effect=_spy),
+    ):
+        database._build_engine()
+
+    assert captured["connect_args"] == {"sslmode": "require"}
 
 
 def test_do_connect_listener_injects_iam_token():
@@ -75,6 +99,19 @@ def test_do_connect_listener_injects_iam_token():
         database._do_connect_listener(object(), object(), [], cparams)
 
     assert cparams["password"] == "iam-token-xyz"
+
+
+def test_do_connect_listener_mints_fresh_token_each_call():
+    """The hook mints a new token on every call (no memoization) — the FLIP#556 guard."""
+    first_params: dict[str, object] = {}
+    second_params: dict[str, object] = {}
+    with patch.object(database, "_generate_db_auth_token", side_effect=["tok-1", "tok-2"]) as mock_mint:
+        database._do_connect_listener(object(), object(), [], first_params)
+        database._do_connect_listener(object(), object(), [], second_params)
+
+    assert mock_mint.call_count == 2
+    assert first_params["password"] == "tok-1"
+    assert second_params["password"] == "tok-2"
 
 
 def test_generate_db_auth_token_calls_rds_client():
@@ -98,6 +135,29 @@ def test_generate_db_auth_token_calls_rds_client():
         DBUsername="local_user",
         Region="eu-west-2",
     )
+
+
+def test_generate_db_auth_token_logs_and_reraises_on_failure(caplog):
+    """A failed token mint logs non-secret context and re-raises the original error."""
+    stt = _fake_settings(ENV="production")
+    mock_client = MagicMock()
+    mock_client.generate_db_auth_token.side_effect = RuntimeError("sts unavailable")
+
+    with (
+        patch.object(database, "get_settings", return_value=stt),
+        patch("boto3.session.Session") as mock_session,
+        caplog.at_level(logging.WARNING),
+    ):
+        mock_session.return_value.client.return_value = mock_client
+        with pytest.raises(RuntimeError, match="sts unavailable"):
+            database._generate_db_auth_token()
+
+    assert "Failed to mint RDS IAM auth token" in caplog.text
+    # Diagnostic context is logged so the failure is distinguishable from a
+    # plain DB outage; the token and any secret are never logged.
+    assert "db.example.com" in caplog.text
+    assert "local_user" in caplog.text
+    assert "eu-west-2" in caplog.text
 
 
 def test_get_rds_client_is_cached():

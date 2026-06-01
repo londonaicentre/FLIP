@@ -20,6 +20,7 @@ from sqlalchemy.engine import Engine
 from sqlmodel import Session, create_engine
 
 from flip_api.config import get_settings
+from flip_api.db.db_auth_logger import logger
 
 # RDS Proxy drops idle client connections after `idle_client_timeout` (1800s by
 # default — see deploy/providers/AWS/rds_proxy.tf). Recycle pooled connections
@@ -53,14 +54,34 @@ def _generate_db_auth_token() -> str:
 
     Returns:
         str: IAM authentication token for the configured DB user and host.
+
+    Raises:
+        Exception: re-raises any error from minting the token (after logging it),
+            so the failure still surfaces loudly on the connection path.
     """
     stt = get_settings()
-    return _get_rds_client().generate_db_auth_token(
-        DBHostname=stt.DB_HOST,
-        Port=stt.DB_PORT,
-        DBUsername=stt.POSTGRES_USER,
-        Region=stt.AWS_REGION,
-    )
+    try:
+        return _get_rds_client().generate_db_auth_token(
+            DBHostname=stt.DB_HOST,
+            Port=stt.DB_PORT,
+            DBUsername=stt.POSTGRES_USER,
+            Region=stt.AWS_REGION,
+        )
+    except Exception:
+        # Log-and-re-raise: a mint failure (missing rds-db:connect grant, bad
+        # AWS_REGION, no resolvable task-role credentials) otherwise reaches the
+        # operator as an opaque SQLAlchemy connection error indistinguishable
+        # from a DB outage. Re-raise unchanged so the pool's pre-ping/invalidate
+        # logic still sees the native exception. Never log the token or a secret
+        # — only the non-sensitive host/user/region.
+        logger.warning(
+            "Failed to mint RDS IAM auth token for DB connection (host=%s, user=%s, region=%s); "
+            "check the flip-api task role's rds-db:connect grant and AWS_REGION.",
+            stt.DB_HOST,
+            stt.POSTGRES_USER,
+            stt.AWS_REGION,
+        )
+        raise
 
 
 def _do_connect_listener(_dialect: object, _conn_rec: object, _cargs: object, cparams: dict[str, Any]) -> None:

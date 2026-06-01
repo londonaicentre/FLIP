@@ -48,7 +48,7 @@ services:
       - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
       - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_SECRET_ARN=${POSTGRES_SECRET_ARN} # in production, password is retrieved from AWS Secrets Manager
+      - POSTGRES_SECRET_ARN=${POSTGRES_SECRET_ARN} # unused since FLIP#556 (ECS prod uses RDS Proxy IAM); legacy EC2/compose path only — retirement tracked in #505
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
