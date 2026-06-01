@@ -16,9 +16,10 @@ name: Check required_files.json in src
 
 on:
   push:
-    paths:
-      - "fl-apps/**"
-      - ".github/workflows/check-required-files.yml"
+    branches: ["**"]
+
+permissions:
+  contents: read
 
 jobs:
   check-required-files:
@@ -27,4 +28,4 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Run check_required_files.sh
-        run: bash fl-apps/scripts/check_required_files.sh
+        run: bash check_required_files.sh
