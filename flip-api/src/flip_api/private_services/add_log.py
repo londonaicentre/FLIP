@@ -18,7 +18,11 @@ from sqlmodel import Session
 from flip_api.auth.access_manager import authenticate_internal_service
 from flip_api.db.database import get_session
 from flip_api.domain.schemas.private import TrainingLog
-from flip_api.model_services.services.model_service import add_log, validate_trusts
+from flip_api.model_services.services.model_service import (
+    add_log,
+    resolve_trust_from_fl_client_name,
+    validate_trust_ids,
+)
 from flip_api.utils.logger import logger
 
 router = APIRouter(tags=["private_services"])
@@ -49,13 +53,24 @@ def add_log_endpoint(
     Raises:
         HTTPException: If the trust is not associated with the model or if there is an internal server error.
     """
+    fl_client_name = training_log.fl_client_name
+
     try:
-        if not validate_trusts(model_id=model_id, trusts=[training_log.trust], session=db):
-            error_msg = f"The trust: {training_log.trust} is not associated with model: {model_id}"
+        # The FL client name the FL server reports differs per FL_BACKEND (NVFLARE: the FL kit slot;
+        # Flower: SUPERNODE_NAME). resolve_trust_from_fl_client_name hides that discrepancy and
+        # returns the trust to validate against the model's approved trusts — see issue #538.
+        trust = resolve_trust_from_fl_client_name(fl_client_name, db)
+        if trust is None:
+            error_msg = f"FL client '{fl_client_name}' could not be resolved to a trust (model: {model_id})"
             logger.error(error_msg)
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
 
-        add_log(model_id=model_id, log=training_log.log, session=db)
+        if not validate_trust_ids(model_id=model_id, trust_ids=[trust.id], session=db):
+            error_msg = f"The trust: {trust.name} is not associated with model: {model_id}"
+            logger.error(error_msg)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
+
+        add_log(model_id=model_id, log=training_log.log, session=db, trust=trust, fl_client_name=fl_client_name)
 
         return {"detail": "Created"}
     except HTTPException:

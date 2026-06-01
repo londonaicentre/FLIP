@@ -11,56 +11,58 @@
  * limitations under the License.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
 import Training from "@/partials/models/Training.vue";
+import { ModelStatus } from "@/services/model-service";
 
 vi.mock("vue-router", async (importOriginal) => {
     const actual = await importOriginal<typeof import("vue-router")>();
+
     return {
         ...actual,
-        useRoute: () => ({ params: { modelId: "model-1" }, query: {} })
+        useRoute: () => ({
+            params: { modelId: "model-1" },
+            query: {}
+        })
     };
 });
 
 vi.mock("@/services/model-service", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/services/model-service")>();
+
     return {
         ...actual,
         initialiseTraining: vi.fn()
     };
 });
 
-const alertStub = {
-    template: "<div data-test=\"alert-stub\"><slot /></div>"
-};
-const buttonStub = {
-    template: "<button data-test=\"initiate-training-btn\"><slot /></button>"
-};
-const actionsMenuStub = {
-    template: "<div data-test=\"training-actions-menu\" />"
-};
+const alertStub = { template: "<div data-test=\"alert-stub\"><slot /></div>" };
+const buttonStub = { template: "<button data-test=\"initiate-training-btn\"><slot /></button>" };
+const actionsMenuStub = { template: "<div data-test=\"training-actions-menu\" />" };
 
 interface MountOpts {
     permissions?: string[];
-    status?: string;
+    status?: ModelStatus;
     allFilesUploaded?: boolean;
     requiredFiles?: string[];
     uploadedFileNames?: string[];
     jobType?: string;
+    flBackendLabel?: string;
 }
 
 function mountTraining(options: MountOpts = {}) {
     const {
-        permissions = ["CanManageProjects"],
+        permissions = ["CanCreateProjects"],
         status = "PENDING",
         allFilesUploaded = false,
         requiredFiles = ["trainer.py", "config.json"],
         uploadedFileNames = [],
-        jobType = "standard"
+        jobType = "standard",
+        flBackendLabel
     } = options;
 
     return mount(Training, {
@@ -74,7 +76,10 @@ function mountTraining(options: MountOpts = {}) {
                             user: {
                                 username: "testuser",
                                 userId: "1",
-                                attributes: { sub: "1", email: "t@e.co" },
+                                attributes: {
+                                    sub: "1",
+                                    email: "t@e.co"
+                                },
                                 permissions
                             },
                             signInStep: "DONE"
@@ -100,24 +105,21 @@ function mountTraining(options: MountOpts = {}) {
             allFilesUploaded,
             requiredFiles,
             uploadedFileNames,
-            jobType
+            jobType,
+            flBackendLabel
         }
     });
 }
 
 describe("Training observer-aware rendering", () => {
-    it("hides the Initiate Training button and actions menu for observers", () => {
+    // The Initiate Training button lives on the model page wrapper
+    // (pages/project/[projectId]/model/[modelId]/index.vue), not on the
+    // Training partial. The observer-hide rule there is covered by the
+    // page's own spec. Only the actions-menu visibility is asserted here.
+    it("hides the actions menu for observers", () => {
         const wrapper = mountTraining({ permissions: [] });
 
-        expect(wrapper.find("[data-test=initiate-training-btn]").exists()).toBe(false);
         expect(wrapper.find("[data-test=training-actions-menu]").exists()).toBe(false);
-    });
-
-    it("shows the Initiate Training button and actions menu for users with CanManageProjects", () => {
-        const wrapper = mountTraining();
-
-        expect(wrapper.find("[data-test=initiate-training-btn]").exists()).toBe(true);
-        expect(wrapper.find("[data-test=training-actions-menu]").exists()).toBe(true);
     });
 });
 
@@ -127,13 +129,17 @@ describe("Training missing-files alert slot", () => {
             allFilesUploaded: false,
             requiredFiles: ["trainer.py", "config.json"],
             uploadedFileNames: ["trainer.py"],
-            jobType: "diffusion"
+            jobType: "diffusion",
+            flBackendLabel: "Flower"
         });
 
-        const slot = wrapper.find("[data-test=alert-stub]");
-        const html = slot.html();
+        // Two AiAlerts render side-by-side: an info-variant listing the
+        // required files and a warning-variant listing the missing subset.
+        // Both stubs share the data-test, so concat their HTML and assert
+        // against the combined content.
+        const html = wrapper.findAll("[data-test=alert-stub]").map(a => a.html()).join("\n");
 
-        expect(slot.exists()).toBe(true);
+        expect(html).toContain("Flower");
         expect(html).toContain("diffusion");
         expect(html).toContain("trainer.py");
         expect(html).toContain("config.json");
@@ -174,5 +180,53 @@ describe("Training missing-files alert slot", () => {
 
         expect(slot.find("img").exists()).toBe(false);
         expect(slot.html()).toContain("&lt;img");
+    });
+});
+
+describe("Training Live activity status dot", () => {
+    const dotSelector = "[data-test=live-activity-dot]";
+
+    it("is primary (in-progress) when training is running", () => {
+        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+
+        const dot = wrapper.find(dotSelector);
+
+        expect(dot.exists()).toBe(true);
+        expect(dot.classes()).toContain("bg-primary-600");
+    });
+
+    it("is red when the model is in ERROR", () => {
+        const wrapper = mountTraining({ status: "ERROR" });
+
+        const dot = wrapper.find(dotSelector);
+
+        expect(dot.exists()).toBe(true);
+        expect(dot.classes()).toContain("bg-red-600");
+        expect(dot.classes()).not.toContain("bg-primary-600");
+        expect(dot.classes()).not.toContain("bg-gray-400");
+    });
+
+    it("is gray when the model is STOPPED", () => {
+        const wrapper = mountTraining({ status: "STOPPED" });
+
+        const dot = wrapper.find(dotSelector);
+
+        expect(dot.exists()).toBe(true);
+        expect(dot.classes()).toContain("bg-gray-400");
+    });
+
+    it("is gray when results have been uploaded", () => {
+        const wrapper = mountTraining({ status: "RESULTS_UPLOADED" });
+
+        const dot = wrapper.find(dotSelector);
+
+        expect(dot.exists()).toBe(true);
+        expect(dot.classes()).toContain("bg-gray-400");
+    });
+
+    it("does not animate the ping ring on ERROR", () => {
+        const wrapper = mountTraining({ status: "ERROR" });
+
+        expect(wrapper.find("[data-test=live-activity-ping]").exists()).toBe(false);
     });
 });

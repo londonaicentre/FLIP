@@ -39,35 +39,44 @@ describe("Manage Users as Administrator", () => {
         cy.visit("/admin/users");
     });
 
-    it("Should allow you to assign a role to a user", () => {
-        cy.getBySel("user").contains("researcher.user@flip.com").click();
-        cy.getBySel("add-admin-btn").click();
+    it("Should allow you to change a user's role", () => {
+        cy.getBySel("user").contains("Researcher User").click();
+        cy.getBySel("select-admin-role").find("input").check();
         cy.intercept("POST", "/users/**/roles", { statusCode: 200 }).as("postRoles");
         cy.getBySel("save-user-btn").click();
         cy.wait("@postRoles").its("request.body").should("deep.equal",
-            { roles: [researcherRoleId, adminRoleId] });
+            { roles: [adminRoleId] });
     });
 
-    it("Should allow you to remove a role from a user who has more than one role", () => {
-        cy.getBySel("user").contains("multipleRole.user@flip.com").click();
+    it("Should save one selected role for users with existing multiple roles", () => {
+        cy.getBySel("user").contains("Multiple Role User").click();
         cy.intercept("POST", "/users/**/roles", { statusCode: 200 }).as("postRoles");
-        cy.getBySel("remove-admin-btn").click();
+        // The new single-role UI shows roles[0] (Researcher) as preselected, so
+        // checking the same radio is a no-op (selectRole short-circuits when the
+        // role hasn't changed) and the form stays clean — leaving save-user-btn
+        // disabled (gated on selectedUser.dirty). Flip to Admin first so the
+        // change registers, then back to Researcher so we still verify the
+        // single-role POST body.
+        cy.getBySel("select-admin-role").find("input").check();
+        cy.getBySel("select-researcher-role").find("input").check();
         cy.getBySel("save-user-btn").click();
         cy.wait("@postRoles").its("request.body").should("deep.equal",
             { roles: [researcherRoleId] });
     });
 
-    it("Should not allow you to remove a user's only role", () => {
-        cy.getBySel("user").contains("researcher.user@flip.com").click();
-        cy.getBySel("remove-researcher-btn").click();
-        cy.contains("You need to have at least 1 role assigned to a user.");
+    it("Should show roles as a single selected radio choice", () => {
+        cy.getBySel("user").contains("Researcher User").click();
+        cy.getBySel("select-researcher-role").find("input").should("be.checked");
+        cy.getBySel("select-admin-role").find("input").should("not.be.checked");
     });
 
     it("Should allow you to register a user", () => {
         cy.getBySel("register-user-btn").click();
+        cy.getBySel("name-field").type("Test Person");
+        cy.getBySel("organisation-field").type("King's College London");
         cy.getBySel("email-field").type("test.person@kcl.ac.uk");
-        cy.getBySel("chip-select").click();
-        cy.getBySel("chip-select-option").contains("Researcher").click();
+        cy.getBySel("role-select").click();
+        cy.getBySel("role-select-option").contains("Researcher").click();
         cy.intercept("POST", "step/users", { fixture: "user/postRegisterUser" }).as("registerUser");
         cy.getBySel("register-user-confirm-btn").click();
 
@@ -75,6 +84,8 @@ describe("Manage Users as Administrator", () => {
             .its("request.body")
             .should("deep.equal", {
                 "email": "test.person@kcl.ac.uk",
+                "name": "Test Person",
+                "organisation": "King's College London",
                 "roles": [
                     "da2d1b85-6bdd-4089-b2fa-3594cc233327"
                 ]
@@ -84,9 +95,11 @@ describe("Manage Users as Administrator", () => {
 
     it("handles error on attempt to register a user", () => {
         cy.getBySel("register-user-btn").click();
+        cy.getBySel("name-field").type("Test Person");
+        cy.getBySel("organisation-field").type("King's College London");
         cy.getBySel("email-field").type("test.person@kcl.ac.uk");
-        cy.getBySel("chip-select").click();
-        cy.getBySel("chip-select-option").contains("Researcher").click();
+        cy.getBySel("role-select").click();
+        cy.getBySel("role-select-option").contains("Researcher").click();
         // step function returns 200 with empty response body if user registration fails
         cy.intercept("POST", "step/users", {}).as("registerUser");
         cy.getBySel("register-user-confirm-btn").click();
@@ -97,24 +110,35 @@ describe("Manage Users as Administrator", () => {
 
     it("Should not allow you to register a user with invalid email", () => {
         cy.getBySel("register-user-btn").click();
-        cy.getBySel("chip-select").click();
-        cy.getBySel("chip-select-option").contains("Researcher").click();
+        cy.getBySel("role-select").click();
+        cy.getBySel("role-select-option").contains("Researcher").click();
+        cy.getBySel("name-field").type("Test Person");
+        cy.getBySel("organisation-field").type("King's College London");
         cy.getBySel("email-field").type("testperson");
         cy.getBySel("register-user-confirm-btn").click();
-        cy.get(".error_message").should("have.text", "Please enter a valid email address");
+        // RegisterUserModal lost the legacy .error_message CSS hook with the
+        // Listbox-based role chooser refactor — validation errors now render
+        // as plain <div class="text-sm text-red-500"> next to the field. Match
+        // on the message text instead, which is the actual contract.
+        cy.contains("Please enter a valid email address").should("be.visible");
     });
 
     it("Should not allow you to register a user without a role", () => {
         cy.getBySel("register-user-btn").click();
+        cy.getBySel("name-field").type("Test Person");
+        cy.getBySel("organisation-field").type("King's College London");
         cy.getBySel("email-field").type("testperson@test.com");
         cy.getBySel("register-user-confirm-btn").click();
-        cy.get(".error_message").should("have.text", "Select at least 1 role");
+        // Same as the email-validation case — the new modal's role chooser
+        // surfaces its yup error inline. Also note the wording changed with
+        // the Listbox refactor: "Please select a role" (was "Select at least
+        // 1 role" in the old chip-select form).
+        cy.contains("Please select a role").should("be.visible");
     });
 
     it("Should allow you to disable access for a user", () => {
-        cy.getBySel("user").contains("researcher.user@flip.com").click();
+        cy.getBySel("user").contains("Researcher User").click();
         cy.intercept("PUT", "/users/**", { statusCode: 200 }).as("disableUser");
-        cy.getBySel("more-options-btn").click();
         cy.getBySel("disable-user-btn").click();
         cy.getBySel("confirm-modal-btn").click();
         cy.wait("@disableUser");
@@ -123,9 +147,8 @@ describe("Manage Users as Administrator", () => {
     });
 
     it("Should allow you to enable access for a disabled user", () => {
-        cy.getBySel("user").contains("disabled.user@flip.com").click();
+        cy.getBySel("user").contains("Disabled User").click();
         cy.intercept("PUT", "/users/**", { statusCode: 200 }).as("enableUser");
-        cy.getBySel("more-options-btn").click();
         cy.getBySel("enable-user-btn").click();
         cy.getBySel("confirm-modal-btn").click();
         cy.wait("@enableUser");
@@ -134,10 +157,9 @@ describe("Manage Users as Administrator", () => {
     });
 
     it("allows reset of a user's password", () => {
-        cy.getBySel("user").contains("researcher.user@flip.com").click();
+        cy.getBySel("user").contains("Researcher User").click();
         cy.intercept("POST", "https://cognito-idp.eu-west-2.amazonaws.com/", { statusCode: 200, body: {} })
             .as("passwordReset");
-        cy.getBySel("more-options-btn").click();
         cy.getBySel("reset-password-btn").click();
         cy.getBySel("confirm-modal-btn").click();
         cy.wait("@passwordReset");
@@ -149,6 +171,6 @@ describe("Manage Users as Administrator", () => {
             .as("pageTwo");
         cy.getBySel("page-btn-2").click();
         cy.wait("@pageTwo");
-        cy.contains("test.user@flip.com").should("be.visible");
+        cy.contains("Test User").should("be.visible");
     });
 });

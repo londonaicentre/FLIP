@@ -130,7 +130,10 @@ interface IAddUser {
 
 const props = withDefaults(
     defineProps<IProjectUsersProps>(),
-    { readonly: false, users: () => [] }
+    {
+        readonly: false,
+        users: () => []
+    }
 );
 
 const authStore = useAuthStore();
@@ -197,7 +200,7 @@ const removeUser = async(id: string): Promise<void> => {
             emit("updatedUsers", userList.value);
         }
 
-    } catch (e) {
+    } catch {
         return handleError("Something went wrong when removing the user");
     } finally {
         formSubmit.value = false;

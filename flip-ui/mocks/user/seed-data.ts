@@ -23,24 +23,32 @@ export const users: IUser[] = [
     {
         id: "1e195cde-8210-40a4-91d4-8c8582a29298",
         email: "john.smith@example.com",
+        name: "John Smith",
+        organisation: "London AI Centre",
         roles: [roleResearcher],
         isDisabled: false
     },
     {
         id: "87f892d2-908b-4a2d-8597-c34b65952620",
         email: "this.is.a.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.really.long.email.but.still.valid@example.com",
+        name: "Long Email User",
+        organisation: "Example Organisation",
         roles: [roleResearcher],
         isDisabled: false
     },
     {
         id: "1a1af391-d0d6-469c-886b-7a6b6d31ab65",
         email: "disabled.user@example.com",
+        name: "Disabled User",
+        organisation: "London AI Centre",
         roles: [roleResearcher],
         isDisabled: true
     },
     {
         id: "5c052df5-4886-450a-9c0c-649c5f8c4fc6",
         email: "mr.admin@example.com",
+        name: "Mr Admin",
+        organisation: "London AI Centre",
         roles: [roleAdmin],
         isDisabled: false
     }

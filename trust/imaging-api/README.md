@@ -159,13 +159,7 @@ the [`flip` Python package](https://github.com/londonaicentre/flip-fl-base/tree/
 
 imaging-api is also a *sender*: it forwards the same key on every call to data-access-api `/cohort/accession-ids`, which now has the same auth check on its `/cohort` router.
 
-Each trust has a distinct key. Generate them with:
-
-```bash
-make -C ../../flip-api generate-trust-internal-service-keys
-```
-
-This populates `TRUST_INTERNAL_SERVICE_KEYS` (a JSON dict keyed by trust name) in your env file. `trust/Makefile` extracts the per-trust value into each trust-internal container's environment at deploy time as `TRUST_INTERNAL_SERVICE_KEY`, mirroring how `TRUST_API_KEYS` is handled.
+Each trust has a distinct key. A trust's `TRUST_INTERNAL_SERVICE_KEY` is minted by `register_trust` (`make register-trusts`) and written into that trust's kit file (`trust/.env.<CODE>.<env>`), which `trust/Makefile` `-include`s so every trust-internal container inherits it.
 
 For more on the threat model, see the **Trust-internal Service Authentication** section in [`CLAUDE.md`](../../CLAUDE.md).
 

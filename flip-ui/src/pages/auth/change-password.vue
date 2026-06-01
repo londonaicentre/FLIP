@@ -175,7 +175,7 @@ const requestCode = async (values: unknown) => {
 
     try {
         await authStore.resetPassword(email);
-    } catch (e) {
+    } catch {
         errorStore.setError();
 
         return;
@@ -195,7 +195,7 @@ const submitChangePassword = async (v: unknown): Promise<void> => {
 
     try {
         await authStore.updateForgottenPassword(values);
-    } catch (e) {
+    } catch {
         Snackbar.show({
             type: "error",
             title: "Error",

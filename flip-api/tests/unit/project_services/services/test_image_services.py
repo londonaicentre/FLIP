@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy.exc import SQLAlchemyError
 
 from flip_api.domain.interfaces.project import (
+    IImagingImportStatus,
     IReimportQuery,
     IUpdateXnatProfile,
 )
@@ -256,8 +257,6 @@ class TestGetImagingProjectStatuses:
         mock_db_session: MagicMock,
     ):
         """Should populate import_status from the latest completed GET_IMAGING_STATUS task."""
-        from flip_api.domain.interfaces.project import IImagingImportStatus
-
         trust_id = uuid4()
         imaging_projects_list = [
             ImagingProject(
@@ -363,15 +362,22 @@ class TestUpdateXnatUserProfile:
 
 # --- reimport_failed_studies ---
 class TestReimportFailedStudies:
+    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
     @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
     @patch(MOCK_LOGGER_PATH)
     def test_reimport_logic(
         self,
         mock_logger: MagicMock,
         mock_b64_encode: MagicMock,
+        mock_get_latest: MagicMock,
         mock_db_session: MagicMock,
     ):
         project_reimport_rate_minutes = 60  # 1 hour
+
+        # A project with failed studies remains eligible for reimport.
+        mock_get_latest.return_value = IImagingImportStatus(
+            successful=0, failed=1, processing=0, queued=0, queueFailed=0
+        )
 
         queries = [
             # This one should not run because last_reimport is within the rate limit
@@ -419,12 +425,14 @@ class TestReimportFailedStudies:
         assert mock_db_session.add.call_count == 2
         mock_db_session.commit.assert_called_once()
 
+    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
     @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
     @patch(MOCK_LOGGER_PATH)
     def test_reimport_record_not_found(
         self,
         mock_logger: MagicMock,
         mock_b64_encode: MagicMock,
+        mock_get_latest: MagicMock,
         mock_db_session: MagicMock,
     ):
         """Should log error and continue when XNATProjectStatus record not found."""
@@ -439,6 +447,9 @@ class TestReimportFailedStudies:
             ),
         ]
         mock_b64_encode.side_effect = lambda q: "encoded"
+        mock_get_latest.return_value = IImagingImportStatus(
+            successful=0, failed=1, processing=0, queued=0, queueFailed=0
+        )
         mock_db_session.exec.return_value.one_or_none.return_value = None
 
         result = reimport_failed_studies(queries, mock_db_session, 0)
@@ -446,12 +457,14 @@ class TestReimportFailedStudies:
         assert result is False
         mock_logger.error.assert_called()
 
+    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
     @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
     @patch(MOCK_LOGGER_PATH)
     def test_reimport_exception_continues(
         self,
         mock_logger: MagicMock,
         mock_b64_encode: MagicMock,
+        mock_get_latest: MagicMock,
         mock_db_session: MagicMock,
     ):
         """Should log error and continue when exception occurs during reimport."""
@@ -466,12 +479,147 @@ class TestReimportFailedStudies:
             ),
         ]
         mock_b64_encode.side_effect = lambda q: "encoded"
+        mock_get_latest.return_value = IImagingImportStatus(
+            successful=0, failed=1, processing=0, queued=0, queueFailed=0
+        )
         mock_db_session.add.side_effect = Exception("DB error")
 
         result = reimport_failed_studies(queries, mock_db_session, 0)
 
         assert result is False
         mock_logger.error.assert_called()
+
+
+class TestReimportFailedStudiesCompletenessGate:
+    """Reimport exists only to retry failed studies. A project whose studies have all
+    imported must not keep being reimported up to MAX_REIMPORT_COUNT (issue #553)."""
+
+    @staticmethod
+    def _eligible_query() -> IReimportQuery:
+        """A query past the reimport rate-limit window, so only the completeness gate decides."""
+        return IReimportQuery(
+            query_id=uuid4(),
+            query="SELECT 1",
+            xnat_project_id=uuid4(),
+            last_reimport=datetime.now(timezone.utc) - timedelta(minutes=90),
+            trust_id=uuid4(),
+            trust_name="T1",
+        )
+
+    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
+    @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
+    @patch(MOCK_LOGGER_PATH)
+    def test_skips_when_all_studies_imported(
+        self,
+        mock_logger: MagicMock,
+        mock_b64_encode: MagicMock,
+        mock_get_latest: MagicMock,
+        mock_db_session: MagicMock,
+    ):
+        """Zero failed and zero queue-failed studies: no task queued, count not incremented."""
+        mock_b64_encode.side_effect = lambda q: "encoded"
+        mock_get_latest.return_value = IImagingImportStatus(
+            successful=300, failed=0, processing=0, queued=0, queueFailed=0
+        )
+        mock_xnat_status = MagicMock()
+        mock_xnat_status.reimport_count = 2
+        mock_db_session.exec.return_value.one_or_none.return_value = mock_xnat_status
+
+        result = reimport_failed_studies([self._eligible_query()], mock_db_session, project_reimport_rate_minutes=60)
+
+        assert result is True
+        mock_db_session.add.assert_not_called()
+        assert mock_xnat_status.reimport_count == 2
+        mock_db_session.commit.assert_called_once()
+
+    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
+    @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
+    @patch(MOCK_LOGGER_PATH)
+    def test_skips_when_zero_failures_but_studies_in_flight(
+        self,
+        mock_logger: MagicMock,
+        mock_b64_encode: MagicMock,
+        mock_get_latest: MagicMock,
+        mock_db_session: MagicMock,
+    ):
+        """In-flight studies with no failures yet have nothing to retry, so skip."""
+        mock_b64_encode.side_effect = lambda q: "encoded"
+        mock_get_latest.return_value = IImagingImportStatus(
+            successful=100, failed=0, processing=100, queued=100, queueFailed=0
+        )
+        mock_db_session.exec.return_value.one_or_none.return_value = MagicMock()
+
+        result = reimport_failed_studies([self._eligible_query()], mock_db_session, project_reimport_rate_minutes=60)
+
+        assert result is True
+        mock_db_session.add.assert_not_called()
+
+    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
+    @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
+    @patch(MOCK_LOGGER_PATH)
+    def test_reimports_when_studies_failed(
+        self,
+        mock_logger: MagicMock,
+        mock_b64_encode: MagicMock,
+        mock_get_latest: MagicMock,
+        mock_db_session: MagicMock,
+    ):
+        """A failed study keeps the project eligible: task queued and count incremented."""
+        mock_b64_encode.side_effect = lambda q: "encoded"
+        mock_get_latest.return_value = IImagingImportStatus(
+            successful=298, failed=2, processing=0, queued=0, queueFailed=0
+        )
+        mock_xnat_status = MagicMock()
+        mock_xnat_status.reimport_count = 2
+        mock_db_session.exec.return_value.one_or_none.return_value = mock_xnat_status
+
+        result = reimport_failed_studies([self._eligible_query()], mock_db_session, project_reimport_rate_minutes=60)
+
+        assert result is True
+        assert mock_db_session.add.call_count == 1
+        assert mock_xnat_status.reimport_count == 3
+
+    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
+    @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
+    @patch(MOCK_LOGGER_PATH)
+    def test_reimports_when_only_queue_failed(
+        self,
+        mock_logger: MagicMock,
+        mock_b64_encode: MagicMock,
+        mock_get_latest: MagicMock,
+        mock_db_session: MagicMock,
+    ):
+        """A queue-failed study also keeps the project eligible for reimport."""
+        mock_b64_encode.side_effect = lambda q: "encoded"
+        mock_get_latest.return_value = IImagingImportStatus(
+            successful=299, failed=0, processing=0, queued=0, queueFailed=1
+        )
+        mock_db_session.exec.return_value.one_or_none.return_value = MagicMock(reimport_count=0)
+
+        result = reimport_failed_studies([self._eligible_query()], mock_db_session, project_reimport_rate_minutes=60)
+
+        assert result is True
+        assert mock_db_session.add.call_count == 1
+
+    @patch(f"{MOCK_SERVICE_PATH}._get_latest_imaging_status")
+    @patch(f"{MOCK_SERVICE_PATH}.base64_url_encode")
+    @patch(MOCK_LOGGER_PATH)
+    def test_reimports_when_status_unknown(
+        self,
+        mock_logger: MagicMock,
+        mock_b64_encode: MagicMock,
+        mock_get_latest: MagicMock,
+        mock_db_session: MagicMock,
+    ):
+        """No completed status result yet: proceed as before so real failures still get retried."""
+        mock_b64_encode.side_effect = lambda q: "encoded"
+        mock_get_latest.return_value = None
+        mock_db_session.exec.return_value.one_or_none.return_value = MagicMock(reimport_count=0)
+
+        result = reimport_failed_studies([self._eligible_query()], mock_db_session, project_reimport_rate_minutes=60)
+
+        assert result is True
+        assert mock_db_session.add.call_count == 1
 
 
 class TestGetImagingProjectsEdgeCases:

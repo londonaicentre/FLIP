@@ -15,9 +15,8 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import { useAuthStore } from "@/store/auth";
-
 import NewPassword from "@/pages/auth/new-password.vue";
+import { useAuthStore } from "@/store/auth";
 
 const mockGotoLogin = vi.fn();
 const mockViewProjects = vi.fn();
@@ -45,9 +44,7 @@ vi.mock("@/utils/snackbar", () => ({
 // The onBeforeMount guard delegates to isUserUnconfirmedCheck — stub it
 // so we can force each branch (unconfirmed → stay, else → redirect).
 const mockIsUserUnconfirmedCheck = vi.fn();
-vi.mock("@/utils/auth", () => ({
-    isUserUnconfirmedCheck: (...args: unknown[]) => mockIsUserUnconfirmedCheck(...args)
-}));
+vi.mock("@/utils/auth", () => ({ isUserUnconfirmedCheck: (...args: unknown[]) => mockIsUserUnconfirmedCheck(...args) }));
 
 interface AuthStoreState {
     signInStep: string | null;

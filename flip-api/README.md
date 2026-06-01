@@ -48,15 +48,15 @@ or as part of the full platform:
 make up
 ```
 
-Before starting the platform, generate per-trust API keys, the internal service key, and the per-trust internal service keys:
+Before starting the platform, generate the internal service key:
 
 ```bash
-make generate-trust-api-keys                  # from repo root
 make generate-internal-service-key            # from repo root (also invoked automatically by `make up`)
-make generate-trust-internal-service-keys     # from repo root
 ```
 
-`generate-trust-api-keys` updates `TRUST_API_KEYS` and `TRUST_API_KEY_HASHES` in `.env.development`. `generate-internal-service-key` writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` (used for fl-server-to-hub authentication). `generate-trust-internal-service-keys` writes `TRUST_INTERNAL_SERVICE_KEYS` (per-trust JSON dict) used for trust-api / imaging-api / data-access-api / fl-client authentication inside each trust — never sent to the hub.
+`generate-internal-service-key` writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` to `.env.development` (used for fl-server-to-hub authentication).
+
+Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster; from the repo root) or `make register-trust KIT=<CODE>` (one trust). Each inserts a `trust` row with its `api_key_hash`, claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>` carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY` — neither plaintext is stored on the hub. `make up` runs `register-trusts` automatically once the hub is up.
 See [`.env.development.example`](../.env.development.example) for the expected format.
 
 The API is served on the port defined by `API_PORT` in [`.env.development.example`](../.env.development.example)
@@ -81,7 +81,6 @@ The flip-api is configured via environment variables. In development these are s
 | `AWS_COGNITO_USER_POOL_ID` | AWS Cognito User Pool ID |
 | `AWS_COGNITO_APP_CLIENT_ID` | AWS Cognito App Client ID |
 | `AES_KEY_BASE64` | Base64-encoded AES-256 key used to encrypt trust task payloads and project IDs. Shared between hub (encryption) and trusts (decryption) |
-| `TRUST_API_KEY_HASHES` | JSON dict mapping trust names to SHA-256 hashes of their per-trust API keys (e.g. `{"Trust_1": "<hash>"}`) — used by the hub to authenticate incoming trust requests |
 | `UPLOADED_MODEL_FILES_BUCKET` | S3 bucket for uploaded model files |
 | `UPLOADED_FEDERATED_DATA_BUCKET` | S3 bucket for storing models and artefacts |
 

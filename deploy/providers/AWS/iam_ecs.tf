@@ -177,6 +177,21 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
     ]
     resources = [aws_kms_key.flip_app_key.arn]
   }
+
+  # Ephemeral SSM parameter handoff for register_trust (S-1 fix).
+  # `register-trusts.sh` mints a one-off parameter under this prefix before
+  # spawning the ECS task; the task writes the kit JSON here as a
+  # SecureString (encrypted with the AWS-managed `alias/aws/ssm`, no extra
+  # KMS grant needed); the deploy script reads + deletes it immediately
+  # after. Scope is intentionally narrow — only the ephemeral prefix.
+  statement {
+    sid = "SsmTrustKitEphemeralWrite"
+    actions = [
+      "ssm:PutParameter",
+      "ssm:DeleteParameter",
+    ]
+    resources = ["arn:aws:ssm:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:parameter/flip/trust-kits/ephemeral/*"]
+  }
 }
 
 resource "aws_iam_role_policy" "ecs_flip_api_task" {
@@ -208,7 +223,7 @@ resource "aws_iam_role" "ecs_fl_api_task" {
 # minimal: read its INTERNAL_SERVICE_KEY from the FLIP_API secret (so it can
 # call back to flip-api on /api/model/{id}/status) and write training results
 # to the dedicated flip-fl-results bucket. Crucially, it has NO access to
-# AES_KEY_BASE64, TRUST_API_KEY_HASHES, the model-files-uploads or app-bundles
+# AES_KEY_BASE64, the model-files-uploads or app-bundles
 # buckets, or any flip-api-only data. The secret is shared today (single
 # FLIP_API secret) so the execution role's GetSecretValue covers fetch; the
 # task role here only needs to expose ListSecretVersionIds for runtime

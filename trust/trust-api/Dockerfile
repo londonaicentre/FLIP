@@ -15,7 +15,6 @@ FROM python:3.12-slim-bookworm AS development
 ARG UID
 ARG GID
 ARG UNAME
-ARG DEBUG_PORT
 RUN groupadd -g ${GID} ${UNAME}
 # Create a user with the same UID and GID as the host user with home directory at /home/${UNAME}
 RUN useradd -u ${UID} -g ${GID} -m -d /home/${UNAME} -s /bin/bash ${UNAME}
@@ -39,7 +38,6 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 # Expose the application port
 EXPOSE 8000
-EXPOSE ${DEBUG_PORT}
 
 # Run FastAPI application using uvicorn via uv
 CMD ["./entrypoint.sh"]

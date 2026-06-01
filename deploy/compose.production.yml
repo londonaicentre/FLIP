@@ -54,7 +54,7 @@ services:
       - POSTGRES_DB=${POSTGRES_DB}
       - TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
-      # in production, TRUST_API_KEY_HASHES, INTERNAL_SERVICE_KEY_HASH, and AES_KEY_BASE64 are retrieved from AWS Secrets Manager at runtime
+      # in production, INTERNAL_SERVICE_KEY_HASH and AES_KEY_BASE64 are retrieved from AWS Secrets Manager at runtime
       - AWS_SECRET_NAME=${AWS_SECRET_NAME}
       - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
       - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS}
@@ -65,6 +65,5 @@ services:
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
-      - TRUST_NAMES=${TRUST_NAMES}
     restart: unless-stopped
     container_name: flip-api
