@@ -12,6 +12,7 @@
 
 """Utility functions for FLIP."""
 
+from typing import Any
 from uuid import UUID
 
 
@@ -19,7 +20,7 @@ class Utils:
     """Utility class with static helper methods."""
 
     @staticmethod
-    def is_valid_uuid(val) -> bool:
+    def is_valid_uuid(val: Any) -> bool:
         """
         Check if a value is a valid UUID.
 
