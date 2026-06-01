@@ -19,6 +19,7 @@ from flip_api.domain.interfaces.fl import (
     IClientStatus,
     IServerStatus,
 )
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.get_status import get_status_endpoint
 
 
@@ -46,7 +47,7 @@ def mock_get_nets():
             self.fl_backend = fl_backend
 
     with patch("flip_api.fl_services.get_status.get_nets") as mock:
-        mock.return_value = [Net("net-1", "endpoint1", "nvflare")]
+        mock.return_value = [Net("net-1", "endpoint1", FLBackend.NVFLARE)]
         yield mock
 
 
@@ -90,7 +91,7 @@ def test_get_status_endpoint_success(
     net = result[0]
     assert net.name == "net-1"
     # Backend always comes from the net's seeded (canonical) value, not the server self-report.
-    assert net.fl_backend == "nvflare"
+    assert net.fl_backend == FLBackend.NVFLARE
     assert net.online is True
     assert net.net_in_use is True
     assert net.registered_clients == 2
@@ -110,7 +111,7 @@ def test_get_status_endpoint_reports_seeded_backend(
     # The status reflects the net's seeded backend regardless of the live server status —
     # there is no runtime self-report reconciliation anymore.
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
-    assert result[0].fl_backend == "nvflare"
+    assert result[0].fl_backend == FLBackend.NVFLARE
 
 
 def test_get_status_endpoint_error(fake_request, mock_db):
@@ -127,7 +128,7 @@ def test_get_status_endpoint_server_status_none(
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
     assert len(result) == 1
     assert result[0].online is False
-    assert result[0].fl_backend == "nvflare"
+    assert result[0].fl_backend == FLBackend.NVFLARE
     assert result[0].clients == []
 
 
@@ -145,5 +146,5 @@ def test_get_status_endpoint_client_status_none(
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
     assert len(result) == 1
     assert result[0].online is False
-    assert result[0].fl_backend == "nvflare"
+    assert result[0].fl_backend == FLBackend.NVFLARE
     assert result[0].clients == []

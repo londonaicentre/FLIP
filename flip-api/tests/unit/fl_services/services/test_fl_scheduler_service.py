@@ -22,6 +22,7 @@ from flip_api.domain.interfaces.fl import (
     ISchedulerResponse,
 )
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.utils.exceptions import NotFoundError
 
@@ -62,7 +63,7 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
     ):
         # The net self-reports its backend, so resolve_backend(session, net) returns it
         # without touching the DB or any boot-time env var.
-        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend="nvflare")
+        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
 
         fl_scheduler_service.prepare_and_start_training(
             model_id=model_id,
@@ -89,7 +90,7 @@ def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
         patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
     ):
         # Net reports nvflare so the nvflare bundler (patched to raise) is the path taken.
-        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend="nvflare")
+        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
         with pytest.raises(Exception, match="bundle failed"):
             fl_scheduler_service.prepare_and_start_training(
                 model_id=model_id,
@@ -182,14 +183,14 @@ def test_revert_scheduler_pickup_not_found(fake_session):
 
 
 def test_get_net_by_model_id(fake_session, model_id):
-    fake_session.exec.return_value.first.return_value = ("endpoint", "name", "nvflare")
+    fake_session.exec.return_value.first.return_value = ("endpoint", "name", FLBackend.NVFLARE)
 
     result = fl_scheduler_service.get_net_by_model_id(model_id, fake_session)
 
     assert isinstance(result, INetDetails)
     assert result.endpoint == "endpoint"
     assert result.name == "name"
-    assert result.fl_backend == "nvflare"
+    assert result.fl_backend == FLBackend.NVFLARE
 
 
 def test_get_net_by_model_id_not_found(fake_session, model_id):
@@ -199,13 +200,13 @@ def test_get_net_by_model_id_not_found(fake_session, model_id):
 
 
 def test_get_net_by_name(fake_session):
-    fake_session.exec.return_value.first.return_value = ("endpoint", "net-name", "flower")
+    fake_session.exec.return_value.first.return_value = ("endpoint", "net-name", FLBackend.FLOWER)
 
     result = fl_scheduler_service.get_net_by_name("net-name", fake_session)
 
     assert isinstance(result, INetDetails)
     assert result.name == "net-name"
-    assert result.fl_backend == "flower"
+    assert result.fl_backend == FLBackend.FLOWER
 
 
 def test_get_net_by_name_not_found(fake_session):
@@ -217,8 +218,8 @@ def test_get_net_by_name_not_found(fake_session):
 
 def test_get_nets(fake_session):
     fake_session.exec.return_value.all.return_value = [
-        ("endpoint", "net1", "nvflare"),
-        ("endpoint2", "net2", "flower"),
+        ("endpoint", "net1", FLBackend.NVFLARE),
+        ("endpoint2", "net2", FLBackend.FLOWER),
     ]
 
     results = fl_scheduler_service.get_nets(fake_session)

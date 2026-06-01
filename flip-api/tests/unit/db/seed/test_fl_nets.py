@@ -17,6 +17,7 @@ from sqlmodel import Session
 
 from flip_api.db.models.main_models import FLNets
 from flip_api.db.seed.fl_nets import seed_fl_nets
+from flip_api.domain.schemas.types import FLBackend
 
 
 @pytest.fixture
@@ -31,7 +32,7 @@ def mock_fl_net():
     net = Mock(spec=FLNets)
     net.name = "existing_net"
     net.endpoint = "http://existing.com"
-    net.fl_backend = "flower"
+    net.fl_backend = FLBackend.FLOWER
     return net
 
 
@@ -41,7 +42,7 @@ def sample_net_endpoints():
     return {"net1": "http://net1.com", "net2": "http://net2.com"}
 
 
-def _mock_settings(net_endpoints: dict, fl_backend: str = "nvflare") -> SimpleNamespace:
+def _mock_settings(net_endpoints: dict, fl_backend: FLBackend = FLBackend.NVFLARE) -> SimpleNamespace:
     """Helper to build a settings-like object."""
     return SimpleNamespace(NET_ENDPOINTS=net_endpoints, FL_BACKEND=fl_backend)
 
@@ -64,15 +65,15 @@ def test_seed_fl_nets_creates_new_nets_when_none_exist(mock_get_settings, mock_s
     assert {added_net1.name, added_net2.name} == {"net1", "net2"}
     assert {added_net1.endpoint, added_net2.endpoint} == {"http://net1.com", "http://net2.com"}
     # New rows are bootstrapped with the declared FL_BACKEND.
-    assert added_net1.fl_backend == "nvflare"
-    assert added_net2.fl_backend == "nvflare"
+    assert added_net1.fl_backend == FLBackend.NVFLARE
+    assert added_net2.fl_backend == FLBackend.NVFLARE
 
 
 @patch("flip_api.db.seed.fl_nets.get_settings")
 def test_seed_fl_nets_skips_matching_existing_nets(mock_get_settings, mock_session, mock_fl_net):
     """Existing row whose endpoint and backend already match is left alone."""
     mock_get_settings.return_value = _mock_settings(
-        {"existing_net": "http://existing.com", "new_net": "http://new.com"}, fl_backend="flower"
+        {"existing_net": "http://existing.com", "new_net": "http://new.com"}, fl_backend=FLBackend.FLOWER
     )
     mock_session.exec.return_value.all.side_effect = [[mock_fl_net], [mock_fl_net, Mock(spec=FLNets)]]
 
@@ -94,7 +95,7 @@ def test_seed_fl_nets_reconciles_stale_endpoint(mock_get_settings, mock_session,
     `Name or service not known`.
     """
     mock_get_settings.return_value = _mock_settings(
-        {"existing_net": "http://fl-api-net-1.flip.local:8000"}, fl_backend="flower"
+        {"existing_net": "http://fl-api-net-1.flip.local:8000"}, fl_backend=FLBackend.FLOWER
     )
     mock_session.exec.return_value.all.side_effect = [[mock_fl_net], [mock_fl_net]]
 
@@ -136,12 +137,14 @@ def test_seed_fl_nets_backfills_null_backend(mock_get_settings, mock_session):
     legacy.name = "existing_net"
     legacy.endpoint = "http://existing.com"
     legacy.fl_backend = None
-    mock_get_settings.return_value = _mock_settings({"existing_net": "http://existing.com"}, fl_backend="nvflare")
+    mock_get_settings.return_value = _mock_settings(
+        {"existing_net": "http://existing.com"}, fl_backend=FLBackend.NVFLARE
+    )
     mock_session.exec.return_value.all.side_effect = [[legacy], [legacy]]
 
     seed_fl_nets(mock_session)
 
-    assert legacy.fl_backend == "nvflare"
+    assert legacy.fl_backend == FLBackend.NVFLARE
     mock_session.add.assert_called_once_with(legacy)
 
 
@@ -152,10 +155,12 @@ def test_seed_fl_nets_overwrites_existing_backend(mock_get_settings, mock_sessio
     The mock net already matches endpoint and has fl_backend='flower'; seeding with FL_BACKEND='nvflare'
     must overwrite it (this is how `make restart-fl FL_BACKEND=...` switches frameworks).
     """
-    mock_get_settings.return_value = _mock_settings({"existing_net": "http://existing.com"}, fl_backend="nvflare")
+    mock_get_settings.return_value = _mock_settings(
+        {"existing_net": "http://existing.com"}, fl_backend=FLBackend.NVFLARE
+    )
     mock_session.exec.return_value.all.side_effect = [[mock_fl_net], [mock_fl_net]]
 
     seed_fl_nets(mock_session)
 
-    assert mock_fl_net.fl_backend == "nvflare"
+    assert mock_fl_net.fl_backend == FLBackend.NVFLARE
     mock_session.add.assert_called_once_with(mock_fl_net)

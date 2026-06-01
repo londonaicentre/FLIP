@@ -24,6 +24,7 @@ from flip_api.domain.interfaces.fl import (
     IStartTrainingBody,
 )
 from flip_api.domain.schemas.status import ClientStatus
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
 
 
@@ -150,7 +151,7 @@ def test_validate_client_availability_all_offline(mock_get_status):
     ]
 
     with pytest.raises(ValueError, match="Clients unavailable: trust-1"):
-        fl_service.validate_client_availability(["trust-1"], "endpoint", "nvflare")
+        fl_service.validate_client_availability(["trust-1"], "endpoint", FLBackend.NVFLARE)
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
@@ -162,7 +163,7 @@ def test_validate_client_availability_some_online(mock_get_status):
 
     # This has to raise an error for Trust_2 only.
     with pytest.raises(ValueError, match="Clients unavailable: Trust_2"):
-        fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint", "nvflare")
+        fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint", FLBackend.NVFLARE)
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
@@ -170,7 +171,7 @@ def test_validate_client_availability_empty_statuses(mock_get_status):
     mock_get_status.return_value = []
 
     with pytest.raises(ValueError, match="Unable to fetch client statuses"):
-        fl_service.validate_client_availability(["trust-1"], "endpoint", "nvflare")
+        fl_service.validate_client_availability(["trust-1"], "endpoint", FLBackend.NVFLARE)
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
@@ -179,7 +180,7 @@ def test_validate_client_availability_flower_soft_on_empty(mock_get_status):
     mock_get_status.return_value = []
 
     # Should NOT raise — Flower degrades gracefully
-    fl_service.validate_client_availability(["Trust_1"], "endpoint", "flower")
+    fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.FLOWER)
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
@@ -190,7 +191,7 @@ def test_validate_client_availability_flower_soft_on_unavailable(mock_get_status
     ]
 
     # Should NOT raise — Flower degrades gracefully
-    fl_service.validate_client_availability(["Trust_1"], "endpoint", "flower")
+    fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.FLOWER)
 
 
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
@@ -199,7 +200,7 @@ def test_validate_client_availability_nvflare_still_raises(mock_get_status):
     mock_get_status.return_value = []
 
     with pytest.raises(ValueError, match="Unable to fetch client statuses"):
-        fl_service.validate_client_availability(["Trust_1"], "endpoint", "nvflare")
+        fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.NVFLARE)
 
 
 @patch("flip_api.fl_services.services.fl_service.http_delete")

@@ -17,6 +17,7 @@ from fastapi import HTTPException, Request
 
 from flip_api.domain.interfaces.fl import IClientStatus
 from flip_api.domain.schemas.status import ClientStatus
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.get_net_status import get_net_status
 
 
@@ -39,7 +40,7 @@ def fake_request():
 def mock_get_net_by_name():
     with patch("flip_api.fl_services.get_net_status.get_net_by_name") as mock:
         # The net carries its self-reported backend; the endpoint reads it off net_info.
-        mock.return_value = MagicMock(endpoint="endpoint", name="net-name", fl_backend="nvflare")
+        mock.return_value = MagicMock(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
         yield mock
 
 
@@ -70,7 +71,7 @@ def test_get_net_status_success(
 ):
     result = get_net_status("net-name", fake_request, mock_db)
     assert result.name == "net-name"
-    assert result.fl_backend == "nvflare"
+    assert result.fl_backend == FLBackend.NVFLARE
     assert len(result.clients) == 3
     assert any(client.name == "client1" and client.online for client in result.clients)
     assert any(client.name == "client2" and not client.online for client in result.clients)
@@ -80,9 +81,9 @@ def test_get_net_status_success(
 def test_get_net_status_reports_flower_backend(
     fake_request, mock_db, mock_get_net_by_name, mock_fetch_client_status, mock_get_trusts
 ):
-    mock_get_net_by_name.return_value = MagicMock(endpoint="endpoint", name="net-name", fl_backend="flower")
+    mock_get_net_by_name.return_value = MagicMock(endpoint="endpoint", name="net-name", fl_backend=FLBackend.FLOWER)
     result = get_net_status("net-name", fake_request, mock_db)
-    assert result.fl_backend == "flower"
+    assert result.fl_backend == FLBackend.FLOWER
 
 
 def test_get_net_status_net_not_found(fake_request, mock_db):

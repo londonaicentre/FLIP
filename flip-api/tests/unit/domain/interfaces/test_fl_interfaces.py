@@ -82,34 +82,34 @@ class TestJobRequiredFiles:
         # job_type is a plain string (no enum) validated against the manifest keys.
         fake_config = {"standard": ["trainer.py", "config.json"], "evaluation": ["evaluator.py"]}
         with patch("flip_api.domain.interfaces.fl._load_job_types_config", return_value=fake_config) as mock_load:
-            assert JobRequiredFiles.get_required_files("standard", "nvflare") == [
+            assert JobRequiredFiles.get_required_files("standard", FLBackend.NVFLARE) == [
                 "trainer.py",
                 "config.json",
             ]
-            assert JobRequiredFiles.get_required_files("evaluation", "nvflare") == ["evaluator.py"]
+            assert JobRequiredFiles.get_required_files("evaluation", FLBackend.NVFLARE) == ["evaluator.py"]
 
         # The backend is forwarded to the manifest loader.
-        assert mock_load.call_args[0][0] == "nvflare"
+        assert mock_load.call_args[0][0] == FLBackend.NVFLARE
 
     def test_is_valid_job_type_checks_manifest_keys(self):
         # The valid set is data (manifest keys), not a hard-coded enum.
         fake_config = {"standard": ["trainer.py"], "evaluation": ["evaluator.py"]}
         with patch("flip_api.domain.interfaces.fl._load_job_types_config", return_value=fake_config) as mock_load:
-            assert JobRequiredFiles.is_valid_job_type("standard", "flower") is True
-            assert JobRequiredFiles.is_valid_job_type("nonexistent", "flower") is False
+            assert JobRequiredFiles.is_valid_job_type("standard", FLBackend.FLOWER) is True
+            assert JobRequiredFiles.is_valid_job_type("nonexistent", FLBackend.FLOWER) is False
 
-        assert mock_load.call_args[0][0] == "flower"
+        assert mock_load.call_args[0][0] == FLBackend.FLOWER
 
     def test_get_all_job_types_with_files_returns_config_copy(self):
         fake_config = {"standard": ["trainer.py", "config.json"], "evaluation": ["evaluator.py"]}
         with patch("flip_api.domain.interfaces.fl._load_job_types_config", return_value=fake_config):
-            result = JobRequiredFiles.get_all_job_types_with_files("flower")
+            result = JobRequiredFiles.get_all_job_types_with_files(FLBackend.FLOWER)
 
         assert result == fake_config
 
     def test_get_required_files_empty_config_returns_empty_list(self):
         with patch("flip_api.domain.interfaces.fl._load_job_types_config", return_value={}):
-            assert JobRequiredFiles.get_required_files("standard", "nvflare") == []
+            assert JobRequiredFiles.get_required_files("standard", FLBackend.NVFLARE) == []
 
 
 class TestManifestLoading:
