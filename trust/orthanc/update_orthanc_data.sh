@@ -28,11 +28,6 @@ set -euo pipefail
 REPO_DATA_VERSION_FILE=".data_version"  # committed in repo
 VOLUMES_DIR="./volumes"                  # local dir for downloaded archives
 
-# Required env vars (only the selected trust's var is strictly needed, but both
-# are validated upfront so a missing var is caught before any download starts).
-: "${ORTHANC_STORAGE_DIR_TRUST_1:?ORTHANC_STORAGE_DIR_TRUST_1 is required}"
-: "${ORTHANC_STORAGE_DIR_TRUST_2:?ORTHANC_STORAGE_DIR_TRUST_2 is required}"
-
 # Mock data is fetched anonymously over HTTPS from a public Hugging Face dataset
 # (no AWS CLI or credentials required). The dataset is laid out per trust:
 #   <repo>/resolve/<revision>/trust1/trust1_orthanc_data_<version>.tar
@@ -42,11 +37,30 @@ HF_TRUST_DATA_REVISION="${HF_TRUST_DATA_REVISION:-main}"
 HF_BASE_URL="https://huggingface.co/datasets/${HF_TRUST_DATA_REPO}/resolve/${HF_TRUST_DATA_REVISION}"
 
 # TRUST controls which trust(s) to update: "1", "2", or "all" (default).
+# Validate before env-var checks so TRUST=1 never requires TRUST_2's var.
 TRUST="${TRUST:-all}"
 if [[ "${TRUST}" != "1" && "${TRUST}" != "2" && "${TRUST}" != "all" ]]; then
   echo "❌ Invalid TRUST value '${TRUST}'. Must be 1, 2, or all." >&2
   exit 1
 fi
+
+# Required env vars — only require the var(s) relevant to the selected trust.
+if [[ "${TRUST}" == "1" || "${TRUST}" == "all" ]]; then
+  : "${ORTHANC_STORAGE_DIR_TRUST_1:?ORTHANC_STORAGE_DIR_TRUST_1 is required}"
+fi
+if [[ "${TRUST}" == "2" || "${TRUST}" == "all" ]]; then
+  : "${ORTHANC_STORAGE_DIR_TRUST_2:?ORTHANC_STORAGE_DIR_TRUST_2 is required}"
+fi
+
+# Resolve ORTHANC_STORAGE_DIR_TRUST_<N> against trust/ — the base Docker Compose
+# uses (--project-directory ., invoked from trust/) — independent of this script's
+# CWD (trust/orthanc).  Absolute paths are honored as-is.
+TRUST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+resolve_storage_dir() {
+  local p="$1"
+  [[ "$p" = /* ]] && printf '%s\n' "$p" || printf '%s/%s\n' "${TRUST_DIR}" "$p"
+}
 
 # --- read desired data version from repo file ---
 DATA_VERSION="$(tr -d ' \n\r\t' < "${REPO_DATA_VERSION_FILE}")"
@@ -60,7 +74,7 @@ mkdir -p "${VOLUMES_DIR}"
 update_trust() {
   local trust_num="$1"
   local storage_dir_var="ORTHANC_STORAGE_DIR_TRUST_${trust_num}"
-  local storage_dir="${!storage_dir_var}"
+  local storage_dir; storage_dir="$(resolve_storage_dir "${!storage_dir_var}")"
   local local_version_file="${VOLUMES_DIR}/.local_data_version_trust${trust_num}"
   local archive="trust${trust_num}_orthanc_data_${DATA_VERSION}.tar"
   local hf_url="${HF_BASE_URL}/trust${trust_num}/${archive}"
@@ -90,11 +104,11 @@ update_trust() {
   fi
 
   echo "🗑️  Removing existing orthanc storage dir for Trust ${trust_num}..."
-  sudo rm -rf "./${storage_dir}"
-  mkdir -p "./${storage_dir}"
+  sudo rm -rf "${storage_dir}"
+  mkdir -p "${storage_dir}"
 
   echo "📁 Extracting archive for Trust ${trust_num}..."
-  tar -xf "${local_archive}" -C "./${storage_dir}"
+  tar -xf "${local_archive}" -C "${storage_dir}"
 
   echo "${DATA_VERSION}" > "${local_version_file}"
   echo "✅ Done. Local Orthanc data for Trust ${trust_num} is now at version ${DATA_VERSION}"
