@@ -90,12 +90,12 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
     if not isinstance(event_data, Shareable):
         raise TypeError(f"event_data must be type Shareable but got {type(event_data)}")
 
+    # The client name is the participant name we specified in the FLARE provisioning file (project yaml file).
     client_name = event_data.get_header(FedEventHeader.ORIGIN)
-    metrics_data = from_shareable(event_data).data
 
-    # NOTE currently the client name needs to match the trust name in the Central Hub for the metrics to be properly
-    # associated with the client's contributions.
-    trust_name = client_name.replace("site-", "Trust_")
+    # Extract the metrics data from the event data. The client should have sent the metric label and value, and
+    # optionally a 'round' value.
+    metrics_data = from_shareable(event_data).data
 
     if "round" in metrics_data.keys():
         # Override the global rounds with the 'round' value sent by the client if it is provided. This allows the client
@@ -103,7 +103,7 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
         # TODO let the client specify an x-value for the metric that is not necessarily the round number, and use that
         # x-value when sending the metric to the Central Hub (see https://github.com/londonaicentre/FLIP/issues/148).
         flip.send_metrics(
-            client_name=trust_name,
+            client_name=client_name,
             model_id=model_id,
             label=metrics_data["label"],
             value=metrics_data["value"],
@@ -112,7 +112,7 @@ def handle_metrics_event(event_data: Shareable, global_round: int, model_id: str
     else:
         # Legacy behaviour: if the client does not provide 'round', use the global round as the x-value for the metric.
         flip.send_metrics(
-            client_name=trust_name,
+            client_name=client_name,
             model_id=model_id,
             label=metrics_data["label"],
             value=metrics_data["value"],
