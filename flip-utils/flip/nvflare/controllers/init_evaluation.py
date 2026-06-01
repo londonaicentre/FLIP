@@ -37,15 +37,16 @@ class InitEvaluation(Controller):
         flip: FLIP = FLIP(),
         cleanup_timeout: int = 600,
     ):
-        """The controller that is executed pre-training and is a part of the FLIP training model
+        """The controller that is executed pre-evaluation and is a part of the FLIP evaluation model.
 
-        The InitTraining workflow sends a request to the Central Hub, stating that training has initiated
+        The InitEvaluation workflow sends a request to the Central Hub, stating that evaluation has initiated
         and executes the client cleanup task.
 
         Args:
-            model_id (str): ID of the model that the training is being performed under.
+            model_id (str): ID of the model that the evaluation is being performed under.
             min_clients (int, optional): Minimum number of clients. Defaults to 1 for the aggregation to take place with
                 successful results.
+            flip (FLIP, optional): FLIP instance used for status updates and exception reporting (default: FLIP()).
             cleanup_timeout (int, optional): Timeout for image cleanup, defaults to 600 seconds (10 minutes)
 
         Raises:
