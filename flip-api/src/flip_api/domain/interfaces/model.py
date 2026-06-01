@@ -116,7 +116,7 @@ class IBuildImagesForModel(BaseModel):
     files: dict = Field(...)
 
     @validator("files")
-    def validate_files(cls, v):
+    def validate_files(cls, v: dict) -> dict:
         required_keys = {"opener", "algo", "model"}
         if not isinstance(v, dict):
             raise ValueError("'files' must be an object")

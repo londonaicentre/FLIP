@@ -13,8 +13,8 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
-import { reactive, ref } from "vue";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { reactive, ref } from "vue";
 
 import { FileUploadStatus } from "@/interfaces/model/types";
 import type { IModelDashboard } from "@/services/model-service";
@@ -23,11 +23,15 @@ const mockRoute = reactive({
     name: "Model",
     fullPath: "/project/test-project/model/test-model",
     path: "/project/test-project/model/test-model",
-    params: { projectId: "test-project", modelId: "test-model" } as Record<string, string>
+    params: {
+        projectId: "test-project",
+        modelId: "test-model"
+    } as Record<string, string>
 });
 
 vi.mock("vue-router", async (importOriginal) => {
     const actual = await importOriginal<typeof import("vue-router")>();
+
     return {
         ...actual,
         useRoute: () => mockRoute
@@ -46,19 +50,13 @@ vi.mock("swrv", () => ({
     })
 }));
 
-vi.mock("@/composables/useErrorHandler", () => ({
-    default: vi.fn()
-}));
+vi.mock("@/composables/useErrorHandler", () => ({ default: vi.fn() }));
 
-vi.mock("@/router", () => ({
-    routeChange: { viewProject: vi.fn() }
-}));
+vi.mock("@/router", () => ({ routeChange: { viewProject: vi.fn() } }));
 
 const resolveModelConfigStateMock = vi.fn();
 
-vi.mock("@/services/file-service", () => ({
-    resolveModelConfigState: (...args: unknown[]) => resolveModelConfigStateMock(...args)
-}));
+vi.mock("@/services/file-service", () => ({ resolveModelConfigState: (...args: unknown[]) => resolveModelConfigStateMock(...args) }));
 
 const jobTypes = {
     standard: ["trainer.py", "config.json"],
@@ -67,6 +65,7 @@ const jobTypes = {
 
 vi.mock("@/services/model-service", async (importOriginal) => {
     const actual = await importOriginal<typeof import("@/services/model-service")>();
+
     return {
         ...actual,
         fetchJobTypes: vi.fn().mockResolvedValue(jobTypes),
@@ -99,7 +98,11 @@ function makeModel(files: { name: string; status: string }[]): IModelDashboard {
         modelName: "Test Model",
         modelDescription: "",
         status: "PENDING",
-        query: { name: "", query: "", results: [] },
+        query: {
+            name: "",
+            query: "",
+            results: []
+        },
         files: files as IModelDashboard["files"]
     };
 }
@@ -112,12 +115,26 @@ async function flushPromises(): Promise<void> {
 
 async function mountPage() {
     const ModelPage = (await import("@/pages/project/[projectId]/model/[modelId]/index.vue")).default;
-    const pinia = createTestingPinia({ createSpy: vi.fn, stubActions: false });
-    pinia.state.value.project = { project: { id: "test-project", name: "P", status: "APPROVED" } };
+    const pinia = createTestingPinia({
+        createSpy: vi.fn,
+        stubActions: false
+    });
+    pinia.state.value.project = {
+        project: {
+            id: "test-project",
+            name: "P",
+            status: "APPROVED"
+        }
+    };
     const wrapper = mount(ModelPage, {
-        global: { plugins: [pinia], stubs, directives: { tippy: () => {} } }
+        global: {
+            plugins: [pinia],
+            stubs,
+            directives: { tippy: () => {} }
+        }
     });
     await flushPromises();
+
     return wrapper;
 }
 
@@ -143,7 +160,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
     it("invokes resolveModelConfigState with the current config.json status on each poll", async () => {
         const wrapper = await mountPage();
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.SCANNING }
+            {
+                name: "config.json",
+                status: FileUploadStatus.SCANNING
+            }
         ]);
         await flushPromises();
         await wrapper.vm.$nextTick();
@@ -151,7 +171,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
 
         expect(resolveModelConfigStateMock).toHaveBeenCalled();
         const call = resolveModelConfigStateMock.mock.calls.at(-1);
-        expect(call?.[0]).toEqual([{ name: "config.json", status: FileUploadStatus.SCANNING }]);
+        expect(call?.[0]).toEqual([{
+            name: "config.json",
+            status: FileUploadStatus.SCANNING
+        }]);
         // previousStatus starts as null
         expect(call?.[1]).toBeNull();
         expect(call?.[2]).toEqual(jobTypes);
@@ -166,7 +189,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
             requiredFiles: jobTypes.diffusion
         });
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.COMPLETED }
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
         ]);
         const wrapper = await mountPage();
         await flushPromises();
@@ -175,7 +201,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
 
         // Trigger a second poll with a new object reference but unchanged content
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.COMPLETED }
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
         ]);
         await flushPromises();
         await wrapper.vm.$nextTick();
@@ -196,7 +225,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
             requiredFiles: jobTypes.standard
         });
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.SCANNING }
+            {
+                name: "config.json",
+                status: FileUploadStatus.SCANNING
+            }
         ]);
         const wrapper = await mountPage();
         await flushPromises();
@@ -207,7 +239,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
         // Tracker must stay at SCANNING regardless of how many times the watch fires.
         resolveModelConfigStateMock.mockResolvedValue({ changed: false });
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.COMPLETED }
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
         ]);
         await flushPromises();
         await wrapper.vm.$nextTick();
@@ -223,7 +258,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
             requiredFiles: jobTypes.diffusion
         });
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.COMPLETED }
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
         ]);
         await flushPromises();
         await wrapper.vm.$nextTick();
@@ -242,7 +280,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
             requiredFiles: jobTypes.standard
         });
         mockSwrvData.value = makeModel([
-            { name: "config.json", status: FileUploadStatus.COMPLETED }
+            {
+                name: "config.json",
+                status: FileUploadStatus.COMPLETED
+            }
         ]);
         const wrapper = await mountPage();
         await flushPromises();
@@ -262,7 +303,10 @@ describe("pages/project/[projectId]/model/[modelId]", () => {
 
         // Simulate the refreshed poll response; helper should see previousStatus=null again
         mockSwrvData.value = makeModel([
-            { name: "trainer.py", status: FileUploadStatus.COMPLETED }
+            {
+                name: "trainer.py",
+                status: FileUploadStatus.COMPLETED
+            }
         ]);
         await flushPromises();
         await wrapper.vm.$nextTick();

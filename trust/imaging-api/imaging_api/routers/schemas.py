@@ -216,14 +216,14 @@ class ImportStudy(BaseModel):
     accession_number: str = Field(..., alias="accessionNumber")
     relabel_map: dict[str, str] = Field(default={}, alias="relabelMap")
 
-    def set_relabel_map(self):
+    def set_relabel_map(self) -> None:
         """Sets the relabel_map dictionary for subject and session."""
         self.relabel_map = {
             "Subject": str(uuid.uuid4()),  # Generate new UUID for Subject
             "Session": self.accession_number,
         }
 
-    def __init__(self, **data):
+    def __init__(self, **data: object) -> None:
         """Initializes the ImportStudy instance and sets the relabel_map."""
         super().__init__(**data)
         self.set_relabel_map()
@@ -241,7 +241,7 @@ class ImportStudyRequest(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def deduplicate_and_parse_studies(cls, data):
+    def deduplicate_and_parse_studies(cls, data: dict) -> dict:
         """Deduplicates and parses studies before validation.
 
         Args:

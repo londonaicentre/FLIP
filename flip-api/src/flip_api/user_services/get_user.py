@@ -29,7 +29,7 @@ def get_user(
     user_id: str,
     request: Request,
     token_id: UUID = Depends(verify_token),
-):
+) -> CognitoUser:
     """
     Get user details by ID or email.
 

@@ -1,4 +1,6 @@
-from flip_api.domain.interfaces.fl import ClientStatus, IClientStatus
+from unittest.mock import patch
+
+from flip_api.domain.interfaces.fl import ClientStatus, IClientStatus, JobRequiredFiles
 
 
 class TestIClientStatusSchema:
@@ -58,3 +60,24 @@ class TestIClientStatusSchema:
 
         client_status.status = ClientStatus.NO_REPLY.value
         assert client_status.online is False
+
+
+class TestJobRequiredFiles:
+    def test_init_does_not_raise(self):
+        # Regression: __init__ previously called self._load_job_types_config(), which doesn't exist
+        # on the class and would raise AttributeError if anything ever instantiated the model.
+        JobRequiredFiles()
+
+    def test_init_sets_attribute_per_job_type_from_config(self):
+        fake_config = {"standard": ["trainer.py", "config.json"], "evaluation": ["evaluator.py"]}
+        with patch("flip_api.domain.interfaces.fl._load_job_types_config", return_value=fake_config):
+            instance = JobRequiredFiles()
+
+        assert instance.standard == ["trainer.py", "config.json"]
+        assert instance.evaluation == ["evaluator.py"]
+
+    def test_init_with_empty_config_sets_no_job_type_attributes(self):
+        with patch("flip_api.domain.interfaces.fl._load_job_types_config", return_value={}):
+            instance = JobRequiredFiles()
+
+        assert not hasattr(instance, "standard")

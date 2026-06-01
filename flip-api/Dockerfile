@@ -26,9 +26,9 @@ WORKDIR /app
 RUN chown -R ${UNAME}:${UNAME} /app
 
 # Add uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
 
-# Sync the project into a new environment, using the frozen lockfile
+# Sync the project into a new environment, using the lockfile
 COPY pyproject.toml uv.lock ./
 RUN chown -R ${UNAME}:${UNAME} /app
 COPY entrypoint.sh /app/entrypoint.sh
@@ -37,7 +37,7 @@ WORKDIR /app
 USER ${UNAME}
 
 # Sync dependencies using uv
-RUN uv sync --frozen
+RUN uv sync --locked
 
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"

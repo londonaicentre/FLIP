@@ -29,5 +29,6 @@ export function confirmsTypedValue(
         return true;
     }
     const typedStr = (typed ?? "").toString();
+
     return typedStr.toUpperCase() === expected.toUpperCase();
 }

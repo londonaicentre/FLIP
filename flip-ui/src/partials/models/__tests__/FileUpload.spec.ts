@@ -11,16 +11,14 @@
  * limitations under the License.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
 import { describe, expect, it, vi } from "vitest";
 
 import FileUpload from "@/partials/models/FileUpload.vue";
 
-const alertStub = {
-    template: "<div data-test=\"alert-stub\"><slot /></div>"
-};
+const alertStub = { template: "<div data-test=\"alert-stub\"><slot /></div>" };
 
 function mountFileUpload(options: {
     permissions?: string[];
@@ -44,7 +42,10 @@ function mountFileUpload(options: {
                             user: {
                                 username: "testuser",
                                 userId: "1",
-                                attributes: { sub: "1", email: "t@e.co" },
+                                attributes: {
+                                    sub: "1",
+                                    email: "t@e.co"
+                                },
                                 permissions
                             },
                             signInStep: "DONE"
@@ -55,7 +56,10 @@ function mountFileUpload(options: {
             renderStubDefaultSlot: true,
             stubs: { AiAlert: alertStub }
         },
-        props: { requiredFiles, jobType }
+        props: {
+            requiredFiles,
+            jobType
+        }
     });
 }
 
@@ -90,7 +94,10 @@ describe("FileUpload observer-aware rendering", () => {
     it("escapes job type and file names so user-controlled values cannot inject HTML", () => {
         const payload = "<img src=x onerror=alert(1)>";
 
-        const wrapper = mountFileUpload({ jobType: payload, requiredFiles: [payload] });
+        const wrapper = mountFileUpload({
+            jobType: payload,
+            requiredFiles: [payload]
+        });
         const slot = wrapper.find("[data-test=alert-stub]");
 
         expect(slot.find("img").exists()).toBe(false);
