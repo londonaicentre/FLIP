@@ -33,13 +33,13 @@ class BucketAction(Enum):
     NO = "no"
 
 
-class ClientDeployResponse(str, Enum):
+class ClientDeployResponse(StrEnum):
     """Response for client deployment."""
 
     OK = "OK"
 
 
-class ClientStatus(str, Enum):
+class ClientStatus(StrEnum):
     """Status of the client."""
 
     # TODO we might want to reconcile these with the FL API responses
@@ -79,7 +79,7 @@ class NetStatus(Enum):
     BUSY = "BUSY"
 
 
-class FLTargets(str, Enum):
+class FLTargets(StrEnum):
     """Targets for FL backend."""
 
     SERVER = "server"
@@ -103,7 +103,7 @@ class FileUploadTag(Enum):
     OBJECTIVE_TARGET = "OBJECTIVE_TARGET"
 
 
-class FLStatus(str, Enum):
+class FLStatus(StrEnum):
     """Status of the FL."""
 
     SUCCESS = "SUCCESS"
@@ -113,7 +113,7 @@ class FLStatus(str, Enum):
     ERROR_AUTHENTICATION = "ERROR_AUTHENTICATION"
 
 
-class ProjectStatus(str, Enum):
+class ProjectStatus(StrEnum):
     """Status of the project."""
 
     UNSTAGED = "UNSTAGED"
@@ -121,7 +121,7 @@ class ProjectStatus(str, Enum):
     APPROVED = "APPROVED"
 
 
-class ServerEngineStatus(str, Enum):
+class ServerEngineStatus(StrEnum):
     """Status of the server engine."""
 
     STARTED = "started"
@@ -131,7 +131,7 @@ class ServerEngineStatus(str, Enum):
     SHUTDOWN = "shutdown"
 
 
-class TrustIntersectStatus(str, Enum):
+class TrustIntersectStatus(StrEnum):
     """Status of the trust intersect."""
 
     PENDING = "PENDING"
@@ -139,7 +139,7 @@ class TrustIntersectStatus(str, Enum):
     INITIALISED = "INITIALISED"
 
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     """Status of a trust task in the task queue."""
 
     PENDING = "PENDING"
@@ -148,7 +148,7 @@ class TaskStatus(str, Enum):
     FAILED = "FAILED"
 
 
-class TaskType(str, Enum):
+class TaskType(StrEnum):
     """Type of task dispatched to a trust."""
 
     COHORT_QUERY = "cohort_query"
@@ -159,7 +159,7 @@ class TaskType(str, Enum):
     UPDATE_USER_PROFILE = "update_user_profile"
 
 
-class XNATImageStatus(str, Enum):
+class XNATImageStatus(StrEnum):
     """Status of the XNAT imaging project."""
 
     RETRIEVE_STARTED = "RETRIEVE_STARTED"

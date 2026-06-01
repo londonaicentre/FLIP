@@ -149,7 +149,7 @@ def test_stage_project_not_unstaged_status(app_fixture, client, test_user_id, te
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert (
         response.json()["detail"]
-        == f"Project with ID: {test_project_id} is not 'ProjectStatus.UNSTAGED' and cannot be staged."
+        == f"Project with ID: {test_project_id} is not 'UNSTAGED' and cannot be staged."
     )
 
 

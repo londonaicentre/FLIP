@@ -10,10 +10,10 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ProjectAuditAction(str, Enum):
+class ProjectAuditAction(StrEnum):
     DELETE = "DELETE"
     EDIT = "EDIT"
     APPROVE = "APPROVE"
@@ -21,6 +21,6 @@ class ProjectAuditAction(str, Enum):
     UNSTAGE = "UNSTAGE"
 
 
-class ModelAuditAction(str, Enum):
+class ModelAuditAction(StrEnum):
     DELETE = "DELETE"
     EDIT = "EDIT"
