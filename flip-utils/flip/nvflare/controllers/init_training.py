@@ -43,6 +43,7 @@ class InitTraining(Controller):
             model_id (str): ID of the model that the training is being performed under.
             min_clients (int, optional): Minimum number of clients. Defaults to 1 for the aggregation to take place with
                 successful results.
+            flip (FLIP, optional): FLIP instance used for status updates and exception reporting (default: FLIP()).
             cleanup_timeout (int, optional): Timeout for image cleanup, defaults to 600 seconds (10 minutes)
 
         Raises:
