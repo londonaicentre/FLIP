@@ -14,13 +14,16 @@ NAMESPACE ?= flip-trust
 RELEASE_NAME ?= trust-release
 CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 VALUES_FILE ?= $(CHART_DIR)/values.yaml
+SECRETS_FILE := $(wildcard $(CHART_DIR)/values-secrets.yaml)
 OVERRIDES_FILE ?=
 
 # Determine which values files to pass
+VALUES_OPTS := -f $(VALUES_FILE)
+ifneq ($(strip $(SECRETS_FILE)),)
+	VALUES_OPTS := $(VALUES_OPTS) -f $(SECRETS_FILE)
+endif
 ifneq ($(strip $(OVERRIDES_FILE)),)
-	VALUES_OPTS := -f $(VALUES_FILE) -f $(OVERRIDES_FILE)
-else
-	VALUES_OPTS := -f $(VALUES_FILE)
+	VALUES_OPTS := $(VALUES_OPTS) -f $(OVERRIDES_FILE)
 endif
 
 .PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps register-trust
@@ -41,9 +44,10 @@ update-deps: ## Update Helm chart dependencies
 	$(HELM) dependency update $(CHART_DIR)
 
 deploy: ## Deploy the Helm chart to the cluster
+	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
-		--create-namespace \
+		--timeout 20m \
 		$(VALUES_OPTS)
 
 undeploy: ## Remove the Helm release from the cluster

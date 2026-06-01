@@ -80,39 +80,62 @@ spec:
               memory: "512Mi"
               cpu: "200m"
         - name: configure-xnat-web
-          image: alpine/curl:8.12.1
+          image: alpine:3.20
           command:
             - /bin/sh
             - -c
             - |
               set -euo pipefail
+              apk add --no-cache curl >/dev/null 2>&1
               XNAT_URL="http://xnat-web:8080"
               ADMIN_USER="{{ .Values.xnat.web.adminUser }}"
               ADMIN_PASS="${XNAT_ADMIN_PASS}"
               echo "Waiting for XNAT to be ready..."
               for i in $(seq 1 60); do
-                if curl -sf -o /dev/null "${XNAT_URL}/xapi/siteConfig" 2>/dev/null; then
-                  echo "XNAT is ready!"
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${XNAT_URL}/xapi/siteConfig" 2>/dev/null)
+                if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ]; then
+                  echo "XNAT is ready (HTTP ${HTTP_CODE})!"
                   break
                 fi
                 sleep 10
               done
 
-              JSESSION=$(curl -sf -X POST "${XNAT_URL}/data/JSESSION" \
-                -u "${ADMIN_USER}:${ADMIN_PASS}" 2>/dev/null || echo "")
-              echo "JSESSIONID: ${JSESSION}"
-
+              # Login: try configured password first, fall back to XNAT default (admin:admin pre-init)
+              _xnat_login() {
+                local PASS="$1"
+                local RESP
+                RESP=$(curl -s -D - -X POST "${XNAT_URL}/data/JSESSION" -u "${ADMIN_USER}:${PASS}" 2>/dev/null)
+                local SID
+                SID=$(echo "$RESP" | tail -1 | tr -d '[:space:]')
+                if [ -z "$SID" ] || echo "$SID" | grep -qi '<html'; then
+                  SID=$(echo "$RESP" | grep -i 'Set-Cookie: JSESSIONID=' | sed 's/.*JSESSIONID=\([^;]*\).*/\1/' | tr -d '\r')
+                fi
+                echo "$SID"
+              }
+              JSESSION=$(_xnat_login "${ADMIN_PASS}")
               if [ -z "$JSESSION" ]; then
-                echo "Failed to login to XNAT"
+                echo "Configured password failed, trying XNAT default (admin:admin)..."
+                JSESSION=$(_xnat_login "admin")
+              fi
+              echo "JSESSIONID: ${JSESSION}"
+              if [ -z "$JSESSION" ]; then
+                echo "Failed to login to XNAT with any credential"
                 exit 1
               fi
 
-              # Activate XNAT site
+              # Activate XNAT site (idempotent — safe to call even if already initialized)
               echo "Activating XNAT site..."
-              curl -sf -X POST "${XNAT_URL}/xapi/siteConfig" \
+              curl -s -X POST "${XNAT_URL}/xapi/siteConfig" \
                 -H "Cookie: JSESSIONID=${JSESSION}" \
                 -H "Content-Type: application/json" \
-                -d '{"initialized": true}' || echo "Activation may have already been done"
+                -d '{"initialized": true}' -o /dev/null -w "siteConfig HTTP:%{http_code}\n" || true
+
+              # Set admin password to configured value if it differs from default
+              echo "Setting admin password..."
+              curl -s -X PUT "${XNAT_URL}/xapi/users/${ADMIN_USER}" \
+                -H "Cookie: JSESSIONID=${JSESSION}" \
+                -H "Content-Type: application/json" \
+                -d "{\"password\": \"${ADMIN_PASS}\"}" -o /dev/null -w "setPassword HTTP:%{http_code}\n" || true
 
               # Assign roles to service account
               SERVICE_USER="${XNAT_SERVICE_USER:-flipServiceAccount}"
@@ -196,21 +219,22 @@ spec:
         # configure-dcm2niix.sh does in the Compose deployment, but speaks to
         # the K8s backend instead of the Docker socket.
         - name: configure-dcm2niix
-          image: alpine/curl:8.12.1
+          image: alpine:3.20
           command:
             - /bin/sh
             - -c
             - |
               set -euo pipefail
-              apk add --no-cache jq >/dev/null
+              apk add --no-cache curl jq >/dev/null
               XNAT_URL="http://xnat-web:8080"
               CREDS="${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASS}"
               DCM2NIIX_NAME="dcm2niix"
 
               echo "Waiting for XNAT to be ready..."
               for i in $(seq 1 60); do
-                if curl -sf -o /dev/null "${XNAT_URL}/xapi/siteConfig" 2>/dev/null; then
-                  echo "XNAT is ready!"
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${XNAT_URL}/xapi/siteConfig" 2>/dev/null)
+                if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ]; then
+                  echo "XNAT is ready (HTTP ${HTTP_CODE})!"
                   break
                 fi
                 sleep 10

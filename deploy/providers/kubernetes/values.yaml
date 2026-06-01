@@ -33,7 +33,7 @@ imagePullSecrets: []
 
 # Whether to create the namespace as part of the chart install
 namespace:
-  create: true
+  create: false
   name: ""
 
 # ---------------------------------------------------------------------------

@@ -44,9 +44,14 @@ spec:
                 echo "PostgreSQL data directory is already populated. Skipping restore."
                 exit 0
               fi
+              S3_BUCKET="{{ .Values.omopDb.initJob.s3Bucket }}"
+              # Skip if no S3 bucket configured (local dev uses image seed data)
+              if [ -z "$S3_BUCKET" ]; then
+                echo "No S3 bucket configured; skipping OMOP data restore."
+                exit 0
+              fi
               # Install tar (amazon/aws-cli image doesn't ship it)
               microdnf install -y tar gzip 2>/dev/null || yum install -y tar gzip 2>/dev/null
-              S3_BUCKET="{{ .Values.omopDb.initJob.s3Bucket }}"
               DATA_VERSION="{{ .Values.omopDb.initJob.dataVersion }}"
               TRUST_NAME="{{ .Values.trustName }}"
               ARCHIVE_NAME="{{ .Values.omopDb.initJob.archiveName }}"

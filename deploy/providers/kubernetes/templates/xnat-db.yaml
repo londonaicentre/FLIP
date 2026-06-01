@@ -21,6 +21,7 @@ metadata:
     app.kubernetes.io/component: xnat-db
 data:
   POSTGRES_DB: "xnat"
+  POSTGRES_USER: {{ .Values.xnat.db.datasourceUsername | quote }}
   XNAT_DATASOURCE_USERNAME: {{ .Values.xnat.db.datasourceUsername | quote }}
 ---
 apiVersion: v1

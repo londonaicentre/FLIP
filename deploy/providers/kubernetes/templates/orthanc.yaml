@@ -58,6 +58,8 @@ metadata:
     app.kubernetes.io/component: orthanc
 spec:
   replicas: {{ .Values.orthanc.replicas }}
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       {{- include "flip-trust.selectorLabels" . | nindent 6 }}
