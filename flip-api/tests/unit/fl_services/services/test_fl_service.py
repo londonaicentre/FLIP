@@ -946,3 +946,34 @@ def test_add_fl_job_rollback_on_exception(model_id):
     with pytest.raises(Exception, match="DB Error"):
         fl_service.add_fl_job(model_id, ["client1"], fake_session)
     fake_session.rollback.assert_called_once()
+
+
+@patch("flip_api.fl_services.get_status.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_nets")
+@patch("flip_api.fl_services.services.fl_service.Session")
+def test_keep_fl_api_session_alive_pings_each_net(mock_session, mock_get_nets, mock_fetch):
+    # The keep-alive poll pings every net's check_server_status; it no longer reconciles any backend.
+    mock_session.return_value.__enter__.return_value = MagicMock()
+    mock_get_nets.return_value = [
+        MagicMock(endpoint="http://net1:8000"),
+        MagicMock(endpoint="http://net2:8000"),
+    ]
+
+    fl_service.keep_fl_api_session_alive()
+
+    assert mock_fetch.call_count == 2
+    mock_fetch.assert_any_call("http://net1:8000")
+    mock_fetch.assert_any_call("http://net2:8000")
+
+
+@patch("flip_api.fl_services.get_status.fetch_server_status", side_effect=Exception("boom"))
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_nets")
+@patch("flip_api.fl_services.services.fl_service.Session")
+def test_keep_fl_api_session_alive_swallows_errors(mock_session, mock_get_nets, mock_fetch):
+    # A failed status check for one net must not propagate (it is logged and ignored).
+    mock_session.return_value.__enter__.return_value = MagicMock()
+    mock_get_nets.return_value = [MagicMock(endpoint="http://net1:8000")]
+
+    fl_service.keep_fl_api_session_alive()
+
+    mock_fetch.assert_called_once_with("http://net1:8000")
