@@ -148,3 +148,32 @@ def test_get_cohort_results_internal_error(mock_access):
 
     assert exc_info.value.status_code == 500
     assert "Internal server error" in str(exc_info.value.detail)
+
+
+@patch("flip_api.cohort_services.get_cohort_query_results.can_access_cohort_query", return_value=True)
+def test_get_cohort_results_surfaces_per_trust_record_counts(mock_access):
+    """trust_record_counts must reach the UI so a 0-record trust shows "0"
+    rather than staying stuck on "running"."""
+    stats_with_counts = {
+        **MOCK_STATS,
+        "trust_record_counts": {"trust-1": 100, "trust-2": 100, "trust-3": 0},
+    }
+    mock_db = MagicMock()
+    _configure_db_mock(mock_db, query_exists=True, stats_json=json.dumps(stats_with_counts))
+
+    result = get_cohort_query_results(query_id=TEST_QUERY_ID, db=mock_db, user_id=TEST_USER_ID)
+
+    assert result.trust_record_counts == {"trust-1": 100, "trust-2": 100, "trust-3": 0}
+
+
+@patch("flip_api.cohort_services.get_cohort_query_results.can_access_cohort_query", return_value=True)
+def test_get_cohort_results_omits_trust_record_counts_backcompat(mock_access):
+    """Older QueryStats rows (pre-upgrade) lack ``trust_record_counts``; that
+    must still parse — degrading to an empty map — so existing queries don't
+    return 500 after deploy."""
+    mock_db = MagicMock()
+    _configure_db_mock(mock_db, query_exists=True, stats_json=json.dumps(MOCK_STATS))
+
+    result = get_cohort_query_results(query_id=TEST_QUERY_ID, db=mock_db, user_id=TEST_USER_ID)
+
+    assert result.trust_record_counts == {}

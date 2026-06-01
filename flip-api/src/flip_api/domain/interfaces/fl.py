@@ -15,10 +15,10 @@ from enum import Enum
 from pathlib import Path
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from flip_api.domain.schemas.status import ClientStatus, FLJobStatus
-from flip_api.domain.schemas.types import FLBackend, TrimStr
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.utils.constants import job_types_required_files_name
 from flip_api.utils.logger import logger
 
@@ -80,9 +80,16 @@ class ISchedulerResponse(BaseModel):
 
 
 class IJobResponse(BaseModel):
+    """Internal handoff from `check_for_queued_jobs` to `prepare_and_start_training`.
+
+    Carries the trust ids that were attached to the FL job via the `fl_job_trust` link table;
+    `prepare_and_start_training` re-fetches the Trust rows from the DB before talking to the
+    FL backend, so we don't try to ferry ORM objects through a Pydantic schema.
+    """
+
     id: UUID  # FLJob table primary key
     model_id: UUID
-    clients: list[str]
+    trust_ids: list[UUID]
 
 
 class IJobMetaData(BaseModel):
@@ -105,13 +112,27 @@ class IRequiredTrainingInformation(BaseModel):
 
 
 class IInitiateTrainingInputPayload(BaseModel):
-    trusts: list[TrimStr]
+    """Request body for `POST /fl/initiate/{model_id}`.
 
-    @field_validator("trusts")
+    The selected trusts are the FL participants for this training run. Trusts are
+    identified by their UUID `id` (not name): names are admin-chosen, non-unique,
+    and may contain arbitrary characters, so they are unsafe to match on. The ids
+    are looked up against the `trust` table at request time — see
+    `initiate_training` for the existence check.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    trust_ids: list[UUID] = Field(
+        min_length=1,
+        description="IDs of trusts to participate in training. Must be non-empty and unique.",
+    )
+
+    @field_validator("trust_ids")
     @classmethod
-    def must_be_unique(cls, v: list[TrimStr]) -> list[TrimStr]:
+    def must_be_unique(cls, v: list[UUID]) -> list[UUID]:
         if len(set(v)) != len(v):
-            raise ValueError("'trusts' must all be unique entries")
+            raise ValueError("'trust_ids' must all be unique entries")
         return v
 
 
@@ -137,7 +158,16 @@ class IClientStatus(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     name: str
+    # The trust's short code (e.g. "GSTT"). None for raw FL-server client
+    # statuses; set when the client is resolved to a registered trust.
+    code: str | None = None
     status: str
+    # The FL kit slot backing this client (the pre-provisioned participant
+    # identity, e.g. "Trust_1"). The trust's display name (`name`) can differ
+    # from the slot once a trust is registered under an arbitrary name, so the
+    # slot is surfaced for the connection-status detailed view. None for raw
+    # FL-server client statuses (which are already keyed by slot).
+    fl_kit_slot: str | None = None
 
     # set the online status based on the client status
     # This property will be included in dumps / JSON schemas

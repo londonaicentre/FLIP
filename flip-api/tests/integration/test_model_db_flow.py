@@ -42,7 +42,6 @@ from flip_api.model_services.services.model_service import (
     delete_model,
     edit_model,
     get_model_status,
-    validate_trusts,
 )
 
 
@@ -253,36 +252,3 @@ def test_get_model_status_returns_status_for_existing_model(session, model_in_db
 
 def test_get_model_status_returns_none_for_missing_model(session):
     assert get_model_status(uuid4(), session) is None
-
-
-def test_validate_trusts_returns_true_when_all_provided_trusts_are_associated(session, model_in_db, trust_factory):
-    """The Trust ↔ ModelTrustIntersect join must hydrate a real list of names."""
-    model = model_in_db["model"]
-    trust_a = trust_factory.build(name="trust_a")
-    trust_b = trust_factory.build(name="trust_b")
-    session.add_all([trust_a, trust_b])
-    session.flush()
-    session.add_all(
-        [
-            ModelTrustIntersect(model_id=model.id, trust_id=trust_a.id, status=TrustIntersectStatus.PENDING),
-            ModelTrustIntersect(model_id=model.id, trust_id=trust_b.id, status=TrustIntersectStatus.PENDING),
-        ]
-    )
-    session.commit()
-
-    assert validate_trusts(model.id, ["trust_a", "trust_b"], session) is True
-
-
-def test_validate_trusts_returns_false_when_any_provided_trust_is_not_associated(
-    session, model_in_db, trust_factory
-):
-    model = model_in_db["model"]
-    trust_a = trust_factory.build(name="trust_a")
-    session.add(trust_a)
-    session.flush()
-    session.add(
-        ModelTrustIntersect(model_id=model.id, trust_id=trust_a.id, status=TrustIntersectStatus.PENDING)
-    )
-    session.commit()
-
-    assert validate_trusts(model.id, ["trust_a", "trust_unknown"], session) is False

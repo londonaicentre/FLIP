@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+import os
+
 from flip_api.domain.schemas.types import FLBackend
 
 SERVICE_UNAVAILABLE_MESSAGE = "The server is unable to process any requests at the moment, please try again later."
@@ -35,8 +37,9 @@ def job_types_required_files_name(fl_backend: FLBackend) -> str:
     return f"job_types_and_required_files.{fl_backend}.json"
 
 
-# Testing constants
-BASE_URL = "http://localhost:8080/api"
+# Testing constants. BASE_URL defaults to the local dev stack; override with
+# FLIP_E2E_BASE_URL to run the e2e smoke against a remote hub (stag/prod).
+BASE_URL = os.environ.get("FLIP_E2E_BASE_URL", "http://localhost:8080/api")
 
 # Main user emails - these should match the users created in Cognito and seeded in DB
 ADMIN_EMAIL_1 = "aicentreflip@gmail.com"

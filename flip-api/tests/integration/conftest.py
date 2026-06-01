@@ -54,7 +54,6 @@ from flip_api.db.models.user_models import RoleRef, UserRole
 from flip_api.db.seed.permissions import seed_permissions
 from flip_api.db.seed.role_permissions import seed_role_permissions
 from flip_api.db.seed.roles import seed_roles
-from flip_api.db.seed.trusts import seed_trusts
 from flip_api.main import app
 
 
@@ -139,10 +138,10 @@ def pg_container() -> Generator[PostgresContainer, None, None]:
 def integration_engine(pg_container: PostgresContainer):
     """Build the engine, create the schema, seed essentials, redirect flip-api at it.
 
-    The seed steps that don't need ``Settings`` (permissions, roles,
-    role-permissions) run unconditionally. ``seed_trusts`` reads
-    ``settings.TRUST_NAMES`` so it only runs if that's set; tests that need
-    specific trusts insert their own rows via the ``trust_factory``.
+    Only the env-independent seed steps (permissions, roles, role-permissions) run.
+    Trust rows are created on demand by tests via the ``trust_factory``; there is no
+    seed-time trust registration anymore (the deploy-time ``register_trust`` CLI is the
+    one writer outside the admin endpoint).
     """
     engine = create_engine(
         pg_container.get_connection_url(),
@@ -155,12 +154,6 @@ def integration_engine(pg_container: PostgresContainer):
         seed_permissions(s)
         seed_roles(s)
         seed_role_permissions(s)
-        try:
-            seed_trusts(s)
-        except Exception:
-            # TRUST_NAMES may be absent in a CI env that hasn't copied the
-            # full .env.development; tests that need trusts add them inline.
-            s.rollback()
 
     # Redirect every reference to the prod-bound engine at the throwaway DB.
     # Both modules captured ``engine`` at import time, so we rebind both names.

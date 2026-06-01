@@ -43,8 +43,11 @@ describe("Model Dashboard - Post Training", () => {
         cy.visit(`project/${projectId}/model/${modelId}`);
         cy.wait("@getModel");
 
-        cy.getBySel("initiate-training-btn").should("be.disabled");
-        cy.getBySel("user-btn").click();
+        // After training has started the Initiate button isn't even rendered —
+        // it's gated on isTrainingPending() (model.status === "PENDING").
+        cy.getBySel("initiate-training-btn").should("not.exist");
+        // TrainingActionsMenu now exposes stop-training-btn / download-results-btn
+        // directly — the old "user-btn" dropdown wrapper is gone.
         cy.getBySel("stop-training-btn").should("be.disabled");
     });
 
@@ -59,8 +62,11 @@ describe("Model Dashboard - Post Training", () => {
         cy.visit(`project/${projectId}/model/${modelId}`);
         cy.wait("@getModel");
 
-        cy.getBySel("initiate-training-btn").should("be.disabled");
-        cy.getBySel("user-btn").click();
+        // After training has started the Initiate button isn't even rendered —
+        // it's gated on isTrainingPending() (model.status === "PENDING").
+        cy.getBySel("initiate-training-btn").should("not.exist");
+        // TrainingActionsMenu now exposes stop-training-btn / download-results-btn
+        // directly — the old "user-btn" dropdown wrapper is gone.
         cy.getBySel("stop-training-btn").should("be.visible").click();
         cy.getBySel("confirm-modal-btn").click();
 

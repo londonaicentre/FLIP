@@ -38,9 +38,7 @@ imaging-api/experiments.csv
 imaging-api/app/routers/example_get_experiment_response.json
 
 # Trust
-orthanc/orthanc-storage
-orthanc/orthanc-storage-2
-orthanc/orthanc-storage-local
+orthanc/orthanc-storage-*
 xnat/plugins/*.jar
 
 # Image data folder

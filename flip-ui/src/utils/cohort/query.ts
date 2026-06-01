@@ -34,3 +34,21 @@ const regex = new RegExp(`(${forbiddenCommands.join("|")})`, "i");
 export const containsForbiddenCommands = (query: string): boolean => {
     return regex.test(query);
 };
+
+/**
+ * Restrict a list of trusts to those that participated in a cohort query.
+ *
+ * Returns the input unchanged when `queriedTrustIds` is undefined — that
+ * signals the project (and therefore the trust set) hasn't loaded yet.
+ * An empty array is a meaningful "no participants" answer and filters
+ * everything out. Internally uses a Set for O(1) membership.
+ */
+export const filterByQueriedTrustIds = <T extends { id: string }>(
+    trusts: T[],
+    queriedTrustIds: string[] | undefined
+): T[] => {
+    if (queriedTrustIds === undefined) return trusts;
+    const set = new Set(queriedTrustIds);
+
+    return trusts.filter((t) => set.has(t.id));
+};

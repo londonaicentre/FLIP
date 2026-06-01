@@ -17,19 +17,9 @@
             name="fade"
             mode="out-in"
         >
-            <AiLoader v-if="!results" class="py-8" />
+            <AiLoader v-if="!results || submitting" class="py-8" />
             <div v-else-if="results.trustsResults.length">
-                <div class="mt-2">
-                    <div class="flex items-baseline mb-8">
-                        <span class="mr-2 text-2xl font-semibold leading-8 font-heading">
-                            Cohort results
-                        </span>
-                        <span class="pl-2 mr-2 text-sm leading-8 border-l border-gray-200" data-test="total-results">
-                            {{ results.recordCount.toLocaleString() }} - Estimated total results
-                        </span>
-                    </div>
-                </div>
-                <div class="h-full gap-4 space-y-4 columns-1 2xl:columns-2">
+                <div class="h-full gap-4 space-y-4 columns-1 lg:columns-2">
                     <AiCard
                         v-for="chartResults in results.trustsResults"
                         :key="chartResults.name"
@@ -41,19 +31,12 @@
                     </AiCard>
                 </div>
             </div>
-            <div v-else-if="!results.trustsResults.length">
+            <div v-else-if="!results.trustsResults.length" data-test="no-results-message">
                 <div class="py-4">
                     <div>
-                        <h1
-                            data-test="no-results-message"
-                            class="mt-2 text-xl font-extrabold tracking-tight text-gray-700 sm:text-4xl"
-                        >
-                            No results to show
-                        </h1>
                         <p class="mt-2 text-lg text-gray-500">
-                            No results can be shown as your query did not reach the minimum cohort size of <span
-                                class="font-bold"
-                            >5 records</span>, please expand your search.
+                            No results can be shown as your query did not return enough records.
+                            Please expand your search.
                         </p>
                     </div>
                 </div>
@@ -72,6 +55,12 @@ import AiChart from "@/components/AiChart/AiCohortChart.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import { getOMOPResults } from "@/services/cohort-query-service";
 import { useProjectStore } from "@/store/project";
+
+interface IProps {
+    submitting?: boolean;
+}
+
+withDefaults(defineProps<IProps>(), { submitting: false });
 
 const projectStore = useProjectStore();
 
@@ -103,4 +92,13 @@ whenever(data, () => {
 watch(projectStore, () => {
     getResults.value = "true";
 }, { immediate: true });
+
+// Drop cached results when the query id changes so a re-run starts from the
+// loader state instead of leaving stale plots on screen while SWRV waits for
+// the first poll of the new query.
+watch(() => projectStore.project?.query?.id, (newId, oldId) => {
+    if (newId !== oldId) {
+        results.value = undefined;
+    }
+});
 </script>

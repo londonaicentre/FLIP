@@ -37,7 +37,6 @@ import { computed, ComputedRef, onMounted, ref, watch } from "vue";
 
 import { IModelMetricData } from "@/services/model-service";
 import { useSiteSettings } from "@/store/siteSettingsStore";
-import { capatilizeString } from "@/utils/helpers";
 
 interface IAiCohortChartProps {
     data: IModelMetricData
@@ -76,23 +75,16 @@ onMounted(() => {
             ]);
 
             const chart = echarts.init(containerRef.value);
-            const colorPalette = ["#a55eea", "#4b7bec", "#2bcbba", "#fd9644", "#fc5c65", "#4b6584", "#2d98da", "#cc7e63", "#724e58", "#4b565b"];
-            const chartTitle = capatilizeString(props.data.yLabel);
+            const colorPalette = ["#61366e", "#4b7bec", "#2bcbba", "#fd9644", "#fc5c65", "#4b6584", "#2d98da", "#cc7e63", "#724e58", "#4b565b"];
 
+            // Chart-level title intentionally omitted — the only consumer
+            // (TrainingMetrics) renders the y-label as the tab name, so an
+            // in-chart title would be redundant noise.
             const chartOptions: ComputedRef<ECOption> = computed(() => ({
                 color: colorPalette,
                 colorBy: "series",
                 darkMode: siteSettings.getSettings.darkMode,
-                backgroundColor: siteSettings.getSettings.darkMode ? "#111827" : "#F9FAFB",
-                title: {
-                    text: chartTitle,
-                    textStyle: {
-                        fontSize: 16,
-                        fontWeight: 700,
-                        fontFamily: "Inter",
-                        color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36"
-                    }
-                },
+                backgroundColor: siteSettings.getSettings.darkMode ? "#111827" : "#FFFFFF",
                 textStyle: {
                     fontFamily: "JetBrainsMono",
                     fontWeight: 700
@@ -127,7 +119,7 @@ onMounted(() => {
                 grid: {
                     backgroundColor: siteSettings.getSettings.darkMode ? "#282A36": "#4A5462",
                     left: "5%",
-                    right: "5%",
+                    right: 160,
                     bottom: "25%",
                     containLabel: true
                 },
@@ -140,17 +132,19 @@ onMounted(() => {
                     }
                 },
                 legend: {
-                    data: props.data.metrics.map(d => d.seriesLabel),
-                    left: "center",
+                    data: props.data.metrics
+                        .map(d => d.seriesLabel)
+                        .slice()
+                        .sort((a, b) => a.localeCompare(b)),
+                    orient: "vertical",
+                    right: 10,
+                    top: "middle",
+                    align: "left",
+                    itemGap: 10,
                     textStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" }
                 },
                 xAxis: {
                     type: "value",
-                    minorTick: {
-                        show: true,
-                        splitNumber: 1,
-                        lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" }
-                    },
                     minInterval: 1,
                     splitNumber: 10, // <— try to show 10 ticks (only)
                     name: "Global Rounds",
@@ -166,55 +160,45 @@ onMounted(() => {
                         fontFamily: "Inter",
                         hideOverlap: true // <— auto hides colliding labels
                     },
-                    axisTick: {
-                        show: true,
-                        inside: true,
-                        lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" }
-                    },
+                    axisTick: { show: false },
                     axisLine: { lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" } },
-                    minorSplitLine: {
-                        show: false,
-                        lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#4A5462" }
-                    },
-                    splitLine: { lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#111827" } }
+                    splitLine: { show: false } // Mission control: no vertical grid lines
                 },
                 yAxis: {
                     type: "value",
-                    minorTick: {
-                        show: true,
-                        lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" }
-                    },
-                    axisTick: {
-                        show: true,
-                        inside: true,
-                        lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" }
-                    },
+                    axisTick: { show: false },
                     axisLabel: {
                         show: true,
                         fontWeight: 900,
                         fontFamily: "JetBrainsMono"
                     },
-                    axisLine: {
-                        show: false,
-                        lineStyle: {
-                            color: siteSettings.getSettings.darkMode ? "#ccc": "#111827",
-                            width: 1,
-                            type: "solid"
-                        }
-                    },
+                    axisLine: { show: false },
                     show: true,
-                    splitLine: { lineStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#111827" } },
+                    // Mission control: horizontal grey lines only (--line-2 #F1ECF0)
+                    splitLine: { lineStyle: { color: siteSettings.getSettings.darkMode ? "#2A2530" : "#F1ECF0" } },
                     minorSplitLine: { show: false }
                 },
-                series: props.data.metrics.map(element => {
+                series: props.data.metrics.map((element, seriesIdx) => {
                     const sortedData = _.sortBy(element.data, "xValue");
                     const totalPoints = sortedData.length;
                     const totalDuration = 3000; // total animation time (ms)
                     const perPointDelay = totalDuration / totalPoints;
+                    const seriesColor = colorPalette[seriesIdx % colorPalette.length];
 
                     return {
                         name: element.seriesLabel,
                         type: "line",
+                        smooth: true,
+                        showSymbol: true,
+                        symbol: "circle",
+                        symbolSize: 4,
+                        itemStyle: { color: seriesColor },
+                        lineStyle: { width: 2 },
+                        // Mission control: filled AUC at 10% opacity
+                        areaStyle: {
+                            color: seriesColor,
+                            opacity: 0.10
+                        },
                         // total animation duration for each point
                         animationDuration: perPointDelay,
                         // staggered start for each point

@@ -56,6 +56,11 @@ services:
     # image (its workflow is a CI smoke test; prod serves it from S3/CloudFront).
     image: ${DOCKER_REGISTRY}flip-api:${DOCKER_TAG}
     pull_policy: always
+    # Dev-on-pull: the GHCR image bakes uid 1000 (flip); run the pulled image as
+    # the HOST uid so it can write the host-owned bind mounts (src/, ~/.aws).
+    # Paired with the HOME/UV_* env below so it never writes the image-owned
+    # .venv. No effect under BUILD=true (the image is already host-uid).
+    user: "${UID}:${GID}"
     build:
       args:
         UID: ${UID}
@@ -83,6 +88,18 @@ services:
       - shared-net-2
     environment:
       - ENV=development
+      # Dev-on-pull (see `user:` above): import flip_api via PYTHONPATH and skip
+      # the runtime editable install (UV_NO_SYNC) so the host-uid process never
+      # writes the image-owned .venv; keep uv's cache + HOME writable. HOME
+      # matches the ~/.aws mount path below so boto3 still finds credentials.
+      - HOME=/home/${UNAME}
+      - UV_CACHE_DIR=/tmp/uv-cache
+      - UV_NO_SYNC=1
+      - PYTHONPATH=/app/src
+      # Under user-mapping the host uid has no /etc/passwd entry, so libpq's
+      # getpwuid fails and the entrypoint's `pg_isready` gate returns "no
+      # attempt". PGUSER lets it skip the user lookup (it doesn't authenticate).
+      - PGUSER=${POSTGRES_USER}
       # Disable the app-layer MFA gate for local dev so developers aren't
       # forced through TOTP enrolment on a burner authenticator app just
       # to click around. Stag/prod compose files don't pass this through;
@@ -114,7 +131,6 @@ services:
       - DB_PORT=${DB_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
       - TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
-      - TRUST_API_KEY_HASHES=${TRUST_API_KEY_HASHES}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY_HASH=${INTERNAL_SERVICE_KEY_HASH}
       - AES_KEY_BASE64=${AES_KEY_BASE64}
@@ -129,7 +145,24 @@ services:
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
       - ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
-      - TRUST_NAMES=${TRUST_NAMES}
+      - FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
+      # Hub-shared kit values — must be readable inside the container by
+      # flip_api/scripts/register_trust.py::_hub_shared_from_env() so that
+      # `make register-trusts` populates the per-trust kit file's managed
+      # block instead of leaving `<run-make-sync-trust-kit>` placeholders.
+      # Keep this list in lockstep with HUB_SHARED_ENV_KEYS in that script.
+      # (AES_KEY_BASE64, TRUST_API_KEY_HEADER, FL_BACKEND and
+      # UPLOADED_FEDERATED_DATA_BUCKET are passed above.)
+      - CENTRAL_HUB_API_URL=${CENTRAL_HUB_API_URL}
+      - FLOWER_KIT_DATE=${FLOWER_KIT_DATE}
+      - FLARE_KIT_DATE=${FLARE_KIT_DATE}
+      - DOCKER_TAG=${DOCKER_TAG}
+      - DOCKER_REGISTRY=${DOCKER_REGISTRY}
+      - DOCKER_FL_TAG=${DOCKER_FL_TAG}
+      - DOCKER_FL_REGISTRY=${DOCKER_FL_REGISTRY}
+      - DOCKER_FL_CLIENT_NAME=${DOCKER_FL_CLIENT_NAME}
+      - NLB_SUBDOMAIN=${NLB_SUBDOMAIN}
+      - FL_SERVER_PORT=${FL_SERVER_PORT}
     restart: unless-stopped
     container_name: flip-api
 

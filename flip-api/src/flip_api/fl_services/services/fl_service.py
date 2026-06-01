@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 
 from flip_api.config import get_settings
 from flip_api.db.database import engine
-from flip_api.db.models.main_models import FLJob
+from flip_api.db.models.main_models import FLJob, Trust
 from flip_api.domain.interfaces.fl import (
     DEFAULT_JOB_TYPE,
     IClientStatus,
@@ -139,7 +139,7 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        IServerStatus | None: The server status, or None if the FL API did not respond.
+        IServerStatus | None: The server status, or ``None`` when the FL API does not respond.
     """
     url = f"{endpoint}/check_server_status"
     logger.debug(f"Checking server status at '{url}'")
@@ -892,13 +892,15 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     logger.info(f"Abort job response ({target=}, {clients=}): {response}")
 
 
-def add_fl_job(model_id: UUID, clients: list[str], session: Session) -> None:
+def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:
     """
-    Insert a new FL job into the database.
+    Insert a new FL job into the database with its trust participants.
 
     Args:
         model_id (UUID): The ID of the model for which the FL job is being created.
-        clients (list[str]): A list of client names associated with the FL job.
+        trusts (list[Trust]): Trust rows participating in this job. Stored via the
+            `fl_job_trust` link table — the relationship gives `job.trusts` direct
+            access to full Trust ORM rows without a manual id-to-name lookup.
         session (Session): The SQLModel session to use for the database operation.
 
     Raises:
@@ -906,7 +908,7 @@ def add_fl_job(model_id: UUID, clients: list[str], session: Session) -> None:
     """
     logger.debug(f"Adding FL job for model ID: {model_id}")
 
-    job = FLJob(model_id=model_id, clients=clients)
+    job = FLJob(model_id=model_id, trusts=trusts)
 
     try:
         session.add(job)

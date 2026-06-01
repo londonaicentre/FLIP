@@ -21,27 +21,10 @@
         @dragenter.prevent="dragover = false"
         @dragleave.prevent="dragover = false"
     >
-        <AiAlert
-            variant="info"
-            class="w-full"
-            :rounded="false"
-            :bordered="false"
-        >
-            Your current job type is: <strong><code>{{ jobType }}</code></strong>.
-            If you want to change it, add it as a <code>job_type</code> variable in your <code>config.json</code> file.
-            <br>
-            Required files:
-            <template v-for="(f, i) in requiredFiles" :key="f">
-                <code>{{ f }}</code><template v-if="i < requiredFiles.length - 1">
-                    ,
-                </template>
-            </template>
-        </AiAlert>
-
         <div
-            class="flex items-center justify-center px-4 py-4 mx-auto grow h-[150px]"
+            class="flex items-center justify-center min-h-24 gap-3 px-4 py-6 mx-auto grow"
         >
-            <icon-mdi-cloud-upload-outline class="hidden w-16 h-16 text-gray-200 dark:text-gray-500 sm:block" />
+            <icon-mdi-cloud-upload-outline class="hidden w-8 h-8 text-gray-300 dark:text-gray-500 sm:block" />
             <input
                 ref="fileUpload"
                 type="file"
@@ -50,39 +33,29 @@
                 hidden
                 @change.capture="emitChoosenFiles"
             >
-            <p class="m-0 ml-4 text-sm text-center text-black dark:text-gray-400">
-                Drag & drop files or <br>
+            <p class="m-0 text-sm text-center text-black dark:text-gray-400">
+                Drag &amp; drop or
                 <a
                     class="font-semibold underline cursor-pointer hover:text-primary-500 dark:hover:text-primary-200"
                     data-test="upload-file-btn"
                     @click="openFilesNativeDialog()"
                 >browse</a>
-                to upload
+                to upload files
             </p>
         </div>
     </div>
 </template>
 
 <script lang="ts" setup>
-import { computed, ref } from "vue";
+import { ref } from "vue";
 
-import AiAlert from "@/components/AiAlert/AiAlert.vue";
-import { JobTypes } from "@/services/model-service";
-import { useAuthStore } from "@/store/auth";
-
-interface IFileUploadProps {
-    requiredFiles: string[];
-    jobType: JobTypes;
-}
-
-defineProps<IFileUploadProps>();
+import { usePermissions } from "@/composables/usePermissions";
 
 const emit = defineEmits<{
     (e: "newFiles", files: FileList): void;
 }>();
 
-const authStore = useAuthStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
+const { isObserver } = usePermissions();
 
 const dragover = ref(false);
 const fileUpload = ref<HTMLInputElement | null>(null);

@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import mimetypes
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -106,14 +107,47 @@ def resolve_model_name(base_name: str, abort_midway: bool) -> str:
     return f"{base_name}{ABORT_MIDWAY_NAME_SUFFIX}"
 
 
+def _maybe_refresh(headers: dict[str, str]) -> bool:
+    """Refresh the bearer token in-place via Cognito REFRESH_TOKEN_AUTH.
+
+    Used when the smoke runs token-driven against a remote hub (FLIP_E2E_TOKEN):
+    a long run can outlast the access token's TTL, so a 401 triggers a refresh.
+    Returns True if the token was refreshed.
+    """
+    refresh = os.environ.get("FLIP_E2E_REFRESH_TOKEN")
+    client_id = os.environ.get("AWS_COGNITO_APP_CLIENT_ID")
+    if not refresh or not client_id:
+        return False
+    import boto3
+
+    try:
+        resp = boto3.client("cognito-idp", region_name=os.environ.get("AWS_REGION", "eu-west-2")).initiate_auth(
+            ClientId=client_id,
+            AuthFlow="REFRESH_TOKEN_AUTH",
+            AuthParameters={"REFRESH_TOKEN": refresh},
+        )
+        headers["authorization"] = "Bearer " + resp["AuthenticationResult"]["AccessToken"]
+        _log("  🔄 refreshed access token")
+        return True
+    except Exception as exc:  # noqa: BLE001 - refresh is best-effort
+        _log(f"  ⚠️  token refresh failed: {exc}")
+        return False
+
+
 def _post(
     client: requests.Session, path: str, json: dict[str, Any], headers: dict[str, str], timeout: int = 30
 ) -> requests.Response:
-    return client.post(f"{constants.BASE_URL}{path}", json=json, headers=headers, timeout=timeout)
+    resp = client.post(f"{constants.BASE_URL}{path}", json=json, headers=headers, timeout=timeout)
+    if resp.status_code == 401 and _maybe_refresh(headers):
+        resp = client.post(f"{constants.BASE_URL}{path}", json=json, headers=headers, timeout=timeout)
+    return resp
 
 
 def _get(client: requests.Session, path: str, headers: dict[str, str], timeout: int = 30) -> requests.Response:
-    return client.get(f"{constants.BASE_URL}{path}", headers=headers, timeout=timeout)
+    resp = client.get(f"{constants.BASE_URL}{path}", headers=headers, timeout=timeout)
+    if resp.status_code == 401 and _maybe_refresh(headers):
+        resp = client.get(f"{constants.BASE_URL}{path}", headers=headers, timeout=timeout)
+    return resp
 
 
 def _try_request(fn: Any, *args: Any, **kwargs: Any) -> requests.Response | None:
@@ -137,6 +171,13 @@ def _ensure_ok(response: requests.Response, what: str) -> requests.Response:
 
 
 def authenticate() -> dict[str, str]:
+    # FLIP_E2E_TOKEN lets the smoke run against a remote hub (stag/prod) with a
+    # pre-obtained bearer token, bypassing the Cognito USER_PASSWORD_AUTH flow
+    # (which is unavailable when the admin has MFA). _maybe_refresh keeps it live.
+    token = os.environ.get("FLIP_E2E_TOKEN")
+    if token:
+        _log("🔐 Using FLIP_E2E_TOKEN (pre-supplied bearer token)")
+        return {"scheme": "Bearer", "authorization": f"Bearer {token}"}
     _log("🔐 Authenticating as admin via Cognito…")
     headers = admin_authentication()
     _log("  ✅ Got auth token")
@@ -187,33 +228,37 @@ def create_project_with_query(
     return project_id, query_id
 
 
-def wait_for_trusts_queried(
+def wait_for_trusts_responded(
     client: requests.Session, headers: dict[str, str], project_id: str, timeout_s: int = 120
 ) -> int:
-    """Block until the project's query has been answered by ≥1 trust.
+    """Block until every queried trust has posted a cohort result.
 
-    `/projects/{id}/stage` rejects a project whose query.trustsQueried is 0,
-    and the trust query is dispatched async by `/cohort/submit/`. Without this
-    poll the smoke races the submission and fails at staging.
+    `/cohort/submit/` dispatches the query asynchronously: the hub records the
+    dispatched trusts in `query.queriedTrustIds` immediately, but each trust
+    only posts its result a few poll-cycles later (it polls the hub, runs the
+    OMOP query, then POSTs `/cohort/results`). `/projects/{id}/stage` rejects a
+    project whose staged trusts are not in `query.respondedTrustIds`, so the
+    smoke must wait for the results to land — not merely for the dispatch.
     """
-    _log(f"⏳ Waiting for trusts to answer the cohort query (timeout {timeout_s}s)")
+    _log(f"⏳ Waiting for trusts to return cohort results (timeout {timeout_s}s)")
     deadline = time.monotonic() + timeout_s
-    last_count = -1
+    last = (-1, -1)
     while time.monotonic() < deadline:
         resp = _try_request(_get, client, f"/projects/{project_id}", headers)
         if resp is None or resp.status_code >= 300:
             time.sleep(5)
             continue
         query = resp.json().get("query") or {}
-        count = int(query.get("trustsQueried") or 0)
-        if count != last_count:
-            _log(f"  📊 trustsQueried={count}")
-            last_count = count
-        if count > 0:
-            return count
+        queried = len(query.get("queriedTrustIds") or [])
+        responded = len(query.get("respondedTrustIds") or [])
+        if (queried, responded) != last:
+            _log(f"  📊 queriedTrustIds={queried}  respondedTrustIds={responded}")
+            last = (queried, responded)
+        if queried > 0 and responded >= queried:
+            return responded
         time.sleep(5)
     raise SmokeFailure(
-        f"No trust answered the cohort query within {timeout_s}s. "
+        f"Not all queried trusts returned cohort results within {timeout_s}s. "
         "Check trust-api / data-access-api logs for query failures."
     )
 
@@ -225,7 +270,7 @@ def stage_and_approve(client: requests.Session, headers: dict[str, str], project
         raise SmokeFailure("No trusts registered with the hub — start the trust services and seed first")
     _log(f"  ✅ found {len(trusts)} trust(s): {[t['name'] for t in trusts]}")
 
-    wait_for_trusts_queried(client, headers, project_id)
+    wait_for_trusts_responded(client, headers, project_id)
 
     trust_ids = [t["id"] for t in trusts]
     _log("📋 Staging project")
@@ -242,21 +287,31 @@ def stage_and_approve(client: requests.Session, headers: dict[str, str], project
     return trusts
 
 
-def _import_progress(status: dict[str, Any]) -> tuple[int, int]:
-    """Return (successful, total) counts for one trust's import status.
+def _import_progress(status: dict[str, Any]) -> tuple[int, int, int]:
+    """Return (successful, in_flight, total) counts for one trust's import status.
+
+    ``in_flight`` is processing + queued — work that may still complete.
+    ``total`` includes the terminal ``failed`` + ``queueFailed`` counts so the
+    caller can detect when failures alone push the max achievable ratio below
+    threshold (otherwise wait_for_image_pull sits idle for the full timeout
+    on any run with unrecoverable scan failures).
 
     A trust that's still waiting for `projectCreationCompleted` reports no
-    importStatus yet — treat that as 0/0 so the caller polls again.
+    importStatus yet — treat that as 0/0/0 so the caller polls again.
     """
     import_status = status.get("importStatus")
     if not import_status:
-        return 0, 0
+        return 0, 0, 0
     successful = int(import_status.get("successful", 0))
     failed = int(import_status.get("failed", 0))
     processing = int(import_status.get("processing", 0))
     queued = int(import_status.get("queued", 0))
     queue_failed = int(import_status.get("queueFailed", 0))
-    return successful, successful + failed + processing + queued + queue_failed
+    return (
+        successful,
+        processing + queued,
+        successful + failed + processing + queued + queue_failed,
+    )
 
 
 def wait_for_image_pull(
@@ -288,10 +343,17 @@ def wait_for_image_pull(
 
         per_trust = []
         all_ready = True
+        unreachable: tuple[str, float] | None = None
         for s in statuses:
-            successful, total = _import_progress(s)
+            successful, in_flight, total = _import_progress(s)
             ratio = (successful / total) if total else 0.0
             per_trust.append(f"{s['trustName']}: {successful}/{total} ({ratio:.0%})")
+            # Failed + queueFailed scans never recover, so once
+            # (successful + in_flight) / total dips below threshold the run
+            # cannot reach the bar — fail fast instead of waiting out the
+            # full timeout.
+            if total > 0 and (successful + in_flight) / total < threshold:
+                unreachable = (s["trustName"], (successful + in_flight) / total)
             if total == 0 or ratio < threshold:
                 all_ready = False
 
@@ -299,6 +361,13 @@ def wait_for_image_pull(
         if summary != last_summary:
             _log(f"  📊 {summary}")
             last_summary = summary
+        if unreachable:
+            trust_name, max_ratio = unreachable
+            raise SmokeFailure(
+                f"{trust_name}: failed scans push max reachable ratio to "
+                f"{max_ratio:.0%}, below threshold {int(threshold * 100)}%. "
+                "Aborting — image pull will not recover."
+            )
         if all_ready:
             _log("  ✅ image pull threshold reached")
             return
@@ -388,10 +457,13 @@ def upload_files(
 
 
 def initiate_training(
-    client: requests.Session, headers: dict[str, str], model_id: str, trust_names: list[str]
+    client: requests.Session, headers: dict[str, str], model_id: str, trusts: list[dict[str, Any]]
 ) -> None:
-    _log(f"🚀 Initiating training across trusts: {trust_names}")
-    resp = _post(client, f"/fl/initiate/{model_id}", {"trusts": trust_names}, headers)
+    trust_ids = [t["id"] for t in trusts]
+    # Log the human-friendly trust codes (fall back to name, then id) but send the stable ids.
+    labels = [t.get("code") or t.get("name") or t["id"] for t in trusts]
+    _log(f"🚀 Initiating training across trusts: {labels}")
+    resp = _post(client, f"/fl/initiate/{model_id}", {"trust_ids": trust_ids}, headers)
     if resp.status_code != 204:
         raise SmokeFailure(f"initiate training failed: HTTP {resp.status_code} {resp.text}")
     _log("  ✅ training initiated (model status now INITIATED)")
@@ -549,6 +621,27 @@ def download_results(
     return paths
 
 
+def run_data_enrichment(cwd: Path, cmd: str, project_id: str) -> None:
+    """Run an optional data-enrichment step between image pull and training initiation.
+
+    Generic hook -- the shell command runs in ``cwd`` with ``FLIP_PROJECT_ID``
+    exported, so any project-aware enrichment (e.g. the spleen segmentation
+    tutorial's upload-labels-to-XNAT step) can resolve the per-trust XNAT id from
+    the central-hub project id. Non-zero exit raises ``SmokeFailure``.
+
+    ``cwd`` existence and the cwd/cmd pairing are validated upfront in
+    :func:`parse_args` so misuse fails before the multi-minute image-pull wait.
+    """
+    _log(f"🧪 Data enrichment: running `{cmd}` in {cwd} (FLIP_PROJECT_ID={project_id})")
+    env = {**os.environ, "FLIP_PROJECT_ID": project_id}
+    result = subprocess.run(cmd, shell=True, cwd=str(cwd), env=env)
+    if result.returncode != 0:
+        raise SmokeFailure(
+            f"Data-enrichment command failed (exit {result.returncode}): {cmd}"
+        )
+    _log("  ✅ data enrichment complete")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
@@ -616,7 +709,31 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Directory to download FL results into (default: a fresh tempdir, kept after exit).",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--data-enrichment-cwd",
+        type=Path,
+        default=None,
+        help="With --data-enrichment-cmd, run that shell command in this directory "
+        "between image pull and training initiation, with FLIP_PROJECT_ID exported. "
+        "Generic hook for project-specific steps (e.g. the spleen segmentation "
+        "tutorial's upload-labels-to-XNAT step).",
+    )
+    parser.add_argument(
+        "--data-enrichment-cmd",
+        default=None,
+        help="Shell command for the data-enrichment step (paired with --data-enrichment-cwd).",
+    )
+    args = parser.parse_args(argv)
+
+    # Validate the data-enrichment pair upfront so a typo doesn't surface only
+    # after the 5–15 min image-pull wait. Both flags are required together;
+    # the cwd must exist.
+    if bool(args.data_enrichment_cmd) != bool(args.data_enrichment_cwd):
+        parser.error("--data-enrichment-cmd and --data-enrichment-cwd must be used together")
+    if args.data_enrichment_cwd is not None and not args.data_enrichment_cwd.exists():
+        parser.error(f"--data-enrichment-cwd does not exist: {args.data_enrichment_cwd}")
+
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -631,6 +748,22 @@ def main(argv: list[str] | None = None) -> int:
     headers = authenticate()
     client = requests.Session()
     client.headers.update({"Content-Type": "application/json"})
+
+    # Against a TLS-terminating proxy (CloudFront → flip-api), FastAPI's
+    # trailing-slash redirects come back with an http:// Location because uvicorn
+    # sees the internal hop as plain HTTP. Following that http:// URL hits a
+    # CloudFront 403. Rewrite redirect Locations to https:// so the smoke's
+    # trailing-slash paths resolve. Only attach against an https BASE_URL — on a
+    # local http stack the redirect Location is the real target and rewriting it
+    # to https triggers an SSL handshake against a plain-http port.
+    if constants.BASE_URL.startswith("https://"):
+
+        def _force_https_redirect(response: requests.Response, *_: Any, **__: Any) -> None:
+            loc = response.headers.get("location", "")
+            if loc.startswith("http://"):
+                response.headers["location"] = "https://" + loc[len("http://") :]
+
+        client.hooks["response"].append(_force_https_redirect)
 
     try:
         if args.project_id:
@@ -658,7 +791,9 @@ def main(argv: list[str] | None = None) -> int:
         wait_for_image_pull(
             client, headers, project_id, args.image_pull_threshold, args.image_pull_timeout
         )
-        initiate_training(client, headers, model_id, [t["name"] for t in trusts])
+        if args.data_enrichment_cmd:
+            run_data_enrichment(args.data_enrichment_cwd, args.data_enrichment_cmd, project_id)
+        initiate_training(client, headers, model_id, trusts)
         wait_for_training_started(client, headers, model_id, args.training_start_timeout)
         if args.abort_midway:
             # #490: exercise the FL "stop training" path instead of running to completion.

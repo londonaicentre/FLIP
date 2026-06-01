@@ -29,7 +29,10 @@ describe("Ai MainNavigation", () => {
                     stubActions: false
                 })]
             },
-            props: { currentPage: "/project" }
+            props: {
+                currentPage: "/project",
+                isDark: false
+            }
         });
 
         expect(comp.exists()).toBe(true);
