@@ -14,26 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { buildModelSteps,
-    clearJobTypesCache,
-    createModel,
-    DEFAULT_JOB_TYPE,
-    deleteModel,
-    editModel,
-    fetchJobTypes,
-    getDownloadUrlForResults,
-    getLogsForModel,
-    getModel,
-    getModelFileStatus,
-    getModelMetrics,
-    getModels,
-    getPreSignedUrl,
-    getRequiredFilesForJobType,
-    initialiseTraining,
-    isValidJobType,
-    type ModelStatus,
-    stopTraining,
-    uploadModelFile } from "@/services/model-service";
+import { buildModelSteps, clearJobTypesCache, createModel, DEFAULT_JOB_TYPE, deleteModel, editModel, fetchJobTypes, getDownloadUrlForResults, getLogsForModel, getModel, getModelFileStatus, getModelMetrics, getModels, getPreSignedUrl, getRequiredFilesForJobType, getStatusEnumValue, initialiseTraining, isValidJobType, type ModelStatus, ModelStatusEnum, stopTraining, uploadModelFile } from "@/services/model-service";
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -491,6 +472,25 @@ describe("model-service", () => {
             // receiving a newer status degrades gracefully rather than crashing.
             expect(() => buildModelSteps("NONSENSE" as ModelStatus)).not.toThrow();
             expect(stepByName("NONSENSE" as ModelStatus, "Training").error).toBe(true);
+        });
+    });
+
+    describe("getStatusEnumValue", () => {
+        it("maps a known status name to its ordinal", () => {
+            expect(getStatusEnumValue("RESULTS_UPLOAD_FAILED")).toBe(ModelStatusEnum.RESULTS_UPLOAD_FAILED);
+        });
+
+        it("falls back to ERROR for undefined or unrecognised status", () => {
+            expect(getStatusEnumValue(undefined)).toBe(ModelStatusEnum.ERROR);
+            expect(getStatusEnumValue("NONSENSE")).toBe(ModelStatusEnum.ERROR);
+        });
+
+        it("falls back to ERROR for a numeric-string key (numeric-enum reverse mapping)", () => {
+            // ModelStatusEnum["0"] reverse-maps to the member NAME ("PENDING"), a string —
+            // not an ordinal. The guard must reject it and still return a number.
+            const result = getStatusEnumValue("0");
+            expect(typeof result).toBe("number");
+            expect(result).toBe(ModelStatusEnum.ERROR);
         });
     });
 });

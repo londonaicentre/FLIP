@@ -162,7 +162,13 @@ export function isModelStatusError(status: ModelStatus | undefined): boolean {
  */
 export function getStatusEnumValue(status: string | undefined): number {
     if (status && status in ModelStatusEnum) {
-        return ModelStatusEnum[status as keyof typeof ModelStatusEnum];
+        const value = ModelStatusEnum[status as keyof typeof ModelStatusEnum];
+        // Numeric enums carry a reverse mapping, so a numeric-string key like "0"
+        // resolves to the member NAME (a string), not an ordinal. Only return real
+        // numeric ordinals; anything else degrades to ERROR below.
+        if (typeof value === "number") {
+            return value;
+        }
     }
 
     return ModelStatusEnum.ERROR;
