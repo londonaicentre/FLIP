@@ -13,7 +13,7 @@
 
 
 import { createTestingPinia } from "@pinia/testing";
-import { mount } from "@vue/test-utils";
+import { mount, VueWrapper } from "@vue/test-utils";
 import { reactive, ref } from "vue";
 
 import MainLayout from "../MainLayout.vue";
@@ -38,11 +38,17 @@ vi.mock("vue-router", async (importOriginal) => {
 });
 
 vi.mock("swrv", () => ({
-    default: () => ({
-        data: ref(null),
-        mutate: vi.fn(),
-        error: ref(null)
-    })
+    // Invoke the key function like real swrv does, so the page's key builders
+    // (e.g. the `/users/${email}` lookup) are exercised rather than skipped.
+    default: (keyFn?: unknown) => {
+        if (typeof keyFn === "function") keyFn();
+
+        return {
+            data: ref(null),
+            mutate: vi.fn(),
+            error: ref(null)
+        };
+    }
 }));
 
 vi.mock("@vueuse/core", () => ({
@@ -167,30 +173,30 @@ describe("MainLayout", () => {
     describe("userRole", () => {
         it("returns Admin when user has CanAccessAdminPanel permission", () => {
             const wrapper = mountMainLayout({ permissions: ["CanAccessAdminPanel"] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']");
+            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
 
-            expect(dropdown.props("role")).toBe("Admin");
+            expect((dropdown.props() as Record<string, unknown>).role).toBe("Admin");
         });
 
-        it("returns Researcher when user has CanManageProjects but not CanAccessAdminPanel", () => {
-            const wrapper = mountMainLayout({ permissions: ["CanManageProjects"] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']");
+        it("returns Researcher when user has CanCreateProjects but not CanAccessAdminPanel", () => {
+            const wrapper = mountMainLayout({ permissions: ["CanCreateProjects"] });
+            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
 
-            expect(dropdown.props("role")).toBe("Researcher");
+            expect((dropdown.props() as Record<string, unknown>).role).toBe("Researcher");
         });
 
         it("returns Observer when user has no management permissions", () => {
             const wrapper = mountMainLayout({ permissions: [] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']");
+            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
 
-            expect(dropdown.props("role")).toBe("Observer");
+            expect((dropdown.props() as Record<string, unknown>).role).toBe("Observer");
         });
 
         it("prioritises Admin over Researcher when user has both permissions", () => {
             const wrapper = mountMainLayout({ permissions: ["CanAccessAdminPanel", "CanManageProjects"] });
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']");
+            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
 
-            expect(dropdown.props("role")).toBe("Admin");
+            expect((dropdown.props() as Record<string, unknown>).role).toBe("Admin");
         });
     });
 
@@ -251,7 +257,7 @@ describe("MainLayout", () => {
     describe("signOut", () => {
         it("calls authStore.signOut when sign-out is emitted", async () => {
             const wrapper = mountMainLayout();
-            const dropdown = wrapper.findComponent("[data-test='user-dropdown']");
+            const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
 
             await dropdown.vm.$emit("sign-out");
             await wrapper.vm.$nextTick();
@@ -260,6 +266,54 @@ describe("MainLayout", () => {
             const authStore = useAuthStore();
 
             expect(authStore.signOut).toHaveBeenCalled();
+        });
+    });
+
+    describe("project fetch reactions", () => {
+        it("setProject + hasProject when data arrives (whenever data → callback)", async () => {
+            // `whenever` is stubbed to vi.fn() so callbacks don't auto-fire — pull
+            // the captured callback out of the mock's first call (data arm) and
+            // run it manually, then assert the store side-effect.
+            mountMainLayout({
+                routePath: "/project/abc",
+                routeParams: { projectId: "abc" }
+            });
+
+            const { whenever } = await import("@vueuse/core");
+            const dataCallback = (whenever as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1];
+            dataCallback();
+
+            const { useProjectStore } = await import("@/store/project");
+            const projectStore = useProjectStore();
+            // setProject is a Pinia action; createTestingPinia spies on it.
+            expect(projectStore.setProject).toHaveBeenCalled();
+        });
+
+        it("routes to / and shows an error snackbar when getProject errors (whenever error → callback)", async () => {
+            mountMainLayout({
+                routePath: "/project/abc",
+                routeParams: { projectId: "abc" }
+            });
+
+            const { whenever } = await import("@vueuse/core");
+            const errorCallback = (whenever as unknown as ReturnType<typeof vi.fn>).mock.calls[1][1];
+            errorCallback();
+
+            const { Snackbar } = await import("@/utils/snackbar");
+            expect(Snackbar.error).toHaveBeenCalledWith(
+                expect.objectContaining({ title: "Not found" })
+            );
+            expect(mockRouterPush).toHaveBeenCalledWith({ path: "/" });
+        });
+
+        it("clears the project store when the route leaves /project/", async () => {
+            // Mount on a non-project page → the immediate watch falls into the
+            // `else` branch and clears the store.
+            mountMainLayout({ routePath: "/projects" });
+
+            const { useProjectStore } = await import("@/store/project");
+            const projectStore = useProjectStore();
+            expect(projectStore.clearProject).toHaveBeenCalled();
         });
     });
 });

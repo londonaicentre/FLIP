@@ -84,9 +84,13 @@ For example:
 | `make restart-no-trust` | Stop and start all services except the trust services related services |
 | `make clean` | Remove all stopped containers, networks, and images |
 | `make ci` | Run the CI pipeline locally using `act` |
-| `make up-local-trust` | Run a local (on-premises) trust (set `PROD=true` or `PROD=stag` for environment) |
+| `make -C trust up-trust KIT=<CODE> PROD=<env>` | Run a trust on the local host pointing at a remote hub (kit file `trust/.env.<CODE>.<env>`; the on-prem trust kit is `trust/.env.<CODE>.production`) |
+| `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."` | Scaffold a new trust kit file `trust/.env.<CODE>.<env>` from the base template |
+| `make register-trusts` | Register the shipped dev roster (`trust/.env.*.development.example`, currently GSTT + KCH) on the running hub and write per-trust kit files (run automatically by `make up`) |
+| `make register-trust KIT=<CODE>` | Register one trust on the running hub and fill its kit file (creds + hub-shared block) |
 | `make unit_test` | Run unit tests across all services |
-| `make tests` | Run flip-ui unit tests and the full flip-api test suite (lint + mypy + pytest) |
+| `make tests` | Run flip-ui unit and e2e tests followed by the full flip-api test suite (lint + mypy + pytest) |
+| `make e2e_smoke` | Drive a full project lifecycle (create → upload → train → download) against an already-running stack (not run in CI) |
 | `make lock` | Regenerate every service's `uv.lock` from its `pyproject.toml` |
 | `make debug SERVICE=<name>` | Restart one service in debug mode (waits for a debugger on port 5678). Services: `flip-api`, `fl-api-net-1`, `trust-api`, `imaging-api`, `data-access-api` |
 | `make debug-off SERVICE=<name>` | Take a single service back out of debug mode |
@@ -142,23 +146,23 @@ make down        # Stop XNAT services
 make xnat-shell  # Get a shell in the XNAT container
 ```
 
-### Trust API Key Setup
+### Trust Registration
 
-Before starting the platform, generate per-trust API keys, the internal service key, and the per-trust internal service keys, and write them into `.env.development` using:
+The internal service key (for fl-server-to-hub authentication) must be generated before starting the platform:
 
 ```bash
-make generate-trust-api-keys
 make generate-internal-service-key
-make generate-trust-internal-service-keys
 ```
 
-`generate-trust-api-keys` generates a unique key for each trust found in `.env.development`, and writes both `TRUST_API_KEYS` and `TRUST_API_KEY_HASHES` (JSON dicts) directly into the env file. `generate-internal-service-key` writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` (plain strings) for fl-server-to-hub authentication. `make up` invokes `generate-internal-service-key` automatically. `generate-trust-internal-service-keys` writes `TRUST_INTERNAL_SERVICE_KEYS` (JSON dict) used by trust-api / imaging-api / data-access-api / fl-client to authenticate to one another inside each trust — distinct from the hub's `INTERNAL_SERVICE_KEY` and never sent to the hub. See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the threat model.
+This writes `INTERNAL_SERVICE_KEY` and `INTERNAL_SERVICE_KEY_HASH` (plain strings) into `.env.development`. `make up` invokes `generate-internal-service-key` automatically.
 
-To generate a key for a single trust (e.g. when adding a new trust):
+Trusts are registered on the **running hub** rather than configured via env-file key dicts:
 
 ```bash
-make -C flip-api generate-trust-key TRUST_NAME=Trust_1
+make register-trusts
 ```
+
+`register-trusts` registers the shipped dev roster — every `trust/.env.*.development.example` kit (currently GSTT and KCH) — on the hub: for each, it inserts a `trust` row with its `api_key_hash`, claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.development` (with `TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`, `FL_KIT_SLOT`, `FL_KIT_SLOT_NUMBER`, `EXPECTED_TRUST_ID`). The kit files ARE the roster — trusts are not enumerated in the hub env file. To add another, run `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..."` then `make register-trust KIT=<CODE>`. `make up` runs `register-trusts` automatically once the hub is up. See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the trust-internal auth threat model.
 
 ### Basic Usage
 
@@ -223,7 +227,7 @@ If you see errors like "fed_client.json does not exist" or "missing startup fold
 For production deployments on AWS, see the [AWS Deployment Guide](deploy/README.md). This covers provisioning
 infrastructure with OpenTofu (Terraform), configuring AWS services, and deploying the platform at scale.
 
-For hybrid on-premises trust deployments, see the [Local Trust Deployment Guide](deploy/providers/local/README.md).
+For hybrid on-premises trust deployments, see the [On-Prem Trust Deployment Guide](deploy/providers/local/README.md).
 
 ## Project Structure
 

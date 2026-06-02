@@ -45,7 +45,7 @@ const stubs = {
 };
 
 describe("Create Project Modal", () => {
-    let component: any;
+    let component: ReturnType<typeof mount>;
 
     beforeEach(() => {
         mockCreateProject.mockClear();
@@ -107,6 +107,7 @@ describe("Create Project Modal", () => {
                         template: "<form @submit.prevent=\"$emit('submit', $attrs['initial-values'])\"><slot /></form>",
                         mounted() {
                             // Override initial-values to simulate unchecked toggle
+                            // eslint-disable-next-line @typescript-eslint/no-explicit-any
                             (this as any).$attrs["initial-values"].dicom_to_nifti = "";
                         }
                     }

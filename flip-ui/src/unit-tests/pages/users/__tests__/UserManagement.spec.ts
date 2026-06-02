@@ -15,8 +15,8 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
-import { ref } from "vue";
 import { beforeEach, describe, expect, it, test, vi } from "vitest";
+import { ref } from "vue";
 
 import UserManagement from "@/pages/admin/users.vue";
 
@@ -33,8 +33,15 @@ vi.mock("swrv", () => {
                 .then((d) => { data.value = d; })
                 .catch((e) => { error.value = e; });
         }
-        return { data, error, mutate: vi.fn(), isValidating: ref(false) };
+
+        return {
+            data,
+            error,
+            mutate: vi.fn(),
+            isValidating: ref(false)
+        };
     };
+
     return { default: useSWRV };
 });
 
@@ -45,18 +52,18 @@ const mockResetUserMfa = vi.fn();
 const mockGetUsers = vi.fn();
 const mockGetRoles = vi.fn();
 const mockUpdateUserDisabledState = vi.fn();
+const mockUpdateUserProfile = vi.fn();
 const mockUpdateUserRoles = vi.fn();
 
 vi.mock("@/services/user-service", () => ({
     resetUserMfa: (...args: unknown[]) => mockResetUserMfa(...args),
     getUsers: (...args: unknown[]) => mockGetUsers(...args),
     updateUserDisabledState: (...args: unknown[]) => mockUpdateUserDisabledState(...args),
+    updateUserProfile: (...args: unknown[]) => mockUpdateUserProfile(...args),
     updateUserRoles: (...args: unknown[]) => mockUpdateUserRoles(...args)
 }));
 
-vi.mock("@/services/role-service", () => ({
-    getRoles: (...args: unknown[]) => mockGetRoles(...args)
-}));
+vi.mock("@/services/role-service", () => ({ getRoles: (...args: unknown[]) => mockGetRoles(...args) }));
 
 const mockRouteNotAllowed = vi.fn();
 const mockViewProjects = vi.fn();
@@ -84,14 +91,18 @@ vi.mock("@/utils/snackbar", () => ({
 // Authorised by default — tests that need the 403 branch override with
 // mockResolvedValueOnce(false).
 const mockCanAccessRoute = vi.fn().mockResolvedValue(true);
-vi.mock("@/utils/route-validator", () => ({
-    canAccessRoute: (...args: unknown[]) => mockCanAccessRoute(...args)
-}));
+vi.mock("@/utils/route-validator", () => ({ canAccessRoute: (...args: unknown[]) => mockCanAccessRoute(...args) }));
 
 const SAMPLE_USER = {
     id: "user-1",
     email: "user@example.com",
-    roles: [{ id: "role-1", rolename: "admin", roledescription: "Administrator" }],
+    name: "User Example",
+    organisation: "Example Org",
+    roles: [{
+        id: "role-1",
+        rolename: "admin",
+        roledescription: "Administrator"
+    }],
     isDisabled: false
 };
 
@@ -122,11 +133,6 @@ function mountUserManagement(): VueWrapper {
                 PopoverButton: { template: "<div><slot /></div>" },
                 PopoverGroup: { template: "<div><slot /></div>" },
                 PopoverPanel: { template: "<div><slot /></div>" },
-                VTable: {
-                    template:
-                        "<table><slot name=\"head\" /><slot name=\"body\" :rows=\"data ?? []\" /></table>",
-                    props: ["data"]
-                },
                 AiButton: {
                     // Inherit attrs (including data-test) so we can find
                     // the specific action buttons by data-test selector.
@@ -145,6 +151,7 @@ describe("User Management", () => {
         mockGetUsers.mockReset();
         mockGetRoles.mockReset();
         mockUpdateUserDisabledState.mockReset();
+        mockUpdateUserProfile.mockReset();
         mockUpdateUserRoles.mockReset();
         mockRouteNotAllowed.mockReset();
         mockViewProjects.mockReset();
@@ -161,8 +168,16 @@ describe("User Management", () => {
         });
         mockGetRoles.mockResolvedValue({
             roles: [
-                { id: "role-1", rolename: "admin", roledescription: "Administrator" },
-                { id: "role-2", rolename: "viewer", roledescription: "View-only" }
+                {
+                    id: "role-1",
+                    rolename: "admin",
+                    roledescription: "Administrator"
+                },
+                {
+                    id: "role-2",
+                    rolename: "viewer",
+                    roledescription: "View-only"
+                }
             ]
         });
     });
@@ -204,6 +219,7 @@ describe("User Management", () => {
             // Select the sample user so the action panel renders.
             await wrapper.find("[data-test='user']").trigger("click");
             await flushPromises();
+
             return wrapper;
         }
 
@@ -275,22 +291,25 @@ describe("User Management", () => {
     });
 
     describe("saveUser", () => {
-        // setSelectedUser in users.vue stores user.roles by reference, so
-        // clicking add-viewer mutates the underlying mock. Hand each test
-        // its own user so role mutations don't leak across tests.
+        // Hand each test its own user so role mutations don't leak across tests.
         function freshUser() {
             return {
                 id: "user-1",
                 email: "user@example.com",
-                roles: [{ id: "role-1", rolename: "admin", roledescription: "Administrator" }],
+                name: "User Example",
+                organisation: "Example Org",
+                roles: [{
+                    id: "role-1",
+                    rolename: "admin",
+                    roledescription: "Administrator"
+                }],
                 isDisabled: false
             };
         }
 
-        // The "Available roles" panel renders from a separate useSWRV
-        // /roles call; needs its own flush after the user click before
-        // the add-viewer button exists.
-        async function mountAndAddViewerRole(): Promise<VueWrapper> {
+        // The role selector renders from a separate useSWRV /roles call;
+        // needs its own flush after the user click before the radio exists.
+        async function mountAndSelectViewerRole(): Promise<VueWrapper> {
             mockGetUsers.mockResolvedValue({
                 data: [freshUser()],
                 page: 1,
@@ -302,7 +321,8 @@ describe("User Management", () => {
             await wrapper.find("[data-test='user']").trigger("click");
             await flushPromises();
             await flushPromises();
-            await wrapper.find("[data-test='add-viewer-btn']").trigger("click");
+            await wrapper.find("[data-test='select-viewer-role'] input").setValue();
+
             return wrapper;
         }
 
@@ -310,21 +330,23 @@ describe("User Management", () => {
         // underlying DOM element, so read the prop off the component
         // directly to verify the dirty-flag → disabled binding.
         function saveButtonDisabled(wrapper: VueWrapper): boolean {
-            return wrapper.findComponent("[data-test='save-user-btn']").props("disabled") as boolean;
+            const btn = wrapper.findComponent("[data-test='save-user-btn']") as VueWrapper;
+
+            return (btn.props() as Record<string, unknown>).disabled as boolean;
         }
 
         test("calls updateUserRoles, clears dirty, and shows a success snackbar on success", async () => {
             mockUpdateUserRoles.mockResolvedValueOnce([]);
 
-            const wrapper = await mountAndAddViewerRole();
+            const wrapper = await mountAndSelectViewerRole();
             expect(saveButtonDisabled(wrapper)).toBe(false);
 
             await wrapper.find("[data-test='save-user-btn']").trigger("click");
             await flushPromises();
 
-            expect(mockUpdateUserRoles).toHaveBeenCalledWith("user-1", ["role-1", "role-2"]);
+            expect(mockUpdateUserRoles).toHaveBeenCalledWith("user-1", ["role-2"]);
             expect(mockSnackbarSuccess).toHaveBeenCalledWith({
-                text: "The user's permissions have been updated.",
+                text: "The user has been updated.",
                 title: "User updated"
             });
             expect(mockSnackbarError).not.toHaveBeenCalled();
@@ -334,17 +356,117 @@ describe("User Management", () => {
         test("shows an error snackbar and keeps dirty state when updateUserRoles rejects", async () => {
             mockUpdateUserRoles.mockRejectedValueOnce(new Error("API error"));
 
-            const wrapper = await mountAndAddViewerRole();
+            const wrapper = await mountAndSelectViewerRole();
             await wrapper.find("[data-test='save-user-btn']").trigger("click");
             await flushPromises();
 
-            expect(mockUpdateUserRoles).toHaveBeenCalledWith("user-1", ["role-1", "role-2"]);
+            expect(mockUpdateUserRoles).toHaveBeenCalledWith("user-1", ["role-2"]);
             expect(mockSnackbarError).toHaveBeenCalledWith({
                 text: "The user could not be updated, please try again.",
                 title: "Update failed"
             });
             expect(mockSnackbarSuccess).not.toHaveBeenCalled();
             expect(saveButtonDisabled(wrapper)).toBe(false);
+        });
+    });
+
+    describe("User list & search", () => {
+        const USERS = [
+            {
+                id: "u1",
+                email: "amara.okonkwo@gstt.nhs.uk",
+                name: "Amara Okonkwo",
+                organisation: "Guy's & St Thomas'",
+                roles: [{
+                    id: "role-1",
+                    rolename: "Admin",
+                    roledescription: "Administrator"
+                }],
+                isDisabled: false
+            },
+            {
+                id: "u2",
+                email: "priya.raghavan@kcl.ac.uk",
+                name: "Priya Raghavan",
+                organisation: "King's College London",
+                roles: [{
+                    id: "role-2",
+                    rolename: "Researcher",
+                    roledescription: "Researcher"
+                }],
+                isDisabled: false
+            },
+            {
+                id: "u3",
+                email: "tomas.ribeiro@nhs.uk",
+                name: "Tomas Ribeiro",
+                organisation: "King's College Hospital",
+                roles: [{
+                    id: "role-3",
+                    rolename: "Observer",
+                    roledescription: "Observer"
+                }],
+                isDisabled: true
+            }
+        ];
+
+        async function mountWithUsers(): Promise<VueWrapper> {
+            mockGetUsers.mockResolvedValue({
+                data: USERS,
+                page: 1,
+                pageSize: 20,
+                totalPages: 1,
+                totalRecords: 3
+            });
+            const wrapper = mountUserManagement();
+            await flushPromises();
+
+            return wrapper;
+        }
+
+        test("renders one row per user, each with a role-tinted avatar and badge", async () => {
+            const wrapper = await mountWithUsers();
+
+            expect(wrapper.findAll("[data-test='user']")).toHaveLength(3);
+            expect(wrapper.findAll("[data-test='user'] [data-test='user-avatar']")).toHaveLength(3);
+            expect(wrapper.findAll("[data-test='user'] [data-test='role-badge']")).toHaveLength(3);
+        });
+
+        test("typing in the search box filters the list by name", async () => {
+            const wrapper = await mountWithUsers();
+
+            await wrapper.find("[data-test='user-search']").setValue("priya");
+            await flushPromises();
+
+            const rows = wrapper.findAll("[data-test='user']");
+            expect(rows).toHaveLength(1);
+            expect(rows[0].text()).toContain("Priya Raghavan");
+        });
+
+        test("search also matches email, organisation, and role", async () => {
+            const wrapper = await mountWithUsers();
+
+            await wrapper.find("[data-test='user-search']").setValue("kcl.ac.uk");
+            await flushPromises();
+            expect(wrapper.findAll("[data-test='user']")).toHaveLength(1);
+
+            await wrapper.find("[data-test='user-search']").setValue("King's College London");
+            await flushPromises();
+            expect(wrapper.findAll("[data-test='user']")).toHaveLength(1);
+
+            await wrapper.find("[data-test='user-search']").setValue("researcher");
+            await flushPromises();
+            expect(wrapper.findAll("[data-test='user']")).toHaveLength(1);
+        });
+
+        test("shows an empty-state message when no user matches the search", async () => {
+            const wrapper = await mountWithUsers();
+
+            await wrapper.find("[data-test='user-search']").setValue("no-such-user");
+            await flushPromises();
+
+            expect(wrapper.findAll("[data-test='user']")).toHaveLength(0);
+            expect(wrapper.text()).toContain("No users match your search.");
         });
     });
 });

@@ -11,7 +11,8 @@
 #
 
 import json
-from datetime import datetime
+from collections.abc import Sequence
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -29,8 +30,10 @@ from flip_api.db.models.main_models import (
     QueryResult,
     QueryStats,
     Trust,
+    TrustTask,
     XNATProjectStatus,
 )
+from flip_api.db.models.user_models import UserProfile
 from flip_api.domain.interfaces.project import (
     IApprovedTrust,
     IModelsInfoResponse,
@@ -46,12 +49,116 @@ from flip_api.domain.schemas.projects import (
 )
 from flip_api.domain.schemas.status import (
     ProjectStatus,
+    TaskStatus,
     XNATImageStatus,
 )
 from flip_api.model_services.services.model_service import delete_models
 from flip_api.project_services.utils.audit_helper import audit_project_action
 from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
+
+
+def _collect_errored_trust_ids(
+    rows: Sequence[tuple[UUID | None, str | None]],
+    *,
+    query_id: UUID,
+) -> list[UUID]:
+    """Extract trust IDs whose QueryResult data carries a non-null ``error``.
+
+    A row that fails to parse at all also counts as errored — better to mark
+    the trust red than silently swallow a corrupt response.
+
+    Args:
+        rows (Sequence[tuple[UUID | None, str | None]]): ``(trust_id, data_json)`` pairs from QueryResult.
+        query_id (UUID): The query the rows belong to — used for logging only.
+
+    Returns:
+        list[UUID]: Errored trust IDs (subset of those that responded).
+    """
+    errored: list[UUID] = []
+    seen: set[UUID] = set()
+    for tid, data_str in rows:
+        if tid is None or tid in seen:
+            continue
+        seen.add(tid)
+        try:
+            data = json.loads(data_str) if data_str else {}
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Malformed QueryResult.data for query {query_id}, trust {tid}: {e}")
+            errored.append(tid)
+            continue
+        if data.get("error"):
+            errored.append(tid)
+    return errored
+
+
+def _load_task_status_trust_ids(
+    query_id: UUID,
+    session: Session,
+) -> tuple[list[UUID], list[UUID]]:
+    """Per-trust task state for this query: (pending, cancelled).
+
+    PENDING — queued on the hub, trust hasn't polled yet → "queued" chip.
+    CANCELLED — hub gave up on the trust (project approved without it) →
+    "skipped" chip. Done in one round-trip.
+
+    Args:
+        query_id (UUID): The cohort query ID to look up tasks for.
+        session (Session): SQLModel session.
+
+    Returns:
+        tuple[list[UUID], list[UUID]]: ``(pending_trust_ids, cancelled_trust_ids)``.
+    """
+    rows = session.exec(
+        select(TrustTask.trust_id, TrustTask.status)
+        .where(
+            TrustTask.query_id == query_id,
+            col(TrustTask.status).in_([TaskStatus.PENDING, TaskStatus.CANCELLED]),
+        )
+    ).all()
+    pending: list[UUID] = []
+    cancelled: list[UUID] = []
+    seen_pending: set[UUID] = set()
+    seen_cancelled: set[UUID] = set()
+    for tid, status in rows:
+        if tid is None:
+            continue
+        if status == TaskStatus.PENDING and tid not in seen_pending:
+            seen_pending.add(tid)
+            pending.append(tid)
+        elif status == TaskStatus.CANCELLED and tid not in seen_cancelled:
+            seen_cancelled.add(tid)
+            cancelled.append(tid)
+
+    return pending, cancelled
+
+
+def _distinct_responded_trust_ids(
+    rows: Sequence[tuple[UUID | None, str | None]],
+) -> list[UUID]:
+    """Distinct trust IDs that posted any QueryResult row, in input order.
+
+    Two consumers:
+
+    1. The staging guard — a trust must be in this set (and not in
+       ``errored_trust_ids``) to be stageable, otherwise we'd commit the
+       project to data we never received.
+    2. The ``responded_trust_ids`` field surfaced to the per-trust UI.
+
+    Args:
+        rows (Sequence[tuple[UUID | None, str | None]]): ``(trust_id, data_json)`` pairs from QueryResult.
+
+    Returns:
+        list[UUID]: Distinct responded trust IDs preserving row order.
+    """
+    seen: set[UUID] = set()
+    out: list[UUID] = []
+    for tid, _ in rows:
+        if tid is None or tid in seen:
+            continue
+        seen.add(tid)
+        out.append(tid)
+    return out
 
 
 def update_project_user_access(project_id: UUID, user_ids: list[UUID], session: Session) -> None:
@@ -281,26 +388,17 @@ def edit_project_service(
 
 
 def get_project_query(project_from_db: IProjectResponse) -> IProjectQuery | None:
-    """
-    If the project has a query, try to return it if it is valid. Otherwise, return None.
+    """Return the project's cohort query if present, else None.
 
     Args:
         project_from_db (IProjectResponse): The project response object retrieved from the database, which may contain
         a query.
 
     Returns:
-        IProjectQuery | None: The project query if it exists and is valid, otherwise None.
+        IProjectQuery | None: The project query if it exists, otherwise None.
     """
-    logger.debug(project_from_db)
-    query = project_from_db.query
-
-    if query:
-        logger.debug(query)
-
-        if query.id and query.trusts_queried is not None:
-            return query
-
-        logger.warning("Unable to parse query. Assuming there isn't one.")
+    if project_from_db.query:
+        return project_from_db.query
 
     logger.warning("Project has no query associated with it. Returning empty.")
     return None
@@ -350,29 +448,56 @@ def get_trusts_approval_status_for_project(project_id: UUID, session: Session) -
     # a LEFT JOIN from Trusts to ProjectTrustIntersect would be more appropriate.
     # The original query was an INNER JOIN, so it only returns trusts *present* in ProjectTrustIntersect
     # for that project.
-    stmt = (
-        select(
-            Trust.id,
-            Trust.name,
-            # SQLModel doesn't directly support COALESCE in select like this easily without raw SQL or complex
-            # expressions.
-            # It's often easier to fetch the boolean and handle None in Python or use a raw query for COALESCE.
-            ProjectTrustIntersect.approved,
-        )
-        .join(ProjectTrustIntersect, col(Trust.id) == ProjectTrustIntersect.trust_id)
-        .where(col(ProjectTrustIntersect.project_id) == project_id)
-    )
-    results = session.exec(stmt).all()
+    by_project = get_trusts_approval_status_for_projects([project_id], session)
+    results = by_project.get(project_id, [])
 
     if not results:
         logger.warn(f"No trusts found linked to project {project_id} in ProjectTrustIntersect.")
-        # Original TS code throws an error.
-        # raise ValueError(f"No trusts found linked to project {project_id}")
 
-    return [
-        IApprovedTrust(id=trust_id, name=trust_name, approved=approved if approved is not None else False)
-        for trust_id, trust_name, approved in results
-    ]
+    return results
+
+
+def get_trusts_approval_status_for_projects(
+    project_ids: list[UUID],
+    session: Session,
+) -> dict[UUID, list[IApprovedTrust]]:
+    """Batch variant of :func:`get_trusts_approval_status_for_project`.
+
+    Returns a single SQL round-trip's worth of approval rows grouped by project,
+    so callers paginating over many projects (the list endpoint) don't pay the
+    N+1 cost. Single-project callers get the same shape via a 1-element list.
+    """
+    if not project_ids:
+        return {}
+
+    rows = session.exec(
+        select(  # type: ignore[call-overload]
+            ProjectTrustIntersect.project_id,
+            Trust.id,
+            Trust.name,
+            Trust.code,
+            ProjectTrustIntersect.approved,
+            ProjectTrustIntersect.approved_at,
+        )
+        .join(Trust, col(Trust.id) == col(ProjectTrustIntersect.trust_id))
+        .where(col(ProjectTrustIntersect.project_id).in_(project_ids))
+    ).all()
+
+    by_project: dict[UUID, list[IApprovedTrust]] = {}
+    for project_id, trust_id, trust_name, trust_code, approved, approved_at in rows:
+        if project_id is None or trust_id is None:
+            continue
+        by_project.setdefault(project_id, []).append(
+            IApprovedTrust(
+                id=trust_id,
+                name=trust_name,
+                code=trust_code,
+                approved=approved if approved is not None else False,
+                approved_at=approved_at.isoformat(timespec="milliseconds") if approved_at else None,
+            )  # type: ignore[call-arg]
+        )
+
+    return by_project
 
 
 def get_project_models_service(
@@ -524,9 +649,35 @@ def approve_project(
             return False
 
         result.approved = True
+        result.approved_at = datetime.now(timezone.utc)
         db.add(result)  # Mark for update
 
     logger.info("Updated the trusts that have been selected for approval")
+
+    # Cancel any orphan PENDING cohort-query tasks: the project is moving
+    # on without these trusts (likely because they never replied), so
+    # there's no point making them run the query when they next poll. We
+    # only touch PENDING — IN_PROGRESS tasks are left to complete since
+    # there's no protocol to abort a running task at the trust.
+    latest_query = db.exec(
+        select(Queries).where(Queries.project_id == project_id).order_by(col(Queries.created).desc()).limit(1)
+    ).first()
+    if latest_query is not None:
+        cancelled = db.exec(
+            select(TrustTask).where(
+                TrustTask.query_id == latest_query.id,
+                TrustTask.status == TaskStatus.PENDING,
+            )
+        ).all()
+        for task in cancelled:
+            task.status = TaskStatus.CANCELLED
+            task.updated_at = datetime.now(timezone.utc)
+            db.add(task)
+        if cancelled:
+            logger.info(
+                f"Cancelled {len(cancelled)} orphan PENDING cohort-query tasks for query "
+                f"{latest_query.id} on project {project_id} approval."
+            )
 
     update_project_status(
         project_id=project_id,
@@ -721,22 +872,31 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
 
     logger.debug(f"Project found: {project}")
 
-    # Step 2: Fetch most recent query (by created timestamp)
-    query = session.exec(
-        select(Queries).where(Queries.project_id == project.id).order_by(col(Queries.created).desc()).limit(1)
+    # Step 2: Most recent query + the runner's display name in one round-trip
+    # (same UserProfile LEFT JOIN pattern used in the list endpoint's batch
+    # loader). created_by_name is null when the runner has no UserProfile row.
+    query_row = session.exec(
+        select(Queries, UserProfile.name)  # type: ignore[call-overload]
+        .outerjoin(UserProfile, UserProfile.user_id == Queries.created_by)  # type: ignore[arg-type]
+        .where(Queries.project_id == project.id)
+        .order_by(col(Queries.created).desc())
+        .limit(1)
     ).first()
 
     query_data = None
-    if query:
-        # Step 3: Count distinct trusts in QueryResult
-        trust_count = (
-            session.exec(
-                select(func.count(func.distinct(QueryResult.trust_id))).where(QueryResult.query_id == query.id)
-            ).first()
-            or 0
-        )
+    if query_row:
+        query, created_by_name = query_row
+        # Step 3: per-trust QueryResult rows — drive the "errored" carve-out
+        # for staging and the responded set.
+        result_rows = session.exec(
+            select(QueryResult.trust_id, QueryResult.data).where(QueryResult.query_id == query.id)
+        ).all()
+        errored_trust_ids = _collect_errored_trust_ids(result_rows, query_id=query.id)
+        responded_trust_ids = _distinct_responded_trust_ids(result_rows)
+        pending_trust_ids, cancelled_trust_ids = _load_task_status_trust_ids(query.id, session)
+        queried_trust_ids = list(query.queried_trust_ids)
 
-        # Step 4: Get total cohort size from QueryStats (as JSON)
+        # Step 4: total cohort size from QueryStats (stored as JSON).
         stats_entry = session.exec(select(QueryStats).where(QueryStats.query_id == query.id)).first()
 
         total_cohort = 0
@@ -751,8 +911,15 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
             id=query.id,
             name=query.name,
             query=query.query,
-            trusts_queried=trust_count,
+            queried_trust_ids=queried_trust_ids,
+            pending_trust_ids=pending_trust_ids,
+            cancelled_trust_ids=cancelled_trust_ids,
+            responded_trust_ids=responded_trust_ids,
+            errored_trust_ids=errored_trust_ids,
             total_cohort=total_cohort,
+            # `Z` suffix so the browser parses as UTC (naive UTC column).
+            created=(query.created.isoformat(timespec="milliseconds") + "Z") if query.created else None,
+            created_by=created_by_name or None,
         )  # type: ignore[call-arg]
 
     # Step 5: Construct response

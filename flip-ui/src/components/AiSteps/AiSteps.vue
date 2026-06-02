@@ -173,6 +173,7 @@ export interface IStep {
     error?: boolean;
     stopped?: boolean;
     action?: () => void;
+    date?: string | null;
 }
 
 interface IStepsProps {

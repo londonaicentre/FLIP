@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -18,9 +19,9 @@ from sqlmodel import Session
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.user_models import PermissionRef, UsersAudit
+from flip_api.db.models.user_models import PermissionRef, UserProfile, UsersAudit
 from flip_api.domain.interfaces.project import IUpdateXnatProfile
-from flip_api.domain.schemas.users import Disabled
+from flip_api.domain.schemas.users import UpdateUser, UpdateUserResponse
 from flip_api.project_services.services.image_service import update_xnat_user_profile
 from flip_api.utils.cognito_helpers import get_user_pool_id, get_username, update_user
 from flip_api.utils.logger import logger
@@ -32,17 +33,18 @@ router = APIRouter(prefix="/users", tags=["user_services"])
 @router.put(
     "/{user_id}",
     summary="Update user",
-    description="Update a user with disabled status",
-    response_model=Disabled,
+    description="Update a user's disabled status and profile details",
+    response_model=UpdateUserResponse,
+    response_model_exclude_none=True,
     status_code=status.HTTP_200_OK,
 )
 def update_user_endpoint(
     user_id: UUID,
-    disabled: Disabled,
+    user_update: UpdateUser,
     request: Request,
     db: Session = Depends(get_session),
     token_id: UUID = Depends(verify_token),
-) -> Disabled:
+) -> UpdateUserResponse:
     """
     Update user details with disabled status
 
@@ -50,13 +52,13 @@ def update_user_endpoint(
 
     Args:
         user_id (UUID): The ID of the user to update
-        disabled (Disabled): The disabled status to set for the user
+        user_update (UpdateUser): The user fields to update
         request (Request): The FastAPI request object
         db (Session): The database session
         token_id (UUID): The ID of the token used for authentication
 
     Returns:
-        Disabled: The updated disabled status of the user
+        UpdateUserResponse: The updated user fields
 
     Raises:
         HTTPException: If the user does not have permission to update a user, if the user is not found, or if there is
@@ -78,41 +80,43 @@ def update_user_endpoint(
         # HTTPException re-raise.
         username = get_username(str(user_id), user_pool_id)
 
-        # Update user in Cognito
-        response = update_user(username, user_pool_id, disabled.disabled)
+        disabled_response = None
+        if user_update.disabled is not None:
+            # Update user in Cognito
+            disabled_response = update_user(username, user_pool_id, user_update.disabled)
 
-        # Update XNAT user profile. If this fails after the Cognito mutation
-        # has already landed, surface the partial state explicitly so the
-        # operator can reconcile — otherwise the generic "Failed to update
-        # user" catch-all is indistinguishable from "nothing happened".
-        set_user_enabled_data = IUpdateXnatProfile(
-            email=username,
-            enabled=not disabled.disabled,
-        )
-
-        try:
-            update_xnat_user_profile(set_user_enabled_data, db)
-        except Exception as xnat_err:
-            # Despite the name, ``update_xnat_user_profile`` does not call
-            # XNAT directly — it enqueues one ``TrustTask`` per trust
-            # (via ``db.add``) and then ``db.commit()``s. If that commit
-            # fails mid-flight, the session has buffered TrustTask rows
-            # that need rolling back so the next request on this session
-            # doesn't inherit a poisoned transaction. (HTTP-to-XNAT
-            # happens later, in the trust-poll worker pulling those
-            # queued tasks.)
-            db.rollback()
-            logger.exception(
-                f"Cognito update succeeded for user_id={user_id} (initiated by {token_id}) "
-                f"but XNAT profile update failed; manual XNAT reconciliation required."
+            # Update XNAT user profile. If this fails after the Cognito mutation
+            # has already landed, surface the partial state explicitly so the
+            # operator can reconcile — otherwise the generic "Failed to update
+            # user" catch-all is indistinguishable from "nothing happened".
+            set_user_enabled_data = IUpdateXnatProfile(
+                email=username,
+                enabled=not user_update.disabled,
             )
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=(
-                    "Cognito update succeeded but XNAT profile update failed; "
-                    "user state partially updated — please verify and contact ops."
-                ),
-            ) from xnat_err
+
+            try:
+                update_xnat_user_profile(set_user_enabled_data, db)
+            except Exception as xnat_err:
+                # Despite the name, ``update_xnat_user_profile`` does not call
+                # XNAT directly — it enqueues one ``TrustTask`` per trust
+                # (via ``db.add``) and then ``db.commit()``s. If that commit
+                # fails mid-flight, the session has buffered TrustTask rows
+                # that need rolling back so the next request on this session
+                # doesn't inherit a poisoned transaction. (HTTP-to-XNAT
+                # happens later, in the trust-poll worker pulling those
+                # queued tasks.)
+                db.rollback()
+                logger.exception(
+                    f"Cognito update succeeded for user_id={user_id} (initiated by {token_id}) "
+                    f"but XNAT profile update failed; manual XNAT reconciliation required."
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=(
+                        "Cognito update succeeded but XNAT profile update failed; "
+                        "user state partially updated — please verify and contact ops."
+                    ),
+                ) from xnat_err
 
         # Cognito + XNAT mutations succeeded; record the audit row. If the
         # audit commit fails, the user-visible state has already changed
@@ -120,11 +124,30 @@ def update_user_endpoint(
         # the operator knows reconciliation may be needed, and log enough
         # to do it. A retry is safe (admin_enable_user / admin_disable_user
         # are idempotent).
-        action = "Disabled user" if disabled.disabled else "Enabled user"
+        profile_updated = user_update.name is not None or user_update.organisation is not None
+        action = None
+        if user_update.disabled is not None:
+            action = "Disabled user" if user_update.disabled else "Enabled user"
+        if profile_updated and action is None:
+            action = "Updated user profile"
+        elif profile_updated and action is not None:
+            action = f"{action} and updated profile"
+
         try:
+            if profile_updated:
+                profile = db.get(UserProfile, user_id)
+                if profile is None:
+                    profile = UserProfile(user_id=user_id)
+                if user_update.name is not None:
+                    profile.name = user_update.name
+                if user_update.organisation is not None:
+                    profile.organisation = user_update.organisation
+                profile.updated_at = datetime.utcnow()
+                db.add(profile)
+
             db.add(
                 UsersAudit(
-                    action=action,
+                    action=action or "Updated user",
                     user_id=user_id,
                     modified_by_user_id=token_id,
                 )
@@ -133,18 +156,23 @@ def update_user_endpoint(
         except Exception as audit_err:
             db.rollback()
             logger.exception(
-                f"{action} succeeded in Cognito + XNAT for user_id={user_id} "
+                f"{action} succeeded for user_id={user_id} "
                 f"(initiated by {token_id}) but audit-row write failed; manual "
                 f"audit-log reconciliation required."
             )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=(
-                    f"{action} succeeded in Cognito + XNAT, but audit log "
+                    f"{action} succeeded, but audit log "
                     "write failed — please verify and contact ops."
                 ),
             ) from audit_err
 
+        response = UpdateUserResponse(
+            disabled=disabled_response.disabled if disabled_response is not None else None,
+            name=user_update.name,
+            organisation=user_update.organisation,
+        )
         logger.info(f"User updated successfully: {response}")
         return response
 

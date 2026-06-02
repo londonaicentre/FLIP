@@ -14,7 +14,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, validator
+from pydantic import BaseModel, Field, validator
 
 from flip_api.config import get_settings
 from flip_api.domain.schemas.status import TaskType
@@ -36,6 +36,10 @@ class OmopCohortResults(BaseModel):
     created: str
     record_count: int
     data: list[OmopData]
+    # Populated by trust-api when the cohort query fails (data-access-api error,
+    # decryption failure, etc.). When set, the hub records the trust as errored
+    # instead of leaving its per-trust UI status stuck on "running".
+    error: str | None = None
 
     @validator("data", pre=True, always=True)
     def ensure_data_is_list(cls, value: Any) -> list[Any]:
@@ -45,24 +49,14 @@ class OmopCohortResults(BaseModel):
 
 
 class TrainingMetrics(BaseModel):
-    trust: str
-    global_round: int = Field(
-        ...,
-        ge=0,
-        title="global_round",
-        description="'global_round' must be >=0",
-        alias="globalRound",
-    )
+    fl_client_name: str
+    global_round: int = Field(ge=0)
     label: str
     result: float
 
-    model_config = ConfigDict(
-        populate_by_name=True,
-    )
-
 
 class TrainingLog(BaseModel):
-    trust: str
+    fl_client_name: str
     log: str
 
 
@@ -78,6 +72,7 @@ class ProjectApproval(BaseModel):
 class TrustSpecificData(BaseModel):  # Parsed from query_result.data JSON string
     record_count: int
     data: list[OmopData]
+    error: str | None = None
 
 
 class AggregatedTrustFieldResult(BaseModel):
@@ -94,6 +89,13 @@ class AggregatedFieldResult(BaseModel):
 class AggregatedCohortStats(BaseModel):  # Stored as JSON in query_stats.stats
     record_count: int
     trusts_results: list[AggregatedFieldResult]
+    # trust_id (str) -> record_count for trusts that responded successfully.
+    # Distinguishes "responded with 0 (privacy-suppressed)" from "never
+    # responded" so the UI shows 0 instead of staying stuck on "running".
+    trust_record_counts: dict[str, int] = Field(default_factory=dict)
+    # trust_id (str) -> error message for trusts whose cohort query failed.
+    # Mutually exclusive with trust_record_counts for the same trust.
+    trust_errors: dict[str, str] = Field(default_factory=dict)
 
 
 # Helper structure for data fetched from DB for aggregation

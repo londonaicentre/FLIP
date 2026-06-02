@@ -55,7 +55,7 @@ def trust_b(session) -> Trust:
 @pytest.fixture
 def seeded_query(session) -> Queries:
     """Insert a Queries row so query_result.query_id FK is satisfied."""
-    q = Queries(name="cohort-test", query="SELECT 1")
+    q = Queries(name="cohort-test", query="SELECT 1", created_by=uuid.uuid4())
     session.add(q)
     session.commit()
     session.refresh(q)

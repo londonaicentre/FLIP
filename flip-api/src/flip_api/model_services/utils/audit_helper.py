@@ -20,14 +20,17 @@ from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.utils.logger import logger
 
 
-def audit_model_action(model_id: UUID, action: ModelAuditAction, user_id: UUID, session: Session) -> ModelsAudit:
+def audit_model_action(
+    model_id: UUID, action: ModelAuditAction, user_id: UUID | None, session: Session
+) -> ModelsAudit:
     """
     Insert a single audit log into the ModelsAudit table.
 
     Args:
         model_id (UUID): The ID of the model being audited.
         action (ModelAuditAction): The action performed on the model.
-        user_id (UUID): The ID of the user performing the action.
+        user_id (UUID | None): The ID of the user performing the action, or None for
+            unattended background transitions (fl_scheduler).
         session (Session): SQLModel session.
 
     Returns:

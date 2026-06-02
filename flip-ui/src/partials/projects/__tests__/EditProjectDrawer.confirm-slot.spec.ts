@@ -21,21 +21,23 @@ vi.mock("vue-router", async (importOriginal) => {
 
     return {
         ...actual,
-        useRoute: () => ({ params: {}, query: {} })
+        useRoute: () => ({
+            params: {},
+            query: {}
+        })
     };
 });
 
 vi.mock("@/router", () => ({
-    default: { push: vi.fn(), replace: vi.fn() }
+    default: {
+        push: vi.fn(),
+        replace: vi.fn()
+    }
 }));
 
-vi.mock("@/services/project-service", () => ({
-    deleteProject: vi.fn()
-}));
+vi.mock("@/services/project-service", () => ({ deleteProject: vi.fn() }));
 
-const confirmModalStub = {
-    template: "<div data-test=\"confirm-modal-stub\"><slot name=\"confirmation\" /></div>"
-};
+const confirmModalStub = { template: "<div data-test=\"confirm-modal-stub\"><slot name=\"confirmation\" /></div>" };
 
 describe("EditProjectDrawer delete-confirmation slot", () => {
     const baseProps = {
@@ -72,7 +74,10 @@ describe("EditProjectDrawer delete-confirmation slot", () => {
                 renderStubDefaultSlot: true,
                 stubs: { AiConfirmModal: confirmModalStub }
             },
-            props: { ...baseProps, name: payload }
+            props: {
+                ...baseProps,
+                name: payload
+            }
         });
 
         const slot = wrapper.find("[data-test=confirm-modal-stub]");

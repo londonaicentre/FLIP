@@ -31,15 +31,30 @@ describe("AI Chip Select", () => {
 });
 
 describe("AI Chip Select — script logic", () => {
-    const optionA: IOption = { id: "1", description: "Admin" };
-    const optionB: IOption = { id: "2", description: "Researcher" };
+    const optionA: IOption = {
+        id: "1",
+        description: "Admin"
+    };
+    const optionB: IOption = {
+        id: "2",
+        description: "Researcher"
+    };
 
     const fieldEntry = (option: IOption, key = option.id): FieldEntry =>
-        ({ key, value: option, isFirst: false, isLast: false } as FieldEntry);
+        ({
+            key,
+            value: option,
+            isFirst: false,
+            isLast: false
+        } as FieldEntry);
 
     it("emits push + validate when a new option is selected", async () => {
         const component = mountComponent(AiChipSelect, {
-            props: { options: [optionA, optionB], selectedOptions: [], defaultText: "Select role" },
+            props: {
+                options: [optionA, optionB],
+                selectedOptions: [],
+                defaultText: "Select role"
+            }
         });
 
         // Drive the internal ref directly. Headlessui Listbox doesn't open in
@@ -60,8 +75,8 @@ describe("AI Chip Select — script logic", () => {
             props: {
                 options: [optionA, optionB],
                 selectedOptions: [fieldEntry(optionA)],
-                defaultText: "Select role",
-            },
+                defaultText: "Select role"
+            }
         });
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -77,8 +92,8 @@ describe("AI Chip Select — script logic", () => {
             props: {
                 options: [optionA, optionB],
                 selectedOptions: [fieldEntry(optionA), fieldEntry(optionB)],
-                defaultText: "Select role",
-            },
+                defaultText: "Select role"
+            }
         });
 
         const chips = component.findAllComponents({ name: "AiButton" });
@@ -93,18 +108,18 @@ describe("AI Chip Select — script logic", () => {
             props: {
                 options: [optionA, optionB],
                 selectedOptions: [fieldEntry(optionA)],
-                defaultText: "Select role",
-            },
+                defaultText: "Select role"
+            }
         });
 
         // Open the Listbox so the v-for over options actually renders, which
         // is the only path that exercises selectedOptionsInclude(). Headlessui
         // requires a real click on its ListboxButton; trigger() on the
         // wrapper element does the job in jsdom once attachTo is set.
-        await component.get('[aria-haspopup="listbox"]').trigger("click");
+        await component.get("[aria-haspopup=\"listbox\"]").trigger("click");
         await nextTick();
 
-        const optionElements = component.findAll('[data-test="chip-select-option"]');
+        const optionElements = component.findAll("[data-test=\"chip-select-option\"]");
         expect(optionElements).toHaveLength(2);
         // The check icon renders as an inline <svg> only when
         // selectedOptionsInclude returns true. optionA is in selectedOptions
@@ -120,8 +135,8 @@ describe("AI Chip Select — script logic", () => {
             props: {
                 options: [optionA, optionB],
                 selectedOptions: [fieldEntry(optionA), fieldEntry(optionB)],
-                defaultText: "Select role",
-            },
+                defaultText: "Select role"
+            }
         });
 
         // The chips render via AiButton (a <button> wrapper) and the @click
@@ -141,8 +156,8 @@ describe("AI Chip Select — script logic", () => {
             props: {
                 options: [optionA, optionB],
                 selectedOptions: [fieldEntry(optionA)],
-                defaultText: "Select role",
-            },
+                defaultText: "Select role"
+            }
         });
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

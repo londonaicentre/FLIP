@@ -21,12 +21,13 @@ services:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - /opt/flip/services/net-1/certificates:/certs:ro
+      - ${FL_JOBS_DIR}/net-1:/app/src
     environment:
       # Use the internal hostnames and ports for the server since the API is within the same Docker network
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
-      - FLOWER_SRC_ROOT=/app
+      - FLOWER_SRC_ROOT=/app/src
     ports:
       - "${FL_API_PORT}:8000"
     depends_on:
@@ -44,6 +45,11 @@ services:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
       - /opt/flip/services/net-1/certificates:/certs:ro
+      # Shared with FL API: uploaded app bundles (sources + checkpoint) live under
+      # /app/src/<model_id>; the evaluation ServerApp reads the checkpoint from
+      # the path in the flip-job-dir run-config value the FL API injects at submit.
+      # Mirrors the dev compose so the evaluation flow works the same in both envs.
+      - ${FL_JOBS_DIR}/net-1:/app/src
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false
@@ -76,7 +82,11 @@ services:
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - FL_API_ADDRESS=http://flip-fl-api-net-1:8000
-      - TRUST_NAMES=${TRUST_NAMES}
+      # The script reads ${TRUST_NAMES} as a label list, but the underlying identity it's
+      # labelling is the per-slot SuperNode key. Feed FL_KIT_SLOT_NAMES through so trusts
+      # admin-created later (and bound to a slot via FLKitSlot.assigned_to_trust_id) still
+      # get their node_id mapped on net startup.
+      - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
     volumes:
       - /opt/flip/services/net-1/certificates:/certs:ro
       - /opt/flip/services/net-1/keys:/keys:ro

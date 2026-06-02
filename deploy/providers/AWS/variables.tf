@@ -72,17 +72,6 @@ variable "AES_KEY_BASE64" {
   type = string
 }
 
-variable "TRUST_API_KEY_HASHES" {
-  description = "JSON string mapping trust names to SHA-256 hashes of their API keys"
-  type        = string
-}
-
-variable "TRUST_NAMES" {
-  description = "JSON list of trust names that the hub accepts (e.g. '[\"Trust_1\", \"Trust_K8s\"]'). Controls seed data and outbound task dispatch allowlist."
-  type        = string
-  default     = "[\"Trust_1\"]"
-}
-
 variable "K8S_TRUST_IP" {
   description = "Public IP of the Kubernetes-deployed trust host. When set, opens the NLB security group to allow FL client connectivity from this IP."
   type        = string
@@ -301,11 +290,13 @@ variable "SES_VERIFIED_EMAIL" {
 variable "XNAT_PORT" {
   description = "Port for XNAT service"
   type        = number
+  default     = 8104
 }
 
 variable "PACS_UI_PORT" {
   description = "Port for Orthanc PACS UI"
   type        = number
+  default     = 8042
 }
 
 variable "TRUST_API_KEY_HEADER" {
@@ -338,10 +329,10 @@ variable "ENFORCE_MFA" {
   default     = ""
 }
 
-variable "local_trust_public_ip" {
-  description = "Public IP of an on-premises Trust host. When non-empty, AWS security group rules are created to allow consolidated FL communication on port 8002 from this IP to the Central Hub."
-  type        = string
-  default     = ""
+variable "local_trust_public_ips" {
+  description = "Public IPs of on-premises Trust hosts. Each IP gets an ingress rule on the FL-server NLB security group allowing FL communication to the Central Hub. Set via LOCAL_TRUST_PUBLIC_IPS in the env file."
+  type        = list(string)
+  default     = []
 }
 
 variable "ecs_exec_enabled" {

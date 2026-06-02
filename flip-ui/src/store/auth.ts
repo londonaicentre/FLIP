@@ -35,6 +35,7 @@ import { Snackbar } from "@/utils/snackbar";
 export type UserPermissions =
     | "CanManageUsers"
     | "CanManageProjects"
+    | "CanCreateProjects"
     | "CanApproveProjects"
     | "CanDeleteAnyProject"
     | "CanUnstageProjects"

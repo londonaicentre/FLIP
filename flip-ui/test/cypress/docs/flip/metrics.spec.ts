@@ -1,0 +1,80 @@
+/*
+ * Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// Records docs/source/assets/flip/metrics.gif.
+// Mirrors the happy path in test/cypress/integration/group-6/model_dashboard_post_training.spec.ts.
+
+describe("docs: model metrics", () => {
+    it("views the training metrics for a completed model", () => {
+        cy.login();
+
+        const projectId = "6fcbdd40-3675-45c9-899e-1a005e5245ba";
+        const modelId = "6292d9ec-e821-4e4a-814e-3a315a4cb95e";
+
+        cy.intercept("GET", `/projects/${projectId}`, { fixture: "project/getProjectWithQuery" }).as("getProject");
+        cy.intercept("POST", `/step/model/${modelId}`, { fixture: "model/getModelPostTrainingPreparedStatus" })
+            .as("getModel");
+        cy.intercept("GET", `/model/${modelId}/logs`, { fixture: "model/logsPostTraining" });
+        cy.intercept("GET", `/model/${modelId}/metrics`, {
+            body: [
+                {
+                    yLabel: "Loss",
+                    xLabel: "Round",
+                    metrics: [
+                        {
+                            seriesLabel: "Global model",
+                            data: [
+                                { xValue: 1, yValue: 0.91 },
+                                { xValue: 2, yValue: 0.62 },
+                                { xValue: 3, yValue: 0.41 },
+                                { xValue: 4, yValue: 0.27 },
+                                { xValue: 5, yValue: 0.19 }
+                            ]
+                        }
+                    ]
+                },
+                {
+                    yLabel: "Accuracy",
+                    xLabel: "Round",
+                    metrics: [
+                        {
+                            seriesLabel: "Global model",
+                            data: [
+                                { xValue: 1, yValue: 0.54 },
+                                { xValue: 2, yValue: 0.71 },
+                                { xValue: 3, yValue: 0.83 },
+                                { xValue: 4, yValue: 0.89 },
+                                { xValue: 5, yValue: 0.93 }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }).as("getMetrics");
+
+        cy.visit(`/project/${projectId}/model/${modelId}`);
+        cy.wait("@getModel");
+        cy.demoPause();
+
+        cy.wait("@getMetrics");
+        cy.demoPause();
+
+        // AiModelMetricsChart paints the chart — title, axes, legend — onto an
+        // ECharts <canvas>, so "Accuracy" is never DOM text. Assert the charts
+        // rendered instead: the empty-state placeholder is gone and a chart
+        // canvas is visible.
+        cy.contains("Any results generated during training will show here.").should("not.exist");
+        cy.get("canvas").first().should("be.visible");
+        cy.demoPause(1200);
+    });
+});

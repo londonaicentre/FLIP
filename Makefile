@@ -12,19 +12,23 @@
 
 .PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
-		check-aws-access up-local-trust generate-trust-api-keys generate-internal-service-key \
-		generate-trust-internal-service-keys integration_test lock \
+		check-aws-access generate-internal-service-key \
+		register-trust register-trusts new-trust _wait-for-hub integration_test \
+		sync-trust-kit sync-trust-kits lock \
 		deploy-trust-k8s undeploy-trust-k8s
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
 __DCKR_SUFFIX=production
+ENV=production
 else ifeq ($(PROD),stag)
 MAIN_ENV_FILE=.env.stag
 __DCKR_SUFFIX=production
+ENV=stag
 else
 MAIN_ENV_FILE=.env.development
 __DCKR_SUFFIX=development
+ENV=development
 endif
 
 # Print which environment files are being used
@@ -45,6 +49,7 @@ FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 # Docker requires absolute paths for volume mounts; the .env value may be relative
 MAKEFILE_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 override FL_PROVISIONED_DIR := $(abspath $(MAKEFILE_DIR)/$(FL_PROVISIONED_DIR))
+override FL_JOBS_DIR := $(abspath $(MAKEFILE_DIR)/$(FL_JOBS_DIR))
 
 # Service configuration
 define SERVICE_CONFIG
@@ -100,32 +105,55 @@ build:
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: check-aws-access generate-internal-service-key create-networks
+up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jobs-dir
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
-	@echo "🚢 Starting trust services..."
+	@echo "🔑 Registering trusts and writing kit files..."
+	$(MAKE) register-trusts
+	@echo "🚢 Starting trust services (each trust brings up its own XNAT)..."
 	$(MAKE) -C trust up
-	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -C trust/xnat up
 	@echo "✅ All services started successfully!"
 
+# Ensure jobs/<net> dirs exist with writable perms before starting containers,
+# so Docker doesn't create them root-owned and lock out the fl-api container
+# (which runs as a non-root `app` user).
+#
+# Net IDs come from NET_ENDPOINTS (the per-env single source of truth — prod
+# has only net-1; dev has net-1 + net-2). A new net is just an NET_ENDPOINTS
+# entry plus a compose service block; this target picks it up automatically.
+# Only needed for the Flower backend (NVFLARE doesn't use FL_JOBS_DIR).
+_ensure-fl-jobs-dir:
+	@if [ "$(FL_BACKEND)" = "flower" ]; then \
+		nets=$$(printf '%s' '$(NET_ENDPOINTS)' | python3 -c "import json,sys; d=sys.stdin.read().strip(); print(' '.join(json.loads(d).keys()) if d else '')"); \
+		if [ -z "$$nets" ]; then \
+			echo "❌ _ensure-fl-jobs-dir: NET_ENDPOINTS is empty or unparseable; cannot derive net IDs" >&2; \
+			exit 1; \
+		fi; \
+		mkdir -p jobs; \
+		chmod 777 jobs; \
+		for net in $$nets; do \
+			mkdir -p jobs/$$net; \
+			chmod 777 jobs/$$net; \
+		done; \
+	fi
+
 # Minimal $(MAKE) up
-up-no-trust: generate-internal-service-key create-networks
+up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
 
 up-trusts: create-networks
-	@echo "🚢 Starting Trust services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust up
-	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up
+	@echo "🔑 Registering trusts and writing kit files (hub must already be up)..."
+	$(MAKE) register-trusts
+	@echo "🚢 Starting Trust services (each trust brings up its own XNAT)..."
+	$(MAKE) DEBUG=$(DEBUG) -C trust up
 	@echo "✅ Trust services started successfully!"
 
 # Uses --pull always to ensure the latest FL images and 'stag'/'prod' version are used
-up-centralhub-ec2: create-networks-centralhub
+up-centralhub-ec2: create-networks-centralhub _ensure-fl-jobs-dir
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting central hub API services..."
@@ -139,29 +167,60 @@ up-trust-ec2: create-networks
 	@echo "Hey! PROD="$(PROD)
 	@echo "Hey! UI_PORT="$(UI_PORT)
 	@echo "🚢 Starting Trust services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-trust-1-ec2 PROD=${PROD}
-	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-1 PROD=${PROD}
+	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust services started successfully!"
-
-LOCAL_TRUST_NAME ?= Trust_2
-
-up-local-trust: create-networks
-	docker context use default
-	@echo "🚢 Starting local on-prem Trust services (PROD=$(PROD), TRUST_NAME=$(LOCAL_TRUST_NAME))..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust up-local-trust PROD=$(PROD) LOCAL_TRUST_NAME=$(LOCAL_TRUST_NAME)
-	@echo "🚢 Starting XNAT services..."
-	$(MAKE) -e DEBUG=$(DEBUG) -C trust/xnat up-xnat-local PROD=$(PROD)
-	@echo "✅ Local Trust services started successfully!"
 
 central-hub: create-networks-centralhub
 	$(MAKE) -C flip-api up
 
+# On-prem operator flow — start a trust on the local host pointing at a
+# remote hub (typically the prod CloudFront one).
+#
+# Gated on the onboard-onprem-trust checklist (kit file present, swarm
+# initialized, Hub-shared + Kit credentials filled in, FL_KIT_DIR exists +
+# contains the expected files). On any failure the checklist prints what's
+# missing and how to fix it; we exit so the operator doesn't hit a cryptic
+# compose / pydantic failure deeper in the stack.
+up-onprem-trust:
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	@$(MAKE) onboard-onprem-trust KIT=$(KIT)
+	$(MAKE) DEBUG=$(DEBUG) -C trust up-trust KIT=$(KIT) PROD=$(or $(PROD),true)
+
+# Symmetric down for the on-prem flow. Wraps trust/Makefile's down-trust
+# so an operator doesn't have to remember the -C trust path or PROD value.
+down-onprem-trust:
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<slot> is required (e.g. KIT=Trust_2)"; exit 1)
+	$(MAKE) -C trust down-trust KIT=$(KIT) PROD=$(or $(PROD),true)
+
+# Readiness checklist for an on-prem trust. Prints the operator's public
+# IP + a row per precondition (kit file, swarm, Hub-shared block, Kit
+# credentials, FL_KIT_DIR and its contents) with ✅/❌ and a concrete fix
+# under each failing row. Exits 0 when all checks pass (the operator can
+# then run `make up-onprem-trust KIT=<slot>`), 1 otherwise.
+#
+# Invoked automatically as a precheck by up-onprem-trust; can also be run
+# standalone (e.g. `make onboard-onprem-trust KIT=Trust_2`).
+#
+# On-prem onboarding splits like this:
+#   - Admin owns: opening the prod NLB to the operator's IP, UI-registering
+#     the trust on the prod hub (Add-Trust modal mints the 5 Kit credentials,
+#     admin pastes into trust/.env.<KIT>), running `make sync-trust-kit-N`
+#     to populate the Hub-shared block in trust/.env.<KIT>, running
+#     `make package-onprem-trust-kit` to tarball the populated env file
+#     plus the operator's slice of the FL participant kit S3 bucket.
+#   - Operator owns: extracting the tarball, copying the .env.<KIT> in,
+#     setting FL_KIT_DIR + Host-local profile, running `make up-onprem-trust`.
+# The operator never touches the prod UI directly — the admin uses it on
+# the operator's behalf because Hub-shared values + FL kit S3 slice both
+# need prod AWS creds the operator doesn't have.
+onboard-onprem-trust:
+	@uv run --no-config scripts/onboard_onprem_trust.py $(KIT)
+
 # Stop all containers
 down:
 	@echo "🛑 Stopping all services..."
-	$(MAKE) -C trust/xnat down
 	$(MAKE) -C trust down
+
 	${DOCKER_COMMAND} down --remove-orphans
 	@echo "🛌 All services stopped successfully!"
 
@@ -323,14 +382,97 @@ lock:
 e2e_smoke:
 	$(MAKE) -C flip-api e2e_smoke $(if $(FL_BACKEND),FL_BACKEND=$(FL_BACKEND)) $(if $(MODEL_FILES_DIR),MODEL_FILES_DIR=$(MODEL_FILES_DIR)) $(if $(QUERY_FILE),QUERY_FILE=$(QUERY_FILE)) $(if $(EXTRA_ARGS),EXTRA_ARGS="$(EXTRA_ARGS)")
 
-generate-trust-api-keys:
-	$(MAKE) -C flip-api generate-trust-api-keys $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE))
-
 generate-internal-service-key:
 	$(MAKE) -C flip-api generate-internal-service-key $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
 
-generate-trust-internal-service-keys:
-	$(MAKE) -C flip-api generate-trust-internal-service-keys $(if $(ENV_FILE),ENV_FILE=$(ENV_FILE)) $(if $(FORCE),FORCE=$(FORCE))
+# Poll flip-api /api/health before registering. The entrypoint seeds the DB —
+# including the FL kit-slot pool that register_trust claims from — *before* the
+# API answers, so a healthy /api/health is a safe "seed complete" signal.
+_wait-for-hub:
+	@echo "⏳ Waiting for the hub (flip-api) to be ready on :$(API_PORT)..."
+	@for i in $$(seq 1 90); do \
+	  if curl -sf "http://localhost:$(API_PORT)/api/health" >/dev/null 2>&1; then \
+	    echo "✅ Hub ready."; break; \
+	  fi; \
+	  if [ $$i -eq 90 ]; then echo "❌ flip-api not ready after 180s — is the hub up?"; exit 1; fi; \
+	  sleep 2; \
+	done
+
+# Register one trust on the running hub from its kit file. KIT is the trust
+# CODE (the kit-file handle). Seeds trust/.env.<CODE>.<env> from its .example on
+# first run, reads TRUST_NAME/CODE/REGION from it, registers (idempotent — an
+# already-registered name is skipped, credentials preserved), then writes the
+# minted credentials + assigned FL kit slot + hub-shared block back into the
+# kit. The hub keeps no trust list — the kit files ARE the list.
+register-trust: _wait-for-hub
+	@[ -n "$(KIT)" ] || { echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1; }
+	@kit="trust/.env.$(KIT).$(ENV)"; ex="$$kit.example"; \
+	  if [ ! -f "$$kit" ]; then \
+	    [ -f "$$ex" ] || { echo "❌ Neither $$kit nor $$ex exists — run 'make new-trust TRUST_CODE=$(KIT) TRUST_NAME=...' first."; exit 1; }; \
+	    cp "$$ex" "$$kit"; chmod 600 "$$kit"; echo "📋 Seeded $$kit from $$(basename "$$ex")"; \
+	  fi; \
+	  name="$$(sed -n 's/^TRUST_NAME=//p' "$$kit" | head -1)"; \
+	  code="$$(sed -n 's/^TRUST_CODE=//p' "$$kit" | head -1)"; \
+	  region="$$(sed -n 's/^TRUST_REGION=//p' "$$kit" | head -1)"; \
+	  [ -n "$$name" ] || { echo "❌ TRUST_NAME not set in $$kit"; exit 1; }; \
+	  [ -n "$$code" ] || { echo "❌ TRUST_CODE not set in $$kit — code is required to register a trust"; exit 1; }; \
+	  echo "🔑 Registering trust '$$name' (KIT=$(KIT))..."; \
+	  set -- --name "$$name" --code "$$code"; \
+	  [ -n "$$region" ] && set -- "$$@" --region "$$region"; \
+	  kitjson="$$($(DOCKER_COMMAND) exec -T flip-api uv run python -m flip_api.scripts.register_trust "$$@")" \
+	    || { echo "❌ register_trust failed for KIT=$(KIT)"; exit 1; }; \
+	  printf '%s\n' "$$kitjson" | uv run --no-config scripts/distribute_trust_kits.py --target "$$kit"
+
+# Register every dev trust: the shipped trust/.env.<CODE>.<env>.example kits ARE
+# the roster (each is seeded to a live kit + registered). Used by `make up`.
+register-trusts:
+	@rc=0; found=0; for ex in trust/.env.*.$(ENV).example; do \
+	  [ -e "$$ex" ] || continue; \
+	  code="$${ex#trust/.env.}"; code="$${code%.$(ENV).example}"; \
+	  found=1; $(MAKE) register-trust KIT="$$code" || rc=1; \
+	done; \
+	[ "$$found" = 1 ] || echo "ℹ️  No trust/.env.*.$(ENV).example kits found — nothing to register."; \
+	[ "$$rc" = 0 ] || echo "❌ One or more trust registrations failed."; \
+	exit $$rc
+
+# Scaffold a new trust kit (trust/.env.<CODE>.<env>) from the base template.
+# e.g. make new-trust TRUST_CODE=KCL TRUST_NAME="Kings College" PROD=true
+new-trust:
+	@[ -n "$(TRUST_CODE)" ] || { echo "❌ TRUST_CODE=<code> required (e.g. TRUST_CODE=KCL)"; exit 1; }
+	@[ -n "$(TRUST_NAME)" ] || { echo "❌ TRUST_NAME=<name> required (e.g. TRUST_NAME='Kings College')"; exit 1; }
+	@uv run --no-config scripts/new_trust.py --code "$(TRUST_CODE)" --name "$(TRUST_NAME)" \
+		$(if $(TRUST_REGION),--region "$(TRUST_REGION)") --env $(ENV)
+
+# Refresh the Hub-shared block in trust/.env.<CODE>.<env> with current
+# $(MAIN_ENV_FILE) values. Preserves credentials. Safe to run repeatedly. Use
+# after rotating AES_KEY_BASE64 or bumping image tags on the hub side — does NOT
+# redistribute the updated kit file to remote operators (still out-of-band).
+# On prod this is REQUIRED after `register-trust`: register fills only the
+# hub-shared vars present in the flip-api task env (AES_KEY_BASE64,
+# TRUST_API_KEY_HEADER, FL_BACKEND); the rest come from the admin's local env here.
+#
+# Works identically for dev/stag/prod: the Hub-shared values live in
+# $(MAIN_ENV_FILE), which the root Makefile already `include`s + exports.
+# No docker compose exec, no ECS round-trip, no per-trust TRUST_<n>_NAME
+# lookup — just a file→file copy keyed on KIT.
+sync-trust-kit:
+	@[ -n "$(KIT)" ] || (echo "❌ KIT=<CODE> required (e.g. KIT=GSTT)"; exit 1)
+	@MAIN_ENV_FILE=$(MAIN_ENV_FILE) uv run --no-config scripts/sync_trust_kit.py $(KIT).$(ENV)
+
+# Sync every locally-present kit for this env. Globs trust/.env.*.$(ENV) and
+# drops the .example templates (which don't match the bare-env suffix).
+sync-trust-kits:
+	@found=0; \
+	for f in trust/.env.*.$(ENV); do \
+	    case "$$f" in *.example) continue;; esac; \
+	    [ -f "$$f" ] || continue; \
+	    code="$${f#trust/.env.}"; code="$${code%.$(ENV)}"; \
+	    found=$$((found + 1)); \
+	    $(MAKE) sync-trust-kit KIT="$$code"; \
+	done; \
+	if [ "$$found" = "0" ]; then \
+	    echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."; \
+	fi
 
 # ---------------------------------------------------------------------------
 # Kubernetes Helm chart targets

@@ -38,7 +38,7 @@
                         leave-from="translate-x-0"
                         leave-to="translate-x-full"
                     >
-                        <div class="w-screen max-w-4xl">
+                        <div class="w-screen max-w-md">
                             <Form :validation-schema="schema" class="flex flex-col h-full bg-white divide-y divide-gray-100 shadow-xl dark:bg-gray-800 dark:divide-gray-700 dark:ring-1 dark:ring-white/20" @submit="update">
                                 <div class="p-4 bg-primary-500 dark:bg-gray-900 sm:px-6">
                                     <div class="flex items-center justify-between">
@@ -66,7 +66,7 @@
                                 <AiAlert
                                     v-if="!modelPending"
                                     variant="info"
-                                    text="This training has been started so you can no longer edit model details."
+                                    text="Training for this model started so you can no longer edit model details."
                                     :rounded="false"
                                     :bordered="false"
                                 />
@@ -102,19 +102,22 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div v-if="canDeleteModel()" class="p-4 sm:px-6 bg-body dark:bg-gray-900">
-                                    <div class="flex items-center justify-between">
-                                        <DialogTitle class="font-bold font-heading">
-                                            Advanced Options
-                                        </DialogTitle>
-                                    </div>
-                                    <div class="mt-2">
-                                        <AiButton text data-test="delete-model-btn" @click="confirmDeleteOpen = true">
-                                            <icon-mdi-delete class="mr-2 text-red-500" />
-                                            <span class="text-red-500">
+                                <div v-if="canDeleteModel()" class="p-4">
+                                    <div class="p-4 border border-red-300 rounded-md bg-red-50 dark:bg-red-950/30 dark:border-red-800">
+                                        <h2 class="text-sm font-bold text-red-700 dark:text-red-300">
+                                            Danger Zone
+                                        </h2>
+                                        <div class="mt-3">
+                                            <AiButton
+                                                data-test="delete-model-btn"
+                                                error
+                                                block
+                                                @click="confirmDeleteOpen = true"
+                                            >
+                                                <icon-mdi-delete class="mr-2" />
                                                 Delete Model
-                                            </span>
-                                        </AiButton>
+                                            </AiButton>
+                                        </div>
                                     </div>
                                 </div>
                                 <div class="flex justify-end flex-shrink-0 p-4 space-x-4 bg-gray-50 dark:bg-gray-900">
@@ -150,7 +153,7 @@
             >
                 <template #confirmation>
                     <div class="my-4 space-y-2">
-                        <strong>Training for this model will also be stopped if active. This can not be undone.</strong>
+                        <strong>Training for this model will be stopped. This can not be undone.</strong>
                         <p>Your username will be recorded against this action.</p>
                         <p>
                             To delete this model, enter
@@ -174,6 +177,7 @@ import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
+import { usePermissions } from "@/composables/usePermissions";
 import router from "@/router";
 import { deleteModel } from "@/services/model-service";
 import { useAuthStore } from "@/store/auth";
@@ -198,6 +202,7 @@ interface IEditModelDrawerProps {
 }
 
 const authStore = useAuthStore();
+const { isAdmin, canCreateProjects } = usePermissions();
 const errorStore = useErrorStore();
 const projectStore = useProjectStore();
 const route = useRoute();
@@ -255,9 +260,10 @@ const confirmDeleteModel = async () => {
 };
 
 const canDeleteModel = () => {
-    const userHasPermission = authStore.hasPermissions(["CanManageProjects"]);
+    // Admin always; otherwise allow Researcher who owns/has access to the project.
+    if (isAdmin.value) return true;
 
-    return userHasPermission || isOwnerOrHasAccess();
+    return canCreateProjects.value && isOwnerOrHasAccess();
 };
 
 const isOwnerOrHasAccess = () => {

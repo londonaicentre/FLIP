@@ -57,6 +57,7 @@ def get_trusts(session: Session, ids: list[UUID] | None = None) -> list[ITrust]:
         ITrust(
             id=trust.id,
             name=trust.name,
+            code=trust.code,
         )
         for trust in result
     ]
