@@ -225,9 +225,9 @@ class TestModelStatus:
         assert ModelStatus.PREPARED.value == "PREPARED"
         assert ModelStatus.TRAINING_STARTED.value == "TRAINING_STARTED"
         assert ModelStatus.RESULTS_UPLOADED.value == "RESULTS_UPLOADED"
-        assert ModelStatus.RESULTS_UPLOAD_FAILED.value == "RESULTS_UPLOAD_FAILED"
         assert ModelStatus.ERROR.value == "ERROR"
         assert ModelStatus.STOPPED.value == "STOPPED"
+        assert ModelStatus.RESULTS_UPLOAD_FAILED.value == "RESULTS_UPLOAD_FAILED"
 
     def test_model_status_is_string_enum(self):
         """ModelStatus should be a string enum."""

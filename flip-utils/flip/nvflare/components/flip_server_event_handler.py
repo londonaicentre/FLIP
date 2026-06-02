@@ -106,7 +106,13 @@ class ServerEventHandler(FLComponent):
                 if self.fatal_error:
                     self.final_status = ModelStatus.ERROR
             except ResultsUploadError:
-                self.final_status = ModelStatus.RESULTS_UPLOAD_FAILED
+                # Preserve the more salient terminal states: a recorded fatal system
+                # error (root cause) and a user-requested abort take precedence over a
+                # trailing upload failure, matching the success-path precedence above.
+                if self.fatal_error:
+                    self.final_status = ModelStatus.ERROR
+                elif self.final_status != ModelStatus.STOPPED:
+                    self.final_status = ModelStatus.RESULTS_UPLOAD_FAILED
             except Exception:
                 self.final_status = ModelStatus.ERROR
 

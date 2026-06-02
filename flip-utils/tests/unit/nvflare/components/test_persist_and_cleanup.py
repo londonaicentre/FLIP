@@ -14,7 +14,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, call, patch
 
 import pytest
-from nvflare.apis.shareable import Shareable
 from nvflare.app_opt.pt.file_model_persistor import PTFileModelPersistor
 
 from flip.constants import PTConstants
@@ -195,8 +194,13 @@ class TestPersistToS3AndCleanup:
         assert flip.cleanup.call_count == 2
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
-    def test_execute_base_exception_handling(self, mock_constants):
-        """Test execute with BaseException"""
+    def test_execute_reraises_base_exception(self, mock_constants):
+        """execute should log and re-raise even a non-Exception BaseException.
+
+        Guards the ``except BaseException`` handler specifically: a ``KeyboardInterrupt``
+        (which an ``except Exception`` would not catch) must still be logged and
+        propagated unchanged, so an interrupted run is never silently swallowed.
+        """
         mock_constants.LOCAL_DEV = True
         model_id = "123e4567-e89b-12d3-a456-426614174000"
         flip = MagicMock()
@@ -209,15 +213,21 @@ class TestPersistToS3AndCleanup:
         engine = MagicMock()
         fl_ctx.get_engine.return_value = engine
 
-        # Mock persistor as invalid to trigger panic
-        persistor = "invalid_persistor"
+        persistor = Mock(spec=PTFileModelPersistor)
+        model_location = MagicMock()
+        model_location.location = "/path/to/model"
+        persistor.get_model_inventory.return_value = {PTConstants.PTFileModelName: model_location}
         engine.get_component.return_value = persistor
 
-        shareable = Shareable()
+        with (
+            patch.object(component, "upload_results_to_s3_bucket", side_effect=KeyboardInterrupt),
+            patch.object(component, "cleanup"),
+            patch.object(component, "fire_event"),
+        ):
+            with pytest.raises(KeyboardInterrupt):
+                component.execute(fl_ctx)
 
-        # system_panic raises BaseException - we're testing the exception is raised, not the message
-        with pytest.raises(BaseException):  # noqa: PT011
-            component.execute("task", shareable, fl_ctx, MagicMock())
+        component.log_exception.assert_called_once()
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     def test_execute_reraises_original_exception_type(self, mock_constants):

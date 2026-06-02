@@ -170,9 +170,11 @@ class ModelStatus(str, Enum):
     PREPARED = "PREPARED"
     TRAINING_STARTED = "TRAINING_STARTED"
     RESULTS_UPLOADED = "RESULTS_UPLOADED"
-    RESULTS_UPLOAD_FAILED = "RESULTS_UPLOAD_FAILED"
     ERROR = "ERROR"
     STOPPED = "STOPPED"
+    # Appended last to mirror the native Postgres enum on the hub, which grows via
+    # `ALTER TYPE ... ADD VALUE` (appends to the end). Keep new members at the end.
+    RESULTS_UPLOAD_FAILED = "RESULTS_UPLOAD_FAILED"
 
 
 class FlipMetricsLabel(str, Enum):
