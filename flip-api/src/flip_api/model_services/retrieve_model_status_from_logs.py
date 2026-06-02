@@ -124,7 +124,7 @@ def retrieve_model_status_from_logs(
     if values:
         flat_params = {k: v for d in params for k, v in d.items()}
         insert_stmt = f"""
-            INSERT INTO fl_logs (model_id, logdate, success, trust_name, log)
+            INSERT INTO fl_logs (model_id, logdate, success, fl_client_name, log)
             VALUES {", ".join(values)}
             ON CONFLICT DO NOTHING
         """

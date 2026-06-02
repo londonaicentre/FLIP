@@ -74,13 +74,15 @@
                     >
                         <template #head>
                             <tr class="text-left">
-                                <th class="w-[200px]">
+                                <th class="w-[340px]">
                                     Name
                                 </th>
                                 <th>
                                     Description
                                 </th>
-                                <th class="w-[150px]" />
+                                <th class="w-[220px] whitespace-nowrap">
+                                    Status
+                                </th>
                             </tr>
                         </template>
                         <template #body="{ rows }">
@@ -88,11 +90,14 @@
                                 v-for="row, index in rows"
                                 :key="row.id"
                                 :data-test="`model-list-item-${index}`"
+                                class="cursor-pointer transition hover:bg-gray-50 dark:hover:bg-gray-900 h-16 [&>td]:py-4"
+                                @click="viewModel(row.id)"
                             >
-                                <td class="font-bold min-w-[150px]">
+                                <td class="font-bold min-w-[300px]">
                                     <router-link
                                         class="break-words line-clamp-2"
                                         :to="`/project/${route.params['projectId']}/model/${row.id}`"
+                                        @click.stop
                                     >
                                         {{ row.name }}
                                     </router-link>
@@ -107,16 +112,24 @@
                                         </p>
                                     </div>
                                 </td>
-                                <td>
-                                    <AiButton
-                                        text-primary
-                                        text
-                                        class="float-right "
-                                        data-test="view-models-btn"
-                                        @click="() => viewModel(row.id)"
-                                    >
-                                        View Model
-                                    </AiButton>
+                                <td :data-test="`model-status-${row.id}`">
+                                    <div class="flex items-center gap-2 whitespace-nowrap">
+                                        <icon-heroicons-outline-check
+                                            v-if="row.status && !isModelStatusError(row.status)"
+                                            class="w-4 h-4 text-green-600 dark:text-green-400 shrink-0"
+                                            data-test="model-status-icon-tick"
+                                            aria-hidden="true"
+                                        />
+                                        <icon-heroicons-outline-x
+                                            v-else-if="isModelStatusError(row.status)"
+                                            class="w-4 h-4 text-red-600 dark:text-red-400 shrink-0"
+                                            data-test="model-status-icon-cross"
+                                            aria-hidden="true"
+                                        />
+                                        <span class="text-sm text-gray-700 dark:text-gray-300">
+                                            {{ modelStatusLabel(row.status) }}
+                                        </span>
+                                    </div>
                                 </td>
                             </tr>
                             <tr v-if="!rows.length">
@@ -141,15 +154,15 @@
 import { TransitionRoot } from "@headlessui/vue";
 import { debouncedWatch } from "@vueuse/core";
 import useSWRV from "swrv";
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import { useRoute } from "vue-router";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiPagination from "@/components/AiPagination/AiPagination.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
+import { usePermissions } from "@/composables/usePermissions";
 import { routeChange } from "@/router";
-import { getModels } from "@/services/model-service";
-import { useAuthStore } from "@/store/auth";
+import { getModels, isModelStatusError, modelStatusLabel } from "@/services/model-service";
 import { useModalsStore } from "@/store/modals";
 
 interface IModelListProps {
@@ -167,8 +180,7 @@ const searchQueryParam = ref("");
 
 const modalStore = useModalsStore();
 const route = useRoute();
-const authStore = useAuthStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
+const { isObserver } = usePermissions();
 
 debouncedWatch(
     search,

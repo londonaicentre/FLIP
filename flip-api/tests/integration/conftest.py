@@ -50,11 +50,10 @@ import tests.fixtures.main_fixtures as main_fixtures
 from flip_api.auth.dependencies import verify_token
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
-from flip_api.db.models.user_models import RoleRef, User, UserRole
+from flip_api.db.models.user_models import RoleRef, UserRole
 from flip_api.db.seed.permissions import seed_permissions
 from flip_api.db.seed.role_permissions import seed_role_permissions
 from flip_api.db.seed.roles import seed_roles
-from flip_api.db.seed.trusts import seed_trusts
 from flip_api.main import app
 
 
@@ -139,10 +138,10 @@ def pg_container() -> Generator[PostgresContainer, None, None]:
 def integration_engine(pg_container: PostgresContainer):
     """Build the engine, create the schema, seed essentials, redirect flip-api at it.
 
-    The seed steps that don't need ``Settings`` (permissions, roles,
-    role-permissions) run unconditionally. ``seed_trusts`` reads
-    ``settings.TRUST_NAMES`` so it only runs if that's set; tests that need
-    specific trusts insert their own rows via the ``trust_factory``.
+    Only the env-independent seed steps (permissions, roles, role-permissions) run.
+    Trust rows are created on demand by tests via the ``trust_factory``; there is no
+    seed-time trust registration anymore (the deploy-time ``register_trust`` CLI is the
+    one writer outside the admin endpoint).
     """
     engine = create_engine(
         pg_container.get_connection_url(),
@@ -155,12 +154,6 @@ def integration_engine(pg_container: PostgresContainer):
         seed_permissions(s)
         seed_roles(s)
         seed_role_permissions(s)
-        try:
-            seed_trusts(s)
-        except Exception:
-            # TRUST_NAMES may be absent in a CI env that hasn't copied the
-            # full .env.development; tests that need trusts add them inline.
-            s.rollback()
 
     # Redirect every reference to the prod-bound engine at the throwaway DB.
     # Both modules captured ``engine`` at import time, so we rebind both names.
@@ -365,18 +358,18 @@ def ses_send_email_recorder(aws_mock, monkeypatch) -> list[dict]:
 
 
 def admin_user(session: Session) -> UUID:
-    """Persist an Admin-roled user and return its id.
+    """Persist an Admin role grant for a fresh Cognito-sub-shaped UUID and return it.
 
     Admin grants every permission via the seed contract verified in
     ``test_auth_permissions_db_flow``, so any ``can_*`` check short-circuits
-    True for this user without per-resource access rows.
+    True for this user without per-resource access rows. Cognito is the
+    source of truth for user identity (no local users table), so the
+    returned UUID stands in for a Cognito ``sub``.
     """
-    user = User(id=uuid4(), email=f"admin.{uuid4().hex[:8]}@example.com")
-    session.add(user)
-    session.flush()
-    session.add(UserRole(user_id=user.id, role_id=RoleRef.ADMIN.value))
+    user_id = uuid4()
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.ADMIN.value))
     session.commit()
-    return user.id
+    return user_id
 
 
 def override_verify_token_as(user_id: UUID) -> None:

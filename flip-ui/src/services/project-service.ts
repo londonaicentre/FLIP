@@ -15,19 +15,42 @@
 
 
 import { _http, IPaginatedResponse } from "@/services/api";
+import type { IProjectUser } from "@/services/user-service";
+
+export type { IProjectUser };
 
 export interface IProjectTrust {
     name: string;
     id: string;
+    code?: string | null;
     approved: boolean;
+    approvedAt?: string | null;
 }
 
 export interface IProjectQuery {
     id: string;
     name: string;
     query: string;
-    trustsQueried: number;
+    // Trust IDs the query was dispatched to at submit time. PerTrustResponse
+    // uses this as the visibility set so trusts that errored or never
+    // responded stay on screen (sent / running / red chip). Callers that
+    // want a "how many trusts ran this?" count take `.length`.
+    queriedTrustIds: string[];
+    // Subset of `queriedTrustIds` whose TrustTask is still PENDING — trust
+    // hasn't polled yet. UI shows a "queued" chip instead of "running".
+    pendingTrustIds: string[];
+    // Subset of `queriedTrustIds` whose TrustTask was cancelled (project
+    // approved without them). UI shows a "skipped" chip.
+    cancelledTrustIds: string[];
+    // Subset of `queriedTrustIds` that posted any QueryResult row (success
+    // or error). Stageable = `respondedTrustIds − erroredTrustIds`.
+    respondedTrustIds: string[];
+    // Subset of `respondedTrustIds` whose response carried an error.
+    // Staging additionally excludes these — we have no usable cohort count.
+    erroredTrustIds: string[];
     totalCohort: number;
+    created?: string | null;
+    createdBy?: string | null;
 }
 
 export type ProjectStatus = "UNSTAGED" | "STAGED" | "APPROVED";
@@ -37,18 +60,21 @@ export type IProject = {
     name: string;
     description: string;
     ownerId: string;
+    // Display name of the owner (from UserProfile). Optional because
+    // the detail endpoint doesn't surface it (only the list endpoint
+    // does); UI falls back to the email-derived username.
+    ownerName?: string | null;
     ownerEmail: string;
+    // Total users with project access — includes the owner (auto-added
+    // to ProjectUserAccess on creation), so the UI doesn't need to +1.
+    // Optional for the same reason as ownerName.
+    userCount?: number;
     creationtimestamp: string;
+    stagedAt?: string | null;
     query?: IProjectQuery;
     approvedTrusts?: IProjectTrust[];
     users: IProjectUser[]
     status: ProjectStatus
-}
-
-export interface IProjectUser {
-    id: string;
-    email: string;
-    isDisabled: boolean;
 }
 
 export interface IProjectCreate {

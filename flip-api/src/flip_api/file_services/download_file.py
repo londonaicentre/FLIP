@@ -22,6 +22,7 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import UploadedFiles
+from flip_api.domain.schemas.file import SafeFileName
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import S3Client
 
@@ -32,7 +33,7 @@ router = APIRouter(prefix="/files", tags=["file_services"])
 @router.get("/model/{model_id}/{file_name}", response_class=StreamingResponse, response_model=None)
 def download_file(
     model_id: UUID,
-    file_name: str,
+    file_name: SafeFileName,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
 ) -> StreamingResponse:
@@ -102,19 +103,18 @@ def download_file(
                     # "Cache-Control": "no-store",
                 },
             )
-        except Exception as e:
-            error_message = f"Error downloading {s3_path} from S3: {e}"
-            logger.error(error_message)
+        except Exception:
+            logger.exception(f"Error downloading file from S3 for model_id={model_id}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=error_message,
+                detail="Error downloading file",
             )
 
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Unhandled error: {str(e)}")
+    except Exception:
+        logger.exception(f"Unhandled error in download_file for model_id={model_id}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Internal server error: {e}",
+            detail="Internal server error",
         )

@@ -67,7 +67,11 @@ def mock_get_project():
     with mock.patch("flip_api.trusts_services.start_project_imaging_creation.get_project") as mock_get_project:
         query_id = uuid.uuid4()
         query = IProjectQuery(
-            id=query_id, name="Test Query", query="SELECT * FROM table", trusts_queried=2, total_cohort=20
+            id=query_id,
+            name="Test Query",
+            query="SELECT * FROM table",
+            queried_trust_ids=[uuid.uuid4(), uuid.uuid4()],
+            total_cohort=20,
         )
         mock_get_project.return_value = IProjectResponse(
             id=project_id,

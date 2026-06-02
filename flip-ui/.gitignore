@@ -50,6 +50,8 @@ test/ui/screenshots/integration/diff
 ######################
 test/cypress/screenshots/*
 test/cypress/videos/*
+# Cypress docs GIF recording — raw videos (converted to GIFs in docs/source/assets/admin/)
+/test/cypress/videos/docs/
 cypress.meta.json
 cypress/logs/
 cypress/videos/*

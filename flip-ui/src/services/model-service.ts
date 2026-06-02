@@ -31,7 +31,7 @@ export interface IModelMetricData {
 }
 
 export interface IInitTraining {
-    trusts: string[];
+    trust_ids: string[];
 }
 
 export interface IModel {
@@ -40,6 +40,9 @@ export interface IModel {
     description: string;
     ownerId: string;
     projectId: string;
+    // Optional only because cached payloads from before the backend exposed
+    // it on the project-models list may still be in flight on first paint.
+    status?: ModelStatus;
 }
 
 export interface ILog {
@@ -65,6 +68,10 @@ export interface IModelDashboard {
     status: ModelStatus;
     query: IModelDashboardQuery,
     files: FileInfo[];
+    creationTimestamp?: string | null;
+    preparedAt?: string | null;
+    trainingStartedAt?: string | null;
+    resultsUploadedAt?: string | null;
 }
 
 export interface IModelCreate {
@@ -91,6 +98,18 @@ export interface IPreSignedUrlBody {
     contentType: string | null;
 }
 
+/**
+ * Server-issued presigned POST policy. ``fields`` must be appended to a
+ * ``multipart/form-data`` body verbatim, with the file last under the field
+ * name ``file``. ``maxBytes`` mirrors the size cap baked into the policy so
+ * the UI can fail fast on oversized files.
+ */
+export interface IPreSignedUploadPolicy {
+    url: string;
+    fields: Record<string, string>;
+    maxBytes: number;
+}
+
 export type ModelStatus =
     "PENDING" |
     "INITIATED" |
@@ -108,6 +127,26 @@ export enum ModelStatusEnum {
     "PREPARED",
     "TRAINING_STARTED",
     "RESULTS_UPLOADED",
+}
+
+const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
+    PENDING: "Model Created",
+    INITIATED: "Model Queued",
+    PREPARED: "Model Prepared",
+    TRAINING_STARTED: "Training Started",
+    RESULTS_UPLOADED: "Results Uploaded",
+    ERROR: "Error",
+    STOPPED: "Stopped"
+};
+
+/** Human-readable label for a model status. Falls back to "—" if unknown. */
+export function modelStatusLabel(status: ModelStatus | undefined): string {
+    return status ? MODEL_STATUS_LABELS[status] ?? "—" : "—";
+}
+
+/** True for terminal failure / cancellation states (drives the red-cross icon). */
+export function isModelStatusError(status: ModelStatus | undefined): boolean {
+    return status === "ERROR" || status === "STOPPED";
 }
 
 /**
@@ -218,17 +257,32 @@ export async function deleteModel(url: string): Promise<void> {
     await _http.delete<never>(url);
 }
 
-export async function uploadModelFile(url: string, file: Blob): Promise<void> {
-    await fetch(url, {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": file.type }
+export async function uploadModelFile(policy: IPreSignedUploadPolicy, file: File): Promise<void> {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(policy.fields)) {
+        form.append(key, value);
+    }
+    form.append("file", file);
+
+    const response = await fetch(policy.url, {
+        method: "POST",
+        body: form
     });
+
+    if (!response.ok) {
+        // S3 rejects oversized or policy-violating uploads at the edge —
+        // surface that as a thrown error so the caller can mark the file
+        // ERROR rather than silently treating an HTML/XML 4xx body as a
+        // successful upload.
+        throw new Error(`Upload rejected by storage (status ${response.status})`);
+    }
 }
 
-export async function getPreSignedUrl(url: string, body: IPreSignedUrlBody): Promise<string | null> {
-
-    const response = await _http.post<string>(url, body);
+export async function getPreSignedUrl(
+    url: string,
+    body: IPreSignedUrlBody
+): Promise<IPreSignedUploadPolicy | null> {
+    const response = await _http.post<IPreSignedUploadPolicy>(url, body);
 
     return response.data ?? null;
 }

@@ -12,5 +12,7 @@
 
 import logging
 
+from flip_api.config import get_settings
+
 logger = logging.getLogger("uvicorn")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(get_settings().LOG_LEVEL)

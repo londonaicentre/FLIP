@@ -19,6 +19,7 @@ import { _http } from "./api";
 export interface ITrustResponse {
     id: string;
     name: string;
+    code?: string | null;
 }
 
 export async function getTrusts(): Promise<ITrustResponse[]> {

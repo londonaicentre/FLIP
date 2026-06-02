@@ -10,58 +10,41 @@
 # limitations under the License.
 #
 
-# if tag PROD=true is passed, set PROD=true
-ifeq ($(PROD),true)
-MAIN_ENV_FILE=../../.env.production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE=../../.env.stag
-else
-MAIN_ENV_FILE=../../.env.development
-endif
-
-ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
-include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+# Pull defaults from the per-trust kit example (the only tracked env source —
+# the real kit file is gitignored and may not exist on a dev box).
+KIT_ENV_FILE=../.env.GSTT.development.example
+ifneq ("$(wildcard $(KIT_ENV_FILE))","")
+include $(KIT_ENV_FILE)
+export $(shell sed 's/=.*//' $(KIT_ENV_FILE))
 endif
 
 service_name = orthanc
-docker_command = docker compose -f ../compose_trust.development.yml
+docker_command = docker compose --project-directory .. -f ../deploy/compose_trust.development.yml
 run_clean = run --rm --remove-orphans
 
 network1 = deploy_trust-network-1
-network2 = deploy_trust-network-2
 
 TRUST_1_VARS = \
-	PACS_UI_PORT=${PACS_UI_PORT_TRUST_1} \
-	ORTHANC_STORAGE_DIR=${ORTHANC_STORAGE_DIR_TRUST_1} \
+	PACS_UI_PORT=${PACS_UI_PORT} \
+	ORTHANC_STORAGE_DIR=${ORTHANC_STORAGE_DIR} \
 	ORTHANC_USERNAME=${ORTHANC_USERNAME} \
 	ORTHANC_PASSWORD=${ORTHANC_PASSWORD} \
-	XNAT_PORT=${XNAT_PORT_TRUST_1} \
+	XNAT_PORT=${XNAT_PORT} \
 	TRUST_NETWORK_NAME=${network1}
-TRUST_2_VARS = \
-	PACS_UI_PORT=${PACS_UI_PORT_TRUST_2} \
-	ORTHANC_STORAGE_DIR=${ORTHANC_STORAGE_DIR_TRUST_2} \
-	ORTHANC_USERNAME=${ORTHANC_USERNAME} \
-	ORTHANC_PASSWORD=${ORTHANC_PASSWORD} \
-	XNAT_PORT=${XNAT_PORT_TRUST_2} \
-	TRUST_NETWORK_NAME=${network2}
 
 build:
 	$(docker_command) build $(service_name)
 up-trust-1:
 	$(TRUST_1_VARS) $(docker_command) up $(service_name)
-up-trust-2:
-	$(TRUST_2_VARS) $(docker_command) up $(service_name)
 down:
 	$(TRUST_1_VARS) $(docker_command) down --remove-orphans $(service_name)
 shell:
 	$(TRUST_1_VARS) $(docker_command) $(run_clean) $(service_name) /bin/bash
 
 # Sync mock orthanc DICOM data (used in development / staging environments where real data is not available)
-# Needs AWS account credentials configured to run S3 commands
+# Fetched anonymously from the public Hugging Face dataset (no AWS CLI / credentials needed)
 update-orthanc-data:
 	CLEAN_AFTER_UPDATE=True \
-	AICENTRE_BUCKET_NAME=$(AICENTRE_BUCKET_NAME) \
 	ORTHANC_STORAGE_DIR_TRUST_1=$(ORTHANC_STORAGE_DIR_TRUST_1) \
 	ORTHANC_STORAGE_DIR_TRUST_2=$(ORTHANC_STORAGE_DIR_TRUST_2) \
 	./update_orthanc_data.sh

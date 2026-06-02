@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 
 from flip_api.config import get_settings
 from flip_api.db.database import engine
-from flip_api.db.models.main_models import FLJob
+from flip_api.db.models.main_models import FLJob, Trust
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
     IJobMetaData,
@@ -28,7 +28,7 @@ from flip_api.domain.interfaces.fl import (
     JobRequiredFiles,
     JobTypes,
 )
-from flip_api.domain.schemas.status import FLTargets
+from flip_api.domain.schemas.status import FLJobStatus, FLTargets
 from flip_api.utils.encryption import encrypt
 from flip_api.utils.http import http_delete, http_get, http_post
 from flip_api.utils.logger import logger
@@ -138,7 +138,7 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
         endpoint (str): The endpoint of the server to check the status from.
 
     Returns:
-        IServerStatus: The server status.
+        IServerStatus | None: The server status, or ``None`` when the FL API does not respond.
     """
     url = f"{endpoint}/check_server_status"
     logger.debug(f"Checking server status at '{url}'")
@@ -769,20 +769,24 @@ def get_bundle_urls(s3_path: str) -> list[str]:
         raise RuntimeError(error_msg)
 
 
-def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData:
+def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobMetaData | None:
     """
-    Extract the current job data from the FL server status response.
+    Extract the currently-running FL job matching ``fl_backend_job_id``.
 
     Args:
         net_endpoint (str): The endpoint of the FL API service.
         fl_backend_job_id (str): The FL job ID to look for.
 
     Returns:
-        IJobMetaData: The current job data if found.
+        IJobMetaData | None: The running job's metadata, or ``None`` if no running job
+            matches ``fl_backend_job_id`` (the job is already terminal or never started).
 
     Raises:
-        ValueError: If the FL server response is not a list, no running job matches
-            ``fl_backend_job_id``, or more than one running job shares the same ID.
+        ValueError: If the FL server response is not a list, or more than one running
+            job shares the same ID.
+        pydantic.ValidationError: If a returned item does not conform to ``IJobMetaData``
+            (e.g. an unknown status from a non-conforming FL-API adapter) — failing loudly
+            here is intentional.
     """
     url = f"{net_endpoint}/list_jobs"
     current_job_data = http_get(url)
@@ -797,7 +801,7 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     current_job_data = [IJobMetaData.model_validate(j) for j in current_job_data]
 
     # Get the running jobs only
-    current_job_data = [j for j in current_job_data if j.status == "RUNNING"]
+    current_job_data = [j for j in current_job_data if j.status == FLJobStatus.RUNNING]
     logger.debug(f"Running jobs: {current_job_data}")
 
     # Filter the fl_backend_job_id
@@ -805,9 +809,11 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
     logger.debug(f"Current job data for job ID {fl_backend_job_id}: {current_job_data}")
 
     if not current_job_data:
-        error_msg = f"Could not find job ID {fl_backend_job_id} on FL server {net_endpoint}."
-        logger.error(error_msg)
-        raise ValueError(error_msg)
+        logger.info(
+            f"No running job with ID {fl_backend_job_id} on FL server {net_endpoint}; "
+            f"it is already terminal or never started."
+        )
+        return None
 
     # assert that there is only 1 running job with the fl_backend_job_id
     # this should not happen, but just in case
@@ -829,8 +835,7 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         session (Session): SQLModel session object
 
     Raises:
-        ValueError: If the FL server is not running, or if the job currently running on the
-            server does not correspond to ``model_id``, or if ``target`` is invalid.
+        ValueError: If the FL server is not running, or if ``target`` is invalid.
     """
     logger.debug(f"Checking if model {model_id} is currently running...")
 
@@ -859,19 +864,14 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
         logger.error(error_msg)
         raise ValueError(error_msg)
 
-    # Extracting current job data from the server status
-    current_job_data = extract_current_job_data(net_endpoint, fl_backend_job_id)
-
-    # Current server job name (i.e. app_name) must match the model_id in order to abort
-    current_app_name = current_job_data.job_name
-
-    if current_app_name != str(model_id):
-        error_msg = (
-            f"Requested model to abort ({model_id=}) does not match the current model running on the server "
-            f"({current_app_name=})."
+    # If there is no running job for this model, it is already terminal — abort is an
+    # idempotent no-op.
+    if extract_current_job_data(net_endpoint, fl_backend_job_id) is None:
+        logger.info(
+            f"No running FL job for model {model_id} (job ID {fl_backend_job_id}); "
+            f"already stopped — nothing to abort."
         )
-        logger.error(error_msg)
-        raise ValueError(error_msg)
+        return
 
     # Extracting target and clients from the request path parameters
     path_params = request.path_params
@@ -890,13 +890,15 @@ def abort_model_training(request: Request, model_id: UUID, session: Session) -> 
     logger.info(f"Abort job response ({target=}, {clients=}): {response}")
 
 
-def add_fl_job(model_id: UUID, clients: list[str], session: Session) -> None:
+def add_fl_job(model_id: UUID, trusts: list[Trust], session: Session) -> None:
     """
-    Insert a new FL job into the database.
+    Insert a new FL job into the database with its trust participants.
 
     Args:
         model_id (UUID): The ID of the model for which the FL job is being created.
-        clients (list[str]): A list of client names associated with the FL job.
+        trusts (list[Trust]): Trust rows participating in this job. Stored via the
+            `fl_job_trust` link table — the relationship gives `job.trusts` direct
+            access to full Trust ORM rows without a manual id-to-name lookup.
         session (Session): The SQLModel session to use for the database operation.
 
     Raises:
@@ -904,7 +906,7 @@ def add_fl_job(model_id: UUID, clients: list[str], session: Session) -> None:
     """
     logger.debug(f"Adding FL job for model ID: {model_id}")
 
-    job = FLJob(model_id=model_id, clients=clients)
+    job = FLJob(model_id=model_id, trusts=trusts)
 
     try:
         session.add(job)

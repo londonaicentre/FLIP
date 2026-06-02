@@ -49,14 +49,14 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
-htmlcov/
+htmlcov*/
 .tox/
 .nox/
 .coverage
 .coverage.*
 .cache
 nosetests.xml
-coverage.xml
+coverage*.xml
 *.cover
 *.py,cover
 .hypothesis/
@@ -335,8 +335,19 @@ flip-fl-api/transfer/*/*
 .env.development
 .env.stag
 .env.production
+# Per-trust operator kits — one file per trust, named by trust CODE and
+# environment (e.g. trust/.env.KCH.development, trust/.env.<CODE>.production).
+# Minted by the hub via register-trust / POST /admin/trusts; contain plaintext
+# TRUST_API_KEY + TRUST_INTERNAL_SERVICE_KEY (and, in prod kits, the hub-shared
+# block). Never commit. The `.example` schema templates ARE tracked.
+trust/.env.*
+!trust/.env.*.example
+!trust/.env.example
 
-
+# NVFLARE participant-kit trees synced from the hub's S3 bucket
+# (s3://<aicentre-bucket>/fl-flare-participant-kits/<date>/net-1/services/<slot>/).
+# Contains client.key / client.crt — never commit.
+trust/fl_participant_kits/
 
 trust/terraform.tfstate
 
@@ -368,3 +379,9 @@ deploy/providers/AWS/email_previews/
 deploy/providers/AWS/dev/.terraform.lock.hcl
 
 .claude/scheduled_tasks.lock
+
+design_handoff*
+CONTEXT.md
+
+# Federated learning runtime directories (at repo root, same pattern as flip-fl-base-flower)
+jobs/

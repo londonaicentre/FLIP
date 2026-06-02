@@ -51,6 +51,11 @@ _ALLOWED_QUERY_TYPES: tuple[type[exp.Expression], ...] = (
 )
 
 
+def _invalid_query(detail: str) -> HTTPException:
+    logger.warning(f"Query validation failed: {detail}")
+    return HTTPException(status_code=400, detail=detail)
+
+
 def validate_query(query: str) -> bool:
     """
     Validates that an inbound SQL query is structurally safe to run against OMOP.
@@ -94,10 +99,7 @@ def validate_query(query: str) -> bool:
         HTTPException(400): When any of the rules above is violated.
     """
     if len(query) > MAX_QUERY_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters.",
-        )
+        raise _invalid_query(f"Query exceeds maximum length of {MAX_QUERY_LENGTH} characters.")
 
     try:
         statements = sqlglot.parse(query, read="postgres")
@@ -105,25 +107,19 @@ def validate_query(query: str) -> bool:
         # SqlglotError is the parent of both ParseError (e.g. "SELECT FROM") and
         # TokenError (e.g. unterminated string literals); catch the parent so a
         # tokenizer failure can't bubble up as an unhandled 500.
-        raise HTTPException(status_code=400, detail=f"Could not parse SQL query: {e}") from e
+        raise _invalid_query(f"Could not parse SQL query: {e}") from e
 
     # sqlglot returns ``None`` for empty/whitespace input and for stray semicolons
     # (e.g. ``SELECT 1; ;`` parses to ``[Select, None]``). Reject if the result is
     # not exactly one non-empty statement — silently filtering ``None`` would let
     # callers smuggle an extra trailing semicolon past the single-statement check.
     if len(statements) != 1 or statements[0] is None:
-        raise HTTPException(
-            status_code=400,
-            detail="Exactly one SQL statement is allowed per request.",
-        )
+        raise _invalid_query("Exactly one SQL statement is allowed per request.")
 
     stmt = statements[0]
 
     if not isinstance(stmt, _ALLOWED_QUERY_TYPES):
-        raise HTTPException(
-            status_code=400,
-            detail="Only SELECT statements are allowed.",
-        )
+        raise _invalid_query("Only SELECT statements are allowed.")
 
     # Walk the whole AST so subqueries, CTEs, and set-operation arms are checked.
     for table in stmt.find_all(exp.Table):
@@ -137,22 +133,15 @@ def validate_query(query: str) -> bool:
         # schema, so .name is safe here.
         schema_name = schema_node.name.lower()
         if schema_name != ALLOWED_SCHEMA:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    f"Schema '{schema_name}' is not accessible. "
-                    f"Only the '{ALLOWED_SCHEMA}' schema is allowed."
-                ),
+            raise _invalid_query(
+                f"Schema '{schema_name}' is not accessible. Only the '{ALLOWED_SCHEMA}' schema is allowed."
             )
 
     for clause_type, label in ((exp.Limit, "LIMIT"), (exp.Offset, "OFFSET")):
         for node in stmt.find_all(clause_type):
             value = node.expression
             if not isinstance(value, exp.Literal) or not value.is_int:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"{label} must be a literal integer.",
-                )
+                raise _invalid_query(f"{label} must be a literal integer.")
 
     return True
 
@@ -193,6 +182,14 @@ def get_records(
         set_cached_result(query, df, params)
         return df
 
+    # Error responses are deliberately category-only (S-8): the trust forwards
+    # this HTTPException detail to the central hub, which surfaces it through
+    # the cohort UI to every project member. Raw psycopg / SQLAlchemy text can
+    # leak row values, constraint names, and connection-pool internals — so we
+    # log the full error here for ops and return only a category to the caller.
+    # UndefinedTable / UndefinedColumn are an intentional exception: they echo
+    # back identifiers the OPERATOR typed in their own SQL (against the public
+    # OMOP CDM schema), so they leak no data while remaining a useful diagnostic.
     except DBAPIError as e:
         orig = e.orig
         error_msg = str(orig).strip()
@@ -209,14 +206,14 @@ def get_records(
 
         else:
             logger.error(f"Database error: {error_msg}")
-            raise HTTPException(status_code=500, detail=f"Database error: {error_msg}") from e
+            raise HTTPException(status_code=500, detail="query_failed") from e
 
     except SQLAlchemyError as e:
         logger.error(f"SQLAlchemy error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"SQLAlchemy error: {str(e)}") from e
+        raise HTTPException(status_code=500, detail="internal_error") from e
     except Exception as e:
         logger.error(f"Unexpected error executing query: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error executing query: {str(e)}") from e
+        raise HTTPException(status_code=500, detail="internal_error") from e
 
 
 def get_counts(df: pd.DataFrame) -> dict:
@@ -380,13 +377,16 @@ def make_other_category(results: list[dict], min_count: int = COHORT_QUERY_THRES
 
 
 def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: int) -> StatisticsResponse:
-    """
-    Returns aggregated statistics from the query results.
+    """Returns aggregated statistics from the query results.
 
     - Counts the number of records.
     - Aggregates the number of occurrences of each unique value per column.
 
-    If the number of records is less than the threshold, an empty response is returned.
+    Below-threshold counts are privacy-suppressed by returning a ``StatisticsResponse``
+    with ``record_count=0`` and empty ``data`` — the count itself is suppressed, not
+    just the per-field breakdown. This is intentional so the trust still has a normal
+    response to forward to the hub; raising HTTPException here previously caused
+    trust-api to skip the hub callback and leave the per-trust UI status stuck.
 
     Args:
         df (pd.DataFrame): Query results dataframe.
@@ -394,32 +394,31 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
         threshold (int): Minimum number of records required to return results.
 
     Returns:
-        StatisticsResponse: Contains the aggregated statistics.
-
-    Raises:
-        HTTPException: If the request cannot be processed.
+        StatisticsResponse: Contains the aggregated statistics, or a 0-count empty response
+        when below ``COHORT_QUERY_THRESHOLD``.
     """
     record_count = len(df)
 
-    # Create StatisticsResponse
+    if record_count < COHORT_QUERY_THRESHOLD:
+        logger.info(
+            f"Query returned insufficient results ({record_count} < {COHORT_QUERY_THRESHOLD});"
+            " returning privacy-suppressed 0-count response"
+        )
+        return StatisticsResponse(
+            query_id=query_input.query_id,
+            trust_id=query_input.trust_id,
+            record_count=0,
+            created=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
+            data=[],
+        )
+
     stats = StatisticsResponse(
         query_id=query_input.query_id,
         trust_id=query_input.trust_id,
         record_count=record_count,
         created=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
-        data=[],
+        data=[get_counts(df), get_null_counts(df)],
     )
-
-    if record_count < COHORT_QUERY_THRESHOLD:
-        logger.info(
-            f"Query returned insufficient results ({COHORT_QUERY_THRESHOLD}, {record_count})"
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=f"Query returned insufficient results ({COHORT_QUERY_THRESHOLD}, {record_count})",
-        )
-    stats.data = []
-    stats.data += [get_counts(df), get_null_counts(df)]
 
     if "person_id" in df.columns:
         logger.info("person_id column found in the query results; including age and sex distribution calculations.")

@@ -15,9 +15,17 @@
 
 Uses [sphinx-autoapi](https://sphinx-autoapi.readthedocs.io/en/latest/) to generate API documentation from docstrings in the codebase.
 
-To generate the documentation, run:
+To generate the documentation, run (from the repository root):
 
 ```bash
+make -C docs clean
+make -C docs docs
+```
+
+Or, from inside the `docs/` directory:
+
+```bash
+cd docs
 make clean
 make docs
 ```

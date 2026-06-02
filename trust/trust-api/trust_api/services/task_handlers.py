@@ -16,6 +16,7 @@ Task handlers for processing tasks received from the central hub via polling.
 Each handler processes a specific task type and returns a result dict.
 """
 
+import datetime
 import json
 from typing import Any
 
@@ -67,6 +68,8 @@ async def handle_cohort_query(payload: dict[str, Any]) -> dict[str, Any]:
     Process a cohort query task.
 
     Calls the local data-access-api, then pushes results back to the central hub.
+    On data-access-api failure, posts an error report to the hub so the per-trust
+    UI status switches from "running" to "error" instead of staying stuck.
 
     Args:
         payload: Task payload containing query details (query, query_name, encrypted_project_id, etc.)
@@ -106,7 +109,42 @@ async def handle_cohort_query(payload: dict[str, Any]) -> dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Error processing cohort query: {e}")
+        await _report_cohort_error_to_hub(payload, str(e))
         return {"success": False, "error": str(e)}
+
+
+async def _report_cohort_error_to_hub(payload: dict[str, Any], error: str) -> None:
+    """Tell the hub this trust's cohort query failed.
+
+    Without this, the hub never sees the trust at all for this query and the UI
+    leaves the per-trust chip on "running" forever. We swallow any failure here
+    because the original cohort error is what callers care about — surfacing a
+    hub-post failure would mask the real cause in the task result.
+    """
+    query_id = payload.get("query_id")
+    trust_id = payload.get("trust_id")
+    if not query_id or not trust_id:
+        # Payload was malformed before we could extract identifiers; nothing to
+        # post — the upstream error already explains what went wrong.
+        return
+    try:
+        await make_request(
+            method="POST",
+            url=f"{CENTRAL_HUB_API_URL}/cohort/results",
+            json_body={
+                "query_id": query_id,
+                "trust_id": trust_id,
+                "created": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
+                "record_count": 0,
+                "data": [],
+                "error": error,
+            },
+            headers={TRUST_API_KEY_HEADER: TRUST_API_KEY},
+        )
+    except Exception as hub_exc:
+        logger.warning(
+            f"Failed to report cohort error to hub for query_id={query_id}, trust_id={trust_id}: {hub_exc}"
+        )
 
 
 async def handle_create_imaging(payload: dict[str, Any]) -> dict[str, Any]:

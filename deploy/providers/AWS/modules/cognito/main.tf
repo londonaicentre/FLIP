@@ -132,9 +132,17 @@ resource "aws_cognito_user_pool_client" "client" {
     access_token  = "minutes"
     id_token      = "minutes"
   }
+  # ALLOW_USER_PASSWORD_AUTH is intentionally absent: it lets the browser
+  # POST the plaintext password to Cognito's InitiateAuth, which is visible
+  # to any TLS terminator, WAF, or proxy that captures request bodies. The
+  # UI uses USER_SRP_AUTH (Amplify v6 default) so only an SRP proof crosses
+  # the wire. ALLOW_ADMIN_USER_PASSWORD_AUTH is retained because it is an
+  # AWS-IAM-gated server-side flow (not browser-reachable) used by the
+  # admin-auth fallback in flip-api integration tests.
+  # Reference for the SRP / USER_AUTH / OAuth flows enumerated below:
+  # https://docs.aws.amazon.com/cognito/latest/developerguide/amazon-cognito-user-pools-authentication-flow.html
   explicit_auth_flows = [
     "ALLOW_USER_AUTH",
-    "ALLOW_USER_PASSWORD_AUTH",
     "ALLOW_USER_SRP_AUTH",
     "ALLOW_ADMIN_USER_PASSWORD_AUTH",
     "ALLOW_CUSTOM_AUTH",

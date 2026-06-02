@@ -83,7 +83,7 @@ async def test_happy_path_image_counts_and_age_sex(stub_hub_received):
 
     # Sex Distribution: persons 1-12 appear in image_occurrence; 6 M, 6 F. The SQL
     # groups by gender_source_value of distinct person_id. The compose stack runs
-    # with COHORT_QUERY_THRESHOLD=5 (see trust/compose.test.yml), so 6 clears the
+    # with COHORT_QUERY_THRESHOLD=5 (see trust/deploy/compose.test.yml), so 6 clears the
     # bucket-rollup threshold and neither value collapses into "Other".
     sex = _aggregate(body, "Sex Distribution")
     assert sex == {"M": 6, "F": 6}
@@ -188,23 +188,28 @@ async def test_realistic_cte_multi_join_shaped_query(stub_hub_received):
 
 
 @pytest.mark.asyncio
-async def test_empty_result_below_threshold_returns_failure(stub_hub_received):
-    """A query that matches no rows trips the cohort-size threshold and surfaces as failure."""
+async def test_empty_result_below_threshold_suppresses_to_hub(stub_hub_received):
+    """A below-threshold cohort is privacy-suppressed by data-access-api (200 + empty data).
+    trust-api treats it as success and forwards the empty result to the hub so the per-trust
+    chip resolves to "responded" with record_count=0 instead of being stuck on "running"."""
     result = await handle_cohort_query(
         _payload("SELECT * FROM omop.image_occurrence WHERE accession_id = 'NONEXISTENT'")
     )
 
-    assert result["success"] is False
-    # data-access-api raises HTTPException(400, "Query returned too few records: 0 ...");
-    # make_request promotes that to an HTTPException whose detail is the upstream body.
-    assert "too few records" in result["error"].lower()
-    # The hub callback should not fire when the data-access-api hop already failed.
-    assert stub_hub_received == []
+    assert result == {"success": True}
+    assert len(stub_hub_received) == 1
+    callback = stub_hub_received[0]
+    assert callback["path"].rstrip("/").endswith("/cohort/results")
+    body = json.loads(callback["body"])
+    assert body["query_id"] == "qid-1"
+    assert body["trust_id"] == "trust_test"
+    assert body["record_count"] == 0
 
 
 @pytest.mark.asyncio
 async def test_malformed_payload_validation_error(stub_hub_received):
-    """Missing required fields in the payload short-circuit before any HTTP call."""
+    """Missing required fields in the payload short-circuit before we know which (query_id,
+    trust_id) to report against, so trust-api can't usefully tell the hub. No hub callback."""
     # No query_name / encrypted_project_id / query_id / trust_id.
     result = await handle_cohort_query({"query": "SELECT 1"})
 
@@ -214,8 +219,9 @@ async def test_malformed_payload_validation_error(stub_hub_received):
 
 
 @pytest.mark.asyncio
-async def test_data_access_api_unreachable_returns_failure(monkeypatch, stub_hub_received):
-    """Pointing trust-api at a dead port should produce a clean failure envelope."""
+async def test_data_access_api_unreachable_reports_error_to_hub(monkeypatch, stub_hub_received):
+    """When data-access-api is unreachable, trust-api still posts an error envelope to the
+    hub so the per-trust chip transitions to "errored" instead of being stuck on "running"."""
     from trust_api.services import task_handlers
 
     # 127.0.0.1:1 — port 1 is privileged and effectively guaranteed to refuse.
@@ -226,13 +232,19 @@ async def test_data_access_api_unreachable_returns_failure(monkeypatch, stub_hub
     assert result["success"] is False
     # ``make_request`` maps connection errors to HTTPException(502, "Failed to connect ...").
     assert "failed to connect" in result["error"].lower() or "502" in result["error"]
-    assert stub_hub_received == []
+    # trust-api now reports failures to the hub too — the chip resolves to "errored".
+    assert len(stub_hub_received) == 1
+    body = json.loads(stub_hub_received[0]["body"])
+    assert body["query_id"] == "qid-1"
+    assert body["trust_id"] == "trust_test"
+    assert body["record_count"] == 0
+    assert "failed to connect" in body["error"].lower() or "502" in body["error"]
 
 
 @pytest.mark.asyncio
 async def test_sql_injection_attempt_rejected(stub_hub_received):
-    """Multi-statement payloads (e.g. trailing ``DROP``) are filtered by
-    data-access-api's validate_query."""
+    """Multi-statement payloads (e.g. trailing ``DROP``) are filtered by data-access-api's
+    validate_query. trust-api forwards the failure to the hub so the chip resolves to "errored"."""
     result = await handle_cohort_query(
         _payload("SELECT * FROM omop.image_occurrence; DROP TABLE omop.person")
     )
@@ -241,12 +253,15 @@ async def test_sql_injection_attempt_rejected(stub_hub_received):
     # The AST-based validate_query enforces a single-statement invariant before any DDL/
     # DML check, so query-stacking surfaces as the "one statement per request" message.
     assert "one sql statement" in result["error"].lower()
-    assert stub_hub_received == []
+    assert len(stub_hub_received) == 1
+    body = json.loads(stub_hub_received[0]["body"])
+    assert "one sql statement" in body["error"].lower()
 
 
 @pytest.mark.asyncio
 async def test_missing_table_returns_failure(stub_hub_received):
-    """Querying a table that doesn't exist surfaces as a 400 from data-access-api."""
+    """Querying a table that doesn't exist surfaces as a 400 from data-access-api and is
+    reported to the hub as an error envelope (per-trust chip → "errored")."""
     result = await handle_cohort_query(_payload("SELECT * FROM omop.does_not_exist"))
 
     assert result["success"] is False
@@ -255,4 +270,7 @@ async def test_missing_table_returns_failure(stub_hub_received):
     # a future-Postgres flake.
     err = result["error"].lower()
     assert "does_not_exist" in err or "does not exist" in err
-    assert stub_hub_received == []
+    assert len(stub_hub_received) == 1
+    body = json.loads(stub_hub_received[0]["body"])
+    err_body = body["error"].lower()
+    assert "does_not_exist" in err_body or "does not exist" in err_body

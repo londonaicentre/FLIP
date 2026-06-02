@@ -170,7 +170,7 @@ const submitForm = async (v: unknown) => {
         });
 
         routeChange.viewModel(projectId, modelId);
-    } catch (e) {
+    } catch {
         modalStore.toggleCreateModel();
 
         Snackbar.show({

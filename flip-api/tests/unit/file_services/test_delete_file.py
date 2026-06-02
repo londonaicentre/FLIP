@@ -12,17 +12,21 @@
 
 import uuid
 from unittest import mock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException, status
+from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from flip_api.auth.dependencies import verify_token
 from flip_api.config import Settings
+from flip_api.db.database import get_session
 from flip_api.file_services.delete_file import (
     S3Client,
     delete_model_file,
 )
+from flip_api.main import app
 
 # Common test data
 model_id = uuid.uuid4()
@@ -96,4 +100,31 @@ def test_delete_model_file_s3_error(session: Session, monkeypatch):
 
     # Assertions
     assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Error deleting" in exc_info.value.detail
+    assert exc_info.value.detail == "Error deleting file"
+
+
+@pytest.mark.parametrize(
+    "bad_file_name",
+    [
+        # ``..`` (literal) is collapsed by HTTP-client URL normalisation
+        # before the request is sent, so it never reaches the validator;
+        # the percent-encoded forms below are the real attack shape.
+        "..%2Fescape.bin",
+        "subdir%2Ffile.bin",
+        "subdir%5Cfile.bin",
+        "file%00.bin",
+    ],
+)
+def test_delete_model_file_route_rejects_path_traversal_file_name(bad_file_name):
+    """Path-param validator must short-circuit before any DB or S3 access."""
+    user_id_local = uuid.uuid4()
+    mock_session = MagicMock()
+    app.dependency_overrides[get_session] = lambda: mock_session
+    app.dependency_overrides[verify_token] = lambda: user_id_local
+    try:
+        with patch("flip_api.file_services.delete_file.S3Client") as mock_s3_cls:
+            response = TestClient(app).delete(f"/api/files/model/{uuid.uuid4()}/{bad_file_name}")
+        assert response.status_code in (status.HTTP_404_NOT_FOUND, status.HTTP_422_UNPROCESSABLE_ENTITY)
+        mock_s3_cls.assert_not_called()
+    finally:
+        app.dependency_overrides.clear()

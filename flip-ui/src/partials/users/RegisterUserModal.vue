@@ -56,20 +56,83 @@
                                             <p>The new user will be sent a temporary password.</p>
                                             <AiInput
                                                 class="mt-2"
+                                                data-test="name-field"
+                                                type="text"
+                                                name="name"
+                                                placeholder="Name"
+                                            />
+                                            <AiInput
+                                                class="mt-2"
+                                                data-test="organisation-field"
+                                                type="text"
+                                                name="organisation"
+                                                placeholder="Organisation"
+                                            />
+                                            <AiInput
+                                                class="mt-2"
                                                 data-test="email-field"
                                                 type="email"
                                                 name="email"
                                                 placeholder="Email Address"
                                             />
-                                            <AiChipSelect
-                                                default-text="Please select a role"
-                                                :error-message="errors?.selectedRoles"
-                                                :options="mapRoleOptions()"
-                                                :selected-options="fields"
-                                                @push="push"
-                                                @remove="remove"
-                                                @validate="validateField('selectedRoles')"
-                                            />
+                                            <Listbox v-model="selectedOption">
+                                                <ListboxButton
+                                                    class="relative w-full py-2 pl-3 pr-10 mt-2 text-left bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-700 rounded-md cursor-default focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400 focus:ring-1"
+                                                    :class="[
+                                                        !!errors?.role &&
+                                                            'ring-1 ring-red-500 focus:ring-red-500 text-red-500 dark:text-red-400 dark:focus:ring-red-400',
+                                                        !!errors?.role &&
+                                                            'focus:border-red-500 border-red-500 dark:focus:border-red-400',
+                                                    ]"
+                                                >
+                                                    <span
+                                                        class="block truncate"
+                                                        :class="!selectedOption && 'text-gray-500'"
+                                                        data-test="role-select"
+                                                    >
+                                                        {{ selectedOption?.description ?? "Please select a role" }}
+                                                    </span>
+                                                    <span class="absolute inset-y-0 right-0 flex items-center pr-2 pointer-events-none">
+                                                        <icon-mdi-chevron-down class="w-5 h-5 text-gray-400" />
+                                                    </span>
+                                                </ListboxButton>
+                                                <transition
+                                                    enter-active-class="transition duration-100 ease-out"
+                                                    enter-from-class="transform scale-95 opacity-0"
+                                                    enter-to-class="transform scale-100 opacity-100"
+                                                    leave-active-class="transition duration-75 ease-in"
+                                                    leave-from-class="transform scale-100 opacity-100"
+                                                    leave-to-class="transform scale-95 opacity-0"
+                                                >
+                                                    <ListboxOptions
+                                                        class="fixed z-10 py-2 origin-top-left bg-white dark:bg-gray-900 dark:ring-white/20 rounded-md shadow-2xl w-60 ring-1 ring-black ring-opacity-5 focus:outline-none"
+                                                    >
+                                                        <ListboxOption
+                                                            v-for="option in roleOptions"
+                                                            v-slot="{ active, selected }"
+                                                            :key="option.id"
+                                                            data-test="role-select-option"
+                                                            :value="option"
+                                                        >
+                                                            <li
+                                                                class="relative px-4 py-2 pl-10 select-none transition"
+                                                                :class="[
+                                                                    (selected || active)
+                                                                        && 'text-primary-500 bg-primary-100 dark:bg-gray-800 dark:text-primary-200'
+                                                                ]"
+                                                            >
+                                                                <span>{{ option.description }}</span>
+                                                                <span class="absolute inset-y-0 left-0 flex items-center pl-3">
+                                                                    <icon-mdi-check v-if="selected" />
+                                                                </span>
+                                                            </li>
+                                                        </ListboxOption>
+                                                    </ListboxOptions>
+                                                </transition>
+                                            </Listbox>
+                                            <div v-if="!!errors?.role" class="mt-1 text-sm text-red-500 dark:text-red-400">
+                                                {{ errors.role }}
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -103,18 +166,23 @@
 <script setup lang="ts">
 import { Dialog,
     DialogTitle,
+    Listbox,
+    ListboxButton,
+    ListboxOption,
+    ListboxOptions,
     TransitionChild,
     TransitionRoot } from "@headlessui/vue";
-import { useField, useFieldArray, useForm } from "vee-validate";
-import { ref, watch } from "vue";
-import { array, object, string } from "yup";
+import { useField, useForm } from "vee-validate";
+import { computed, ref, watch } from "vue";
+import { object, string } from "yup";
 
 import AiDialogOverlay from "@/components/AiDialogOverlay/AiDialogOverlay.vue";
-import AiChipSelect from "@/components/AiSelect/AiChipSelect.vue";
+import AiInput from "@/components/AiInput/AiInput.vue";
 import { IOption } from "@/components/AiSelect/interfaces";
 import { IRole } from "@/services/role-service";
 import { IRegisterUserDto, registerUser } from "@/services/user-service";
 import { useErrorStore } from "@/store/error";
+import { extractErrorDetail } from "@/utils/api-errors";
 import { Snackbar } from "@/utils/snackbar";
 
 interface IRegisterUserModalProps {
@@ -124,8 +192,10 @@ interface IRegisterUserModalProps {
 }
 
 interface RegisterUserForm {
+    name: string;
+    organisation: string;
     email: string;
-    selectedRoles: string[];
+    role: string;
 }
 
 const props = withDefaults(
@@ -138,35 +208,42 @@ const props = withDefaults(
 const emit = defineEmits(["closeModal", "onSuccess"]);
 
 const schema = object().shape({
+    name: string()
+        .required("A name is required"),
+    organisation: string()
+        .required("An organisation is required"),
     email: string()
         .required("An email address is required")
         .email("Please enter a valid email address"),
-    selectedRoles: array()
-        .required("Select at least 1 role")
-        .min(1, "Select at least 1 role")
+    role: string()
+        .required("Please select a role")
 });
 
 const errorStore = useErrorStore();
-const currentlySelected = ref();
+const selectedOption = ref<IOption>();
 const isSubmitting = ref(false);
 
 const { errors, resetForm, validate, validateField } = useForm<RegisterUserForm>({ validationSchema: schema });
-const { push, remove, fields } = useFieldArray("selectedRoles");
+const name = useField("name");
+const organisation = useField("organisation");
 const email = useField("email");
-useField("selectedRoles");
+const role = useField<string>("role");
 
-watch(currentlySelected, async (current) => {
-    if (current) {
-        if (!fields.value.some((field) => (field.value as IRole).id === current.id)) {
-            push(current);
-        }
-        await validateField("selectedRoles");
-    }
+const roleOptions = computed<IOption[]>(() =>
+    props.roles.map((item) => ({
+        id: item.id,
+        description: item.rolename
+    }))
+);
+
+watch(selectedOption, async (current) => {
+    role.value.value = current?.id ?? "";
+    await validateField("role");
 });
 
 const close = () => {
     emit("closeModal", false);
-    currentlySelected.value = undefined;
+    selectedOption.value = undefined;
     resetForm();
 };
 
@@ -177,8 +254,10 @@ const submitAction = async () => {
 
     if (valid) {
         const user: IRegisterUserDto = {
+            name: name.value.value as string,
+            organisation: organisation.value.value as string,
             email: email.value.value as string,
-            roles: fields.value.map(item => (item.value as IRole).id)
+            roles: [role.value.value as string]
         };
 
         try {
@@ -199,7 +278,7 @@ const submitAction = async () => {
             }
         } catch (e) {
             Snackbar.error({
-                text: "There was an error, please try again.",
+                text: extractErrorDetail(e, "There was an error, please try again."),
                 title: "User not registered"
             });
             errorStore.setError();
@@ -208,16 +287,5 @@ const submitAction = async () => {
     }
 
     isSubmitting.value = false;
-};
-
-const mapRoleOptions = (): IOption[] => {
-    return props.roles.map((item) => {
-        const option: IOption = {
-            id: item.id,
-            description: item.rolename
-        };
-
-        return option;
-    });
 };
 </script>

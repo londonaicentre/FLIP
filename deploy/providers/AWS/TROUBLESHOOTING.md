@@ -118,7 +118,30 @@ If the existing resource has a mismatched attribute (e.g., different public key 
 
 ---
 
-### 1.5 AWS SSO token expired
+### 1.5 Trust EC2 runs out of disk during `make deploy-trust`
+
+**Symptom**: `make deploy-trust` fails partway through `docker compose pull` with:
+
+```
+failed to extract layer ... torch/_inductor/codegen/cpp_micro_gemm.py:
+no space left on device
+```
+
+`df -h /` on the trust EC2 shows the root volume near 100 % used, even though it was nominally 30+ GB free at the start of the pull.
+
+**Root cause**: The full trust image set (NVFLARE `flare-fl-client` with multi-GB torch deps, XNAT Tomcat ~4 GB compressed, Orthanc, OMOP, observability stack, three trust APIs) blows through 50 GB of overlayfs snapshot space when extracted concurrently. The 50 GB default sized for the legacy compose stack is no longer adequate.
+
+**Fix**: The trust EC2 module now provisions a 100 GB root volume (`modules/trust_ec2/main.tf`). Volume modification is in-place — no instance replacement — but the partition + filesystem still need an online resize once after `terraform apply`:
+
+```bash
+ssh flip-trust 'sudo growpart /dev/nvme0n1 1 && sudo resize2fs /dev/nvme0n1p1'
+```
+
+Then retry `make deploy-trust`. Verify with `df -h /` (should show ~100 GB).
+
+---
+
+### 1.6 AWS SSO token expired
 
 **Symptom**: All `aws` commands return `Unable to locate credentials` or `AccessDenied`.
 
@@ -132,6 +155,28 @@ Use `--use-device-code` for headless/SSH environments.
 
 ---
 
+### 1.7 ALB returns 502 / NLB shows unhealthy targets after ECS cutover
+
+**Symptom**: After bringing ECS Fargate up alongside the legacy EC2 stack, the ALB still returns 502 for `/api/*` and the NLB target group shows the legacy EC2 target as unhealthy. Trust-side fl-client cannot reach fl-server. trust-api heartbeats may also return 401 because they hit the legacy flip-api whose secret hashes are stale.
+
+**Root cause**: The ALB listener rule and NLB TCP listener still forward to the EC2-instance target groups. Adding ECS services without `load_balancer` blocks does not register the task ENI IPs anywhere — the LBs keep routing to the now-stopped EC2 containers.
+
+**Fix** (already in place on `develop`): in `main.tf`, ECS task IPs are registered to dedicated `target_type = "ip"` target groups (`ecs_flip_api`, `ecs_fl_server_tcp`) and the listener rules / default actions point at them. The `ecs_services.tf` services include `load_balancer` blocks so each running task auto-registers. The legacy module-managed `ec2-instance-fl-server-tcp` target group is removed from the NLB module config so it stops registering an unhealthy EC2 target.
+
+If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_lb_target_group.ecs_flip_api.arn` and the NLB TCP listener default action targets `aws_lb_target_group.ecs_fl_server_tcp.arn`. `target_type = "ip"` is mandatory for awsvpc Fargate — `instance` will not register.
+
+---
+
+### 1.8 ECS-internal call from fl-api → fl-server hangs in `try_connect`
+
+**Symptom**: On ECS `fl-api-net-1` boots, registers in Cloud Map, but its NVFLARE admin client hangs trying to reach fl-server. `fl-server-net-1` is healthy on the NLB and reachable from the trust EC2.
+
+**Root cause**: fl-api is the NVFLARE admin client and connects directly to fl-server inside the VPC (the NLB path is reserved for off-VPC trust FL clients). The fl-server SG had no ingress on 8002 from the fl-api SG, so the in-VPC connect attempt timed out.
+
+**Fix**: `ecs_sg.tf` now opens fl-server SG ingress on 8002 from the fl-api SG. If you add another in-VPC NVFLARE admin consumer, add its SG to the same ingress rule.
+
+---
+
 ## 2. Deployment (Ansible / Docker)
 
 ### 2.1 Docker volume mount parse failure (`empty section between colons`)
@@ -142,13 +187,23 @@ Use `--use-device-code` for headless/SSH environments.
 invalid spec: :/var/lib/orthanc/db: empty section between colons
 ```
 
-**Root cause**: The `ORTHANC_STORAGE_DIR_TRUST_1` environment variable is missing from the `.env.stag` file, resulting in an empty host path for the Orthanc Docker volume mount.
+**Root cause**: `ORTHANC_STORAGE_DIR` is missing from the per-trust kit file
+(`trust/.env.<KIT>`), so the Orthanc compose mount expands to an empty host
+path. The compose files (`trust/deploy/compose_trust.{development,production}.yml`)
+both consume the unsuffixed `${ORTHANC_STORAGE_DIR}` — the older
+`_TRUST_{1,2}` suffixed names from `.env.stag` were retired by the
+per-trust-kit refactor.
 
-**Fix**: Add to `.env.stag`:
+**Fix**: Set the host-local profile entry in the kit file:
 
 ```
-ORTHANC_STORAGE_DIR_TRUST_1=/opt/flip/orthanc/orthanc-storage
+ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage-trust1
 ```
+
+The trust kit `.example` templates carry this key in their **Host-local
+profile** section; if you bootstrapped a kit before the refactor, copy the
+key from a current template (e.g. `trust/.env.GSTT.development.example` or the
+base `trust/.env.example`) and adjust the path for the trust host.
 
 ---
 
@@ -202,6 +257,59 @@ ssh flip-trust "docker service update --force xnat1_xnat-web"
 ```bash
 ssh flip-trust "docker restart trust1-imaging-api-1"
 ```
+
+---
+
+### 2.5 NVFLARE participant kit fails `LoadResult.INVALID_SIGNATURE` on fl-api / fl-server boot
+
+**Symptom**: After regenerating an NVFLARE participant kit and redeploying, fl-api or fl-server crash-loops with `LoadResult.INVALID_SIGNATURE`. Or fl-client connects to fl-server but TLS handshake fails with `SSLV3_ALERT_BAD_CERTIFICATE` / `CERTIFICATE_VERIFY_FAILED`.
+
+**Root cause**: NVFLARE signs every file in the kit at provision time (`signature.json` references a hash of `fed_admin.json`, `rootCA.pem`, `client.crt`, etc.). Two failure modes:
+
+1. **In-place edits**: Sed-patching `fed_admin.json` after the kit lands (e.g. to swap a hostname) tears the signature.
+2. **Stale `aws s3 sync`**: `aws s3 sync` skips files when source and destination have similar size + mtime, so a freshly regenerated kit can leave a stale `rootCA.pem` / `client.crt` / `fed_client.json` next to a fresh `signature.json` (or vice versa). The on-disk kit is then signed by one rootCA but presents a cert from another.
+
+**Fix**:
+
+1. Never edit the kit after provision. If a hostname needs to change, regenerate the kit with the right hostname baked in.
+2. The EFS provisioner (`ecs_efs_provision.tf`) and the trust Ansible playbook (`site.yml`, both NVFLARE Trust_1 and Flower trust syncs) now wipe the destination with `find <dest> -mindepth 1 -delete` immediately before the `aws s3 sync` / `aws s3 cp`. This forces a clean copy. If you script your own kit sync somewhere new, mirror this pattern.
+
+To recover a stuck stack: re-run `make full-deploy` (central hub) or `make deploy-trust` (trust EC2). Both now wipe before sync.
+
+---
+
+### 2.6 fl-client returns 401 from data-access-api or imaging-api
+
+**Symptom**: A new model run fails with:
+
+```
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: http://data-access-api:8000//cohort/dataframe
+```
+
+(or the same on `imaging-api`). Trust-api → data-access-api / imaging-api calls succeed; only fl-client calls fail.
+
+**Root cause**: The running fl-client / fl-server / fl-api images predate `flip-fl-base` PR #111, which added `headers=_trust_internal_headers()` to every outbound `flip.get_dataframe` / `flip.get_by_accession_number` / `flip.add_resource` call. Without that header, the data-access-api / imaging-api router-level auth check rejects the request with 401.
+
+**Fix**: bump `DOCKER_FL_TAG` in `.env.stag` (and `.env.production` for prod) to a `flip-fl-base` SHA that includes PR #111, then redeploy. A single tag bump rolls all three images:
+
+```bash
+# Pick a flip-fl-base SHA on develop after PR #111 merged
+sed -i 's/^DOCKER_FL_TAG=.*/DOCKER_FL_TAG=<sha>/' .env.stag
+
+# fl-api + fl-server (ECS task defs read TF_VAR_flip_fl_image_tag)
+make apply PROD=stag
+
+# fl-client (trust EC2 compose pulls the same tag)
+make deploy-trust PROD=stag
+```
+
+Verify the running fl-client has the header wiring:
+
+```bash
+ssh flip-trust 'docker exec trust1-fl-client-net-1 grep -n "_trust_internal_headers" /app/flip/core/standard.py'
+```
+
+You should see calls at `get_dataframe`, `get_by_accession_number`, and `add_resource`.
 
 ---
 
@@ -317,6 +425,52 @@ The code fix (adding `timeout=120` to all XNAT calls) prevents recurrence.
 
 ---
 
+### 3.6 FL training aborts with `num_samples=0` (looks like a data bug)
+
+**Symptom**: A model run reaches the FL training stage and immediately dies with:
+
+```
+ValueError: num_samples should be a positive integer value, but got num_samples=0
+```
+
+The cohort query returned a non-empty dataframe (visible in trust-api logs), so this looks like a preprocessing or trainer bug at first glance.
+
+**Root cause** (the one we hit; confirm with logs before assuming): every `imaging-api/download/images/net-1` call from fl-client returned 500 with `[Errno 13] Permission denied: '/app/data/images/net-1'` and `Found 0 files in total`. The bind-mount source on the trust EC2 (`/opt/flip/data/trust-1` / `trust-2`) was owned by root because Docker auto-created it as root when no Ansible play pre-created it. imaging-api runs as uid 1000 (`flip`) and could not `mkdir` inside.
+
+**Diagnosis**: pull the fl-client log directly from the workspace, then cross-check imaging-api:
+
+```bash
+ssh flip-trust 'docker exec trust1-fl-client-net-1 \
+  find /app -name "log.txt" -path "*<run-id>*" -exec tail -200 {} \;'
+
+ssh flip-trust 'docker logs trust1-imaging-api-1 --since 10m 2>&1 | \
+  grep -iE "permission|errno|500"'
+```
+
+If you see `Permission denied` on `/app/data/images/...`, you have the same bug.
+
+**Fix** (sticky): `site.yml` now pre-creates `/opt/flip/data/trust-1` and `/opt/flip/data/trust-2` owned by `ubuntu:ubuntu` (uid 1000 inside the containers) and removes the unused `/opt/flip/data/images` entry. Re-run `make full-deploy PROD=stag`.
+
+**Hot-fix** (existing host, no redeploy):
+
+```bash
+ssh flip-trust 'sudo chown -R 1000:1000 /opt/flip/data/trust-1 /opt/flip/data/trust-2'
+```
+
+The general principle: anywhere a non-root container bind-mounts a host path, pre-create the host path with the right uid in Ansible. Letting Docker auto-create it leaves a root-owned source that silently breaks every non-root container that touches it.
+
+---
+
+### 3.7 Single net permanently starved of new training jobs
+
+**Symptom**: One FL net never picks up new training jobs even though scheduler logs show jobs being queued. Other nets are fine.
+
+**Root cause**: `FLScheduler` rows transition to `BUSY` while a job runs. If `prepare_and_start_training` raised mid-flight in a previous cycle, the row was left `BUSY` with no live job — `run_jobs_core` then refused to schedule new work for that net forever.
+
+**Fix** (already in place on `develop`): `_recover_stale_busy_schedulers()` runs at the top of every `run_jobs_core` cycle and resets `BUSY` rows whose associated job no longer exists. No manual intervention needed; just confirm the next cycle clears the row.
+
+---
+
 ## 4. Configuration
 
 ### 4.1 `NET_ENDPOINTS` hostname not resolvable
@@ -329,11 +483,14 @@ The code fix (adding `timeout=120` to all XNAT calls) prevents recurrence.
 
 ---
 
-### 4.2 Missing `ORTHANC_STORAGE_DIR_TRUST_1` env var
+### 4.2 Missing `ORTHANC_STORAGE_DIR` env var
 
 **Symptom**: `make deploy-trust` fails with Docker volume mount parse error.
 
-**Fix**: Add `ORTHANC_STORAGE_DIR_TRUST_1=/opt/flip/orthanc/orthanc-storage` to `.env.stag`.
+**Fix**: Add `ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage` to the
+per-trust kit file `trust/.env.<KIT>` (see 2.1 for the full root-cause
+context — the compose files consume the unsuffixed name and read from the
+kit, not `.env.stag`).
 
 ---
 
@@ -354,9 +511,11 @@ The code fix (adding `timeout=120` to all XNAT calls) prevents recurrence.
 **Root cause**: The `dhcp.tf` resource associates a new DHCP options set (with `flip.local` search domain) to the VPC. Existing EC2 instances won't pick up the new options until their DHCP lease expires and renews (typically 24-72 hours for AWS default, or a reboot). Until renewal, the instances continue using the previous (default) DHCP options.
 
 **Fix**: Reboot the EC2 instance to force an immediate DHCP renewal:
+
 ```bash
 aws ec2 reboot-instances --instance-ids <instance-id> --profile FlipDeveloperAccess
 ```
+
 Or wait for the lease to renew naturally. This only matters if the instance needs to resolve `flip.local` domains (which it doesn't during PR 1 — ECS Fargate tasks are the consumers in PR 2).
 
 ---

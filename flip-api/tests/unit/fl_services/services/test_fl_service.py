@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from flip_api.config import Settings
+from flip_api.db.models.main_models import Trust
 from flip_api.domain.interfaces import fl as fl_interfaces
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
@@ -827,8 +828,8 @@ def test_extract_current_job_data_success(mock_http_get):
 
     # Mock backend job list response
     mock_http_get.return_value = [
-        {"job_id": "job123", "status": "RUNNING", "job_name": "myjob"},
-        {"job_id": "job999", "status": "FINISHED", "job_name": "oldjob"},
+        {"job_id": "job123", "status": "RUNNING"},
+        {"job_id": "job999", "status": "FINISHED"},
     ]
 
     result = extract_current_job_data(net_endpoint, fl_backend_job_id)
@@ -842,15 +843,14 @@ def test_extract_current_job_data_success(mock_http_get):
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
-def test_extract_current_job_data_not_found(mock_http_get):
+def test_extract_current_job_data_not_found_returns_none(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
-    mock_http_get.return_value = [{"job_id": "other", "status": "RUNNING", "job_name": "otherjob"}]
+    mock_http_get.return_value = [{"job_id": "other", "status": "RUNNING"}]
     net_endpoint = "http://fl-api-endpoint"
     fl_backend_job_id = "missing-job"
 
-    with pytest.raises(ValueError, match=f"Could not find job ID {fl_backend_job_id}"):
-        extract_current_job_data(net_endpoint, fl_backend_job_id)
+    assert extract_current_job_data(net_endpoint, fl_backend_job_id) is None
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
@@ -861,8 +861,8 @@ def test_extract_current_job_data_multiple_found(mock_http_get):
     fl_backend_job_id = "duplicate-job"
 
     mock_http_get.return_value = [
-        {"job_id": "duplicate-job", "status": "RUNNING", "job_name": "duplicate-job"},
-        {"job_id": "duplicate-job", "status": "RUNNING", "job_name": "duplicate-job"},
+        {"job_id": "duplicate-job", "status": "RUNNING"},
+        {"job_id": "duplicate-job", "status": "RUNNING"},
     ]
 
     with pytest.raises(ValueError, match="Multiple running jobs found"):
@@ -888,7 +888,7 @@ def test_abort_model_training_success(
     mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
     mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
     mock_fetch_server_status.return_value = {"status": "stopped"}
-    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", job_name=str(model_id), status="RUNNING")
+    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
 
     request = MagicMock()
     request.scope = {"request_id": "req-id"}
@@ -898,17 +898,52 @@ def test_abort_model_training_success(
     mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
 
 
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+def test_abort_model_training_idempotent_when_no_running_job(
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
+    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
+    mock_fetch_server_status.return_value = {"status": "stopped"}
+    mock_extract_current_job_data.return_value = None
+
+    request = MagicMock()
+    request.scope = {"request_id": "req-id"}
+    request.path_params = {"target": "server", "clients": None}
+
+    # No running job -> idempotent no-op: must not raise and must not call abort_job.
+    fl_service.abort_model_training(request, model_id, fake_session)
+    mock_abort.assert_not_called()
+
+
 def test_add_fl_job_creates_job(model_id, fake_session):
-    clients = ["client1", "client2"]
-    fl_service.add_fl_job(model_id, clients, fake_session)
+    trusts = [Trust(id=uuid4(), name="client1"), Trust(id=uuid4(), name="client2")]
+    fl_service.add_fl_job(model_id, trusts, fake_session)
+
     fake_session.add.assert_called_once()
     fake_session.commit.assert_called_once()
     fake_session.refresh.assert_called_once()
+
+    # The persisted FLJob attaches the Trust rows via the `fl_job_trust` link relationship.
+    persisted_job = fake_session.add.call_args.args[0]
+    assert persisted_job.trusts == trusts
 
 
 def test_add_fl_job_rollback_on_exception(model_id):
     fake_session = MagicMock()
     fake_session.add.side_effect = Exception("DB Error")
     with pytest.raises(Exception, match="DB Error"):
-        fl_service.add_fl_job(model_id, ["client1"], fake_session)
+        fl_service.add_fl_job(model_id, [Trust(id=uuid4(), name="client1")], fake_session)
     fake_session.rollback.assert_called_once()

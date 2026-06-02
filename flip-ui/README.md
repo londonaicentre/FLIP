@@ -82,10 +82,18 @@ stack, so there is no VITE_-prefixed duplication to keep in sync.
 | `AWS_REGION` | AWS region hosting the pool (default `eu-west-2`) |
 | `CENTRAL_HUB_API_URL` | Full base URL of the flip-api backend, including `/api` |
 | `BLACKLISTED_MODEL_FILES` | Comma-separated file names to reject in model uploads |
-| `VITE_LOCAL` | Set to `true` for local mock mode (bypasses Cognito) |
+| `VITE_LOCAL` | Set to `true` for local mock mode (bypasses Cognito). **Local dev only — see warning below.** |
 
 Authentication is handled through [AWS Cognito](https://docs.aws.amazon.com/cognito/). A valid Cognito User Pool and
 Client ID are required for a production deployment.
+
+> **`VITE_LOCAL=true` must never reach a production build.** The flag is inlined by Vite at build time and
+> short-circuits the Cognito session check in [`src/utils/auth.ts`](src/utils/auth.ts) plus enables the MirageJS
+> mock in [`src/main.ts`](src/main.ts) — so a build carrying it ships an unauthenticated app. `npm run build` and
+> `npm run build:deploy` therefore refuse to proceed if `VITE_LOCAL=true` is set in the environment (enforced by
+> [`scripts/check-build-flags.mjs`](scripts/check-build-flags.mjs) and a belt-and-braces check in
+> [`vite.config.mts`](vite.config.mts)). Use it only with `npm run dev` against a mocked API; keep it out of
+> CI and deploy environments.
 
 ## Testing
 

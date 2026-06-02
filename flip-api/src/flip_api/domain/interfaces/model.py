@@ -106,6 +106,14 @@ class IModelResponse(BaseModel):
     status: ModelStatus
     query: IQuery | None = Field(default=None)
     files: list[UploadedFiles] | None = None
+    # Lifecycle timestamps surfaced so the model lifecycle bar can render real
+    # dates instead of static "done" labels. Each is the latest models_audit
+    # row for the corresponding action; None until the model has reached that
+    # stage. ``creation_timestamp`` is just ``Model.creation_timestamp``.
+    creation_timestamp: str | None = Field(default=None, alias="creationTimestamp")
+    prepared_at: str | None = Field(default=None, alias="preparedAt")
+    training_started_at: str | None = Field(default=None, alias="trainingStartedAt")
+    results_uploaded_at: str | None = Field(default=None, alias="resultsUploadedAt")
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -116,7 +124,7 @@ class IBuildImagesForModel(BaseModel):
     files: dict = Field(...)
 
     @validator("files")
-    def validate_files(cls, v):
+    def validate_files(cls, v: dict) -> dict:
         required_keys = {"opener", "algo", "model"}
         if not isinstance(v, dict):
             raise ValueError("'files' must be an object")

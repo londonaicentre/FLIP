@@ -1,10 +1,13 @@
 {
     "permissions": [
+        "CanCreateProjects",
         "CanDeleteAnyProject",
         "CanManageProjects",
         "CanManageUsers",
         "CanApproveProjects",
         "CanUnstageProjects",
-        "CanAccessAdminPanel"
+        "CanAccessAdminPanel",
+        "CanManageDeployments",
+        "CanManageSiteBanner"
     ]
 }

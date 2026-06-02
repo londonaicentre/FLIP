@@ -37,6 +37,7 @@ import { computed, ComputedRef, onMounted, ref, watch } from "vue";
 
 import { IResults } from "@/services/cohort-query-service";
 import { useSiteSettings } from "@/store/siteSettingsStore";
+import { useTrustStore } from "@/store/trusts";
 import { capatilizeString } from "@/utils/helpers";
 
 interface IAiCohortChartProps {
@@ -46,6 +47,16 @@ interface IAiCohortChartProps {
 const props = defineProps<IAiCohortChartProps>();
 
 const siteSettings = useSiteSettings();
+const trustStore = useTrustStore();
+
+// Prefer the trust's short code (e.g. "GSTT") in legend/series labels so the
+// chart legend stays compact; fall back to the name from the cohort result if
+// the trust store hasn't loaded yet or the trust has no code set.
+const trustLabel = (trustId: string, trustName: string): string => {
+    const trust = trustStore.getTrusts.find(t => t.id === trustId);
+
+    return trust?.code || trustName;
+};
 
 const containerRef = ref<HTMLDivElement | HTMLCanvasElement>();
 
@@ -83,7 +94,7 @@ onMounted(() => {
         const xAxisValues = [...new Set(xAxisData)].sort();
 
         const chart = echarts.init(containerRef.value);
-        const colorPalette = ["#a55eea", "#4b7bec", "#2bcbba", "#fd9644", "#fc5c65", "#4b6584", "#2d98da", "#cc7e63", "#724e58", "#4b565b"];
+        const colorPalette = ["#61366e", "#4b7bec", "#2bcbba", "#fd9644", "#fc5c65", "#4b6584", "#2d98da", "#cc7e63", "#724e58", "#4b565b"];
 
         const chartTitle = capatilizeString(props.data.name);
 
@@ -91,7 +102,7 @@ onMounted(() => {
             color: colorPalette,
             colorBy: "series",
             darkMode: siteSettings.getSettings.darkMode,
-            backgroundColor: siteSettings.getSettings.darkMode ? "#111827" : "#F9FAFB",
+            backgroundColor: "transparent",
             title: {
                 text: chartTitle,
                 textStyle: {
@@ -126,7 +137,6 @@ onMounted(() => {
                 }
             },
             grid: {
-                backgroundColor: siteSettings.getSettings.darkMode ? "#282A36": "#4A5462",
                 left: "5%",
                 right: "5%",
                 bottom: "25%",
@@ -141,7 +151,7 @@ onMounted(() => {
                 }
             },
             legend: {
-                data: props.data.results.map(d => d.trustName),
+                data: props.data.results.map(d => trustLabel(d.trustId, d.trustName)),
                 left: "center",
                 textStyle: { color: siteSettings.getSettings.darkMode ? "#ccc": "#282A36" }
             },
@@ -207,7 +217,7 @@ onMounted(() => {
             series:
                 props.data.results.map(element => {
                     return {
-                        name: element.trustName,
+                        name: trustLabel(element.trustId, element.trustName),
                         type: "bar",
                         data: _.sortBy(element.data, "value").map(data => {
 

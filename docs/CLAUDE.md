@@ -4,21 +4,26 @@
 
 | File | Topic |
 |------|-------|
-| `source/1_overview.rst` | Project overview, architecture, motivation |
-| `source/2_components.rst` | Component descriptions (API, UI, trust services, FL nodes) |
-| `source/3_sys-admin.rst` | System administration, deployment, auth configuration |
-| `source/4_user-guides.rst` | User-facing workflows and guides |
-| `source/5_api_reference.rst` | REST API endpoint reference |
-| `source/6_faqs.rst` | Frequently asked questions |
-| `source/7_glossary.rst` | Terminology definitions |
+| `source/overview.rst` | Project overview, architecture, motivation |
+| `source/components.rst` | Component descriptions (API, UI, trust services, FL nodes) |
+| `source/sys-admin.rst` | System administration, deployment, auth configuration |
+| `source/user-guides.rst` | User-facing workflows and guides |
+| `source/api-reference.rst` | REST API endpoint reference |
+| `source/deploy-flip.rst` | Deployment instructions (central hub, TRE, on-prem) |
+| `source/working-with-flip-apps.rst` | Building FL apps (NVFLARE / Flower) |
+| `source/flip-workflow.rst` | End-to-end FLIP workflow |
+| `source/faqs.rst` | Frequently asked questions |
+| `source/glossary.rst` | Terminology definitions |
 
 ## Sub-docs
 
-| File | Topic |
-|------|-------|
-| `source/components/component-fl-nodes.rst` | FL training nodes (NVFLARE/Flower) |
-| `source/components/component-user-roles.rst` | User roles and permissions |
+| Directory | Topic |
+|-----------|-------|
+| `source/components/` | Per-component deep dives (FL nodes, XNAT, OMOP, logging stack, architecture overview) |
+| `source/sys-admin/` | Admin tasks (user roles, project/user management, platform support) |
 | `source/user-guides/` | User guide files |
+| `source/deploy-flip/` | Per-target deployment guides (central hub, TRE, on-prem) |
+| `source/working-with-flip-apps/` | Step-by-step FLARE / Flower app authoring |
 
 ## How to Read
 

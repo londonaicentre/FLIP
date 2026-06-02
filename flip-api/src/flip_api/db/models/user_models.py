@@ -62,22 +62,35 @@ class RoleRef(Enum):
 
 
 class UserRole(SQLModel, table=True):
-    """User role mapping table."""
+    """User role mapping table.
+
+    ``user_id`` holds a Cognito ``sub`` UUID. There is intentionally no FK to
+    a local users table — Cognito is the source of truth for user identity.
+    """
 
     __tablename__ = "user_role"
 
-    user_id: UUID = Field(foreign_key="users.id", primary_key=True)
+    user_id: UUID = Field(primary_key=True)
     role_id: UUID = Field(foreign_key="roles.id", primary_key=True)
 
 
-class User(SQLModel, table=True):
-    """User table."""
+class UserProfile(SQLModel, table=True):
+    """DB-backed profile data for a Cognito user.
 
-    __tablename__ = "users"
+    `name` and `organisation` are operator-supplied strings rendered to other
+    users via Vue `{{ }}` interpolation (project card `owner_name`, audit log
+    actor labels, etc.). Vue escapes `{{ }}` by default, so the current UI is
+    safe. Treat both fields as UNTRUSTED CONTENT — if you ever render them via
+    `v-html`, export them to PDF/CSV, or paste them into an email template,
+    re-escape at that boundary. The 255-char cap is a length bound, not a
+    content filter.
+    """
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-    email: str = Field(unique=True)
-    enabled: bool = Field(default=True)
+    __tablename__ = "user_profile"
+
+    user_id: UUID = Field(primary_key=True)
+    name: str = Field(default="", max_length=255)
+    organisation: str = Field(default="", max_length=255)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 

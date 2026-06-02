@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import Enum, StrEnum
 
 # ---------------------------
 # Enums
@@ -146,6 +146,11 @@ class TaskStatus(str, Enum):
     IN_PROGRESS = "IN_PROGRESS"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+    # Terminal state set by the hub when the task is no longer needed —
+    # e.g. cohort-query task still PENDING when the project is approved
+    # without that trust. Trust polling skips CANCELLED tasks; the task
+    # row is kept for audit so we can answer "was this trust ever asked?".
+    CANCELLED = "CANCELLED"
 
 
 class TaskType(str, Enum):
@@ -168,3 +173,19 @@ class XNATImageStatus(str, Enum):
     RETRIEVE_ERROR = "RETRIEVE_ERROR"
     CREATED = "CREATED"
     DELETED = "DELETED"
+
+
+class FLJobStatus(StrEnum):
+    """Normalized FL-backend job lifecycle status.
+
+    The shared job-metadata contract (GitHub issue #490): every FL-API adapter
+    (fl-api-flower, fl-api-base) maps its native runtime status into one of these
+    values, and flip-api consumes only these. Distinct from ``JobStatus`` above,
+    which tracks the FL scheduler queue state.
+    """
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    FINISHED = "FINISHED"
+    FAILED = "FAILED"
+    STOPPED = "STOPPED"

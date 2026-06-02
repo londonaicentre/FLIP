@@ -19,6 +19,17 @@ import { validProject } from "../../common";
 describe("Upload Model Files", () => {
     const projectId = validProject.id;
     const modelId = "6292d9ec-e821-4e4a-814e-3a315a4cb95e";
+    const uploadOrigin = "https://flip-uploaded-model-files-bucket-test.s3.eu-west-2.amazonaws.com";
+    const presignedPolicy = {
+        url: `${uploadOrigin}/`,
+        fields: {
+            "key": `${modelId}/trainer.py`,
+            "Content-Type": "text/x-python",
+            "policy": "stub-policy",
+            "x-amz-signature": "stub-signature"
+        },
+        maxBytes: 100 * 1024 * 1024
+    };
 
     before(() => {
         cy.login();
@@ -47,12 +58,12 @@ describe("Upload Model Files", () => {
     });
 
     it("displays uploaded status when model file is uploaded successfully", () => {
-        cy.intercept("POST", `/files/preSignedUrl/model/${modelId}`, "https://flip-uploaded-model-files-bucket-test.s3.eu-west-2.amazonaws.com/test")
+        cy.intercept("POST", `/files/preSignedUrl/model/${modelId}`, presignedPolicy)
             .as("fileLambda");
         cy.intercept(
-            "PUT",
-            "https://flip-uploaded-model-files-bucket-test.s3.eu-west-2.amazonaws.com/test",
-            { statusCode: 200 }
+            "POST",
+            `${uploadOrigin}/`,
+            { statusCode: 204 }
         ).as("fileUpload");
 
         cy.getBySel("upload-file-btn").scrollIntoView();
@@ -68,12 +79,12 @@ describe("Upload Model Files", () => {
     });
 
     it("displays scanning status", () => {
-        cy.intercept("POST", `/files/preSignedUrl/model/${modelId}`, "https://flip-uploaded-model-files-bucket-test.s3.eu-west-2.amazonaws.com/test")
+        cy.intercept("POST", `/files/preSignedUrl/model/${modelId}`, presignedPolicy)
             .as("fileLambda");
         cy.intercept(
-            "PUT",
-            "https://flip-uploaded-model-files-bucket-test.s3.eu-west-2.amazonaws.com/test",
-            { statusCode: 200 }
+            "POST",
+            `${uploadOrigin}/`,
+            { statusCode: 204 }
         ).as("fileUpload");
 
         cy.getBySel("upload-file-btn").scrollIntoView();
@@ -97,13 +108,13 @@ describe("Upload Model Files", () => {
     });
 
     it("handles error from get model call and displays error status", () => {
-        cy.intercept("POST", `/files/preSignedUrl/model/${modelId}`, "https://flip-uploaded-model-files-bucket-test.s3.eu-west-2.amazonaws.com/test")
+        cy.intercept("POST", `/files/preSignedUrl/model/${modelId}`, presignedPolicy)
             .as("getUploadURL");
 
         cy.intercept(
-            "PUT",
-            "https://flip-uploaded-model-files-bucket-test.s3.eu-west-2.amazonaws.com/test",
-            { statusCode: 200 }
+            "POST",
+            `${uploadOrigin}/`,
+            { statusCode: 204 }
         ).as("fileUpload");
 
         cy.getBySel("upload-file-btn").scrollIntoView();
