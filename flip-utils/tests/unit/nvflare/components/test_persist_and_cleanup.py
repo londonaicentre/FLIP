@@ -220,6 +220,43 @@ class TestPersistToS3AndCleanup:
             component.execute("task", shareable, fl_ctx, MagicMock())
 
     @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
+    def test_execute_reraises_original_exception_type(self, mock_constants):
+        """execute should re-raise the original exception type rather than masking it.
+
+        Guards the bare ``raise`` in the ``except BaseException`` handler: a
+        ResultsUploadError surfacing from the upload step must propagate unchanged so
+        the server event handler can map it to RESULTS_UPLOAD_FAILED instead of a
+        blanket ERROR. A plain ``raise Exception`` here would lose that distinction.
+        """
+        mock_constants.LOCAL_DEV = True
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        flip = MagicMock()
+        component = PersistToS3AndCleanup(model_id=model_id, flip=flip)
+        component.log_info = MagicMock()
+        component.log_exception = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_peer_context.return_value = None
+        engine = MagicMock()
+        fl_ctx.get_engine.return_value = engine
+
+        persistor = Mock(spec=PTFileModelPersistor)
+        model_location = MagicMock()
+        model_location.location = "/path/to/model"
+        persistor.get_model_inventory.return_value = {PTConstants.PTFileModelName: model_location}
+        engine.get_component.return_value = persistor
+
+        with (
+            patch.object(component, "upload_results_to_s3_bucket", side_effect=ResultsUploadError("S3 upload failed")),
+            patch.object(component, "cleanup"),
+            patch.object(component, "fire_event"),
+        ):
+            with pytest.raises(ResultsUploadError, match="S3 upload failed"):
+                component.execute(fl_ctx)
+
+        component.log_exception.assert_called_once()
+
+    @patch("flip.nvflare.components.persist_and_cleanup.FlipConstants")
     def test_upload_results_with_general_exception(self, mock_constants):
         """Test upload_results_to_s3_bucket with general exception"""
         mock_constants.LOCAL_DEV = True
