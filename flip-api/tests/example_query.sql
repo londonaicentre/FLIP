@@ -1,62 +1,106 @@
-WITH feature_observation AS (
-    -- the subset of image_feature rows that link to the observation table
-    SELECT
-        ife.image_occurrence_id,
-        ife.image_feature_concept_id,
-        ife.anatomic_site_concept_id,
-        ife.image_feature_event_id
-    FROM
-        omop.image_feature ife
-    WHERE
-        ife.image_feature_event_field_concept_id = 1147304 -- "observation" table
+-- Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+-- Licensed under the Apache License, Version 2.0 (the "License");
+-- you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+--     http://www.apache.org/licenses/LICENSE-2.0
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the License for the specific language governing permissions and
+-- limitations under the License.
+
+WITH gender_concept AS (
+    SELECT concept_id, concept_name
+    FROM omop.concept
+    WHERE concept_name in ('Male', 'Female')
 ),
-observation_value AS (
-    -- Pivot image features and observation values to give one row per image occurrence
+type_concept AS(
+    SELECT concept_id, concept_name
+	FROM omop.concept
+	WHERE domain_id = 'Type Concept'
+),
+body_structure_concept AS (
+    SELECT concept_id, concept_name
+    FROM omop.concept
+    WHERE concept_class_id = 'Body Structure'
+	AND standard_concept = 'S'
+),
+procedure_concept AS (
+    SELECT concept_id, concept_name
+    FROM omop.concept
+    WHERE domain_id = 'Procedure'
+    AND concept_class_id in ('Procedure', 'Clinical Observation')
+	AND standard_concept = 'S'
+),
+measurement_concept AS (
+    SELECT concept_id, concept_name
+	FROM omop.concept
+	WHERE domain_id = 'Measurement'
+),
+image_feature_measurement AS (
     SELECT
-        fo.image_occurrence_id,
-        -- anatomy is the same for every feature, so just pick one
-        MAX(anatomic_site_concept_id) AS anatomic_site_concept_id,
-        MAX(
-            CASE
-                -- when the feature is "effusion" (4215818) get the "yes/no" value from observation table
-                WHEN image_feature_concept_id = 4215818 THEN value_concept.concept_name
-            END
-        ) AS effusion,
-        MAX(
-            CASE
-                WHEN image_feature_concept_id = 4196943 THEN value_concept.concept_name
-            END
-        ) AS edema,
-        MAX(
-            CASE
-                WHEN image_feature_concept_id = 40481136 THEN value_concept.concept_name
-            END
-        ) AS normal_lungs
-    FROM
-        feature_observation fo
-        JOIN omop.observation o ON o.observation_id = fo.image_feature_event_id
-        JOIN omop.concept value_concept ON value_concept.concept_id = o.value_as_concept_id
-    GROUP BY
-        fo.image_occurrence_id
+        f.image_occurrence_id,
+        f.image_feature_concept_id,
+		mc.concept_name AS image_feature_concept_name,
+        f.image_feature_event_id,
+        m.measurement_concept_id,
+        m.value_as_number,
+        m.value_source_value
+    FROM omop.image_feature f
+    JOIN omop.measurement m
+      ON m.measurement_id = f.image_feature_event_id
+	LEFT JOIN measurement_concept mc
+	  ON mc.concept_id = f.image_feature_concept_id
+    WHERE f.image_feature_event_field_concept_id = 1147330
+),
+dicom_attributes AS (
+    SELECT
+        ifm.image_occurrence_id,
+        MAX(CASE WHEN ifm.image_feature_concept_name = 'Slice Thickness'
+                 THEN ifm.value_as_number END) AS slice_thickness_mm,
+        MAX(CASE WHEN ifm.image_feature_concept_name = 'Manufacturer'
+                 THEN ifm.value_source_value END) AS manufacturer
+    FROM image_feature_measurement ifm
+    GROUP BY ifm.image_occurrence_id
 )
 SELECT
+    -- person
+    p.person_id,
+    p.person_source_value AS "Patient ID",
+    gender_concept.concept_name AS "Gender",
+	-- visit occurrence
+    v.visit_start_date AS "Visit date",
+    visit_type_concept.concept_name AS "Visit type",
+	-- procedure occurrence
+	pr.procedure_occurrence_id AS "Procedure ID",
+    pr.procedure_date AS "Procedure date",
+    procedure_concept.concept_name AS "Procedure",
     -- image occurrence
-    io.accession_id,
-    io.image_occurrence_date AS "Image date",
-    modality_concept.concept_name AS "Modality",
-    io_anatomic_site_concept.concept_name AS "Image occurrence anatomy",
-    -- chest x-ray features
-    ife_anatomic_site_concept.concept_name AS "Image feature anatomy",
-    ov.effusion AS "Effusion",
-    ov.edema AS "Edema",
-    ov.normal_lungs AS "Lungs in normal arrangement"
-FROM
-    -- data tables
-    omop.image_occurrence io
-    JOIN observation_value ov ON ov.image_occurrence_id = io.image_occurrence_id -- concept tables
-    JOIN omop.concept modality_concept ON modality_concept.concept_id = io.modality_concept_id
-    JOIN omop.concept io_anatomic_site_concept ON io.anatomic_site_concept_id = io_anatomic_site_concept.concept_id
-    JOIN omop.concept ife_anatomic_site_concept ON ov.anatomic_site_concept_id = ife_anatomic_site_concept.concept_id
-ORDER BY RANDOM()
-LIMIT 150;
- 
+	io.accession_id,
+    io.image_occurrence_date AS "Image date"	,
+    modality_concept.concept_name as "Modality",
+    io_anatomic_site_concept.concept_name as "Image occurrence anatomy",
+	da.slice_thickness_mm AS "Slice thickness (mm)",
+	da.manufacturer AS "Manufacturer"
+FROM omop.person p
+LEFT JOIN omop.visit_occurrence v
+  ON v.person_id = p.person_id
+LEFT JOIN omop.procedure_occurrence pr
+  ON pr.visit_occurrence_id = v.visit_occurrence_id
+LEFT JOIN omop.image_occurrence io
+  ON io.procedure_occurrence_id = pr.procedure_occurrence_id
+LEFT JOIN dicom_attributes da
+  ON da.image_occurrence_id = io.image_occurrence_id
+-- concepts
+LEFT JOIN gender_concept
+  ON p.gender_concept_id = gender_concept.concept_id
+LEFT JOIN type_concept visit_type_concept
+  ON visit_type_concept.concept_id = v.visit_type_concept_id
+LEFT JOIN procedure_concept
+  ON pr.procedure_concept_id = procedure_concept.concept_id
+LEFT JOIN body_structure_concept io_anatomic_site_concept
+  ON io.anatomic_site_concept_id = io_anatomic_site_concept.concept_id
+LEFT JOIN procedure_concept modality_concept
+  ON io.modality_concept_id = modality_concept.concept_id
+WHERE
+    procedure_concept.concept_name = 'CT Spleen'
