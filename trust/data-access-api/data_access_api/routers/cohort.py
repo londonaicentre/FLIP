@@ -88,9 +88,11 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     Receives a cohort query and returns the aggregated statistics.
 
     Below-threshold results are privacy-suppressed: the response is a normal
-    ``StatisticsResponse`` with ``record_count=0`` and empty ``data``, *not*
-    an HTTP error. Returning an error here caused trust-api to skip reporting
-    back to the hub, which left the per-trust UI status stuck on "running".
+    ``StatisticsResponse`` with ``record_count=0``, empty ``data`` and
+    ``suppressed=True``, *not* an HTTP error. Returning an error here caused
+    trust-api to skip reporting back to the hub, which left the per-trust UI
+    status stuck on "running". The ``suppressed`` flag lets the hub/UI tell a
+    privacy-suppressed count apart from a genuine zero match (issue #519).
 
     Args:
         query_input (data_access_api.routers.schema.CohortQueryInput): The input data for the cohort query.

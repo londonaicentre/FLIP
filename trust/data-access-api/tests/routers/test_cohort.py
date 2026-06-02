@@ -129,6 +129,8 @@ def test_receive_cohort_query_too_few_records(mock_validate_query, mock_get_sett
     body = response.json()
     assert body["record_count"] == 0
     assert body["data"] == []
+    # The 0 is privacy suppression, not a genuine zero — flagged on the wire (#519).
+    assert body["suppressed"] is True
     assert body["query_id"] == sample_query_input["query_id"]
     assert body["trust_id"] == sample_query_input["trust_id"]
 

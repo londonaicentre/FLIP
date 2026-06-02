@@ -119,6 +119,28 @@ describe("CohortAggregateCard", () => {
         expect(wrapper.text()).toContain("1 errored");
     });
 
+    it("includes a suppressed segment when any trust privacy-suppressed its count", async () => {
+        // trust-2 matched some patients but the count was below the privacy
+        // threshold; the headline total (5) understates the picture, so the
+        // subtitle calls out the suppressed trust (#519).
+        const data = {
+            recordCount: 5,
+            trustsResults: [],
+            trustRecordCounts: {
+                "trust-1": 5,
+                "trust-2": 0
+            },
+            trustSuppressed: ["trust-2"]
+        };
+        const wrapper = mountCard({ data });
+        await nextTick();
+        await flushPromises();
+
+        expect(wrapper.text()).toContain("2 trusts complete");
+        expect(wrapper.text()).toContain("1 running");
+        expect(wrapper.text()).toContain("1 suppressed");
+    });
+
     it("drops the '(live)' marker and patients-so-far suffix once all trusts have responded", async () => {
         const data = {
             recordCount: 12,

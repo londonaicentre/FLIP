@@ -96,6 +96,14 @@
                         running
                     </span>
                     <span
+                        v-else-if="row.suppressed"
+                        class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-amber-700 dark:text-amber-300 rounded-full bg-amber-100 dark:bg-amber-900/40"
+                        title="Matched some patients, but the count is below the privacy threshold and was suppressed by the trust"
+                    >
+                        <span class="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full" />
+                        suppressed
+                    </span>
+                    <span
                         v-else
                         class="text-lg font-semibold tabular-nums text-gray-900 dark:text-gray-100"
                     >
@@ -153,6 +161,7 @@ interface IResultsShape {
     trustsResults?: IFieldShape[];
     trustRecordCounts?: Record<string, number>;
     trustErrors?: Record<string, string>;
+    trustSuppressed?: string[];
 }
 
 const perTrustCounts = computed<Record<string, number>>(() => {
@@ -177,6 +186,15 @@ const perTrustErrors = computed<Record<string, string>>(() => {
     return r?.trustErrors ?? {};
 });
 
+// Set of trust ids whose count was privacy-suppressed (below threshold). These
+// trusts responded successfully but render a "suppressed" chip instead of a
+// literal 0 that would read as "no data available". See issue #519.
+const perTrustSuppressed = computed<Set<string>>(() => {
+    const r = results.value as unknown as IResultsShape | null;
+
+    return new Set(r?.trustSuppressed ?? []);
+});
+
 interface IRow {
     id: string;
     code: string;
@@ -187,12 +205,14 @@ interface IRow {
     running: boolean;
     errored: boolean;
     error: string | null;
+    suppressed: boolean;
 }
 
 const rows = computed<IRow[]>(() => {
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
     const counts = perTrustCounts.value;
     const errors = perTrustErrors.value;
+    const suppressed = perTrustSuppressed.value;
 
     // Three cases:
     // 1. Mid-submit: fan-out targets the live trust list — render every
@@ -246,7 +266,9 @@ const rows = computed<IRow[]>(() => {
                 cancelled,
                 running,
                 errored,
-                error: errored ? (errors[t.id] || null) : null
+                error: errored ? (errors[t.id] || null) : null,
+                // Only meaningful once the trust has responded (not errored/in-flight).
+                suppressed: responded && suppressed.has(t.id)
             };
         })
         .sort((a, b) => a.code.localeCompare(b.code));

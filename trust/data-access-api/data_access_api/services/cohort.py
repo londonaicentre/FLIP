@@ -383,10 +383,12 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
     - Aggregates the number of occurrences of each unique value per column.
 
     Below-threshold counts are privacy-suppressed by returning a ``StatisticsResponse``
-    with ``record_count=0`` and empty ``data`` — the count itself is suppressed, not
-    just the per-field breakdown. This is intentional so the trust still has a normal
-    response to forward to the hub; raising HTTPException here previously caused
-    trust-api to skip the hub callback and leave the per-trust UI status stuck.
+    with ``record_count=0``, empty ``data`` and ``suppressed=True`` — the count itself
+    is suppressed, not just the per-field breakdown. This is intentional so the trust
+    still has a normal response to forward to the hub; raising HTTPException here
+    previously caused trust-api to skip the hub callback and leave the per-trust UI
+    status stuck. The ``suppressed`` flag lets the hub/UI tell a privacy-suppressed
+    count apart from a genuine zero match (issue #519).
 
     Args:
         df (pd.DataFrame): Query results dataframe.
@@ -410,6 +412,7 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
             record_count=0,
             created=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
             data=[],
+            suppressed=True,
         )
 
     stats = StatisticsResponse(

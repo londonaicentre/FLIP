@@ -81,6 +81,8 @@ def test_get_statistics(mock_read_sql, mock_df):
 
     # Check the record count
     assert stats.record_count == 21
+    # An above-threshold count is a genuine result, not privacy-suppressed.
+    assert stats.suppressed is False
 
 
 @patch("pandas.read_sql")
@@ -105,6 +107,9 @@ def test_get_statistics_below_threshold(mock_read_sql, mock_df_below_threshold):
     assert stats.data == []
     assert stats.query_id == "2"
     assert stats.trust_id == "mock_trust"
+    # The 0 is privacy suppression, not a genuine zero match — flagged so the
+    # hub/UI can tell the two apart (#519).
+    assert stats.suppressed is True
 
 
 @patch("data_access_api.services.cohort.COHORT_QUERY_THRESHOLD", 10)
@@ -133,6 +138,7 @@ def test_get_statistics_fails_global_threshold(mock_read_sql):
     stats = get_statistics(mock_df_medium, query_input, threshold=5)
     assert stats.record_count == 0
     assert stats.data == []
+    assert stats.suppressed is True
 
 
 @patch("pandas.read_sql")

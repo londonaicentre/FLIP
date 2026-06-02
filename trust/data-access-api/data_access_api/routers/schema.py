@@ -68,6 +68,11 @@ class StatisticsResponse(BaseModel):
     record_count: int
     created: str
     data: list[dict[str, Any]]
+    # True when the count was privacy-suppressed (below ``COHORT_QUERY_THRESHOLD``)
+    # rather than a genuine zero match. Without this, ``record_count=0`` on the wire
+    # is indistinguishable from "matched no patients", so the hub/UI misread a
+    # suppressed trust as "no data available". See issue #519.
+    suppressed: bool = False
 
 
 class AccessionIdsResponse(BaseModel):

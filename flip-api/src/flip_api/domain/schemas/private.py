@@ -40,6 +40,11 @@ class OmopCohortResults(BaseModel):
     # decryption failure, etc.). When set, the hub records the trust as errored
     # instead of leaving its per-trust UI status stuck on "running".
     error: str | None = None
+    # True when the trust privacy-suppressed the count (below COHORT_QUERY_THRESHOLD)
+    # rather than genuinely matching zero patients. Set by data-access-api and
+    # forwarded verbatim by trust-api. Lets the UI show a "suppressed" chip instead
+    # of a literal 0 that reads as "no data available". See issue #519.
+    suppressed: bool = False
 
     @validator("data", pre=True, always=True)
     def ensure_data_is_list(cls, value: Any) -> list[Any]:
@@ -73,6 +78,9 @@ class TrustSpecificData(BaseModel):  # Parsed from query_result.data JSON string
     record_count: int
     data: list[OmopData]
     error: str | None = None
+    # Mirrors OmopCohortResults.suppressed; persisted in QueryResult.data so the
+    # aggregator can flag privacy-suppressed trusts. See issue #519.
+    suppressed: bool = False
 
 
 class AggregatedTrustFieldResult(BaseModel):
@@ -96,6 +104,11 @@ class AggregatedCohortStats(BaseModel):  # Stored as JSON in query_stats.stats
     # trust_id (str) -> error message for trusts whose cohort query failed.
     # Mutually exclusive with trust_record_counts for the same trust.
     trust_errors: dict[str, str] = Field(default_factory=dict)
+    # trust_ids (str) that privacy-suppressed their count (below threshold).
+    # A suppressed trust still appears in trust_record_counts with count 0 — this
+    # list tells the UI to render a "suppressed" chip instead of a literal 0 that
+    # would read as "no data available". See issue #519.
+    trust_suppressed: list[str] = Field(default_factory=list)
 
 
 # Helper structure for data fetched from DB for aggregation

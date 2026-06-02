@@ -69,6 +69,9 @@ def test_cohort_endpoint_suppresses_below_threshold(http_client):
     body = response.json()
     assert body["record_count"] == 0
     assert body["data"] == []
+    # The 0 is privacy suppression, flagged so the hub/UI can tell it apart from a
+    # genuine zero match (#519).
+    assert body["suppressed"] is True
 
 
 def test_cohort_endpoint_rejects_unsafe_sql(http_client):

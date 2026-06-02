@@ -75,6 +75,7 @@ interface IResultsShape {
     trustsResults?: IFieldShape[];
     trustRecordCounts?: Record<string, number>;
     trustErrors?: Record<string, string>;
+    trustSuppressed?: string[];
 }
 
 const perTrustCounts = computed<Record<string, number>>(() => {
@@ -120,6 +121,17 @@ const erroredCount = computed(() => {
     return trusts.filter(t => t.id in errors).length;
 });
 
+// Trusts that matched some patients but suppressed the count for privacy. Surfaced
+// in the subtitle so the headline total isn't misread as the whole picture (#519).
+const suppressedCount = computed(() => {
+    if (props.submitting) return 0;
+    const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
+    const r = results.value as unknown as IResultsShape | null;
+    const suppressed = new Set(r?.trustSuppressed ?? []);
+
+    return trusts.filter(t => suppressed.has(t.id)).length;
+});
+
 const runningCount = computed(() => Math.max(0, trustCount.value - completeCount.value - erroredCount.value));
 
 const anyRunning = computed(() => runningCount.value > 0);
@@ -131,6 +143,7 @@ const subtitle = computed(() => {
     parts.push(`${completeCount.value} trusts complete`);
     if (runningCount.value > 0) parts.push(`${runningCount.value} running`);
     if (erroredCount.value > 0) parts.push(`${erroredCount.value} errored`);
+    if (suppressedCount.value > 0) parts.push(`${suppressedCount.value} suppressed`);
 
     return parts.join(" · ");
 });

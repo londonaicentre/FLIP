@@ -204,6 +204,9 @@ async def test_empty_result_below_threshold_suppresses_to_hub(stub_hub_received)
     assert body["query_id"] == "qid-1"
     assert body["trust_id"] == "trust_test"
     assert body["record_count"] == 0
+    # The suppression flag must survive the trust-api passthrough so the hub/UI can
+    # tell a privacy-suppressed 0 apart from a genuine zero match (#519).
+    assert body["suppressed"] is True
 
 
 @pytest.mark.asyncio
