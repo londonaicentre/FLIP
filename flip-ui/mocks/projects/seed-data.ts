@@ -69,7 +69,11 @@ export const projectDataPage1: IProject[] = [
             name: "A Stroke Test Query",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         users: [],
         status: "APPROVED"
@@ -88,7 +92,11 @@ export const projectDataPage1: IProject[] = [
             name: "A Stroke Pathway Query",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         status: "UNSTAGED"
     },
@@ -105,7 +113,11 @@ export const projectDataPage1: IProject[] = [
             name: "A Stroke Pathway Query",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         users: [],
         status: "APPROVED"
@@ -124,7 +136,11 @@ export const projectDataPage1: IProject[] = [
             name: "A Stroke Test Query",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         status: "APPROVED"
     },
@@ -141,46 +157,66 @@ export const projectDataPage1: IProject[] = [
             name: "A Severe Covid Deterioration query",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         users: [
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 1",
+                organisation: "Example Trust",
                 isDisabled: false
             },
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 2",
+                organisation: "Example Trust",
                 isDisabled: false
             },
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 3",
+                organisation: "Example Trust",
                 isDisabled: false
             }, {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 4",
+                organisation: "Example Trust",
                 isDisabled: false
             },
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 5",
+                organisation: "Example Trust",
                 isDisabled: false
             },
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 6",
+                organisation: "Example Trust",
                 isDisabled: false
             },
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 7",
+                organisation: "Example Trust",
                 isDisabled: false
             },
             {
                 email: "user1@email.com",
                 id: v4(),
+                name: "Test User 8",
+                organisation: "Example Trust",
                 isDisabled: false
             }
         ],
@@ -199,7 +235,11 @@ export const projectDataPage1: IProject[] = [
             name: "A Lung Biopsy Surgery Query",
             query: "SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table SELECT Column FROM Table ",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         users: [],
         status: "UNSTAGED"
@@ -217,7 +257,11 @@ export const projectDataPage1: IProject[] = [
             name: "A Query For Another Heart Disease Project",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         users: [],
         status: "APPROVED"
@@ -247,7 +291,11 @@ export const projectDataPage1: IProject[] = [
             name: "A Stroke Test Query",
             query: "Some query > 3000",
             totalCohort: 32567,
-            trustsQueried: 2
+            queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
         },
         status: "STAGED"
     },
@@ -438,14 +486,14 @@ export const ownerProjects: IPaginatedResponse<IProject> = {
 export const imagingProjectStatus: IImagingProjectStatus[] = [
     {
         trustId: "7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2",
-        trustName: "KCH",
+        trustName: "Trust_1",
         projectCreationCompleted: true,
         importStatus: {
-            successful: 41,
-            failed: 11,
-            processing: 22,
-            queued: 29,
-            queueFailed: 51
+            successful: 40,
+            failed: 1,
+            processing: 0,
+            queued: 0,
+            queueFailed: 0
         },
         reimportCount: 2
     },

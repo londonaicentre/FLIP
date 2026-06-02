@@ -20,7 +20,9 @@ from flip_api.auth.dependencies import verify_token
 from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.project import IReturnedProject
+from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.status import ProjectStatus
+from flip_api.project_services.get_projects import _load_latest_audit_at_per_project
 from flip_api.project_services.services.project_services import (
     get_project,
     get_project_query,
@@ -151,7 +153,10 @@ def get_project_details_endpoint(
             seen_ids.add(user.id)
             unique_users.append(user)
 
-    # Build object to return
+    # Reuses the list-endpoint's batch helper with a single ID so list and
+    # detail responses agree on which audit row counts as "the" stage event.
+    staged_at_map = _load_latest_audit_at_per_project([project_db.id], ProjectAuditAction.STAGE, db)
+
     response_data = IReturnedProject(
         id=project_db.id,
         name=project_db.name,
@@ -161,7 +166,12 @@ def get_project_details_endpoint(
         approved_trusts=approved_trusts_for_project,
         query=get_project_query(project_db),
         users=unique_users,
-        creation_timestamp=project_db.creation_timestamp.isoformat(timespec="milliseconds"),
+        # Append `Z` so the browser parses the naive UTC value as UTC rather
+        # than local time (the column default is `datetime.utcnow`, so the
+        # value is already UTC — just untagged). See trust.last_heartbeat for
+        # the same fix.
+        creation_timestamp=project_db.creation_timestamp.isoformat(timespec="milliseconds") + "Z",
+        staged_at=staged_at_map.get(project_db.id),
         owner_id=project_db.owner_id,
     )  # type: ignore[call-arg]
 

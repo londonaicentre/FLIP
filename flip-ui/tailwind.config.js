@@ -30,7 +30,10 @@ module.exports = {
             },
             colors: {
                 // Add new colours here
-                body: colors.gray[100],
+                // `body` is the application-wide page background. Matches the
+                // design handoff's `--paper` token (#FAF7F5), a warm off-white
+                // with a pink undertone that complements the primary palette.
+                body: "#FAF7F5",
                 primary: {
                     100: "#F7F3F9",
                     200: "#DBC4E2",

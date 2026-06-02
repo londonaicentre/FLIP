@@ -32,7 +32,7 @@ export interface IModelMetricData {
 }
 
 export interface IInitTraining {
-    trusts: string[];
+    trust_ids: string[];
 }
 
 export interface IModel {
@@ -69,6 +69,10 @@ export interface IModelDashboard {
     status: ModelStatus;
     query: IModelDashboardQuery,
     files: FileInfo[];
+    creationTimestamp?: string | null;
+    preparedAt?: string | null;
+    trainingStartedAt?: string | null;
+    resultsUploadedAt?: string | null;
 }
 
 export interface IModelCreate {
@@ -170,8 +174,11 @@ export function getStatusEnumValue(status: string | undefined): number {
  *
  * When training is stopped or errors, prior completed steps stay completed (✅)
  * rather than showing 🚫. RESULTS_UPLOAD_FAILED means training finished but the
- * post-training results upload failed, so "Training Started" stays completed and
- * only "Results Uploaded" shows the error. See issue #29.
+ * post-training results upload failed, so "Training" stays completed and only
+ * "Results Uploaded" shows the error. See issue #29.
+ *
+ * Per-step dates (creation/prepared/training/results timestamps) are layered on
+ * by the caller, which holds the model record; this helper is purely status-driven.
  */
 export function buildModelSteps(status: ModelStatus | undefined): IStep[] {
     const statusValue = getStatusEnumValue(status);
@@ -194,7 +201,7 @@ export function buildModelSteps(status: ModelStatus | undefined): IStep[] {
         },
         {
             id: "03",
-            name: "Training Started",
+            name: "Training",
             description:
                 (statusValue >= ModelStatusEnum.PREPARED && statusValue < ModelStatusEnum.RESULTS_UPLOADED)
                     ? "In Progress" : undefined,

@@ -25,8 +25,9 @@ from flip_api.model_services.services.model_service import (
     edit_model,
     get_metrics,
     get_model_status,
+    resolve_trust_from_fl_client_name,
     update_model_status,
-    validate_trusts,
+    validate_trust_ids,
 )
 
 
@@ -159,52 +160,125 @@ def test_get_model_status_not_found():
     assert result is None
 
 
-def test_validate_trusts_all_valid():
+def test_resolve_trust_resolves_kit_slot():
+    mock_trust = MagicMock()
     session = MagicMock()
-    model_id = uuid4()
-    trusts = ["Trust A", "Trust B"]
-    session.exec.return_value.all.return_value = ["Trust A", "Trust B", "Trust C"]
+    session.exec.return_value.first.return_value = mock_trust
 
-    result = validate_trusts(model_id, trusts, session)
-    assert result is True
+    result = resolve_trust_from_fl_client_name("Trust_2", session)
+    assert result is mock_trust
 
 
-def test_validate_trusts_some_invalid():
+def test_resolve_trust_unassigned_slot():
     session = MagicMock()
-    model_id = uuid4()
-    trusts = ["Trust A", "Trust B"]
-    # Simulate that Trust B is not in the database
-    session.exec.return_value.all.return_value = ["Trust A", "Trust C"]
+    # No slot row matches, or the slot is not assigned to a trust.
+    session.exec.return_value.first.return_value = None
 
-    result = validate_trusts(model_id, trusts, session)
-    assert result is False
+    result = resolve_trust_from_fl_client_name("Trust_9", session)
+    assert result is None
+
+
+def test_resolve_trust_resolves_by_kit_slot():
+    """The FL kit slot (the client name) resolves via FLKitSlot.slot_name.
+
+    Resolution is uniform across backends and independent of the operator-chosen
+    trust display name (see #538): NVFLARE reports the certificate CN, Flower the
+    SUPERNODE_NAME (set to FL_KIT_SLOT) — both are the slot, so no backend branch
+    (and no get_settings()) is involved.
+    """
+    session = MagicMock()
+    mock_trust = MagicMock()
+    session.exec.return_value.first.return_value = mock_trust
+
+    result = resolve_trust_from_fl_client_name("Trust_1", session)
+
+    assert result is mock_trust
+    stmt_sql = str(session.exec.call_args[0][0]).lower()
+    assert "slot_name" in stmt_sql, f"expected slot-based resolution, got: {stmt_sql}"
 
 
 def test_get_metrics():
     session = MagicMock()
     model_id = uuid4()
+    trust_a = uuid4()
+    trust_b = uuid4()
 
-    mock_metric1 = FLMetrics(model_id=model_id, label="accuracy", trust="trust1", global_round=1, result=0.9)
-    mock_metric2 = FLMetrics(model_id=model_id, label="accuracy", trust="trust1", global_round=2, result=0.92)
-    mock_metric3 = FLMetrics(model_id=model_id, label="accuracy", trust="trust2", global_round=1, result=0.88)
+    m1 = FLMetrics(
+        model_id=model_id, trust=trust_a, fl_client_name="Trust_1", label="accuracy", global_round=1, result=0.9
+    )
+    m2 = FLMetrics(
+        model_id=model_id, trust=trust_a, fl_client_name="Trust_1", label="accuracy", global_round=2, result=0.92
+    )
+    m3 = FLMetrics(
+        model_id=model_id, trust=trust_b, fl_client_name="Trust_2", label="accuracy", global_round=1, result=0.88
+    )
 
-    session.exec.return_value.all.return_value = [mock_metric1, mock_metric2, mock_metric3]
+    # First exec = FLMetrics rows; second exec = trust id -> (code, name) lookup.
+    session.exec.side_effect = [
+        MagicMock(all=MagicMock(return_value=[m1, m2, m3])),
+        MagicMock(all=MagicMock(return_value=[(trust_a, None, "Trust A"), (trust_b, None, "Trust B")])),
+    ]
 
     result = get_metrics(model_id, session)
 
     assert len(result) == 1
     assert result[0].yLabel == "accuracy"
     assert result[0].xLabel == "globalRound"
-    assert len(result[0].metrics) == 2  # trust1 and trust2
+    assert len(result[0].metrics) == 2  # trust_a and trust_b
 
-    trust_labels = sorted([m.seriesLabel for m in result[0].metrics])
-    assert trust_labels == ["trust1", "trust2"]
+    labels = sorted(m.seriesLabel for m in result[0].metrics)
+    assert labels == ["Trust A", "Trust B"]
 
-    trust1_data = next(m for m in result[0].metrics if m.seriesLabel == "trust1").data
-    assert trust1_data[0].xValue == 1
-    assert trust1_data[0].yValue == 0.9
-    assert trust1_data[1].xValue == 2
-    assert trust1_data[1].yValue == 0.92
+    trust_a_data = next(m for m in result[0].metrics if m.seriesLabel == "Trust A").data
+    assert trust_a_data[0].xValue == 1
+    assert trust_a_data[0].yValue == 0.9
+    assert trust_a_data[1].xValue == 2
+    assert trust_a_data[1].yValue == 0.92
+
+
+def test_get_metrics_resolves_trust_to_code():
+    """seriesLabel uses the trust's `code` when one is set."""
+    session = MagicMock()
+    model_id = uuid4()
+    trust_1 = uuid4()
+    trust_2 = uuid4()
+
+    m1 = FLMetrics(
+        model_id=model_id, trust=trust_1, fl_client_name="Trust_1", label="accuracy", global_round=1, result=0.9
+    )
+    m2 = FLMetrics(
+        model_id=model_id, trust=trust_2, fl_client_name="Trust_2", label="accuracy", global_round=1, result=0.85
+    )
+
+    session.exec.side_effect = [
+        MagicMock(all=MagicMock(return_value=[m1, m2])),
+        MagicMock(all=MagicMock(return_value=[(trust_1, "GSTT", "Trust One"), (trust_2, "UCLH", "Trust Two")])),
+    ]
+
+    result = get_metrics(model_id, session)
+
+    labels = sorted(m.seriesLabel for m in result[0].metrics)
+    assert labels == ["GSTT", "UCLH"]
+
+
+def test_get_metrics_falls_back_to_trust_name_when_no_code():
+    """A trust without a `code` uses the trust name as the legend label."""
+    session = MagicMock()
+    model_id = uuid4()
+    trust_3 = uuid4()
+
+    m = FLMetrics(
+        model_id=model_id, trust=trust_3, fl_client_name="Trust_3", label="accuracy", global_round=1, result=0.8
+    )
+
+    session.exec.side_effect = [
+        MagicMock(all=MagicMock(return_value=[m])),
+        MagicMock(all=MagicMock(return_value=[(trust_3, None, "Trust Three")])),
+    ]
+
+    result = get_metrics(model_id, session)
+
+    assert result[0].metrics[0].seriesLabel == "Trust Three"
 
 
 def test_get_metrics_no_results():
@@ -216,3 +290,125 @@ def test_get_metrics_no_results():
     result = get_metrics(model_id, session)
 
     assert len(result) == 0
+
+
+# ---------------------------------------------------------------------------
+# update_model_status — additional branches: passing status=None preserves the
+# current status; audit + scheduler side-effects fire on terminal transitions.
+# ---------------------------------------------------------------------------
+
+
+@patch("flip_api.model_services.services.model_service.audit_model_action")
+def test_update_model_status_with_none_keeps_existing_status(mock_audit):
+    """status=None means "re-emit the current status" — used by callers that
+    just want the value back without mutating it. The audit map only fires
+    when the status actually changes, so no audit row is written here.
+    """
+    session = MagicMock()
+    mock_model = MagicMock(status=ModelStatus.INITIATED)
+    session.get.return_value = mock_model
+
+    result = update_model_status(uuid4(), None, session)
+
+    assert result == ModelStatus.INITIATED
+    # No transition → no audit insert.
+    mock_audit.assert_not_called()
+
+
+@patch("flip_api.model_services.services.model_service.audit_model_action")
+def test_update_model_status_writes_audit_on_transition_to_prepared(mock_audit):
+    """A PENDING → PREPARED transition writes a PREPARED audit row."""
+    session = MagicMock()
+    mock_model = MagicMock(status=ModelStatus.PENDING)
+    session.get.return_value = mock_model
+    user_id = uuid4()
+    model_id = uuid4()
+
+    update_model_status(model_id, ModelStatus.PREPARED, session, user_id=user_id)
+
+    mock_audit.assert_called_once()
+    audited_model_id, audited_action, audited_user, audited_session = mock_audit.call_args.args
+    assert audited_model_id == model_id
+    assert audited_user == user_id
+
+
+@patch("flip_api.model_services.services.model_service.fl_scheduler_service")
+@patch("flip_api.model_services.services.model_service.audit_model_action")
+def test_update_model_status_notifies_scheduler_on_terminal_status(mock_audit, mock_scheduler):
+    """Terminal statuses (ERROR/STOPPED/RESULTS_UPLOADED) prompt the scheduler
+    to retire the run — confirms the side-effect on transition.
+    """
+    session = MagicMock()
+    mock_model = MagicMock(status=ModelStatus.TRAINING_STARTED)
+    session.get.return_value = mock_model
+    model_id = uuid4()
+
+    update_model_status(model_id, ModelStatus.ERROR, session)
+
+    mock_scheduler.update_fl_scheduler.assert_called_once_with(model_id, session)
+
+
+@patch("flip_api.model_services.services.model_service.audit_model_action")
+def test_update_model_status_no_audit_when_status_is_unchanged(mock_audit):
+    """Repeating the same terminal status fires no audit; idempotency keeps the
+    timeline clean and prevents duplicate "RESULTS_UPLOADED" rows from polling.
+    """
+    session = MagicMock()
+    mock_model = MagicMock(status=ModelStatus.RESULTS_UPLOADED)
+    session.get.return_value = mock_model
+
+    update_model_status(uuid4(), ModelStatus.RESULTS_UPLOADED, session)
+
+    mock_audit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# delete_models — the soft branch (ensure_deletion=False with no rows) returns
+# 0 instead of raising. Belt-and-braces for callers that loop over projects.
+# ---------------------------------------------------------------------------
+
+
+def test_delete_models_returns_zero_when_ensure_deletion_is_false():
+    session = MagicMock()
+    session.exec.return_value.all.return_value = []
+
+    result = delete_models(uuid4(), "user", session, ensure_deletion=False)
+
+    assert result == 0
+    # No models → no audit + no commit.
+    session.commit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# validate_trust_ids — every id must be in ModelTrustIntersect for the model.
+# ---------------------------------------------------------------------------
+
+
+def test_validate_trust_ids_all_associated():
+    session = MagicMock()
+    model_id = uuid4()
+    trust_1 = uuid4()
+    trust_2 = uuid4()
+    session.exec.return_value.all.return_value = [trust_1, trust_2]
+
+    assert validate_trust_ids(model_id, [trust_1, trust_2], session) is True
+
+
+def test_validate_trust_ids_returns_false_when_any_id_is_unknown():
+    session = MagicMock()
+    trust_1 = uuid4()
+    trust_2 = uuid4()
+    unknown = uuid4()
+    session.exec.return_value.all.return_value = [trust_1, trust_2]
+
+    assert validate_trust_ids(uuid4(), [trust_1, unknown], session) is False
+
+
+def test_validate_trust_ids_returns_true_for_empty_input():
+    """An empty trust-id list is trivially "all associated" — set-difference
+    against any superset is empty.
+    """
+    session = MagicMock()
+    session.exec.return_value.all.return_value = [uuid4()]
+
+    assert validate_trust_ids(uuid4(), [], session) is True

@@ -17,7 +17,7 @@ from uuid import UUID
 import pytest
 from fastapi import HTTPException, status
 
-from flip_api.db.models.user_models import PermissionRef, UsersAudit
+from flip_api.db.models.user_models import PermissionRef, UserProfile, UsersAudit
 from flip_api.domain.interfaces.user import IRegisterUser, IUserResponse
 from flip_api.user_services.register_user import register_user
 
@@ -42,6 +42,8 @@ def user_data():
     """Valid user data fixture."""
     return IRegisterUser(
         email="user1@example.com",
+        name="User One",
+        organisation="Example Org",
         roles=["5e874994-8528-41a1-82a9-c4b86a41d201", "3c3f280b-ea85-47d9-914f-26774abeb410"],
     )
 
@@ -70,6 +72,8 @@ def test_register_user_success(mock_request, mock_db, token_id, user_data):
         # Assert
         assert isinstance(result, IUserResponse)
         assert result.email == user_data.email
+        assert result.name == user_data.name
+        assert result.organisation == user_data.organisation
         assert result.roles == user_data.roles
         assert result.user_id == user_id
 
@@ -79,8 +83,13 @@ def test_register_user_success(mock_request, mock_db, token_id, user_data):
         mock_create_cognito_user.assert_called_once_with(user_data.email, user_pool_id)
 
         # Audit row written for the new sub
-        mock_db.add.assert_called_once()
-        audit_row = mock_db.add.call_args[0][0]
+        assert mock_db.add.call_count == 2
+        profile_row = mock_db.add.call_args_list[0][0][0]
+        assert isinstance(profile_row, UserProfile)
+        assert profile_row.user_id == user_id
+        assert profile_row.name == user_data.name
+        assert profile_row.organisation == user_data.organisation
+        audit_row = mock_db.add.call_args_list[1][0][0]
         assert isinstance(audit_row, UsersAudit)
         assert audit_row.action == "Registered user"
         assert audit_row.user_id == user_id

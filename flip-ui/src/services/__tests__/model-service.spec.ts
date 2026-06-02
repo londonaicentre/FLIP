@@ -342,14 +342,14 @@ describe("model-service", () => {
     });
 
     describe("training control", () => {
-        it("initialiseTraining POSTs to /fl/initiate/{modelId} with the trust list", async () => {
+        it("initialiseTraining POSTs to /fl/initiate/{modelId} with the trust id list", async () => {
             vi.mocked(_http.post).mockResolvedValue({ data: undefined } as never);
 
-            await initialiseTraining("m-1", { trusts: ["t-1", "t-2"] });
+            await initialiseTraining("m-1", { trust_ids: ["t-1", "t-2"] });
 
             expect(_http.post).toHaveBeenCalledWith(
                 "/fl/initiate/m-1",
-                { trusts: ["t-1", "t-2"] }
+                { trust_ids: ["t-1", "t-2"] }
             );
         });
 
@@ -451,7 +451,7 @@ describe("model-service", () => {
             expect(buildModelSteps("PENDING").map(s => s.name)).toEqual([
                 "Model Created",
                 "Model Prepared",
-                "Training Started",
+                "Training",
                 "Results Uploaded"
             ]);
         });
@@ -460,17 +460,17 @@ describe("model-service", () => {
             expect(buildModelSteps("RESULTS_UPLOADED").every(s => s.completed)).toBe(true);
         });
 
-        it("ERROR flags Training Started as an error", () => {
-            // A genuine training failure should still surface on the Training Started milestone.
-            const step = stepByName("ERROR", "Training Started");
+        it("ERROR flags Training as an error", () => {
+            // A genuine training failure should still surface on the Training milestone.
+            const step = stepByName("ERROR", "Training");
             expect(step.error).toBe(true);
             expect(step.completed).toBeFalsy();
         });
 
-        it("RESULTS_UPLOAD_FAILED keeps Training Started completed (training did finish)", () => {
-            // The bug this fixes: an upload failure must not paint the Training Started
+        it("RESULTS_UPLOAD_FAILED keeps Training completed (training did finish)", () => {
+            // The bug this fixes: an upload failure must not paint the Training
             // milestone as failed, because training itself completed successfully.
-            const step = stepByName("RESULTS_UPLOAD_FAILED", "Training Started");
+            const step = stepByName("RESULTS_UPLOAD_FAILED", "Training");
             expect(step.completed).toBe(true);
             expect(step.error).toBeFalsy();
             expect(step.inProgress).toBeFalsy();
@@ -490,7 +490,7 @@ describe("model-service", () => {
             // getStatusEnumValue maps anything unknown to ERROR so a stale UI bundle
             // receiving a newer status degrades gracefully rather than crashing.
             expect(() => buildModelSteps("NONSENSE" as ModelStatus)).not.toThrow();
-            expect(stepByName("NONSENSE" as ModelStatus, "Training Started").error).toBe(true);
+            expect(stepByName("NONSENSE" as ModelStatus, "Training").error).toBe(true);
         });
     });
 });

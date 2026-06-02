@@ -49,7 +49,7 @@ describe.skip("Delete Model: Researcher & Owner", () => {
             .should("exist")
             .click();
 
-        cy.contains("Training for this model will also be stopped if active.")
+        cy.contains("Training for this model will be stopped.")
             .should("be.visible");
 
         cy.getBySel("confirmation-input")
@@ -128,7 +128,7 @@ describe("Delete Model: With Permissions", () => {
             .should("exist")
             .click();
 
-        cy.contains("Training for this model will also be stopped if active.")
+        cy.contains("Training for this model will be stopped.")
             .should("be.visible");
 
         cy.getBySel("confirmation-input")
@@ -199,7 +199,7 @@ describe.skip("Delete Model: User", () => {
             .should("exist")
             .click();
 
-        cy.contains("Training for this model will also be stopped if active.")
+        cy.contains("Training for this model will be stopped.")
             .should("be.visible");
 
         cy.getBySel("confirmation-input")

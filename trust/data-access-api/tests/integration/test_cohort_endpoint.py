@@ -57,16 +57,18 @@ def test_cohort_endpoint_returns_aggregates_for_image_occurrences(http_client):
     assert {"Counts", "Nulls", "Sex Distribution", "Age Distribution"} <= aggregate_names
 
 
-def test_cohort_endpoint_rejects_below_threshold(http_client):
-    """A query with 0 matching rows trips the cohort threshold and returns 400."""
+def test_cohort_endpoint_suppresses_below_threshold(http_client):
+    """A below-threshold cohort is privacy-suppressed: HTTP 200 with empty data."""
     response = http_client.post(
         "/cohort",
         json=_cohort_payload(
             "SELECT * FROM omop.image_occurrence WHERE accession_id = 'NONEXISTENT'"
         ),
     )
-    assert response.status_code == 400
-    assert "too few records" in response.json()["detail"].lower()
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["record_count"] == 0
+    assert body["data"] == []
 
 
 def test_cohort_endpoint_rejects_unsafe_sql(http_client):
