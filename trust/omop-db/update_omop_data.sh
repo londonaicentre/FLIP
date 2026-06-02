@@ -26,6 +26,9 @@ set -euo pipefail
 # These paths are relative to the location of this script
 REPO_DATA_VERSION_FILE=".data_version"  # committed in repo
 VOLUMES_DIR="./volumes"                  # local dir for omop-db volumes
+# Pre-per-trust marker. Older versions of this script tracked a single shared
+# version here; both trusts now use per-trust markers (.local_data_version_trust<N>).
+LEGACY_DATA_VERSION_FILE="${VOLUMES_DIR}/.local_data_version"
 
 # Mock data is fetched anonymously over HTTPS from a public Hugging Face dataset
 # (no AWS CLI or credentials required). The dataset is laid out per trust:
@@ -62,6 +65,13 @@ update_trust() {
   local local_version=""
   if [[ -f "${local_version_file}" ]]; then
     local_version="$(tr -d ' \n\r\t' < "${local_version_file}" || true)"
+  elif [[ -f "${LEGACY_DATA_VERSION_FILE}" ]]; then
+    # Migrate from the pre-per-trust shared marker: an existing install already
+    # holds this version for both trusts, so adopt it instead of forcing a
+    # needless re-download. The legacy file is removed once both trusts have
+    # migrated (see cleanup after the update_trust calls).
+    local_version="$(tr -d ' \n\r\t' < "${LEGACY_DATA_VERSION_FILE}" || true)"
+    echo "${local_version}" > "${local_version_file}"
   fi
 
   if [[ "${local_version}" == "${DATA_VERSION}" ]]; then
@@ -104,4 +114,14 @@ fi
 
 if [[ "${TRUST}" == "2" || "${TRUST}" == "all" ]]; then
   update_trust 2
+fi
+
+# Remove the orphaned legacy shared marker once both per-trust markers exist, so
+# it doesn't linger invisibly after the migration. Only delete when both trusts
+# have a marker — a single-trust run must not strand the other trust's migration.
+if [[ -f "${LEGACY_DATA_VERSION_FILE}" \
+   && -f "${VOLUMES_DIR}/.local_data_version_trust1" \
+   && -f "${VOLUMES_DIR}/.local_data_version_trust2" ]]; then
+  rm -f "${LEGACY_DATA_VERSION_FILE}"
+  echo "🧹 Removed orphaned legacy version file ${LEGACY_DATA_VERSION_FILE}."
 fi

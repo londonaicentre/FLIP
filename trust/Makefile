@@ -163,10 +163,10 @@ build:
 # up-trust-2, and a shared phony prerequisite would be built once (de-duplicated to a
 # single TRUST value) — separate sub-makes keep each trust's refresh independent.
 up-trust-1:
+	$(MAKE) update-omop-data update-orthanc-data TRUST=1
 	@echo "🚢 Starting Trust 1 services..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(MAKE) update-omop-data update-orthanc-data TRUST=1
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST1}
 	$(TRUST_1_VARS) DEBUG=${DEBUG} ${DOCKER_COMPOSE_CMD} -f deploy/compose_trust-1_override.yml -p ${trust1} up -d $(UP_PULL_FLAGS)
 
@@ -218,10 +218,10 @@ down-local-trust:
 # Refresh only Trust 2's data (TRUST=2) before bringing it up — see up-trust-1 for
 # why this is a recursive $(MAKE) call rather than a prerequisite.
 up-trust-2:
+	$(MAKE) update-omop-data update-orthanc-data TRUST=2
 	@echo "🚢 Starting Trust 2 services..."
 	@echo "⚙️ Using environment file ${MAIN_ENV_FILE}"
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
-	$(MAKE) update-omop-data update-orthanc-data TRUST=2
 	mkdir -p ${BASE_IMAGES_DOWNLOAD_DIR_TRUST2}
 	$(TRUST_2_VARS) ${DOCKER_COMPOSE_CMD} -p ${trust2} up -d $(UP_PULL_FLAGS)
 
