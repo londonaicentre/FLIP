@@ -18,7 +18,7 @@ from sqlmodel import Session, col, select
 
 from flip_api.auth.access_manager import authenticate_trust
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import QueryResult, QueryStats, Trust
+from flip_api.db.models.main_models import Queries, QueryResult, QueryStats, Trust
 from flip_api.domain.schemas.private import (
     AggregatedCohortStats,
     AggregatedFieldResult,
@@ -157,6 +157,15 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
     )
 
     try:
+        # Serialize aggregation for this query: take a blocking row lock on the parent
+        # Queries row before the read-modify-write below, so concurrent trust POSTs
+        # aggregate one-at-a-time instead of racing on the single QueryStats row (a stale
+        # pass could otherwise clobber a fuller one and drop a responded trust — #579).
+        # _save_individual_result has already committed this trust's QueryResult row, so
+        # once the lock is held the re-read sees every result posted so far. The lock is
+        # released by the commit at the end of this block.
+        db.exec(select(Queries).where(Queries.id == query_id).with_for_update()).first()
+
         rows = db.exec(statement).all()
         logger.debug(f"Response: {rows} for query_id: {query_id}")
 
