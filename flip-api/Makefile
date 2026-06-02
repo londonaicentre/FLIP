@@ -131,11 +131,5 @@ e2e_smoke_spleen_evaluation: QUERY_FILE := ../../flip-fl-base-flower/tutorials/3
 e2e_smoke_spleen_evaluation: EXTRA_ARGS := --data-enrichment-cwd ../../flip_project_spleen_segmentation --data-enrichment-cmd 'uv run upload_labels_to_XNAT.py --flip-project-id $$FLIP_PROJECT_ID'
 e2e_smoke_spleen_evaluation: e2e_smoke
 
-generate-trust-key:
-	uv run python -m flip_api.scripts.generate_trust_key --trust-name $(TRUST_NAME)
-generate-trust-api-keys:
-	uv run python -m flip_api.scripts.generate_trust_api_keys $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
 generate-internal-service-key:
 	uv run python -m flip_api.scripts.generate_internal_service_key $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)
-generate-trust-internal-service-keys:
-	uv run python -m flip_api.scripts.generate_trust_internal_service_keys $(if $(ENV_FILE),--env-file $(ENV_FILE)) $(if $(FORCE),--force)

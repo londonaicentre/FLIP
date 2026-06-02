@@ -87,14 +87,20 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     """
     Receives a cohort query and returns the aggregated statistics.
 
+    Below-threshold results are privacy-suppressed: the response is a normal
+    ``StatisticsResponse`` with ``record_count=0`` and empty ``data``, *not*
+    an HTTP error. Returning an error here caused trust-api to skip reporting
+    back to the hub, which left the per-trust UI status stuck on "running".
+
     Args:
         query_input (data_access_api.routers.schema.CohortQueryInput): The input data for the cohort query.
 
     Returns:
-        StatisticsResponse: The aggregated statistics from the query results.
+        StatisticsResponse: The aggregated statistics from the query results, or a 0-count response
+        when the count is below ``COHORT_QUERY_THRESHOLD``.
 
     Raises:
-        HTTPException: If there is an error during the execution of the query or if the query returns too few records.
+        HTTPException: If there is an error during the execution of the query.
     """
     logger.info("Received cohort query")
 
@@ -105,9 +111,6 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
 
     # On the original implementation get_records was invoked within get_statistics. However, to better handle
     # exceptions and log the query execution, we separate the two calls here.
-    # Execute the query and get the DataFrame
-    # TODO: Move this check to centralhub and use the aggregated results only, here we are using partial results from
-    # each trust
     safe_query = _parse_and_emit(query_input.query)
 
     try:
@@ -117,12 +120,6 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
         df = df.dropna(axis=1, how="all")  # Ignore entirely empty columns
         # drop duplicate columns
         df = df.loc[:, ~df.columns.duplicated()]
-
-        if len(df) < minimum_cohort_size:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Query returned too few records: {len(df)} (minimum required: {minimum_cohort_size})",
-            )
     except Exception as e:
         logger.error(f"Error executing query: {str(e)}")
         raise e

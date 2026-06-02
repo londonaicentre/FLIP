@@ -15,7 +15,7 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
-from flip_api.db.models.main_models import FLLogs, FLMetrics, Model, ModelTrustIntersect, Trust
+from flip_api.db.models.main_models import FLKitSlot, FLLogs, FLMetrics, Model, ModelTrustIntersect, Trust
 from flip_api.domain.interfaces.model import (
     IDetailedModelStatus,
     IModelAuditAction,
@@ -62,14 +62,28 @@ def edit_model(model_id: UUID, model_details: IModelDetails, user_id: UUID, sess
     logger.info(f"Output: {audit_response}")
 
 
-def update_model_status(model_id: UUID, status: ModelStatus | None, session: Session) -> ModelStatus | None:
+_STATUS_AUDIT_MAP: dict[ModelStatus, ModelAuditAction] = {
+    ModelStatus.PREPARED: ModelAuditAction.PREPARED,
+    ModelStatus.TRAINING_STARTED: ModelAuditAction.TRAINING_STARTED,
+    ModelStatus.RESULTS_UPLOADED: ModelAuditAction.RESULTS_UPLOADED,
+}
+
+
+def update_model_status(
+    model_id: UUID,
+    status: ModelStatus | None,
+    session: Session,
+    user_id: UUID | None = None,
+) -> ModelStatus | None:
     """
-    Update the status of a model
+    Update the status of a model.
 
     Args:
-        model_id (UUID): The ID of the model
-        status (ModelStatus | None): The new status to be set
-        session (Session): The database session
+        model_id (UUID): The ID of the model.
+        status (ModelStatus | None): The new status to be set.
+        session (Session): The database session.
+        user_id (UUID | None): Optional user who triggered the change; recorded on
+            the audit row when present. Background transitions pass None.
 
     Returns:
         ModelStatus | None: The updated status of the model, or None if the model does not exist.
@@ -84,10 +98,16 @@ def update_model_status(model_id: UUID, status: ModelStatus | None, session: Ses
     if not status:
         status = model.status
 
+    previous_status = model.status
     model.status = status
     session.commit()
 
     logger.info(f"The status of Model ID: {model_id} has been updated to {status}")
+
+    audit_action = _STATUS_AUDIT_MAP.get(status)
+    if audit_action and previous_status != status:
+        audit_model_action(model_id, audit_action, user_id, session)
+        session.commit()
 
     if status in [ModelStatus.ERROR, ModelStatus.STOPPED, ModelStatus.RESULTS_UPLOADED]:
         fl_scheduler_service.update_fl_scheduler(model_id, session)
@@ -96,7 +116,13 @@ def update_model_status(model_id: UUID, status: ModelStatus | None, session: Ses
 
 
 def add_log(
-    model_id: UUID, log: str, session: Session, transaction: Any | None = None, success: bool = True
+    model_id: UUID,
+    log: str,
+    session: Session,
+    transaction: Any | None = None,
+    success: bool = True,
+    trust: Trust | None = None,
+    fl_client_name: str | None = None,
 ) -> None:
     """
     Add a log entry to the database
@@ -107,6 +133,10 @@ def add_log(
         session (Session): The database session.
         transaction (Any | None): Optional transaction to control commit behavior.
         success (bool): Indicates if the log entry is a success or failure.
+        trust (Trust | None): The trust the log is attributed to, when the log was
+            reported by an FL client. None for model-level (hub) logs.
+        fl_client_name (str | None): The FL client name as reported by the FL server.
+            None for model-level logs.
 
     Returns:
         None
@@ -118,7 +148,13 @@ def add_log(
     logger.info({"message": "Attempting to add a log line for model...", "modelId": model_id, "log": log})
 
     # Create the log entry
-    log_entry = FLLogs(model_id=model_id, log=log, success=success)
+    log_entry = FLLogs(
+        model_id=model_id,
+        log=log,
+        success=success,
+        trust=trust.id if trust is not None else None,
+        fl_client_name=fl_client_name,
+    )
 
     try:
         session.add(log_entry)
@@ -230,39 +266,58 @@ def get_model_status(model_id: UUID, session: Session) -> IDetailedModelStatus |
     return IDetailedModelStatus(status=model.status, deleted=model.deleted)
 
 
-def validate_trusts(model_id: UUID, trusts: list[str], session: Session) -> bool:
-    """
-    Validate whether the trusts are associated with the model.
+def resolve_trust_from_fl_client_name(fl_client_name: str, session: Session) -> Trust | None:
+    """Resolve an FL client name (its FL kit slot) to its Trust.
+
+    Both backends report the FL kit slot as the client name, so resolution is
+    uniform — the slot is mapped to its assigned trust via the FLKitSlot table,
+    independent of the operator-chosen trust display name (closes the #538 drift
+    from Flower's previous free-form name lookup):
+
+    - NVFLARE: the slot is the certificate CN baked in at provisioning time
+      (e.g. ``Trust_2``).
+    - Flower: the slot is the ``SUPERNODE_NAME`` env var, set to ``FL_KIT_SLOT``
+      in the trust compose so the FL identity is the slot, not the trust name.
 
     Args:
-        model_id (UUID): The ID of the model.
-        trusts (list[str]): A list of trust names to validate.
+        fl_client_name (str): The FL kit slot name reported by the FL server.
         session (Session): The database session.
 
     Returns:
-        bool: True if all trusts are associated with the model, False otherwise.
+        Trust | None: The resolved trust, or None when the slot name matches no
+            assigned slot (an unknown / unassigned FL kit slot).
     """
-    logger.debug(f"Attempting to validate whether the trusts: {trusts} are associated with the model: {model_id} ...")
+    logger.debug(f"Resolving FL kit slot '{fl_client_name}' to its assigned trust ...")
 
-    # Get all trusts associated with the model
     stmt = (
-        select(Trust.name)
-        .join(ModelTrustIntersect, Trust.id == ModelTrustIntersect.trust_id)  # type: ignore[arg-type]
-        .where(ModelTrustIntersect.model_id == model_id)
+        select(Trust)
+        .join(FLKitSlot, FLKitSlot.assigned_to_trust_id == Trust.id)  # type: ignore[arg-type]
+        .where(FLKitSlot.slot_name == fl_client_name)
     )
 
-    result = session.exec(stmt).all()
-    associated_trusts = set(result)
+    return session.exec(stmt).first()
 
-    logger.debug(f"Trusts associated with model {model_id}: {associated_trusts}")
 
-    # Check if all input trusts are in the associated trusts
-    missing_trusts = set(trusts) - associated_trusts
-    if missing_trusts:
-        logger.debug(f"Trusts not associated with model {model_id}: {missing_trusts}")
-        logger.error(f"One or more trusts in: {trusts} are not an approved trust(s)")
+def validate_trust_ids(model_id: UUID, trust_ids: list[UUID], session: Session) -> bool:
+    """Validate that every trust id is associated with the model via ModelTrustIntersect.
+
+    Args:
+        model_id (UUID): The ID of the model.
+        trust_ids (list[UUID]): Trust ids to validate.
+        session (Session): The database session.
+
+    Returns:
+        bool: True if every id is associated with the model, False otherwise.
+    """
+    associated = set(
+        session.exec(
+            select(ModelTrustIntersect.trust_id).where(ModelTrustIntersect.model_id == model_id)
+        ).all()
+    )
+    missing = set(trust_ids) - associated
+    if missing:
+        logger.error(f"Trust ids not approved for model {model_id}: {missing}")
         return False
-
     return True
 
 
@@ -285,6 +340,12 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
         logger.warning("No metrics have been found")
         return []
 
+    # FLMetrics.trust is the assigned trust's id. Resolve it to the trust's short
+    # `code` (e.g. "UCLH") for chart legends, falling back to the trust's name.
+    trust_label: dict[UUID, str] = {}
+    for trust_id, code, name in session.exec(select(Trust.id, Trust.code, Trust.name)).all():
+        trust_label[trust_id] = code or name
+
     # metrics_map: label -> IModelMetrics
     metrics_map: dict[str, IModelMetrics] = {}
 
@@ -296,10 +357,12 @@ def get_metrics(model_id: UUID, session: Session) -> list[IModelMetrics]:
         # Get the list of series for this label
         metric = metrics_map[row.label]
 
+        series_label = trust_label.get(row.trust, str(row.trust))
+
         # Find or create the series for this trust
-        series = next((s for s in metric.metrics if s.seriesLabel == row.trust), None)
+        series = next((s for s in metric.metrics if s.seriesLabel == series_label), None)
         if not series:
-            series = IModelMetricsData(seriesLabel=row.trust, data=[])
+            series = IModelMetricsData(seriesLabel=series_label, data=[])
             metric.metrics.append(series)
 
         # Add the data point

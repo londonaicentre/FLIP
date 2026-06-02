@@ -21,7 +21,14 @@ class IRoles(BaseModel):
     roles: list[UUID] = Field(..., description="List of role GUIDs assigned to the user")
 
 
-class IRegisterUser(IRoles):
+class IUserProfileData(BaseModel):
+    """Editable profile data stored by FLIP."""
+
+    name: str = Field(..., min_length=1, max_length=255, description="User's display name")
+    organisation: str = Field(..., min_length=1, max_length=255, description="User's organisation")
+
+
+class IRegisterUser(IUserProfileData, IRoles):
     """Model for user data."""
 
     email: EmailStr = Field(..., description="User's email address")
@@ -42,4 +49,6 @@ class IRegisterUserDto(BaseModel):
 
     user_id: UUID = Field(..., description="User ID from Cognito")
     email: EmailStr = Field(..., description="User's email address")
+    name: str = Field(..., description="User's display name")
+    organisation: str = Field(..., description="User's organisation")
     roles: list[UUID] = Field(..., description="List of role GUIDs assigned to the user")

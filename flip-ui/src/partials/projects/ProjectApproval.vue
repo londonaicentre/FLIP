@@ -15,7 +15,7 @@
     <AiCard>
         <div class="p-4">
             <h2 class="text-lg font-semibold font-heading grow leading-loose">
-                Project Approval
+                Trust Approval
             </h2>
         </div>
         <Form
@@ -24,15 +24,18 @@
             :validation-schema="schema"
             @submit="approveProject"
         >
-            <div class="w-full gap-3 text-sm">
+            <div class="w-full gap-3 text-xs">
                 <ul role="list" class="border-gray-200 divide-y divide-gray-200 dark:divide-gray-700 dark:border-gray-700 border-y">
-                    <li v-for="(trust, idx) in approvedTrusts" :key="trust.id">
+                    <li v-for="(trust, idx) in sortedApprovedTrusts" :key="trust.id">
                         <div class="flex items-center py-4 transition hover:bg-gray-50 dark:hover:bg-gray-800 group">
                             <div class="flex items-center flex-1 px-4 grow">
                                 <div class="flex-1 min-w-0">
                                     <div>
-                                        <p class="text-sm font-semibold truncate text-primary-600 dark:text-primary-200">
-                                            {{ trust.name }}
+                                        <p
+                                            class="text-xs font-semibold truncate text-primary-600 dark:text-primary-200"
+                                            :title="trust.name"
+                                        >
+                                            {{ trust.code || trust.name }}
                                         </p>
                                     </div>
                                 </div>
@@ -48,18 +51,21 @@
                                     :label="{ enabled: 'Approved', disabled: 'Not Approved' }"
                                 />
                                 <template v-else>
-                                    <div
+                                    <span
                                         v-if="trust.approved"
-                                        class="flex flex-row items-center justify-between gap-2 px-2 py-1 border-2 border-gray-200 dark:border-gray-700 rounded ring-2 ring-offset-2 ring-green-600/70 dark:ring-green-500 dark:ring-offset-gray-900"
+                                        class="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-semibold bg-emerald-600 text-white shrink-0"
+                                        :data-test="`trust-approved-chip-${idx}`"
+                                        :title="approvedAtTitle(trust)"
                                     >
-                                        <span class="text-xs font-bold">Approved</span>
-                                    </div>
-                                    <div
-                                        v-if="!trust.approved"
-                                        class="flex flex-row items-center justify-between gap-2 px-2 py-1 border-2 border-gray-200 dark:border-gray-700 rounded ring-2 ring-offset-2 ring-red-600/70 dark:ring-red-500 dark:ring-offset-gray-900"
+                                        <icon-heroicons-outline-check class="w-3.5 h-3.5 stroke-2" />
+                                        {{ approvedAtLabel(trust) }}
+                                    </span>
+                                    <span
+                                        v-else
+                                        class="inline-flex items-center px-2 py-1 rounded-md text-[11px] font-semibold bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-200"
                                     >
-                                        <span class="text-xs font-bold">Not Approved</span>
-                                    </div>
+                                        Not Approved
+                                    </span>
                                 </template>
                             </div>
                         </div>
@@ -111,7 +117,11 @@ interface IProjectApprovalProps {
 
 const authStore = useAuthStore();
 
-defineProps<IProjectApprovalProps>();
+const props = defineProps<IProjectApprovalProps>();
+
+const sortedApprovedTrusts = computed(() =>
+    [...props.approvedTrusts].sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name))
+);
 
 const emits = defineEmits(["approveProject", "stageProject"]);
 
@@ -130,6 +140,21 @@ const schema = object().shape({
 const hasPermissionToApprove = computed(() => {
     return authStore.hasPermissions(["CanApproveProjects"]);
 });
+
+const approvedAtLabel = (trust: IProjectTrust): string => {
+    if (!trust.approvedAt) return "Approved";
+
+    return new Date(trust.approvedAt).toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short"
+    });
+};
+
+const approvedAtTitle = (trust: IProjectTrust): string => {
+    if (!trust.approvedAt) return `${trust.name} approved`;
+
+    return `${trust.name} approved on ${new Date(trust.approvedAt).toLocaleString()}`;
+};
 
 const approveProject = (v: unknown) => {
     const values = v as { trusts: string[] };

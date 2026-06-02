@@ -18,7 +18,7 @@ from sqlmodel import Session
 from flip_api.auth.auth_utils import has_permissions
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.db.models.user_models import PermissionRef, UsersAudit
+from flip_api.db.models.user_models import PermissionRef, UserProfile, UsersAudit
 from flip_api.domain.interfaces.user import IRegisterUser, IUserResponse
 from flip_api.utils.cognito_helpers import (
     create_cognito_user,
@@ -120,10 +120,16 @@ def register_user(
         # Create user in Cognito
         user_id = create_cognito_user(user_data.email, user_pool_id)
 
-        # Audit the registration. Cognito is the source of truth for the
-        # user identity itself; UsersAudit captures the actor + timestamp
-        # for forensic purposes.
+        # Store FLIP-owned profile data and audit the registration. Cognito
+        # remains the source of truth for authentication identity.
         try:
+            db.add(
+                UserProfile(
+                    user_id=user_id,
+                    name=user_data.name,
+                    organisation=user_data.organisation,
+                )
+            )
             db.add(UsersAudit(action="Registered user", user_id=user_id, modified_by_user_id=token_id))
             db.commit()
         except Exception as audit_err:
@@ -142,6 +148,8 @@ def register_user(
 
         return IUserResponse(
             email=user_data.email,
+            name=user_data.name,
+            organisation=user_data.organisation,
             roles=user_data.roles,
             user_id=user_id,
         )  # type: ignore[call-arg]

@@ -15,7 +15,7 @@ import { fetchAuthSession } from "aws-amplify/auth";
 import { createPinia, setActivePinia } from "pinia";
 
 import router, { routeChange } from "@/router";
-import { useAuthStore } from "@/store/auth";
+import { type SignInStep, useAuthStore } from "@/store/auth";
 import { authCheck, isUserUnconfirmedCheck, NO_FORCED_SIGNOUT_PATHS } from "@/utils/auth";
 import { Snackbar } from "@/utils/snackbar";
 
@@ -560,7 +560,7 @@ describe("isUserUnconfirmedCheck", () => {
 
     it("returns false for any other step", async () => {
         const auth = useAuthStore();
-        auth.signInStep = "SOME_UNHANDLED_STEP";
+        auth.signInStep = "SOME_UNHANDLED_STEP" as unknown as SignInStep;
 
         await expect(isUserUnconfirmedCheck(auth)).resolves.toBe(false);
     });

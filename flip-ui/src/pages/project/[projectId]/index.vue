@@ -18,129 +18,106 @@
 
 <template>
     <div v-if="project" class="relative flex flex-col h-full overflow-hidden">
-        <AiBreadcrumbs :pages="breadcrumbPages" :current="{name: project.name}" />
         <div class="flex-grow h-full overflow-y-auto">
-            <div class="flex items-center justify-end flex-shrink-0 px-4 py-4 space-x-4 bg-white shadow-sm dark:bg-gray-900">
-                <div class="flex flex-row items-center gap-4">
-                    <div
-                        class="relative flex flex-col items-center justify-end w-10 h-10 transition bg-white rounded-full dark:bg-gray-900 ring-2 ring-offset-2 dark:ring-offset-gray-900 shrink-0"
-                        :class="[
-                            project.status === 'APPROVED' && 'ring-green-600/70 dark:ring-green-400',
-                            project.status === 'STAGED' && 'ring-primary-600/70 dark:ring-primary-400',
-                            project.status === 'UNSTAGED' && 'ring-gray-400/70 dark:ring-gray-600',
-                        ]"
-                    >
-                        <div class="relative flex items-center justify-center w-full bg-gray-100 border border-gray-300 rounded-full shadow dark:bg-gray-800 dark:text-gray-300 grow dark:border-gray-500">
-                            {{ getInitials(project.name) }}
-                        </div>
-                    </div>
-                    <div class="hidden text-lg font-semibold truncate md:flex font-heading grow">
-                        <span class="max-w-lg truncate">{{ project.name }}</span>
-                    </div>
-                </div>
-
-                <div class="flex flex-row items-center md:gap-2 shrink-0 grow md:justify-end">
-                    <div class="flex flex-col gap-4 md:flex-row">
-                        <template v-if="isProjectStaged()">
-                            <div class="flex items-center flex-shrink-0 gap-3 text-sm">
-                                <AiCircledIcon>
-                                    <icon-heroicons-outline-clock class="w-4 h-4" />
-                                </AiCircledIcon>
-                                Awaiting Approval
-                            </div>
-                        </template>
-                        <template v-if="projectApproved">
-                            <div class="flex items-center flex-shrink-0 gap-3 text-sm">
-                                <AiCircledIcon>
-                                    <icon-heroicons-outline-check class="w-4 h-4" />
-                                </AiCircledIcon>
-                                Project Approved
-                            </div>
-                        </template>
-                        <div class="flex items-center flex-shrink-0 gap-3 mr-2 text-sm">
-                            <AiCircledIcon>
-                                <icon-ic-twotone-person-outline class="w-4 h-4" />
-                            </AiCircledIcon>
-                            {{ getUserCountMessage() }}
-                        </div>
-                    </div>
-                    <div class="flex flex-col items-end justify-end gap-2 grow md:grow-0 md:flex-row">
-                        <AiGuard :permissions="unstageProjectPermissions">
+            <header class="px-6 pt-4">
+                <router-link
+                    to="/projects"
+                    class="text-xs font-semibold tracking-wider uppercase font-mono text-gray-500 hover:text-primary-500 dark:text-gray-400 dark:hover:text-primary-300"
+                >
+                    Projects
+                </router-link>
+                <div class="flex flex-wrap items-center justify-between gap-4 mt-2">
+                    <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100 truncate">
+                        <span class="max-w-2xl truncate">{{ project.name }}</span>
+                    </h1>
+                    <div class="flex flex-row items-center md:gap-2 shrink-0 grow md:justify-end">
+                        <div class="flex flex-col gap-4 md:flex-row">
                             <template v-if="isProjectStaged()">
-                                <AiButton primary data-test="unstage-project-btn" @click="openUnstagingModal">
-                                    <icon-heroicons-outline-clipboard class="mr-2" />
-                                    Unstage Project
-                                </AiButton>
-                                <AiConfirmModal
-                                    :dialog="unstageProjectOpen"
-                                    small
-                                    title="Unstage Project"
-                                    description="Are you sure you want to unstage the project?"
-                                    continue-button-text="Unstage Project"
-                                    :submitting="unstagingProject"
-                                    :continue-action="unstageCurrentProject"
-                                    @close-modal="closeUnstageModal"
-                                />
+                                <div class="flex items-center flex-shrink-0 gap-3 text-sm">
+                                    <AiCircledIcon>
+                                        <icon-heroicons-outline-clock class="w-4 h-4" />
+                                    </AiCircledIcon>
+                                    Awaiting Approval
+                                </div>
                             </template>
-                        </AiGuard>
-                        <AiGuard :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess() || isObserver">
-                            <AiButton light data-test="edit-project-btn" @click.capture="openEditProjectDrawer">
-                                <icon-mdi-pencil-outline v-if="!isObserver" class="mr-2" />
-                                <icon-mdi-eye-outline v-else class="mr-2" />
-                                {{ isObserver ? "View Project" : "Edit Project" }}
-                            </AiButton>
-                        </AiGuard>
+                            <div class="flex items-center flex-shrink-0 gap-3 mr-2 text-sm">
+                                <AiCircledIcon>
+                                    <icon-ic-twotone-person-outline class="w-4 h-4" />
+                                </AiCircledIcon>
+                                {{ getUserCountMessage() }}
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-end justify-end gap-2 grow md:grow-0 md:flex-row">
+                            <AiGuard :permissions="unstageProjectPermissions">
+                                <template v-if="isProjectStaged()">
+                                    <AiButton primary data-test="unstage-project-btn" @click="openUnstagingModal">
+                                        <icon-heroicons-outline-clipboard class="mr-2" />
+                                        Unstage Project
+                                    </AiButton>
+                                    <AiConfirmModal
+                                        :dialog="unstageProjectOpen"
+                                        small
+                                        title="Unstage Project"
+                                        description="Are you sure you want to unstage the project?"
+                                        continue-button-text="Unstage Project"
+                                        :submitting="unstagingProject"
+                                        :continue-action="unstageCurrentProject"
+                                        @close-modal="closeUnstageModal"
+                                    />
+                                </template>
+                            </AiGuard>
+                            <AiGuard :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess() || isObserver">
+                                <AiButton light data-test="edit-project-btn" @click.capture="openEditProjectDrawer">
+                                    <icon-mdi-pencil-outline v-if="!isObserver" class="mr-2" />
+                                    <icon-mdi-eye-outline v-else class="mr-2" />
+                                    {{ isObserver ? "View Project" : "Edit Project" }}
+                                </AiButton>
+                            </AiGuard>
+                        </div>
                     </div>
                 </div>
-            </div>
+            </header>
 
-            <AiSteps :steps="steps" />
+            <div class="relative grid items-start grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(17rem,0.75fr)_minmax(22rem,1.5fr)_minmax(17rem,0.75fr)] xl:p-4">
+                <div class="lg:col-span-3">
+                    <LifecycleTrack :steps="steps" />
+                </div>
 
-            <div class="relative grid items-start grid-cols-1 gap-4 p-4 lg:grid-cols-12 xl:p-4">
-                <!-- Left column -->
-                <div class="grid grid-cols-1 gap-4 lg:sticky top-16 lg:col-span-4 2xl:col-span-3">
-                    <ProjectDetails />
-                    <QueryDetails
-                        :query-details="project.query"
-                        class="order-2 2xl:order-3"
+                <div class="grid grid-cols-1 gap-4 lg:sticky top-16">
+                    <QueryDetails :query-details="project.query" />
+
+                    <Transition name="slidedown" mode="out-in">
+                        <template v-if="isProjectUnstaged()">
+                            <ProjectStaging
+                                :has-query="!!project.query"
+                                :stageable-trust-ids="stageableTrustIds"
+                                :project-staged="isProjectStaged()"
+                                :staging="stagingProject"
+                                @staged="stageProject"
+                            />
+                        </template>
+                        <template v-else>
+                            <ProjectApproval
+                                :approved-trusts="project.approvedTrusts ?? []"
+                                :has-query="!!project.query"
+                                :project-approved="projectApproved"
+                                :approving="approvingProject"
+                                :can-approve="isProjectStaged()"
+                                @approve-project="approveProjectEvent"
+                            />
+                        </template>
+                    </Transition>
+                </div>
+
+                <div class="lg:sticky top-16">
+                    <ProjectStatus
+                        :can-load="projectApproved"
+                        :cohort-size="project.query?.totalCohort"
                     />
                 </div>
 
-                <!-- Middle Column -->
-                <div class="sticky grid grid-cols-1 gap-4 lg:col-span-8 top-16 2xl:col-span-6">
-                    <div class="grid grid-cols-1 gap-4 2xl:grid-cols-1">
-                        <Transition name="slidedown" mode="out-in">
-                            <template v-if="isProjectUnstaged()">
-                                <ProjectStaging
-                                    :has-query="!!project.query"
-                                    :project-staged="isProjectStaged()"
-                                    :staging="stagingProject"
-                                    @staged="stageProject"
-                                />
-                            </template>
-                            <template v-else>
-                                <ProjectApproval
-                                    :approved-trusts="project.approvedTrusts ?? []"
-                                    :has-query="!!project.query"
-                                    :project-approved="projectApproved"
-                                    :approving="approvingProject"
-                                    :can-approve="isProjectStaged()"
-                                    @approve-project="approveProjectEvent"
-                                />
-                            </template>
-                        </Transition>
-                        <div class="2xl:hidden">
-                            <LatestModels />
-                        </div>
-                    </div>
-                    <ProjectStatus :can-load="projectApproved" />
-                </div>
-
-                <!-- Right column -->
-                <div class="sticky hidden grid-cols-1 gap-4 2xl:grid 2xl:col-span-3 lg:-order-none top-16">
-                    <span class="hidden 2xl:block">
-                        <LatestModels />
-                    </span>
+                <div class="lg:sticky top-16">
+                    <LatestModels />
                 </div>
             </div>
         </div>
@@ -164,27 +141,24 @@ import { storeToRefs } from "pinia";
 import { computed, ref } from "vue";
 import { useRoute } from "vue-router";
 
-import AiBreadcrumbs, { IPage } from "@/components/AiBreadcrumbs/AiBreadcrumbs.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiGuard from "@/components/AiGuard/AiGuard.vue";
 import AiCircledIcon from "@/components/AiIcon/AiCircledIcon.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
 import { IStep } from "@/components/AiSteps/AiSteps.vue";
+import { usePermissions } from "@/composables/usePermissions";
 import QueryDetails from "@/partials/cohort-query/QueryDetails.vue";
 import LatestModels from "@/partials/models/LatestModels.vue";
 import EditProjectDrawer, { IEditProject } from "@/partials/projects/EditProjectDrawer.vue";
+import LifecycleTrack from "@/partials/projects/LifecycleTrack.vue";
 import ProjectApproval from "@/partials/projects/ProjectApproval.vue";
-import ProjectDetails from "@/partials/projects/ProjectDetails.vue";
 import ProjectStaging from "@/partials/projects/ProjectStaging.vue";
 import ProjectStatus from "@/partials/projects/ProjectStatus.vue";
 import { approveProject, editProject, stageProject as stageProjectWithTrusts, unstageProject } from "@/services/project-service";
 import { useAuthStore, UserPermissions } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 import { useProjectStore } from "@/store/project";
-import { getInitials } from "@/utils/helpers";
 import { Snackbar } from "@/utils/snackbar";
-
-import AiSteps from "../../../components/AiSteps/AiSteps.vue";
 
 export interface ITrustToStage {
     id: string;
@@ -205,33 +179,45 @@ const projectUpdating = ref(false);
 const approvingProject = ref(false);
 const unstagingProject = ref(false);
 
-const breadcrumbPages: IPage[] = [
-    {
-        name: "Projects",
-        path: "/projects"
-    }
-];
+// Most-recent per-trust approval (sourced server-side from
+// project_trust_intersect.approved_at) doubles as the project-level
+// approval date in the lifecycle bar.
+const latestTrustApprovalAt = computed<string | null>(() => {
+    const trusts = (project?.value?.approvedTrusts ?? []).filter(t => t.approved && t.approvedAt);
+    if (!trusts.length) return null;
+
+    return trusts
+        .map(t => t.approvedAt as string)
+        .sort()
+        .at(-1) ?? null;
+});
 
 const steps = computed((): IStep[] => [
     {
         id: "01",
         name: "Project Created",
-        completed: true
+        completed: true,
+        date: project?.value?.creationtimestamp ?? null
     },
     {
         id: "02",
-        name: "Cohort Query Created",
-        completed: !!project?.value?.query?.id
+        name: "Cohort Query",
+        completed: !!project?.value?.query?.id,
+        date: project?.value?.query?.created ?? null
     },
     {
         id: "03",
         name: "Project Staged",
-        completed: project?.value?.status !== "UNSTAGED"
+        completed: project?.value?.status !== "UNSTAGED",
+        // stagedAt persists after an unstage (it's the most-recent STAGE audit), so only surface it
+        // while the project is actually staged — otherwise the now-incomplete step shows a stale date.
+        date: project?.value?.status !== "UNSTAGED" ? (project?.value?.stagedAt ?? null) : null
     },
     {
         id: "04",
         name: "Project Approved",
-        completed: project?.value?.status === "APPROVED"
+        completed: project?.value?.status === "APPROVED",
+        date: latestTrustApprovalAt.value
     }
 ]);
 
@@ -239,16 +225,31 @@ const emit = defineEmits(["UpdateProject"]);
 
 const { project } = storeToRefs(projectStore);
 
-const editProjectPermissions: UserPermissions[] = ["CanManageProjects"];
+// Researchers (CanCreateProjects) can edit projects they own — backend
+// per-project access checks gate the actual writes. CanManageProjects is
+// Admin-only and bypasses the per-project check on the server.
+const editProjectPermissions: UserPermissions[] = ["CanCreateProjects"];
 const unstageProjectPermissions: UserPermissions[] = ["CanUnstageProjects"];
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
+const { isObserver, canCreateProjects } = usePermissions();
 
 const projectApproved = computed(() => {
     return project?.value?.status === "APPROVED";
 });
 
+// Stageable = trusts that responded successfully. Excludes late-joiners
+// (not dispatched), never-responded (dispatched but no QueryResult), and
+// errored (responded with an error blob). Mirrors the server-side guard
+// in stage_project.py.
+const stageableTrustIds = computed<string[] | undefined>(() => {
+    const q = project?.value?.query;
+    if (!q) return undefined;
+    const errored = new Set(q.erroredTrustIds ?? []);
+
+    return (q.respondedTrustIds ?? []).filter((id) => !errored.has(id));
+});
+
 const isOwnerOrHasAccess = () => {
-    if (!authStore.hasPermissions(["CanManageProjects"])) return false;
+    if (!canCreateProjects.value) return false;
     const projectOwner = project?.value?.ownerId;
     const currentUserId = authStore.user?.userId;
 
