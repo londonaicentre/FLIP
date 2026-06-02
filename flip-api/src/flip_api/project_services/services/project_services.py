@@ -58,29 +58,44 @@ from flip_api.utils.logger import logger
 from flip_api.utils.paging_utils import IPagedResponse, PagingInfo, get_paging_details
 
 
-def _collect_errored_trust_ids(
+def _classify_responded_trust_ids(
     rows: Sequence[tuple[UUID | None, str | None]],
     *,
     query_id: UUID,
-) -> list[UUID]:
-    """Extract trust IDs whose QueryResult data carries a non-null ``error``.
+) -> tuple[list[UUID], list[UUID], list[UUID]]:
+    """Split QueryResult rows into ``(responded, errored, empty)`` trust IDs in one pass.
 
-    A row that fails to parse at all also counts as errored — better to mark
-    the trust red than silently swallow a corrupt response.
+    Each distinct trust's ``data`` blob is parsed once and classified, rather than walked
+    separately per category. All three lists preserve row order and dedup a trust by its
+    first occurrence; ``errored`` and ``empty`` are disjoint subsets of ``responded``.
+
+    - **responded**: every distinct non-null trust ID that posted a row (success or error).
+      A trust must be here — and not errored or empty — to be stage-eligible; the set is
+      also surfaced to the per-trust UI.
+    - **errored**: responded trusts whose ``data`` carries a non-null ``error``, or that fail
+      to parse at all. Better to mark the trust red than silently swallow a corrupt response
+      and let staging include results we never validated.
+    - **empty**: responded, non-errored trusts with ``record_count == 0`` — a genuine zero
+      match or a privacy-suppressed below-threshold count (the trust sets ``record_count=0``
+      either way; ``suppressed`` only tells the two apart for display, see issue #519). These
+      have no usable cohort and must not be stage-eligible.
 
     Args:
         rows (Sequence[tuple[UUID | None, str | None]]): ``(trust_id, data_json)`` pairs from QueryResult.
         query_id (UUID): The query the rows belong to — used for logging only.
 
     Returns:
-        list[UUID]: Errored trust IDs (subset of those that responded).
+        tuple[list[UUID], list[UUID], list[UUID]]: ``(responded, errored, empty)`` trust IDs.
     """
+    responded: list[UUID] = []
     errored: list[UUID] = []
+    empty: list[UUID] = []
     seen: set[UUID] = set()
     for tid, data_str in rows:
         if tid is None or tid in seen:
             continue
         seen.add(tid)
+        responded.append(tid)
         try:
             data = json.loads(data_str) if data_str else {}
         except (ValueError, TypeError) as e:
@@ -89,7 +104,9 @@ def _collect_errored_trust_ids(
             continue
         if data.get("error"):
             errored.append(tid)
-    return errored
+        elif int(data.get("record_count") or 0) == 0:
+            empty.append(tid)
+    return responded, errored, empty
 
 
 def _load_task_status_trust_ids(
@@ -131,74 +148,6 @@ def _load_task_status_trust_ids(
             cancelled.append(tid)
 
     return pending, cancelled
-
-
-def _distinct_responded_trust_ids(
-    rows: Sequence[tuple[UUID | None, str | None]],
-) -> list[UUID]:
-    """Distinct trust IDs that posted any QueryResult row, in input order.
-
-    Two consumers:
-
-    1. The staging guard — a trust must be in this set (and not in
-       ``errored_trust_ids``) to be stageable, otherwise we'd commit the
-       project to data we never received.
-    2. The ``responded_trust_ids`` field surfaced to the per-trust UI.
-
-    Args:
-        rows (Sequence[tuple[UUID | None, str | None]]): ``(trust_id, data_json)`` pairs from QueryResult.
-
-    Returns:
-        list[UUID]: Distinct responded trust IDs preserving row order.
-    """
-    seen: set[UUID] = set()
-    out: list[UUID] = []
-    for tid, _ in rows:
-        if tid is None or tid in seen:
-            continue
-        seen.add(tid)
-        out.append(tid)
-    return out
-
-
-def _collect_empty_cohort_trust_ids(
-    rows: Sequence[tuple[UUID | None, str | None]],
-    *,
-    query_id: UUID,
-) -> list[UUID]:
-    """Extract trust IDs that responded with no usable cohort (``record_count == 0``).
-
-    Covers both a genuine zero match and a privacy-suppressed below-threshold count
-    (the trust sets ``record_count=0`` in both cases; ``suppressed`` only tells the
-    two apart for display — see issue #519). Errored rows are excluded here because
-    they are already carved out by ``_collect_errored_trust_ids``; a malformed row is
-    likewise left to the errored path. These trusts must not be stage-eligible: there
-    is no cohort to build an imaging project against (issue #519 follow-up).
-
-    Args:
-        rows (Sequence[tuple[UUID | None, str | None]]): ``(trust_id, data_json)`` pairs from QueryResult.
-        query_id (UUID): The query the rows belong to — used for logging only.
-
-    Returns:
-        list[UUID]: Trust IDs that responded with a zero/suppressed count (subset of responded, minus errored).
-    """
-    empty: list[UUID] = []
-    seen: set[UUID] = set()
-    for tid, data_str in rows:
-        if tid is None or tid in seen:
-            continue
-        seen.add(tid)
-        try:
-            data = json.loads(data_str) if data_str else {}
-        except (ValueError, TypeError) as e:
-            # Malformed payload is handled as errored elsewhere; don't double-flag.
-            logger.warning(f"Malformed QueryResult.data for query {query_id}, trust {tid}: {e}")
-            continue
-        if data.get("error"):
-            continue
-        if int(data.get("record_count") or 0) == 0:
-            empty.append(tid)
-    return empty
 
 
 def update_project_user_access(project_id: UUID, user_ids: list[UUID], session: Session) -> None:
@@ -926,14 +875,14 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
     query_data = None
     if query_row:
         query, created_by_name = query_row
-        # Step 3: per-trust QueryResult rows — drive the "errored" carve-out
-        # for staging and the responded set.
+        # Step 3: per-trust QueryResult rows — drive the errored/empty carve-outs
+        # for staging and the responded set surfaced to the UI.
         result_rows = session.exec(
             select(QueryResult.trust_id, QueryResult.data).where(QueryResult.query_id == query.id)
         ).all()
-        errored_trust_ids = _collect_errored_trust_ids(result_rows, query_id=query.id)
-        empty_trust_ids = _collect_empty_cohort_trust_ids(result_rows, query_id=query.id)
-        responded_trust_ids = _distinct_responded_trust_ids(result_rows)
+        responded_trust_ids, errored_trust_ids, empty_trust_ids = _classify_responded_trust_ids(
+            result_rows, query_id=query.id
+        )
         pending_trust_ids, cancelled_trust_ids = _load_task_status_trust_ids(query.id, session)
         queried_trust_ids = list(query.queried_trust_ids)
 

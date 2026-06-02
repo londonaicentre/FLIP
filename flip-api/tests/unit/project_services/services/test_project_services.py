@@ -783,103 +783,98 @@ class TestGetUsersWithAccess:
         assert result == []
 
 
-# Helpers introduced by the connection-status PR — _collect_errored_trust_ids,
+# Helpers introduced by the connection-status PR — _classify_responded_trust_ids,
 # update_project_user_access, plus warn paths in get_project_models_service /
 # unstage_project_service.
 
 
-class TestCollectErroredTrustIds:
-    """A QueryResult row whose `data` JSON fails to parse is treated as errored.
+class TestClassifyRespondedTrustIds:
+    """One pass over QueryResult rows splits responded trusts into errored vs empty.
 
-    Better to surface the trust as red in the UI than silently swallow a corrupt
-    response — the latter would let staging-eligibility include a trust whose
-    results we never validated.
+    A row whose `data` JSON fails to parse is treated as errored — better to surface the
+    trust as red than silently swallow a corrupt response, which would let staging include
+    a trust whose results we never validated. A non-errored trust with `record_count == 0`
+    (a genuine zero or a privacy-suppressed count, #519) is empty: responded but with no
+    usable cohort, so excluded from staging eligibility. `errored` and `empty` are disjoint.
     """
 
     def test_marks_malformed_json_as_errored(self):
-        from flip_api.project_services.services.project_services import _collect_errored_trust_ids
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
 
         tid = uuid4()
-        result = _collect_errored_trust_ids([(tid, "not-a-json-blob")], query_id=uuid4())
+        responded, errored, empty = _classify_responded_trust_ids([(tid, "not-a-json-blob")], query_id=uuid4())
 
-        assert result == [tid]
+        assert responded == [tid]
+        assert errored == [tid]
+        assert empty == []
 
     def test_explicit_error_field_marks_trust_as_errored(self):
-        from flip_api.project_services.services.project_services import _collect_errored_trust_ids
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
 
         tid = uuid4()
-        result = _collect_errored_trust_ids(
+        # An errored row is never double-flagged as empty even though its count is 0.
+        responded, errored, empty = _classify_responded_trust_ids(
             [(tid, '{"record_count": 0, "error": "OMOP timeout"}')], query_id=uuid4()
         )
 
-        assert result == [tid]
+        assert responded == [tid]
+        assert errored == [tid]
+        assert empty == []
 
-    def test_success_payload_is_not_marked_errored(self):
-        from flip_api.project_services.services.project_services import _collect_errored_trust_ids
+    def test_success_payload_is_neither_errored_nor_empty(self):
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
 
         tid = uuid4()
-        result = _collect_errored_trust_ids(
+        responded, errored, empty = _classify_responded_trust_ids(
             [(tid, '{"record_count": 7, "error": null}')], query_id=uuid4()
         )
 
-        assert result == []
-
-
-class TestCollectEmptyCohortTrustIds:
-    """A trust that responded with 0 records — genuine zero or privacy-suppressed
-    (#519) — has no usable cohort and must be excluded from staging eligibility.
-    """
+        assert responded == [tid]
+        assert errored == []
+        assert empty == []
 
     def test_zero_record_count_is_flagged_empty(self):
-        from flip_api.project_services.services.project_services import _collect_empty_cohort_trust_ids
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
 
         tid = uuid4()
-        result = _collect_empty_cohort_trust_ids(
+        responded, errored, empty = _classify_responded_trust_ids(
             [(tid, '{"record_count": 0, "error": null}')], query_id=uuid4()
         )
 
-        assert result == [tid]
+        assert responded == [tid]
+        assert errored == []
+        assert empty == [tid]
 
     def test_suppressed_count_is_flagged_empty(self):
-        from flip_api.project_services.services.project_services import _collect_empty_cohort_trust_ids
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
 
         tid = uuid4()
-        result = _collect_empty_cohort_trust_ids(
+        responded, errored, empty = _classify_responded_trust_ids(
             [(tid, '{"record_count": 0, "suppressed": true, "error": null}')], query_id=uuid4()
         )
 
-        assert result == [tid]
+        assert responded == [tid]
+        assert errored == []
+        assert empty == [tid]
 
-    def test_non_empty_count_is_not_flagged(self):
-        from flip_api.project_services.services.project_services import _collect_empty_cohort_trust_ids
+    def test_mixed_batch_partitions_in_one_pass_preserving_order(self):
+        # Every distinct trust is "responded"; errored/empty are disjoint subsets in row order.
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
 
-        tid = uuid4()
-        result = _collect_empty_cohort_trust_ids(
-            [(tid, '{"record_count": 7, "error": null}')], query_id=uuid4()
+        ok, err, zero = uuid4(), uuid4(), uuid4()
+        responded, errored, empty = _classify_responded_trust_ids(
+            [
+                (ok, '{"record_count": 7}'),
+                (err, '{"record_count": 0, "error": "OMOP timeout"}'),
+                (None, '{"record_count": 0}'),  # no trust id — skipped entirely
+                (zero, '{"record_count": 0}'),
+            ],
+            query_id=uuid4(),
         )
 
-        assert result == []
-
-    def test_errored_row_is_not_double_flagged_as_empty(self):
-        # An errored trust is already carved out by _collect_errored_trust_ids;
-        # it must not also land in the empty set even though its count is 0.
-        from flip_api.project_services.services.project_services import _collect_empty_cohort_trust_ids
-
-        tid = uuid4()
-        result = _collect_empty_cohort_trust_ids(
-            [(tid, '{"record_count": 0, "error": "OMOP timeout"}')], query_id=uuid4()
-        )
-
-        assert result == []
-
-    def test_malformed_row_is_not_flagged_empty(self):
-        # Malformed payloads are handled by the errored path; don't double-flag.
-        from flip_api.project_services.services.project_services import _collect_empty_cohort_trust_ids
-
-        tid = uuid4()
-        result = _collect_empty_cohort_trust_ids([(tid, "not-a-json-blob")], query_id=uuid4())
-
-        assert result == []
+        assert responded == [ok, err, zero]
+        assert errored == [err]
+        assert empty == [zero]
 
 
 class TestUpdateProjectUserAccess:
