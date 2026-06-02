@@ -13,11 +13,11 @@ Central Hub REST API. FastAPI + asyncpg + SQLModel. Handles user auth (Cognito),
 | `src/flip_api/db/database.py` | asyncpg async session, DB connection |
 | `src/flip_api/db/models/main_models.py` | SQLModel ORM: Project, Trust, Model, File, etc. |
 | `src/flip_api/db/models/user_models.py` | User, Role, Permission models |
-| `src/flip_api/db/seed/` | DB seed data: roles, permissions, trusts, FL scheduler, banners |
+| `src/flip_api/db/seed/` | DB seed data: roles, permissions, FL kit slots, FL scheduler, banners |
 | `src/flip_api/domain/schemas/` | Pydantic request/response schemas |
 | `src/flip_api/domain/interfaces/` | Repository interfaces (Dependency Inversion) |
 | `src/flip_api/auth/` | Cognito JWT verification, auth middleware |
-| `src/flip_api/scripts/` | Key generation (trust, internal service, env utils) |
+| `src/flip_api/scripts/` | Trust registration CLI (register_trust.py), internal-service-key generation, env utils |
 
 ## Service Modules
 

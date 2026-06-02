@@ -74,9 +74,9 @@ describe("routeChange", () => {
 
     it("changePassword pushes /auth/change-password with email param", () => {
         routeChange.changePassword("a@b.com");
+        // Name-based: route params only resolve against a named route.
         expect(pushSpy).toHaveBeenCalledWith({
             name: "ChangePassword",
-            path: "/auth/change-password",
             params: { email: "a@b.com" }
         });
     });
@@ -98,10 +98,7 @@ describe("routeChange", () => {
 
     it("accessRequest pushes /auth/access-request", () => {
         routeChange.accessRequest();
-        expect(pushSpy).toHaveBeenCalledWith({
-            name: "AccessRequest",
-            path: "/auth/access-request"
-        });
+        expect(pushSpy).toHaveBeenCalledWith({ path: "/auth/access-request" });
     });
 
     it("back calls router.back()", () => {

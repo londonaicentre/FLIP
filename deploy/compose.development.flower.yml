@@ -119,7 +119,11 @@ services:
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - FL_API_ADDRESS=http://flip-fl-api-net-1:8000
-      - TRUST_NAMES=${TRUST_NAMES}
+      # The script reads ${TRUST_NAMES} as a label list, but the underlying identity it's
+      # labelling is the per-slot SuperNode key — one entry per provisioned slot. Feed
+      # FL_KIT_SLOT_NAMES through so trusts admin-created later (and bound to a slot via
+      # FLKitSlot.assigned_to_trust_id) still get their node_id mapped on net startup.
+      - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
@@ -183,7 +187,8 @@ services:
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-2:9093
       - FL_API_ADDRESS=http://flip-fl-api-net-2:8000
-      - TRUST_NAMES=${TRUST_NAMES}
+      # See net-1 above — feed FL_KIT_SLOT_NAMES so all provisioned slots get labelled.
+      - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro

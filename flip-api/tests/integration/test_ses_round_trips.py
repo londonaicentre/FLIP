@@ -157,7 +157,7 @@ def test_handle_imaging_task_sends_one_email_per_user_and_persists_status(
     session.add(project)
     session.commit()
     # Latest query for the project — required by the persistence helper.
-    session.add(Queries(id=uuid4(), name="b2-q", query="select 1", project_id=project.id))
+    session.add(Queries(id=uuid4(), name="b2-q", query="select 1", project_id=project.id, created_by=uuid4()))
     session.commit()
     task = _seed_completed_imaging_task(session, trust.id, project.id)
 
@@ -192,7 +192,7 @@ def test_handle_imaging_task_idempotent_on_status_row(
     session.add(trust)
     session.add(project)
     session.commit()
-    session.add(Queries(id=uuid4(), name="b2-q", query="select 1", project_id=project.id))
+    session.add(Queries(id=uuid4(), name="b2-q", query="select 1", project_id=project.id, created_by=uuid4()))
     session.commit()
     task = _seed_completed_imaging_task(session, trust.id, project.id)
 
@@ -217,7 +217,7 @@ def test_handle_imaging_task_no_users_skips_email_path(
     session.add(trust)
     session.add(project)
     session.commit()
-    session.add(Queries(id=uuid4(), name="b2-q", query="select 1", project_id=project.id))
+    session.add(Queries(id=uuid4(), name="b2-q", query="select 1", project_id=project.id, created_by=uuid4()))
     session.commit()
     task = TrustTask(
         id=uuid4(),

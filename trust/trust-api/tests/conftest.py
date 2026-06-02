@@ -21,7 +21,6 @@ _TEST_ENV_DEFAULTS = {
     "IMAGING_API_URL": "http://localhost:8002",
     "TRUST_API_KEY": "test-key",
     "TRUST_API_KEY_HEADER": "Authorization",
-    "TRUST_NAME": "Test_Trust",
     "AES_KEY_BASE64": "dGVzdGtleXRlc3RrZXl0ZXN0a2V5dGVzdGtleTA9PQ==",
     "TRUST_INTERNAL_SERVICE_KEY": "test-trust-internal-service-key",
     "TRUST_INTERNAL_SERVICE_KEY_HEADER": "X-Trust-Internal-Service-Key",

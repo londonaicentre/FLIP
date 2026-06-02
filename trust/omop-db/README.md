@@ -17,7 +17,7 @@ Postgres database containing OMOP-ified data.
 
 ## Set up
 
-We have prepared mock data for each of the 2 dev trusts (Trust_1 and Trust_2) as postgres data volumes, published to the public Hugging Face dataset [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data). In order to set up the database locally, these data volumes need to be downloaded/extracted. They are fetched anonymously over HTTPS — no AWS CLI or credentials required. This will be handled automatically when
+We have prepared mock data for each of the 2 dev trusts (GSTT and KCH) as postgres data volumes, published to the public Hugging Face dataset [`aicentreflip/trust-data`](https://huggingface.co/datasets/aicentreflip/trust-data). In order to set up the database locally, these data volumes need to be downloaded/extracted. They are fetched anonymously over HTTPS — no AWS CLI or credentials required. This will be handled automatically when
 creating the trust containers, and similarly they will be updated locally when the desired version changes (note for devs: this is controlled by the `.data_version` file in this directory).
 
 ```sh
@@ -29,12 +29,12 @@ make update-omop-data TRUST=2   # Trust_2 only
 The OMOP database container is normally started as part of a full trust stack from the repository root:
 
 ```sh
-make up-trusts                # both trusts
-make -C trust up-trust-1      # Trust_1 only
-make -C trust up-trust-2      # Trust_2 only
+make up-trusts                     # both trusts
+make -C trust up-trust KIT=GSTT    # GSTT only
+make -C trust up-trust KIT=KCH     # KCH only
 ```
 
-For database-only debugging (without the rest of the trust stack), `make -C trust/omop-db up-test-omop-trust1` will start just the Trust_1 OMOP container.
+For database-only debugging (without the rest of the trust stack), `make -C trust/omop-db up-test-omop-trust1` will start just the first dev trust's OMOP container.
 
 Bringing the container up should not run any initialization scripts — the data volume already contains a populated database.
 

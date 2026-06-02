@@ -13,7 +13,6 @@
 
 <template>
     <div class="flex h-full w-[384px] rounded-lg relative p-2 select-none">
-        <img src="/images/AI-centre.png" class="absolute top-3 left-4 h-[76px] w-[116px]">
         <div class="login-branding-container w-full h-full relative">
             <img src="@/assets/login/branding-top-right.png" class="absolute top-2 right-2 h-[97.61px] w-[156px]">
             <img src="@/assets/login/branding-bottom-left.png" class="absolute bottom-2 left-2 h-[74.88px] w-[99px]">
@@ -49,6 +48,5 @@
 
 .login-branding-container::before {
     @apply bg-[#61366E] absolute inset-0 content-[""];
-    clip-path: polygon(0px 93px, 135.16px 93px, 135.16px 0px, 100% 0%, 100% 100%, 0 100%);
 }
 </style>

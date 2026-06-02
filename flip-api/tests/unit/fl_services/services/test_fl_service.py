@@ -18,6 +18,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from flip_api.config import Settings
+from flip_api.db.models.main_models import Trust
 from flip_api.domain.interfaces import fl as fl_interfaces
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
@@ -928,16 +929,21 @@ def test_abort_model_training_idempotent_when_no_running_job(
 
 
 def test_add_fl_job_creates_job(model_id, fake_session):
-    clients = ["client1", "client2"]
-    fl_service.add_fl_job(model_id, clients, fake_session)
+    trusts = [Trust(id=uuid4(), name="client1"), Trust(id=uuid4(), name="client2")]
+    fl_service.add_fl_job(model_id, trusts, fake_session)
+
     fake_session.add.assert_called_once()
     fake_session.commit.assert_called_once()
     fake_session.refresh.assert_called_once()
+
+    # The persisted FLJob attaches the Trust rows via the `fl_job_trust` link relationship.
+    persisted_job = fake_session.add.call_args.args[0]
+    assert persisted_job.trusts == trusts
 
 
 def test_add_fl_job_rollback_on_exception(model_id):
     fake_session = MagicMock()
     fake_session.add.side_effect = Exception("DB Error")
     with pytest.raises(Exception, match="DB Error"):
-        fl_service.add_fl_job(model_id, ["client1"], fake_session)
+        fl_service.add_fl_job(model_id, [Trust(id=uuid4(), name="client1")], fake_session)
     fake_session.rollback.assert_called_once()

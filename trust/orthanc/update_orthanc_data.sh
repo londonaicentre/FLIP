@@ -31,6 +31,16 @@ VOLUMES_DIR="./volumes"                  # local dir for downloaded archives
 # version here; both trusts now use per-trust markers (.local_data_version_trust<N>).
 LEGACY_DATA_VERSION_FILE="${VOLUMES_DIR}/.local_data_version"
 
+# Per-trust storage dirs fall back to trust/-relative defaults when the caller
+# (trust/orthanc/Makefile) hasn't sourced them from the kit files — the kit-file
+# refactor on develop moved per-trust paths to the unsuffixed ORTHANC_STORAGE_DIR
+# (e.g. ./orthanc/orthanc-storage-trust1 in trust/.env.<CODE>), so this script —
+# shared across both trusts — keeps its own legacy-suffixed defaults to stay
+# self-contained. Paths are resolved against trust/ by resolve_storage_dir below,
+# so the defaults carry the orthanc/ prefix to match the compose mount.
+: "${ORTHANC_STORAGE_DIR_TRUST_1:=orthanc/orthanc-storage-trust1}"
+: "${ORTHANC_STORAGE_DIR_TRUST_2:=orthanc/orthanc-storage-trust2}"
+
 # Mock data is fetched anonymously over HTTPS from a public Hugging Face dataset
 # (no AWS CLI or credentials required). The dataset is laid out per trust:
 #   <repo>/resolve/<revision>/trust1/trust1_orthanc_data_<version>.tar
@@ -45,14 +55,6 @@ TRUST="${TRUST:-all}"
 if [[ "${TRUST}" != "1" && "${TRUST}" != "2" && "${TRUST}" != "all" ]]; then
   echo "❌ Invalid TRUST value '${TRUST}'. Must be 1, 2, or all." >&2
   exit 1
-fi
-
-# Required env vars — only require the var(s) relevant to the selected trust.
-if [[ "${TRUST}" == "1" || "${TRUST}" == "all" ]]; then
-  : "${ORTHANC_STORAGE_DIR_TRUST_1:?ORTHANC_STORAGE_DIR_TRUST_1 is required}"
-fi
-if [[ "${TRUST}" == "2" || "${TRUST}" == "all" ]]; then
-  : "${ORTHANC_STORAGE_DIR_TRUST_2:?ORTHANC_STORAGE_DIR_TRUST_2 is required}"
 fi
 
 # Resolve ORTHANC_STORAGE_DIR_TRUST_<N> against trust/ — the base Docker Compose
@@ -114,7 +116,12 @@ update_trust() {
   fi
 
   echo "🗑️  Removing existing orthanc storage dir for Trust ${trust_num}..."
-  sudo rm -rf "${storage_dir}"
+  # The dir is owned by the orthanc container's uid, so removal needs sudo —
+  # but sudo prompts for a password in non-interactive runs. Only invoke it when
+  # there's actually something to delete (first-run case has no dir yet).
+  if [[ -e "${storage_dir}" ]]; then
+    sudo rm -rf "${storage_dir}"
+  fi
   mkdir -p "${storage_dir}"
 
   echo "📁 Extracting archive for Trust ${trust_num}..."

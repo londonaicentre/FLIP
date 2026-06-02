@@ -93,7 +93,12 @@ update_trust() {
   fi
 
   echo "🗑️  Removing existing db_data dir for Trust ${trust_num}..."
-  sudo rm -rf "${dest_dir}"
+  # The dir is owned by the postgres container's uid, so removal needs sudo —
+  # but sudo prompts for a password in non-interactive runs. Only invoke it when
+  # there's actually something to delete (first-run case has no dir yet).
+  if [[ -e "${dest_dir}" ]]; then
+    sudo rm -rf "${dest_dir}"
+  fi
   mkdir -p "${dest_dir}"
 
   echo "📁 Extracting archive for Trust ${trust_num}..."

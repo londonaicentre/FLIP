@@ -15,7 +15,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import trust_api.services.task_poller as task_poller
 from trust_api.services.task_poller import (
+    _maybe_announce_identity,
     _poll_for_tasks,
     _process_task,
     _report_task_result,
@@ -23,18 +25,60 @@ from trust_api.services.task_poller import (
     run_poller,
 )
 
+
+@pytest.fixture(autouse=True)
+def _reset_identity_logged():
+    """The poller caches "identity announced" in a module global; reset per test."""
+    task_poller._identity_logged = False
+    yield
+    task_poller._identity_logged = False
+
+
+# ---- _maybe_announce_identity (EXPECTED_TRUST_ID self-check) ----
+
+
+def test_announce_identity_logs_and_continues_when_no_expected_id(caplog):
+    """With EXPECTED_TRUST_ID unset, the hub-resolved identity is just logged."""
+    with patch.object(task_poller, "EXPECTED_TRUST_ID", ""), caplog.at_level("INFO"):
+        _maybe_announce_identity({"trust_id": "abc-123", "trust_name": "Open Trust (EC2)"})
+    assert any("Authenticated to hub as trust" in r.message for r in caplog.records)
+
+
+def test_announce_identity_continues_when_expected_id_matches():
+    """A matching EXPECTED_TRUST_ID must not exit the process."""
+    with patch.object(task_poller, "EXPECTED_TRUST_ID", "abc-123"):
+        _maybe_announce_identity({"trust_id": "abc-123", "trust_name": "Open Trust (EC2)"})
+    # no SystemExit raised
+
+
+def test_announce_identity_exits_on_expected_id_mismatch():
+    """A mismatched EXPECTED_TRUST_ID means the wrong kit — the poller must exit."""
+    with patch.object(task_poller, "EXPECTED_TRUST_ID", "expected-id"):
+        with pytest.raises(SystemExit):
+            _maybe_announce_identity({"trust_id": "different-id", "trust_name": "Some Trust"})
+
+
+def test_announce_identity_ignores_response_without_identity():
+    """A response body lacking trust_id/trust_name is not an identity check."""
+    with patch.object(task_poller, "EXPECTED_TRUST_ID", "expected-id"):
+        _maybe_announce_identity({"message": "Heartbeat recorded"})  # no exit
+
 # ---- _poll_for_tasks ----
 
 
 @pytest.mark.asyncio
 async def test_poll_for_tasks_success():
-    """Should return tasks from the hub on 200 response."""
+    """Should return the ``tasks`` list from the hub's identity-bearing response."""
     mock_client = AsyncMock()
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = [
-        {"id": "task-1", "task_type": "cohort_query", "payload": '{"query": "SELECT 1"}'},
-    ]
+    mock_response.json.return_value = {
+        "trust_id": "trust-uuid-1",
+        "trust_name": "Open Trust (EC2)",
+        "tasks": [
+            {"id": "task-1", "task_type": "cohort_query", "payload": '{"query": "SELECT 1"}'},
+        ],
+    }
     mock_client.get.return_value = mock_response
 
     tasks = await _poll_for_tasks(mock_client)
@@ -42,15 +86,21 @@ async def test_poll_for_tasks_success():
     assert len(tasks) == 1
     assert tasks[0]["id"] == "task-1"
     assert tasks[0]["task_type"] == "cohort_query"
+    # The poll URL has no trust-name segment — identity is the API key.
+    assert mock_client.get.call_args[0][0].endswith("/tasks/pending")
 
 
 @pytest.mark.asyncio
 async def test_poll_for_tasks_empty():
-    """Should return empty list when no tasks."""
+    """Should return an empty list when the hub reports no pending tasks."""
     mock_client = AsyncMock()
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = []
+    mock_response.json.return_value = {
+        "trust_id": "trust-uuid-1",
+        "trust_name": "Open Trust (EC2)",
+        "tasks": [],
+    }
     mock_client.get.return_value = mock_response
 
     tasks = await _poll_for_tasks(mock_client)
@@ -89,6 +139,7 @@ async def test_poll_for_tasks_non_200():
 async def test_send_heartbeat_success():
     """Should POST to the heartbeat endpoint."""
     mock_client = AsyncMock()
+    mock_client.post.return_value = MagicMock(is_success=True)
 
     await _send_heartbeat(mock_client)
 
@@ -99,12 +150,32 @@ async def test_send_heartbeat_success():
 
 @pytest.mark.asyncio
 async def test_send_heartbeat_error():
-    """Should not raise on error."""
+    """Should not raise on transport error."""
     mock_client = AsyncMock()
     mock_client.post.side_effect = Exception("Network error")
 
     # Should not raise
     await _send_heartbeat(mock_client)
+
+
+@pytest.mark.asyncio
+async def test_send_heartbeat_logs_non_2xx_response(caplog):
+    """A 401/403/404 from the hub must surface as an error in the trust log.
+    httpx only raises on transport errors — without an explicit status check
+    the trust silently believes the heartbeat landed while the hub never
+    updates last_heartbeat, so Connection Status reports the trust 'offline'
+    while it polls normally."""
+    mock_client = AsyncMock()
+    mock_client.post.return_value = MagicMock(
+        is_success=False,
+        status_code=401,
+        text="Invalid API key",
+    )
+
+    with caplog.at_level("ERROR"):
+        await _send_heartbeat(mock_client)
+
+    assert any("Heartbeat rejected" in r.message and "401" in r.message for r in caplog.records)
 
 
 # ---- _report_task_result ----
