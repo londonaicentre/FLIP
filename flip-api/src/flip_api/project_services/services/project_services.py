@@ -73,8 +73,9 @@ def _classify_responded_trust_ids(
       A trust must be here — and not errored or empty — to be stage-eligible; the set is
       also surfaced to the per-trust UI.
     - **errored**: responded trusts whose ``data`` carries a non-null ``error``, or that fail
-      to parse at all. Better to mark the trust red than silently swallow a corrupt response
-      and let staging include results we never validated.
+      to parse (malformed JSON, or a ``record_count`` that won't coerce to an int). Better to
+      mark the trust red than silently swallow a corrupt response and let staging include
+      results we never validated.
     - **empty**: responded, non-errored trusts with ``record_count == 0`` — a genuine zero
       match or a privacy-suppressed below-threshold count (the trust sets ``record_count=0``
       either way; ``suppressed`` only tells the two apart for display, see issue #519). These
@@ -104,7 +105,17 @@ def _classify_responded_trust_ids(
             continue
         if data.get("error"):
             errored.append(tid)
-        elif int(data.get("record_count") or 0) == 0:
+            continue
+        try:
+            record_count = int(data.get("record_count") or 0)
+        except (ValueError, TypeError) as e:
+            # A corrupt count in otherwise-valid JSON is treated like a malformed payload:
+            # mark the trust errored (red chip, excluded from staging) rather than let the
+            # coercion raise and 500 the whole project listing. See issue #519 review.
+            logger.warning(f"Could not parse record_count for query {query_id}, trust {tid}: {e}")
+            errored.append(tid)
+            continue
+        if record_count == 0:
             empty.append(tid)
     return responded, errored, empty
 

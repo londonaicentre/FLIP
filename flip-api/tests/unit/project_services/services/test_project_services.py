@@ -876,6 +876,32 @@ class TestClassifyRespondedTrustIds:
         assert errored == [err]
         assert empty == [zero]
 
+    def test_missing_record_count_is_flagged_empty(self):
+        # A responded, non-errored row with no record_count defaults to 0 → empty (no
+        # usable cohort) — the safe back-compat reading for pre-upgrade rows.
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
+
+        tid = uuid4()
+        responded, errored, empty = _classify_responded_trust_ids([(tid, '{"error": null}')], query_id=uuid4())
+
+        assert responded == [tid]
+        assert errored == []
+        assert empty == [tid]
+
+    def test_uncoercible_record_count_is_errored(self):
+        # A record_count that won't coerce to an int is treated like a malformed payload —
+        # errored, not an unhandled 500 on the read path (#519 review).
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
+
+        tid = uuid4()
+        responded, errored, empty = _classify_responded_trust_ids(
+            [(tid, '{"record_count": "not-a-number"}')], query_id=uuid4()
+        )
+
+        assert responded == [tid]
+        assert errored == [tid]
+        assert empty == []
+
 
 class TestUpdateProjectUserAccess:
     """Persists one `ProjectUserAccess` row per user id in a single commit.

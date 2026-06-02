@@ -209,7 +209,7 @@ def _load_latest_query_per_project(
 
     query_ids = [qid for qid, _, _, _, _, _ in latest_per_project.values()]
 
-    # QueryResult rows give us the responded set + errored carve-out per
+    # QueryResult rows give us the responded set + errored/empty carve-outs per
     # query. Volume is bounded (queries-in-page × trusts).
     errored_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
     empty_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
