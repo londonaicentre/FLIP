@@ -99,6 +99,7 @@ const stagedProjectWithQuery: IProject = {
         cancelledTrustIds: [],
         respondedTrustIds: [],
         erroredTrustIds: [],
+        emptyTrustIds: [],
         totalCohort: 100
     }
 };
@@ -114,6 +115,7 @@ const unstagedProjectWithQuery: IProject = {
         cancelledTrustIds: [],
         respondedTrustIds: [],
         erroredTrustIds: [],
+        emptyTrustIds: [],
         totalCohort: 100
     }
 };

@@ -161,6 +161,46 @@ def _distinct_responded_trust_ids(
     return out
 
 
+def _collect_empty_cohort_trust_ids(
+    rows: Sequence[tuple[UUID | None, str | None]],
+    *,
+    query_id: UUID,
+) -> list[UUID]:
+    """Extract trust IDs that responded with no usable cohort (``record_count == 0``).
+
+    Covers both a genuine zero match and a privacy-suppressed below-threshold count
+    (the trust sets ``record_count=0`` in both cases; ``suppressed`` only tells the
+    two apart for display — see issue #519). Errored rows are excluded here because
+    they are already carved out by ``_collect_errored_trust_ids``; a malformed row is
+    likewise left to the errored path. These trusts must not be stage-eligible: there
+    is no cohort to build an imaging project against (issue #519 follow-up).
+
+    Args:
+        rows (Sequence[tuple[UUID | None, str | None]]): ``(trust_id, data_json)`` pairs from QueryResult.
+        query_id (UUID): The query the rows belong to — used for logging only.
+
+    Returns:
+        list[UUID]: Trust IDs that responded with a zero/suppressed count (subset of responded, minus errored).
+    """
+    empty: list[UUID] = []
+    seen: set[UUID] = set()
+    for tid, data_str in rows:
+        if tid is None or tid in seen:
+            continue
+        seen.add(tid)
+        try:
+            data = json.loads(data_str) if data_str else {}
+        except (ValueError, TypeError) as e:
+            # Malformed payload is handled as errored elsewhere; don't double-flag.
+            logger.warning(f"Malformed QueryResult.data for query {query_id}, trust {tid}: {e}")
+            continue
+        if data.get("error"):
+            continue
+        if int(data.get("record_count") or 0) == 0:
+            empty.append(tid)
+    return empty
+
+
 def update_project_user_access(project_id: UUID, user_ids: list[UUID], session: Session) -> None:
     """
     Updates the user access for a project by creating new ProjectUserAccess entries for the provided user IDs.
@@ -892,6 +932,7 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
             select(QueryResult.trust_id, QueryResult.data).where(QueryResult.query_id == query.id)
         ).all()
         errored_trust_ids = _collect_errored_trust_ids(result_rows, query_id=query.id)
+        empty_trust_ids = _collect_empty_cohort_trust_ids(result_rows, query_id=query.id)
         responded_trust_ids = _distinct_responded_trust_ids(result_rows)
         pending_trust_ids, cancelled_trust_ids = _load_task_status_trust_ids(query.id, session)
         queried_trust_ids = list(query.queried_trust_ids)
@@ -916,6 +957,7 @@ def get_project(project_id: UUID, session: Session) -> IProjectResponse:
             cancelled_trust_ids=cancelled_trust_ids,
             responded_trust_ids=responded_trust_ids,
             errored_trust_ids=errored_trust_ids,
+            empty_trust_ids=empty_trust_ids,
             total_cohort=total_cohort,
             # `Z` suffix so the browser parses as UTC (naive UTC column).
             created=(query.created.isoformat(timespec="milliseconds") + "Z") if query.created else None,

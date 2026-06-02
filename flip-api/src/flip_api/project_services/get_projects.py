@@ -34,6 +34,7 @@ from flip_api.domain.interfaces.project import IProject, IProjectQuery
 from flip_api.domain.schemas.actions import ProjectAuditAction
 from flip_api.domain.schemas.status import TaskStatus
 from flip_api.project_services.services.project_services import (
+    _collect_empty_cohort_trust_ids,
     _collect_errored_trust_ids,
     _distinct_responded_trust_ids,
     get_trusts_approval_status_for_projects,
@@ -213,6 +214,7 @@ def _load_latest_query_per_project(
     # QueryResult rows give us the responded set + errored carve-out per
     # query. Volume is bounded (queries-in-page × trusts).
     errored_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
+    empty_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
     responded_trust_ids_by_query: dict[UUID, list[UUID]] = {qid: [] for qid in query_ids}
     rows_by_query: dict[UUID, list[tuple[UUID | None, str | None]]] = {qid: [] for qid in query_ids}
     pair_rows = session.exec(
@@ -225,6 +227,7 @@ def _load_latest_query_per_project(
         rows_by_query.setdefault(qid, []).append((tid, data))
     for qid, rows in rows_by_query.items():
         errored_trust_ids_by_query[qid] = _collect_errored_trust_ids(rows, query_id=qid)
+        empty_trust_ids_by_query[qid] = _collect_empty_cohort_trust_ids(rows, query_id=qid)
         responded_trust_ids_by_query[qid] = _distinct_responded_trust_ids(rows)
 
     # Trust task state per query, split by status:
@@ -277,6 +280,7 @@ def _load_latest_query_per_project(
             cancelled_trust_ids=cancelled_trust_ids_by_query.get(qid, []),
             responded_trust_ids=responded_trust_ids_by_query.get(qid, []),
             errored_trust_ids=errored_trust_ids_by_query.get(qid, []),
+            empty_trust_ids=empty_trust_ids_by_query.get(qid, []),
             total_cohort=total_cohort_by_query.get(qid, 0),
             # `Z` suffix so the browser parses as UTC (naive UTC column).
             created=(qcreated.isoformat(timespec="milliseconds") + "Z") if qcreated else None,

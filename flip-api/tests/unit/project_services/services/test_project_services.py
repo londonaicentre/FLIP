@@ -825,6 +825,63 @@ class TestCollectErroredTrustIds:
         assert result == []
 
 
+class TestCollectEmptyCohortTrustIds:
+    """A trust that responded with 0 records — genuine zero or privacy-suppressed
+    (#519) — has no usable cohort and must be excluded from staging eligibility.
+    """
+
+    def test_zero_record_count_is_flagged_empty(self):
+        from flip_api.project_services.services.project_services import _collect_empty_cohort_trust_ids
+
+        tid = uuid4()
+        result = _collect_empty_cohort_trust_ids(
+            [(tid, '{"record_count": 0, "error": null}')], query_id=uuid4()
+        )
+
+        assert result == [tid]
+
+    def test_suppressed_count_is_flagged_empty(self):
+        from flip_api.project_services.services.project_services import _collect_empty_cohort_trust_ids
+
+        tid = uuid4()
+        result = _collect_empty_cohort_trust_ids(
+            [(tid, '{"record_count": 0, "suppressed": true, "error": null}')], query_id=uuid4()
+        )
+
+        assert result == [tid]
+
+    def test_non_empty_count_is_not_flagged(self):
+        from flip_api.project_services.services.project_services import _collect_empty_cohort_trust_ids
+
+        tid = uuid4()
+        result = _collect_empty_cohort_trust_ids(
+            [(tid, '{"record_count": 7, "error": null}')], query_id=uuid4()
+        )
+
+        assert result == []
+
+    def test_errored_row_is_not_double_flagged_as_empty(self):
+        # An errored trust is already carved out by _collect_errored_trust_ids;
+        # it must not also land in the empty set even though its count is 0.
+        from flip_api.project_services.services.project_services import _collect_empty_cohort_trust_ids
+
+        tid = uuid4()
+        result = _collect_empty_cohort_trust_ids(
+            [(tid, '{"record_count": 0, "error": "OMOP timeout"}')], query_id=uuid4()
+        )
+
+        assert result == []
+
+    def test_malformed_row_is_not_flagged_empty(self):
+        # Malformed payloads are handled by the errored path; don't double-flag.
+        from flip_api.project_services.services.project_services import _collect_empty_cohort_trust_ids
+
+        tid = uuid4()
+        result = _collect_empty_cohort_trust_ids([(tid, "not-a-json-blob")], query_id=uuid4())
+
+        assert result == []
+
+
 class TestUpdateProjectUserAccess:
     """Persists one `ProjectUserAccess` row per user id in a single commit.
 
