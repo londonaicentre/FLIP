@@ -165,7 +165,15 @@ const addBannerLink = ref(!!details.banner?.link);
 
 const schema = object().shape({
     message: string().required(),
-    link: string().notRequired().url("Please enter a valid URL, prefixed with 'http(s)://'"),
+    // `.url()` alone accepts dangerous schemes such as `javascript:`; require an
+    // explicit http(s) prefix so a banner link can never become a stored-XSS sink.
+    link: string()
+        .notRequired()
+        .url("Please enter a valid URL, prefixed with 'http(s)://'")
+        .matches(/^https?:\/\//i, {
+            message: "Please enter a valid URL, prefixed with 'http(s)://'",
+            excludeEmptyString: true
+        }),
     enabled: string().optional()
 });
 

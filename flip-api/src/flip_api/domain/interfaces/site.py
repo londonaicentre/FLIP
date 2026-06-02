@@ -11,13 +11,48 @@
 #
 
 
-from pydantic import BaseModel
+import re
+
+from pydantic import BaseModel, field_validator
+
+# Banner links are rendered as anchor `href`s in every user's session. Only
+# http(s) URLs are permitted — schemes such as `javascript:` or `data:` would
+# otherwise allow stored XSS via the site banner. An empty string / None means
+# "no link" and is preserved as-is.
+_SAFE_HTTP_URL = re.compile(r"^https?://", re.IGNORECASE)
+
+
+def is_safe_http_url(value: str | None) -> bool:
+    """Return True if ``value`` is a non-empty http(s) URL safe to use as an href.
+
+    Args:
+        value (str | None): Candidate URL string.
+
+    Returns:
+        bool: True only when the (stripped) value begins with ``http://`` or ``https://``.
+    """
+    if value is None:
+        return False
+    return _SAFE_HTTP_URL.match(value.strip()) is not None
 
 
 class ISiteBanner(BaseModel):
     message: str
     link: str | None = None
     enabled: bool
+
+    @field_validator("link")
+    @classmethod
+    def _validate_link_scheme(cls, value: str | None) -> str | None:
+        """Reject banner links that are not http(s) URLs (defeats `javascript:`/`data:` XSS).
+
+        An empty string or None is allowed and denotes "no link".
+        """
+        if value is None or value.strip() == "":
+            return value
+        if not is_safe_http_url(value):
+            raise ValueError("Banner link must be an http(s) URL")
+        return value
 
 
 class ISiteDetails(BaseModel):

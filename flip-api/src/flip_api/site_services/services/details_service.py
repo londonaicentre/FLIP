@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 
 from flip_api.config import get_settings
 from flip_api.db.models.main_models import SiteBanner, SiteConfig
-from flip_api.domain.interfaces.site import ISiteBanner, ISiteDetails
+from flip_api.domain.interfaces.site import ISiteBanner, ISiteDetails, is_safe_http_url
 from flip_api.utils.logger import logger
 
 
@@ -42,13 +42,16 @@ def get_site_details(db: Session) -> ISiteDetails:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Deployment mode not found")
 
     if banner:
-        validated_banner = ISiteBanner.model_validate(banner.model_dump())
+        # Defensively neutralise any stored link that is not an http(s) URL so a
+        # legacy / poisoned row (e.g. a `javascript:` value written before scheme
+        # validation existed) can never reach the UI or break this read path.
+        safe_link = banner.link if is_safe_http_url(banner.link) else None
 
         return ISiteDetails(
             banner=ISiteBanner(
-                message=validated_banner.message,
-                link=validated_banner.link if banner.link and banner.link.strip() != "" else None,
-                enabled=validated_banner.enabled,
+                message=banner.message,
+                link=safe_link,
+                enabled=banner.enabled,
             ),
             deploymentMode=config.value,
             maxReimportCount=get_settings().MAX_REIMPORT_COUNT,

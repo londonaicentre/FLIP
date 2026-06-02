@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlmodel import Session
 
 from flip_api.db.models.main_models import SiteBanner, SiteConfig
@@ -226,3 +227,46 @@ def test_update_site_details_banner_with_none_link(mock_db):
     update_site_details(site_details, mock_db)
 
     assert existing_banner.link == ""
+
+
+@pytest.mark.parametrize(
+    "dangerous_link",
+    [
+        "javascript:alert(document.cookie)",
+        "JavaScript:alert(1)",
+        "  javascript:alert(1)  ",
+        "data:text/html,<script>alert(1)</script>",
+        "vbscript:msgbox(1)",
+        "not-a-url",
+    ],
+)
+def test_site_banner_rejects_non_http_link(dangerous_link):
+    """ISiteBanner must reject non-http(s) link schemes to prevent stored XSS."""
+    with pytest.raises(ValidationError):
+        ISiteBanner(message="hi", link=dangerous_link, enabled=True)
+
+
+@pytest.mark.parametrize("safe_link", ["http://example.com", "https://example.com/x?y=1", ""])
+def test_site_banner_accepts_http_link(safe_link):
+    """ISiteBanner accepts http(s) URLs (and empty string for 'no link')."""
+    banner = ISiteBanner(message="hi", link=safe_link, enabled=True)
+    assert banner.link == safe_link
+
+
+def test_get_site_details_neutralises_poisoned_link():
+    """A legacy/poisoned non-http(s) link stored in the DB is stripped to None on read."""
+    db = MagicMock(spec=Session)
+
+    # SiteBanner is a DB model with no scheme validation, so a malicious value can
+    # already exist in the database from before validation was introduced.
+    mock_banner = SiteBanner(message="Hello", link="javascript:alert(1)", enabled=True)
+    mock_config = SiteConfig(key="DeploymentMode", value=True)
+
+    db.get.return_value = mock_banner
+    db.exec.return_value = MagicMock(first=MagicMock(return_value=mock_config))
+
+    result = get_site_details(db)
+
+    assert result.banner is not None
+    assert result.banner.link is None
+    assert result.banner.message == "Hello"

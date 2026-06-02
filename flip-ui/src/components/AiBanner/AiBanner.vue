@@ -24,9 +24,10 @@
                     </div>
                     <div class="flex items-center flex-shrink-0 order-3 w-full mt-2 sm:order-2 sm:mt-0 sm:w-auto">
                         <a
-                            v-if="link"
-                            :href="link"
+                            v-if="safeLink"
+                            :href="safeLink"
                             target="_blank"
+                            rel="noopener noreferrer"
                             data-test="banner-link"
                             class="flex items-center justify-center px-4 py-2 text-white hover:text-primary-200 grow"
                         >
@@ -43,7 +44,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { directive as vTippy } from "vue-tippy";
 
 interface IBannerProps {
@@ -51,12 +52,20 @@ interface IBannerProps {
     link?: string;
 }
 
-withDefaults(
+const props = withDefaults(
     defineProps<IBannerProps>(),
     { link: undefined }
 );
 
 const showBanner = ref(true);
+
+// Only render the "Learn more" anchor when the link is an http(s) URL. This
+// neutralises stored-XSS payloads such as `javascript:` / `data:` URLs that
+// would otherwise execute when bound to an anchor href. Defence-in-depth: the
+// backend also rejects non-http(s) schemes on write and strips them on read.
+const safeLink = computed(() =>
+    props.link && /^https?:\/\//i.test(props.link.trim()) ? props.link : undefined
+);
 
 const close = () => {
     showBanner.value = false;
