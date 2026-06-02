@@ -129,7 +129,8 @@ def test_receive_cohort_query_too_few_records(mock_validate_query, mock_get_sett
     body = response.json()
     assert body["record_count"] == 0
     assert body["data"] == []
-    # The 0 is privacy suppression, not a genuine zero — flagged on the wire (#519).
+    # Below-threshold count is privacy-suppressed on the wire (a genuine zero is suppressed
+    # the same way, so it can't reveal whether >=1 patient matched) (#519).
     assert body["suppressed"] is True
     assert body["query_id"] == sample_query_input["query_id"]
     assert body["trust_id"] == sample_query_input["trust_id"]
@@ -139,8 +140,9 @@ def test_receive_cohort_query_too_few_records(mock_validate_query, mock_get_sett
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.validate_query")
 def test_receive_cohort_query_zero_records(mock_validate_query, mock_get_settings, mock_get_records):
-    """A query that genuinely returns 0 rows is a valid response flagged as a true zero
-    (suppressed=False), distinct from a below-threshold privacy suppression (#519)."""
+    """A query that genuinely returns 0 rows is privacy-suppressed identically to a
+    below-threshold count (suppressed=True), so the wire can't reveal a true zero from a
+    small count (#519, security review)."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
 
     mock_df = pd.DataFrame({"col1": []})
@@ -152,8 +154,8 @@ def test_receive_cohort_query_zero_records(mock_validate_query, mock_get_setting
     body = response.json()
     assert body["record_count"] == 0
     assert body["data"] == []
-    # A genuine zero match is NOT a privacy suppression.
-    assert body["suppressed"] is False
+    # A genuine zero is suppressed the same as a 1..N-1 count — no membership leak.
+    assert body["suppressed"] is True
 
 
 @patch("data_access_api.routers.cohort.get_records")

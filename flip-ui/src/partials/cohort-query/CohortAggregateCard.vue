@@ -121,8 +121,9 @@ const erroredCount = computed(() => {
     return trusts.filter(t => t.id in errors).length;
 });
 
-// Trusts that matched some patients but suppressed the count for privacy. Surfaced
-// in the subtitle so the headline total isn't misread as the whole picture (#519).
+// Trusts whose cohort is below the privacy threshold and was suppressed (the exact count,
+// which may be zero, is hidden). Surfaced in the subtitle so the headline total isn't
+// misread as the whole picture (#519).
 const suppressedCount = computed(() => {
     if (props.submitting) return 0;
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];

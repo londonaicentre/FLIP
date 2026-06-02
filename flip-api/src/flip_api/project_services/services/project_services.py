@@ -77,9 +77,10 @@ def _classify_responded_trust_ids(
       mark the trust red than silently swallow a corrupt response and let staging include
       results we never validated.
     - **empty**: responded, non-errored trusts with ``record_count == 0`` — a genuine zero
-      match or a privacy-suppressed below-threshold count (the trust sets ``record_count=0``
-      either way; ``suppressed`` only tells the two apart for display, see issue #519). These
-      have no usable cohort and must not be stage-eligible.
+      match or a privacy-suppressed below-threshold count. The trust reports both as
+      ``record_count=0`` and flags both ``suppressed`` (they are deliberately
+      indistinguishable, see issue #519), so neither has a usable cohort and both must be
+      excluded from staging.
 
     Args:
         rows (Sequence[tuple[UUID | None, str | None]]): ``(trust_id, data_json)`` pairs from QueryResult.

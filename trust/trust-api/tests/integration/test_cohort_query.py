@@ -207,8 +207,8 @@ async def test_below_threshold_result_suppresses_to_hub(stub_hub_received):
     assert body["query_id"] == "qid-1"
     assert body["trust_id"] == "trust_test"
     assert body["record_count"] == 0
-    # The suppression flag must survive the trust-api passthrough so the hub/UI can
-    # tell a privacy-suppressed 0 apart from a genuine zero match (#519).
+    # The suppression flag must survive the trust-api passthrough so the hub/UI can render
+    # the "below-threshold" chip (a genuine zero is suppressed the same way) (#519).
     assert body["suppressed"] is True
 
 

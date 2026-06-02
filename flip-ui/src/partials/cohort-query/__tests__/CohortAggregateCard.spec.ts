@@ -120,9 +120,9 @@ describe("CohortAggregateCard", () => {
     });
 
     it("includes a suppressed segment when any trust privacy-suppressed its count", async () => {
-        // trust-2 matched some patients but the count was below the privacy
-        // threshold; the headline total (5) understates the picture, so the
-        // subtitle calls out the suppressed trust (#519).
+        // trust-2's cohort fell below the privacy threshold and was suppressed (its
+        // count may be 1-9 or zero); the subtitle calls it out so a suppressed trust
+        // isn't silently dropped from the picture (#519).
         const data = {
             recordCount: 5,
             trustsResults: [],

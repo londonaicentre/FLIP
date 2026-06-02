@@ -143,8 +143,9 @@ class TestPydanticModels:
         assert payload.error is None
 
     def test_omop_cohort_results_accepts_suppressed_flag(self, sample_cohort_dict):
-        """A privacy-suppressed trust reports record_count=0 with suppressed=True so
-        the hub can tell suppression apart from a genuine zero match (#519)."""
+        """A privacy-suppressed trust reports record_count=0 with suppressed=True so the
+        hub can flag the below-threshold trust (a genuine zero is flagged the same way, so
+        it reveals no membership) (#519)."""
         sample_cohort_dict["record_count"] = 0
         sample_cohort_dict["data"] = []
         sample_cohort_dict["suppressed"] = True

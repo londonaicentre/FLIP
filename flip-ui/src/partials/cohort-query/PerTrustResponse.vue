@@ -98,7 +98,7 @@
                     <span
                         v-else-if="row.suppressed"
                         class="inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-semibold tracking-wide text-amber-700 dark:text-amber-300 rounded-full bg-amber-100 dark:bg-amber-900/40"
-                        title="Matched some patients, but the count is below the privacy threshold and was suppressed by the trust"
+                        title="The matching cohort is below the privacy threshold, so the trust suppressed the exact count (which may be zero)"
                     >
                         <span class="inline-block w-1.5 h-1.5 bg-amber-500 rounded-full" />
                         suppressed

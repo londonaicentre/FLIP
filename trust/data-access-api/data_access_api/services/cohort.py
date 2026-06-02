@@ -382,14 +382,16 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
     - Counts the number of records.
     - Aggregates the number of occurrences of each unique value per column.
 
-    A non-zero count below the threshold is privacy-suppressed by returning a
-    ``StatisticsResponse`` with ``record_count=0``, empty ``data`` and ``suppressed=True``
-    — the count itself is suppressed, not just the per-field breakdown. A genuine zero
-    match is returned the same way but with ``suppressed=False``, so the hub/UI can tell a
-    privacy-suppressed count apart from a true zero (issue #519). Suppression is intentional
-    rather than an HTTPException so the trust still has a normal response to forward to the
-    hub; raising here previously caused trust-api to skip the hub callback and leave the
-    per-trust UI status stuck.
+    Below-threshold counts are privacy-suppressed by returning a ``StatisticsResponse``
+    with ``record_count=0``, empty ``data`` and ``suppressed=True`` — the count itself is
+    suppressed, not just the per-field breakdown. A genuine zero is suppressed identically
+    to a small (1..threshold-1) count, so the two are indistinguishable on the wire and the
+    response cannot be used to infer that >=1 patient matched (membership disclosure — issue
+    #519, security review). The ``suppressed`` flag only tells the hub/UI to render a
+    "below-threshold" chip instead of a bare 0; it does not reveal which 0s were genuine.
+    Suppression is intentional rather than an HTTPException so the trust still has a normal
+    response to forward to the hub; raising here previously caused trust-api to skip the hub
+    callback and leave the per-trust UI status stuck.
 
     Args:
         df (pd.DataFrame): Query results dataframe.
@@ -403,13 +405,13 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
     record_count = len(df)
 
     if record_count < COHORT_QUERY_THRESHOLD:
-        # A non-zero count below the threshold is privacy-suppressed to 0; a genuine
-        # zero match is returned as a true 0 (suppressed=False) so the hub/UI can tell
-        # the two apart (issue #519). Both carry record_count=0 with empty data.
-        suppressed = record_count > 0
+        # Privacy-suppress every below-threshold count, INCLUDING a genuine zero: a true
+        # zero and a small (1..threshold-1) count return identically (record_count=0,
+        # suppressed=True) so the response can't reveal that >=1 patient matched.
+        # Distinguishing them would leak membership/existence (issue #519, security review).
         logger.info(
-            f"Query returned {record_count} records (< {COHORT_QUERY_THRESHOLD}); returning"
-            f" {'privacy-suppressed' if suppressed else 'genuine'} 0-count response"
+            f"Query returned {record_count} records (< {COHORT_QUERY_THRESHOLD});"
+            " returning privacy-suppressed 0-count response"
         )
         return StatisticsResponse(
             query_id=query_input.query_id,
@@ -417,7 +419,7 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
             record_count=0,
             created=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
             data=[],
-            suppressed=suppressed,
+            suppressed=True,
         )
 
     stats = StatisticsResponse(

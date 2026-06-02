@@ -145,9 +145,9 @@ describe("PerTrustResponse", () => {
     });
 
     it("shows a 'suppressed' chip (not a literal 0) for a privacy-suppressed trust", async () => {
-        // trust-1 returned a real count; trust-2 matched some patients but the
-        // count fell below the privacy threshold and was suppressed by the trust.
-        // It must not read as a bare "0" / "no data available" (#519).
+        // trust-1 returned a real count; trust-2's cohort fell below the privacy
+        // threshold and was suppressed by the trust (the count may be zero). It must
+        // not read as a bare "0" / "no data available" (#519).
         const data = {
             recordCount: 7,
             trustsResults: [],

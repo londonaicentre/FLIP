@@ -73,14 +73,15 @@ def test_cohort_endpoint_suppresses_below_threshold(http_client):
     body = response.json()
     assert body["record_count"] == 0
     assert body["data"] == []
-    # The 0 is privacy suppression of a real (1-9) count, flagged so the hub/UI can tell
-    # it apart from a genuine zero match (#519).
+    # The 0 is privacy suppression of a real (1-9) count; a genuine zero is suppressed the
+    # same way, so the flag can't reveal which 0s were genuine (#519).
     assert body["suppressed"] is True
 
 
-def test_cohort_endpoint_genuine_zero_not_suppressed(http_client):
-    """A query matching no rows returns a true zero: record_count=0 with suppressed=False,
-    so the hub/UI renders a literal 0 rather than a "suppressed" chip (#519)."""
+def test_cohort_endpoint_genuine_zero_is_suppressed(http_client):
+    """Privacy regression: a query matching no rows is suppressed identically to a
+    below-threshold count (record_count=0, suppressed=True), so the wire never reveals a
+    genuine zero apart from a small count (#519, security review)."""
     response = http_client.post(
         "/cohort",
         json=_cohort_payload(
@@ -91,7 +92,7 @@ def test_cohort_endpoint_genuine_zero_not_suppressed(http_client):
     body = response.json()
     assert body["record_count"] == 0
     assert body["data"] == []
-    assert body["suppressed"] is False
+    assert body["suppressed"] is True
 
 
 def test_cohort_endpoint_rejects_unsafe_sql(http_client):
