@@ -289,8 +289,8 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(snackbarSuccess).toHaveBeenCalled();
     });
 
-    test("Edit Project button label flips to 'View Project' for observers", () => {
-        // Observer = no CanCreateProjects. canCreateProjects=false → isObserver=true.
+    test("Edit Project button label flips to 'View Project' for viewers", () => {
+        // Viewer = no CanCreateProjects. canCreateProjects=false → isViewer=true.
         const wrapper = mountProjectPage({ permissions: [] });
         const editBtn = wrapper.find("[data-test=edit-project-btn]");
         expect(editBtn.text()).toContain("View Project");

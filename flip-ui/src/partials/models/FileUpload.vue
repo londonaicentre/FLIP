@@ -13,7 +13,7 @@
 
 <template>
     <div
-        v-if="!isObserver"
+        v-if="!isViewer"
         class="border-2 ring-2 ring-offset-4 border-dashed rounded-lg bg-primary-100 dark:bg-gray-800 overflow-hidden border-primary-500 dark:border-primary-400 transition dark:ring-offset-gray-900 ring-offset-white"
         :class="{ 'dark:ring-primary-400 ring-primary-600': dragover, 'ring-transparent': !dragover }"
         @drop.prevent="emitDroppedFile($event)"
@@ -55,7 +55,7 @@ const emit = defineEmits<{
     (e: "newFiles", files: FileList): void;
 }>();
 
-const { isObserver } = usePermissions();
+const { isViewer } = usePermissions();
 
 const dragover = ref(false);
 const fileUpload = ref<HTMLInputElement | null>(null);

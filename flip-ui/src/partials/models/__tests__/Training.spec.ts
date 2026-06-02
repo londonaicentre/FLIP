@@ -111,12 +111,12 @@ function mountTraining(options: MountOpts = {}) {
     });
 }
 
-describe("Training observer-aware rendering", () => {
+describe("Training viewer-aware rendering", () => {
     // The Initiate Training button lives on the model page wrapper
     // (pages/project/[projectId]/model/[modelId]/index.vue), not on the
-    // Training partial. The observer-hide rule there is covered by the
+    // Training partial. The viewer-hide rule there is covered by the
     // page's own spec. Only the actions-menu visibility is asserted here.
-    it("hides the actions menu for observers", () => {
+    it("hides the actions menu for viewers", () => {
         const wrapper = mountTraining({ permissions: [] });
 
         expect(wrapper.find("[data-test=training-actions-menu]").exists()).toBe(false);

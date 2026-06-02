@@ -43,14 +43,14 @@
                         <span class="max-w-2xl truncate">{{ modelData.modelName }}</span>
                     </h1>
                     <div class="flex items-center gap-3 shrink-0">
-                        <AiGuard v-if="!isObserver" :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess()">
+                        <AiGuard v-if="!isViewer" :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess()">
                             <AiButton light data-test="edit-model-btn" @click="openEditModelDrawer">
                                 <icon-mdi-pencil-outline class="mr-2" />
                                 Edit Model
                             </AiButton>
                         </AiGuard>
                         <AiButton
-                            v-if="!isObserver && isTrainingPending()"
+                            v-if="!isViewer && isTrainingPending()"
                             primary
                             data-test="initiate-training-btn"
                             :disabled="!readyToTrain"
@@ -59,7 +59,7 @@
                         >
                             Initiate Training
                         </AiButton>
-                        <TrainingActionsMenu v-if="!isObserver && !isTrainingPending()" :status="getStatusEnumValue(modelData?.status)" />
+                        <TrainingActionsMenu v-if="!isViewer && !isTrainingPending()" :status="getStatusEnumValue(modelData?.status)" />
                     </div>
                 </div>
             </header>
@@ -72,7 +72,7 @@
                         <ModelUpload
                             :files="modelData.files ?? []"
                             :loading="!modelData"
-                            :can-upload="!trainingStartedOrStopped && !isObserver"
+                            :can-upload="!trainingStartedOrStopped && !isViewer"
                             :model-id="modelData.modelId"
                             :required-files="requiredFiles"
                             :job-type="currentJobType"
@@ -146,7 +146,7 @@ const projectStore = useProjectStore();
 const project = projectStore.project;
 const authStore = useAuthStore();
 const errorStore = useErrorStore();
-const { isObserver } = usePermissions();
+const { isViewer } = usePermissions();
 
 // Bridge to Training.vue: the form lives there (vee-validate context wraps
 // TrainingOptions) but the submit button lives in the page header. Page calls

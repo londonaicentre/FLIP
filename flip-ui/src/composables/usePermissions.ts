@@ -20,11 +20,11 @@ import { useAuthStore } from "@/store/auth";
  * calls so changes to the permission model (e.g. role → permission mapping)
  * only need editing in one place.
  *
- * The Admin / Researcher / Observer split:
+ * The Admin / Researcher / Viewer split:
  *   - Admin       — has `CanAccessAdminPanel` (every permission, by seed).
  *   - Researcher  — has `CanCreateProjects` (no `CanManageProjects`; per-project
  *                   access is enforced server-side on writes).
- *   - Observer    — has neither.
+ *   - Viewer      — has neither.
  */
 export function usePermissions(): {
     isAdmin: ComputedRef<boolean>;
@@ -36,16 +36,16 @@ export function usePermissions(): {
      * per-project write authority is enforced server-side based on
      * project ownership / membership.
      */
-    isObserver: ComputedRef<boolean>;
+    isViewer: ComputedRef<boolean>;
 } {
     const authStore = useAuthStore();
     const isAdmin = computed(() => authStore.hasPermissions(["CanAccessAdminPanel"]));
     const canCreateProjects = computed(() => authStore.hasPermissions(["CanCreateProjects"]));
-    const isObserver = computed(() => !canCreateProjects.value);
+    const isViewer = computed(() => !canCreateProjects.value);
 
     return {
         isAdmin,
         canCreateProjects,
-        isObserver
+        isViewer
     };
 }

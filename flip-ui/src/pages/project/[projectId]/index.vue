@@ -66,11 +66,11 @@
                                     />
                                 </template>
                             </AiGuard>
-                            <AiGuard :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess() || isObserver">
+                            <AiGuard :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess() || isViewer">
                                 <AiButton light data-test="edit-project-btn" @click.capture="openEditProjectDrawer">
-                                    <icon-mdi-pencil-outline v-if="!isObserver" class="mr-2" />
+                                    <icon-mdi-pencil-outline v-if="!isViewer" class="mr-2" />
                                     <icon-mdi-eye-outline v-else class="mr-2" />
-                                    {{ isObserver ? "View Project" : "Edit Project" }}
+                                    {{ isViewer ? "View Project" : "Edit Project" }}
                                 </AiButton>
                             </AiGuard>
                         </div>
@@ -126,7 +126,7 @@
             :show="editDrawerOpen"
             :name="project.name"
             :users="project.users"
-            :project-unstaged="isProjectUnstaged() && !isObserver"
+            :project-unstaged="isProjectUnstaged() && !isViewer"
             :description="project.description"
             :updating="projectUpdating"
             :owner-id="project.ownerId"
@@ -230,7 +230,7 @@ const { project } = storeToRefs(projectStore);
 // Admin-only and bypasses the per-project check on the server.
 const editProjectPermissions: UserPermissions[] = ["CanCreateProjects"];
 const unstageProjectPermissions: UserPermissions[] = ["CanUnstageProjects"];
-const { isObserver, canCreateProjects } = usePermissions();
+const { isViewer, canCreateProjects } = usePermissions();
 
 const projectApproved = computed(() => {
     return project?.value?.status === "APPROVED";

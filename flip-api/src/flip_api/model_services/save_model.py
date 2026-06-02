@@ -57,7 +57,7 @@ def save_model(
     logger.info(f"User {user_id} requested model creation for project {payload.project_id}")
 
     # Access control: project owner, admins, and project-member Researchers may create models.
-    # Observers (no CAN_CREATE_PROJECTS) and non-members are rejected here.
+    # Viewers (no CAN_CREATE_PROJECTS) and non-members are rejected here.
     if not can_contribute_to_project(user_id, payload.project_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

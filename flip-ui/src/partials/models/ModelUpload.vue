@@ -98,7 +98,7 @@
                             </div>
                             <div class="flex gap-2 shrink-0">
                                 <Transition name="fade">
-                                    <AiButton v-if="!isObserver && file.status === FileUploadStatus.COMPLETED" small :loading="downloadingFile === file.name" @click="() => downloadFile(file.name)">
+                                    <AiButton v-if="!isViewer && file.status === FileUploadStatus.COMPLETED" small :loading="downloadingFile === file.name" @click="() => downloadFile(file.name)">
                                         <icon-ph-download-duotone />
                                     </AiButton>
                                 </Transition>
@@ -161,7 +161,7 @@ const props = defineProps<IModelUploadProps>();
 
 const emits = defineEmits(["uploaded", "deletedFile"]);
 
-const { isObserver } = usePermissions();
+const { isViewer } = usePermissions();
 const route = useRoute();
 const internalFiles = ref<FileInfo[]>([]);
 const uploadingFiles = ref<FileInfo[]>([]);

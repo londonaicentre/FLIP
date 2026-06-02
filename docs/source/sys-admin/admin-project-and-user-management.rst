@@ -76,7 +76,7 @@ Register User
 ^^^^^^^^^^^^^
 
 1. Click the 'Register User' button
-2. Enter the new user's email address and select a single role (``admin``, ``researcher`` or ``observer``)
+2. Enter the new user's email address and select a single role (``admin``, ``researcher`` or ``viewer``)
 3. Click the 'Register User' button
 4. The user will be emailed a one-time password to use on their :ref:`initial-login`
 
@@ -111,7 +111,7 @@ Manage Role
    A user's role may be re-assigned at any time. Each user holds exactly one role.
 
 1. Select the user from the user list
-2. Choose the new role from the radio list (``admin``, ``researcher`` or ``observer``)
+2. Choose the new role from the radio list (``admin``, ``researcher`` or ``viewer``)
 3. Click the 'Save User' button
 
 .. figure:: ../assets/admin/role-assignment.gif
