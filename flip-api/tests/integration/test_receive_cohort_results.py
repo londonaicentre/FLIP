@@ -26,11 +26,12 @@ import uuid
 import pytest
 from fastapi import HTTPException, status
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import NullPool
 from sqlmodel import Session
 
 from flip_api.auth.access_manager import authenticate_trust
-from flip_api.db.models.main_models import Queries, QueryResult, Trust
+from flip_api.db.models.main_models import Queries, QueryResult, QueryStats, Trust
 from flip_api.main import app
 from flip_api.private_services.receive_cohort_results import _aggregate_and_save_results
 
@@ -166,3 +167,26 @@ class TestAggregateConcurrency:
                 holder.rollback()  # release the lock
         finally:
             concurrent_engine.dispose()
+
+
+class TestQueryStatsConstraints:
+    """QueryStats holds exactly one aggregate row per query (#579 defense-in-depth)."""
+
+    def test_query_id_is_unique(self, session):
+        """A second QueryStats row for the same query must be rejected by the DB, not
+        silently duplicated — a duplicate would let the read path (`.first()`) pick an
+        arbitrary/stale row. This backs up the serialization lock against any future
+        non-serialized writer.
+        """
+        query_row = Queries(name="dup-stats", query="SELECT 1", created_by=uuid.uuid4())
+        session.add(query_row)
+        session.commit()
+        session.refresh(query_row)
+
+        session.add(QueryStats(query_id=query_row.id, stats="{}"))
+        session.commit()
+
+        session.add(QueryStats(query_id=query_row.id, stats="{}"))
+        with pytest.raises(IntegrityError):
+            session.commit()
+        session.rollback()

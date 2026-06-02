@@ -207,7 +207,11 @@ class QueryStats(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     stats: str = Field()
     stats_received: Annotated[datetime, Field(default_factory=datetime.utcnow)]
-    query_id: UUID | None = Field(default=None, foreign_key="queries.id")
+    # One aggregate row per query. The serialization lock in _aggregate_and_save_results
+    # already prevents concurrent inserts; this is a DB-level backstop so a duplicate can
+    # never be created silently (a duplicate would let the read path pick an arbitrary row).
+    # See issue #579.
+    query_id: UUID | None = Field(default=None, foreign_key="queries.id", unique=True)
 
 
 class SiteBanner(SQLModel, table=True):
