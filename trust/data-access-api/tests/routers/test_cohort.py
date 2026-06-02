@@ -139,7 +139,8 @@ def test_receive_cohort_query_too_few_records(mock_validate_query, mock_get_sett
 @patch("data_access_api.routers.cohort.get_settings")
 @patch("data_access_api.routers.cohort.validate_query")
 def test_receive_cohort_query_zero_records(mock_validate_query, mock_get_settings, mock_get_records):
-    """A query that returns 0 rows is also a valid, privacy-suppressed response."""
+    """A query that genuinely returns 0 rows is a valid response flagged as a true zero
+    (suppressed=False), distinct from a below-threshold privacy suppression (#519)."""
     mock_get_settings.return_value.COHORT_QUERY_THRESHOLD = 5
 
     mock_df = pd.DataFrame({"col1": []})
@@ -151,6 +152,8 @@ def test_receive_cohort_query_zero_records(mock_validate_query, mock_get_setting
     body = response.json()
     assert body["record_count"] == 0
     assert body["data"] == []
+    # A genuine zero match is NOT a privacy suppression.
+    assert body["suppressed"] is False
 
 
 @patch("data_access_api.routers.cohort.get_records")

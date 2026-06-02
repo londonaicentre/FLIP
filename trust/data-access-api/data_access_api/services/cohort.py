@@ -382,13 +382,14 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
     - Counts the number of records.
     - Aggregates the number of occurrences of each unique value per column.
 
-    Below-threshold counts are privacy-suppressed by returning a ``StatisticsResponse``
-    with ``record_count=0``, empty ``data`` and ``suppressed=True`` — the count itself
-    is suppressed, not just the per-field breakdown. This is intentional so the trust
-    still has a normal response to forward to the hub; raising HTTPException here
-    previously caused trust-api to skip the hub callback and leave the per-trust UI
-    status stuck. The ``suppressed`` flag lets the hub/UI tell a privacy-suppressed
-    count apart from a genuine zero match (issue #519).
+    A non-zero count below the threshold is privacy-suppressed by returning a
+    ``StatisticsResponse`` with ``record_count=0``, empty ``data`` and ``suppressed=True``
+    — the count itself is suppressed, not just the per-field breakdown. A genuine zero
+    match is returned the same way but with ``suppressed=False``, so the hub/UI can tell a
+    privacy-suppressed count apart from a true zero (issue #519). Suppression is intentional
+    rather than an HTTPException so the trust still has a normal response to forward to the
+    hub; raising here previously caused trust-api to skip the hub callback and leave the
+    per-trust UI status stuck.
 
     Args:
         df (pd.DataFrame): Query results dataframe.
@@ -402,9 +403,13 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
     record_count = len(df)
 
     if record_count < COHORT_QUERY_THRESHOLD:
+        # A non-zero count below the threshold is privacy-suppressed to 0; a genuine
+        # zero match is returned as a true 0 (suppressed=False) so the hub/UI can tell
+        # the two apart (issue #519). Both carry record_count=0 with empty data.
+        suppressed = record_count > 0
         logger.info(
-            f"Query returned insufficient results ({record_count} < {COHORT_QUERY_THRESHOLD});"
-            " returning privacy-suppressed 0-count response"
+            f"Query returned {record_count} records (< {COHORT_QUERY_THRESHOLD}); returning"
+            f" {'privacy-suppressed' if suppressed else 'genuine'} 0-count response"
         )
         return StatisticsResponse(
             query_id=query_input.query_id,
@@ -412,7 +417,7 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
             record_count=0,
             created=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
             data=[],
-            suppressed=True,
+            suppressed=suppressed,
         )
 
     stats = StatisticsResponse(

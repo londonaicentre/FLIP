@@ -40,7 +40,7 @@ class OmopCohortResults(BaseModel):
     # decryption failure, etc.). When set, the hub records the trust as errored
     # instead of leaving its per-trust UI status stuck on "running".
     error: str | None = None
-    # True when the trust privacy-suppressed the count (below COHORT_QUERY_THRESHOLD)
+    # True when the trust privacy-suppressed a non-zero count below COHORT_QUERY_THRESHOLD,
     # rather than genuinely matching zero patients. Set by data-access-api and
     # forwarded verbatim by trust-api. Lets the UI show a "suppressed" chip instead
     # of a literal 0 that reads as "no data available". See issue #519.

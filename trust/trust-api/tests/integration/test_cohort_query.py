@@ -188,12 +188,15 @@ async def test_realistic_cte_multi_join_shaped_query(stub_hub_received):
 
 
 @pytest.mark.asyncio
-async def test_empty_result_below_threshold_suppresses_to_hub(stub_hub_received):
-    """A below-threshold cohort is privacy-suppressed by data-access-api (200 + empty data).
-    trust-api treats it as success and forwards the empty result to the hub so the per-trust
-    chip resolves to "responded" with record_count=0 instead of being stuck on "running"."""
+async def test_below_threshold_result_suppresses_to_hub(stub_hub_received):
+    """A non-zero below-threshold cohort (4 XR rows in the seed) is privacy-suppressed by
+    data-access-api (200 + empty data, suppressed=True). trust-api treats it as success and
+    forwards the suppressed result to the hub so the per-trust chip resolves to "responded"
+    with record_count=0 instead of being stuck on "running"."""
     result = await handle_cohort_query(
-        _payload("SELECT * FROM omop.image_occurrence WHERE accession_id = 'NONEXISTENT'")
+        # modality_concept_id 4013632 = 'XR'; the seed has 4 such rows (below the threshold
+        # of 10) — a genuine below-threshold count, not a zero match.
+        _payload("SELECT * FROM omop.image_occurrence WHERE modality_concept_id = 4013632")
     )
 
     assert result == {"success": True}

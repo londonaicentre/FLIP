@@ -58,7 +58,29 @@ def test_cohort_endpoint_returns_aggregates_for_image_occurrences(http_client):
 
 
 def test_cohort_endpoint_suppresses_below_threshold(http_client):
-    """A below-threshold cohort is privacy-suppressed: HTTP 200 with empty data."""
+    """A non-zero below-threshold cohort (4 XR rows in the seed) is privacy-suppressed:
+    HTTP 200 with record_count=0, empty data and suppressed=True (#519)."""
+    response = http_client.post(
+        "/cohort",
+        json=_cohort_payload(
+            # modality_concept_id 4013632 = 'XR' (Plain Film); the seed has 4 such rows,
+            # below the threshold of 10 — a genuine below-threshold count, not a zero.
+            "SELECT person_id, modality_concept_id, accession_id "
+            "FROM omop.image_occurrence WHERE modality_concept_id = 4013632"
+        ),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["record_count"] == 0
+    assert body["data"] == []
+    # The 0 is privacy suppression of a real (1-9) count, flagged so the hub/UI can tell
+    # it apart from a genuine zero match (#519).
+    assert body["suppressed"] is True
+
+
+def test_cohort_endpoint_genuine_zero_not_suppressed(http_client):
+    """A query matching no rows returns a true zero: record_count=0 with suppressed=False,
+    so the hub/UI renders a literal 0 rather than a "suppressed" chip (#519)."""
     response = http_client.post(
         "/cohort",
         json=_cohort_payload(
@@ -69,9 +91,7 @@ def test_cohort_endpoint_suppresses_below_threshold(http_client):
     body = response.json()
     assert body["record_count"] == 0
     assert body["data"] == []
-    # The 0 is privacy suppression, flagged so the hub/UI can tell it apart from a
-    # genuine zero match (#519).
-    assert body["suppressed"] is True
+    assert body["suppressed"] is False
 
 
 def test_cohort_endpoint_rejects_unsafe_sql(http_client):

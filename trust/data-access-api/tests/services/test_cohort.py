@@ -142,6 +142,28 @@ def test_get_statistics_fails_global_threshold(mock_read_sql):
 
 
 @patch("pandas.read_sql")
+def test_get_statistics_genuine_zero_not_suppressed(mock_read_sql):
+    """A query that genuinely matches 0 patients returns ``record_count=0`` but
+    ``suppressed=False`` — a true zero is not a privacy suppression, so the hub/UI can
+    tell it apart from a below-threshold count (#519)."""
+    mock_df_empty = pd.DataFrame({"modality": [], "manufacturer": [], "accession_id": []})
+    mock_read_sql.return_value = mock_df_empty
+
+    query_input = CohortQueryInput(
+        encrypted_project_id="my_project",
+        query_id="4",
+        query_name="query_4",
+        query="SELECT * FROM omop.radiology_occurrence WHERE 1 = 0",
+        trust_id="mock_trust",
+    )
+
+    stats = get_statistics(mock_df_empty, query_input, threshold=10)
+    assert stats.record_count == 0
+    assert stats.data == []
+    assert stats.suppressed is False
+
+
+@patch("pandas.read_sql")
 def test_get_records_undefined_table_error(mock_read_sql):
     """
     Test get_records with UndefinedTable error.
