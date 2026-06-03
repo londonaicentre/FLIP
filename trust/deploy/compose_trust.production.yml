@@ -50,8 +50,6 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - NET_RAW
-      - KILL
     volumes:
       - ${ORTHANC_STORAGE_DIR}:/var/lib/orthanc/db
     environment:

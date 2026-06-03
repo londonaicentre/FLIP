@@ -21,5 +21,5 @@ COPY custom-nginx.conf /etc/nginx/nginx.conf
 RUN chmod 644 /etc/nginx/nginx.conf
 
 # Drop root privileges: the nginx user exists in the base image.
-# Requires NET_BIND_SERVICE capability to bind to port 80 (added in compose).
+# NET_BIND_SERVICE is granted in compose to allow binding to port 80 as non-root.
 USER nginx
