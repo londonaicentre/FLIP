@@ -263,8 +263,8 @@ The trust host must be able to make outbound connections to two **separate** Cen
 endpoints — different hostnames behind different load balancers, so both must be allowlisted:
 
 - The Central Hub FLIP API over HTTPS (port 443) — the ALB (e.g. ``app.flip.aicentre.co.uk``).
-- The FL Server endpoint over gRPC or HTTP (configurable port; e.g. 8002) — the NLB
-  (e.g. ``fl.app.flip.aicentre.co.uk``).
+- The FL Server endpoint over gRPC or HTTP (port set by ``FL_SERVER_PORT``,
+  default 8002) — the NLB (e.g. ``fl.app.flip.aicentre.co.uk``).
 
 If the trust's public IP changes (common with residential broadband), update
 the NLB security group:
@@ -287,7 +287,7 @@ Troubleshooting
 |                                  | Host/router firewall blocking outbound on port 8002?       |
 +----------------------------------+------------------------------------------------------------+
 | Firewall blocking outbound       | Confirm the host/router firewall allows outbound HTTPS     |
-|                                  | (443) and the FL gRPC port (default 8002).                 |
+|                                  | (443) and the FL gRPC port (``FL_SERVER_PORT``, def. 8002).|
 +----------------------------------+------------------------------------------------------------+
 | Ansible ``Permission denied``    | SSH key correct? User has ``sudo``? ``ANSIBLE_BECOME_PASS``|
 |                                  | set if running in local-host mode?                         |
