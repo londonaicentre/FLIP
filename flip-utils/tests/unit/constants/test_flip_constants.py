@@ -227,6 +227,7 @@ class TestModelStatus:
         assert ModelStatus.RESULTS_UPLOADED.value == "RESULTS_UPLOADED"
         assert ModelStatus.ERROR.value == "ERROR"
         assert ModelStatus.STOPPED.value == "STOPPED"
+        assert ModelStatus.RESULTS_UPLOAD_FAILED.value == "RESULTS_UPLOAD_FAILED"
 
     def test_model_status_is_string_enum(self):
         """ModelStatus should be a string enum."""
@@ -234,8 +235,8 @@ class TestModelStatus:
         assert ModelStatus.PENDING == "PENDING"
 
     def test_model_status_all_members(self):
-        """ModelStatus should have exactly 7 members."""
-        assert len(ModelStatus) == 7
+        """ModelStatus should have exactly 8 members."""
+        assert len(ModelStatus) == 8
 
 
 class TestFlipMetricsLabel:

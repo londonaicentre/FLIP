@@ -22,6 +22,7 @@ from requests import HTTPError
 
 from flip.constants import ModelStatus, ResourceType
 from flip.core.standard import FLIPStandardDev, FLIPStandardProd
+from flip.exceptions import ResultsUploadError
 
 
 class TestFLIPStandardDevGetDataframe:
@@ -512,7 +513,7 @@ class TestFLIPStandardProdUploadResultsToS3:
             assert upload_args[2].startswith("uploads/model-123/")
 
     def test_upload_results_to_s3_raises_when_archive_creation_fails(self, flip_prod, tmp_path):
-        """upload_results_to_s3 should raise a consistent exception when archiving fails."""
+        """upload_results_to_s3 should raise ResultsUploadError when archiving fails."""
         results_folder = tmp_path / "results"
         results_folder.mkdir()
 
@@ -522,7 +523,7 @@ class TestFLIPStandardProdUploadResultsToS3:
         ):
             mock_constants.UPLOADED_FEDERATED_DATA_BUCKET = "s3://test-bucket/uploads"
 
-            with pytest.raises(Exception, match="Unexpected failure uploading results to S3"):
+            with pytest.raises(ResultsUploadError, match="Unexpected failure uploading results to S3"):
                 flip_prod.upload_results_to_s3(results_folder, "model-123")
 
 
