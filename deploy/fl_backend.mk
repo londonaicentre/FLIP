@@ -25,7 +25,7 @@
 # the root Makefile still absolutises it for consistency but no prod compose
 # references ${FL_PROVISIONED_DIR}.
 
-FL_BACKEND ?= flower
+FL_BACKEND ?= nvflare
 VALID_FL_BACKENDS := flower nvflare
 
 ifeq (,$(filter $(FL_BACKEND),$(VALID_FL_BACKENDS)))
