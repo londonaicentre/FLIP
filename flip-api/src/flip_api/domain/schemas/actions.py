@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from enum import Enum, StrEnum
+from enum import StrEnum
 
 
 class ProjectAuditAction(StrEnum):
@@ -33,7 +33,7 @@ class ModelAuditAction(StrEnum):
     RESULTS_UPLOADED = "RESULTS_UPLOADED"
 
 
-class TrustAuditAction(str, Enum):
+class TrustAuditAction(StrEnum):
     """Lifecycle events for the trust registry.
 
     Captured by `trusts_services.utils.audit_helper.audit_trust_action`:
