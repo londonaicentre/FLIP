@@ -45,8 +45,8 @@ const TRUSTS = [
     }
 ];
 
-function mountCard(options: { data?: unknown; submitting?: boolean } = {}) {
-    const { data = null, submitting = false } = options;
+function mountCard(options: { data?: unknown; submitting?: boolean; queriedTrustIds?: string[] } = {}) {
+    const { data = null, submitting = false, queriedTrustIds } = options;
     swrvMock.value = data;
 
     return mount(CohortAggregateCard, {
@@ -61,7 +61,10 @@ function mountCard(options: { data?: unknown; submitting?: boolean } = {}) {
                         project: {
                             id: "p-1",
                             status: "UNSTAGED",
-                            query: { id: "q-1" }
+                            query: {
+                                id: "q-1",
+                                ...(queriedTrustIds ? { queriedTrustIds } : {})
+                            }
                         }
                     }
                 }
@@ -182,6 +185,32 @@ describe("CohortAggregateCard", () => {
 
         expect(wrapper.text()).toContain("0 trusts complete");
         expect(wrapper.text()).toContain("3 running");
+    });
+
+    it("restricts the subtitle counts to the queried trust set when queriedTrustIds is present", async () => {
+        // trust-3 is in the store but was not queried for this project. With
+        // queriedTrustIds = [trust-1, trust-2] it must not inflate the running count:
+        // denominator is 2 (trust-1 complete, trust-2 suppressed → both complete), 0 running.
+        const data = {
+            recordCount: 5,
+            trustsResults: [],
+            trustRecordCounts: {
+                "trust-1": 5,
+                "trust-2": 0
+            },
+            trustSuppressed: ["trust-2"]
+        };
+        const wrapper = mountCard({
+            data,
+            queriedTrustIds: ["trust-1", "trust-2"]
+        });
+        await nextTick();
+        await flushPromises();
+
+        expect(wrapper.text()).toContain("2 trusts complete");
+        expect(wrapper.text()).toContain("1 suppressed");
+        // trust-3 (un-queried) is excluded, so nothing is counted as running.
+        expect(wrapper.text()).not.toContain("running");
     });
 
     it("falls back to the legacy trustsResults shape when trustRecordCounts is absent", async () => {

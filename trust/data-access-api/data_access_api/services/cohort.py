@@ -428,6 +428,7 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
         record_count=record_count,
         created=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
         data=[get_counts(df), get_null_counts(df)],
+        suppressed=False,
     )
 
     if "person_id" in df.columns:

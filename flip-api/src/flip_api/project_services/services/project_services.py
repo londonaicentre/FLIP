@@ -104,6 +104,12 @@ def _classify_responded_trust_ids(
             logger.warning(f"Malformed QueryResult.data for query {query_id}, trust {tid}: {e}")
             errored.append(tid)
             continue
+        if not isinstance(data, dict):
+            # Valid JSON but not an object (e.g. "null", "[]") — treat like a malformed
+            # payload: mark errored rather than let .get() raise and 500 the read path.
+            logger.warning(f"Non-object QueryResult.data for query {query_id}, trust {tid}")
+            errored.append(tid)
+            continue
         if data.get("error"):
             errored.append(tid)
             continue

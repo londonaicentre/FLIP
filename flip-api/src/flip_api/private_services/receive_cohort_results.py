@@ -197,6 +197,8 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
         trust_record_counts: dict[str, int] = {}
         trust_errors: dict[str, str] = {}
         trust_suppressed: list[str] = []
+        # error and suppressed are mutually exclusive by construction — data-access-api
+        # never sets both — so the suppressed flag is only read in the non-errored branch.
         for i, ptd in enumerate(parsed_trust_data_list):
             trust_id_str = fetched_data.trust_id[i]
             if ptd.error:

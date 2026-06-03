@@ -902,6 +902,19 @@ class TestClassifyRespondedTrustIds:
         assert errored == [tid]
         assert empty == []
 
+    @pytest.mark.parametrize("blob", ["null", "[]", "true"])
+    def test_non_dict_json_is_errored(self, blob: str):
+        # Valid JSON that isn't an object (null/list/scalar) is treated like a malformed
+        # payload — errored, not an AttributeError on data.get() that would 500 the read.
+        from flip_api.project_services.services.project_services import _classify_responded_trust_ids
+
+        tid = uuid4()
+        responded, errored, empty = _classify_responded_trust_ids([(tid, blob)], query_id=uuid4())
+
+        assert responded == [tid]
+        assert errored == [tid]
+        assert empty == []
+
 
 class TestUpdateProjectUserAccess:
     """Persists one `ProjectUserAccess` row per user id in a single commit.

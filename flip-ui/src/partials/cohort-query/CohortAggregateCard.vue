@@ -99,10 +99,27 @@ const perTrustErrors = computed<Record<string, string>>(() => {
     return r?.trustErrors ?? {};
 });
 
+// Restrict the subtitle's counts to the trusts this project actually queried, so the
+// segments (complete · running · errored · suppressed) share one denominator and stay
+// consistent even if the trust store and the query response ever drift. Falls back to
+// "all known trusts" when the query hasn't loaded yet (or pre-#519 data lacks the field),
+// preserving prior behaviour (e.g. all trusts shown running before any results arrive).
+const queriedTrustIdSet = computed<Set<string> | null>(() => {
+    const ids = projectStore.project?.query?.queriedTrustIds;
+
+    return ids?.length ? new Set(ids) : null;
+});
+
+const isQueried = (id: string): boolean => {
+    const s = queriedTrustIdSet.value;
+
+    return !s || s.has(id);
+};
+
 const trustCount = computed(() => {
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
 
-    return trusts.length;
+    return trusts.filter(t => isQueried(t.id)).length;
 });
 
 const completeCount = computed(() => {
@@ -110,7 +127,7 @@ const completeCount = computed(() => {
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
     const counts = perTrustCounts.value;
 
-    return trusts.filter(t => t.id in counts).length;
+    return trusts.filter(t => isQueried(t.id) && t.id in counts).length;
 });
 
 const erroredCount = computed(() => {
@@ -118,7 +135,7 @@ const erroredCount = computed(() => {
     const trusts = Array.isArray(trustStore.getTrusts) ? trustStore.getTrusts : [];
     const errors = perTrustErrors.value;
 
-    return trusts.filter(t => t.id in errors).length;
+    return trusts.filter(t => isQueried(t.id) && t.id in errors).length;
 });
 
 // Trusts whose cohort is below the privacy threshold and was suppressed (the exact count,
@@ -130,7 +147,7 @@ const suppressedCount = computed(() => {
     const r = results.value as unknown as IResultsShape | null;
     const suppressed = new Set(r?.trustSuppressed ?? []);
 
-    return trusts.filter(t => suppressed.has(t.id)).length;
+    return trusts.filter(t => isQueried(t.id) && suppressed.has(t.id)).length;
 });
 
 const runningCount = computed(() => Math.max(0, trustCount.value - completeCount.value - erroredCount.value));
