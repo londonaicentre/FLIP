@@ -51,9 +51,9 @@ def mock_get_net_by_name():
 def mock_fetch_client_status():
     with patch("flip_api.fl_services.get_net_status.fetch_client_status") as mock:
         mock.return_value = [
-            IClientStatus(name="client1", status=ClientStatus.NO_JOBS.value),
-            IClientStatus(name="client2", status=ClientStatus.NO_REPLY.value),
-            IClientStatus(name="client3", status=ClientStatus.NO_REPLY.value),
+            IClientStatus(name="client1", status=ClientStatus.NO_JOBS),
+            IClientStatus(name="client2", status=ClientStatus.NO_REPLY),
+            IClientStatus(name="client3", status=ClientStatus.NO_REPLY),
         ]
         yield mock
 
@@ -125,7 +125,7 @@ def test_get_net_status_matches_client_via_slot_name_when_trust_renamed(
         TRUST_3_ID: "client3",
     }
     with patch("flip_api.fl_services.get_net_status.fetch_client_status") as mock_clients:
-        mock_clients.return_value = [IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS.value)]
+        mock_clients.return_value = [IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS)]
         result = get_net_status("net-name", fake_request, mock_db)
     online = [c for c in result.clients if c.online]
     assert len(online) == 1

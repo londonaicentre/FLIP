@@ -155,8 +155,8 @@ class IClientStatus(BaseModel):
     @property
     def online(self) -> bool:
         offline_statuses = {
-            ClientStatus.NO_REPLY.value,
-            ClientStatus.DISCONNECTED.value,
+            ClientStatus.NO_REPLY,
+            ClientStatus.DISCONNECTED,
         }
         return self.status not in offline_statuses
 

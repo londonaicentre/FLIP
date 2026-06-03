@@ -13,7 +13,7 @@ class TestIClientStatusSchema:
     def test_online_true_when_status_not_no_reply(self):
         client_status = IClientStatus(
             name="client1",
-            status=ClientStatus.NO_JOBS.value,
+            status=ClientStatus.NO_JOBS,
         )
 
         assert client_status.online is True
@@ -21,7 +21,7 @@ class TestIClientStatusSchema:
     def test_online_false_when_status_no_reply(self):
         client_status = IClientStatus(
             name="client1",
-            status=ClientStatus.NO_REPLY.value,
+            status=ClientStatus.NO_REPLY,
         )
 
         assert client_status.online is False
@@ -29,7 +29,7 @@ class TestIClientStatusSchema:
     def test_online_true_when_status_connected(self):
         client_status = IClientStatus(
             name="client1",
-            status=ClientStatus.CONNECTED.value,
+            status=ClientStatus.CONNECTED,
         )
 
         assert client_status.online is True
@@ -37,7 +37,7 @@ class TestIClientStatusSchema:
     def test_online_false_when_status_disconnected(self):
         client_status = IClientStatus(
             name="client1",
-            status=ClientStatus.DISCONNECTED.value,
+            status=ClientStatus.DISCONNECTED,
         )
 
         assert client_status.online is False
@@ -53,12 +53,12 @@ class TestIClientStatusSchema:
     def test_online_reacts_to_status_change(self):
         client_status = IClientStatus(
             name="client1",
-            status=ClientStatus.NO_JOBS.value,
+            status=ClientStatus.NO_JOBS,
         )
 
         assert client_status.online is True
 
-        client_status.status = ClientStatus.NO_REPLY.value
+        client_status.status = ClientStatus.NO_REPLY
         assert client_status.online is False
 
 
