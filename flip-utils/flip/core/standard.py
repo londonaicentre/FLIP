@@ -38,6 +38,7 @@ from requests import HTTPError
 
 from flip.constants.flip_constants import FlipConstants, ModelStatus, ResourceType
 from flip.core.base import FLIPBase
+from flip.exceptions import ResultsUploadError
 from flip.schemas import TrainingLog, TrainingMetrics
 from flip.utils.utils import Utils
 
@@ -442,7 +443,7 @@ class FLIPStandardProd(FLIPBase):
         except Exception as e:
             # catch-all: ensures you still get a consistent exception type at the boundary
             self.logger.exception("Unexpected failure in upload_results_to_s3 for model_id=%s", model_id)
-            raise Exception("Unexpected failure uploading results to S3") from e
+            raise ResultsUploadError("Unexpected failure uploading results to S3") from e
 
     @override
     def cleanup(self, path: Path) -> None:
