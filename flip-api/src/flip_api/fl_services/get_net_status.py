@@ -80,7 +80,7 @@ def get_net_status(
                 logger.warning(f"Trust {trust.name} (slot={slot_name}) not found in client statuses")
                 trust_client_statuses.append(
                     IClientStatus(
-                        name=trust.name, code=trust.code, status=ClientStatus.NO_REPLY.value, fl_kit_slot=slot_name
+                        name=trust.name, code=trust.code, status=ClientStatus.NO_REPLY, fl_kit_slot=slot_name
                     )
                 )
                 continue

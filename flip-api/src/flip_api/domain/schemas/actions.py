@@ -10,10 +10,10 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 
 
-class ProjectAuditAction(str, Enum):
+class ProjectAuditAction(StrEnum):
     DELETE = "DELETE"
     EDIT = "EDIT"
     APPROVE = "APPROVE"
@@ -21,7 +21,7 @@ class ProjectAuditAction(str, Enum):
     UNSTAGE = "UNSTAGE"
 
 
-class ModelAuditAction(str, Enum):
+class ModelAuditAction(StrEnum):
     DELETE = "DELETE"
     EDIT = "EDIT"
     # Status-transition audits keyed by the new ModelStatus value. Recorded in
@@ -33,7 +33,7 @@ class ModelAuditAction(str, Enum):
     RESULTS_UPLOADED = "RESULTS_UPLOADED"
 
 
-class TrustAuditAction(str, Enum):
+class TrustAuditAction(StrEnum):
     """Lifecycle events for the trust registry.
 
     Captured by `trusts_services.utils.audit_helper.audit_trust_action`:

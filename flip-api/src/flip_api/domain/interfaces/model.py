@@ -11,7 +11,7 @@
 #
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, validator
@@ -21,7 +21,7 @@ from flip_api.domain.schemas.actions import ModelAuditAction
 from flip_api.domain.schemas.status import ModelStatus, TrustIntersectStatus
 
 
-class ModelStatusEdit(str, Enum):
+class ModelStatusEdit(StrEnum):
     PENDING = "PENDING"
 
 

@@ -119,14 +119,14 @@ def test_fetch_server_status_success(mock_check_server):
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_fetch_client_status_success(mock_check_client):
     mock_check_client.return_value = [
-        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS.value),
-        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY.value),
+        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
+        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY),
     ]
     status = fl_service.fetch_client_status("endpoint")
     assert status[0].name == "Trust_1"
-    assert status[0].status == ClientStatus.NO_JOBS.value
+    assert status[0].status == ClientStatus.NO_JOBS
     assert status[1].name == "Trust_2"
-    assert status[1].status == ClientStatus.NO_REPLY.value
+    assert status[1].status == ClientStatus.NO_REPLY
 
 
 def test_get_fl_backend_job_id_by_model_id_not_found(model_id, fake_session):
@@ -147,8 +147,8 @@ def test_add_fl_backend_job_id_raises_if_job_missing(fl_job_id, fake_session):
 def test_validate_client_availability_all_offline(mock_get_status):
     # The backend is passed in explicitly now (resolved per-net at runtime), not read from settings.
     mock_get_status.return_value = [
-        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY.value),
-        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS.value),
+        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY),
+        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
     ]
 
     with pytest.raises(ValueError, match="Clients unavailable: trust-1"):
@@ -158,8 +158,8 @@ def test_validate_client_availability_all_offline(mock_get_status):
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_validate_client_availability_some_online(mock_get_status):
     mock_get_status.return_value = [
-        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY.value),
-        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS.value),
+        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY),
+        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
     ]
 
     # This has to raise an error for Trust_2 only.
@@ -188,7 +188,7 @@ def test_validate_client_availability_flower_soft_on_empty(mock_get_status):
 def test_validate_client_availability_flower_soft_on_unavailable(mock_get_status):
     """Flower backend: unavailable clients logs warning instead of raising."""
     mock_get_status.return_value = [
-        IClientStatus(name="Trust_1", status=ClientStatus.DISCONNECTED.value),
+        IClientStatus(name="Trust_1", status=ClientStatus.DISCONNECTED),
     ]
 
     # Should NOT raise — Flower degrades gracefully
