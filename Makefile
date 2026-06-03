@@ -236,17 +236,22 @@ restart: down up
 # NOTE: Uses $(UP_PULL_FLAGS) — pulls fresh FL images only when DOCKER_FL_REGISTRY is set
 #       (same logic as `up`); an empty registry keeps locally built flip-fl-base-flower images.
 # NOTE: Client keys must be re-registered before starting clients (Flower only)
+# NOTE: flip-api is recreated first so its startup seeding re-applies FL_BACKEND onto the
+#       FLNets rows — the seeded backend is canonical, so this is how a framework switch
+#       (make restart-fl FL_BACKEND=...) takes effect. --no-deps leaves flip-db untouched.
 restart-fl:
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
-	@echo "🔄 Step 2: Restarting FL APIs and servers..."
+	@echo "🔄 Step 2: Recreating flip-api to re-seed FLNets.fl_backend=$(FL_BACKEND)..."
+	${DOCKER_COMMAND} up -d --force-recreate --no-deps $(UP_PULL_FLAGS) flip-api
+	@echo "🔄 Step 3: Restarting FL APIs and servers..."
 	${DOCKER_COMMAND} up -d --force-recreate --no-deps $(UP_PULL_FLAGS) fl-api-net-1 fl-api-net-2 fl-server-net-1 fl-server-net-2
 	@if [ "$(FL_BACKEND)" = "flower" ]; then \
-		echo "🔄 Step 3: Registering new client keys with FL servers (Flower only)..."; \
+		echo "🔄 Step 4: Registering new client keys with FL servers (Flower only)..."; \
 		${DOCKER_COMMAND} up --force-recreate $(UP_PULL_FLAGS) register-supernode-keys-net-1 register-supernode-keys-net-2; \
 	fi
-	@echo "🔄 Step 4: Starting new FL clients..."
+	@echo "🔄 Step 5: Starting new FL clients..."
 	$(MAKE) -C trust up-fl-clients
 	@echo "✅ FL services restarted successfully!"
 

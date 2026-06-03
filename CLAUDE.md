@@ -111,10 +111,10 @@ Prerequisites:
 - Stack up via `make up` (central hub + trusts + XNAT) with trusts registered; Orthanc PACS seeded with DICOM data so image pull has something to pull.
 - Sibling repo `../flip-fl-base-flower` (Flower) or `../flip-fl-base` (NVFLARE) checked out — its chest-xray tutorial supplies the model files and `query.sql`.
 
-Defaults track `FL_BACKEND` (default `flower`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `../../flip-fl-base-flower/tutorials/xray_classification/`. Common overrides:
+Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `../../flip-fl-base/tutorials/image_classification/xray_classification/`. Common overrides:
 
 ```bash
-make e2e_smoke FL_BACKEND=nvflare                              # use the NVFLARE tutorial
+make e2e_smoke FL_BACKEND=flower                               # use the Flower tutorial
 make e2e_smoke MODEL_FILES_DIR=/path/app QUERY_FILE=/path/q.sql
 make e2e_smoke EXTRA_ARGS="--abort-midway"                     # exercise the FL stop-training path
 make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
@@ -228,7 +228,7 @@ After changes, evaluate if docs need updating:
 6. `make create-networks`
 
 ### Key Environment Variables
-- `FL_BACKEND` — `flower` (default) or `nvflare`
+- `FL_BACKEND` — `nvflare` (default) or `flower`. Two roles: (1) deploy layer — selects which fl-* images run (compose/Makefile); (2) flip-api — sets the `FLNets.fl_backend` column at seed time. The seeded value is **canonical**: flip-api reads `FL_BACKEND` only at seeding and never reconciles it at runtime. To switch frameworks, `make restart-fl FL_BACKEND=...` recreates flip-api so its startup seeding re-applies the backend onto every net.
 - `PROD` — `true` (production), `stag` (staging), unset (development)
 - `AES_KEY_BASE64` — encryption key for trust communication
 - A remote trust operator only needs their kit file (`trust/.env.<KIT>`) — no hub `.env.<env>` needed on trust hosts.

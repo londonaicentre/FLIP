@@ -15,6 +15,8 @@ from typing import Literal
 from pydantic import EmailStr, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from flip_api.domain.schemas.types import FLBackend
+
 
 class Settings(BaseSettings):
     """Common settings shared across all environments (development and production)."""
@@ -88,8 +90,12 @@ class Settings(BaseSettings):
     # provisions kits and adds them here.
     FL_KIT_SLOT_NAMES: list[str] = []
 
-    # FL settings
-    FL_BACKEND: Literal["nvflare", "flower"] = "nvflare"
+    # FL backend written onto the FLNets.fl_backend column at seed time (seed_fl_nets). This is
+    # canonical: flip-api reads it only at seeding, and the seeded value is never reconciled at
+    # runtime. To switch frameworks, `make restart-fl FL_BACKEND=...` recreates flip-api so this
+    # seeding re-runs and overwrites the backend on every net. Also used at the deploy layer
+    # (compose/Makefile) to pick which fl-* images to run. See fl_scheduler_service.resolve_backend.
+    FL_BACKEND: FLBackend = FLBackend.NVFLARE
 
     # MFA enforcement gate. Defaults to True so every unknown environment
     # (prod, stag, any new deploy) requires TOTP enrolment. Dev compose

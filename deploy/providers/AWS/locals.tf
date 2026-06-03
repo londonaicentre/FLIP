@@ -57,16 +57,20 @@ locals {
 
   # Sub-paths under the new three-bucket layout. The legacy single-bucket
   # prefixes (`model_files/uploaded`, `uploaded_federated_data`,
-  # `base-application/${fl_backend}`, `app_destination_bucket`) are re-pointed
+  # `base-application`, `app_destination_bucket`) are re-pointed
   # at the new purpose-built buckets per the migration mapping in
   # `make migrate-flip-bucket` (see deploy/providers/AWS/Makefile). Keeping
   # the same local names (`uploaded_federated_data_uri`, …) means the
   # ecs_task_env map below can stay byte-identical with the prior single-bucket
   # layout — only the value behind each local changes.
+  # fl_app_base_uri is the backend-agnostic root: flip-api appends the per-backend
+  # segment (.../base-application/{nvflare,flower}/...) in code from each net's seeded
+  # (canonical) backend. A framework switch is applied via `make restart-fl`, which
+  # recreates flip-api so seeding re-applies the backend onto every net.
   uploaded_federated_data_uri = "${local.flip_fl_results_bucket_uri}/results"
   uploaded_model_files_uri    = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
   scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
-  fl_app_base_uri             = "${local.flip_app_bundles_bucket_uri}/base-application/${var.fl_backend}"
+  fl_app_base_uri             = "${local.flip_app_bundles_bucket_uri}/base-application"
   fl_app_destination_uri      = "${local.flip_app_bundles_bucket_uri}/app_destinations"
 
   # NET_ENDPOINTS tells flip-api how to reach each FL network's fl-api. On

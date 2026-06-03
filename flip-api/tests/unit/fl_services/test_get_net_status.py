@@ -18,6 +18,7 @@ from fastapi import HTTPException, Request
 
 from flip_api.domain.interfaces.fl import IClientStatus
 from flip_api.domain.schemas.status import ClientStatus
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.get_net_status import get_net_status
 
 TRUST_1_ID = uuid4()
@@ -43,7 +44,8 @@ def fake_request():
 @pytest.fixture
 def mock_get_net_by_name():
     with patch("flip_api.fl_services.get_net_status.get_net_by_name") as mock:
-        mock.return_value = MagicMock(endpoint="endpoint", name="net-name")
+        # The net carries its self-reported backend; the endpoint reads it off net_info.
+        mock.return_value = MagicMock(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
         yield mock
 
 
@@ -82,13 +84,6 @@ def mock_get_slot_names_by_trust_ids():
         yield mock
 
 
-@pytest.fixture
-def mock_get_settings():
-    with patch("flip_api.fl_services.get_net_status.get_settings") as mock:
-        mock.return_value.FL_BACKEND = "nvflare"
-        yield mock
-
-
 def test_get_net_status_success(
     fake_request,
     mock_db,
@@ -96,11 +91,10 @@ def test_get_net_status_success(
     mock_fetch_client_status,
     mock_get_trusts,
     mock_get_slot_names_by_trust_ids,
-    mock_get_settings,
 ):
     result = get_net_status("net-name", fake_request, mock_db)
     assert result.name == "net-name"
-    assert result.fl_backend == "nvflare"
+    assert result.fl_backend == FLBackend.NVFLARE
     assert len(result.clients) == 3
     assert any(client.name == "client1" and client.online for client in result.clients)
     assert any(client.name == "client2" and not client.online for client in result.clients)
@@ -113,7 +107,6 @@ def test_get_net_status_matches_client_via_slot_name_when_trust_renamed(
     mock_get_net_by_name,
     mock_get_trusts,
     mock_get_slot_names_by_trust_ids,
-    mock_get_settings,
 ):
     # Trust display name overrides leave the FL identity on the slot, not the trust.
     # Matching must therefore use slot_name; the UI keeps showing the trust's friendly name.
@@ -143,11 +136,10 @@ def test_get_net_status_reports_flower_backend(
     mock_fetch_client_status,
     mock_get_trusts,
     mock_get_slot_names_by_trust_ids,
-    mock_get_settings,
 ):
-    mock_get_settings.return_value.FL_BACKEND = "flower"
+    mock_get_net_by_name.return_value = MagicMock(endpoint="endpoint", name="net-name", fl_backend=FLBackend.FLOWER)
     result = get_net_status("net-name", fake_request, mock_db)
-    assert result.fl_backend == "flower"
+    assert result.fl_backend == FLBackend.FLOWER
 
 
 def test_get_net_status_net_not_found(fake_request, mock_db):

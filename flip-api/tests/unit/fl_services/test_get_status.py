@@ -20,6 +20,7 @@ from flip_api.domain.interfaces.fl import (
     IClientStatus,
     IServerStatus,
 )
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.get_status import get_status_endpoint
 
 TRUST_1_ID = uuid4()
@@ -42,12 +43,13 @@ def fake_request():
 @pytest.fixture
 def mock_get_nets():
     class Net:
-        def __init__(self, name, endpoint):
+        def __init__(self, name, endpoint, fl_backend):
             self.name = name
             self.endpoint = endpoint
+            self.fl_backend = fl_backend
 
     with patch("flip_api.fl_services.get_status.get_nets") as mock:
-        mock.return_value = [Net("net-1", "endpoint1")]
+        mock.return_value = [Net("net-1", "endpoint1", FLBackend.NVFLARE)]
         yield mock
 
 
@@ -76,9 +78,7 @@ def mock_get_slot_names_by_trust_ids():
 @pytest.fixture
 def mock_fetch_server_status():
     with patch("flip_api.fl_services.get_status.fetch_server_status") as mock:
-        mock.return_value = IServerStatus(
-            status="started",
-        )
+        mock.return_value = IServerStatus(status="started")
         yield mock
 
 
@@ -91,13 +91,6 @@ def mock_fetch_client_status():
         yield mock
 
 
-@pytest.fixture
-def mock_get_settings():
-    with patch("flip_api.fl_services.get_status.get_settings") as mock:
-        mock.return_value.FL_BACKEND = "nvflare"
-        yield mock
-
-
 def test_get_status_endpoint_success(
     fake_request,
     mock_db,
@@ -106,13 +99,13 @@ def test_get_status_endpoint_success(
     mock_get_slot_names_by_trust_ids,
     mock_fetch_server_status,
     mock_fetch_client_status,
-    mock_get_settings,
 ):
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
     assert len(result) == 1
     net = result[0]
     assert net.name == "net-1"
-    assert net.fl_backend == "nvflare"
+    # Backend always comes from the net's seeded (canonical) value, not the server self-report.
+    assert net.fl_backend == FLBackend.NVFLARE
     assert net.online is True
     assert net.net_in_use is True
     assert net.registered_clients == 2
@@ -128,7 +121,6 @@ def test_get_status_endpoint_matches_client_via_slot_name_when_trust_renamed(
     mock_get_trusts,
     mock_get_slot_names_by_trust_ids,
     mock_fetch_server_status,
-    mock_get_settings,
 ):
     # Simulates the seeded-rename case: Trust display name is "(Mock) GSTT",
     # but the FL net only knows the slot identity "Trust_1". The endpoint must
@@ -152,7 +144,6 @@ def test_get_status_endpoint_trust_with_no_slot_assignment_is_offline(
     mock_get_slot_names_by_trust_ids,
     mock_fetch_server_status,
     mock_fetch_client_status,
-    mock_get_settings,
 ):
     # An unassigned trust has no FL identity to compare against; even if a
     # client happens to share its name, it must show offline (NO_REPLY).
@@ -160,6 +151,21 @@ def test_get_status_endpoint_trust_with_no_slot_assignment_is_offline(
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
     trust_1_entry = next(c for c in result[0].clients if c.name == "trust-1")
     assert trust_1_entry.online is False
+
+
+def test_get_status_endpoint_reports_seeded_backend(
+    fake_request,
+    mock_db,
+    mock_get_nets,
+    mock_get_trusts,
+    mock_get_slot_names_by_trust_ids,
+    mock_fetch_server_status,
+    mock_fetch_client_status,
+):
+    # The status reflects the net's seeded backend regardless of the live server status —
+    # there is no runtime self-report reconciliation anymore.
+    result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
+    assert result[0].fl_backend == FLBackend.NVFLARE
 
 
 def test_get_status_endpoint_reports_flower_backend(
@@ -170,11 +176,12 @@ def test_get_status_endpoint_reports_flower_backend(
     mock_get_slot_names_by_trust_ids,
     mock_fetch_server_status,
     mock_fetch_client_status,
-    mock_get_settings,
 ):
-    mock_get_settings.return_value.FL_BACKEND = "flower"
+    # A Flower-seeded net reports flower: the backend is the net's canonical seeded
+    # value (FLNets.fl_backend), not the live server self-report.
+    mock_get_nets.return_value[0].fl_backend = FLBackend.FLOWER
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
-    assert result[0].fl_backend == "flower"
+    assert result[0].fl_backend == FLBackend.FLOWER
 
 
 def test_get_status_endpoint_error(fake_request, mock_db):
@@ -185,13 +192,13 @@ def test_get_status_endpoint_error(fake_request, mock_db):
 
 
 def test_get_status_endpoint_server_status_none(
-    fake_request, mock_db, mock_get_nets, mock_get_trusts, mock_fetch_server_status, mock_get_settings
+    fake_request, mock_db, mock_get_nets, mock_get_trusts, mock_fetch_server_status
 ):
     mock_fetch_server_status.return_value = None
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
     assert len(result) == 1
     assert result[0].online is False
-    assert result[0].fl_backend == "nvflare"
+    assert result[0].fl_backend == FLBackend.NVFLARE
     assert result[0].clients == []
 
 
@@ -203,15 +210,12 @@ def test_get_status_endpoint_client_status_none(
     mock_get_slot_names_by_trust_ids,
     mock_fetch_server_status,
     mock_fetch_client_status,
-    mock_get_settings,
 ):
-    mock_fetch_server_status.return_value = IServerStatus(
-        status="stopped",
-    )
+    mock_fetch_server_status.return_value = IServerStatus(status="stopped")
     mock_fetch_client_status.return_value = []
 
     result = get_status_endpoint(fake_request, mock_db, user_id="user-1")
     assert len(result) == 1
     assert result[0].online is False
-    assert result[0].fl_backend == "nvflare"
+    assert result[0].fl_backend == FLBackend.NVFLARE
     assert result[0].clients == []
