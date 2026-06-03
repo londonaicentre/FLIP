@@ -111,4 +111,4 @@ Access to FLIP is granted by a FLIP administrator.
 
 Access to FLIP will be reviewed annually, with dormant accounts being removed.
 
-FLIP employs role based access control to permit functionality for accounts, managed through the FLIP API and UI. FLIP currently has three access profiles: **Admin**, **Researcher** and **Observer**. For full details of permissions assigned to each role, see :ref:`rbac-roles`.
+FLIP employs role based access control to permit functionality for accounts, managed through the FLIP API and UI. FLIP currently has three access profiles: **Admin**, **Researcher** and **Viewer**. For full details of permissions assigned to each role, see :ref:`rbac-roles`.

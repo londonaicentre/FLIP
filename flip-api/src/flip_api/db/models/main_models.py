@@ -31,6 +31,7 @@ from flip_api.domain.schemas.status import (
     TrustIntersectStatus,
     XNATImageStatus,
 )
+from flip_api.domain.schemas.types import FLBackend
 
 
 # Tables
@@ -39,6 +40,14 @@ class FLNets(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(unique=True)
     endpoint: str = Field(unique=True)
+    # FL backend ("nvflare"/"flower") this net runs. Set at seed time from FL_BACKEND
+    # (seed_fl_nets) and canonical — never reconciled at runtime. A framework switch happens by
+    # re-seeding (make restart-fl recreates flip-api). Non-null: every net has a declared backend
+    # from creation. Mapped like the other enum columns (status, task_type, ...): SQLModel infers a
+    # SQLAlchemy Enum column from FLBackend, so the DB persists the member name and reads return a
+    # real FLBackend member. FLBackend is the one column whose member name (NVFLARE) differs from its
+    # lowercase value (nvflare), so the DB stores the uppercase name while env/JSON/S3 use the value.
+    fl_backend: FLBackend = Field(nullable=False)
 
     schedulers: list["FLScheduler"] = Relationship(back_populates="net")
 

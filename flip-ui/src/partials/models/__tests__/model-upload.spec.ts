@@ -198,9 +198,9 @@ function mountModelUpload(
             }
         }
     });
-    // Drive `isObserver` via hasPermissions (the component calls
+    // Drive `isViewer` via hasPermissions (the component calls
     // authStore.hasPermissions(["CanManageProjects"])). Mock that
-    // here so we can toggle observer vs researcher/admin between tests.
+    // here so we can toggle viewer vs researcher/admin between tests.
     const authStore = useAuthStore();
     (authStore.hasPermissions as unknown as ReturnType<typeof vi.fn>) = vi.fn(() =>
         opts.hasPermissions ?? true
@@ -242,7 +242,7 @@ describe("ModelUpload", () => {
         });
 
         test("hides the FileUpload child when canUpload is false", () => {
-            // Observers (no CanManageProjects permission) see the listing
+            // Viewers (no CanManageProjects permission) see the listing
             // but not the upload affordance.
             const wrapper = mountModelUpload({ canUpload: false });
             expect(wrapper.find("[data-test='file-upload']").exists()).toBe(false);
@@ -604,7 +604,7 @@ describe("ModelUpload", () => {
             const wrapper = mountModelUpload({ files }, { hasPermissions: true });
             await flushPromises();
 
-            // hasPermissions=true → isObserver=false → download button
+            // hasPermissions=true → isViewer=false → download button
             // visible. Two row buttons: [0] download (first Transition),
             // [1] delete (second Transition).
             const rowButtons = wrapper.findAll("li button");
@@ -622,7 +622,7 @@ describe("ModelUpload", () => {
             revokeObjectURLSpy.mockRestore();
         });
 
-        test("observer (no CanManageProjects) does not see the download button", async () => {
+        test("viewer (no CanManageProjects) does not see the download button", async () => {
             const files: FileInfo[] = [
                 {
                     id: "1",
@@ -631,8 +631,8 @@ describe("ModelUpload", () => {
                     status: FileUploadStatus.COMPLETED
                 }
             ];
-            // Observers can view the file list but can't download. canUpload
-            // is false for observers so delete is also hidden.
+            // Viewers can view the file list but can't download. canUpload
+            // is false for viewers so delete is also hidden.
             const wrapper = mountModelUpload(
                 {
                     files,
@@ -642,7 +642,7 @@ describe("ModelUpload", () => {
             );
             await flushPromises();
 
-            // No row buttons should render at all for an observer.
+            // No row buttons should render at all for a viewer.
             expect(wrapper.findAll("li button").length).toBe(0);
         });
 

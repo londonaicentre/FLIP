@@ -28,7 +28,7 @@
                                 There is no cohort query assigned to this project.
                             </div>
                         </div>
-                        <AiButton v-if="!isObserver" primary data-test="create-query-btn" @click="addCohortQuery">
+                        <AiButton v-if="!isViewer" primary data-test="create-query-btn" @click="addCohortQuery">
                             Create Cohort Query
                         </AiButton>
                     </div>
@@ -88,7 +88,7 @@ interface IQueryDetails {
 const router = useRouter();
 const project = useProjectStore().project;
 
-const { isObserver } = usePermissions();
+const { isViewer } = usePermissions();
 
 const props = defineProps<IQueryDetails>();
 

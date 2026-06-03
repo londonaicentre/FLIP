@@ -403,8 +403,8 @@ describe("User Management", () => {
                 organisation: "King's College Hospital",
                 roles: [{
                     id: "role-3",
-                    rolename: "Observer",
-                    roledescription: "Observer"
+                    rolename: "Viewer",
+                    roledescription: "Viewer"
                 }],
                 isDisabled: true
             }

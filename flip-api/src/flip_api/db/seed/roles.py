@@ -27,8 +27,8 @@ CURRENT_ROLES = [
         "description": "A role for administrators.",
     },
     {
-        "id": RoleRef.OBSERVER.value,
-        "name": "Observer",
+        "id": RoleRef.VIEWER.value,
+        "name": "Viewer",
         "description": "Read-only access to assigned projects. Cannot create, edit, or delete resources.",
     },
 ]

@@ -59,12 +59,12 @@ function setData(v: unknown) {
 }
 
 interface MountOptions {
-    isObserver?: boolean;
+    isViewer?: boolean;
     projectStatus?: string;
 }
 
 function mountLatestModels({
-    isObserver = false,
+    isViewer = false,
     projectStatus = "APPROVED"
 }: MountOptions = {}) {
     return mount(LatestModels, {
@@ -75,7 +75,7 @@ function mountLatestModels({
                     // stubActions: false runs the real action implementations
                     // against the initialState — needed so authStore.hasPermissions
                     // reflects the seeded `user.permissions` array instead of a
-                    // spy that returns undefined and makes isObserver always true.
+                    // spy that returns undefined and makes isViewer always true.
                     stubActions: false,
                     initialState: {
                         auth: {
@@ -86,7 +86,7 @@ function mountLatestModels({
                                     sub: "s",
                                     email: "u@e.com"
                                 },
-                                permissions: isObserver ? [] : ["CanCreateProjects"]
+                                permissions: isViewer ? [] : ["CanCreateProjects"]
                             },
                             signInStep: "DONE",
                             mfaEnabled: true,
@@ -183,7 +183,7 @@ describe("LatestModels — defensive data access", () => {
         expect(wrapper.text()).toContain("View All Models");
     });
 
-    test("shows the header Create-Model button when not an observer", async () => {
+    test("shows the header Create-Model button when not a viewer", async () => {
         setData({
             data: [{
                 id: "m1",
@@ -191,7 +191,7 @@ describe("LatestModels — defensive data access", () => {
                 description: ""
             }]
         });
-        const wrapper = mountLatestModels({ isObserver: false });
+        const wrapper = mountLatestModels({ isViewer: false });
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(true);
@@ -212,13 +212,13 @@ describe("LatestModels — defensive data access", () => {
                 description: ""
             }]
         });
-        const wrapper = mountLatestModels({ isObserver: false });
+        const wrapper = mountLatestModels({ isViewer: false });
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(true);
     });
 
-    test("hides the header Create-Model button for observers", async () => {
+    test("hides the header Create-Model button for viewers", async () => {
         setData({
             data: [{
                 id: "m1",
@@ -226,23 +226,23 @@ describe("LatestModels — defensive data access", () => {
                 description: ""
             }]
         });
-        const wrapper = mountLatestModels({ isObserver: true });
+        const wrapper = mountLatestModels({ isViewer: true });
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(false);
     });
 
-    test("hides the header Create-Model button for observers in the empty state", async () => {
+    test("hides the header Create-Model button for viewers in the empty state", async () => {
         setData({ data: [] });
-        const wrapper = mountLatestModels({ isObserver: true });
+        const wrapper = mountLatestModels({ isViewer: true });
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(false);
     });
 
-    test("non-observer empty state renders the create-model CTA in the header", async () => {
+    test("non-viewer empty state renders the create-model CTA in the header", async () => {
         setData({ data: [] });
-        const wrapper = mountLatestModels({ isObserver: false });
+        const wrapper = mountLatestModels({ isViewer: false });
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(true);

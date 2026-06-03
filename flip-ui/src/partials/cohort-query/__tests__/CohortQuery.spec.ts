@@ -99,6 +99,7 @@ const stagedProjectWithQuery: IProject = {
         cancelledTrustIds: [],
         respondedTrustIds: [],
         erroredTrustIds: [],
+        emptyTrustIds: [],
         totalCohort: 100
     }
 };
@@ -114,6 +115,7 @@ const unstagedProjectWithQuery: IProject = {
         cancelledTrustIds: [],
         respondedTrustIds: [],
         erroredTrustIds: [],
+        emptyTrustIds: [],
         totalCohort: 100
     }
 };
@@ -275,7 +277,7 @@ describe("CohortQuery", () => {
             expect(codeTextArea.props("inputProps")).toEqual({ readonly: true });
         });
 
-        it("sets readonly on AiCodeTextArea when user is observer", () => {
+        it("sets readonly on AiCodeTextArea when user is viewer", () => {
             const wrapper = mountCohortQuery({
                 project: unstagedProject,
                 permissions: []
@@ -296,7 +298,7 @@ describe("CohortQuery", () => {
         });
 
         // Run button lives on the page wrapper, not the partial.
-        it("shows the run button when project is UNSTAGED and user is not observer", () => {
+        it("shows the run button when project is UNSTAGED and user is not viewer", () => {
             const wrapper = mountCohortQueryPage({ project: unstagedProject });
 
             expect(wrapper.find(CohortQueryPage.runCohortQueryButton).exists()).toBe(true);
@@ -308,7 +310,7 @@ describe("CohortQuery", () => {
             expect(wrapper.find(CohortQueryPage.runCohortQueryButton).exists()).toBe(false);
         });
 
-        it("hides the run button when user is observer", () => {
+        it("hides the run button when user is viewer", () => {
             const wrapper = mountCohortQueryPage({
                 project: unstagedProject,
                 permissions: []

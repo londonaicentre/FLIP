@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+from enum import StrEnum
 from typing import Annotated
 from uuid import UUID
 
@@ -18,3 +19,22 @@ from pydantic import Field, StringConstraints
 TrimStr = Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]
 
 NonEmptyUUIDList = Annotated[list[UUID], Field(min_length=1)]
+
+
+class FLBackend(StrEnum):
+    """The set of supported federated-learning backends.
+
+    Defined once here so the value flows consistently through the DB column
+    (``FLNets.fl_backend``), the FL interfaces, and every helper that
+    resolves/bundles/pulls per backend. Add a new backend in this one place.
+
+    ``StrEnum`` (not a bare ``Enum``) so each member *is* its lowercase string
+    value: ``str(FLBackend.FLOWER) == "flower"``. Env (``FL_BACKEND``), JSON API
+    fields and S3 path segments all use that plain lowercase value, exactly as the
+    previous ``Literal`` did. The ``FLNets.fl_backend`` column is an auto-mapped
+    SQLAlchemy ``Enum`` (like the other enum columns) and so persists the member
+    *name* (``NVFLARE``/``FLOWER``); reads return a real ``FLBackend`` member.
+    """
+
+    NVFLARE = "nvflare"
+    FLOWER = "flower"

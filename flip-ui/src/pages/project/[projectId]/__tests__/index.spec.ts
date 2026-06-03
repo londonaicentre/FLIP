@@ -75,7 +75,12 @@ const stubs = {
         props: ["steps"]
     },
     ProjectApproval: { template: "<div data-test=\"stub-project-approval\" />" },
-    ProjectStaging: { template: "<div data-test=\"stub-project-staging\" />" },
+    ProjectStaging: {
+        // Expose the computed stageable set so tests can assert the parent's
+        // exclusion logic (errored / never-responded / empty trusts).
+        template: "<div data-test=\"stub-project-staging\" :data-stageable=\"(stageableTrustIds || []).join(',')\" />",
+        props: ["stageableTrustIds", "hasQuery", "projectStaged", "staging"]
+    },
     ProjectStatus: { template: "<div data-test=\"stub-project-status\" />" },
     Transition: { template: "<div><slot /></div>" },
     // Render the slot so breadcrumb copy is exercised (the real RouterLink is
@@ -172,6 +177,25 @@ describe("Project page (/project/[id]/index.vue)", () => {
         const wrapper = mountProjectPage({ project });
         const step02 = wrapper.find("[data-test=step-02]");
         expect(step02.attributes("data-completed")).toBe("true");
+    });
+
+    test("excludes errored and empty (0-record/suppressed) trusts from the stageable set", async () => {
+        const project = baseProject();
+        project.query = {
+            id: "q1",
+            name: "q",
+            query: "SELECT 1",
+            queriedTrustIds: ["t1", "t2", "t3", "t4"],
+            respondedTrustIds: ["t1", "t2", "t3"],
+            erroredTrustIds: ["t2"],
+            emptyTrustIds: ["t3"]
+        } as unknown as IProject["query"];
+        const wrapper = mountProjectPage({ project });
+        await flushPromises();
+
+        // t1 only: t2 errored, t3 returned 0/suppressed, t4 never responded (#519).
+        const staging = wrapper.find("[data-test=stub-project-staging]");
+        expect(staging.attributes("data-stageable")).toBe("t1");
     });
 
     test("marks Project Staged when status moves off UNSTAGED, and Project Approved when status is APPROVED", () => {
@@ -289,8 +313,8 @@ describe("Project page (/project/[id]/index.vue)", () => {
         expect(snackbarSuccess).toHaveBeenCalled();
     });
 
-    test("Edit Project button label flips to 'View Project' for observers", () => {
-        // Observer = no CanCreateProjects. canCreateProjects=false → isObserver=true.
+    test("Edit Project button label flips to 'View Project' for viewers", () => {
+        // Viewer = no CanCreateProjects. canCreateProjects=false → isViewer=true.
         const wrapper = mountProjectPage({ permissions: [] });
         const editBtn = wrapper.find("[data-test=edit-project-btn]");
         expect(editBtn.text()).toContain("View Project");

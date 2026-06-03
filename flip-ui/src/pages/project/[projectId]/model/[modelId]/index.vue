@@ -43,14 +43,14 @@
                         <span class="max-w-2xl truncate">{{ modelData.modelName }}</span>
                     </h1>
                     <div class="flex items-center gap-3 shrink-0">
-                        <AiGuard v-if="!isObserver" :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess()">
+                        <AiGuard v-if="!isViewer" :permissions="editProjectPermissions" :bypass="isOwnerOrHasAccess()">
                             <AiButton light data-test="edit-model-btn" @click="openEditModelDrawer">
                                 <icon-mdi-pencil-outline class="mr-2" />
                                 Edit Model
                             </AiButton>
                         </AiGuard>
                         <AiButton
-                            v-if="!isObserver && isTrainingPending()"
+                            v-if="!isViewer && isTrainingPending()"
                             primary
                             data-test="initiate-training-btn"
                             :disabled="!readyToTrain"
@@ -59,7 +59,7 @@
                         >
                             Initiate Training
                         </AiButton>
-                        <TrainingActionsMenu v-if="!isObserver && !isTrainingPending()" :status="getStatusEnumValue(modelData?.status)" />
+                        <TrainingActionsMenu v-if="!isViewer && !isTrainingPending()" :status="getStatusEnumValue(modelData?.status)" />
                     </div>
                 </div>
             </header>
@@ -72,7 +72,7 @@
                         <ModelUpload
                             :files="modelData.files ?? []"
                             :loading="!modelData"
-                            :can-upload="!trainingStartedOrStopped && !isObserver"
+                            :can-upload="!trainingStartedOrStopped && !isViewer"
                             :model-id="modelData.modelId"
                             :required-files="requiredFiles"
                             :job-type="currentJobType"
@@ -120,10 +120,10 @@ import { useRoute } from "vue-router";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiGuard from "@/components/AiGuard/AiGuard.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
-import { IStep } from "@/components/AiSteps/AiSteps.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
 import { usePermissions } from "@/composables/usePermissions";
 import { FileUploadStatus } from "@/interfaces/model/types";
+import { IStep } from "@/interfaces/steps";
 import EditModelDrawer, { IEditModel } from "@/partials/models/EditModelDrawer.vue";
 import ModelUpload from "@/partials/models/ModelUpload.vue";
 import Training from "@/partials/models/Training.vue";
@@ -132,7 +132,7 @@ import LifecycleTrack from "@/partials/projects/LifecycleTrack.vue";
 import { routeChange } from "@/router";
 import { resolveModelConfigState } from "@/services/file-service";
 import { getFLStatus } from "@/services/fl-service";
-import { DEFAULT_JOB_TYPE, editModel, fetchJobTypes, getModel, getRequiredFilesForJobType, type JobType, type JobTypesResponse, ModelStatusEnum } from "@/services/model-service";
+import { buildModelSteps, DEFAULT_JOB_TYPE, editModel, fetchJobTypes, getModel, getRequiredFilesForJobType, getStatusEnumValue, type JobType, type JobTypesResponse, ModelStatusEnum } from "@/services/model-service";
 import { useAuthStore, UserPermissions } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 import { useProjectStore } from "@/store/project";
@@ -146,7 +146,7 @@ const projectStore = useProjectStore();
 const project = projectStore.project;
 const authStore = useAuthStore();
 const errorStore = useErrorStore();
-const { isObserver } = usePermissions();
+const { isViewer } = usePermissions();
 
 // Bridge to Training.vue: the form lives there (vee-validate context wraps
 // TrainingOptions) but the submit button lives in the page header. Page calls
@@ -232,58 +232,20 @@ watch(error, () => {
 });
 
 
-function getStatusEnumValue(status: string | undefined): number {
-    // Map string status (e.g. "PENDING") to ModelStatusEnum value
-    if (!status || !(status in ModelStatusEnum)) return ModelStatusEnum.ERROR;
-
-    // @ts-expect-error indexing the enum by a string key already guarded by the `status in ModelStatusEnum` check above
-    return ModelStatusEnum[status];
-}
-
+// Status drives the step flags (buildModelSteps); the per-step dates come from
+// the model record and are layered on here by position. See issue #29.
 const steps = computed((): IStep[] => {
-    const statusValue = getStatusEnumValue(modelData.value?.status);
-    const isStopped = statusValue === ModelStatusEnum.STOPPED;
-    const isError = statusValue === ModelStatusEnum.ERROR;
-
-    // When training is stopped or errors, prior completed steps should
-    // remain marked as completed (✅) rather than showing 🚫.
-    // A stopped/errored model must have been at least PREPARED, so
-    // "Model Prepared" stays completed and only later steps show the
-    // stopped/error indicator.  See issue #29.
-    return [
-        {
-            id: "01",
-            name: "Model Created",
-            completed: true,
-            date: modelData.value?.creationTimestamp ?? null
-        },
-        {
-            id: "02",
-            name: "Model Prepared",
-            description: statusValue === ModelStatusEnum.INITIATED ? "Model Queued" : undefined,
-            inProgress: statusValue === ModelStatusEnum.INITIATED,
-            completed: statusValue >= ModelStatusEnum.PREPARED || isStopped || isError,
-            date: modelData.value?.preparedAt ?? null
-        },
-        {
-            id: "03",
-            name: "Training",
-            description:
-                (statusValue >= ModelStatusEnum.PREPARED && statusValue < ModelStatusEnum.RESULTS_UPLOADED)
-                    ? "In Progress" : undefined,
-            inProgress: statusValue >= ModelStatusEnum.PREPARED && !isStopped && !isError,
-            completed: statusValue > ModelStatusEnum.TRAINING_STARTED,
-            error: isError,
-            stopped: isStopped,
-            date: modelData.value?.trainingStartedAt ?? null
-        },
-        {
-            id: "04",
-            name: "Results Uploaded",
-            completed: statusValue === ModelStatusEnum.RESULTS_UPLOADED,
-            date: modelData.value?.resultsUploadedAt ?? null
-        }
+    const dates = [
+        modelData.value?.creationTimestamp,
+        modelData.value?.preparedAt,
+        modelData.value?.trainingStartedAt,
+        modelData.value?.resultsUploadedAt
     ];
+
+    return buildModelSteps(modelData.value?.status).map((step, i) => ({
+        ...step,
+        date: dates[i] ?? null
+    }));
 });
 
 

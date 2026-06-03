@@ -102,7 +102,7 @@ import { array, lazy, object, string } from "yup";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiCard from "@/components/AiCard/AiCard.vue";
-import { IInitTraining, initialiseTraining,
+import { getStatusEnumValue, IInitTraining, initialiseTraining,
     JobType,
     ModelStatus,
     ModelStatusEnum } from "@/services/model-service";
@@ -167,18 +167,19 @@ defineExpose({
 });
 
 const getStatus = computed(() => {
-    return ModelStatusEnum[props.status];
+    return getStatusEnumValue(props.status);
 });
 
 const finished = computed(() => {
     return [
         ModelStatusEnum.ERROR,
         ModelStatusEnum.RESULTS_UPLOADED,
+        ModelStatusEnum.RESULTS_UPLOAD_FAILED,
         ModelStatusEnum.STOPPED
-    ].includes(ModelStatusEnum[props.status]);
+    ].includes(getStatus.value);
 });
 
-const isError = computed(() => ModelStatusEnum[props.status] === ModelStatusEnum.ERROR);
+const isError = computed(() => getStatus.value === ModelStatusEnum.ERROR);
 
 const liveActivityDotClass = computed(() => {
     if (isError.value) return "bg-red-600";

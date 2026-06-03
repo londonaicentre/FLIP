@@ -33,7 +33,7 @@
                             </div>
                             <AiCodeTextArea
                                 :initial-value="project?.query?.query"
-                                :input-props="{readonly: queryLocked || isObserver}"
+                                :input-props="{readonly: queryLocked || isViewer}"
                                 :height="440"
                                 name="query"
                                 label=""
@@ -85,7 +85,7 @@ import QueryResultCharts from "./QueryResultCharts.vue";
 
 const route = useRoute();
 const projectStore = useProjectStore();
-const { isObserver } = usePermissions();
+const { isViewer } = usePermissions();
 
 const queryId = ref<string>("");
 const project = ref<IProject>();

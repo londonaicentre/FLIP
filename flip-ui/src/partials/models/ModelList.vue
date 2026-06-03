@@ -55,7 +55,7 @@
                             data-test="model-search"
                         />
                     </div>
-                    <div v-if="!isObserver">
+                    <div v-if="!isViewer">
                         <AiButton
                             light
                             data-test="add-model-btn"
@@ -180,7 +180,7 @@ const searchQueryParam = ref("");
 
 const modalStore = useModalsStore();
 const route = useRoute();
-const { isObserver } = usePermissions();
+const { isViewer } = usePermissions();
 
 debouncedWatch(
     search,

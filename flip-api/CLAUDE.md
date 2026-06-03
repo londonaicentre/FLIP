@@ -57,5 +57,5 @@ make debug         # Restart in debug mode (port 5678)
 - FastAPI `Depends()` for DI. Repository pattern in `domain/interfaces/`.
 - asyncpg connections via async context managers from `db/database.py`.
 - pytest + factory_boy for test data. Fixtures in `conftest.py`.
-- Ruff config: line-length 120, select I/F/E/W/PT/UP* rules.
+- Ruff config: line-length 120, select I/F/E/W/PT + UP006/UP007/UP035/UP042/UP045 (`UP042` enforces `StrEnum` over the legacy `(str, Enum)` pattern).
 - All tests in `tests/unit/` and `tests/integration/`.
