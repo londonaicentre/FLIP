@@ -17,8 +17,12 @@ FROM nginx:${NGINX_VERSION}
 # This will overwrite the nginx.conf included in the base image
 COPY custom-nginx.conf /etc/nginx/nginx.conf
 
-# Ensure correct permissions (chmod is done during build as root before switching to nginx user)
-RUN chmod 644 /etc/nginx/nginx.conf
+# Fix permissions while still root: cache dirs and the pid file are created
+# by the base image owned by root; the nginx user needs write access to them.
+RUN chmod 644 /etc/nginx/nginx.conf \
+    && chown -R nginx:nginx /var/cache/nginx /var/log/nginx \
+    && touch /run/nginx.pid \
+    && chown nginx:nginx /run/nginx.pid
 
 # Drop root privileges: the nginx user exists in the base image.
 # NET_BIND_SERVICE is granted in compose to allow binding to port 80 as non-root.
