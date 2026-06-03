@@ -34,6 +34,12 @@ jobs:
 
     env:
       VITE_LOCAL: false
+      # This job only runs lint + Vitest unit tests, neither of which needs
+      # the Cypress desktop binary. Skipping its postinstall download avoids a
+      # hard dependency on download.cypress.io (a flaky external CDN) during
+      # `npm ci`. The cypress-e2e job below still installs the binary via
+      # cypress-io/github-action, which caches it.
+      CYPRESS_INSTALL_BINARY: "0"
 
     steps:
       - name: Checkout code
