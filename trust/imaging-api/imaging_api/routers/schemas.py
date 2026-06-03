@@ -38,7 +38,10 @@ _XML_FORBIDDEN_CHARS = ("<", ">", "&")
 class User(BaseModel):
     """Represents a user profile on XNAT."""
 
-    lastModified: int
+    # XNAT omits lastModified for never-modified users (e.g. a freshly configured
+    # admin that has only logged in), so it must be optional — otherwise parsing
+    # the user list fails and project creation 500s.
+    lastModified: int | None = None
     username: str
     enabled: bool
     id: int

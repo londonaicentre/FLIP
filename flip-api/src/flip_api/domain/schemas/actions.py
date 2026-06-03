@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from enum import StrEnum
+from enum import Enum, StrEnum
 
 
 class ProjectAuditAction(StrEnum):
@@ -24,3 +24,23 @@ class ProjectAuditAction(StrEnum):
 class ModelAuditAction(StrEnum):
     DELETE = "DELETE"
     EDIT = "EDIT"
+    # Status-transition audits keyed by the new ModelStatus value. Recorded in
+    # update_model_status so the model lifecycle UI can render real dates for
+    # "Prepared / Training started / Results uploaded" instead of static "done"
+    # labels. Only stages surfaced in the lifecycle bar are tracked.
+    PREPARED = "PREPARED"
+    TRAINING_STARTED = "TRAINING_STARTED"
+    RESULTS_UPLOADED = "RESULTS_UPLOADED"
+
+
+class TrustAuditAction(str, Enum):
+    """Lifecycle events for the trust registry.
+
+    Captured by `trusts_services.utils.audit_helper.audit_trust_action`:
+    `register_trust` writes REGISTERED, `delete_trust` writes DELETED. The
+    audit row is stored in `trusts_audit` with no FK to `trust.id`, so it
+    persists past a hard delete.
+    """
+
+    REGISTERED = "REGISTERED"
+    DELETED = "DELETED"

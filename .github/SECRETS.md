@@ -52,12 +52,12 @@ openssl rand -base64 32
 
 ### 2. `TRUST_API_KEY`
 
-**Description**: Per-trust API key for authenticating trust-to-hub service calls. Each trust gets a unique key; the hub stores SHA-256 hashes in `TRUST_API_KEY_HASHES` and validates incoming keys with constant-time comparison.
+**Description**: Per-trust API key for authenticating trust-to-hub service calls. Each trust gets a unique key; the hub stores the SHA-256 hash in the `trust` table's `api_key_hash` column and validates incoming keys with constant-time comparison.
 
 **How to generate**:
 
 ```bash
-make generate-trust-api-keys
+make register-trusts
 ```
 
 **Example value**: `test-trust-api-key-for-ci`
@@ -68,7 +68,7 @@ make generate-trust-api-keys
 - `imaging_api.yml`
 - `data_access_api.yml`
 
-> **Note**: The central hub (`flip-api`) validates per-trust keys via `TRUST_API_KEY_HASHES`. Plaintext keys are stored in `TRUST_API_KEYS` JSON dict in the env file.
+> **Note**: The central hub (`flip-api`) validates per-trust keys against the SHA-256 hash in the `trust` table's `api_key_hash` column. The plaintext key lives only in the trust's kit file (`trust/.env.<CODE>.<env>`), never on the hub.
 
 ---
 

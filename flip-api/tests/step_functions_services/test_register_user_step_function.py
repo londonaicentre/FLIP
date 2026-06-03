@@ -31,13 +31,21 @@ client = TestClient(app)
 def user_payload():
     return {
         "email": "test@example.com",
+        "name": "Test User",
+        "organisation": "Example Org",
         "roles": [str(uuid4()), str(uuid4())],
     }
 
 
 @pytest.fixture
 def mock_register_response(user_payload):
-    return IUserResponse(user_id=uuid4(), email=user_payload["email"], roles=user_payload["roles"])
+    return IUserResponse(
+        user_id=uuid4(),
+        email=user_payload["email"],
+        name=user_payload["name"],
+        organisation=user_payload["organisation"],
+        roles=user_payload["roles"],
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +73,8 @@ def test_register_user_success(mock_register, mock_set_roles, user_payload, mock
     data = response.json()
     print(data)
     assert data["email"] == user_payload["email"]
+    assert data["name"] == user_payload["name"]
+    assert data["organisation"] == user_payload["organisation"]
     assert data["roles"] == user_payload["roles"]
 
     mock_register.assert_called_once()

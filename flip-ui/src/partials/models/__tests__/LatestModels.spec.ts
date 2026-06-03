@@ -86,7 +86,7 @@ function mountLatestModels({
                                     sub: "s",
                                     email: "u@e.com"
                                 },
-                                permissions: isObserver ? [] : ["CanManageProjects"]
+                                permissions: isObserver ? [] : ["CanCreateProjects"]
                             },
                             signInStep: "DONE",
                             mfaEnabled: true,
@@ -183,10 +183,7 @@ describe("LatestModels — defensive data access", () => {
         expect(wrapper.text()).toContain("View All Models");
     });
 
-    test("shows the header Create-Model button when not an observer and data has rows", async () => {
-        // Drives the `!isObserver && projectStore.project?.status === 'APPROVED'
-        // && data?.data?.length` v-if branch in the template — both halves
-        // of the optional chain must short-circuit safely.
+    test("shows the header Create-Model button when not an observer", async () => {
         setData({
             data: [{
                 id: "m1",
@@ -205,6 +202,22 @@ describe("LatestModels — defensive data access", () => {
         expect(wrapper.exists()).toBe(true);
     });
 
+    test("shows the header Create-Model button for a Researcher (CanCreateProjects only)", async () => {
+        // Researchers don't have CanManageProjects — per-project access is
+        // enforced server-side. The UI gate must not exclude them.
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: ""
+            }]
+        });
+        const wrapper = mountLatestModels({ isObserver: false });
+        await flushPromises();
+
+        expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(true);
+    });
+
     test("hides the header Create-Model button for observers", async () => {
         setData({
             data: [{
@@ -219,25 +232,22 @@ describe("LatestModels — defensive data access", () => {
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(false);
     });
 
-    test("hides the empty-state Create-Model button for observers", async () => {
-        // When the project is approved and data.data is [], non-observers
-        // see a Create-Model CTA inside the empty-state card. Observers
-        // see only the alert text.
+    test("hides the header Create-Model button for observers in the empty state", async () => {
         setData({ data: [] });
         const wrapper = mountLatestModels({ isObserver: true });
         await flushPromises();
 
-        expect(wrapper.find("[data-test=create-model-btn]").exists()).toBe(false);
+        expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(false);
     });
 
-    test("non-observer empty-state renders the create-model CTA", async () => {
+    test("non-observer empty state renders the create-model CTA in the header", async () => {
         setData({ data: [] });
         const wrapper = mountLatestModels({ isObserver: false });
         await flushPromises();
 
-        expect(wrapper.find("[data-test=create-model-btn]").exists()).toBe(true);
+        expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(true);
 
-        await wrapper.find("[data-test=create-model-btn]").trigger("click");
+        await wrapper.find("[data-test=add-model-btn]").trigger("click");
         expect(wrapper.exists()).toBe(true);
     });
 
@@ -259,7 +269,7 @@ describe("LatestModels — defensive data access", () => {
                                     username: "u",
                                     userId: "id",
                                     attributes: {},
-                                    permissions: ["CanManageProjects"]
+                                    permissions: ["CanCreateProjects"]
                                 },
                                 signInStep: "DONE",
                                 mfaEnabled: true

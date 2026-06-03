@@ -86,7 +86,14 @@ else
 fi
 
 echo "🗑️ Removing existing db_data dirs..."
-sudo rm -rf "${VOLUMES_DIR}/Trust_1/db_data" "${VOLUMES_DIR}/Trust_2/db_data"
+# The dirs are owned by the postgres container's uid, so removal needs sudo —
+# but sudo prompts for a password in non-interactive runs. Only invoke it when
+# there's actually something to delete (first-run case has no dirs yet).
+for dir in "${VOLUMES_DIR}/Trust_1/db_data" "${VOLUMES_DIR}/Trust_2/db_data"; do
+  if [[ -e "${dir}" ]]; then
+    sudo rm -rf "${dir}"
+  fi
+done
 mkdir -p "${VOLUMES_DIR}/Trust_1/db_data" "${VOLUMES_DIR}/Trust_2/db_data"
 
 echo "📁 Extracting archives (will replace existing db_data dirs)..."

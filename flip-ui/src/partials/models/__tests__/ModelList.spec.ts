@@ -72,7 +72,7 @@ function mountModelList() {
                                     sub: "s",
                                     email: "u@e.com"
                                 },
-                                permissions: ["CanManageProjects"]
+                                permissions: ["CanCreateProjects"]
                             },
                             signInStep: "DONE",
                             mfaEnabled: true,

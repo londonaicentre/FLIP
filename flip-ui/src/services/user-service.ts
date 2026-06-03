@@ -26,12 +26,16 @@ interface IUserPermissions {
 export interface IUser {
     id: string;
     email: string;
+    name: string;
+    organisation: string;
     roles: IRole[];
     isDisabled: boolean;
 }
 
 export interface IRegisterUserDto {
     email: string,
+    name: string,
+    organisation: string,
     roles: string[]
 }
 
@@ -39,9 +43,16 @@ export interface IUserDisabledStateDto {
     disabled: boolean
 }
 
+export interface IUserProfileDto {
+    name: string,
+    organisation: string
+}
+
 export interface IProjectUser {
     id: string;
     email: string;
+    name: string;
+    organisation: string;
     isDisabled: boolean;
 }
 
@@ -98,6 +109,12 @@ export async function registerUser(user: IRegisterUserDto): Promise<IRegisterUse
 export async function updateUserDisabledState(userId: string, state: IUserDisabledStateDto):
 Promise<IUserDisabledStateDto> {
     const response = await _http.put<IUserDisabledStateDto>(`/users/${userId}`, state);
+
+    return response.data;
+}
+
+export async function updateUserProfile(userId: string, profile: IUserProfileDto): Promise<IUserProfileDto> {
+    const response = await _http.put<IUserProfileDto>(`/users/${userId}`, profile);
 
     return response.data;
 }
