@@ -47,5 +47,6 @@ shell:
 
 # Sync mock omop data (used in development / staging environments where real data is not available)
 # Fetched anonymously from the public Hugging Face dataset (no AWS CLI / credentials needed)
+# Pass TRUST=1 or TRUST=2 to update only a single trust; defaults to all.
 update-omop-data:
-	CLEAN_AFTER_UPDATE=True ./update_omop_data.sh
+	TRUST=$(TRUST) CLEAN_AFTER_UPDATE=True ./update_omop_data.sh
