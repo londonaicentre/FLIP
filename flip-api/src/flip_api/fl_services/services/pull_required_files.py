@@ -15,6 +15,7 @@ import json
 from flip_api.config import get_settings
 from flip_api.domain.interfaces.fl import required_job_types_file
 from flip_api.domain.schemas.types import FLBackend
+from flip_api.utils.constants import job_types_required_files_s3_key
 from flip_api.utils.logger import logger
 from flip_api.utils.s3_client import S3Client
 
@@ -34,7 +35,7 @@ def pull_required_files_json_to_assets(fl_backend: FLBackend) -> None:
         Exception: If the object cannot be fetched from S3 or is not valid JSON.
     """
     s3 = S3Client()
-    bucket_path = f"{get_settings().FL_APP_BASE_BUCKET}/{fl_backend}/required_files.json"
+    bucket_path = f"{get_settings().FL_APP_BASE_BUCKET}/{job_types_required_files_s3_key(fl_backend)}"
     dest = required_job_types_file(fl_backend)
 
     try:

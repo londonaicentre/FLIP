@@ -56,7 +56,7 @@ def mocked_settings():
 
 
 @pytest.fixture
-def mock_job_types_file(tmp_path, monkeypatch):
+def mock_job_types_file():
     """Provide the set of valid job types for the parametrized bundler tests.
 
     Job types are data (the per-backend manifest keys), not an enum. The bundler tests drive

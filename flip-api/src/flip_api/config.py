@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     # runtime. To switch frameworks, `make restart-fl FL_BACKEND=...` recreates flip-api so this
     # seeding re-runs and overwrites the backend on every net. Also used at the deploy layer
     # (compose/Makefile) to pick which fl-* images to run. See fl_scheduler_service.resolve_backend.
-    FL_BACKEND: FLBackend = FLBackend.FLOWER
+    FL_BACKEND: FLBackend = FLBackend.NVFLARE
 
     # MFA enforcement gate. Defaults to True so every unknown environment
     # (prod, stag, any new deploy) requires TOTP enrolment. Dev compose

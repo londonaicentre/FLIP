@@ -29,9 +29,11 @@ class FLBackend(StrEnum):
     resolves/bundles/pulls per backend. Add a new backend in this one place.
 
     ``StrEnum`` (not a bare ``Enum``) so each member *is* its lowercase string
-    value: ``str(FLBackend.FLOWER) == "flower"``. That keeps env (``FL_BACKEND``),
-    JSON API fields, S3 path segments and the varchar DB column all using the
-    plain backend string, exactly as the previous ``Literal`` did.
+    value: ``str(FLBackend.FLOWER) == "flower"``. Env (``FL_BACKEND``), JSON API
+    fields and S3 path segments all use that plain lowercase value, exactly as the
+    previous ``Literal`` did. The ``FLNets.fl_backend`` column is an auto-mapped
+    SQLAlchemy ``Enum`` (like the other enum columns) and so persists the member
+    *name* (``NVFLARE``/``FLOWER``); reads return a real ``FLBackend`` member.
     """
 
     NVFLARE = "nvflare"

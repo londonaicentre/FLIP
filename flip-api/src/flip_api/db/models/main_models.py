@@ -45,7 +45,8 @@ class FLNets(SQLModel, table=True):
     # re-seeding (make restart-fl recreates flip-api). Non-null: every net has a declared backend
     # from creation. Mapped like the other enum columns (status, task_type, ...): SQLModel infers a
     # SQLAlchemy Enum column from FLBackend, so the DB persists the member name and reads return a
-    # real FLBackend member.
+    # real FLBackend member. FLBackend is the one column whose member name (NVFLARE) differs from its
+    # lowercase value (nvflare), so the DB stores the uppercase name while env/JSON/S3 use the value.
     fl_backend: FLBackend = Field(nullable=False)
 
     schedulers: list["FLScheduler"] = Relationship(back_populates="net")

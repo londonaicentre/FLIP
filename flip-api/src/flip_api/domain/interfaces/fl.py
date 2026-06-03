@@ -31,6 +31,9 @@ DEFAULT_JOB_TYPE = "standard"
 # The manifests themselves are never committed to source control (gitignored) — S3 is the
 # single source of truth, pulled per FL backend on model creation. See pull_required_files.py.
 ASSETS_DIR = Path(__file__).parent.parent.parent / "assets"
+# Ensure the directory exists so the manifest pull and load have a target on a clean checkout /
+# fresh Docker volume (the dir is not tracked in git — only its manifest contents are gitignored).
+ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def required_job_types_file(fl_backend: FLBackend) -> Path:
@@ -62,8 +65,14 @@ def _load_job_types_config(fl_backend: FLBackend) -> dict[str, list[str]]:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except Exception as e:
-        logger.warning(f"Could not load required-files manifest {path}: {e}")
+    except FileNotFoundError:
+        # Benign: the manifest is pulled from S3 on model creation, so it is legitimately
+        # absent on first boot / a fresh volume before any model exists.
+        logger.debug(f"Required-files manifest not present at {path}; returning empty job-type map.")
+        return {}
+    except (json.JSONDecodeError, OSError) as e:
+        # A present-but-unreadable or corrupt manifest is a real error worth a traceback.
+        logger.warning(f"Could not load required-files manifest {path}: {e}", exc_info=True)
         return {}
 
 

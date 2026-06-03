@@ -77,7 +77,9 @@ def seed_fl_nets(session: Session) -> list[FLNets]:
                 logger.info(f"FL Net '{name}' already matches NET_ENDPOINTS and FL_BACKEND. Skipping.")
     session.commit()
 
-    return list(session.exec(select(FLNets)).all())
+    result = list(session.exec(select(FLNets)).all())
+    logger.info(f"Seeded {len(result)} FL net(s); declared backend = '{backend}'.")
+    return result
 
 
 if __name__ == "__main__":
