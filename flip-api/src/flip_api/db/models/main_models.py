@@ -217,10 +217,13 @@ class QueryStats(SQLModel, table=True):
     stats: str = Field()
     stats_received: Annotated[datetime, Field(default_factory=datetime.utcnow)]
     # One aggregate row per query. The serialization lock in _aggregate_and_save_results
-    # already prevents concurrent inserts; this is a DB-level backstop so a duplicate can
-    # never be created silently (a duplicate would let the read path pick an arbitrary row).
-    # See issue #579.
-    query_id: UUID | None = Field(default=None, foreign_key="queries.id", unique=True)
+    # already prevents concurrent inserts; the UNIQUE constraint is a DB-level backstop so a
+    # duplicate can never be created silently (a duplicate would let the read path pick an
+    # arbitrary row). Non-nullable on purpose: every aggregate belongs to a query (the only
+    # writer always sets it), and Postgres treats NULLs as distinct under UNIQUE — a nullable
+    # FK would let multiple NULL-query_id rows slip past the constraint, so the invariant is
+    # only fully encoded when the column is NOT NULL. See issue #579.
+    query_id: UUID = Field(foreign_key="queries.id", unique=True)
 
 
 class SiteBanner(SQLModel, table=True):
