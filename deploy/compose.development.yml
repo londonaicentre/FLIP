@@ -156,7 +156,8 @@ services:
       - ALL
     cap_add:
       - CHOWN
-      - SETPCAP
+      - SETUID
+      - SETGID
     networks:
       - default
     container_name: flip-db

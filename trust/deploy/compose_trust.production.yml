@@ -29,6 +29,8 @@ services:
       - ALL
     cap_add:
       - CHOWN
+      - SETUID
+      - SETGID
     environment:
       POSTGRES_USER: ${OMOP_POSTGRES_USER}
       POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
