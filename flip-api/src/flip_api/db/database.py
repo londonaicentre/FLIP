@@ -1,15 +1,18 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
+#
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
 
+import threading
 from collections.abc import Generator
 from typing import Any
 from urllib.parse import quote
@@ -31,15 +34,24 @@ _POOL_RECYCLE_SECONDS = 1500
 # Lazily-created, reused RDS client for minting IAM auth tokens. boto3 clients
 # are not free to construct (service-model load), and the do_connect hook can
 # fire on every new physical connection, so we cache one. Typed Any because the
-# bare boto3-stubs install has no rds service stub.
+# bare boto3-stubs install has no rds service stub. The lock guards the
+# first-warmup race: the do_connect hook can fire from several pool threads at
+# once, and without it each would construct (and discard all-but-one) client.
 _rds_client: Any = None
+_rds_client_lock = threading.Lock()
 
 
 def _get_rds_client() -> Any:
     """Return a cached boto3 RDS client for the configured region."""
     global _rds_client  # noqa: PLW0603
     if _rds_client is None:
-        _rds_client = boto3.session.Session().client(service_name="rds", region_name=get_settings().AWS_REGION)
+        with _rds_client_lock:
+            # Re-check inside the lock: another thread may have built it while
+            # this one waited (double-checked locking).
+            if _rds_client is None:
+                _rds_client = boto3.session.Session().client(
+                    service_name="rds", region_name=get_settings().AWS_REGION
+                )
     return _rds_client
 
 
