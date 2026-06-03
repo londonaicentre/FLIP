@@ -17,14 +17,14 @@ import pytest
 from fastapi import HTTPException, status
 from sqlmodel import Session
 
-from flip_api.db.models.user_models import RoleRef, UserRole
-from flip_api.db.seed.main_users import ensure_user_and_role, seed_main_users
+from flip_api.db.models.user_models import RoleRef, UserProfile, UserRole
+from flip_api.db.seed.main_users import MAIN_USER_PROFILES, ensure_user_and_role, seed_main_users
 from flip_api.domain.schemas.users import CognitoUser
 from flip_api.utils.constants import (
     ADMIN_EMAIL_1,
     ADMIN_EMAIL_2,
     ADMIN_EMAIL_3,
-    OBSERVER_EMAIL,
+    VIEWER_EMAIL,
     RESEARCHER_EMAIL,
 )
 
@@ -44,16 +44,26 @@ def mock_settings():
 @patch("flip_api.db.seed.main_users.ensure_user_and_role")
 @patch("flip_api.db.seed.main_users.logger")
 def test_seed_main_users_calls_ensure_user_and_role(mock_logger, mock_ensure_user_and_role, mock_session):
-    """Test that seed_main_users calls ensure_user_and_role for each admin, researcher, and observer."""
+    """Test that seed_main_users calls ensure_user_and_role for each admin, researcher, and viewer."""
     seed_main_users(mock_session)
 
     assert mock_ensure_user_and_role.call_count == 5
 
-    mock_ensure_user_and_role.assert_any_call(ADMIN_EMAIL_1, RoleRef.ADMIN, mock_session)
-    mock_ensure_user_and_role.assert_any_call(ADMIN_EMAIL_2, RoleRef.ADMIN, mock_session)
-    mock_ensure_user_and_role.assert_any_call(ADMIN_EMAIL_3, RoleRef.ADMIN, mock_session)
-    mock_ensure_user_and_role.assert_any_call(RESEARCHER_EMAIL, RoleRef.RESEARCHER, mock_session)
-    mock_ensure_user_and_role.assert_any_call(OBSERVER_EMAIL, RoleRef.OBSERVER, mock_session)
+    mock_ensure_user_and_role.assert_any_call(
+        ADMIN_EMAIL_1, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_1]
+    )
+    mock_ensure_user_and_role.assert_any_call(
+        ADMIN_EMAIL_2, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_2]
+    )
+    mock_ensure_user_and_role.assert_any_call(
+        ADMIN_EMAIL_3, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_3]
+    )
+    mock_ensure_user_and_role.assert_any_call(
+        RESEARCHER_EMAIL, RoleRef.RESEARCHER, mock_session, *MAIN_USER_PROFILES[RESEARCHER_EMAIL]
+    )
+    mock_ensure_user_and_role.assert_any_call(
+        VIEWER_EMAIL, RoleRef.VIEWER, mock_session, *MAIN_USER_PROFILES[VIEWER_EMAIL]
+    )
 
     # Logging verified
     mock_logger.debug.assert_called_with("Seeding main users...")
@@ -103,7 +113,9 @@ def test_seed_main_users_propagates_unexpected_errors(
     with pytest.raises(RuntimeError, match="Unexpected programming error"):
         seed_main_users(mock_session)
 
-    mock_ensure_user_and_role.assert_called_once_with(ADMIN_EMAIL_1, RoleRef.ADMIN, mock_session)
+    mock_ensure_user_and_role.assert_called_once_with(
+        ADMIN_EMAIL_1, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_1]
+    )
 
 
 @patch("flip_api.db.seed.main_users.ensure_user_and_role")
@@ -126,7 +138,9 @@ def test_seed_main_users_propagates_4xx_http_failures(
         seed_main_users(mock_session)
 
     assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-    mock_ensure_user_and_role.assert_called_once_with(ADMIN_EMAIL_1, RoleRef.ADMIN, mock_session)
+    mock_ensure_user_and_role.assert_called_once_with(
+        ADMIN_EMAIL_1, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_1]
+    )
 
 
 @patch("flip_api.db.seed.main_users.ensure_user_and_role")
@@ -138,11 +152,11 @@ def test_seed_main_users_runs_all_when_each_succeeds(mock_logger, mock_ensure_us
     seed_main_users(mock_session)
 
     expected_calls = [
-        (ADMIN_EMAIL_1, RoleRef.ADMIN, mock_session),
-        (ADMIN_EMAIL_2, RoleRef.ADMIN, mock_session),
-        (ADMIN_EMAIL_3, RoleRef.ADMIN, mock_session),
-        (RESEARCHER_EMAIL, RoleRef.RESEARCHER, mock_session),
-        (OBSERVER_EMAIL, RoleRef.OBSERVER, mock_session),
+        (ADMIN_EMAIL_1, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_1]),
+        (ADMIN_EMAIL_2, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_2]),
+        (ADMIN_EMAIL_3, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_3]),
+        (RESEARCHER_EMAIL, RoleRef.RESEARCHER, mock_session, *MAIN_USER_PROFILES[RESEARCHER_EMAIL]),
+        (VIEWER_EMAIL, RoleRef.VIEWER, mock_session, *MAIN_USER_PROFILES[VIEWER_EMAIL]),
     ]
     actual_calls = [c.args for c in mock_ensure_user_and_role.call_args_list]
     assert actual_calls == expected_calls
@@ -163,7 +177,7 @@ def test_ensure_user_and_role_skips_missing_cognito_user(
         detail="Not found",
     )
 
-    ensure_user_and_role("missing@example.com", RoleRef.RESEARCHER, mock_session)
+    ensure_user_and_role("missing@example.com", RoleRef.RESEARCHER, mock_session, "Missing User", "Example Org")
 
     mock_get_user_by_email_or_id.assert_called_once_with(user_pool_id="test-pool", email="missing@example.com")
     mock_session.exec.assert_not_called()
@@ -182,7 +196,7 @@ def test_ensure_user_and_role_reraises_non_404_cognito_errors(
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        ensure_user_and_role("missing@example.com", RoleRef.RESEARCHER, mock_session)
+        ensure_user_and_role("missing@example.com", RoleRef.RESEARCHER, mock_session, "Missing User", "Example Org")
 
     assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
 
@@ -198,16 +212,22 @@ def test_ensure_user_and_role_grants_role_when_missing(
     mock_get_user_by_email_or_id.return_value = CognitoUser(
         id=sub, email="alex@example.com", is_disabled=False
     )  # type: ignore[call-arg]
+    mock_session.get.return_value = None
     mock_session.exec.return_value.first.return_value = None
 
-    ensure_user_and_role("alex@example.com", RoleRef.RESEARCHER, mock_session)
+    ensure_user_and_role("alex@example.com", RoleRef.RESEARCHER, mock_session, "Alex Example", "Example Org")
 
-    mock_session.add.assert_called_once()
-    added_obj = mock_session.add.call_args.args[0]
-    assert isinstance(added_obj, UserRole)
-    assert added_obj.user_id == sub
-    assert added_obj.role_id == RoleRef.RESEARCHER.value
-    mock_session.commit.assert_called_once()
+    assert mock_session.add.call_count == 2
+    added_profile = mock_session.add.call_args_list[0].args[0]
+    assert isinstance(added_profile, UserProfile)
+    assert added_profile.user_id == sub
+    assert added_profile.name == "Alex Example"
+    assert added_profile.organisation == "Example Org"
+    added_role = mock_session.add.call_args_list[1].args[0]
+    assert isinstance(added_role, UserRole)
+    assert added_role.user_id == sub
+    assert added_role.role_id == RoleRef.RESEARCHER.value
+    assert mock_session.commit.call_count == 2
 
 
 @patch("flip_api.db.seed.main_users.get_settings")
@@ -225,7 +245,43 @@ def test_ensure_user_and_role_is_idempotent_when_grant_already_exists(
         user_id=sub, role_id=RoleRef.RESEARCHER.value
     )
 
-    ensure_user_and_role("alex@example.com", RoleRef.RESEARCHER, mock_session)
+    mock_session.get.return_value = UserProfile(user_id=sub, name="Alex Example", organisation="Example Org")
+
+    ensure_user_and_role("alex@example.com", RoleRef.RESEARCHER, mock_session, "Alex Example", "Example Org")
 
     mock_session.add.assert_not_called()
     mock_session.commit.assert_not_called()
+
+
+@patch("flip_api.db.seed.main_users.get_settings")
+@patch("flip_api.db.seed.main_users.get_user_by_email_or_id")
+def test_ensure_user_and_role_updates_existing_profile_when_seed_fields_drift(
+    mock_get_user_by_email_or_id, mock_get_settings, mock_session, mock_settings
+):
+    """A profile row already exists but the seeded display name/org have
+    changed (e.g. a hardcoded admin was renamed in MAIN_USER_PROFILES).
+    The profile must be brought in line on next boot.
+
+    The role grant stays unchanged — `has_any_role` is short-circuited by the
+    existing UserRole row.
+    """
+    mock_get_settings.return_value = mock_settings
+    sub = uuid4()
+    mock_get_user_by_email_or_id.return_value = CognitoUser(
+        id=sub, email="alex@example.com", is_disabled=False
+    )  # type: ignore[call-arg]
+    existing_profile = UserProfile(user_id=sub, name="Stale Name", organisation="Old Org")
+    mock_session.get.return_value = existing_profile
+    mock_session.exec.return_value.first.return_value = UserRole(
+        user_id=sub, role_id=RoleRef.RESEARCHER.value
+    )
+
+    ensure_user_and_role(
+        "alex@example.com", RoleRef.RESEARCHER, mock_session, "Fresh Name", "New Org"
+    )
+
+    # The in-place mutation + add() captures the updated row for the commit.
+    assert existing_profile.name == "Fresh Name"
+    assert existing_profile.organisation == "New Org"
+    mock_session.add.assert_called_once_with(existing_profile)
+    mock_session.commit.assert_called_once()

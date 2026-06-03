@@ -21,19 +21,21 @@
                 <div
                     class="relative "
                 >
-                    <icon-ph-download-duotone
-                        class="w-16 h-16 mb-8 transition"
-                        :class="[details.deploymentMode ? 'text-primary-600 dark:text-green-400' : 'text-gray-300']"
-                    />
-                    <h3 class="mt-2 text-3xl font-semibold font-heading">
-                        Deployment Mode is <span
-                            class="font-black underline uppercase transition decoration-4 decoration-solid underline-offset-8"
-                            :class="[details.deploymentMode ? 'decoration-primary-600 dark:decoration-green-400' : 'decoration-transparent']"
-                            data-test="deployment-mode-status-text"
-                        >
-                            {{ details.deploymentMode ? 'Enabled' : 'Disabled' }}
-                        </span>
-                    </h3>
+                    <div class="flex items-center gap-3">
+                        <icon-ph-download-duotone
+                            class="w-9 h-9 transition shrink-0"
+                            :class="[details.deploymentMode ? 'text-primary-600 dark:text-green-400' : 'text-gray-300']"
+                        />
+                        <h3 class="text-3xl font-semibold font-heading">
+                            Deployment Mode is <span
+                                class="font-black underline uppercase transition decoration-4 decoration-solid underline-offset-8"
+                                :class="[details.deploymentMode ? 'decoration-primary-600 dark:decoration-green-400' : 'decoration-transparent']"
+                                data-test="deployment-mode-status-text"
+                            >
+                                {{ details.deploymentMode ? 'Enabled' : 'Disabled' }}
+                            </span>
+                        </h3>
+                    </div>
                     <p class="max-w-2xl my-6 text-gray-400">
                         Enabling <strong class="font-bold">deployment mode</strong> will disable core functionality
                         across the platform whilst a deployment is in progress. You probably want to enable a site

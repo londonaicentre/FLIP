@@ -77,7 +77,15 @@
         - "{{ flip_dir }}/xnat/xnat-data/cache"
         - "{{ flip_dir }}/xnat/xnat-db-data"
 
-    - name: Create FL client kit directories
+    # ── FL participant kit dir ────────────────────────────────────────────────
+    # Pre-create /opt/flip/fl-kit/net-1/services/<slot>/{local,startup,transfer}
+    # — the layout the trust-side prod compose mounts via
+    # ${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/... (nvflare) or
+    # ${FL_KIT_DIR}/net-1/{certificates,keys} (flower). Keep this list in
+    # sync with the playbook in deploy/providers/AWS/site.yml; if the
+    # operator overrides FL_KIT_DIR in their trust kit file they're
+    # responsible for the directory tree themselves.
+    - name: Create FL participant kit directories (default FL_KIT_DIR=/opt/flip/fl-kit)
       file:
         path: "{{ item }}"
         state: directory
@@ -85,8 +93,12 @@
         group: ubuntu
         mode: "0755"
       loop:
-        - "/opt/flip/services"
-        - "/opt/flip/services/Trust_2"
-        - "/opt/flip/services/Trust_2/startup"
-        - "/opt/flip/services/Trust_2/local"
-        - "/opt/flip/services/Trust_2/transfer"
+        - "{{ flip_dir }}/fl-kit"
+        - "{{ flip_dir }}/fl-kit/net-1"
+        - "{{ flip_dir }}/fl-kit/net-1/services"
+        - "{{ flip_dir }}/fl-kit/net-1/services/Trust_2"
+        - "{{ flip_dir }}/fl-kit/net-1/services/Trust_2/local"
+        - "{{ flip_dir }}/fl-kit/net-1/services/Trust_2/startup"
+        - "{{ flip_dir }}/fl-kit/net-1/services/Trust_2/transfer"
+        - "{{ flip_dir }}/fl-kit/net-1/certificates"
+        - "{{ flip_dir }}/fl-kit/net-1/keys"

@@ -11,21 +11,36 @@
 #
 
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException, Request, status
+from pydantic import ValidationError
 
+from flip_api.db.models.main_models import Trust
 from flip_api.domain.interfaces.fl import IInitiateTrainingInputPayload
 from flip_api.fl_services.initiate_training import initiate_training
 
 
+def _trust(name: str, trust_id: UUID | None = None) -> Trust:
+    """Build a Trust ORM row with a fixed id for deterministic test assertions."""
+    return Trust(id=trust_id or uuid4(), name=name)
+
+
 @pytest.fixture
-def mock_db():
-    with patch("flip_api.fl_services.run_jobs.get_session") as mock_get_session:
-        mock_db = MagicMock()
-        mock_get_session.return_value = mock_db
-        yield mock_db
+def client1():
+    # The default trust the mock DB resolves; tests build their payload from its id.
+    return _trust("client1")
+
+
+@pytest.fixture
+def mock_db(client1):
+    # initiate_training receives the session as an argument, so the test passes a plain mock.
+    mock_db = MagicMock()
+    # Default: the lookup resolves to a single trust (`client1`). Tests that exercise
+    # other shapes (unknown trust, multiple trusts) override `mock_db.exec(...).all`.
+    mock_db.exec.return_value.all.side_effect = lambda: [client1]
+    return mock_db
 
 
 @pytest.fixture
@@ -67,19 +82,45 @@ def mock_add_log():
 
 
 def test_initiate_training_success(
-    model_id, fake_request, mock_db, mock_can_modify_model, mock_add_fl_job, mock_update_model_status, mock_add_log
+    model_id, fake_request, mock_db, client1, mock_can_modify_model, mock_add_fl_job, mock_update_model_status,
+    mock_add_log
 ):
-    payload = IInitiateTrainingInputPayload(trusts=["client1"])
+    payload = IInitiateTrainingInputPayload(trust_ids=[client1.id])
     response = initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
     assert response is None  # Expecting no content response
+
     mock_add_fl_job.assert_called_once()
+    # add_fl_job must receive resolved Trust ORM rows, not the raw payload.trust_ids.
+    _, called_trusts, _ = mock_add_fl_job.call_args.args
+    assert all(isinstance(t, Trust) for t in called_trusts)
+    assert [t.name for t in called_trusts] == ["client1"]
+
     mock_update_model_status.assert_called_once()
     assert mock_add_log.call_count == 2
+    # Audit log uses names extracted from the resolved Trust rows, not the raw payload ids.
+    second_log_msg = mock_add_log.call_args_list[1].args[1]
+    assert "client1" in second_log_msg
+
+
+def test_initiate_training_passes_full_trust_rows_to_add_fl_job(
+    model_id, fake_request, mock_db, mock_can_modify_model, mock_add_fl_job, mock_update_model_status, mock_add_log
+):
+    trust_1 = _trust("Trust_1")
+    trust_2 = _trust("Trust_2")
+    mock_db.exec.return_value.all.side_effect = lambda: [trust_1, trust_2]
+
+    payload = IInitiateTrainingInputPayload(trust_ids=[trust_1.id, trust_2.id])
+    initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
+
+    _, called_trusts, _ = mock_add_fl_job.call_args.args
+    # Same Trust instances the DB returned — endpoint must not project to names/ids before
+    # handing off to internal services.
+    assert called_trusts == [trust_1, trust_2]
 
 
 def test_initiate_training_forbidden(model_id, fake_request, mock_db, mock_can_modify_model):
     mock_can_modify_model.return_value = False
-    payload = IInitiateTrainingInputPayload(trusts=["client1"])
+    payload = IInitiateTrainingInputPayload(trust_ids=[uuid4()])
 
     with pytest.raises(HTTPException) as exc_info:
         initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
@@ -87,19 +128,62 @@ def test_initiate_training_forbidden(model_id, fake_request, mock_db, mock_can_m
 
 
 def test_initiate_training_model_not_found(
-    model_id, fake_request, mock_db, mock_can_modify_model, mock_add_fl_job, mock_add_log
+    model_id, fake_request, mock_db, client1, mock_can_modify_model, mock_add_fl_job, mock_add_log
 ):
     with patch("flip_api.fl_services.initiate_training.update_model_status", return_value=False):
-        payload = IInitiateTrainingInputPayload(trusts=["client1"])
+        payload = IInitiateTrainingInputPayload(trust_ids=[client1.id])
         with pytest.raises(HTTPException) as exc_info:
             initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
         assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
 
 
-def test_initiate_training_failure(model_id, fake_request, mock_db, mock_can_modify_model):
+def test_initiate_training_failure(model_id, fake_request, mock_db, client1, mock_can_modify_model):
     with patch("flip_api.fl_services.initiate_training.add_fl_job", side_effect=Exception("Unexpected error")):
-        payload = IInitiateTrainingInputPayload(trusts=["client1"])
+        payload = IInitiateTrainingInputPayload(trust_ids=[client1.id])
         with pytest.raises(HTTPException) as exc_info:
             initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
         assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         assert "Unexpected error" in exc_info.value.detail
+
+
+def test_initiate_training_rejects_unknown_trusts(
+    model_id, fake_request, mock_db, client1, mock_can_modify_model, mock_add_fl_job
+):
+    # The DB resolves only `client1`; the payload also references an id with no Trust row.
+    ghost_id = uuid4()
+    payload = IInitiateTrainingInputPayload(trust_ids=[client1.id, ghost_id])
+
+    with pytest.raises(HTTPException) as exc_info:
+        initiate_training(model_id, payload, fake_request, mock_db, user_id="user123")
+
+    assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+    assert str(ghost_id) in exc_info.value.detail
+    mock_add_fl_job.assert_not_called()
+
+
+class TestIInitiateTrainingInputPayloadSchema:
+    def test_rejects_empty_trust_ids(self):
+        with pytest.raises(ValidationError) as exc_info:
+            IInitiateTrainingInputPayload(trust_ids=[])
+        assert "at least 1 item" in str(exc_info.value)
+
+    def test_rejects_duplicate_trust_ids(self):
+        dup = uuid4()
+        with pytest.raises(ValidationError) as exc_info:
+            IInitiateTrainingInputPayload(trust_ids=[dup, dup])
+        assert "unique" in str(exc_info.value)
+
+    def test_rejects_unknown_fields(self):
+        with pytest.raises(ValidationError) as exc_info:
+            IInitiateTrainingInputPayload(trust_ids=[uuid4()], extra_field="x")
+        assert "extra_field" in str(exc_info.value)
+
+    def test_rejects_non_uuid_entries(self):
+        # Trust *names* (or any non-UUID string) are no longer accepted — identity is the id.
+        with pytest.raises(ValidationError):
+            IInitiateTrainingInputPayload(trust_ids=["Trust_1"])
+
+    def test_accepts_valid_payload(self):
+        id_1, id_2 = uuid4(), uuid4()
+        payload = IInitiateTrainingInputPayload(trust_ids=[id_1, id_2])
+        assert payload.trust_ids == [id_1, id_2]

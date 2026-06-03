@@ -56,7 +56,7 @@ def seed_role_permissions(session: Session) -> None:
     - Admin: every permission defined in ``PermissionRef``.
     - Researcher: ``CAN_CREATE_PROJECTS`` only. ``CAN_MANAGE_PROJECTS`` is
       reserved for Admin — it bypasses per-project access checks (see issue #358).
-    - Observer: none — read-only access is enforced at the route layer by
+    - Viewer: none — read-only access is enforced at the route layer by
       the absence of ``CAN_MANAGE_PROJECTS``.
 
     Args:

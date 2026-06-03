@@ -58,7 +58,7 @@ class RoleRef(Enum):
 
     ADMIN = UUID("64d3145b-034c-4328-b637-8eb54313b7c5")
     RESEARCHER = UUID("10b64ed0-bc90-4c01-9cc3-933c704905c1")
-    OBSERVER = UUID("cdee79c9-a5e1-4b9e-a315-1ec2f3d29efe")
+    VIEWER = UUID("cdee79c9-a5e1-4b9e-a315-1ec2f3d29efe")
 
 
 class UserRole(SQLModel, table=True):
@@ -72,6 +72,27 @@ class UserRole(SQLModel, table=True):
 
     user_id: UUID = Field(primary_key=True)
     role_id: UUID = Field(foreign_key="roles.id", primary_key=True)
+
+
+class UserProfile(SQLModel, table=True):
+    """DB-backed profile data for a Cognito user.
+
+    `name` and `organisation` are operator-supplied strings rendered to other
+    users via Vue `{{ }}` interpolation (project card `owner_name`, audit log
+    actor labels, etc.). Vue escapes `{{ }}` by default, so the current UI is
+    safe. Treat both fields as UNTRUSTED CONTENT — if you ever render them via
+    `v-html`, export them to PDF/CSV, or paste them into an email template,
+    re-escape at that boundary. The 255-char cap is a length bound, not a
+    content filter.
+    """
+
+    __tablename__ = "user_profile"
+
+    user_id: UUID = Field(primary_key=True)
+    name: str = Field(default="", max_length=255)
+    organisation: str = Field(default="", max_length=255)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class Role(SQLModel, table=True):

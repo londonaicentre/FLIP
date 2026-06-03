@@ -11,8 +11,7 @@
  * limitations under the License.
  */
 
-import {
-    confirmResetPassword,
+import { confirmResetPassword,
     confirmSignIn,
     fetchAuthSession,
     fetchUserAttributes,
@@ -22,8 +21,7 @@ import {
     signIn,
     signOut,
     updateMFAPreference,
-    verifyTOTPSetup
-} from "aws-amplify/auth";
+    verifyTOTPSetup } from "aws-amplify/auth";
 import { createPinia, setActivePinia } from "pinia";
 
 import { routeChange } from "@/router";
@@ -95,9 +93,7 @@ describe("authStore", () => {
         // Default: tokens are visible immediately so waitForSessionTokens
         // resolves without triggering the forceRefresh fallback. Tests that
         // exercise the race re-arm this with mockResolvedValueOnce.
-        vi.mocked(fetchAuthSession).mockResolvedValue({
-            tokens: { accessToken: { toString: () => "access-token" } as never }
-        } as never);
+        vi.mocked(fetchAuthSession).mockResolvedValue({ tokens: { accessToken: { toString: () => "access-token" } as never } } as never);
     });
 
     describe("initial state & getters", () => {
@@ -113,7 +109,10 @@ describe("authStore", () => {
             store.user = {
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "e@f.com" },
+                attributes: {
+                    sub: "s",
+                    email: "e@f.com"
+                },
                 permissions: []
             };
             expect(store.getUser).toEqual(store.user);
@@ -126,7 +125,10 @@ describe("authStore", () => {
             store.user = {
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "e@f.com" },
+                attributes: {
+                    sub: "s",
+                    email: "e@f.com"
+                },
                 permissions: []
             };
             // Stag/prod path: mfaRequired=true forces mfaEnabled=true gate.
@@ -175,14 +177,15 @@ describe("authStore", () => {
                 username: "u",
                 userId: "id"
             } as never);
-            vi.mocked(getMfaStatus).mockResolvedValue({ enabled: true, required: true });
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: true,
+                required: true
+            });
             vi.mocked(fetchUserAttributes).mockResolvedValue({
                 sub: "s",
                 email: "e@f.com"
             } as never);
-            vi.mocked(getUserPermissions).mockResolvedValue({
-                permissions: ["CanManageUsers"]
-            });
+            vi.mocked(getUserPermissions).mockResolvedValue({ permissions: ["CanManageUsers"] });
 
             await store.hydrate();
 
@@ -191,7 +194,10 @@ describe("authStore", () => {
             expect(store.user).toEqual({
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "e@f.com" },
+                attributes: {
+                    sub: "s",
+                    email: "e@f.com"
+                },
                 permissions: ["CanManageUsers"]
             });
             expect(getUserPermissions).toHaveBeenCalledWith("id");
@@ -203,7 +209,10 @@ describe("authStore", () => {
                 username: "u",
                 userId: "id"
             } as never);
-            vi.mocked(getMfaStatus).mockResolvedValue({ enabled: true, required: true });
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: true,
+                required: true
+            });
             vi.mocked(fetchUserAttributes).mockResolvedValue({
                 sub: "s",
                 email: "e@f.com"
@@ -221,7 +230,10 @@ describe("authStore", () => {
                 username: "u",
                 userId: "id"
             } as never);
-            vi.mocked(getMfaStatus).mockResolvedValue({ enabled: false, required: true });
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: false,
+                required: true
+            });
             vi.mocked(fetchUserAttributes).mockResolvedValue({
                 sub: "s",
                 email: "e@f.com"
@@ -234,7 +246,10 @@ describe("authStore", () => {
             expect(store.user).toEqual({
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "e@f.com" },
+                attributes: {
+                    sub: "s",
+                    email: "e@f.com"
+                },
                 permissions: []
             });
             expect(getUserPermissions).not.toHaveBeenCalled();
@@ -251,7 +266,10 @@ describe("authStore", () => {
             } as never);
             vi.mocked(getUserPermissions).mockResolvedValue({ permissions: [] });
 
-            await store.hydrate({ enabled: true, required: true });
+            await store.hydrate({
+                enabled: true,
+                required: true
+            });
 
             expect(getMfaStatus).not.toHaveBeenCalled();
             expect(store.mfaEnabled).toBe(true);
@@ -267,14 +285,15 @@ describe("authStore", () => {
                 username: "u",
                 userId: "id"
             } as never);
-            vi.mocked(getMfaStatus).mockResolvedValue({ enabled: false, required: false });
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: false,
+                required: false
+            });
             vi.mocked(fetchUserAttributes).mockResolvedValue({
                 sub: "s",
                 email: "e@f.com"
             } as never);
-            vi.mocked(getUserPermissions).mockResolvedValue({
-                permissions: ["CanManageUsers"]
-            });
+            vi.mocked(getUserPermissions).mockResolvedValue({ permissions: ["CanManageUsers"] });
 
             await store.hydrate();
 
@@ -291,7 +310,10 @@ describe("authStore", () => {
                 username: "u",
                 userId: "id"
             } as never);
-            vi.mocked(getMfaStatus).mockResolvedValue({ enabled: false, required: true });
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: false,
+                required: true
+            });
             vi.mocked(fetchUserAttributes).mockResolvedValue({
                 sub: "s",
                 email: "e@f.com"
@@ -310,7 +332,10 @@ describe("authStore", () => {
                 username: "u",
                 userId: "id"
             } as never);
-            vi.mocked(getMfaStatus).mockResolvedValue({ enabled: true, required: true });
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: true,
+                required: true
+            });
             vi.mocked(fetchUserAttributes).mockResolvedValue({
                 sub: "s",
                 email: "e@f.com"
@@ -330,7 +355,10 @@ describe("authStore", () => {
             store.user = {
                 username: "stale",
                 userId: "stale",
-                attributes: { sub: "", email: "" },
+                attributes: {
+                    sub: "",
+                    email: ""
+                },
                 permissions: []
             };
             store.signInStep = "DONE";
@@ -343,14 +371,20 @@ describe("authStore", () => {
                 username: "u",
                 userId: "id"
             } as never);
-            vi.mocked(getMfaStatus).mockResolvedValue({ enabled: true, required: true });
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: true,
+                required: true
+            });
             vi.mocked(fetchUserAttributes).mockResolvedValue({
                 sub: "s",
                 email: "e@f.com"
             } as never);
             vi.mocked(getUserPermissions).mockResolvedValue({ permissions: [] });
 
-            await store.signIn({ username: "u", password: "p" });
+            await store.signIn({
+                username: "u",
+                password: "p"
+            });
 
             expect(signIn).toHaveBeenCalledWith({
                 username: "u",
@@ -375,7 +409,10 @@ describe("authStore", () => {
                 }
             } as never);
 
-            await store.signIn({ username: "u", password: "p" });
+            await store.signIn({
+                username: "u",
+                password: "p"
+            });
 
             expect(store.signInStep).toBe("CONTINUE_SIGN_IN_WITH_TOTP_SETUP");
             expect(store.totpSetup).toEqual({
@@ -389,12 +426,13 @@ describe("authStore", () => {
         it("returns early for new-password challenge without hydrating", async () => {
             vi.mocked(signIn).mockResolvedValue({
                 isSignedIn: false,
-                nextStep: {
-                    signInStep: "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED"
-                }
+                nextStep: { signInStep: "CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED" }
             } as never);
 
-            await store.signIn({ username: "u", password: "p" });
+            await store.signIn({
+                username: "u",
+                password: "p"
+            });
 
             expect(store.signInStep).toBe("CONFIRM_SIGN_IN_WITH_NEW_PASSWORD_REQUIRED");
             expect(getCurrentUser).not.toHaveBeenCalled();
@@ -406,7 +444,10 @@ describe("authStore", () => {
                 nextStep: { signInStep: "CONFIRM_SIGN_IN_WITH_TOTP_CODE" }
             } as never);
 
-            await store.signIn({ username: "u", password: "p" });
+            await store.signIn({
+                username: "u",
+                password: "p"
+            });
 
             expect(store.signInStep).toBe("CONFIRM_SIGN_IN_WITH_TOTP_CODE");
             expect(getCurrentUser).not.toHaveBeenCalled();
@@ -418,7 +459,10 @@ describe("authStore", () => {
                 nextStep: undefined
             } as never);
 
-            await store.signIn({ username: "u", password: "p" });
+            await store.signIn({
+                username: "u",
+                password: "p"
+            });
 
             expect(store.signInStep).toBeNull();
             expect(getCurrentUser).not.toHaveBeenCalled();
@@ -441,9 +485,10 @@ describe("authStore", () => {
                 nextStep: { signInStep: "DONE" }
             } as never);
 
-            await expect(store.signIn({ username: "u", password: "p" })).rejects.toMatchObject({
-                name: "MissingSessionTokensError"
-            });
+            await expect(store.signIn({
+                username: "u",
+                password: "p"
+            })).rejects.toMatchObject({ name: "MissingSessionTokensError" });
 
             // hydrate must not have been attempted — `getCurrentUser` is
             // hydrate's first Amplify call and would proceed if the wait
@@ -473,9 +518,7 @@ describe("authStore", () => {
             vi.mocked(fetchAuthSession)
                 .mockReset()
                 .mockResolvedValueOnce({ tokens: undefined } as never)
-                .mockResolvedValueOnce({
-                    tokens: { accessToken: { toString: () => "access" } as never }
-                } as never);
+                .mockResolvedValueOnce({ tokens: { accessToken: { toString: () => "access" } as never } } as never);
             vi.mocked(signIn).mockResolvedValue({
                 isSignedIn: true,
                 nextStep: { signInStep: "DONE" }
@@ -484,14 +527,20 @@ describe("authStore", () => {
                 username: "u",
                 userId: "id"
             } as never);
-            vi.mocked(getMfaStatus).mockResolvedValue({ enabled: true, required: true });
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: true,
+                required: true
+            });
             vi.mocked(fetchUserAttributes).mockResolvedValue({
                 sub: "s",
                 email: "e@f.com"
             } as never);
             vi.mocked(getUserPermissions).mockResolvedValue({ permissions: [] });
 
-            await store.signIn({ username: "u", password: "p" });
+            await store.signIn({
+                username: "u",
+                password: "p"
+            });
 
             expect(fetchAuthSession).toHaveBeenCalledTimes(2);
             expect(fetchAuthSession).toHaveBeenNthCalledWith(2, { forceRefresh: true });
@@ -504,9 +553,7 @@ describe("authStore", () => {
             // tab still has a live session. Recover by signing the stale
             // session out and retrying once, otherwise the user is stuck on
             // the login page until they clear storage by hand.
-            const stale = Object.assign(new Error("There is already a signed in user."), {
-                name: "UserAlreadyAuthenticatedException"
-            });
+            const stale = Object.assign(new Error("There is already a signed in user."), { name: "UserAlreadyAuthenticatedException" });
             vi.mocked(signIn)
                 .mockReset()
                 .mockRejectedValueOnce(stale)
@@ -519,14 +566,20 @@ describe("authStore", () => {
                 username: "u",
                 userId: "id"
             } as never);
-            vi.mocked(getMfaStatus).mockResolvedValue({ enabled: true, required: true });
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: true,
+                required: true
+            });
             vi.mocked(fetchUserAttributes).mockResolvedValue({
                 sub: "s",
                 email: "e@f.com"
             } as never);
             vi.mocked(getUserPermissions).mockResolvedValue({ permissions: [] });
 
-            await store.signIn({ username: "u", password: "p" });
+            await store.signIn({
+                username: "u",
+                password: "p"
+            });
 
             expect(signIn).toHaveBeenCalledTimes(2);
             expect(signOut).toHaveBeenCalledTimes(1);
@@ -544,9 +597,7 @@ describe("authStore", () => {
             // UserAlreadyAuthenticatedException (token write hadn't settled,
             // another tab racing), the store must let the error bubble
             // instead of retrying again. Two attempts max, no infinite loop.
-            const stale = Object.assign(new Error("There is already a signed in user."), {
-                name: "UserAlreadyAuthenticatedException"
-            });
+            const stale = Object.assign(new Error("There is already a signed in user."), { name: "UserAlreadyAuthenticatedException" });
             vi.mocked(signIn)
                 .mockReset()
                 .mockRejectedValueOnce(stale)
@@ -554,10 +605,11 @@ describe("authStore", () => {
             vi.mocked(signOut).mockResolvedValue(undefined as never);
 
             await expect(
-                store.signIn({ username: "u", password: "p" })
-            ).rejects.toMatchObject({
-                name: "UserAlreadyAuthenticatedException"
-            });
+                store.signIn({
+                    username: "u",
+                    password: "p"
+                })
+            ).rejects.toMatchObject({ name: "UserAlreadyAuthenticatedException" });
 
             expect(signIn).toHaveBeenCalledTimes(2);
             expect(signOut).toHaveBeenCalledTimes(1);
@@ -567,13 +619,14 @@ describe("authStore", () => {
         });
 
         it("does not retry on errors other than UserAlreadyAuthenticatedException", async () => {
-            const wrongPassword = Object.assign(new Error("Incorrect username or password."), {
-                name: "NotAuthorizedException"
-            });
+            const wrongPassword = Object.assign(new Error("Incorrect username or password."), { name: "NotAuthorizedException" });
             vi.mocked(signIn).mockReset().mockRejectedValue(wrongPassword);
 
             await expect(
-                store.signIn({ username: "u", password: "p" })
+                store.signIn({
+                    username: "u",
+                    password: "p"
+                })
             ).rejects.toThrow("Incorrect username or password.");
 
             expect(signIn).toHaveBeenCalledTimes(1);
@@ -600,7 +653,10 @@ describe("authStore", () => {
             const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
             await expect(
-                store.signIn({ username: "u", password: "p" })
+                store.signIn({
+                    username: "u",
+                    password: "p"
+                })
             ).rejects.toThrow("Request failed with status code 401");
 
             expect(consoleSpy).toHaveBeenCalledWith(
@@ -622,7 +678,10 @@ describe("authStore", () => {
                 username: "u",
                 userId: "id"
             } as never);
-            vi.mocked(getMfaStatus).mockResolvedValue({ enabled: false, required: true });
+            vi.mocked(getMfaStatus).mockResolvedValue({
+                enabled: false,
+                required: true
+            });
             vi.mocked(fetchUserAttributes).mockResolvedValue({
                 sub: "s",
                 email: "e@f.com"
@@ -630,9 +689,7 @@ describe("authStore", () => {
 
             await store.changePassword("newPassword123!");
 
-            expect(confirmSignIn).toHaveBeenCalledWith({
-                challengeResponse: "newPassword123!"
-            });
+            expect(confirmSignIn).toHaveBeenCalledWith({ challengeResponse: "newPassword123!" });
             expect(store.signInStep).toBe("DONE");
             expect(store.mfaEnabled).toBe(false);
         });
@@ -741,9 +798,7 @@ describe("authStore", () => {
             await store.confirmTotpChallenge("123456");
 
             expect(Snackbar.show).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    type: "warning"
-                })
+                expect.objectContaining({ type: "warning" })
             );
             consoleSpy.mockRestore();
         });
@@ -763,7 +818,10 @@ describe("authStore", () => {
         });
 
         it("sets MFA preference, clears totpSetup, then hydrates with known-true MFA", async () => {
-            store.totpSetup = { sharedSecret: "ABC", setupUri: "otpauth://..." };
+            store.totpSetup = {
+                sharedSecret: "ABC",
+                setupUri: "otpauth://..."
+            };
             vi.mocked(confirmSignIn).mockResolvedValue({
                 isSignedIn: true,
                 nextStep: undefined
@@ -850,7 +908,10 @@ describe("authStore", () => {
             const getSetupUri = vi.fn(() => url);
             store.pendingUsername = "u@e.com";
             store.captureTotpSetupDetails({
-                totpSetupDetails: { sharedSecret: "SEC", getSetupUri }
+                totpSetupDetails: {
+                    sharedSecret: "SEC",
+                    getSetupUri
+                }
             });
 
             expect(getSetupUri).toHaveBeenCalledWith("FLIP", "u@e.com");
@@ -865,7 +926,10 @@ describe("authStore", () => {
             const getSetupUri = vi.fn(() => url);
             store.pendingUsername = null;
             store.captureTotpSetupDetails({
-                totpSetupDetails: { sharedSecret: "SEC", getSetupUri }
+                totpSetupDetails: {
+                    sharedSecret: "SEC",
+                    getSetupUri
+                }
             });
 
             expect(getSetupUri).toHaveBeenCalledWith("FLIP", undefined);
@@ -891,7 +955,10 @@ describe("authStore", () => {
             store.user = {
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "e@f.com" },
+                attributes: {
+                    sub: "s",
+                    email: "e@f.com"
+                },
                 permissions: []
             };
 
@@ -920,7 +987,10 @@ describe("authStore", () => {
 
     describe("completeMfaEnrolment", () => {
         it("verifies code, sets MFA preference, clears setup, and hydrates known-true", async () => {
-            store.totpSetup = { sharedSecret: "ABC", setupUri: "otpauth://..." };
+            store.totpSetup = {
+                sharedSecret: "ABC",
+                setupUri: "otpauth://..."
+            };
             vi.mocked(verifyTOTPSetup).mockResolvedValue(undefined as never);
             vi.mocked(updateMFAPreference).mockResolvedValue(undefined as never);
             vi.mocked(getCurrentUser).mockResolvedValue({
@@ -997,7 +1067,10 @@ describe("authStore", () => {
             store.user = {
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "e@f.com" },
+                attributes: {
+                    sub: "s",
+                    email: "e@f.com"
+                },
                 permissions: []
             };
             store.signInStep = "DONE";
@@ -1019,7 +1092,10 @@ describe("authStore", () => {
             store.user = {
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "e@f.com" },
+                attributes: {
+                    sub: "s",
+                    email: "e@f.com"
+                },
                 permissions: []
             };
 
@@ -1031,9 +1107,7 @@ describe("authStore", () => {
             );
             expect(store.user).toBeNull();
             expect(routeChange.gotoLogin).toHaveBeenCalledTimes(1);
-            expect(Snackbar.error).toHaveBeenCalledWith(expect.objectContaining({
-                title: "Sign-out incomplete"
-            }));
+            expect(Snackbar.error).toHaveBeenCalledWith(expect.objectContaining({ title: "Sign-out incomplete" }));
             consoleSpy.mockRestore();
         });
 
@@ -1043,15 +1117,16 @@ describe("authStore", () => {
             // with NotAuthorizedException as expected. Surfacing any
             // snackbar here would stack on top of the interceptor's
             // "Not Authorised" message every time the session expires.
-            const expected = Object.assign(new Error("Access Token has been revoked"), {
-                name: "NotAuthorizedException"
-            });
+            const expected = Object.assign(new Error("Access Token has been revoked"), { name: "NotAuthorizedException" });
             vi.mocked(signOut).mockRejectedValue(expected);
             const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
             store.user = {
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "e@f.com" },
+                attributes: {
+                    sub: "s",
+                    email: "e@f.com"
+                },
                 permissions: []
             };
 
@@ -1070,15 +1145,16 @@ describe("authStore", () => {
             // current code blanket-suppresses NotAuthorizedException so the
             // user gets no signal about the remote revocation. For
             // user-initiated sign-out, show an info-level message either way.
-            const expected = Object.assign(new Error("Access Token has been revoked"), {
-                name: "NotAuthorizedException"
-            });
+            const expected = Object.assign(new Error("Access Token has been revoked"), { name: "NotAuthorizedException" });
             vi.mocked(signOut).mockRejectedValue(expected);
             const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
             store.user = {
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "e@f.com" },
+                attributes: {
+                    sub: "s",
+                    email: "e@f.com"
+                },
                 permissions: []
             };
 
@@ -1137,7 +1213,10 @@ describe("authStore", () => {
             store.user = {
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "e@f.com" },
+                attributes: {
+                    sub: "s",
+                    email: "e@f.com"
+                },
                 permissions: ["CanManageUsers", "CanManageProjects"]
             };
 
@@ -1151,7 +1230,10 @@ describe("authStore", () => {
             store.user = {
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "e@f.com" },
+                attributes: {
+                    sub: "s",
+                    email: "e@f.com"
+                },
                 permissions: ["CanManageUsers"]
             };
 
@@ -1165,7 +1247,10 @@ describe("authStore", () => {
             store.user = {
                 username: "u",
                 userId: "id",
-                attributes: { sub: "s", email: "e@f.com" },
+                attributes: {
+                    sub: "s",
+                    email: "e@f.com"
+                },
                 permissions: []
             };
 

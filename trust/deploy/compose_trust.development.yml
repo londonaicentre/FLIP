@@ -36,9 +36,15 @@ services:
       POSTGRES_PASSWORD: ${OMOP_POSTGRES_PASSWORD}
       POSTGRES_DB: ${OMOP_POSTGRES_DB}
     volumes:
-      - ./omop-db/volumes/${TRUST_NAME}/db_data:/var/lib/postgresql/data
+      # OMOP_DATA_DIR decouples the host-side fixture path from TRUST_NAME so a
+      # rename of the friendly name (e.g. "Trust_1" → "(Mock) GSTT") doesn't make
+      # Docker create a fresh empty volume and skip the OMOP schema/role seeding.
+      - ${OMOP_DATA_DIR:-./omop-db/volumes/Trust_${TRUST_NUMBER}/db_data}:/var/lib/postgresql/data
 
   orthanc:
+    # Pull from GHCR by default; `make up BUILD=true` rebuilds from build: below.
+    image: ghcr.io/londonaicentre/orthanc:${DOCKER_TAG}
+    pull_policy: always
     build:
       context: ./orthanc
       dockerfile: Dockerfile
@@ -61,12 +67,20 @@ services:
           {"XNAT": {"AET": "XNAT", "Host": "xnat-web", "Port": "${XNAT_PORT}"}}
 
   imaging-api:
+    # Pull from GHCR by default; local imaging_api/ bind-mount overlays it for
+    # live reload. `make up BUILD=true` rebuilds from the build: block instead.
+    image: ghcr.io/londonaicentre/imaging-api:${DOCKER_TAG}
+    pull_policy: always
+    # Dev-on-pull: the GHCR image bakes uid 1000 (flip); run it as the HOST uid
+    # so it can write the host-owned mounts (notably ${BASE_IMAGES_DOWNLOAD_DIR}
+    # -> /app/data/images, written during FL-training image download). Paired
+    # with the HOME/UV_*/PYTHONPATH env below. No effect under BUILD=true.
+    user: "${UID}:${GID}"
     build:
       args:
         UID: ${UID}
         GID: ${GID}
         UNAME: ${UNAME}
-        DEBUG_PORT: ${IMAGING_DEBUG_PORT_TRUST_1}
       context: ./imaging-api
       dockerfile: Dockerfile
       target: development
@@ -79,21 +93,27 @@ services:
     cap_add:
       - CHOWN
     environment:
-      XNAT_URL: ${XNAT_URL}
+      # XNAT_URL, PACS_ID, XNAT_DATABASE_URL, DATA_ACCESS_API_URL and
+      # TRUST_INTERNAL_SERVICE_KEY_HEADER are internal-topology constants and now
+      # default in imaging_api/config.py — do not inject them (an empty ${VAR}
+      # from a kit that omits them would override the code default).
       XNAT_PORT: ${XNAT_PORT}
       XNAT_SERVICE_USER: ${XNAT_SERVICE_USER}
       XNAT_SERVICE_PASSWORD: ${XNAT_SERVICE_PASSWORD}
-      PACS_ID: ${PACS_ID}
-      XNAT_DATABASE_URL: ${XNAT_DATABASE_URL}
-      DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
       AES_KEY_BASE64: ${AES_KEY_BASE64}
-      DEBUG_PORT: ${IMAGING_DEBUG_PORT_TRUST_1}
+      DEBUG_PORT: ${IMAGING_DEBUG_PORT}
       DEBUG: ${DEBUG}
       ENV: development
       BASE_IMAGES_DOWNLOAD_DIR: /app/data/images
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
-      TRUST_INTERNAL_SERVICE_KEY_HEADER: ${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
+      # Dev-on-pull (see `user:` above): host-uid process imports the package via
+      # PYTHONPATH and skips the runtime editable install (UV_NO_SYNC) so it never
+      # writes the image-owned .venv; keep uv's cache + HOME writable.
+      HOME: /tmp
+      UV_CACHE_DIR: /tmp/uv-cache
+      UV_NO_SYNC: "1"
+      PYTHONPATH: /app
     # NOTE the volume BASE_IMAGES_DOWNLOAD_DIR is mounted to share images downloaded from XNAT with FL clients
     volumes:
       - ./imaging-api/imaging_api:/app/imaging_api
@@ -102,12 +122,18 @@ services:
       - ./observability/log_config:/app/log_config:ro
 
   data-access-api:
+    # Pull from GHCR by default; local data_access_api/ bind-mount overlays it for
+    # live reload. `make up BUILD=true` rebuilds from the build: block instead.
+    image: ghcr.io/londonaicentre/data-access-api:${DOCKER_TAG}
+    pull_policy: always
+    # Dev-on-pull: run the uid-1000 GHCR image as the HOST uid (see imaging-api
+    # note); paired with the HOME/UV_*/PYTHONPATH env below. No effect under BUILD=true.
+    user: "${UID}:${GID}"
     build:
       args:
         UID: ${UID}
         GID: ${GID}
         UNAME: ${UNAME}
-        DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT_TRUST_1}
       context: ./data-access-api
       dockerfile: Dockerfile
       target: development
@@ -120,29 +146,41 @@ services:
     cap_add:
       - CHOWN
     environment:
-      OMOP_DB_SERVICE_NAME: ${OMOP_DB_SERVICE_NAME}
+      # OMOP_DB_SERVICE_NAME and TRUST_INTERNAL_SERVICE_KEY_HEADER default in
+      # data_access_api/config.py — not injected (see imaging-api note above).
       DATA_ACCESS_POSTGRES_USER: ${DATA_ACCESS_POSTGRES_USER}
       DATA_ACCESS_POSTGRES_PASSWORD: ${DATA_ACCESS_POSTGRES_PASSWORD}
       OMOP_POSTGRES_DB: ${OMOP_POSTGRES_DB}
       AES_KEY_BASE64: ${AES_KEY_BASE64}
-      DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT_TRUST_1}
+      DEBUG_PORT: ${DATA_ACCESS_DEBUG_PORT}
       DEBUG: ${DEBUG}
       ENV: development
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
-      TRUST_INTERNAL_SERVICE_KEY_HEADER: ${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
+      # Dev-on-pull (see `user:` above): import via PYTHONPATH, skip the editable
+      # install (UV_NO_SYNC), keep uv's cache + HOME writable.
+      HOME: /tmp
+      UV_CACHE_DIR: /tmp/uv-cache
+      UV_NO_SYNC: "1"
+      PYTHONPATH: /app
     volumes:
       - ./data-access-api/data_access_api:/app/data_access_api
       - ./data-access-api/tests:/app/tests
       - ./observability/log_config:/app/log_config:ro
 
   trust-api:
+    # Pull from GHCR by default; local trust_api/ bind-mount overlays it for live
+    # reload. `make up BUILD=true` rebuilds from the build: block instead.
+    image: ghcr.io/londonaicentre/trust-api:${DOCKER_TAG}
+    pull_policy: always
+    # Dev-on-pull: run the uid-1000 GHCR image as the HOST uid (see imaging-api
+    # note); paired with the HOME/UV_*/PYTHONPATH env below. No effect under BUILD=true.
+    user: "${UID}:${GID}"
     build:
       args:
         UID: ${UID}
         GID: ${GID}
         UNAME: ${UNAME}
-        DEBUG_PORT: ${TRUST_DEBUG_PORT}
       context: ./trust-api
       dockerfile: Dockerfile
       target: development
@@ -156,13 +194,13 @@ services:
       - CHOWN
     environment:
       # Dev-only override: the env-file value of CENTRAL_HUB_API_URL is the browser-facing
-      # URL (host port 8080 published by flip-ui's nginx) and is unreachable from inside
+      # URL (host port 8080, where flip-api is published) and is unreachable from inside
       # this container, so trust-api dials flip-api directly over the docker network here.
       # In prod compose files the env-file value is the shared public CloudFront URL and
       # works for both browser and trust-api, so this override is dev-only.
       CENTRAL_HUB_API_URL: http://flip-api:8000/api
-      DATA_ACCESS_API_URL: ${DATA_ACCESS_API_URL}
-      IMAGING_API_URL: ${IMAGING_API_URL}
+      # DATA_ACCESS_API_URL, IMAGING_API_URL and TRUST_INTERNAL_SERVICE_KEY_HEADER
+      # default in trust_api/config.py — not injected (see imaging-api note above).
       DEBUG_PORT: ${TRUST_DEBUG_PORT}
       DEBUG: ${DEBUG}
       TRUST_API_KEY_HEADER: ${TRUST_API_KEY_HEADER}
@@ -172,8 +210,13 @@ services:
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
       ENV: development
       LOG_LEVEL: ${TRUST_LOG_LEVEL}
-      TRUST_INTERNAL_SERVICE_KEY_HEADER: ${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
+      # Dev-on-pull (see `user:` above): import via PYTHONPATH, skip the editable
+      # install (UV_NO_SYNC), keep uv's cache + HOME writable.
+      HOME: /tmp
+      UV_CACHE_DIR: /tmp/uv-cache
+      UV_NO_SYNC: "1"
+      PYTHONPATH: /app
     volumes:
       - ./trust-api/trust_api:/app/trust_api
       - ./trust-api/tests:/app/tests

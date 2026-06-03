@@ -93,6 +93,10 @@ class OmopCohortResultsResponse(BaseModel):
 
     record_count: int = Field(..., alias="recordCount")
     trusts_results: list[OMOPResult] = Field(..., alias="trustsResults")
+    # Per-trust signals so the UI can distinguish "responded with 0", "errored"
+    # and "still running" — see AggregatedCohortStats for the threat model.
+    trust_record_counts: dict[str, int] = Field(default_factory=dict, alias="trustRecordCounts")
+    trust_errors: dict[str, str] = Field(default_factory=dict, alias="trustErrors")
 
     model_config = ConfigDict(
         populate_by_name=True,

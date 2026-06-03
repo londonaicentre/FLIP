@@ -3,4 +3,4 @@ FAQs
 #####
 
 * Can a user have more than 1 role assigned to them?
-    Yes. A user may be assigned any combination of ``admin``, ``researcher`` and ``observer`` roles. Their effective permissions are the union of all assigned roles. For example, a user with both ``researcher`` and ``observer`` roles would have full ``researcher`` permissions.
+    No. Roles are exclusive — each user holds exactly one of ``admin``, ``researcher`` or ``viewer``. The role grants the user's effective permissions directly: ``admin`` already includes all ``researcher`` capabilities, so there is no need to stack roles to broaden access. To change a user's role, an administrator selects the new role in the Admin Area's User Management page; see :ref:`admin-project-and-user-management`.

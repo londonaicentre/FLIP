@@ -7,6 +7,10 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 
+[options]
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer-span = "P3D"
+
 [manifest]
 constraints = [
     { name = "python-dotenv", specifier = ">=1.2.2" },
@@ -329,7 +333,7 @@ dev = [
 requires-dist = [
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.115.11" },
-    { name = "idna", specifier = ">=3.14" },
+    { name = "idna", specifier = ">=3.15" },
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "psycopg2-binary", specifier = ">=2.9.10" },
     { name = "pydantic-settings", specifier = ">=2.9.1" },

@@ -55,11 +55,14 @@ def test_project_id():
     return UUID("87654321-4321-8765-2109-876543210987")
 
 
+_TRUST_A = UUID("11111111-1111-1111-1111-111111111111")
+_TRUST_B = UUID("22222222-2222-2222-2222-222222222222")
+_TRUST_NEW = UUID("33333333-3333-3333-3333-333333333333")
+
+
 @pytest.fixture
 def stage_request_payload():
-    stage_request = StageProjectRequest(
-        trusts=[UUID("11111111-1111-1111-1111-111111111111"), UUID("22222222-2222-2222-2222-222222222222")]
-    )
+    stage_request = StageProjectRequest(trusts=[_TRUST_A, _TRUST_B])
     return stage_request.model_dump(mode="json")
 
 
@@ -68,7 +71,10 @@ def mock_project_data():
     mock_project = MagicMock()
     mock_project.status = ProjectStatus.UNSTAGED.value
     mock_project.query = MagicMock()
-    mock_project.query.trusts_queried = 5
+    # Default: both trusts in the standard payload have responded successfully.
+    mock_project.query.queried_trust_ids = [_TRUST_A, _TRUST_B]
+    mock_project.query.responded_trust_ids = [_TRUST_A, _TRUST_B]
+    mock_project.query.errored_trust_ids = []
     return mock_project
 
 
@@ -147,9 +153,11 @@ def test_stage_project_not_unstaged_status(app_fixture, client, test_user_id, te
 
     # Assert
     assert response.status_code == status.HTTP_400_BAD_REQUEST
+    # ProjectStatus is a StrEnum, so interpolating ProjectStatus.UNSTAGED into the error message renders the
+    # bare value "UNSTAGED", not "ProjectStatus.UNSTAGED" as the old (str, Enum) did. Expected, not a regression.
     assert (
         response.json()["detail"]
-        == f"Project with ID: {test_project_id} is not 'ProjectStatus.UNSTAGED' and cannot be staged."
+        == f"Project with ID: {test_project_id} is not 'UNSTAGED' and cannot be staged."
     )
 
 
@@ -182,6 +190,8 @@ def test_stage_project_no_query(app_fixture, client, test_user_id, test_project_
 def test_stage_project_invalid_trusts_queried(
     app_fixture, client, test_user_id, test_project_id, stage_request_payload
 ):
+    """A query with no trust responses (empty queried_trust_ids) cannot be
+    staged — there's nothing to commit to."""
     # Arrange
     mock_session = MagicMock()
     app_fixture.dependency_overrides[get_session] = lambda: mock_session
@@ -190,7 +200,7 @@ def test_stage_project_invalid_trusts_queried(
     mock_project_data = MagicMock()
     mock_project_data.status = ProjectStatus.UNSTAGED.value
     mock_project_data.query = MagicMock()
-    mock_project_data.query.trusts_queried = 0
+    mock_project_data.query.queried_trust_ids = []
 
     with (
         patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
@@ -206,6 +216,103 @@ def test_stage_project_invalid_trusts_queried(
         "cannot be staged."
     )
     assert response.json()["detail"] == expected_detail
+
+
+def test_stage_project_rejects_trust_not_in_cohort_query(
+    app_fixture, client, test_user_id, test_project_id
+):
+    """A trust that joined the platform after the cohort query was submitted
+    has no QueryResult row, so its UUID is missing from queried_trust_ids.
+    Staging against it must 400 — staging without a cohort count for that
+    trust would mean the user is committing to data they've never seen."""
+    mock_session = MagicMock()
+    app_fixture.dependency_overrides[get_session] = lambda: mock_session
+    app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
+
+    mock_project_data = MagicMock()
+    mock_project_data.status = ProjectStatus.UNSTAGED.value
+    mock_project_data.query = MagicMock()
+    mock_project_data.query.queried_trust_ids = [_TRUST_A, _TRUST_B]
+    mock_project_data.query.responded_trust_ids = [_TRUST_A, _TRUST_B]
+    mock_project_data.query.errored_trust_ids = []
+
+    payload = StageProjectRequest(trusts=[_TRUST_A, _TRUST_NEW]).model_dump(mode="json")
+
+    with (
+        patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
+        patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.stage_project.stage_project_service") as mock_stage,
+    ):
+        response = client.post(f"/api/projects/{test_project_id}/stage", json=payload)
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert str(_TRUST_NEW) in response.json()["detail"]
+    mock_stage.assert_not_called()
+
+
+def test_stage_project_rejects_errored_trust(
+    app_fixture, client, test_user_id, test_project_id
+):
+    """A trust that responded with an error has a QueryResult row but no
+    usable count. Staging against it must 400 — otherwise the project commits
+    to data we never received."""
+    mock_session = MagicMock()
+    app_fixture.dependency_overrides[get_session] = lambda: mock_session
+    app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
+
+    mock_project_data = MagicMock()
+    mock_project_data.status = ProjectStatus.UNSTAGED.value
+    mock_project_data.query = MagicMock()
+    mock_project_data.query.queried_trust_ids = [_TRUST_A, _TRUST_B]
+    mock_project_data.query.responded_trust_ids = [_TRUST_A, _TRUST_B]
+    mock_project_data.query.errored_trust_ids = [_TRUST_B]  # errored
+
+    payload = StageProjectRequest(trusts=[_TRUST_A, _TRUST_B]).model_dump(mode="json")
+
+    with (
+        patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
+        patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.stage_project.stage_project_service") as mock_stage,
+    ):
+        response = client.post(f"/api/projects/{test_project_id}/stage", json=payload)
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert str(_TRUST_B) in response.json()["detail"]
+    assert "error" in response.json()["detail"].lower()
+    mock_stage.assert_not_called()
+
+
+def test_stage_project_rejects_never_responded_trust(
+    app_fixture, client, test_user_id, test_project_id
+):
+    """A trust that was dispatched but never posted a QueryResult has no
+    cohort count. Staging against it must 400 — otherwise the project
+    commits to data we never received."""
+    mock_session = MagicMock()
+    app_fixture.dependency_overrides[get_session] = lambda: mock_session
+    app_fixture.dependency_overrides[verify_token] = lambda: test_user_id
+
+    mock_project_data = MagicMock()
+    mock_project_data.status = ProjectStatus.UNSTAGED.value
+    mock_project_data.query = MagicMock()
+    # Both trusts dispatched; only A responded.
+    mock_project_data.query.queried_trust_ids = [_TRUST_A, _TRUST_B]
+    mock_project_data.query.responded_trust_ids = [_TRUST_A]
+    mock_project_data.query.errored_trust_ids = []
+
+    payload = StageProjectRequest(trusts=[_TRUST_A, _TRUST_B]).model_dump(mode="json")
+
+    with (
+        patch("flip_api.project_services.stage_project.can_modify_project", return_value=True),
+        patch("flip_api.project_services.stage_project.get_project", return_value=mock_project_data),
+        patch("flip_api.project_services.stage_project.stage_project_service") as mock_stage,
+    ):
+        response = client.post(f"/api/projects/{test_project_id}/stage", json=payload)
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert str(_TRUST_B) in response.json()["detail"]
+    assert "have not returned cohort query results" in response.json()["detail"]
+    mock_stage.assert_not_called()
 
 
 def test_stage_project_value_error_from_service(

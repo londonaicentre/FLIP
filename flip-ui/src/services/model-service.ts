@@ -31,7 +31,7 @@ export interface IModelMetricData {
 }
 
 export interface IInitTraining {
-    trusts: string[];
+    trust_ids: string[];
 }
 
 export interface IModel {
@@ -68,6 +68,10 @@ export interface IModelDashboard {
     status: ModelStatus;
     query: IModelDashboardQuery,
     files: FileInfo[];
+    creationTimestamp?: string | null;
+    preparedAt?: string | null;
+    trainingStartedAt?: string | null;
+    resultsUploadedAt?: string | null;
 }
 
 export interface IModelCreate {

@@ -109,7 +109,7 @@ class ProjectDetails(BaseModel, from_attributes=True):
 
     @field_validator("description")
     @classmethod
-    def strip_whitespace(cls, value: str):
+    def strip_whitespace(cls, value: str) -> str:
         if not isinstance(value, str):
             return ""
         return value.strip()

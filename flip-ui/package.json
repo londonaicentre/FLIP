@@ -11,11 +11,12 @@
         "dev": "vite --host 0.0.0.0 --port 443 --mode development",
         "prebuild": "npm run check-build-flags && npm run generate-window-js",
         "build": "vue-tsc --noEmit && vite build",
-        "prebuild:deploy": "npm run check-build-flags && npm run generate-window-js",
+        "prebuild:deploy": "npm run check-build-flags",
         "build:deploy": "vite build",
+        "postbuild:deploy": "sh scripts/generate-window-js.sh > dist/js/window.js",
         "serve": "vite preview",
         "test:unit": "vitest run --silent --coverage",
-        "lint": "npx eslint ./src/**/*.vue ./src/**/*.ts",
+        "lint": "npx eslint \"./src/**/*.vue\" \"./src/**/*.ts\"",
         "prepare": "husky install",
         "test:unit:update": "vitest run -u --silent --coverage",
         "test:unit:watch": "vitest watch --silent",
@@ -31,6 +32,7 @@
     "dependencies": {
         "echarts": "^5.2.2",
         "husky": "^9.1.7",
+        "jszip": "^3.10.1",
         "qrcode": "^1.5.4",
         "vue": "^3.2.16",
         "vue-router": "^4.0.11"
@@ -120,7 +122,10 @@
         "uuid": "$uuid",
         "fast-xml-parser": ">=5.7.0",
         "fast-xml-builder": ">=1.1.7",
-        "@babel/plugin-transform-modules-systemjs": ">=7.29.4"
+        "qs": ">=6.15.2",
+        "js-cookie": ">=3.0.7",
+        "@babel/plugin-transform-modules-systemjs": ">=7.29.4",
+        "tmp": ">=0.2.6 <0.3.0"
     },
     "babel": {
         "presets": [

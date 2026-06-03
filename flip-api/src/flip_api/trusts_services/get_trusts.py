@@ -48,7 +48,7 @@ def get_trusts(
         results = db.exec(statement).all()
 
         # Convert results to a list of BasicTrust
-        trusts = [IBasicTrust(id=result.id, name=result.name) for result in results]
+        trusts = [IBasicTrust(id=result.id, name=result.name, code=result.code) for result in results]
         return trusts
 
     except Exception as e:

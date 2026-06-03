@@ -24,7 +24,11 @@ import LatestModels from "../LatestModels.vue";
 const mockRoute = { params: { projectId: "project-1" } as Record<string, string> };
 vi.mock("vue-router", async (importOriginal) => {
     const actual = await importOriginal<typeof import("vue-router")>();
-    return { ...actual, useRoute: () => mockRoute };
+
+    return {
+        ...actual,
+        useRoute: () => mockRoute
+    };
 });
 
 // SWRV is the data source. We swap it for a controllable ref so each test
@@ -36,15 +40,17 @@ vi.mock("vue-router", async (importOriginal) => {
 const mockData = vi.hoisted(() => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const vue = require("vue") as typeof import("vue");
+
     return { ref: vue.ref<unknown>(undefined) };
 });
 vi.mock("swrv", () => ({
-    default: () => ({ data: mockData.ref, error: ref(null) })
+    default: () => ({
+        data: mockData.ref,
+        error: ref(null)
+    })
 }));
 
-vi.mock("@/services/model-service", () => ({
-    getModels: vi.fn(async () => undefined)
-}));
+vi.mock("@/services/model-service", () => ({ getModels: vi.fn(async () => undefined) }));
 
 vi.mock("@/composables/useErrorHandler", () => ({ default: vi.fn() }));
 
@@ -53,12 +59,12 @@ function setData(v: unknown) {
 }
 
 interface MountOptions {
-    isObserver?: boolean;
+    isViewer?: boolean;
     projectStatus?: string;
 }
 
 function mountLatestModels({
-    isObserver = false,
+    isViewer = false,
     projectStatus = "APPROVED"
 }: MountOptions = {}) {
     return mount(LatestModels, {
@@ -69,15 +75,18 @@ function mountLatestModels({
                     // stubActions: false runs the real action implementations
                     // against the initialState — needed so authStore.hasPermissions
                     // reflects the seeded `user.permissions` array instead of a
-                    // spy that returns undefined and makes isObserver always true.
+                    // spy that returns undefined and makes isViewer always true.
                     stubActions: false,
                     initialState: {
                         auth: {
                             user: {
                                 username: "u",
                                 userId: "id",
-                                attributes: { sub: "s", email: "u@e.com" },
-                                permissions: isObserver ? [] : ["CanManageProjects"]
+                                attributes: {
+                                    sub: "s",
+                                    email: "u@e.com"
+                                },
+                                permissions: isViewer ? [] : ["CanCreateProjects"]
                             },
                             signInStep: "DONE",
                             mfaEnabled: true,
@@ -153,8 +162,16 @@ describe("LatestModels — defensive data access", () => {
     test("lists models and shows the View All button when data.data is populated", async () => {
         setData({
             data: [
-                { id: "m1", name: "Alpha", description: "" },
-                { id: "m2", name: "Beta", description: "second model" }
+                {
+                    id: "m1",
+                    name: "Alpha",
+                    description: ""
+                },
+                {
+                    id: "m2",
+                    name: "Beta",
+                    description: "second model"
+                }
             ]
         });
         const wrapper = mountLatestModels();
@@ -166,12 +183,15 @@ describe("LatestModels — defensive data access", () => {
         expect(wrapper.text()).toContain("View All Models");
     });
 
-    test("shows the header Create-Model button when not an observer and data has rows", async () => {
-        // Drives the `!isObserver && projectStore.project?.status === 'APPROVED'
-        // && data?.data?.length` v-if branch in the template — both halves
-        // of the optional chain must short-circuit safely.
-        setData({ data: [{ id: "m1", name: "Alpha", description: "" }] });
-        const wrapper = mountLatestModels({ isObserver: false });
+    test("shows the header Create-Model button when not a viewer", async () => {
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: ""
+            }]
+        });
+        const wrapper = mountLatestModels({ isViewer: false });
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(true);
@@ -182,33 +202,52 @@ describe("LatestModels — defensive data access", () => {
         expect(wrapper.exists()).toBe(true);
     });
 
-    test("hides the header Create-Model button for observers", async () => {
-        setData({ data: [{ id: "m1", name: "Alpha", description: "" }] });
-        const wrapper = mountLatestModels({ isObserver: true });
+    test("shows the header Create-Model button for a Researcher (CanCreateProjects only)", async () => {
+        // Researchers don't have CanManageProjects — per-project access is
+        // enforced server-side. The UI gate must not exclude them.
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: ""
+            }]
+        });
+        const wrapper = mountLatestModels({ isViewer: false });
+        await flushPromises();
+
+        expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(true);
+    });
+
+    test("hides the header Create-Model button for viewers", async () => {
+        setData({
+            data: [{
+                id: "m1",
+                name: "Alpha",
+                description: ""
+            }]
+        });
+        const wrapper = mountLatestModels({ isViewer: true });
         await flushPromises();
 
         expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(false);
     });
 
-    test("hides the empty-state Create-Model button for observers", async () => {
-        // When the project is approved and data.data is [], non-observers
-        // see a Create-Model CTA inside the empty-state card. Observers
-        // see only the alert text.
+    test("hides the header Create-Model button for viewers in the empty state", async () => {
         setData({ data: [] });
-        const wrapper = mountLatestModels({ isObserver: true });
+        const wrapper = mountLatestModels({ isViewer: true });
         await flushPromises();
 
-        expect(wrapper.find("[data-test=create-model-btn]").exists()).toBe(false);
+        expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(false);
     });
 
-    test("non-observer empty-state renders the create-model CTA", async () => {
+    test("non-viewer empty state renders the create-model CTA in the header", async () => {
         setData({ data: [] });
-        const wrapper = mountLatestModels({ isObserver: false });
+        const wrapper = mountLatestModels({ isViewer: false });
         await flushPromises();
 
-        expect(wrapper.find("[data-test=create-model-btn]").exists()).toBe(true);
+        expect(wrapper.find("[data-test=add-model-btn]").exists()).toBe(true);
 
-        await wrapper.find("[data-test=create-model-btn]").trigger("click");
+        await wrapper.find("[data-test=add-model-btn]").trigger("click");
         expect(wrapper.exists()).toBe(true);
     });
 
@@ -226,12 +265,21 @@ describe("LatestModels — defensive data access", () => {
                         createSpy: vi.fn,
                         initialState: {
                             auth: {
-                                user: { username: "u", userId: "id", attributes: {}, permissions: ["CanManageProjects"] },
+                                user: {
+                                    username: "u",
+                                    userId: "id",
+                                    attributes: {},
+                                    permissions: ["CanCreateProjects"]
+                                },
                                 signInStep: "DONE",
                                 mfaEnabled: true
                             },
                             project: {
-                                project: { id: "project-1", name: "Test", status: "UNSTAGED" }
+                                project: {
+                                    id: "project-1",
+                                    name: "Test",
+                                    status: "UNSTAGED"
+                                }
                             }
                         }
                     })
@@ -241,7 +289,10 @@ describe("LatestModels — defensive data access", () => {
                     AiButton: { template: "<button><slot /></button>" },
                     AiAlert: { template: "<div><slot /></div>" },
                     AiLoader: { template: "<div data-test='ai-loader' />" },
-                    "router-link": { template: "<a><slot /></a>", props: ["to"] }
+                    "router-link": {
+                        template: "<a><slot /></a>",
+                        props: ["to"]
+                    }
                 }
             }
         });

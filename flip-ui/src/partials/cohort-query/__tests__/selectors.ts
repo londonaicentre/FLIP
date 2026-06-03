@@ -19,7 +19,6 @@ export const CohortQueryPage = {
     queryInput: "[data-test=cohort-query]",
     useQueryButton: "[data-test=use-cohort-query-btn]",
     runCohortQueryButton: "[data-test=view-cohort-query-results-btn]",
-    totalResultData: "[data-test=total-results]",
     continuousDataTable: "[data-test=continuous-data-table]",
     genderDataTable: "[data-test=gender-data-table]",
     clientVisitDataTable: "[data-test=clientvisit-data-table]"
