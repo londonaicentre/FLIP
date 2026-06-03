@@ -14,9 +14,9 @@
 
 
 
-import type { IStep } from "@/components/AiSteps/AiSteps.vue";
 import { TrustsResults } from "@/interfaces/cohort-query/types";
 import { FileInfo, FileTableRow } from "@/interfaces/model/types";
+import type { IStep } from "@/interfaces/steps";
 import { _http, IPaginatedResponse } from "@/services/api";
 
 export interface IModelMetricData {
@@ -191,6 +191,10 @@ export function buildModelSteps(status: ModelStatus | undefined): IStep[] {
     const isStopped = statusValue === ModelStatusEnum.STOPPED;
     const isError = statusValue === ModelStatusEnum.ERROR;
     const isUploadFailed = statusValue === ModelStatusEnum.RESULTS_UPLOAD_FAILED;
+    // RESULTS_UPLOAD_FAILED (ordinal 7) already satisfies the >= PREPARED / > TRAINING_STARTED
+    // comparisons in the "completed" flags below, so isUploadFailed is technically redundant
+    // there today. It is kept explicit so the steps stay correct if the enum is reordered, and
+    // to mirror its load-bearing use in the inProgress / error flags.
 
     return [
         {
