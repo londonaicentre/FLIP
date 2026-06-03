@@ -30,8 +30,8 @@ client = TestClient(app)
 # When a class is declared with table=True, SQLModel treats it as a database model, not a strict validation schema.
 # This bypasses Pydantic-style validation for missing required fields!!
 mock_trusts_data = [
-    Trust(id=uuid.uuid4(), name="Trust A"),
-    Trust(id=uuid.uuid4(), name="Trust B"),
+    Trust(id=uuid.uuid4(), name="Trust A", code="TA"),
+    Trust(id=uuid.uuid4(), name="Trust B", code=None),
 ]
 
 
@@ -44,7 +44,9 @@ def test_get_trusts_success():
     results = get_trusts(db=mock_db, user_id=uuid.uuid4())
 
     # Assert that the response body matches the mock data
-    assert results == [IBasicTrust(id=str(trust.id), name=trust.name) for trust in mock_trusts_data]
+    assert results == [
+        IBasicTrust(id=str(trust.id), name=trust.name, code=trust.code) for trust in mock_trusts_data
+    ]
 
 
 def test_get_trusts_endpoint_success():
@@ -62,7 +64,9 @@ def test_get_trusts_endpoint_success():
     # Assert that the response status code is 200
     assert response.status_code == 200
     # Assert that the response body matches the mock data
-    assert response.json() == [{"id": str(trust.id), "name": trust.name} for trust in mock_trusts_data]
+    assert response.json() == [
+        {"id": str(trust.id), "name": trust.name, "code": trust.code} for trust in mock_trusts_data
+    ]
 
     # Clean up the dependency override
     del app.dependency_overrides[get_session]

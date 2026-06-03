@@ -6,7 +6,7 @@ Platform Support
 Security
 *********
 
-Trusts authenticate to the Central Hub using per-trust API keys. Each trust is identified by its ``TRUST_NAME`` and a secret ``TRUST_API_KEY`` — the hub verifies the SHA-256 hash of the key against its stored ``TRUST_API_KEY_HASHES``. Trust communication payloads are encrypted with a shared ``AES_KEY_BASE64``.
+Trusts authenticate to the Central Hub using per-trust API keys. The hub identifies a trust solely by its API key — it looks up the trust whose stored SHA-256 hash (the ``api_key_hash`` column of the ``trust`` table) matches the presented key. Each trust holds its secret ``TRUST_API_KEY`` in its own environment. Trust communication payloads are encrypted with a shared ``AES_KEY_BASE64``.
 
 See :ref:`deploy-flip-node-on-prem` for details on trust provisioning and authentication setup.
 

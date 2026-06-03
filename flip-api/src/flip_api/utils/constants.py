@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+import os
+
 SERVICE_UNAVAILABLE_MESSAGE = "The server is unable to process any requests at the moment, please try again later."
 
 # AWS SES email templates
@@ -20,8 +22,9 @@ IMAGING_PROJECT_ACCESS_TEMPLATE_NAME = "flip-xnat-added-to-project"
 # File containing job types and their required files
 JOB_TYPES_REQUIRED_FILES_FILE = "job_types_and_required_files.json"
 
-# Testing constants
-BASE_URL = "http://localhost:8080/api"
+# Testing constants. BASE_URL defaults to the local dev stack; override with
+# FLIP_E2E_BASE_URL to run the e2e smoke against a remote hub (stag/prod).
+BASE_URL = os.environ.get("FLIP_E2E_BASE_URL", "http://localhost:8080/api")
 
 # Main user emails - these should match the users created in Cognito and seeded in DB
 ADMIN_EMAIL_1 = "aicentreflip@gmail.com"

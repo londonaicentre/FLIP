@@ -153,8 +153,8 @@ def run_command(args: list[str], timeout: int = 30) -> tuple[bool, str]:
         )
         return True, result.stdout.strip()
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        error_output = e.stderr if hasattr(e, "stderr") else str(e)
-        return False, error_output
+        error_output = e.stderr if hasattr(e, "stderr") and e.stderr else str(e)
+        return False, str(error_output)
 
 
 def check_http_endpoint(url: str, name: str, expected_status: int | list[int] = 200) -> bool:
@@ -288,16 +288,16 @@ def check_endpoint_rejects_insecure(url: str, name: str) -> bool:
         return True
 
 
-def load_env_file(env_file: Path) -> dict:
+def load_env_file(env_file: Path) -> dict[str, str]:
     """Load environment variables from a file.
 
     Args:
-        env_file: Path to the .env file
+        env_file (Path): Path to the .env file.
 
     Returns:
-        Dictionary of environment variables
+        dict[str, str]: Mapping of environment variable names to values.
     """
-    env_vars = {}
+    env_vars: dict[str, str] = {}
     if not env_file.exists():
         return env_vars
 
@@ -309,6 +309,86 @@ def load_env_file(env_file: Path) -> dict:
                     key, value = line.split("=", 1)
                     env_vars[key.strip()] = value.strip().strip('"').strip("'")
     return env_vars
+
+
+@dataclass
+class TrustKit:
+    """A discovered per-trust kit file (trust/.env.<CODE>.<env>) and its host-facing ports.
+
+    Attributes:
+        code (str): Trust CODE — the kit filename handle (e.g. "KCH").
+        name (str): TRUST_NAME for display; falls back to the CODE when absent.
+        slot_number (int | None): Assigned FL kit slot number (FL_KIT_SLOT_NUMBER).
+            Drives the XNAT stack name (xnat<N>) and which trust exposes host APIs.
+        xnat_port (str | None): Host port for the trust's XNAT web UI.
+        pacs_ui_port (str | None): Host port for the trust's Orthanc PACS UI.
+        trust_api_port (str | None): Host port for trust-api (slot-1 trust only).
+        imaging_api_port (str | None): Host port for imaging-api (slot-1 trust only).
+        data_access_api_port (str | None): Host port for data-access-api (slot-1 trust only).
+    """
+
+    code: str
+    name: str
+    slot_number: int | None
+    xnat_port: str | None
+    pacs_ui_port: str | None
+    trust_api_port: str | None
+    imaging_api_port: str | None
+    data_access_api_port: str | None
+
+
+def discover_trust_kits(trust_dir: Path, env: str) -> list[TrustKit]:
+    """Discover per-trust kit files and read their host-facing ports.
+
+    Trusts are configured by CODE-named kit files (trust/.env.<CODE>.<env>) — the
+    same files trust/Makefile -includes and `make up` globs to decide what to
+    deploy — not fixed Trust_1 / Trust_2 names. Each kit carries its assigned FL
+    slot and host ports. The .example templates and other-environment kits are
+    skipped, so the checker's list of trusts stays in lockstep with what is
+    actually brought up.
+
+    Args:
+        trust_dir (Path): The trust/ directory holding the kit files.
+        env (str): Environment token (development / stag / production).
+
+    Returns:
+        list[TrustKit]: One entry per discovered kit, sorted by filename.
+    """
+    kits: list[TrustKit] = []
+    if not trust_dir.is_dir():
+        return kits
+
+    suffix = f".{env}"
+    for kit_path in sorted(trust_dir.glob(f".env.*{suffix}")):
+        if kit_path.name.endswith(".example"):
+            continue
+        stem = kit_path.name[len(".env.") :]  # "<CODE>.<env>"
+        if not stem.endswith(suffix):
+            continue
+        code = stem[: -len(suffix)]  # "<CODE>"
+        if not code:
+            continue
+
+        env_vars = load_env_file(kit_path)
+        slot_raw = env_vars.get("FL_KIT_SLOT_NUMBER", "")
+        try:
+            slot_number: int | None = int(slot_raw) if slot_raw else None
+        except ValueError:
+            slot_number = None
+
+        kits.append(
+            TrustKit(
+                code=code,
+                name=env_vars.get("TRUST_NAME") or code,
+                slot_number=slot_number,
+                xnat_port=env_vars.get("XNAT_PORT"),
+                pacs_ui_port=env_vars.get("PACS_UI_PORT"),
+                trust_api_port=env_vars.get("TRUST_API_PORT"),
+                imaging_api_port=env_vars.get("IMAGING_API_PORT"),
+                data_access_api_port=env_vars.get("DATA_ACCESS_API_PORT"),
+            )
+        )
+    return kits
 
 
 def main(
@@ -361,18 +441,24 @@ def main(
         sys.exit(1)
     print_status("PASS", "Docker daemon is running")
 
-    # Get port configuration from environment
+    # Hub-side ports come from the top-level env file.
     UI_PORT = env_vars.get("UI_PORT", "5173")
     API_PORT = env_vars.get("API_PORT", "8001")
     FL_API_PORT = env_vars.get("FL_API_PORT", "8000")
-    TRUST_API_PORT = env_vars.get("TRUST_API_PORT", "8100")
-    IMAGING_API_PORT = env_vars.get("IMAGING_API_PORT", "8200")
-    DATA_ACCESS_API_PORT = env_vars.get("DATA_ACCESS_API_PORT", "8300")
-    POSTGRES_PORT = env_vars.get("POSTGRES_PORT", "5432")
-    XNAT_PORT_TRUST_1 = env_vars.get("XNAT_PORT_TRUST_1", "8104")
-    XNAT_PORT_TRUST_2 = env_vars.get("XNAT_PORT_TRUST_2", "8106")
-    PACS_UI_PORT_TRUST_1 = env_vars.get("PACS_UI_PORT_TRUST_1", "8042")
-    PACS_UI_PORT_TRUST_2 = env_vars.get("PACS_UI_PORT_TRUST_2", "8044")
+
+    # Per-trust ports live in each trust's CODE-named kit file
+    # (trust/.env.<CODE>.<env>) — the source of truth trust/Makefile -includes and
+    # `make up` globs — keyed by the hub-assigned FL slot, not fixed Trust_1 /
+    # Trust_2 names. Discover the same kits `make up` would deploy.
+    env_token = env_file.name[len(".env.") :] if env_file.name.startswith(".env.") else "development"
+    trust_kits = discover_trust_kits(project_dir / "trust", env_token)
+    if trust_kits:
+        print_status(
+            "INFO",
+            "Discovered trust kit(s): " + ", ".join(f"{k.name} (slot {k.slot_number})" for k in trust_kits),
+        )
+    else:
+        print_status("WARN", f"No trust kits (trust/.env.*.{env_token}) found — trust checks will be skipped")
 
     # Parse NET_ENDPOINTS to determine which FL networks are configured
     NET_ENDPOINTS = env_vars.get("NET_ENDPOINTS", "{}")
@@ -443,10 +529,12 @@ def main(
             if success and "active" in swarm_info.lower():
                 print_status("PASS", "Docker Swarm mode is active")
 
-                # Check for XNAT stacks
+                # Check for XNAT stacks — named xnat<slot> for each discovered
+                # trust (trust/Makefile derives the stack name from the kit's
+                # assigned FL_KIT_SLOT_NUMBER).
                 success, stacks = run_command(["docker", "stack", "ls", "--format", "{{.Name}}"])
                 if success:
-                    xnat_stacks = ["xnat1", "xnat2"]
+                    xnat_stacks = sorted({f"xnat{k.slot_number}" for k in trust_kits if k.slot_number})
                     for stack_name in xnat_stacks:
                         if stack_name in stacks:
                             print_status("PASS", f"XNAT stack '{stack_name}' is deployed")
@@ -579,11 +667,12 @@ def main(
         # Check UI
         check_http_endpoint(f"http://localhost:{UI_PORT}", "FLIP UI", 200)
 
-        # Check API health endpoint
-        check_http_endpoint(f"http://localhost:{API_PORT}/health", "FLIP API Health", 200)
+        # Check API health endpoint. The hub API is served under the /api prefix
+        # (CENTRAL_HUB_API_URL), unlike the trust APIs which serve at the root.
+        check_http_endpoint(f"http://localhost:{API_PORT}/api/health", "FLIP API Health", 200)
 
         # Check API docs endpoint
-        check_http_endpoint(f"http://localhost:{API_PORT}/docs", "FLIP API Docs", 200)
+        check_http_endpoint(f"http://localhost:{API_PORT}/api/docs", "FLIP API Docs", 200)
 
         print_section("FL container running and endpoint checks on the expected ports")
         for net_num in configured_net_numbers:
@@ -598,7 +687,10 @@ def main(
                         fl_service_name,
                         "python",
                         "-c",
-                        f"import httpx; print(httpx.get('http://localhost:{fl_port}/health', follow_redirects=True).status_code)",
+                        (
+                            f"import httpx; print(httpx.get('http://localhost:{fl_port}/health', "
+                            "follow_redirects=True).status_code)"
+                        ),
                     ],
                     timeout=10,
                 )
@@ -611,7 +703,7 @@ def main(
 
         # Check that FL API can be reached from flip-api container
         for net_num in configured_net_numbers:
-            fl_port = 8000  # FL API always runs on port 8000 inside the container
+            fl_port = "8000"  # FL API always runs on port 8000 inside the container
             fl_service_name = f"flip-fl-api-net-{net_num}"
             container_name = "flip-api"
             fl_api_url = f"http://{fl_service_name}:{fl_port}/check_server_status"
@@ -640,29 +732,50 @@ def main(
                     "FAIL", f"FL API Net-{net_num} is NOT reachable from '{container_name}' at {fl_api_url}: {e}"
                 )
 
-        # Check Trust endpoints if they exist
+        # Check Trust endpoints. Only the trust assigned FL slot Trust_1 publishes
+        # its APIs on the host (deploy/compose_trust-1_override.yml); the rest are
+        # internal-only, so we check the slot-1 trust's kit ports.
         print_section("Trust Service Endpoint Checks")
 
-        # Trust API is exposed directly (no nginx-tls proxy — all communication is outbound polling)
-        check_http_endpoint(f"http://localhost:{TRUST_API_PORT}/health", "Trust API Health", 200)
-        check_http_endpoint(f"http://localhost:{TRUST_API_PORT}/docs", "Trust API Docs", 200)
+        host_api_kit = next((k for k in trust_kits if k.slot_number == 1), None)
+        if host_api_kit is None:
+            print_status(
+                "INFO",
+                "No trust holds FL slot Trust_1 — trust APIs are internal-only on this host, skipping endpoint checks",
+            )
+        else:
+            label = host_api_kit.name
+            trust_api_port = host_api_kit.trust_api_port or "8020"
+            imaging_api_port = host_api_kit.imaging_api_port or "8001"
+            data_access_api_port = host_api_kit.data_access_api_port or "8010"
 
-        # Imaging and Data Access APIs are plain HTTP internal services
-        check_http_endpoint(f"http://localhost:{IMAGING_API_PORT}/health", "Imaging API Health", 200)
-        check_http_endpoint(f"http://localhost:{IMAGING_API_PORT}/docs", "Imaging API Docs", 200)
+            # Trust API is exposed directly (no nginx-tls proxy — all communication is outbound polling)
+            check_http_endpoint(f"http://localhost:{trust_api_port}/health", f"Trust API Health ({label})", 200)
+            check_http_endpoint(f"http://localhost:{trust_api_port}/docs", f"Trust API Docs ({label})", 200)
 
-        check_http_endpoint(f"http://localhost:{DATA_ACCESS_API_PORT}/health", "Data Access API Health", 200)
-        check_http_endpoint(f"http://localhost:{DATA_ACCESS_API_PORT}/docs", "Data Access API Docs", 200)
+            # Imaging and Data Access APIs are plain HTTP internal services
+            check_http_endpoint(f"http://localhost:{imaging_api_port}/health", f"Imaging API Health ({label})", 200)
+            check_http_endpoint(f"http://localhost:{imaging_api_port}/docs", f"Imaging API Docs ({label})", 200)
 
-        # Check XNAT endpoints
+            check_http_endpoint(
+                f"http://localhost:{data_access_api_port}/health", f"Data Access API Health ({label})", 200
+            )
+            check_http_endpoint(f"http://localhost:{data_access_api_port}/docs", f"Data Access API Docs ({label})", 200)
+
+        # Check XNAT + PACS endpoints per discovered trust kit.
         print_section("XNAT Service Endpoint Checks")
 
-        # XNAT Trust 1 endpoint - use 127.0.0.1 to avoid IPv6 routing issues with Docker Swarm
-        check_http_endpoint(f"http://127.0.0.1:{XNAT_PORT_TRUST_1}", "XNAT Trust 1 Web UI", [200, 302])
-
-        # XNAT Trust 2 endpoint - use 127.0.0.1 to avoid IPv6 routing issues with Docker Swarm
-        check_http_endpoint(f"http://127.0.0.1:{XNAT_PORT_TRUST_2}", "XNAT Trust 2 Web UI", [200, 302])
-        check_http_endpoint(f"http://localhost:{PACS_UI_PORT_TRUST_2}", "Orthanc PACS Trust 2", [200, 401])
+        if not trust_kits:
+            print_status("INFO", "No trust kits discovered — skipping XNAT/PACS endpoint checks")
+        for kit in trust_kits:
+            slot = f" slot {kit.slot_number}" if kit.slot_number else ""
+            # 127.0.0.1 (not localhost) avoids IPv6 routing issues with Docker Swarm.
+            if kit.xnat_port:
+                xnat_url = f"http://127.0.0.1:{kit.xnat_port}"
+                check_http_endpoint(xnat_url, f"XNAT {kit.name}{slot} Web UI", [200, 302])
+            if kit.pacs_ui_port:
+                pacs_url = f"http://localhost:{kit.pacs_ui_port}"
+                check_http_endpoint(pacs_url, f"Orthanc PACS {kit.name}{slot}", [200, 401])
 
     # Database connectivity check
     print_section("Database Connectivity")

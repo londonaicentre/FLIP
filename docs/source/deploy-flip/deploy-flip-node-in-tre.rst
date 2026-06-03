@@ -171,8 +171,10 @@ Key environment variables (set via ``.env`` or Docker secrets):
      - Description
    * - ``CENTRAL_HUB_API_URL``
      - Hub endpoint the Trust API polls for tasks.
-   * - ``TRUST_NAME``
-     - Identifier matching the ``Trust.name`` record in the hub database (e.g. ``Trust_1``).
+   * - ``EXPECTED_TRUST_ID``
+     - Optional self-check. If set and the hub resolves this host's API key to a
+       different trust *id*, trust-api exits instead of acting as the wrong
+       trust. Kept in the trust's kit file.
    * - ``TRUST_API_KEY`` / ``TRUST_API_KEY_HEADER``
      - Per-trust authentication header used on every outbound request.
    * - ``AES_KEY_BASE64``

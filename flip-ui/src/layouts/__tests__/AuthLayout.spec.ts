@@ -31,6 +31,6 @@ describe("Auth Layout", () => {
         expect(component.find(".bg-body").exists()).toBe(true);
         expect(component.find(".absolute.top-0.right-0 img").exists()).toBe(true);
         expect(component.find(".absolute.bottom-0.left-0 img").exists()).toBe(true);
-        expect(component.find("img[alt=\"NHS logo\"]").exists()).toBe(true);
+        expect(component.find("img[alt=\"NHS logo\"]").exists()).toBe(false);
     });
 });

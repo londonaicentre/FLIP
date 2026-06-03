@@ -187,13 +187,23 @@ If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_
 invalid spec: :/var/lib/orthanc/db: empty section between colons
 ```
 
-**Root cause**: The `ORTHANC_STORAGE_DIR_TRUST_1` environment variable is missing from the `.env.stag` file, resulting in an empty host path for the Orthanc Docker volume mount.
+**Root cause**: `ORTHANC_STORAGE_DIR` is missing from the per-trust kit file
+(`trust/.env.<KIT>`), so the Orthanc compose mount expands to an empty host
+path. The compose files (`trust/deploy/compose_trust.{development,production}.yml`)
+both consume the unsuffixed `${ORTHANC_STORAGE_DIR}` — the older
+`_TRUST_{1,2}` suffixed names from `.env.stag` were retired by the
+per-trust-kit refactor.
 
-**Fix**: Add to `.env.stag`:
+**Fix**: Set the host-local profile entry in the kit file:
 
 ```
-ORTHANC_STORAGE_DIR_TRUST_1=/opt/flip/orthanc/orthanc-storage
+ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage-trust1
 ```
+
+The trust kit `.example` templates carry this key in their **Host-local
+profile** section; if you bootstrapped a kit before the refactor, copy the
+key from a current template (e.g. `trust/.env.GSTT.development.example` or the
+base `trust/.env.example`) and adjust the path for the trust host.
 
 ---
 
@@ -473,11 +483,14 @@ The general principle: anywhere a non-root container bind-mounts a host path, pr
 
 ---
 
-### 4.2 Missing `ORTHANC_STORAGE_DIR_TRUST_1` env var
+### 4.2 Missing `ORTHANC_STORAGE_DIR` env var
 
 **Symptom**: `make deploy-trust` fails with Docker volume mount parse error.
 
-**Fix**: Add `ORTHANC_STORAGE_DIR_TRUST_1=/opt/flip/orthanc/orthanc-storage` to `.env.stag`.
+**Fix**: Add `ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage` to the
+per-trust kit file `trust/.env.<KIT>` (see 2.1 for the full root-cause
+context — the compose files consume the unsuffixed name and read from the
+kit, not `.env.stag`).
 
 ---
 
@@ -498,9 +511,11 @@ The general principle: anywhere a non-root container bind-mounts a host path, pr
 **Root cause**: The `dhcp.tf` resource associates a new DHCP options set (with `flip.local` search domain) to the VPC. Existing EC2 instances won't pick up the new options until their DHCP lease expires and renews (typically 24-72 hours for AWS default, or a reboot). Until renewal, the instances continue using the previous (default) DHCP options.
 
 **Fix**: Reboot the EC2 instance to force an immediate DHCP renewal:
+
 ```bash
 aws ec2 reboot-instances --instance-ids <instance-id> --profile FlipDeveloperAccess
 ```
+
 Or wait for the lease to renew naturally. This only matters if the instance needs to resolve `flip.local` domains (which it doesn't during PR 1 — ECS Fargate tasks are the consumers in PR 2).
 
 ---

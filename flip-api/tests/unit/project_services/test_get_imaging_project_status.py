@@ -156,7 +156,7 @@ def test_get_imaging_project_status_project_not_found(
                 id=uuid4(),
                 name="Age Query",
                 query="SELECT * FROM table WHERE age > 50",
-                trusts_queried=5,
+                queried_trust_ids=[uuid4() for _ in range(5)],
                 total_cohort=100,
             ),  # type: ignore[call-arg]
             owner_id=MOCK_USER_ID,
