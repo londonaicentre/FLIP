@@ -18,7 +18,7 @@
                 <h2 class="text-lg font-semibold font-heading grow leading-loose">
                     Models
                 </h2>
-                <div v-if="!isObserver && projectStore.project?.status === 'APPROVED'">
+                <div v-if="!isViewer && projectStore.project?.status === 'APPROVED'">
                     <AiButton light data-test="add-model-btn" @click="addModel">
                         Create Model
                     </AiButton>
@@ -126,7 +126,7 @@ const modalStore = useModalsStore();
 const projectStore = useProjectStore();
 const route = useRoute();
 
-const { isObserver } = usePermissions();
+const { isViewer } = usePermissions();
 
 const { data, error } = useSWRV(
     () => {

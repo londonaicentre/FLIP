@@ -60,7 +60,7 @@
                 <div class="p-4">
                     <div class="inline-flex justify-end w-full space-x-4">
                         <AiButton
-                            v-if="!isObserver"
+                            v-if="!isViewer"
                             class="ml-2"
                             primary
                             small
@@ -156,7 +156,7 @@ const props = defineProps<IProjectStagingProps>();
 
 const emits = defineEmits(["staged"]);
 
-const { isObserver } = usePermissions();
+const { isViewer } = usePermissions();
 
 const loadingTrusts = ref<boolean>(true);
 const trustsToStage = ref<ITrustToStage[]>();

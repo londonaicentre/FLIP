@@ -24,11 +24,11 @@ describe("RoleBadge", () => {
 
     it("colour-codes the badge by role", () => {
         const admin = mount(RoleBadge, { props: { roleName: "Admin" } });
-        const observer = mount(RoleBadge, { props: { roleName: "Observer" } });
+        const viewer = mount(RoleBadge, { props: { roleName: "Viewer" } });
 
-        // Admin (magenta) and Observer (gray) must not render the same tone.
+        // Admin (magenta) and Viewer (gray) must not render the same tone.
         expect(admin.get("[data-test=role-badge]").attributes("style"))
-            .not.toBe(observer.get("[data-test=role-badge]").attributes("style"));
+            .not.toBe(viewer.get("[data-test=role-badge]").attributes("style"));
     });
 
     it("renders a tinted status dot", () => {

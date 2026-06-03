@@ -63,7 +63,7 @@ function mountFileUpload(options: {
     });
 }
 
-describe("FileUpload observer-aware rendering", () => {
+describe("FileUpload viewer-aware rendering", () => {
     it("hides the upload zone when the user lacks CanCreateProjects", () => {
         const wrapper = mountFileUpload({ permissions: [] });
 
