@@ -71,6 +71,7 @@ export const projectDataPage1: IProject[] = [
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             erroredTrustIds: [],
+            emptyTrustIds: [],
             respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             pendingTrustIds: [],
             cancelledTrustIds: []
@@ -94,6 +95,7 @@ export const projectDataPage1: IProject[] = [
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             erroredTrustIds: [],
+            emptyTrustIds: [],
             respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             pendingTrustIds: [],
             cancelledTrustIds: []
@@ -115,6 +117,7 @@ export const projectDataPage1: IProject[] = [
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             erroredTrustIds: [],
+            emptyTrustIds: [],
             respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             pendingTrustIds: [],
             cancelledTrustIds: []
@@ -138,6 +141,7 @@ export const projectDataPage1: IProject[] = [
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             erroredTrustIds: [],
+            emptyTrustIds: [],
             respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             pendingTrustIds: [],
             cancelledTrustIds: []
@@ -159,6 +163,7 @@ export const projectDataPage1: IProject[] = [
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             erroredTrustIds: [],
+            emptyTrustIds: [],
             respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             pendingTrustIds: [],
             cancelledTrustIds: []
@@ -237,6 +242,7 @@ export const projectDataPage1: IProject[] = [
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             erroredTrustIds: [],
+            emptyTrustIds: [],
             respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             pendingTrustIds: [],
             cancelledTrustIds: []
@@ -259,6 +265,7 @@ export const projectDataPage1: IProject[] = [
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             erroredTrustIds: [],
+            emptyTrustIds: [],
             respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             pendingTrustIds: [],
             cancelledTrustIds: []
@@ -293,6 +300,7 @@ export const projectDataPage1: IProject[] = [
             totalCohort: 32567,
             queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             erroredTrustIds: [],
+            emptyTrustIds: [],
             respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
             pendingTrustIds: [],
             cancelledTrustIds: []
