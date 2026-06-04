@@ -1,0 +1,50 @@
+{
+    "job_type": "diffusion_model",
+    "GLOBAL_ROUNDS": 1,
+    "LOCAL_ROUNDS_AE": 1,
+    "LOCAL_ROUNDS_DM": 1,
+    "GLOBAL_ROUNDS_AE": 1,
+    "GLOBAL_ROUNDS_DM": 1,
+    "PATIENCE_STEPS": 10,
+    "CEILING_NUM_ROUNDS": 100,
+    "LR_G": 0.0001,
+    "LR_D": 0.0002,
+    "LR_DM": 0.0001,
+    "VAL_SPLIT": 0.2,
+    "BATCH_SIZE_AE": 1,
+    "BATCH_SIZE_DM": 4,
+    "w_reconstruction_loss": 1.0,
+    "w_perceptual_loss": 1,
+    "w_gan_loss": 0.1,
+    "w_kl_loss": 1e-9,
+    "spatial_shape": [128, 128, 32],
+    "net_config": {
+        "spatial_dims": 3,
+        "stage_1": {
+            "in_channels": 1,
+            "spatial_dims": 3,
+            "out_channels": 1,
+            "num_res_blocks": [1, 1, 2],
+            "channels": [64, 96, 128],
+            "attention_levels": [false, false, false],
+            "latent_channels": 3
+        },
+        "discriminator": {
+            "spatial_dims": 2,
+            "in_channels": 1,
+            "channels": 64,
+            "num_layers_d": 4,
+            "out_channels": 1
+        },
+        "diffusion_model": {
+            "spatial_dims": 3,
+            "in_channels": 3,
+            "out_channels": 3,
+            "with_conditioning": false,
+            "cross_attention_dim": 0,
+            "channels": [32, 64, 128, 128],
+            "num_res_blocks": [2, 2, 2, 2],
+            "attention_levels": [false, false, true, true]
+        }
+    }
+}
