@@ -15,12 +15,16 @@
 # creds from the SSO token, so FL containers fetch fresh, uid-agnostic creds over HTTP and
 # need no SSO mount, no root.
 
+import logging
 import os
 from datetime import timezone
 
 import boto3
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+
+# uvicorn's error logger, so failure detail is visible via `docker logs aws-creds`.
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI()
 
@@ -34,8 +38,11 @@ def creds() -> JSONResponse:
     try:
         credentials = _session.get_credentials()
         frozen = credentials.get_frozen_credentials()
-    except Exception as exc:  # e.g. SSO token expired / not logged in
-        return JSONResponse({"error": f"could not resolve credentials: {exc}"}, status_code=500)
+    except Exception:  # e.g. SSO token expired / not logged in
+        # Log the detail server-side (visible via `docker logs aws-creds` — e.g. to prompt
+        # `aws sso login`), but don't echo the exception text back to the caller (CWE-209).
+        logger.exception("Could not resolve AWS credentials")
+        return JSONResponse({"error": "could not resolve credentials"}, status_code=500)
 
     expiry = getattr(credentials, "_expiry_time", None)
     return JSONResponse({
