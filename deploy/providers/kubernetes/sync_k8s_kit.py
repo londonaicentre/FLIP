@@ -127,8 +127,7 @@ def patch_k8s_secret(secret_name: str, namespace: str, entries: dict[str, str]) 
         subprocess.run(args, check=True)
         verb = "Created"
 
-    shown = ", ".join(sorted(entries))
-    print(f"  ✓ {verb} Secret/{secret_name} keys: {shown}")
+    print(f"  ✓ {verb} Kubernetes Secret entries.")
     print("    Plaintext values went straight to Kubernetes — not persisted to disk.")
 
 
