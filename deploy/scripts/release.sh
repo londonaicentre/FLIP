@@ -66,7 +66,7 @@ cd "$REPO_ROOT"
 command -v uv >/dev/null 2>&1 || error "'uv' is not installed or not on PATH."
 
 VERSION=$(grep -m1 '^version' pyproject.toml | sed 's/.*= *"\(.*\)"/\1/')
-INIT_VERSION=$(grep -m1 '__version__' flip/__init__.py | sed 's/.*= *"\(.*\)"/\1/')
+INIT_VERSION=$(grep -m1 '__version__' flip-utils/flip/__init__.py | sed 's/.*= *"\(.*\)"/\1/')
 
 info "Package:  flip"
 info "Version:  ${VERSION}"
@@ -74,7 +74,7 @@ info "Target:   ${TARGET}"
 info "Dry run:  ${DRY_RUN}"
 
 if [[ "$VERSION" != "$INIT_VERSION" ]]; then
-    error "Version mismatch: pyproject.toml has '${VERSION}' but flip/__init__.py has '${INIT_VERSION}'. Align them before releasing."
+    error "Version mismatch: pyproject.toml has '${VERSION}' but flip-utils/flip/__init__.py has '${INIT_VERSION}'. Align them before releasing."
 fi
 
 if [[ "$DRY_RUN" == false && -z "${UV_PUBLISH_TOKEN:-}" ]]; then
