@@ -27,7 +27,7 @@ import boto3
 from fastapi.testclient import TestClient
 from sqlmodel import select
 
-from flip_api.db.models.main_models import TaskType, TrustTask
+from flip_api.db.models.main_models import TaskType, Trust, TrustTask
 from flip_api.db.models.user_models import RoleRef, UserRole, UsersAudit
 from tests.integration.conftest import admin_user, override_verify_token_as
 
@@ -58,7 +58,12 @@ def test_register_user_creates_user_in_pool_and_writes_audit(
 
     response = client.post(
         "/api/users/",
-        json={"email": "newuser@example.com", "roles": [str(RoleRef.RESEARCHER.value)]},
+        json={
+            "email": "newuser@example.com",
+            "name": "New User",
+            "organisation": "Test Hospital",
+            "roles": [str(RoleRef.RESEARCHER.value)],
+        },
     )
     assert response.status_code == 200, response.text
     body = response.json()
@@ -90,7 +95,12 @@ def test_register_user_duplicate_email_returns_400(
 
     response = client.post(
         "/api/users/",
-        json={"email": "dupe@example.com", "roles": [str(RoleRef.RESEARCHER.value)]},
+        json={
+            "email": "dupe@example.com",
+            "name": "Dupe User",
+            "organisation": "Test Hospital",
+            "roles": [str(RoleRef.RESEARCHER.value)],
+        },
     )
 
     assert response.status_code == 400, response.text
@@ -106,7 +116,12 @@ def test_register_user_403_for_non_admin(client: TestClient, session, cognito_us
 
     response = client.post(
         "/api/users/",
-        json={"email": "another@example.com", "roles": [str(RoleRef.RESEARCHER.value)]},
+        json={
+            "email": "another@example.com",
+            "name": "Another User",
+            "organisation": "Test Hospital",
+            "roles": [str(RoleRef.RESEARCHER.value)],
+        },
     )
 
     assert response.status_code == 403, response.text
@@ -161,6 +176,11 @@ def test_update_user_toggles_enabled_flag_in_pool(
     admin_id = admin_user(session)
     override_verify_token_as(admin_id)
     sub = _admin_create_user(cognito_user_pool["pool_id"], "togglable@example.com")
+
+    # update_user enqueues an UPDATE_USER_PROFILE TrustTask per registered trust;
+    # at least one trust must exist for that step to run.
+    session.add(Trust(name="XNAT Sync Trust"))
+    session.commit()
 
     response = client.put(f"/api/users/{sub}", json={"disabled": True})
     assert response.status_code == 200, response.text

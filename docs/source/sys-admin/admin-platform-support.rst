@@ -6,7 +6,7 @@ Platform Support
 Security
 *********
 
-Trusts authenticate to the Central Hub using per-trust API keys. Each trust is identified by its ``TRUST_NAME`` and a secret ``TRUST_API_KEY`` — the hub verifies the SHA-256 hash of the key against its stored ``TRUST_API_KEY_HASHES``. Trust communication payloads are encrypted with a shared ``AES_KEY_BASE64``.
+Trusts authenticate to the Central Hub using per-trust API keys. The hub identifies a trust solely by its API key — it looks up the trust whose stored SHA-256 hash (the ``api_key_hash`` column of the ``trust`` table) matches the presented key. Each trust holds its secret ``TRUST_API_KEY`` in its own environment. Trust communication payloads are encrypted with a shared ``AES_KEY_BASE64``.
 
 See :ref:`deploy-flip-node-on-prem` for details on trust provisioning and authentication setup.
 
@@ -111,4 +111,4 @@ Access to FLIP is granted by a FLIP administrator.
 
 Access to FLIP will be reviewed annually, with dormant accounts being removed.
 
-FLIP employs role based access control to permit functionality for accounts, managed through the FLIP API and UI. FLIP currently has three access profiles: **Admin**, **Researcher** and **Observer**. For full details of permissions assigned to each role, see :ref:`rbac-roles`.
+FLIP employs role based access control to permit functionality for accounts, managed through the FLIP API and UI. FLIP currently has three access profiles: **Admin**, **Researcher** and **Viewer**. For full details of permissions assigned to each role, see :ref:`rbac-roles`.

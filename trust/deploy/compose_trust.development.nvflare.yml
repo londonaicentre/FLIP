@@ -20,10 +20,12 @@ services:
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
-      # Provisioned NVFLARE secrets (certificates, fed_client.json)
-      - ${FL_PROVISIONED_DIR}/net-1/services/${TRUST_NAME}/local:/app/local
-      - ${FL_PROVISIONED_DIR}/net-1/services/${TRUST_NAME}/startup:/app/startup
-      - ${FL_PROVISIONED_DIR}/net-1/services/${TRUST_NAME}/transfer:/app/transfer
+      # Provisioned NVFLARE secrets (certificates, fed_client.json) — mounted from the
+      # FL kit slot assigned by the hub, NOT the trust's friendly name. The slot dir's
+      # fed_client.json baked-in CN is the identity the FL server sees on registration.
+      - ${FL_PROVISIONED_DIR}/net-1/services/${FL_KIT_SLOT}/local:/app/local
+      - ${FL_PROVISIONED_DIR}/net-1/services/${FL_KIT_SLOT}/startup:/app/startup
+      - ${FL_PROVISIONED_DIR}/net-1/services/${FL_KIT_SLOT}/transfer:/app/transfer
     environment:
       - NET_ID=net-1
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
@@ -31,7 +33,6 @@ services:
       - LOCAL_DEV=false
       - MIN_CLIENTS=${MIN_CLIENTS}
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       # FL clients intentionally do not have access to Central Hub API credentials.
       # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
       - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
@@ -45,7 +46,7 @@ services:
       - default
       - deploy_shared-net-1
     shm_size: '32gb'
-    gpus: all
+    # GPU passthrough via compose_trust.development.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 
   fl-client-net-2:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
@@ -53,9 +54,9 @@ services:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
       # Provisioned NVFLARE secrets (certificates, fed_client.json)
-      - ${FL_PROVISIONED_DIR}/net-2/services/${TRUST_NAME}/local:/app/local
-      - ${FL_PROVISIONED_DIR}/net-2/services/${TRUST_NAME}/startup:/app/startup
-      - ${FL_PROVISIONED_DIR}/net-2/services/${TRUST_NAME}/transfer:/app/transfer
+      - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/local:/app/local
+      - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
+      - ${FL_PROVISIONED_DIR}/net-2/services/${FL_KIT_SLOT}/transfer:/app/transfer
     environment:
       - NET_ID=net-2
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
@@ -63,7 +64,6 @@ services:
       - LOCAL_DEV=false
       - MIN_CLIENTS=${MIN_CLIENTS}
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       # FL clients intentionally do not have access to Central Hub API credentials.
       # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
       - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
@@ -77,4 +77,4 @@ services:
       - default
       - deploy_shared-net-2
     shm_size: '32gb'
-    gpus: all
+    # GPU passthrough via compose_trust.development.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)

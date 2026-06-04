@@ -7,6 +7,8 @@
         {
             "id": "1c7335ef-9c0a-4f16-b07f-147fcead1f3d",
             "email": "researcher.user@flip.com",
+            "name": "Researcher User",
+            "organisation": "London AI Centre",
             "isDisabled": false,
             "roles": [
                 {
@@ -19,6 +21,8 @@
         {
             "id": "c16dab4d-ab43-4bea-9be5-a045c6d684ff",
             "email": "multipleRole.user@flip.com",
+            "name": "Multiple Role User",
+            "organisation": "King's College London",
             "isDisabled": false,
             "roles": [
                 {
@@ -36,6 +40,8 @@
         {
             "id": "56e5f17a-feff-40cb-a52a-00da8d0091f9",
             "email": "test.man@kcl.ac.uk",
+            "name": "Test Man",
+            "organisation": "King's College London",
             "isDisabled": false,
             "roles": [
                 {
@@ -48,6 +54,8 @@
         {
             "id": "03a3a210-cd5a-405e-a838-07a16aefc806",
             "email": "HasAdminRole@gmail.com",
+            "name": "Admin Role User",
+            "organisation": "London AI Centre",
             "isDisabled": false,
             "roles": [
                 {
@@ -65,6 +73,8 @@
         {
             "id": "55519a49-3206-4721-959b-8ab1f3abca1c",
             "email": "HasResearcherRole@gmail.com",
+            "name": "Researcher Role User",
+            "organisation": "London AI Centre",
             "isDisabled": false,
             "roles": [
                 {
@@ -77,6 +87,8 @@
         {
             "id": "35519a49-6206-6721-659b-6ab1f3abca1c",
             "email": "disabled.user@flip.com",
+            "name": "Disabled User",
+            "organisation": "London AI Centre",
             "isDisabled": true,
             "roles": [
                 {

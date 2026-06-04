@@ -145,15 +145,9 @@ resource "aws_ec2_tag" "rds_security_group_flip_sg" {
   value       = "true"
 }
 
-resource "aws_security_group_rule" "rds_ingress_ecs_flip_api" {
-  type                     = "ingress"
-  from_port                = 5432
-  to_port                  = 5432
-  protocol                 = "tcp"
-  description              = "PostgreSQL from ECS flip-api"
-  source_security_group_id = aws_security_group.ecs_flip_api.id
-  security_group_id        = module.rds_security_group.security_group.id
-}
+# flip-api reaches Postgres only through RDS Proxy (rds_proxy.tf), never
+# directly — so RDS ingress comes from the proxy SG (rds_proxy.tf), not the
+# flip-api task SG.
 
 ############################
 # RDS PostgreSQL Database
@@ -201,7 +195,6 @@ module "flip_api_secret" {
 
   secret_string = jsonencode({
     aes_key                   = var.AES_KEY_BASE64
-    trust_api_key_hashes      = var.TRUST_API_KEY_HASHES
     internal_service_key_hash = var.INTERNAL_SERVICE_KEY_HASH
     internal_service_key      = var.INTERNAL_SERVICE_KEY
   })
@@ -695,21 +688,23 @@ resource "aws_lb_listener_rule" "api_routing" {
 
 ############################
 # On-Premises Trust (optional)
-# Activated by setting local_trust_public_ip in the env file or via
-# TF_VAR_local_trust_public_ip when running `make add-local-trust`.
+# Driven by var.local_trust_public_ips — set via LOCAL_TRUST_PUBLIC_IPS in the
+# env file. One ingress rule is created per IP; `make allow-local-trust-nlb`
+# applies them. Because the IPs are real config (not a transient -target var),
+# a normal `terraform apply` reconciles these rules without drift.
 ############################
 
-# Allow the local (on-prem) trust FL client to reach the FL server via the NLB.
+# Allow on-prem trust FL clients to reach the FL server via the NLB.
 # Without this rule the NLB security group drops the connection before it reaches the EC2.
 resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
-  count             = var.local_trust_public_ip != "" ? 1 : 0
+  for_each          = toset(var.local_trust_public_ips)
   type              = "ingress"
   from_port         = var.FL_SERVER_PORT
   to_port           = var.FL_SERVER_PORT
   protocol          = "tcp"
-  cidr_blocks       = ["${var.local_trust_public_ip}/32"]
+  cidr_blocks       = ["${each.value}/32"]
   security_group_id = module.fl_server_nlb.security_group_id
-  description       = "FL Server/Admin NLB from on-prem Trust"
+  description       = "FL Server/Admin NLB from on-prem Trust (${each.value})"
 }
 
 # Outputs
@@ -755,6 +750,11 @@ output "DbEndpoint" {
 output "DbSecretArn" {
   description = "RDS Database Secret ARN"
   value       = module.flip_db.db_instance_master_user_secret_arn
+}
+
+output "DbProxyEndpoint" {
+  description = "RDS Proxy endpoint (flip-api connects here with IAM auth)"
+  value       = aws_db_proxy.flip_db.endpoint
 }
 
 output "CognitoUserPoolId" {

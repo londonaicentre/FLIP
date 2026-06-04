@@ -21,7 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
-from flip_api.domain.interfaces.model import ILog
+from flip_api.db.models.main_models import FLLogs
 from flip_api.main import app
 
 client = TestClient(app)
@@ -29,20 +29,20 @@ client = TestClient(app)
 test_model_id = uuid4()
 test_user_id = uuid4()
 mock_logs = [
-    ILog(
+    FLLogs(
         id=uuid4(),
         model_id=test_model_id,
         log_date=datetime.now(),
         success=True,
         log="Log entry 1",
-    ),  # type: ignore[call-arg]
-    ILog(
+    ),
+    FLLogs(
         id=uuid4(),
         model_id=test_model_id,
         log_date=datetime.now(),
         success=False,
         log="Log entry 2",
-    ),  # type: ignore[call-arg]
+    ),
 ]
 
 # ---------- Dependency Overrides ----------
@@ -103,9 +103,14 @@ def test_retrieve_logs_for_model_success(override_dependencies, mock_can_access_
     mock_exec_result = MagicMock()
     mock_exec_result.all.return_value = mock_logs
 
+    # Third call to exec().all() → trust id -> name lookup (no trusts to resolve here)
+    mock_trust_result = MagicMock()
+    mock_trust_result.all.return_value = []
+
     override_dependencies.exec.side_effect = [
         mock_model,  # db.exec(...).first() → model exists
         mock_exec_result,  # db.exec(...).all() → returns mock logs
+        mock_trust_result,  # db.exec(...).all() → trust id -> name map
     ]
 
     response = client.get(f"/api/model/{test_model_id}/logs")

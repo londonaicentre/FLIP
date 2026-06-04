@@ -23,18 +23,20 @@
                         <div
                             class="relative pb-4"
                         >
-                            <icon-ph-flag-banner-duotone
-                                class="w-16 h-16 mb-8 transition"
-                                :class="[details.banner.enabled ? 'text-primary-600 dark:text-green-400' : 'text-gray-300']"
-                            />
-                            <h3 class="mt-2 text-3xl font-semibold font-heading">
-                                Site Banner is <span
-                                    class="font-black underline uppercase transition decoration-4 decoration-solid underline-offset-8"
-                                    :class="[details.banner.enabled ? 'decoration-primary-600 dark:decoration-green-400' : 'decoration-transparent']"
-                                >
-                                    {{ details.banner.enabled ? 'Enabled' : 'Disabled' }}
-                                </span>
-                            </h3>
+                            <div class="flex items-center gap-3">
+                                <icon-ph-flag-banner-duotone
+                                    class="w-9 h-9 transition shrink-0"
+                                    :class="[details.banner.enabled ? 'text-primary-600 dark:text-green-400' : 'text-gray-300']"
+                                />
+                                <h3 class="text-3xl font-semibold font-heading">
+                                    Site Banner is <span
+                                        class="font-black underline uppercase transition decoration-4 decoration-solid underline-offset-8"
+                                        :class="[details.banner.enabled ? 'decoration-primary-600 dark:decoration-green-400' : 'decoration-transparent']"
+                                    >
+                                        {{ details.banner.enabled ? 'Enabled' : 'Disabled' }}
+                                    </span>
+                                </h3>
+                            </div>
                             <p class="max-w-2xl my-6 text-gray-400">
                                 Enabling the <strong class="font-bold">site banner</strong> will show a message on every
                                 page to all users across the platform.
@@ -45,7 +47,7 @@
                             </AiButton>
                         </div>
                     </div>
-                    <div class="relative p-4 bg-gray-200 dark:bg-gray-600">
+                    <div class="relative p-4">
                         <div class="overflow-hidden border border-gray-300 rounded-lg shadow-lg dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
                             <div class="w-full">
                                 <div class="p-2 transition bg-primary-500 sm:p-3">

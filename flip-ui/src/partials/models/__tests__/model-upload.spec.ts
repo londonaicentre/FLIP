@@ -54,6 +54,7 @@ const { FileTooLargeError } = vi.hoisted(() => {
             this.actualBytes = actualBytes;
         }
     }
+
     return { FileTooLargeError };
 });
 vi.mock("@/utils/file", () => ({
@@ -80,9 +81,32 @@ vi.mock("@/services/file-service", () => ({
     downloadModelFile: (...args: unknown[]) => mockDownloadModelFile(...args)
 }));
 
-// JobTypes is imported by ModelUpload only as a type annotation; the
+// JobType is imported by ModelUpload only as a type annotation; the
 // value itself is never read at runtime but the module needs to resolve.
-vi.mock("@/services/model-service", () => ({ JobTypes: {} }));
+vi.mock("@/services/model-service", () => ({ JobType: {} }));
+
+// Mock JSZip: the real package's generateAsync({ type: "blob" }) needs
+// browser File API support that jsdom doesn't fully provide. The mock
+// constructor records the files added via file() and returns a fake blob
+// from generateAsync so downloadAllAsZip's <a>-click plumbing runs.
+const jszipAddedFiles: string[] = [];
+vi.mock("jszip", () => {
+    return {
+        default: class FakeJSZip {
+            // Real JSZip signature is `file(name, data)` / `generateAsync(options)` — the
+            // mock drops the extra args silently (JS doesn't enforce arity on method
+            // calls), so the call sites in ModelUpload.vue work unchanged against the
+            // shim. Trimmed here so `@typescript-eslint/no-unused-vars` stays clean
+            // without an inline ignore.
+            file(name: string) {
+                jszipAddedFiles.push(name);
+            }
+            async generateAsync() {
+                return new Blob(["zip-bytes"], { type: "application/zip" });
+            }
+        }
+    };
+});
 
 const mockSnackbarSuccess = vi.fn();
 const mockSnackbarError = vi.fn();
@@ -122,7 +146,7 @@ const baseProps = {
     canUpload: true,
     modelId: "model-under-test",
     requiredFiles: [],
-    jobType: "standard" as unknown as Record<string, unknown>
+    jobType: "standard"
 };
 
 function mountModelUpload(
@@ -174,9 +198,9 @@ function mountModelUpload(
             }
         }
     });
-    // Drive `isObserver` via hasPermissions (the component calls
+    // Drive `isViewer` via hasPermissions (the component calls
     // authStore.hasPermissions(["CanManageProjects"])). Mock that
-    // here so we can toggle observer vs researcher/admin between tests.
+    // here so we can toggle viewer vs researcher/admin between tests.
     const authStore = useAuthStore();
     (authStore.hasPermissions as unknown as ReturnType<typeof vi.fn>) = vi.fn(() =>
         opts.hasPermissions ?? true
@@ -218,7 +242,7 @@ describe("ModelUpload", () => {
         });
 
         test("hides the FileUpload child when canUpload is false", () => {
-            // Observers (no CanManageProjects permission) see the listing
+            // Viewers (no CanManageProjects permission) see the listing
             // but not the upload affordance.
             const wrapper = mountModelUpload({ canUpload: false });
             expect(wrapper.find("[data-test='file-upload']").exists()).toBe(false);
@@ -580,7 +604,7 @@ describe("ModelUpload", () => {
             const wrapper = mountModelUpload({ files }, { hasPermissions: true });
             await flushPromises();
 
-            // hasPermissions=true → isObserver=false → download button
+            // hasPermissions=true → isViewer=false → download button
             // visible. Two row buttons: [0] download (first Transition),
             // [1] delete (second Transition).
             const rowButtons = wrapper.findAll("li button");
@@ -598,7 +622,7 @@ describe("ModelUpload", () => {
             revokeObjectURLSpy.mockRestore();
         });
 
-        test("observer (no CanManageProjects) does not see the download button", async () => {
+        test("viewer (no CanManageProjects) does not see the download button", async () => {
             const files: FileInfo[] = [
                 {
                     id: "1",
@@ -607,8 +631,8 @@ describe("ModelUpload", () => {
                     status: FileUploadStatus.COMPLETED
                 }
             ];
-            // Observers can view the file list but can't download. canUpload
-            // is false for observers so delete is also hidden.
+            // Viewers can view the file list but can't download. canUpload
+            // is false for viewers so delete is also hidden.
             const wrapper = mountModelUpload(
                 {
                     files,
@@ -618,8 +642,110 @@ describe("ModelUpload", () => {
             );
             await flushPromises();
 
-            // No row buttons should render at all for an observer.
+            // No row buttons should render at all for a viewer.
             expect(wrapper.findAll("li button").length).toBe(0);
+        });
+
+        test("download-all-files-btn fetches each file, zips them and triggers an <a> download", async () => {
+            const blob1 = new Blob(["a"], { type: "text/plain" });
+            const blob2 = new Blob(["b"], { type: "text/plain" });
+            mockDownloadModelFile.mockImplementation((path: string) =>
+                Promise.resolve(path.endsWith("a.py") ? blob1 : blob2)
+            );
+            const createObjectURLSpy = vi
+                .spyOn(URL, "createObjectURL").mockReturnValue("blob:zip-fake");
+            const revokeObjectURLSpy = vi
+                .spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+            const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockReturnValue();
+
+            const files: FileInfo[] = [
+                {
+                    id: "1",
+                    name: "a.py",
+                    size: 10,
+                    status: FileUploadStatus.COMPLETED
+                },
+                {
+                    id: "2",
+                    name: "b.py",
+                    size: 12,
+                    status: FileUploadStatus.COMPLETED
+                }
+            ];
+            const wrapper = mountModelUpload({ files }, { hasPermissions: true });
+            await flushPromises();
+
+            await wrapper.find("[data-test=download-all-files-btn]").trigger("click");
+            await flushPromises();
+
+            // One downloadModelFile call per file, in parallel.
+            expect(mockDownloadModelFile).toHaveBeenCalledWith("/files/model/model-under-test/a.py");
+            expect(mockDownloadModelFile).toHaveBeenCalledWith("/files/model/model-under-test/b.py");
+            // The zip blob got an object URL and the <a> click was triggered.
+            expect(createObjectURLSpy).toHaveBeenCalled();
+            expect(clickSpy).toHaveBeenCalled();
+            expect(revokeObjectURLSpy).toHaveBeenCalledWith("blob:zip-fake");
+
+            createObjectURLSpy.mockRestore();
+            revokeObjectURLSpy.mockRestore();
+            clickSpy.mockRestore();
+        });
+
+        test("download-all snackbars when a file fetch fails", async () => {
+            mockDownloadModelFile.mockRejectedValue(new Error("network"));
+            const createObjectURLSpy = vi
+                .spyOn(URL, "createObjectURL").mockReturnValue("blob:nope");
+            const revokeObjectURLSpy = vi
+                .spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+
+            const files: FileInfo[] = [
+                {
+                    id: "1",
+                    name: "a.py",
+                    size: 10,
+                    status: FileUploadStatus.COMPLETED
+                }
+            ];
+            const wrapper = mountModelUpload({ files }, { hasPermissions: true });
+            await flushPromises();
+
+            await wrapper.find("[data-test=download-all-files-btn]").trigger("click");
+            await flushPromises();
+
+            expect(mockSnackbarError).toHaveBeenCalledWith(
+                expect.objectContaining({ title: "Download failed" })
+            );
+
+            createObjectURLSpy.mockRestore();
+            revokeObjectURLSpy.mockRestore();
+        });
+
+        test("download-all is a no-op while a previous download is still in flight", async () => {
+            // Hold the first downloadModelFile open so we can fire the button
+            // again before the first batch finishes.
+            let resolveFirst: ((b: Blob) => void) | null = null;
+            mockDownloadModelFile.mockReturnValueOnce(
+                new Promise<Blob>(resolve => { resolveFirst = resolve; })
+            );
+
+            const files: FileInfo[] = [
+                {
+                    id: "1",
+                    name: "a.py",
+                    size: 10,
+                    status: FileUploadStatus.COMPLETED
+                }
+            ];
+            const wrapper = mountModelUpload({ files }, { hasPermissions: true });
+            await flushPromises();
+
+            await wrapper.find("[data-test=download-all-files-btn]").trigger("click");
+            // Second click should bail at the `if (downloadingAll.value) return` guard.
+            await wrapper.find("[data-test=download-all-files-btn]").trigger("click");
+            expect(mockDownloadModelFile).toHaveBeenCalledTimes(1);
+
+            // Wrap up so we don't leak a pending promise.
+            resolveFirst!(new Blob(["x"]));
         });
     });
 });

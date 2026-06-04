@@ -15,18 +15,19 @@ from unittest.mock import patch
 import pytest
 from fastapi import HTTPException
 
+from flip_api.db.models.main_models import Trust
 from flip_api.domain.schemas.private import TrainingLog
 from flip_api.private_services.add_log import add_log_endpoint
 from flip_api.utils.logger import logger  # To assert logger calls
 
-# Mock schema validation functions if they are complex or have side effects
-# For this example, we'll patch them directly in the tests.
-
 # Sample data
 # TODO consider using UUID for model_id in the test: Note that because we don't call the endpoint via 'TestClient',
 # there is no type validation on the model_id, therefore we can use a string instead of a UUID.
-trust_name = "TestTrust"
+fl_client_name = "TestTrust"
 model_id = "endpoint_model_1"
+
+# The trust the FL client name resolves to (resolve_trust_from_fl_client_name is mocked to return this).
+resolved_trust = Trust(name="TestTrust")
 
 
 @pytest.fixture
@@ -34,7 +35,7 @@ def sample_training_log():
     """Fixture for a sample TrainingLog."""
 
     training_log = TrainingLog(
-        trust=trust_name,
+        fl_client_name=fl_client_name,
         log="Test log message",
     )
     return training_log
@@ -43,9 +44,12 @@ def sample_training_log():
 class TestAddLogEndpoint:
     """Tests for the add_log FastAPI endpoint."""
 
-    @patch("flip_api.private_services.add_log.validate_trusts", return_value=True)
+    @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name", return_value=resolved_trust)
+    @patch("flip_api.private_services.add_log.validate_trust_ids", return_value=True)
     @patch("flip_api.private_services.add_log.add_log")
-    def test_add_log_success(self, mock_add_log, mock_validate_trusts, mock_db_session, sample_training_log):
+    def test_add_log_success(
+        self, mock_add_log, mock_validate_trust_ids, mock_resolve, mock_db_session, sample_training_log
+    ):
         """Test successful log creation via the endpoint."""
 
         model_id = "endpoint_model_1"
@@ -53,13 +57,22 @@ class TestAddLogEndpoint:
 
         response = add_log_endpoint(model_id, sample_training_log, session)
 
-        mock_add_log.assert_called_once_with(model_id=model_id, log=sample_training_log.log, session=session)
+        mock_add_log.assert_called_once_with(
+            model_id=model_id,
+            log=sample_training_log.log,
+            session=session,
+            trust=resolved_trust,
+            fl_client_name=fl_client_name,
+        )
         assert response == {"detail": "Created"}
+        # validate_trust_ids is called with the resolved trust's id.
+        assert mock_validate_trust_ids.call_args.kwargs["trust_ids"] == [resolved_trust.id]
 
-    @patch("flip_api.private_services.add_log.validate_trusts", return_value=True)
+    @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name", return_value=resolved_trust)
+    @patch("flip_api.private_services.add_log.validate_trust_ids", return_value=True)
     @patch("flip_api.private_services.add_log.add_log")
     def test_add_log_http_exception_from_add_log(
-        self, mock_add_log, mock_validate_trusts, mock_db_session, sample_training_log
+        self, mock_add_log, mock_validate_trust_ids, mock_resolve, mock_db_session, sample_training_log
     ):
         """Test when add_log itself raises an HTTPException."""
 
@@ -74,14 +87,16 @@ class TestAddLogEndpoint:
         assert exc_info.value.status_code == 409
         assert exc_info.value.detail == "Conflict in logging"
 
-    @patch("flip_api.private_services.add_log.validate_trusts", return_value=True)
+    @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name", return_value=resolved_trust)
+    @patch("flip_api.private_services.add_log.validate_trust_ids", return_value=True)
     @patch("flip_api.private_services.add_log.add_log")
     @patch.object(logger, "error")
     def test_add_log_general_exception_from_add_log(
         self,
         mock_logger_error,
         mock_add_log,
-        mock_validate_trusts,
+        mock_validate_trust_ids,
+        mock_resolve,
         mock_db_session,
         sample_training_log,
     ):
@@ -103,19 +118,29 @@ class TestAddLogEndpoint:
             f"Unhandled error in add_log endpoint for model {model_id}: {str(general_error)}", exc_info=True
         )
 
-    def test_add_log_invalid_trust(self, mock_db_session, sample_training_log):
+    @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name", return_value=resolved_trust)
+    @patch("flip_api.private_services.add_log.validate_trust_ids", return_value=False)
+    def test_add_log_invalid_trust(self, mock_validate_trust_ids, mock_resolve, mock_db_session, sample_training_log):
         """Test when the trust is not associated with the model."""
 
         model_id = "model_invalid_trust"
         session = mock_db_session
 
-        # Mock the trust validation to return False
-        with patch("flip_api.private_services.add_log.validate_trusts", return_value=False):
-            with pytest.raises(HTTPException) as exc_info:
-                add_log_endpoint(model_id, sample_training_log, session)
+        with pytest.raises(HTTPException) as exc_info:
+            add_log_endpoint(model_id, sample_training_log, session)
 
-            assert exc_info.value.status_code == 400
-            assert (
-                exc_info.value.detail
-                == f"The trust: {sample_training_log.trust} is not associated with model: {model_id}"
-            )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == f"The trust: {resolved_trust.name} is not associated with model: {model_id}"
+
+    @patch("flip_api.private_services.add_log.resolve_trust_from_fl_client_name", return_value=None)
+    def test_add_log_unresolvable_fl_client(self, mock_resolve, mock_db_session, sample_training_log):
+        """An FL client name that maps to no trust is rejected with 400."""
+
+        model_id = "model_unresolvable"
+        session = mock_db_session
+
+        with pytest.raises(HTTPException) as exc_info:
+            add_log_endpoint(model_id, sample_training_log, session)
+
+        assert exc_info.value.status_code == 400
+        assert "could not be resolved" in exc_info.value.detail.lower()

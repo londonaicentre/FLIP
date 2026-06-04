@@ -74,7 +74,7 @@ def test_revoke_all_roles_leaves_no_join_rows(session):
     underlying identity, but we no longer mirror it here."""
     user_id = uuid4()
 
-    session.add(UserRole(user_id=user_id, role_id=RoleRef.OBSERVER.value))
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.VIEWER.value))
     session.commit()
 
     session.execute(delete(UserRole).where(col(UserRole.user_id) == user_id))

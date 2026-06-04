@@ -14,11 +14,11 @@
 <template>
     <AiCard>
         <div class="p-4">
-            <div class="flex items-center">
+            <div class="flex items-center justify-between">
                 <h2 class="text-lg font-semibold font-heading grow leading-loose">
-                    Latest Models
+                    Models
                 </h2>
-                <div v-if="!isObserver && projectStore.project?.status === 'APPROVED' && data?.data?.length">
+                <div v-if="!isViewer && projectStore.project?.status === 'APPROVED'">
                     <AiButton light data-test="add-model-btn" @click="addModel">
                         Create Model
                     </AiButton>
@@ -26,7 +26,7 @@
             </div>
             <div v-if="projectStore.project?.status === 'APPROVED' && !!data && !data?.data?.length">
                 <div
-                    class="flex flex-col items-center justify-center w-full h-full gap-4 p-4 mt-4 border-2 border-gray-300 dark:border-gray-700 border-dashed rounded-lg"
+                    class="flex flex-col items-center justify-center w-full h-full gap-4 p-4 mt-4 border-2 border-gray-100 dark:border-gray-700 rounded-lg"
                 >
                     <div class="relative block w-full text-center">
                         <icon-carbon-machine-learning-model class="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600" />
@@ -34,9 +34,6 @@
                             There are no models assigned to this project.
                         </div>
                     </div>
-                    <AiButton v-if="!isObserver" primary data-test="create-model-btn" @click="addModel">
-                        Create Model
-                    </AiButton>
                 </div>
             </div>
         </div>
@@ -58,11 +55,11 @@
                             class="flex transition items-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 px-4 py-2 gap-2 group"
                             @click="navigate"
                         >
-                            <div class="flex flex-col gap-1 w-full text-sm min-w-0">
-                                <p class="font-semibold text-primary-600 dark:text-primary-200 truncate">
+                            <div class="flex flex-col gap-0.5 w-full text-xs min-w-0">
+                                <p class="font-semibold leading-tight text-primary-600 dark:text-primary-200 truncate">
                                     {{ model.name }}
                                 </p>
-                                <p class="text-gray-500 dark:text-gray-400 truncate">
+                                <p class="leading-tight text-gray-500 dark:text-gray-400 truncate">
                                     {{ model.description }}
                                     <template v-if="!model.description">
                                         <span class="italic text-gray-400 dark:text-gray-500">No description provided...</span>
@@ -71,7 +68,7 @@
                             </div>
                             <div>
                                 <icon-heroicons-outline-chevron-right
-                                    class="w-5 h-5 text-gray-400 transition group-hover:translate-x-0.5"
+                                    class="w-4 h-4 text-gray-400 transition group-hover:translate-x-0.5"
                                     aria-hidden="true"
                                 />
                             </div>
@@ -114,24 +111,22 @@
 
 <script setup lang="ts">
 import useSWRV from "swrv";
-import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
+import { usePermissions } from "@/composables/usePermissions";
 import { getModels } from "@/services/model-service";
-import { useAuthStore } from "@/store/auth";
 import { useModalsStore } from "@/store/modals";
 import { useProjectStore } from "@/store/project";
 
-const authStore = useAuthStore();
 const modalStore = useModalsStore();
 const projectStore = useProjectStore();
 const route = useRoute();
 
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
+const { isViewer } = usePermissions();
 
 const { data, error } = useSWRV(
     () => {

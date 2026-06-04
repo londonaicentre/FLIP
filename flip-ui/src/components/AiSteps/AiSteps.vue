@@ -163,17 +163,7 @@
 import { useScroll } from "@vueuse/core";
 import { onMounted, ref, watch } from "vue";
 
-export interface IStep {
-    id: string;
-    name: string;
-    description?: string;
-    scrollTo?: string;
-    completed?: boolean;
-    inProgress?: boolean;
-    error?: boolean;
-    stopped?: boolean;
-    action?: () => void;
-}
+import type { IStep } from "@/interfaces/steps";
 
 interface IStepsProps {
     steps: IStep[]

@@ -55,7 +55,7 @@
                             data-test="model-search"
                         />
                     </div>
-                    <div v-if="!isObserver">
+                    <div v-if="!isViewer">
                         <AiButton
                             light
                             data-test="add-model-btn"
@@ -74,7 +74,7 @@
                     >
                         <template #head>
                             <tr class="text-left">
-                                <th class="w-[200px]">
+                                <th class="w-[340px]">
                                     Name
                                 </th>
                                 <th>
@@ -83,7 +83,6 @@
                                 <th class="w-[220px] whitespace-nowrap">
                                     Status
                                 </th>
-                                <th class="w-[150px]" />
                             </tr>
                         </template>
                         <template #body="{ rows }">
@@ -91,11 +90,14 @@
                                 v-for="row, index in rows"
                                 :key="row.id"
                                 :data-test="`model-list-item-${index}`"
+                                class="cursor-pointer transition hover:bg-gray-50 dark:hover:bg-gray-900 h-16 [&>td]:py-4"
+                                @click="viewModel(row.id)"
                             >
-                                <td class="font-bold min-w-[150px]">
+                                <td class="font-bold min-w-[300px]">
                                     <router-link
                                         class="break-words line-clamp-2"
                                         :to="`/project/${route.params['projectId']}/model/${row.id}`"
+                                        @click.stop
                                     >
                                         {{ row.name }}
                                     </router-link>
@@ -129,20 +131,9 @@
                                         </span>
                                     </div>
                                 </td>
-                                <td>
-                                    <AiButton
-                                        text-primary
-                                        text
-                                        class="float-right "
-                                        data-test="view-models-btn"
-                                        @click="() => viewModel(row.id)"
-                                    >
-                                        View Model
-                                    </AiButton>
-                                </td>
                             </tr>
                             <tr v-if="!rows.length">
-                                <td colspan="4" class="text-center">
+                                <td colspan="3" class="text-center">
                                     There are no models to show
                                 </td>
                             </tr>
@@ -163,15 +154,15 @@
 import { TransitionRoot } from "@headlessui/vue";
 import { debouncedWatch } from "@vueuse/core";
 import useSWRV from "swrv";
-import { computed, ref } from "vue";
+import { ref } from "vue";
 import { useRoute } from "vue-router";
 
 import AiButton from "@/components/AiButton/AiButton.vue";
 import AiPagination from "@/components/AiPagination/AiPagination.vue";
 import useErrorHandler from "@/composables/useErrorHandler";
+import { usePermissions } from "@/composables/usePermissions";
 import { routeChange } from "@/router";
 import { getModels, isModelStatusError, modelStatusLabel } from "@/services/model-service";
-import { useAuthStore } from "@/store/auth";
 import { useModalsStore } from "@/store/modals";
 
 interface IModelListProps {
@@ -189,8 +180,7 @@ const searchQueryParam = ref("");
 
 const modalStore = useModalsStore();
 const route = useRoute();
-const authStore = useAuthStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
+const { isViewer } = usePermissions();
 
 debouncedWatch(
     search,

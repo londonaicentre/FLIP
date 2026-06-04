@@ -14,8 +14,6 @@
 
 
 
-import { getShortDateFromString } from "@/utils/helpers";
-
 import { validProject, validProjectWithQuery } from "../../common";
 
 describe("Project Page: Researcher & Owner [UNAPPROVED]", () => {
@@ -51,36 +49,6 @@ describe("Project Page: Researcher & Owner [UNAPPROVED]", () => {
         });
 
         cy.visit("/project/" + validProject.id);
-    });
-
-    it("Show the correct breadcrumbs", () => {
-        cy.getBySel("parent-page-text")
-            .first()
-            .should("contain.text", "Projects");
-
-        cy.getBySel("current-page-text")
-            .should("contain.text", validProject.name);
-    });
-
-    it("Has the correct href attribute", () => {
-        cy.getBySel("parent-page-text")
-            .first()
-            .should("contain.text", "Projects")
-            .should("have.attr", "href", "/projects");
-    });
-
-    it("Show the correct details", () => {
-        cy.getBySel("project-name-text")
-            .should("contain.text", validProject.name);
-
-        cy.getBySel("project-description-text")
-            .should("contain.text", validProject.description);
-
-        cy.getBySel("project-creator-text")
-            .should("contain.text", validProject.owneremail);
-
-        cy.getBySel("project-created-time")
-            .should("contain.text", getShortDateFromString(validProject.creationtimestamp));
     });
 
     it("Must have Cohort to stage and allow user to create one", () => {

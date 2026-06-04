@@ -57,16 +57,42 @@ def test_cohort_endpoint_returns_aggregates_for_image_occurrences(http_client):
     assert {"Counts", "Nulls", "Sex Distribution", "Age Distribution"} <= aggregate_names
 
 
-def test_cohort_endpoint_rejects_below_threshold(http_client):
-    """A query with 0 matching rows trips the cohort threshold and returns 400."""
+def test_cohort_endpoint_suppresses_below_threshold(http_client):
+    """A non-zero below-threshold cohort (4 XR rows in the seed) is privacy-suppressed:
+    HTTP 200 with record_count=0, empty data and suppressed=True (#519)."""
+    response = http_client.post(
+        "/cohort",
+        json=_cohort_payload(
+            # modality_concept_id 4013632 = 'XR' (Plain Film); the seed has 4 such rows,
+            # below the threshold of 10 — a genuine below-threshold count, not a zero.
+            "SELECT person_id, modality_concept_id, accession_id "
+            "FROM omop.image_occurrence WHERE modality_concept_id = 4013632"
+        ),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["record_count"] == 0
+    assert body["data"] == []
+    # The 0 is privacy suppression of a real (1-9) count; a genuine zero is suppressed the
+    # same way, so the flag can't reveal which 0s were genuine (#519).
+    assert body["suppressed"] is True
+
+
+def test_cohort_endpoint_genuine_zero_is_suppressed(http_client):
+    """Privacy regression: a query matching no rows is suppressed identically to a
+    below-threshold count (record_count=0, suppressed=True), so the wire never reveals a
+    genuine zero apart from a small count (#519, security review)."""
     response = http_client.post(
         "/cohort",
         json=_cohort_payload(
             "SELECT * FROM omop.image_occurrence WHERE accession_id = 'NONEXISTENT'"
         ),
     )
-    assert response.status_code == 400
-    assert "too few records" in response.json()["detail"].lower()
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["record_count"] == 0
+    assert body["data"] == []
+    assert body["suppressed"] is True
 
 
 def test_cohort_endpoint_rejects_unsafe_sql(http_client):

@@ -16,15 +16,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlmodel import Session
 
 from flip_api.auth.dependencies import verify_token
-from flip_api.config import get_settings
 from flip_api.db.database import get_session
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
     INetStatus,
-    IServerStatus,
 )
 from flip_api.domain.schemas.status import ClientStatus, ServerEngineStatus
-from flip_api.fl_services.services.fl_scheduler_service import get_nets
+from flip_api.fl_services.services.fl_scheduler_service import get_nets, get_slot_names_by_trust_ids
 from flip_api.fl_services.services.fl_service import fetch_client_status, fetch_server_status
 from flip_api.trusts_services.services.trust import get_trusts
 from flip_api.utils.logger import logger
@@ -59,7 +57,6 @@ def get_status_endpoint(
 
     try:
         nets = get_nets(db)
-        fl_backend = get_settings().FL_BACKEND
 
         net_statuses: list[INetStatus] = []
 
@@ -72,7 +69,7 @@ def get_status_endpoint(
                 net_statuses.append(
                     INetStatus(
                         name=net.name,
-                        fl_backend=fl_backend,
+                        fl_backend=net.fl_backend,
                         online=False,
                         registered_clients=0,
                         clients=[],
@@ -85,7 +82,8 @@ def get_status_endpoint(
             # We assume the server is online if we get a response
             online = True
 
-            server_status = IServerStatus(status=server_status.status)
+            # Report the canonical seeded backend (set from FL_BACKEND, never reconciled at runtime).
+            fl_backend = net.fl_backend
 
             # Fetch client statuses
             clients = fetch_client_status(net.endpoint)
@@ -105,24 +103,27 @@ def get_status_endpoint(
                 continue
 
             # For each net, we would like to know which Trusts are connected and their statuses.
+            # Match clients on the FL kit slot name (not Trust.name) — the FL net only ever
+            # sees the slot's CN, which is independent of the trust's hub-side display name.
+            # The response still surfaces trust.name so the UI shows the friendly name.
             trusts = get_trusts(db)
+            slot_names_by_trust_id = get_slot_names_by_trust_ids([t.id for t in trusts], db)
             trust_client_statuses: list[IClientStatus] = []
             for trust in trusts:
-                connected_client_info = None
-
-                for client in clients:
-                    # TODO Trust name and FL client name should match ??
-                    if client.name == trust.name:
-                        connected_client_info = client
-                        break
-                else:
-                    logger.warning(f"Trust {trust.name} not found in client statuses")
-                    trust_client_statuses.append(IClientStatus(name=trust.name, status=ClientStatus.NO_REPLY.value))
+                slot_name = slot_names_by_trust_id.get(trust.id)
+                matched = next((c for c in clients if slot_name and c.name == slot_name), None)
+                if matched is None:
+                    logger.warning(f"Trust {trust.name} (slot={slot_name}) not found in client statuses")
+                    trust_client_statuses.append(
+                        IClientStatus(
+                            name=trust.name, code=trust.code, status=ClientStatus.NO_REPLY, fl_kit_slot=slot_name
+                        )
+                    )
                     continue
-
-                # Log the trust and connected client information
-                logger.debug(f"Trust {trust} name: {trust.name}, connected client info: {connected_client_info}")
-                trust_client_statuses.append(connected_client_info)
+                logger.debug(f"Trust {trust.name} matched slot {slot_name} → status {matched.status}")
+                trust_client_statuses.append(
+                    IClientStatus(name=trust.name, code=trust.code, status=matched.status, fl_kit_slot=slot_name)
+                )
 
             # Create net status response
             net_statuses.append(

@@ -25,7 +25,7 @@
 # the root Makefile still absolutises it for consistency but no prod compose
 # references ${FL_PROVISIONED_DIR}.
 
-FL_BACKEND ?= flower
+FL_BACKEND ?= nvflare
 VALID_FL_BACKENDS := flower nvflare
 
 ifeq (,$(filter $(FL_BACKEND),$(VALID_FL_BACKENDS)))
@@ -37,11 +37,16 @@ DOCKER_FL_API_NAME    := flare-fl-api
 DOCKER_FL_SERVER_NAME := flare-fl-server
 DOCKER_FL_CLIENT_NAME := flare-fl-client
 FL_PROVISIONED_DIR    := deploy/workspace
+FL_JOBS_DIR           := jobs
 else
 DOCKER_FL_API_NAME    := flower-fl-api
 DOCKER_FL_SERVER_NAME := flower-superlink
 DOCKER_FL_CLIENT_NAME := flower-supernode
 FL_PROVISIONED_DIR    := ../flip-fl-base-flower/certs
+# Per-net shared host dir mounted as /app/src on fl-api and fl-server: the FL API
+# downloads uploaded bundles to <FL_JOBS_DIR>/net-X/<model_id>/ and the FL server's
+# evaluation ServerApp reads checkpoints from there via the flip-job-dir run-config.
+FL_JOBS_DIR           := jobs
 endif
 
 # DOCKER_FL_REGISTRY decouples the FL images' registry from DOCKER_REGISTRY so
@@ -51,4 +56,4 @@ endif
 # DOCKER_FL_REGISTRY=`) wins.
 DOCKER_FL_REGISTRY ?= $(DOCKER_REGISTRY)
 
-export DOCKER_FL_API_NAME DOCKER_FL_SERVER_NAME DOCKER_FL_CLIENT_NAME FL_PROVISIONED_DIR DOCKER_FL_REGISTRY
+export DOCKER_FL_API_NAME DOCKER_FL_SERVER_NAME DOCKER_FL_CLIENT_NAME FL_PROVISIONED_DIR FL_JOBS_DIR DOCKER_FL_REGISTRY

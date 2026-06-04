@@ -114,6 +114,14 @@ def test_retrieve_model_success(
     mock_result.mappings.return_value.first.return_value = mock_raw_sql_result
     override_dependencies.execute.return_value = mock_result
 
+    # Two follow-up SQLModel queries after the raw SQL: Model.creation_timestamp,
+    # then ModelsAudit rows. Both return empty so the new lifecycle fields stay None.
+    creation_call = MagicMock()
+    creation_call.first.return_value = None
+    audit_call = MagicMock()
+    audit_call.all.return_value = []
+    override_dependencies.exec.side_effect = [creation_call, audit_call]
+
     # response = client.get(f"/model/{test_model_id}")
     result = retrieve_model(model_id=test_model_id, db=override_dependencies, user_id=test_user_id)
 

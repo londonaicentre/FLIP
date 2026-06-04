@@ -84,15 +84,13 @@ Recommended end-to-end (hybrid) flow
 ************************************
 
 The wrapper target ``full-deploy-hybrid`` performs the full Central Hub deploy,
-provisions the on-prem trust, updates AWS Secrets Manager with the trust's
-keys, and redeploys the hub so the new secret values are loaded:
+registers the trusts on the hub (``register-trusts``), and provisions the
+on-prem trust:
 
 .. code-block:: shell
 
    cd deploy/providers/AWS
-   make full-deploy-hybrid PROD=<stag|true> \
-     LOCAL_TRUST_IP=<public-ip> \
-     [LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key]
+   make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 
 If ``LOCAL_TRUST_IP`` is omitted, the operator workstation's public IP is
 auto-detected via ``curl -s https://api.ipify.org``. ``PROD`` is inherited
@@ -104,61 +102,110 @@ itself:
 
 .. code-block:: shell
 
-   cd trust
-   env PROD=<stag|true> make up-local-trust
+   cd ../../..
+   env PROD=<stag|true> make -C trust up-trust KIT=<CODE>   # the trust code you scaffolded
 
 Then verify the trust is polling: ``docker logs -f trust-api`` should show
 successful task polls against the Central Hub.
 
-************************
-Provision-only flows
-************************
+******************************************
+Onboarding an on-prem trust (step by step)
+******************************************
 
-If the Central Hub is already deployed and you only need to add a new on-prem
-trust, run provisioning directly:
+When the Central Hub is already deployed, an on-prem trust is onboarded
+asynchronously: the FLIP admin (who holds prod AWS creds) scaffolds,
+registers, and packages a kit; the operator (who does not) extracts it and
+brings the stack up. There is no SSH path — each side runs its own step
+locally. ``<CODE>`` is the trust's short code; the kit file is
+``trust/.env.<CODE>.production``.
 
-**Remote trust host (via SSH):**
-
-.. code-block:: shell
-
-   cd deploy/providers/AWS
-   make add-local-trust \
-     LOCAL_TRUST_IP=<public-ip> \
-     LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key
-
-**Local trust host (no SSH — provisioning the same machine you're on):**
-
-.. code-block:: bash
-
-   cd deploy/providers/AWS
-   read -rsp 'Sudo password: ' ANSIBLE_BECOME_PASS && echo
-   export ANSIBLE_BECOME_PASS
-   make add-local-trust LOCAL_TRUST_IP=<public-ip>
-
-In Fish, the prompt-and-export idiom is different:
-
-.. code-block:: fish
-
-   cd deploy/providers/AWS
-   set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
-   make add-local-trust LOCAL_TRUST_IP=<public-ip>
-
-What ``add-local-trust`` does:
-
-1. Runs the Ansible playbook ``deploy/providers/local/site_local_trust.yml``,
-   which installs Docker, required system packages, and creates the
-   ``/opt/flip/`` directory tree.
-2. Downloads the trust's FL participant kit from S3 and deploys it to
-   ``/opt/flip/services/<TRUST_NAME>/{startup,local,transfer}`` on the trust host.
-3. Runs a targeted ``terraform apply`` to add the NLB security group rule that
-   allows FL traffic from the trust's public IP.
-
-Post-provisioning, start the trust stack on the host:
+**1. Scaffold the kit (FLIP admin).** On a workstation with prod AWS creds:
 
 .. code-block:: shell
 
-   cd trust
-   env PROD=stag make up-local-trust
+   make new-trust TRUST_CODE=<CODE> TRUST_NAME="<trust name>" PROD=true
+
+This writes ``trust/.env.<CODE>.production`` from the base template
+(``trust/.env.example``): a host-local profile, mock-stack default
+credentials, and ``<run-make-register-trust>`` placeholders for the
+hub-managed blocks.
+
+**2. Register the kit on the prod hub (FLIP admin).**
+
+.. code-block:: shell
+
+   make register-trust KIT=<CODE> PROD=true
+
+This registers the trust on the prod hub and fills **both** managed blocks in
+one step: the Kit credentials (``TRUST_API_KEY``,
+``TRUST_INTERNAL_SERVICE_KEY``, ``FL_KIT_SLOT``, ``FL_KIT_SLOT_NUMBER``,
+``EXPECTED_TRUST_ID``) and the Hub-shared block (12 keys). The hub stores only
+SHA-256 hashes of the credentials and cannot re-emit them, so this is a
+write-once operation — re-register to rotate.
+
+**3. Package the kit (FLIP admin).** Tarball the populated kit file + the
+operator's slice of the FL participant kit:
+
+.. code-block:: shell
+
+   make -C deploy/providers/AWS package-onprem-trust-kit KIT=<CODE> PROD=true
+
+The script reads ``FL_BACKEND`` / ``FL_KIT_SLOT`` out of
+``trust/.env.<CODE>.production`` (it does not edit the file), slices only this
+operator's portion of the FL participant kit out of S3
+(``net-1/services/<slot>/`` for nvflare; ``net-1/certificates/`` + one
+``supernode_credentials_<N>`` for flower), and writes a tarball under
+``deploy/providers/AWS/build/trust-kits/``. Send it to the operator over an
+encrypted channel — it contains a plaintext API key, AES encryption key, and
+an FL TLS private key.
+
+**4. Extract, configure, and start (trust operator).** Extract the tarball,
+copy the kit into the checkout, edit **only** the Host-local profile, then
+bring the stack up:
+
+.. code-block:: shell
+
+   tar -xzf flip-trust-kit-<slot>-<date>.tar.gz
+   cp .env.<CODE>.production trust/
+   # Edit trust/.env.<CODE>.production (Host-local profile section only):
+   #   - FL_KIT_DIR=<path to extracted fl-kit>
+   #   - adjust ports / bind-mount dirs to match your host
+   #   - rotate the Trust-local passwords
+   make onboard-onprem-trust KIT=<CODE> PROD=true   # readiness checklist
+   make up-onprem-trust KIT=<CODE> PROD=true         # comes up after all checks pass
+
+``make onboard-onprem-trust`` prints a ✅/❌ checklist (your public IP, docker
+swarm state, Hub-shared / Kit credentials populated, FL_KIT_DIR set and on
+disk, FL kit contents present) — fix any ❌ rows before ``up-onprem-trust``,
+which gates on the same checks. The checklist is read-only, so you can run it
+at any point — including before the kit is fully staged — just to read off the
+``Your public IP`` row and report it to the FLIP admin for step 5.
+
+The prod trust compose mounts the extracted ``net-1/`` hierarchy into the
+fl-client container, so preserve it as extracted.
+
+**5. Open the AWS firewall (FLIP admin).** Once the operator reports their
+host's public IP, open the FL-server NLB to it:
+
+.. code-block:: shell
+
+   make -C deploy/providers/AWS allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip> PROD=true
+
+``allow-local-trust-nlb`` runs a normal ``terraform plan``/``apply`` — the IPs
+are real config, so later full applies stay idempotent (no drift).
+
+Then verify the trust is polling: ``docker logs -f trust-api`` should show
+successful task polls against the Central Hub.
+
+**Rotation (later, no re-mint).** When the admin rotates a Hub-shared value
+(``AES_KEY_BASE64``, image tags, ``FL_BACKEND``), refresh only the Hub-shared
+block from the admin's local env file — credentials are preserved:
+
+.. code-block:: shell
+
+   make sync-trust-kit KIT=<CODE> PROD=true
+
+Re-transmit the refreshed kit to the operator over the same encrypted channel.
 
 ***********************
 Trust authentication
@@ -171,8 +218,9 @@ that trust. The trust's env must contain:
 +----------------------------------+--------------------------------------------------------+
 | Variable                         | Purpose                                                |
 +==================================+========================================================+
-| ``TRUST_NAME``                   | Must match a name in the hub's ``TRUST_NAMES`` list    |
-|                                  | (e.g. ``Trust_2``).                                    |
+| ``EXPECTED_TRUST_ID`` (optional) | Opt-in self-check. If set and the hub resolves this    |
+|                                  | host's API key to a different trust *id*, trust-api    |
+|                                  | exits instead of acting as the wrong trust.            |
 +----------------------------------+--------------------------------------------------------+
 | ``TRUST_API_KEY``                | Per-trust secret used on every outbound call to the    |
 |                                  | hub.                                                   |
@@ -191,15 +239,17 @@ that trust. The trust's env must contain:
 **Hub-side prerequisites** (must already be in place before the trust can
 connect):
 
-1. ``TRUST_NAMES`` must include this trust's name.
-2. ``TRUST_API_KEY_HASHES`` must contain the SHA-256 hash of this trust's
-   ``TRUST_API_KEY``.
-3. The hub must be redeployed so the new secret values are loaded
-   (``make deploy-centralhub``).
+1. The trust must be registered on the hub — a row in the ``trust`` table with
+   its ``api_key_hash`` — via ``make register-trust KIT=<CODE>`` or the
+   Add-Trust admin flow (``POST /admin/trusts``).
+2. ``make register-trust KIT=<CODE>`` mints the trust's API key and internal
+   service key into the kit file (``trust/.env.<CODE>.production`` for the
+   on-prem trust) as part of registration.
+3. No hub redeploy is needed — the trust registry is the live database, read
+   on every request.
 
-The ``full-deploy-hybrid`` wrapper handles key generation and hub redeployment
-automatically. When using ``add-local-trust`` standalone, the keys must
-already be configured on the hub.
+In the step-by-step flow above, the trust must be registered (step 2) before
+the operator brings the stack up.
 
 ***********************
 Network requirements
@@ -209,10 +259,12 @@ Network requirements
 tasks, and FL clients connect outbound to the FL server via the NLB. All
 communication is trust-initiated.
 
-The trust host must be able to make outbound connections to:
+The trust host must be able to make outbound connections to two **separate** Central Hub
+endpoints — different hostnames behind different load balancers, so both must be allowlisted:
 
-- The Central Hub FLIP API over HTTPS (port 443).
-- The FL Server endpoint over gRPC or HTTP (configurable port; e.g. 8002).
+- The Central Hub FLIP API over HTTPS (port 443) — the ALB (e.g. ``app.flip.aicentre.co.uk``).
+- The FL Server endpoint over gRPC or HTTP (port set by ``FL_SERVER_PORT``,
+  default 8002) — the NLB (e.g. ``fl.app.flip.aicentre.co.uk``).
 
 If the trust's public IP changes (common with residential broadband), update
 the NLB security group:
@@ -235,7 +287,7 @@ Troubleshooting
 |                                  | Host/router firewall blocking outbound on port 8002?       |
 +----------------------------------+------------------------------------------------------------+
 | Firewall blocking outbound       | Confirm the host/router firewall allows outbound HTTPS     |
-|                                  | (443) and the FL gRPC port (default 8002).                 |
+|                                  | (443) and the FL gRPC port (``FL_SERVER_PORT``, def. 8002).|
 +----------------------------------+------------------------------------------------------------+
 | Ansible ``Permission denied``    | SSH key correct? User has ``sudo``? ``ANSIBLE_BECOME_PASS``|
 |                                  | set if running in local-host mode?                         |

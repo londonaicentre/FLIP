@@ -58,7 +58,9 @@ describe("model list", () => {
             cy.visit(`/project/${projectId}/models`);
             cy.wait("@getModels");
 
-            cy.getBySel("view-models-btn").first().click();
+            // ModelList rows are router-links themselves (no separate
+            // view-models-btn anymore — same pattern as projects.vue).
+            cy.getBySel("model-list-item-0").click();
 
             cy.url().should("include", `/model/${models.data[0].id}`);
         });

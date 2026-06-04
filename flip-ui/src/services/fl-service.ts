@@ -20,8 +20,14 @@ import { _http } from "./api";
 
 export interface IFLStatusClients {
     name: string;
+    // The trust's short code (e.g. "GSTT"), shown as "name (code)" in the card.
+    code?: string | null;
     online: boolean;
     status: string;
+    // The FL kit slot backing this client (e.g. "Trust_1"). May differ from
+    // `name` (the trust's display name) once a trust is registered under an
+    // arbitrary name; surfaced so the card can show the underlying FL identity.
+    fl_kit_slot?: string | null;
 }
 export interface IFLStatus {
     name: string;

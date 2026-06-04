@@ -16,11 +16,11 @@ from uuid import UUID
 
 from sqlalchemy import Column
 from sqlalchemy.exc import SQLAlchemyError
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
-from flip_api.config import get_settings
 from flip_api.db.models.main_models import (
     FLJob,
+    FLKitSlot,
     FLNets,
     FLScheduler,
     Model,
@@ -37,6 +37,7 @@ from flip_api.domain.schemas.status import (
     ModelStatus,
     NetStatus,
 )
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services.fl_service import (
     bundle_flower_application,
     bundle_nvflare_application,
@@ -44,7 +45,7 @@ from flip_api.fl_services.services.fl_service import (
     start_training,
     validate_client_availability,
 )
-from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trusts
+from flip_api.model_services.services.model_service import add_log, update_model_status, validate_trust_ids
 from flip_api.utils.exceptions import DatabaseError, NotFoundError
 from flip_api.utils.logger import logger
 
@@ -173,7 +174,7 @@ def get_net_by_model_id(model_id: UUID, session: Session) -> INetDetails:
     logger.info("Getting the net endpoint via its model ID...")
     try:
         statement = (
-            select(FLNets.endpoint, FLNets.name)
+            select(FLNets.endpoint, FLNets.name, FLNets.fl_backend)
             .join(FLScheduler)
             .join(FLJob)
             .where(FLJob.model_id == model_id)
@@ -185,8 +186,10 @@ def get_net_by_model_id(model_id: UUID, session: Session) -> INetDetails:
             logger.error(f"Net not found for model ID: {model_id}")
             raise NotFoundError(f"Net not found for model ID: {model_id}")
 
-        endpoint, name = result
-        return INetDetails(endpoint=endpoint, name=name)
+        endpoint, name, fl_backend = result
+        # The auto-mapped Enum column yields a real FLBackend at runtime; sqlmodel just types a
+        # single-column select as str, so assert the type back.
+        return INetDetails(endpoint=endpoint, name=name, fl_backend=cast("FLBackend", fl_backend))
 
     except SQLAlchemyError as e:
         logger.error(f"Error getting net by model ID: {e}")
@@ -210,7 +213,7 @@ def get_net_by_name(name: str, session: Session) -> INetDetails | None:
     logger.info(f"Getting {name} info from db...")
 
     try:
-        statement = select(FLNets.endpoint, FLNets.name).where(FLNets.name == name)
+        statement = select(FLNets.endpoint, FLNets.name, FLNets.fl_backend).where(FLNets.name == name)
         result = session.exec(statement).first()
 
         logger.info(f"Query result: {result}")
@@ -219,12 +222,39 @@ def get_net_by_name(name: str, session: Session) -> INetDetails | None:
             logger.error(f"{name} could not be found")
             return None
 
-        endpoint, net_name = result
-        return INetDetails(endpoint=endpoint, name=net_name)
+        endpoint, net_name, fl_backend = result
+        return INetDetails(endpoint=endpoint, name=net_name, fl_backend=cast("FLBackend", fl_backend))
 
     except SQLAlchemyError as e:
         logger.error(f"Database error while getting net by name: {e}")
         raise DatabaseError("Database error while getting net by name") from e
+
+
+def get_slot_names_by_trust_ids(trust_ids: list[UUID], session: Session) -> dict[UUID, str]:
+    """Map each trust id to the slot_name of its bound FL kit slot.
+
+    The FL protocol identifies participants by the slot identity (the CN baked into the
+    kit's cert), which is independent of the trust's display name on the hub. Callers that
+    need to talk to / compare against an FL participant must look up the slot name rather
+    than using ``Trust.name`` — admin-chosen display names can change without rotating
+    the kit, and don't carry into the FL protocol.
+
+    Args:
+        trust_ids (list[UUID]): Trust ids to resolve. Empty input → empty mapping.
+        session (Session): SQLModel session.
+
+    Returns:
+        dict[UUID, str]: ``trust_id → slot_name``. Trusts without an assigned slot are
+        absent from the result; callers should treat a miss as "no FL identity yet".
+    """
+    if not trust_ids:
+        return {}
+    rows = session.exec(
+        select(FLKitSlot.assigned_to_trust_id, FLKitSlot.slot_name).where(
+            col(FLKitSlot.assigned_to_trust_id).in_(trust_ids)
+        )
+    ).all()
+    return {trust_id: slot_name for trust_id, slot_name in rows if trust_id is not None}
 
 
 def get_nets(session: Session) -> list[INetDetails]:
@@ -243,7 +273,7 @@ def get_nets(session: Session) -> list[INetDetails]:
     """
     logger.info("Getting net info from db...")
     try:
-        statement = select(FLNets.endpoint, FLNets.name)
+        statement = select(FLNets.endpoint, FLNets.name, FLNets.fl_backend)
         results = session.exec(statement).all()
 
         if not results:
@@ -251,11 +281,46 @@ def get_nets(session: Session) -> list[INetDetails]:
             logger.error(error_message)
             raise NotFoundError(error_message)
 
-        return [INetDetails(endpoint=endpoint, name=name) for endpoint, name in results]
+        return [
+            INetDetails(endpoint=endpoint, name=name, fl_backend=cast("FLBackend", fl_backend))
+            for endpoint, name, fl_backend in results
+        ]
 
     except SQLAlchemyError as e:
         logger.error(f"Error getting nets: {e}")
         raise DatabaseError("Error getting nets") from e
+
+
+def resolve_backend(session: Session, net: INetDetails | None = None) -> FLBackend:
+    """Resolve the active FL backend at runtime from the nets (never from a static env var).
+
+    Every net carries a non-null ``fl_backend`` set at seed time from FL_BACKEND. That seeded
+    value is canonical — there is no runtime reconciliation — so resolution always reads the DB.
+
+    Args:
+        session (Session): SQLModel session (used when no net is given).
+        net (INetDetails | None): When given, use this net's backend (the job is already pinned
+            to it). When ``None`` (e.g. at model creation, before scheduling), use any net's
+            backend — all nets run the same backend in single-backend mode.
+
+    Returns:
+        FLBackend: The resolved backend (``nvflare`` or ``flower``).
+
+    Raises:
+        ValueError: If no FL nets are registered at all (empty NET_ENDPOINTS / misconfig).
+    """
+    if net is not None:
+        return net.fl_backend
+
+    backend = session.exec(select(FLNets.fl_backend)).first()
+    if backend is not None:
+        # Auto-mapped Enum column; sqlmodel types the single-column select as str, assert it back.
+        return cast("FLBackend", backend)
+
+    raise ValueError(
+        "Cannot determine the active FL backend: no FL nets are registered. "
+        "Check NET_ENDPOINTS and that seeding ran."
+    )
 
 
 def check_for_available_net(session: Session) -> ISchedulerResponse | None:
@@ -337,9 +402,10 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         job.status = JobStatus.IN_PROGRESS
         job.started = datetime.utcnow()
 
+        job_trust_ids = [t.id for t in job.trusts]
         # Validate trusts
-        if not validate_trusts(job.model_id, job.clients, session):
-            raise Exception(f"[{', '.join(job.clients)}] contains invalid trusts")
+        if not validate_trust_ids(job.model_id, job_trust_ids, session):
+            raise Exception(f"Job {job.id} references trust ids not approved for model {job.model_id}")
 
         # Assign job to scheduler
         scheduler = session.get(FLScheduler, scheduler_id)
@@ -351,7 +417,7 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
 
         session.commit()
 
-        return IJobResponse(id=job.id, model_id=job.model_id, clients=job.clients)
+        return IJobResponse(id=job.id, model_id=job.model_id, trust_ids=job_trust_ids)
 
     except SQLAlchemyError as e:
         session.rollback()
@@ -360,14 +426,16 @@ def check_for_queued_jobs(scheduler_id: UUID, session: Session) -> IJobResponse 
         raise DatabaseError("Error checking for queued jobs") from e
 
 
-def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[str], session: Session) -> None:
+def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[UUID], session: Session) -> None:
     """
     Prepares and starts the training process for a given model.
 
     Args:
         model_id (UUID): The ID of the model to train.
         fl_job_id (UUID): The ID of the federated learning job.
-        clients (list[str]): The list of client IDs participating in the training.
+        trust_ids (list[UUID]): The trust ids participating in the training. Names are looked up
+            from the `trust` table here — at the FL backend boundary, which is the only place
+            the FL protocol's name-based addressing matters.
         session (Session): The database session.
 
     Returns:
@@ -381,30 +449,42 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
     try:
         logger.debug("Attempting to prepare and start training...")
 
-        # NOTE folder structure of the bundle will be different depending on whether it's a FLARE / Flower app
-        fl_backend = get_settings().FL_BACKEND
+        # Resolve the backend from the net this job is pinned to. The value is the net's
+        # canonical seeded backend (FLNets.fl_backend), read from the DB, never a boot-time env var.
+        net_details = get_net_by_model_id(model_id, session)
+        if not net_details.endpoint:
+            raise Exception("Failed to get the net endpoint")
 
-        if fl_backend == "nvflare":
+        fl_backend = resolve_backend(session, net_details)
+
+        # NOTE folder structure of the bundle will be different depending on whether it's a FLARE / Flower app
+        if fl_backend == FLBackend.NVFLARE:
             # Copies base application + user-uploaded model files into a destination bucket on S3
             dest_bucket_s3_path = bundle_nvflare_application(model_id)
             logger.info(f"Bundled the app for [nvflare] to '{dest_bucket_s3_path}'.")
 
-        elif fl_backend == "flower":
+        elif fl_backend == FLBackend.FLOWER:
             # Copies base application + user-uploaded model files into a destination bucket on S3
             dest_bucket_s3_path = bundle_flower_application(model_id)
             logger.info(f"Bundled the app for [flower] to '{dest_bucket_s3_path}'.")
 
         else:
-            # If the FL_BACKEND setting is typed/ constrained correctly, this should never be hit
             error_msg = f"Unsupported FL backend: {fl_backend}"
             logger.error(error_msg)
             raise Exception(error_msg)
 
-        net_details = get_net_by_model_id(model_id, session)
-        if not net_details.endpoint:
-            raise Exception("Failed to get the net endpoint")
+        # Resolve FL kit slot names at the FL boundary. The FL protocol (NVFlare/Flower)
+        # identifies participants by the CN baked into the kit's cert at provisioning
+        # time — that's the slot name, NOT the trust's friendly hub-side name. Using
+        # Trust.name here would make validate_client_availability fail with
+        # "Clients unavailable: <friendly name>" because the FL server never saw it.
+        slot_names = list(
+            session.exec(
+                select(FLKitSlot.slot_name).where(col(FLKitSlot.assigned_to_trust_id).in_(trust_ids))
+            ).all()
+        )
 
-        validate_client_availability(clients, net_details.endpoint)
+        validate_client_availability(slot_names, net_details.endpoint, fl_backend)
 
         # Get presigned URLs from the files in the destination bucket on S3
         bundle_urls = get_bundle_urls(dest_bucket_s3_path)
@@ -412,7 +492,7 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
         start_training(
             model_id=model_id,
             fl_job_id=fl_job_id,
-            clients=clients,
+            clients=slot_names,
             endpoint=net_details.endpoint,
             bundle_urls=bundle_urls,
             session=session,
@@ -425,7 +505,7 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, clients: list[st
         error_message = str(e)
         logger.info(f"Error message: {error_message}")
         remove_job(fl_job_id, session)
-        add_log(model_id, error_message, session, False)
+        add_log(model_id, error_message, session, success=False)
         update_model_status(model_id, ModelStatus.ERROR, session)
 
         logger.debug("Reverted job and scheduler pickup")
