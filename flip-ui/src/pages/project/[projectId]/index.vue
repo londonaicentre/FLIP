@@ -145,8 +145,8 @@ import AiButton from "@/components/AiButton/AiButton.vue";
 import AiGuard from "@/components/AiGuard/AiGuard.vue";
 import AiCircledIcon from "@/components/AiIcon/AiCircledIcon.vue";
 import AiConfirmModal from "@/components/AiModal/AiConfirmModal.vue";
-import { IStep } from "@/components/AiSteps/AiSteps.vue";
 import { usePermissions } from "@/composables/usePermissions";
+import { IStep } from "@/interfaces/steps";
 import QueryDetails from "@/partials/cohort-query/QueryDetails.vue";
 import LatestModels from "@/partials/models/LatestModels.vue";
 import EditProjectDrawer, { IEditProject } from "@/partials/projects/EditProjectDrawer.vue";
@@ -236,16 +236,17 @@ const projectApproved = computed(() => {
     return project?.value?.status === "APPROVED";
 });
 
-// Stageable = trusts that responded successfully. Excludes late-joiners
-// (not dispatched), never-responded (dispatched but no QueryResult), and
-// errored (responded with an error blob). Mirrors the server-side guard
-// in stage_project.py.
+// Stageable = trusts that responded with a usable cohort. Excludes
+// late-joiners (not dispatched), never-responded (dispatched but no
+// QueryResult), errored (responded with an error blob), and empty
+// (responded with 0 records — genuine zero or privacy-suppressed, #519).
+// Mirrors the server-side guards in stage_project.py.
 const stageableTrustIds = computed<string[] | undefined>(() => {
     const q = project?.value?.query;
     if (!q) return undefined;
-    const errored = new Set(q.erroredTrustIds ?? []);
+    const excluded = new Set([...(q.erroredTrustIds ?? []), ...(q.emptyTrustIds ?? [])]);
 
-    return (q.respondedTrustIds ?? []).filter((id) => !errored.has(id));
+    return (q.respondedTrustIds ?? []).filter((id) => !excluded.has(id));
 });
 
 const isOwnerOrHasAccess = () => {

@@ -142,6 +142,30 @@ class TestPydanticModels:
         payload = OmopCohortResults(**sample_cohort_dict)
         assert payload.error is None
 
+    def test_omop_cohort_results_accepts_suppressed_flag(self, sample_cohort_dict):
+        """A privacy-suppressed trust reports record_count=0 with suppressed=True so the
+        hub can flag the below-threshold trust (a genuine zero is flagged the same way, so
+        it reveals no membership) (#519)."""
+        sample_cohort_dict["record_count"] = 0
+        sample_cohort_dict["data"] = []
+        sample_cohort_dict["suppressed"] = True
+        payload = OmopCohortResults(**sample_cohort_dict)
+        assert payload.suppressed is True
+
+    def test_omop_cohort_results_suppressed_defaults_to_false(self, sample_cohort_dict):
+        payload = OmopCohortResults(**sample_cohort_dict)
+        assert payload.suppressed is False
+
+    def test_aggregated_cohort_stats_carries_trust_suppressed(self):
+        stats = AggregatedCohortStats(
+            record_count=5,
+            trusts_results=[],
+            trust_record_counts={"trustA": 5, "trustB": 0},
+            trust_suppressed=["trustB"],
+        )
+        assert stats.trust_suppressed == ["trustB"]
+        assert stats.trust_record_counts == {"trustA": 5, "trustB": 0}
+
     def test_fetched_aggregation_data_creation(self):
         fetched = FetchedAggregationData(trust_name=["Trust X"], trust_id=["idX"], data=['{"key": "value"}'])
         assert fetched.trust_name == ["Trust X"]
@@ -190,9 +214,14 @@ class TestAggregateAndSaveResults:
 
         _aggregate_and_save_results(mock_db_session, query_id_for_agg)
 
-        assert mock_db_session.exec.call_count == 2
+        assert mock_db_session.exec.call_count == 3
 
-        select_call_args = mock_db_session.exec.call_args_list[0]
+        # First exec takes the per-query serialization lock on the parent Queries row (#579).
+        lock_sql = str(mock_db_session.exec.call_args_list[0][0][0])
+        assert "FROM queries" in lock_sql
+        assert "FOR UPDATE" in lock_sql
+
+        select_call_args = mock_db_session.exec.call_args_list[1]
         assert "SELECT trust.name, query_result.trust_id, query_result.data" in str(select_call_args[0][0])
 
         mock_db_session.commit.assert_called_once()
@@ -270,6 +299,38 @@ class TestAggregateAndSaveResults:
             str(trust_b_id): 4,
             str(trust_c_id): 0,
         }
+
+    def test_aggregate_flags_suppressed_trusts(
+        self, mock_db_session: MagicMock, query_id_for_agg: UUID
+    ):
+        """A privacy-suppressed trust still counts as "responded" (count 0 in
+        trust_record_counts) but is also listed in ``trust_suppressed`` so the UI
+        renders a "suppressed" chip instead of a literal 0 (#519)."""
+        trust_a_id = uuid.uuid4()
+        trust_b_id = uuid.uuid4()
+
+        trust_a_data = TrustSpecificData(
+            record_count=7, data=[OmopData(name="age", results=[Results(value="<50", count=7)])]
+        ).model_dump_json()
+        # Below-threshold trust: count suppressed to 0, suppressed=True.
+        trust_b_data = TrustSpecificData(record_count=0, data=[], suppressed=True).model_dump_json()
+
+        rows = [
+            ("Trust A", trust_a_id, trust_a_data),
+            ("Trust B", trust_b_id, trust_b_data),
+        ]
+
+        existing_stats_mock = MagicMock()
+        mock_db_session.exec.return_value.all.return_value = rows
+        mock_db_session.exec.return_value.first.return_value = existing_stats_mock
+
+        _aggregate_and_save_results(mock_db_session, query_id_for_agg)
+
+        saved = json.loads(existing_stats_mock.stats)
+        # Suppressed count contributes 0 to the total and still appears as "responded".
+        assert saved["record_count"] == 7
+        assert saved["trust_record_counts"] == {str(trust_a_id): 7, str(trust_b_id): 0}
+        assert saved["trust_suppressed"] == [str(trust_b_id)]
 
     def test_aggregate_surfaces_trust_errors(
         self, mock_db_session: MagicMock, query_id_for_agg: UUID

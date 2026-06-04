@@ -95,13 +95,15 @@ locals {
   # these so the deploy-time and runtime view are kept in sync.
   ecs_task_env = {
     flip_api = merge(local.enforce_mfa_env, {
-      ENV                            = "production"
-      AWS_REGION                     = var.AWS_REGION
-      AWS_COGNITO_USER_POOL_ID       = module.cognito.user_pool_id
-      AWS_COGNITO_APP_CLIENT_ID      = module.cognito.app_client_id
-      POSTGRES_USER                  = var.POSTGRES_USER
-      POSTGRES_DB                    = var.POSTGRES_DB
-      POSTGRES_SECRET_ARN            = module.flip_db.db_instance_master_user_secret_arn
+      ENV                       = "production"
+      AWS_REGION                = var.AWS_REGION
+      AWS_COGNITO_USER_POOL_ID  = module.cognito.user_pool_id
+      AWS_COGNITO_APP_CLIENT_ID = module.cognito.app_client_id
+      POSTGRES_USER             = var.POSTGRES_USER
+      POSTGRES_DB               = var.POSTGRES_DB
+      # No DB password: flip-api authenticates to Postgres via RDS Proxy with
+      # per-connection IAM tokens (DB_HOST = proxy endpoint, see ecs_tasks.tf),
+      # which fixes the secret-rotation outage (FLIP#556).
       TRUST_API_KEY_HEADER           = var.TRUST_API_KEY_HEADER
       INTERNAL_SERVICE_KEY_HEADER    = var.INTERNAL_SERVICE_KEY_HEADER
       AWS_SECRET_NAME                = "FLIP_API" # pragma: allowlist secret

@@ -187,10 +187,13 @@ class DevSettings(Settings):
 
 
 class ProdSettings(Settings):
-    """Settings specific to production environment."""
+    """Settings specific to production environment.
+
+    Production authenticates to Postgres via RDS Proxy with per-connection IAM
+    tokens (see db/database.py), so there is no static DB password setting here.
+    """
 
     ENV: Literal["production"] = "production"
-    POSTGRES_SECRET_ARN: str  # in prod, get DB password from secrets manager, using this ARN
 
 
 # Eager load once (for app use)

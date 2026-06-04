@@ -111,12 +111,13 @@ def stage_project_endpoint(
         f"Project {project_id} has query with {len(project_data.query.queried_trust_ids)} trusts queried."
     )
 
-    # Three guards, each catching a distinct way an operator could end up
-    # staging on a trust they don't have data for. The UI already filters
-    # the selector — these guard direct API callers.
+    # Four guards, each catching a distinct way an operator could end up
+    # staging on a trust they don't have a usable cohort for. The UI already
+    # filters the selector — these guard direct API callers.
     queried_trust_ids = set(project_data.query.queried_trust_ids)
     responded_trust_ids = set(project_data.query.responded_trust_ids)
     errored_trust_ids = set(project_data.query.errored_trust_ids)
+    empty_trust_ids = set(project_data.query.empty_trust_ids)
 
     # (1) Late-joiners: trust joined the platform after the query was
     # dispatched, so it isn't in the queried set at all.
@@ -151,6 +152,20 @@ def stage_project_endpoint(
             detail=(
                 f"Trusts {failed_trust_ids} returned an error for the cohort query for project "
                 f"{project_id} and cannot be staged."
+            ),
+        )
+
+    # (4) Empty cohort: trust replied successfully but with 0 records — either a
+    # genuine zero match or a privacy-suppressed below-threshold count (#519).
+    # Either way there's no cohort to build an imaging project against, so the
+    # trust isn't stage-eligible.
+    empty_cohort_trust_ids = [tid for tid in payload.trusts if tid in empty_trust_ids]
+    if empty_cohort_trust_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Trusts {empty_cohort_trust_ids} returned no cohort records (zero or privacy-suppressed) "
+                f"for project {project_id} and cannot be staged."
             ),
         )
 
