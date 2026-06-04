@@ -249,8 +249,7 @@ def main(code: str, env: str, namespace: str, secret_name: str,
             print()
     else:
         print("ⓘ  --no-apply-secret: skipping the Kubernetes Secret patch.")
-        safe_secret_key_names = ", ".join(sorted(KIT_TO_SECRET_KEY.values()))
-        print(f"   Keys that would be patched: {safe_secret_key_names}")
+        print("   Per-trust secret fields would be patched.")
         print()
 
     # ── 2. Write the (secret-free) Helm values override ──────────────────
