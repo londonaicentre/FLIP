@@ -11,11 +11,23 @@
 #
 
 
+from typing import TypedDict
+from uuid import UUID
+
 from sqlmodel import Session, select
 
 from flip_api.db.models.user_models import Role, RoleRef
 
-CURRENT_ROLES = [
+
+class RoleSeed(TypedDict):
+    """A predefined role to seed; ``id`` is the stable :class:`RoleRef` identity."""
+
+    id: UUID
+    name: str
+    description: str
+
+
+CURRENT_ROLES: list[RoleSeed] = [
     {
         "id": RoleRef.RESEARCHER.value,
         "name": "Researcher",
@@ -35,25 +47,29 @@ CURRENT_ROLES = [
 
 
 def seed_roles(session: Session) -> list[str]:
-    """Seed roles into the database.
+    """Seed roles into the database, idempotently.
+
+    Idempotency is keyed on the role ``id`` (the stable :class:`RoleRef`), not the
+    name. A role may be renamed across releases while keeping its id — e.g. the
+    ``observer`` → ``viewer`` rename — so matching on the (mutable) name would miss
+    the existing row and collide on the primary key when re-seeding a live database.
+    An existing role has its name/description refreshed in place so renames apply.
 
     Args:
-        session (Session): The SQLModel session used for reads and inserts.
+        session (Session): The SQLModel session used for reads and writes.
 
     Returns:
         list[str]: All role names present after seeding.
     """
     for role_data in CURRENT_ROLES:
-        # Check if role exists
-        statement = select(Role).where(Role.name == role_data["name"])
-        existing_role = session.exec(statement).first()
-
+        existing_role = session.get(Role, role_data["id"])
         if existing_role:
-            continue  # Skip if role already exists
+            # Refresh in place so a rename / description change is applied without
+            # re-inserting the already-present primary key.
+            existing_role.name = role_data["name"]
+            existing_role.description = role_data["description"]
         else:
-            # Create new role
-            new_role = Role(**role_data)
-            session.add(new_role)
+            session.add(Role(**role_data))
 
     session.commit()
 
