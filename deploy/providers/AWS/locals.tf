@@ -110,6 +110,7 @@ locals {
       FL_APP_DESTINATION_BUCKET      = local.fl_app_destination_uri
       NET_ENDPOINTS                  = local.net_endpoints_json
       FL_BACKEND                     = var.fl_backend
+      FL_KIT_SLOT_NAMES              = var.FL_KIT_SLOT_NAMES
     })
     fl_server = {
       LOCAL_DEV                      = "false"

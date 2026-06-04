@@ -65,5 +65,9 @@ services:
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
+      # Seeds the fl_kit_slot pool that register_trust claims from. Empty ⇒
+      # NoFreeKitSlotError on every registration. Mirrored into the ECS task
+      # env via TF_VAR_FL_KIT_SLOT_NAMES (locals.tf).
+      - FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
     restart: unless-stopped
     container_name: flip-api

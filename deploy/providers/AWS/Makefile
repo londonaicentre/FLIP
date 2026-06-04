@@ -138,6 +138,9 @@ export TF_VAR_TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
 export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 export TF_VAR_FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
 export TF_VAR_ENFORCE_MFA=${ENFORCE_MFA}
+# JSON list of FL kit-slot names; seeds the fl_kit_slot pool register_trust
+# claims from. Empty ⇒ NoFreeKitSlotError on registration. Set in the env file.
+export TF_VAR_FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
 CENTRALHUB_IMAGES = \
 	$(DOCKER_REGISTRY)flip-api:$(DOCKER_TAG)
 
@@ -342,7 +345,7 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
-		-e pgdata_archive=trust1_pgdata_20260106.tar.gz
+		-e pgdata_archive=trust1_pgdata_20260129.tar
 
 .PHONY: deploy-centralhub
 deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with environment from Terraform

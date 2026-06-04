@@ -90,6 +90,12 @@ variable "INTERNAL_SERVICE_KEY" {
   sensitive   = true
 }
 
+variable "FL_KIT_SLOT_NAMES" {
+  description = "JSON list (as a string) of FL kit-slot names that seed the fl_kit_slot pool register_trust claims from on the flip-api ECS task. Empty ⇒ NoFreeKitSlotError on trust registration. Mirrors compose.production.yml; set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
+  type        = string
+  default     = "[]"
+}
+
 variable "docker_image_tag" {
   description = "Docker image tag for flip-api and flip-ui"
   type        = string
