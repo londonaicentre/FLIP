@@ -96,6 +96,6 @@ the description above:
 - for the Flower framework, users have to upload the `server_app.py` in addition to the `client_app.py` and additional auxiliary code, but in the future, this will not be the case. 
 - the static files (non-modifiable files) from NVFLARE are being moved from S3 buckets to the flip package. Currently, anything that isn't the `config_fed_server.json` and `config_fed_client.json` files is hosted in S3 buckets, 
   whereas the rest of the files are in the flip package. You can check what a fully bundled app looks like by consulting
-  the `fl-apps/templates/` folder in this repository (fl-apps/templates).
+  the `fl-apps/` directory in this repository (e.g. fl-apps/standard/, fl-apps/evaluation/, fl-apps/fed_opt/).
 - we will be soon moving to a fully Pythonic version of NVFLARE apps, more up-to-date and easy to use.
 
