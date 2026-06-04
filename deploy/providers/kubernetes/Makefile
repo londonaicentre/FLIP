@@ -14,6 +14,16 @@ NAMESPACE ?= flip-trust
 RELEASE_NAME ?= trust-release
 CHART_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 VALUES_FILE ?= $(CHART_DIR)/values.yaml
+
+# Kit-file env token, derived from PROD the same way trust/Makefile does:
+# PROD=true → production, PROD=stag → stag, otherwise development.
+ifeq ($(PROD),true)
+ENV := production
+else ifeq ($(PROD),stag)
+ENV := stag
+else
+ENV := development
+endif
 SECRETS_FILE := $(wildcard $(CHART_DIR)/values-secrets.yaml)
 OVERRIDES_FILE ?=
 
@@ -26,7 +36,7 @@ ifneq ($(strip $(OVERRIDES_FILE)),)
 	VALUES_OPTS := $(VALUES_OPTS) -f $(OVERRIDES_FILE)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps register-trust
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -107,13 +117,18 @@ template-all-backends: ## Render templates for all FL backend variants
 clean: ## Clean up rendered output
 	@rm -f $(CHART_DIR)/*.rendered.yaml
 
-register-trust: ## Register a K8s trust with the CENTRAL HUB (requires --hub-url)
-	@[ -n "$(TRUST_NAME)" ] || (echo "❌  TRUST_NAME is required. Usage: make register-trust TRUST_NAME=Trust_2 HUB_URL=https://stag.flip.aicentre.co.uk/api"; exit 1)
-	@[ -n "$(HUB_URL)" ] || (echo "❌  HUB_URL is required. Usage: make register-trust TRUST_NAME=Trust_2 HUB_URL=https://stag.flip.aicentre.co.uk/api"; exit 1)
-	@python3 $(CHART_DIR)/register_k8s_trust.py \
-		--trust-name $(TRUST_NAME) \
-		--hub-url $(HUB_URL) \
-		--trust-number $(if $(TRUST_NUMBER),$(TRUST_NUMBER),3) \
+# Registration is done ONCE on the hub, not here:
+#   make new-trust TRUST_CODE=<KIT> TRUST_NAME="..."
+#   make -C deploy/providers/AWS register-trusts KIT=<KIT> PROD=<env>
+#   make sync-trust-kit KIT=<KIT> PROD=<env>          # fills the Hub-shared block
+# This target then reads trust/.env.<KIT>.<env>, patches the per-trust keys into the
+# chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
+# `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env auto-detected from $(PROD).
+sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writes k8s-trust-<KIT>.yaml override)
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit KIT=Trust_K8s PROD=stag"; exit 1)
+	@python3 $(CHART_DIR)/sync_k8s_kit.py \
+		--kit $(KIT) \
+		--env $(ENV) \
+		--namespace $(NAMESPACE) \
+		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
 		--output-dir $(CHART_DIR)
-	@echo ""
-	@echo "ⓘ  Env file auto-detected from \$$PROD (set PROD=stag or PROD=true)"

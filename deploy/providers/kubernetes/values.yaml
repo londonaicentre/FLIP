@@ -109,7 +109,11 @@ trustApi:
             topologyKey: kubernetes.io/hostname
   env:
     CENTRAL_HUB_API_URL: ""
-    TRUST_API_KEY_HEADER: "X-Trust-Api-Key"
+    # HTTP header the hub reads the per-trust API key from. Must match the hub's
+    # TRUST_API_KEY_HEADER; the platform default (.env.development.example, the
+    # prod/dev compose, and register_trust's Hub-shared block) is "Authorization".
+    # A mismatch makes the hub answer 401 "API key is missing".
+    TRUST_API_KEY_HEADER: "Authorization"  # pragma: allowlist secret
     POLL_INTERVAL_SECONDS: "5"
     # Internal service URLs (short names resolve via K8s DNS in same namespace)
 
@@ -251,12 +255,21 @@ flClient:
   nvflare:
     kitFromS3:
       enabled: true
+      # S3 bucket holding the FL participant kits (the AI Centre bucket,
+      # AICENTRE_BUCKET_NAME). Required, but deployment-specific — supply it via
+      # the kit override (`make sync-kit` writes it from the kit file). Empty here
+      # so the chart stays env-agnostic; an empty bucket crash-loops the kit-init.
       bucket: ""
       kitDate: "20260318"
+      # pathTemplate's trailing segment is the FL kit SLOT the hub assigned
+      # (FL_KIT_SLOT, e.g. Trust_2) — not the cosmetic trustName. `make sync-kit`
+      # pins it to the slot in the generated override. The trustName default below
+      # only works when trustName == the slot.
       pathTemplate: "fl-flare-participant-kits/{{ .Values.flClient.nvflare.kitFromS3.kitDate }}/net-1/services/{{ .Values.trustName }}"
   flower:
     kitFromS3:
       enabled: true
+      # See the nvflare note above — supply via the kit override (`make sync-kit`).
       bucket: ""
       kitDate: "20260401"
       pathTemplate: "fl-flower-participant-kits/{{ .Values.flClient.flower.kitFromS3.kitDate }}/net-1"

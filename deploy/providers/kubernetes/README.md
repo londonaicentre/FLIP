@@ -42,52 +42,92 @@ server; no inbound ports are exposed from the K8s cluster.
 
 ## Quickstart
 
-### 1. Create the required secrets
+A K8s trust is registered with the hub **exactly like any other trust** — by a
+CODE-named *kit*. Registration is done once, centrally, by the DB-backed
+`register_trust` CLI (it mints the per-trust credentials and claims an FL kit
+slot); the chart never registers anything itself. The flow is:
 
-```bash
-# Option A: Create a Secret manually with kubectl
-kubectl create namespace flip-trust
-kubectl create secret generic flip-trust-secrets \
-  --namespace flip-trust \
-  --from-literal=aes-key-base64='<your-base64-aes-key>' \
-  --from-literal=trust-api-key='<your-trust-api-key>' \
-  --from-literal=trust-internal-service-key-header='<your-header-name>' \
-  --from-literal=trust-internal-service-key='<your-internal-key>' \
-  --from-literal=omop-postgres-password='<your-omop-password>' \
-  --from-literal=data-access-postgres-password='<your-data-access-password>' \
-  --from-literal=orthanc-registered-users='<your-orthanc-registered-users>' \
-  --from-literal=xnat-admin-password='<your-xnat-admin-password>' \
-  --from-literal=xnat-service-password='<your-xnat-service-password>' \
-  --from-literal=xnat-datasource-password='<your-xnat-datasource-password>' \
-  --from-literal=grafana-admin-password='<your-grafana-password>' \
-  --from-literal=s3-access-key-id='<your-aws-access-key>' \
-  --from-literal=s3-secret-access-key='<your-aws-secret-key>'
-
-# Option B: Use the chart's built-in Secret template (not recommended for prod)
-# Set secrets.create=true and pass the values via --set or a separate values file.
+```
+ hub side (once)            cluster side (this chart)
+ ─────────────────          ─────────────────────────
+ new-trust ─► register ─► sync-trust-kit ─► sync-kit ─► up ─► (add-k8s-trust)
+            writes trust/.env.<CODE>.<env>   patches Secret + writes override
 ```
 
-### 2. Install the chart
+### 1. Register the trust on the hub (produces the kit)
 
 ```bash
-helm install trust-release ./deploy/providers/kubernetes/ \
-  --namespace flip-trust \
-  --create-namespace \
-  --set secrets.existingName=flip-trust-secrets
+# From the repo root. <CODE> is this trust's name, e.g. Trust_K8s.
+make new-trust TRUST_CODE=<CODE> TRUST_NAME="<Human Name>"
+make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=stag   # mints creds + claims FL slot
+make sync-trust-kit KIT=<CODE> PROD=stag                            # fills the Hub-shared block
 ```
 
-Or using the Makefile:
+This writes `trust/.env.<CODE>.stag` containing the per-trust keys
+(`TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`) and the Hub-shared block
+(`AES_KEY_BASE64`, `CENTRAL_HUB_API_URL`, FL settings). The hub stores only the
+SHA-256 hash of the API key — re-running registration is idempotent.
+
+### 2. Provide the infrastructure secrets
+
+The kit owns only the per-trust keys. The chart's *other* secrets (XNAT, OMOP,
+Orthanc, Grafana, S3 kit-sync credentials) are deployment-specific — supply them
+via the chart's built-in Secret template (`secrets.create=true` + a
+`values-secrets.yaml`, see the [Secrets Reference](#secrets-reference)) or create
+the Secret externally. `make sync-kit` (next step) patches the per-trust keys
+*on top* of this Secret without touching the infra keys.
+
+### 3. Sync the kit into the cluster
 
 ```bash
-make -C deploy/providers/kubernetes deploy
+make -C deploy/providers/kubernetes sync-kit KIT=<CODE> PROD=stag
 ```
 
-### 3. Verify deployment
+This reads `trust/.env.<CODE>.stag`, patches the per-trust keys
+(`trust-api-key`, `trust-internal-service-key[-header]`, `aes-key-base64`) into
+the chart's Kubernetes Secret (`trust-release-flip-trust-secrets`), and writes a
+secret-free Helm override `k8s-trust-<CODE>.yaml` carrying the hub URL, FL
+backend, AWS region, the fl-client kit bucket, and the slot-aware NVFLARE kit
+path. Plaintext keys go straight into the Secret over kubectl's TLS channel —
+never to disk. (Run it after the namespace/Secret exist; if they don't yet,
+deploy once first, then re-run.)
+
+### 4. Install / upgrade the chart
+
+```bash
+make -C deploy/providers/kubernetes up OVERRIDES_FILE=k8s-trust-<CODE>.yaml
+```
+
+Equivalent raw Helm:
+
+```bash
+helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
+  --namespace flip-trust --create-namespace \
+  -f deploy/providers/kubernetes/values.yaml \
+  -f deploy/providers/kubernetes/values-secrets.yaml \
+  -f deploy/providers/kubernetes/k8s-trust-<CODE>.yaml
+```
+
+### 5. Verify the trust is polling
 
 ```bash
 kubectl get pods -n flip-trust
-kubectl get svc -n flip-trust
 kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api
+# Expect: POST .../api/trust/heartbeat "HTTP/1.1 200 OK"
+#         GET  .../api/tasks/pending   "HTTP/1.1 200 OK"
+```
+
+A `401 "API key is missing"` means the API-key **header** is mismatched — the
+chart default `TRUST_API_KEY_HEADER` is `Authorization` (the platform default);
+override it only if your hub uses a different header.
+
+### 6. (FL training only) Open the FL-server NLB
+
+Polling needs nothing more. For FL *training*, the K8s node's FL client must
+reach the hub's FL server, so open the NLB to the node's public/egress IP:
+
+```bash
+make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> PROD=stag
 ```
 
 ## Configuration Reference

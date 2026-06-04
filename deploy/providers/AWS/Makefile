@@ -537,19 +537,19 @@ allow-local-trust-nlb: ## Apply the FL-server NLB ingress rules for the IPs in L
 	@echo "✅ FL-server NLB security group reconciled."
 
 .PHONY: add-k8s-trust
-add-k8s-trust: ## Register a K8s trust with the hub (runs register script + terraform apply for NLB rule)
-	@echo "=== Registering K8s Trust ==="
-	@[ -n "$(TRUST_NAME)" ] || (echo "❌  TRUST_NAME is required. Usage: make add-k8s-trust TRUST_NAME=Trust_K8s HUB_URL=https://stag.flip.aicentre.co.uk/api K8S_TRUST_IP=<public-ip>"; exit 1)
-	@[ -n "$(HUB_URL)" ] || (echo "❌  HUB_URL is required."; exit 1)
-	@[ -n "$(K8S_TRUST_IP)" ] || (echo "❌  K8S_TRUST_IP is required (public IP of the K8s trust node for NLB security group)."; exit 1)
-	@echo "🔑 Generating trust credentials and registering with hub..."
-	@python3 deploy/providers/kubernetes/register_k8s_trust.py \
-		--trust-name $(TRUST_NAME) \
-		--hub-url $(HUB_URL) \
-		--env-file $(MAIN_ENV_FILE) \
-		--trust-number $(if $(TRUST_NUMBER),$(TRUST_NUMBER),3) \
-		--output-dir deploy/providers/kubernetes/
-	@echo "🔐 Updating NLB security group to allow traffic from K8s trust IP..."
+add-k8s-trust: ## Open the FL-server NLB to a K8s trust node's public IP (FL training only)
+	## A K8s trust is registered exactly like any other trust — by CODE-named kit:
+	##   make new-trust TRUST_CODE=Trust_K8s TRUST_NAME="..."
+	##   make -C deploy/providers/AWS register-trusts KIT=Trust_K8s PROD=$(PROD)
+	##   make sync-trust-kit KIT=Trust_K8s PROD=$(PROD)
+	##   make -C deploy/providers/kubernetes sync-kit KIT=Trust_K8s PROD=$(PROD)
+	##   make -C deploy/providers/kubernetes up OVERRIDES_FILE=k8s-trust-Trust_K8s.yaml
+	## Polling needs none of the below. This target is the LAST step, needed only for
+	## FL *training*: it opens the FL-server NLB security group to the K8s node's public
+	## IP (the cluster's egress address) via the K8S_TRUST_IP terraform rule, mirroring
+	## `allow-local-trust-nlb` for on-prem hosts.
+	@[ -n "$(K8S_TRUST_IP)" ] || (echo "❌  K8S_TRUST_IP is required (public/egress IP of the K8s trust node). Usage: make add-k8s-trust K8S_TRUST_IP=<ip> PROD=$(PROD)"; exit 1)
+	@echo "🔐 Opening FL-server NLB to K8s trust IP $(K8S_TRUST_IP)..."
 	@cd deploy/providers/AWS && \
 		TF_VAR_K8S_TRUST_IP=$(K8S_TRUST_IP) terraform plan \
 		-target=aws_security_group_rule.k8s_trust_fl_server_nlb \
@@ -557,12 +557,9 @@ add-k8s-trust: ## Register a K8s trust with the hub (runs register script + terr
 		TF_VAR_K8S_TRUST_IP=$(K8S_TRUST_IP) terraform apply k8s-trust.tfplan && \
 		rm -f k8s-trust.tfplan
 	@echo ""
-	@echo "✅ K8s Trust $(TRUST_NAME) provisioned!"
-	@echo ""
-	@echo "📋 Next steps:"
-	@echo "   1. Review the generated override: deploy/providers/kubernetes/k8s-trust-$(TRUST_NAME).yaml"
-	@echo "   2. Deploy the chart: make -C deploy/providers/kubernetes/ deploy OVERRIDES_FILE=k8s-trust-$(TRUST_NAME).yaml"
-	@echo "   3. Verify trust polling: python3 deploy/providers/kubernetes/check_status.py"
+	@echo "✅ FL-server NLB now allows the K8s trust node ($(K8S_TRUST_IP))."
+	@echo "   K8S_TRUST_IP is a transient -target var; persist it in the env file"
+	@echo "   so later full applies don't drop the rule."
 
 .PHONY: down
 down:

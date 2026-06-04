@@ -348,23 +348,40 @@ kubectl logs -n flip-trust "$TRUST_API_POD" --tail=20
 
 ### Register a New Trust
 
+Registration is done **on the hub**, by the same CODE-named kit flow every
+trust uses — not by a K8s-specific script. From the repo root:
+
 ```bash
-cd deploy/providers/kubernetes
-python3 register_k8s_trust.py --trust-name Trust_MyNew
+make new-trust TRUST_CODE=Trust_MyNew TRUST_NAME="My New Trust"
+make -C deploy/providers/AWS register-trusts KIT=Trust_MyNew PROD=stag  # mints creds + FL slot
+make sync-trust-kit KIT=Trust_MyNew PROD=stag                           # fills Hub-shared block
 ```
 
-This generates:
-- API keys for hub-to-trust auth
-- A Helm values file `k8s-trust-Trust_MyNew.yaml`
-- Terraform instructions to register the trust in the hub
+Then translate the kit into the cluster and deploy:
+
+```bash
+make -C deploy/providers/kubernetes sync-kit KIT=Trust_MyNew PROD=stag  # patches Secret + writes override
+make -C deploy/providers/kubernetes up OVERRIDES_FILE=k8s-trust-Trust_MyNew.yaml
+```
+
+`sync-kit` patches the per-trust keys into the Kubernetes Secret and writes the
+secret-free `k8s-trust-Trust_MyNew.yaml` override (hub URL, FL backend, AWS
+region, fl-client bucket, slot-aware kit path). See the chart README Quickstart.
 
 ### Heartbeat Failure
 
-If trust-api logs show no heartbeats or `401 Unauthorized`:
+If trust-api logs show no heartbeats or `401`:
 
-1. Check `TRUST_API_KEY` matches between trust and hub
-2. Verify `CENTRAL_HUB_API_URL` is correct and reachable
-3. Check NetworkPolicies aren't blocking egress
+1. **`401 "API key is missing"`** → the API-key **header** is mismatched. The
+   hub reads the key from `TRUST_API_KEY_HEADER` (platform default
+   `Authorization`); the chart default matches it. A "missing" (not "invalid")
+   401 is the header *name*, not the key value. Re-run `sync-kit` or check the
+   `TRUST_API_KEY_HEADER` in your override / ConfigMap.
+2. **`401 invalid`** → the key value is wrong. Confirm the Secret holds the
+   registered key: re-run `make -C deploy/providers/kubernetes sync-kit KIT=<CODE>`.
+   The hub stores only the SHA-256 hash, so re-registration is idempotent.
+3. Verify `CENTRAL_HUB_API_URL` is correct and reachable.
+4. Check NetworkPolicies aren't blocking egress.
 
 ```bash
 # Test outbound connectivity
@@ -412,7 +429,7 @@ machine and in `deploy/providers/kubernetes/scripts/`. Key scripts:
 | Script | Purpose |
 |--------|---------|
 | `imaging-import-worker.py` | DQR bypass — direct C-MOVE import worker |
-| `register_k8s_trust.py` | Generate trust registration assets |
+| `sync_k8s_kit.py` | Sync a registered trust kit into the cluster (Secret + override) |
 
 ### Available Tools on DCMTK Pod
 
