@@ -12,11 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Check required_files.json in src
+name: Check required_files.json in fl-apps
 
 on:
   push:
-    branches: ["**"]
+    branches: [develop]
+    paths:
+      - "fl-apps/**"
+      - ".github/workflows/check-required-files.yml"
+  pull_request:
+    branches: [develop]
+    paths:
+      - "fl-apps/**"
+      - ".github/workflows/check-required-files.yml"
 
 permissions:
   contents: read
@@ -28,4 +36,4 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Run check_required_files.sh
-        run: bash check_required_files.sh
+        run: bash fl-apps/scripts/check_required_files.sh
