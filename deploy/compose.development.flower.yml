@@ -37,6 +37,14 @@ services:
       credentials_network:
         ipv4_address: 169.254.170.2
     restart: unless-stopped
+    healthcheck:
+      # #568: liveness only — hits /health (no boto3), so an expired SSO token doesn't mark the
+      # sidecar unhealthy and block dependents that wait on `condition: service_healthy`.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
   fl-api-net-1:
     container_name: flip-fl-api-net-1
@@ -94,6 +102,11 @@ services:
   fl-server-net-1:
     container_name: fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    depends_on:
+      # #568: don't start until the creds sidecar is serving, so an early AWS call (or a
+      # sidecar restart) can't hit a closed port and fail credential resolution.
+      aws-creds:
+        condition: service_healthy
     volumes:
       # #568: AWS creds now come from the aws-creds sidecar via the container
       # credential provider (AWS_CONTAINER_CREDENTIALS_FULL_URI below) — no SSO
@@ -167,6 +180,10 @@ services:
   fl-server-net-2:
     container_name: fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    depends_on:
+      # #568: see net-1 — gate startup on the creds sidecar being healthy.
+      aws-creds:
+        condition: service_healthy
     volumes:
       # #568: AWS creds now come from the aws-creds sidecar via the container
       # credential provider (AWS_CONTAINER_CREDENTIALS_FULL_URI below) — no SSO

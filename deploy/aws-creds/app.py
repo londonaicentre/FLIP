@@ -33,6 +33,13 @@ app = FastAPI()
 _session = boto3.Session(profile_name=os.environ.get("AWS_PROFILE"))
 
 
+@app.get("/health")
+def health() -> JSONResponse:
+    # Liveness probe for the compose healthcheck. Deliberately does NOT touch boto3 — an expired
+    # SSO token must not mark the sidecar unhealthy and block dependents from ever starting.
+    return JSONResponse({"status": "ok"})
+
+
 @app.get("/creds")
 def creds() -> JSONResponse:
     try:
@@ -44,12 +51,22 @@ def creds() -> JSONResponse:
         logger.exception("Could not resolve AWS credentials")
         return JSONResponse({"error": "could not resolve credentials"}, status_code=500)
 
-    expiry = getattr(credentials, "_expiry_time", None)
+    # The SDK's container provider needs an Expiration to drive its re-poll cadence; without one
+    # it treats the creds as static and never refreshes, so they'd go stale mid-run. Prefer a
+    # public expiry_time if botocore exposes one, else fall back to the private attr, and format
+    # inside a try so a type change / naive datetime fails loudly (logged 500) instead of
+    # returning unrefreshable creds.
+    expiry = getattr(credentials, "expiry_time", None) or getattr(credentials, "_expiry_time", None)
+    try:
+        expiration = expiry.astimezone(timezone.utc).isoformat()
+    except (AttributeError, TypeError, ValueError):
+        logger.exception("Could not determine AWS credential expiry")
+        return JSONResponse({"error": "could not determine credential expiry"}, status_code=500)
+
     return JSONResponse({
         "AccessKeyId": frozen.access_key,
         "SecretAccessKey": frozen.secret_key,
         "Token": frozen.token,
-        # Expiration drives the SDK's re-poll cadence; on the next call we hand back
-        # boto3's freshly-refreshed creds.
-        "Expiration": expiry.astimezone(timezone.utc).isoformat() if expiry else None,
+        # On the next poll we hand back boto3's freshly-refreshed creds.
+        "Expiration": expiration,
     })
