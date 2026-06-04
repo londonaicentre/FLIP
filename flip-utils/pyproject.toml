@@ -18,7 +18,7 @@ build-backend = "hatchling.build"
 name = "flip-utils"
 dynamic = ["version"]
 description = "FLIP - Federated Learning and Interoperability Platform library built on NVIDIA FLARE"
-readme = "README.md"
+readme = {file = "docs/overview.rst", content-type = "text/x-rst"}
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [
@@ -49,7 +49,7 @@ classifiers = [
 ]
 dependencies = [
     "boto3>=1.38.31",
-    "nvflare==2.7.2",
+    "nvflare==2.7.1",
     "pandas>=2.3.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
@@ -57,10 +57,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/londonaicentre/FLIP"
-Repository = "https://github.com/londonaicentre/FLIP"
-Documentation = "https://londonaicentreflip.readthedocs.io/en/stable"
-Issues = "https://github.com/londonaicentre/FLIP/issues"
+Homepage = "https://github.com/londonaicentre/flip-fl-base"
+Repository = "https://github.com/londonaicentre/flip-fl-base"
+Documentation = "https://flip-fl-base.readthedocs.io/en/stable"
+Issues = "https://github.com/londonaicentre/flip-fl-base/issues"
 
 [project.optional-dependencies]
 # Full dependencies for running FL jobs (includes ML frameworks)
@@ -68,10 +68,29 @@ full = [
     "einops==0.8.1",
     "gdown==5.2.0",
     "lpips==0.1.4",
-    "monai>=1.5.1",
+    "monai>=1.5.2",
     "nibabel>=5.3.2",
     "pydicom>=3.0.1",
+    # Pin torch>=2.11,<2.12 (was 2.9.1 via MONAI transitive) so the NVFlare
+    # supernode runs the same torch as the flower one (flip-fl-base-flower
+    # pins the same range). PyPI's torch 2.11.x ships the cu128 build by
+    # default, which matches host NVIDIA driver 575.x. 2.12 ships cu130
+    # which needs driver >=580.
+    "torch>=2.11.0,<2.12",
 ]
+
+# Pull torch from PyTorch's cu128 wheel index instead of PyPI's default cu130
+# build. cu130 needs NVIDIA driver >=580; current dev hosts run 575.x and would
+# fail at torch.cuda.is_available() (same trap that bit flip-fl-base-flower).
+# Mirrors the --extra-index-url flag in the flower fl-base Dockerfile.
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
 
 [tool.hatch.version]
 path = "flip/__init__.py"
@@ -114,9 +133,9 @@ preview = true
 select = ['I', 'F', 'E', 'W', 'PT']
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/unit"]
 # Exclude subdirectories that have their own pyproject.toml and dependencies
-norecursedirs = [".venv", ".test_*", ".ruff_cache"]
+norecursedirs = ["fl_services", "fl-base", ".venv", "workspace", ".test_*"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -125,15 +144,21 @@ warn_unused_configs = true
 disallow_untyped_defs = false
 ignore_missing_imports = true
 
+# Exclude patterns to avoid duplicate module issues
 exclude = [
     "^tests/",
+    "^fl_services/",
+    "^workspace/",
     "^\\.test_",
     "^\\.venv/",
 ]
 
+# Each app has its own 'custom' module, so we need to treat them separately
+# by using explicit-package-bases with the namespace_packages option
 explicit_package_bases = true
 namespace_packages = true
 
+# Ignore duplicate module errors for these specific patterns
 [[tool.mypy.overrides]]
 module = [
     "custom",

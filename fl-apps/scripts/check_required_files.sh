@@ -2,7 +2,7 @@
 set -e
 cd "$(dirname "$0")"
 
-SRC_DIR="../templates"
+SRC_DIR="src"
 AGG_FILE="$SRC_DIR/required_files.json"
 FAIL=0
 

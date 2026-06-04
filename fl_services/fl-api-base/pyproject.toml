@@ -18,7 +18,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi[standard]>=0.115.11",
-    "nvflare==2.7.2",
+    "nvflare==2.7.1",
     "pydantic-settings>=2.11.0",
 ]
 

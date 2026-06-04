@@ -19,9 +19,8 @@ include ./.env.app
 export $(shell sed 's/=.*//' ./.env.app)
 endif
 
-.PHONY: run shell down clean sim export
+.PHONY: run shell down clean
 
-# Docker-based NVFlare simulator (legacy path)
 run:
 	$(MAKE) -C $(TESTING_DIR) $@ \
 		JOB_TYPE="$(JOB_TYPE)" \
@@ -41,24 +40,3 @@ down:
 
 clean:
 	$(MAKE) -C $(TESTING_DIR) $@
-
-# --- Client API + SimEnv (new testing path) ---
-# Requires the virtual environment to be active and test data downloaded.
-# FLIP-specific values (project_id, query, model_id) are injected via
-# environment variables (FLIP_PROJECT_ID, FLIP_QUERY, FLIP_MODEL_ID)
-# because SQL queries with spaces don't survive CLI arg splitting.
-sim:
-	uv run python job.py \
-		--n_clients 2 \
-		--num_rounds 10 \
-		--local_epochs 4 \
-		--lr 5e-5
-
-# --- Export job config for Docker deployment ---
-export:
-	uv run python job.py \
-		--export \
-		--export-dir ./fl_job \
-		--n_clients 2 \
-		--num_rounds 10 \
-		--local_epochs 4
