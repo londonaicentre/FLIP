@@ -16,6 +16,28 @@
 services:
   #################### CENTRAL HUB FL ####################
 
+  # #568: local container-credential-provider sidecar. Reads the host SSO
+  # profile and vends short-lived creds over HTTP at the ECS credential IP (169.254.170.2).
+  # FL containers fetch creds via the SDK's container provider (AWS_CONTAINER_CREDENTIALS_*) —
+  # no mounted token, so their uid is irrelevant. This is the ONE container that reads the
+  # mode-600 SSO token, so it runs as the host uid. Mirrors how ECS injects task-role creds.
+  aws-creds:
+    build: ./aws-creds
+    container_name: aws-creds
+    # Runs as the host uid — the ONE container that reads the host's mode-600 SSO token.
+    # boto3 inside it resolves the modern sso_session profile and auto-refreshes.
+    user: "${UID}:${GID}"
+    environment:
+      - HOME=/home/app                # so boto3 finds /home/app/.aws
+      - AWS_PROFILE=${AWS_PROFILE}
+      - AWS_REGION=${AWS_REGION}
+    volumes:
+      - ~/.aws:/home/app/.aws:ro
+    networks:
+      credentials_network:
+        ipv4_address: 169.254.170.2
+    restart: unless-stopped
+
   fl-api-net-1:
     container_name: flip-fl-api-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
@@ -73,11 +95,9 @@ services:
     container_name: fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
-      # Mount the AWS credentials (needed to upload model results to S3).
-      # The image runs as `app` (uid 49999) with HOME=/app, so the mount
-      # lands at /app/.aws/ — the SDK's default lookup path for that user.
-      - ~/.aws/config:/app/.aws/config:ro
-      - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
+      # #568: AWS creds now come from the aws-creds sidecar via the container
+      # credential provider (AWS_CONTAINER_CREDENTIALS_FULL_URI below) — no SSO
+      # mount, so this stays its native uid 49999 (no root, no GID 0).
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
       # Shared with FL API: uploaded app bundles (sources + checkpoint) live under
@@ -93,7 +113,11 @@ services:
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-      - AWS_PROFILE=${AWS_PROFILE}
+      - AWS_REGION=${AWS_REGION}
+      # #568: fetch creds from the aws-creds boto3 sidecar via the container provider.
+      # FULL_URI (link-local host → no auth token needed) so the sidecar can serve on the
+      # non-privileged :8081 as a non-root user.
+      - AWS_CONTAINER_CREDENTIALS_FULL_URI=http://169.254.170.2:8081/creds
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -108,6 +132,7 @@ services:
       - 9093:9093
     networks:
       - shared-net-1
+      - credentials_network  # #568: reach the aws-creds sidecar at 169.254.170.2
     restart: unless-stopped
     init: true
 
@@ -143,11 +168,9 @@ services:
     container_name: fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
     volumes:
-      # Mount the AWS credentials (needed to upload model results to S3).
-      # The image runs as `app` (uid 49999) with HOME=/app, so the mount
-      # lands at /app/.aws/ — the SDK's default lookup path for that user.
-      - ~/.aws/config:/app/.aws/config:ro
-      - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
+      # #568: AWS creds now come from the aws-creds sidecar via the container
+      # credential provider (AWS_CONTAINER_CREDENTIALS_FULL_URI below) — no SSO
+      # mount, so this stays its native uid 49999 (no root, no GID 0).
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       # Shared with FL API: uploaded app bundles (sources + checkpoint) live under
@@ -163,7 +186,11 @@ services:
       - FLIP_API_INTERNAL_URL=${FLIP_API_INTERNAL_URL}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
       - INTERNAL_SERVICE_KEY=${INTERNAL_SERVICE_KEY}
-      - AWS_PROFILE=${AWS_PROFILE}
+      - AWS_REGION=${AWS_REGION}
+      # #568: fetch creds from the aws-creds boto3 sidecar via the container provider.
+      # FULL_URI (link-local host → no auth token needed) so the sidecar can serve on the
+      # non-privileged :8081 as a non-root user.
+      - AWS_CONTAINER_CREDENTIALS_FULL_URI=http://169.254.170.2:8081/creds
     command:
       - --ssl-ca-certfile
       - /certs/ca.crt
@@ -176,6 +203,7 @@ services:
       - 0.0.0.0:9097
     networks:
       - shared-net-2
+      - credentials_network  # #568: reach the aws-creds sidecar at 169.254.170.2
     restart: unless-stopped
     init: true
 
@@ -202,3 +230,12 @@ services:
         condition: service_healthy
     networks:
       - shared-net-2
+
+# #568: compose-managed network carrying the ECS credential IP
+# (169.254.170.2) that the aws-creds sidecar binds and the FL servers reach.
+networks:
+  credentials_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 169.254.170.0/24
