@@ -20,7 +20,7 @@
 #   make up FL_PROVISIONED_DIR=/tmp/my-workspace
 #
 # FL_PROVISIONED_DIR is only read by deploy/compose.development.{flower,nvflare}.yml
-# (volume mounts of the provisioned certs / workspace from the sibling repo).
+# (volume mounts of the provisioned certs / workspace from deploy/workspace).
 # In stag/prod the FL services pull their kit from S3 and this path is unused —
 # the root Makefile still absolutises it for consistency but no prod compose
 # references ${FL_PROVISIONED_DIR}.
