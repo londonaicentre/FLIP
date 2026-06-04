@@ -24,7 +24,7 @@ from flip_api.utils.constants import (
     ADMIN_EMAIL_1,
     ADMIN_EMAIL_2,
     ADMIN_EMAIL_3,
-    OBSERVER_EMAIL,
+    VIEWER_EMAIL,
     RESEARCHER_EMAIL,
 )
 
@@ -44,7 +44,7 @@ def mock_settings():
 @patch("flip_api.db.seed.main_users.ensure_user_and_role")
 @patch("flip_api.db.seed.main_users.logger")
 def test_seed_main_users_calls_ensure_user_and_role(mock_logger, mock_ensure_user_and_role, mock_session):
-    """Test that seed_main_users calls ensure_user_and_role for each admin, researcher, and observer."""
+    """Test that seed_main_users calls ensure_user_and_role for each admin, researcher, and viewer."""
     seed_main_users(mock_session)
 
     assert mock_ensure_user_and_role.call_count == 5
@@ -62,7 +62,7 @@ def test_seed_main_users_calls_ensure_user_and_role(mock_logger, mock_ensure_use
         RESEARCHER_EMAIL, RoleRef.RESEARCHER, mock_session, *MAIN_USER_PROFILES[RESEARCHER_EMAIL]
     )
     mock_ensure_user_and_role.assert_any_call(
-        OBSERVER_EMAIL, RoleRef.OBSERVER, mock_session, *MAIN_USER_PROFILES[OBSERVER_EMAIL]
+        VIEWER_EMAIL, RoleRef.VIEWER, mock_session, *MAIN_USER_PROFILES[VIEWER_EMAIL]
     )
 
     # Logging verified
@@ -156,7 +156,7 @@ def test_seed_main_users_runs_all_when_each_succeeds(mock_logger, mock_ensure_us
         (ADMIN_EMAIL_2, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_2]),
         (ADMIN_EMAIL_3, RoleRef.ADMIN, mock_session, *MAIN_USER_PROFILES[ADMIN_EMAIL_3]),
         (RESEARCHER_EMAIL, RoleRef.RESEARCHER, mock_session, *MAIN_USER_PROFILES[RESEARCHER_EMAIL]),
-        (OBSERVER_EMAIL, RoleRef.OBSERVER, mock_session, *MAIN_USER_PROFILES[OBSERVER_EMAIL]),
+        (VIEWER_EMAIL, RoleRef.VIEWER, mock_session, *MAIN_USER_PROFILES[VIEWER_EMAIL]),
     ]
     actual_calls = [c.args for c in mock_ensure_user_and_role.call_args_list]
     assert actual_calls == expected_calls

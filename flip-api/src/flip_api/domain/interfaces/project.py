@@ -66,6 +66,11 @@ class IProjectQuery(BaseModel):
     # non-null ``error``. Excluded from staging — even though we got a
     # reply, we have no usable cohort count.
     errored_trust_ids: list[UUID] = Field(default_factory=list, alias="erroredTrustIds")
+    # Subset of ``responded_trust_ids`` (disjoint from ``errored_trust_ids``) whose
+    # cohort count is 0 — either a genuine zero match or a privacy-suppressed
+    # below-threshold count (see issue #519). Excluded from staging: there is no
+    # cohort to build an imaging project against.
+    empty_trust_ids: list[UUID] = Field(default_factory=list, alias="emptyTrustIds")
     total_cohort: int | None = Field(default=None, alias="totalCohort")
     created: str | None = Field(default=None)
     created_by: str | None = Field(default=None, alias="createdBy")

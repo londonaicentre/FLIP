@@ -62,7 +62,9 @@ resource "aws_ecs_task_definition" "flip_api" {
       environment = concat(
         [for k, v in local.ecs_task_env.flip_api : { name = k, value = v }],
         [
-          { name = "DB_HOST", value = module.flip_db.db_instance_address },
+          # Connect through RDS Proxy (IAM auth) rather than directly to the
+          # RDS instance — see FLIP#556 and rds_proxy.tf.
+          { name = "DB_HOST", value = aws_db_proxy.flip_db.endpoint },
           { name = "DB_PORT", value = "5432" },
         ],
       )

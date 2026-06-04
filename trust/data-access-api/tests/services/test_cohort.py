@@ -81,6 +81,8 @@ def test_get_statistics(mock_read_sql, mock_df):
 
     # Check the record count
     assert stats.record_count == 21
+    # An above-threshold count is a genuine result, not privacy-suppressed.
+    assert stats.suppressed is False
 
 
 @patch("pandas.read_sql")
@@ -105,6 +107,9 @@ def test_get_statistics_below_threshold(mock_read_sql, mock_df_below_threshold):
     assert stats.data == []
     assert stats.query_id == "2"
     assert stats.trust_id == "mock_trust"
+    # Below-threshold count is privacy-suppressed; the flag drives the UI's "below-threshold"
+    # chip (a genuine zero is suppressed the same way, so it reveals no membership) (#519).
+    assert stats.suppressed is True
 
 
 @patch("data_access_api.services.cohort.COHORT_QUERY_THRESHOLD", 10)
@@ -133,6 +138,30 @@ def test_get_statistics_fails_global_threshold(mock_read_sql):
     stats = get_statistics(mock_df_medium, query_input, threshold=5)
     assert stats.record_count == 0
     assert stats.data == []
+    assert stats.suppressed is True
+
+
+@patch("pandas.read_sql")
+def test_get_statistics_genuine_zero_is_suppressed(mock_read_sql):
+    """Privacy regression: a genuine zero match is suppressed IDENTICALLY to a small
+    below-threshold count (``record_count=0``, ``suppressed=True``). Distinguishing the two
+    would leak that >=1 patient matched a narrow query — keep this bit closed (#519,
+    security review)."""
+    mock_df_empty = pd.DataFrame({"modality": [], "manufacturer": [], "accession_id": []})
+    mock_read_sql.return_value = mock_df_empty
+
+    query_input = CohortQueryInput(
+        encrypted_project_id="my_project",
+        query_id="4",
+        query_name="query_4",
+        query="SELECT * FROM omop.radiology_occurrence WHERE 1 = 0",
+        trust_id="mock_trust",
+    )
+
+    stats = get_statistics(mock_df_empty, query_input, threshold=10)
+    assert stats.record_count == 0
+    assert stats.data == []
+    assert stats.suppressed is True
 
 
 @patch("pandas.read_sql")

@@ -144,6 +144,32 @@ describe("PerTrustResponse", () => {
         expect(t3.text()).toContain("running");
     });
 
+    it("shows a 'suppressed' chip (not a literal 0) for a privacy-suppressed trust", async () => {
+        // trust-1 returned a real count; trust-2's cohort fell below the privacy
+        // threshold and was suppressed by the trust (the count may be zero). It must
+        // not read as a bare "0" / "no data available" (#519).
+        const data = {
+            recordCount: 7,
+            trustsResults: [],
+            trustRecordCounts: {
+                "trust-1": 7,
+                "trust-2": 0
+            },
+            trustSuppressed: ["trust-2"]
+        };
+        const wrapper = mountPerTrustResponse({ data });
+        await nextTick();
+        await flushPromises();
+
+        const t1 = rowFor(wrapper, "T1")!;
+        const t2 = rowFor(wrapper, "T2")!;
+
+        expect(t1.text()).toContain("7");
+
+        expect(t2.text()).toContain("suppressed");
+        expect(t2.text()).not.toContain("running");
+    });
+
     it("falls back to per-field aggregation when trustRecordCounts is absent (back-compat)", async () => {
         // Pre-upgrade QueryStats rows lack trustRecordCounts; the component
         // must still mark trust-1 as responded based on the field results.

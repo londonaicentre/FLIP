@@ -108,7 +108,7 @@ const userRole = computed(() => {
     if (isAdmin.value) return "Admin";
     if (canCreateProjects.value) return "Researcher";
 
-    return "Observer";
+    return "Viewer";
 });
 
 const hasProject = ref(false);

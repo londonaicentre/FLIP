@@ -116,6 +116,10 @@ make debug-data-access-api     # Debug data-access-api only
 make tests                     # Run tests on all 3 API services
 make build                     # Build all trust Docker images
 make create-networks           # Create Docker overlay networks
+make update-omop-data          # Download/extract mock OMOP data (both trusts)
+make update-omop-data TRUST=1  # Trust_1 only
+make update-orthanc-data       # Download/extract mock DICOM data (both trusts)
+make update-orthanc-data TRUST=1  # Trust_1 only
 ```
 
 ## Environment

@@ -88,9 +88,9 @@ def can_modify_project(user_id: UUID, project_id: UUID, db: Session) -> bool:
 
     Ownership is deliberately NOT re-checked against the owner's current role: a user who created a
     project keeps project-level writes (edit / stage / delete, and cohort-submit via
-    ``submit_cohort_query``) even if later demoted to Observer. Ownership is the authority here, not the
+    ``submit_cohort_query``) even if later demoted to Viewer. Ownership is the authority here, not the
     active role. This is an accepted gap — to fully revoke an owner's access, transfer ownership or
-    delete the project. See the Observer role notes in ``docs/source/sys-admin/admin-user-roles.rst``.
+    delete the project. See the Viewer role notes in ``docs/source/sys-admin/admin-user-roles.rst``.
 
     Args:
         user_id (UUID): ID of the user
@@ -121,7 +121,7 @@ def can_contribute_to_project(user_id: UUID, project_id: UUID, db: Session) -> b
 
     Looser than :func:`can_modify_project`: a Researcher who has been added to a project via
     ``ProjectUserAccess`` can contribute their own models even though they cannot edit the
-    project itself. Observers — who hold no permissions — are excluded by the
+    project itself. Viewers — who hold no permissions — are excluded by the
     ``CAN_CREATE_PROJECTS`` clause, so membership alone does not unlock writes for them.
 
     Returns True when any of the following holds:
@@ -173,7 +173,7 @@ def can_modify_model(user_id: UUID, model_id: UUID, db: Session) -> bool:
         - The project owner (unrestricted across all models on the project).
         - The model's own ``owner_id``, but only if they could still contribute to the project
           (per :func:`can_contribute_to_project`). The contribution check is defence-in-depth:
-          it locks an Observer out even if they somehow ended up as ``Model.owner_id``.
+          it locks a Viewer out even if they somehow ended up as ``Model.owner_id``.
 
     Args:
         user_id (UUID): ID of the user

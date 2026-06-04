@@ -3,9 +3,10 @@
 ## Terraform Files
 
 | File | Resources |
-| ------ | ----------- |
-| `main.tf` | Provider config, VPC, subnets, IGW, NAT, route tables |
-| `services.tf` | RDS, Secrets Manager, Cognito, SES |
+|------|-----------|
+| `main.tf` | Provider config, VPC, subnets, IGW, NAT, route tables, RDS instance, Secrets Manager, SES |
+| `services.tf` | S3 buckets, Cognito |
+| `rds_proxy.tf` | RDS Proxy + IAM DB auth (proxy, IAM role/policy, SG, `rds-db:connect`) — see FLIP#556 |
 | `ecs.tf` | ECS cluster, task definitions, IAM execution roles |
 | `ecs_services.tf` | ECS Fargate services (flip-api, FL services) |
 | `ecs_tasks.tf` | ECS task definitions for Central Hub services |
@@ -51,7 +52,7 @@ make aws-login                                # AWS SSO login
 - **VPC**: 10.0.0.0/16, 2 AZs, public + private subnets
 - **ECS Fargate**: Central Hub services (flip-api, fl-api-net-1, fl-server-net-1)
 - **EC2**: Trust host (t3.xlarge, private subnet, SSM-only access)
-- **RDS**: PostgreSQL in private subnets
+- **RDS**: PostgreSQL in private subnets. In production flip-api connects through **RDS Proxy** using **IAM auth** (short-lived per-connection tokens); the proxy uses the RDS-managed master secret to reach the DB, so secret rotation no longer takes flip-api down (FLIP#556). No `rds_iam` Postgres grant is needed.
 - **ALB**: Internal (`internal = true`, private subnets); HTTPS termination for `/api/*` reached via CloudFront VPC origin (no public IP)
 - **NLB**: gRPC for FL server traffic
 - **CloudFront + S3**: flip-ui static hosting

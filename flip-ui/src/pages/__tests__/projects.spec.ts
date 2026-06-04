@@ -362,6 +362,7 @@ describe("Projects Page", () => {
                     cancelledTrustIds: [],
                     respondedTrustIds: [],
                     erroredTrustIds: [],
+                    emptyTrustIds: [],
                     totalCohort: total
                 }
                 : undefined

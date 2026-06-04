@@ -19,14 +19,14 @@ from flip_api.db.seed.seed_logger import logger
 from flip_api.utils.cognito_helpers import (
     get_user_by_email_or_id,
 )
-from flip_api.utils.constants import ADMIN_EMAIL_1, ADMIN_EMAIL_2, ADMIN_EMAIL_3, OBSERVER_EMAIL, RESEARCHER_EMAIL
+from flip_api.utils.constants import ADMIN_EMAIL_1, ADMIN_EMAIL_2, ADMIN_EMAIL_3, RESEARCHER_EMAIL, VIEWER_EMAIL
 
 MAIN_USER_PROFILES = {
     ADMIN_EMAIL_1: ("AI Centre Admin", "London AI Centre"),
     ADMIN_EMAIL_2: ("Alexandre Triay Bagur", "King's College London"),
     ADMIN_EMAIL_3: ("Rafael Garcia-Dias", "King's College London"),
     RESEARCHER_EMAIL: ("Rafael Garcia-Dias", "King's College London"),
-    OBSERVER_EMAIL: ("Alexandre Triay", "London AI Centre"),
+    VIEWER_EMAIL: ("Alexandre Triay", "London AI Centre"),
 }
 
 
@@ -139,7 +139,7 @@ def _ensure_user_and_role_resilient(
 
 def seed_main_users(session: Session) -> None:
     """
-    Seed role grants for the well-known admin/researcher/observer emails.
+    Seed role grants for the well-known admin/researcher/viewer emails.
 
     Resolves each email to its Cognito sub and ensures the corresponding
     ``user_role`` row exists. No local users-table state is created.
@@ -159,7 +159,7 @@ def seed_main_users(session: Session) -> None:
         RESEARCHER_EMAIL, RoleRef.RESEARCHER, session, *MAIN_USER_PROFILES[RESEARCHER_EMAIL]
     )
 
-    # Ensure the Observer role grant.
-    _ensure_user_and_role_resilient(OBSERVER_EMAIL, RoleRef.OBSERVER, session, *MAIN_USER_PROFILES[OBSERVER_EMAIL])
+    # Ensure the Viewer role grant.
+    _ensure_user_and_role_resilient(VIEWER_EMAIL, RoleRef.VIEWER, session, *MAIN_USER_PROFILES[VIEWER_EMAIL])
 
     logger.info("✅ Finished seeding main users.")

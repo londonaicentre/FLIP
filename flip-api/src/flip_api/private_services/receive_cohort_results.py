@@ -18,7 +18,7 @@ from sqlmodel import Session, col, select
 
 from flip_api.auth.access_manager import authenticate_trust
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import QueryResult, QueryStats, Trust
+from flip_api.db.models.main_models import Queries, QueryResult, QueryStats, Trust
 from flip_api.domain.schemas.private import (
     AggregatedCohortStats,
     AggregatedFieldResult,
@@ -90,6 +90,7 @@ def _save_individual_result(db: Session, cohort_results: OmopCohortResults) -> N
         "record_count": cohort_results.record_count,
         "data": [d.model_dump() for d in cohort_results.data],
         "error": cohort_results.error,
+        "suppressed": cohort_results.suppressed,
     })
 
     # Try to retrieve existing result
@@ -157,6 +158,15 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
     )
 
     try:
+        # Serialize aggregation for this query: take a blocking row lock on the parent
+        # Queries row before the read-modify-write below, so concurrent trust POSTs
+        # aggregate one-at-a-time instead of racing on the single QueryStats row (a stale
+        # pass could otherwise clobber a fuller one and drop a responded trust — #579).
+        # _save_individual_result has already committed this trust's QueryResult row, so
+        # once the lock is held the re-read sees every result posted so far. The lock is
+        # released by the commit at the end of this block.
+        db.exec(select(Queries).where(Queries.id == query_id).with_for_update()).first()
+
         rows = db.exec(statement).all()
         logger.debug(f"Response: {rows} for query_id: {query_id}")
 
@@ -195,6 +205,9 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
 
         trust_record_counts: dict[str, int] = {}
         trust_errors: dict[str, str] = {}
+        trust_suppressed: list[str] = []
+        # error and suppressed are mutually exclusive by construction — data-access-api
+        # never sets both — so the suppressed flag is only read in the non-errored branch.
         for i, ptd in enumerate(parsed_trust_data_list):
             trust_id_str = fetched_data.trust_id[i]
             if ptd.error:
@@ -203,6 +216,11 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
                 trust_errors[trust_id_str] = _redact_trust_error(ptd.error)
             else:
                 trust_record_counts[trust_id_str] = ptd.record_count
+                # A suppressed trust still "responded successfully" (count 0), so it
+                # belongs in trust_record_counts; trust_suppressed flags it so the UI
+                # shows a suppression chip instead of a literal 0 (issue #519).
+                if ptd.suppressed:
+                    trust_suppressed.append(trust_id_str)
 
         all_field_names: set[str] = set()
         for trust_data_item in parsed_trust_data_list:
@@ -254,6 +272,7 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
             trusts_results=aggregated_field_results,
             trust_record_counts=trust_record_counts,
             trust_errors=trust_errors,
+            trust_suppressed=trust_suppressed,
         )
 
         # 4. Save aggregated stats

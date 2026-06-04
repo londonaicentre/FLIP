@@ -68,6 +68,11 @@ class StatisticsResponse(BaseModel):
     record_count: int
     created: str
     data: list[dict[str, Any]]
+    # True when the count was privacy-suppressed for being below ``COHORT_QUERY_THRESHOLD``.
+    # A genuine zero is suppressed identically to a 1..N-1 count, so this never reveals
+    # whether >=1 patient matched; it only tells the hub/UI to render a "below-threshold"
+    # chip instead of a bare 0 that reads as "no data available". See issue #519.
+    suppressed: bool = False
 
 
 class AccessionIdsResponse(BaseModel):

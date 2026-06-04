@@ -63,10 +63,10 @@ def test_has_permissions_returns_false_when_researcher_lacks_admin_only_permissi
     )
 
 
-def test_has_permissions_returns_false_for_observer_with_no_seeded_perms(session):
-    """Observer is seeded with zero RolePermission rows; any permission check must fail."""
+def test_has_permissions_returns_false_for_viewer_with_no_seeded_perms(session):
+    """Viewer is seeded with zero RolePermission rows; any permission check must fail."""
     user_id = uuid4()
-    session.add(UserRole(user_id=user_id, role_id=RoleRef.OBSERVER.value))
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.VIEWER.value))
     session.commit()
 
     assert has_permissions(user_id, [PermissionRef.CAN_CREATE_PROJECTS], session) is False
@@ -129,7 +129,7 @@ def test_get_user_permissions_returns_empty_for_user_without_roles(session):
 
 def test_has_role_true_when_user_has_any_role(session):
     user_id = uuid4()
-    session.add(UserRole(user_id=user_id, role_id=RoleRef.OBSERVER.value))
+    session.add(UserRole(user_id=user_id, role_id=RoleRef.VIEWER.value))
     session.commit()
 
     assert has_role(user_id, session) is True
@@ -150,7 +150,7 @@ def test_role_permission_seed_contract(session):
     * a new ``PermissionRef`` value is added but ``seed_role_permissions`` is not updated to
       grant it to Admin (Admin auth on that perm silently fails in prod);
     * a perm is pulled from a role's grant list (the role loses access without anyone noticing);
-    * a perm leaks onto Observer (read-only role escalates).
+    * a perm leaks onto Viewer (read-only role escalates).
 
     Expected map mirrors the docstring on ``seed_role_permissions``. If you change the seed,
     update this map in the same commit — that's the point of the contract.
@@ -158,7 +158,7 @@ def test_role_permission_seed_contract(session):
     expected_by_role = {
         RoleRef.ADMIN.value: {p.value for p in PermissionRef},
         RoleRef.RESEARCHER.value: {PermissionRef.CAN_CREATE_PROJECTS.value},
-        RoleRef.OBSERVER.value: set(),
+        RoleRef.VIEWER.value: set(),
     }
 
     rows = session.exec(RolePermission.__table__.select()).all()

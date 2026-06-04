@@ -43,11 +43,15 @@ export interface IProjectQuery {
     // approved without them). UI shows a "skipped" chip.
     cancelledTrustIds: string[];
     // Subset of `queriedTrustIds` that posted any QueryResult row (success
-    // or error). Stageable = `respondedTrustIds − erroredTrustIds`.
+    // or error). Stageable = `respondedTrustIds − erroredTrustIds − emptyTrustIds`.
     respondedTrustIds: string[];
     // Subset of `respondedTrustIds` whose response carried an error.
     // Staging additionally excludes these — we have no usable cohort count.
     erroredTrustIds: string[];
+    // Subset of `respondedTrustIds` that returned 0 records — genuine zero
+    // match or privacy-suppressed below-threshold count (#519). Staging
+    // excludes these: there's no cohort to build an imaging project against.
+    emptyTrustIds: string[];
     totalCohort: number;
     created?: string | null;
     createdBy?: string | null;

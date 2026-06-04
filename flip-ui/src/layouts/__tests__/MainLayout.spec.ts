@@ -185,11 +185,11 @@ describe("MainLayout", () => {
             expect((dropdown.props() as Record<string, unknown>).role).toBe("Researcher");
         });
 
-        it("returns Observer when user has no management permissions", () => {
+        it("returns Viewer when user has no management permissions", () => {
             const wrapper = mountMainLayout({ permissions: [] });
             const dropdown = wrapper.findComponent("[data-test='user-dropdown']") as VueWrapper;
 
-            expect((dropdown.props() as Record<string, unknown>).role).toBe("Observer");
+            expect((dropdown.props() as Record<string, unknown>).role).toBe("Viewer");
         });
 
         it("prioritises Admin over Researcher when user has both permissions", () => {

@@ -31,6 +31,7 @@ from flip_api.domain.schemas.status import (
     TrustIntersectStatus,
     XNATImageStatus,
 )
+from flip_api.domain.schemas.types import FLBackend
 
 
 # Tables
@@ -39,6 +40,14 @@ class FLNets(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     name: str = Field(unique=True)
     endpoint: str = Field(unique=True)
+    # FL backend ("nvflare"/"flower") this net runs. Set at seed time from FL_BACKEND
+    # (seed_fl_nets) and canonical — never reconciled at runtime. A framework switch happens by
+    # re-seeding (make restart-fl recreates flip-api). Non-null: every net has a declared backend
+    # from creation. Mapped like the other enum columns (status, task_type, ...): SQLModel infers a
+    # SQLAlchemy Enum column from FLBackend, so the DB persists the member name and reads return a
+    # real FLBackend member. FLBackend is the one column whose member name (NVFLARE) differs from its
+    # lowercase value (nvflare), so the DB stores the uppercase name while env/JSON/S3 use the value.
+    fl_backend: FLBackend = Field(nullable=False)
 
     schedulers: list["FLScheduler"] = Relationship(back_populates="net")
 
@@ -207,7 +216,14 @@ class QueryStats(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4, primary_key=True)
     stats: str = Field()
     stats_received: Annotated[datetime, Field(default_factory=datetime.utcnow)]
-    query_id: UUID | None = Field(default=None, foreign_key="queries.id")
+    # One aggregate row per query. The serialization lock in _aggregate_and_save_results
+    # already prevents concurrent inserts; the UNIQUE constraint is a DB-level backstop so a
+    # duplicate can never be created silently (a duplicate would let the read path pick an
+    # arbitrary row). Non-nullable on purpose: every aggregate belongs to a query (the only
+    # writer always sets it), and Postgres treats NULLs as distinct under UNIQUE — a nullable
+    # FK would let multiple NULL-query_id rows slip past the constraint, so the invariant is
+    # only fully encoded when the column is NOT NULL. See issue #579.
+    query_id: UUID = Field(foreign_key="queries.id", unique=True)
 
 
 class SiteBanner(SQLModel, table=True):

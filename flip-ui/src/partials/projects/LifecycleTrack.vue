@@ -88,7 +88,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 
-import { IStep } from "@/components/AiSteps/AiSteps.vue";
+import { IStep } from "@/interfaces/steps";
 
 interface ILifecycleTrackProps {
     steps: IStep[];
