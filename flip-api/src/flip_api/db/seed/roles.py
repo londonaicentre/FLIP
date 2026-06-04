@@ -11,6 +11,7 @@
 #
 
 
+from datetime import datetime
 from typing import TypedDict
 from uuid import UUID
 
@@ -53,7 +54,8 @@ def seed_roles(session: Session) -> list[str]:
     name. A role may be renamed across releases while keeping its id — e.g. the
     ``observer`` → ``viewer`` rename — so matching on the (mutable) name would miss
     the existing row and collide on the primary key when re-seeding a live database.
-    An existing role has its name/description refreshed in place so renames apply.
+    An existing role has its name/description refreshed in place (bumping
+    ``updated_at``) so renames apply; an unchanged re-seed is left untouched.
 
     Args:
         session (Session): The SQLModel session used for reads and writes.
@@ -65,9 +67,13 @@ def seed_roles(session: Session) -> list[str]:
         existing_role = session.get(Role, role_data["id"])
         if existing_role:
             # Refresh in place so a rename / description change is applied without
-            # re-inserting the already-present primary key.
-            existing_role.name = role_data["name"]
-            existing_role.description = role_data["description"]
+            # re-inserting the already-present primary key. Only write — and bump
+            # updated_at — when something actually changed, so an ordinary re-seed
+            # stays a no-op and updated_at tracks the real change, not each deploy.
+            if existing_role.name != role_data["name"] or existing_role.description != role_data["description"]:
+                existing_role.name = role_data["name"]
+                existing_role.description = role_data["description"]
+                existing_role.updated_at = datetime.utcnow()
         else:
             session.add(Role(**role_data))
 

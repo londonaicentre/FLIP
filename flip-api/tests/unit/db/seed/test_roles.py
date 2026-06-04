@@ -10,12 +10,14 @@
 # limitations under the License.
 #
 
+from datetime import datetime
+
 import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from flip_api.db.models.user_models import Role, RoleRef
-from flip_api.db.seed.roles import seed_roles
+from flip_api.db.seed.roles import CURRENT_ROLES, seed_roles
 
 
 @pytest.fixture
@@ -38,11 +40,7 @@ def test_seed_roles_seeds_all_on_empty_db(session):
     seed_roles(session)
 
     by_id = {r.id: r.name for r in session.exec(select(Role)).all()}
-    assert by_id == {
-        RoleRef.RESEARCHER.value: "Researcher",
-        RoleRef.ADMIN.value: "Admin",
-        RoleRef.VIEWER.value: "Viewer",
-    }
+    assert by_id == {r["id"]: r["name"] for r in CURRENT_ROLES}
 
 
 def test_seed_roles_is_idempotent(session):
@@ -76,3 +74,33 @@ def test_seed_roles_applies_rename_keeping_same_id(session):
     assert len(roles) == 3  # no duplicate row for the reused id
     viewer = session.get(Role, RoleRef.VIEWER.value)
     assert viewer.name == "Viewer"  # rename applied in place
+
+
+def test_seed_roles_bumps_updated_at_on_rename(session):
+    """A rename refreshes ``updated_at`` so it reflects the modification, not creation."""
+    past = datetime(2000, 1, 1)
+    session.add(
+        Role(
+            id=RoleRef.VIEWER.value,
+            name="Observer",
+            description="Read-only access (pre-rename name).",
+            created_at=past,
+            updated_at=past,
+        )
+    )
+    session.commit()
+
+    seed_roles(session)
+
+    viewer = session.get(Role, RoleRef.VIEWER.value)
+    assert viewer.updated_at > past  # modification time moved forward
+
+
+def test_seed_roles_unchanged_reseed_leaves_updated_at(session):
+    """An ordinary re-seed with nothing changed must not bump ``updated_at``."""
+    seed_roles(session)
+    before = session.get(Role, RoleRef.VIEWER.value).updated_at
+
+    seed_roles(session)
+
+    assert session.get(Role, RoleRef.VIEWER.value).updated_at == before
