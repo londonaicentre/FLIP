@@ -214,9 +214,14 @@ class TestAggregateAndSaveResults:
 
         _aggregate_and_save_results(mock_db_session, query_id_for_agg)
 
-        assert mock_db_session.exec.call_count == 2
+        assert mock_db_session.exec.call_count == 3
 
-        select_call_args = mock_db_session.exec.call_args_list[0]
+        # First exec takes the per-query serialization lock on the parent Queries row (#579).
+        lock_sql = str(mock_db_session.exec.call_args_list[0][0][0])
+        assert "FROM queries" in lock_sql
+        assert "FOR UPDATE" in lock_sql
+
+        select_call_args = mock_db_session.exec.call_args_list[1]
         assert "SELECT trust.name, query_result.trust_id, query_result.data" in str(select_call_args[0][0])
 
         mock_db_session.commit.assert_called_once()
