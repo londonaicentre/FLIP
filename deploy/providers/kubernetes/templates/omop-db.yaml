@@ -68,6 +68,59 @@ spec:
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
       {{- end }}
+      {{- if .Values.omopDb.initJob.enabled }}
+      initContainers:
+        - name: seed-data
+          image: amazon/aws-cli:2.22.0
+          securityContext:
+            runAsUser: 0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              if [ -f /var/lib/postgresql/data/PG_VERSION ]; then
+                echo "OMOP data directory already populated. Skipping seed."
+                exit 0
+              fi
+              microdnf install -y tar gzip curl 2>/dev/null || yum install -y tar gzip curl 2>/dev/null
+              TRUST_NUM="{{ .Values.trustNumber }}"
+              DATA_VERSION="{{ .Values.omopDb.initJob.dataVersion }}"
+              S3_BUCKET="{{ .Values.omopDb.initJob.s3Bucket }}"
+              mkdir -p /var/lib/postgresql/data
+              if [ -n "$S3_BUCKET" ]; then
+                ARCHIVE_NAME="{{ .Values.omopDb.initJob.archiveName }}"
+                if [ -z "$ARCHIVE_NAME" ]; then
+                  TRUST_NAME="{{ .Values.trustName }}"
+                  ARCHIVE_NAME="${TRUST_NAME}_pgdata_${DATA_VERSION}.tar.gz"
+                fi
+                ARCHIVE_URL="s3://${S3_BUCKET}/omop/${ARCHIVE_NAME}"
+                echo "Downloading OMOP data from S3: ${ARCHIVE_URL}..."
+                aws s3 cp "${ARCHIVE_URL}" /tmp/omop-data.tar
+                tar xf /tmp/omop-data.tar -C /var/lib/postgresql/data
+              else
+                HF_REPO="aicentreflip/trust-data"
+                HF_REVISION="main"
+                ARCHIVE="trust${TRUST_NUM}_pgdata_${DATA_VERSION}.tar"
+                ARCHIVE_URL="https://huggingface.co/datasets/${HF_REPO}/resolve/${HF_REVISION}/trust${TRUST_NUM}/${ARCHIVE}"
+                echo "Downloading OMOP data from HuggingFace (trust${TRUST_NUM}): ${ARCHIVE_URL}..."
+                curl -fSL "${ARCHIVE_URL}" -o /tmp/omop-data.tar
+                tar xf /tmp/omop-data.tar -C /var/lib/postgresql/data
+              fi
+              chown -R 999:999 /var/lib/postgresql/data
+              chmod 700 /var/lib/postgresql/data
+              echo "OMOP data seed complete."
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+          env:
+            - name: AWS_DEFAULT_REGION
+              value: {{ default "eu-west-2" .Values.awsRegion | quote }}
+            - name: AWS_PROFILE
+              value: {{ .Values.omopDb.initJob.awsProfile | quote }}
+          {{- end }}
+      {{- end }}
       containers:
         - name: postgres
           image: "{{ .Values.omopDb.image.repository }}:{{ .Values.omopDb.image.tag }}"
@@ -101,17 +154,24 @@ spec:
                     until pg_isready -U {{ .Values.omopDb.credentials.user | quote }} -d {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }} 2>/dev/null; do
                       sleep 1
                     done
-                    # Create the data_analyst_reader role idempotently
+                    # Create or update the data_analyst_reader role.
+                    # ALTER ROLE runs unconditionally so a restored OMOP backup
+                    # (which carries the role with its original password) always
+                    # ends up with the password from DATA_ACCESS_POSTGRES_PASSWORD.
                     psql -U {{ .Values.omopDb.credentials.user | quote }} -d {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }} <<-EOSQL
                       DO \$\$
                       BEGIN
                         IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'data_analyst_reader') THEN
                           CREATE ROLE data_analyst_reader WITH LOGIN PASSWORD '${DATA_ACCESS_POSTGRES_PASSWORD}';
+                        ELSE
+                          ALTER ROLE data_analyst_reader WITH PASSWORD '${DATA_ACCESS_POSTGRES_PASSWORD}';
                         END IF;
                       END
                       \$\$;
                       GRANT CONNECT ON DATABASE {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }} TO data_analyst_reader;
                       GRANT pg_read_all_data TO data_analyst_reader;
+                      -- Ensure unqualified table refs resolve to omop schema.
+                      ALTER DATABASE {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }} SET search_path = omop, public;
                     EOSQL
           volumeMounts:
             - name: data

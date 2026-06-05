@@ -75,6 +75,60 @@ spec:
       imagePullSecrets:
 {{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
       {{- end }}
+      {{- if .Values.orthanc.initJob.enabled }}
+      initContainers:
+        - name: seed-data
+          image: amazon/aws-cli:2.22.0
+          securityContext:
+            runAsUser: 0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              # Skip if Orthanc data already exists (index file present and non-empty)
+              if [ -f /var/lib/orthanc/db/index ] && [ -s /var/lib/orthanc/db/index ]; then
+                echo "Orthanc data directory already populated. Skipping seed."
+                exit 0
+              fi
+              microdnf install -y tar gzip curl 2>/dev/null || yum install -y tar gzip curl 2>/dev/null
+              TRUST_NUM="{{ .Values.trustNumber }}"
+              DATA_VERSION="{{ .Values.orthanc.initJob.dataVersion }}"
+              S3_BUCKET="{{ .Values.orthanc.initJob.s3Bucket }}"
+              mkdir -p /var/lib/orthanc/db
+              if [ -n "$S3_BUCKET" ]; then
+                ARCHIVE_NAME="{{ .Values.orthanc.initJob.archiveName }}"
+                if [ -z "$ARCHIVE_NAME" ]; then
+                  TRUST_NAME="{{ .Values.trustName }}"
+                  ARCHIVE_NAME="${TRUST_NAME}_orthanc_data_${DATA_VERSION}.tar.gz"
+                fi
+                ARCHIVE_URL="s3://${S3_BUCKET}/orthanc/${ARCHIVE_NAME}"
+                echo "Downloading Orthanc data from S3: ${ARCHIVE_URL}..."
+                aws s3 cp "${ARCHIVE_URL}" /tmp/orthanc-data.tar
+                rm -rf /var/lib/orthanc/db/*
+                tar xf /tmp/orthanc-data.tar -C /var/lib/orthanc/db
+              else
+                HF_REPO="aicentreflip/trust-data"
+                HF_REVISION="main"
+                ARCHIVE="trust${TRUST_NUM}_orthanc_data_${DATA_VERSION}.tar"
+                ARCHIVE_URL="https://huggingface.co/datasets/${HF_REPO}/resolve/${HF_REVISION}/trust${TRUST_NUM}/${ARCHIVE}"
+                echo "Downloading Orthanc data from HuggingFace (trust${TRUST_NUM}): ${ARCHIVE_URL}..."
+                curl -fSL "${ARCHIVE_URL}" -o /tmp/orthanc-data.tar
+                rm -rf /var/lib/orthanc/db/*
+                tar xf /tmp/orthanc-data.tar -C /var/lib/orthanc/db
+              fi
+              echo "Orthanc data seed complete."
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/orthanc/db
+          {{- if .Values.orthanc.initJob.hostAwsMount.enabled }}
+          env:
+            - name: AWS_DEFAULT_REGION
+              value: {{ default "eu-west-2" .Values.awsRegion | quote }}
+            - name: AWS_PROFILE
+              value: {{ .Values.orthanc.initJob.awsProfile | quote }}
+          {{- end }}
+      {{- end }}
       containers:
         - name: orthanc
           image: "{{ .Values.orthanc.image.repository }}:{{ .Values.orthanc.image.tag }}"

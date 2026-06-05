@@ -45,22 +45,33 @@ spec:
                 exit 0
               fi
               # Install tar (amazon/aws-cli image doesn't ship it)
-              microdnf install -y tar gzip 2>/dev/null || yum install -y tar gzip 2>/dev/null
-              S3_BUCKET="{{ .Values.orthanc.initJob.s3Bucket }}"
-              TRUST_NAME="{{ .Values.trustName }}"
+              microdnf install -y tar gzip curl 2>/dev/null || yum install -y tar gzip curl 2>/dev/null
+              TRUST_NUM="{{ .Values.trustNumber }}"
               DATA_VERSION="{{ .Values.orthanc.initJob.dataVersion }}"
-              ARCHIVE_NAME="{{ .Values.orthanc.initJob.archiveName }}"
-              # If archiveName is not set, derive from trust name + data version
-              if [ -z "$ARCHIVE_NAME" ]; then
-                ARCHIVE_NAME="${TRUST_NAME}_orthanc_data_${DATA_VERSION}.tar.gz"
+              S3_BUCKET="{{ .Values.orthanc.initJob.s3Bucket }}"
+              if [ -n "$S3_BUCKET" ]; then
+                ARCHIVE_NAME="{{ .Values.orthanc.initJob.archiveName }}"
+                if [ -z "$ARCHIVE_NAME" ]; then
+                  TRUST_NAME="{{ .Values.trustName }}"
+                  ARCHIVE_NAME="${TRUST_NAME}_orthanc_data_${DATA_VERSION}.tar.gz"
+                fi
+                ARCHIVE_URL="s3://${S3_BUCKET}/orthanc/${ARCHIVE_NAME}"
+                echo "Downloading Orthanc data from S3: ${ARCHIVE_URL}..."
+                aws s3 cp "${ARCHIVE_URL}" /tmp/orthanc-data.tar
+                rm -rf /var/lib/orthanc/db/*
+                tar xf /tmp/orthanc-data.tar -C /var/lib/orthanc/db
+              else
+                # Fall back to HuggingFace mock data, selecting the correct trust
+                # slot (trustNumber) so trust2 gets trust2's dataset, not trust1's.
+                HF_REPO="aicentreflip/trust-data"
+                HF_REVISION="main"
+                ARCHIVE="trust${TRUST_NUM}_orthanc_data_${DATA_VERSION}.tar"
+                ARCHIVE_URL="https://huggingface.co/datasets/${HF_REPO}/resolve/${HF_REVISION}/trust${TRUST_NUM}/${ARCHIVE}"
+                echo "Downloading Orthanc data from HuggingFace (trust${TRUST_NUM}): ${ARCHIVE_URL}..."
+                curl -fSL "${ARCHIVE_URL}" -o /tmp/orthanc-data.tar
+                rm -rf /var/lib/orthanc/db/*
+                tar xf /tmp/orthanc-data.tar -C /var/lib/orthanc/db
               fi
-              ARCHIVE_URL="s3://${S3_BUCKET}/orthanc/${ARCHIVE_NAME}"
-              echo "Downloading Orthanc data archive from ${ARCHIVE_URL}..."
-              aws s3 cp "${ARCHIVE_URL}" /tmp/orthanc-data.tar.gz
-              echo "Clearing target directory..."
-              rm -rf /var/lib/orthanc/db/*
-              echo "Extracting to /var/lib/orthanc/db..."
-              tar xzf /tmp/orthanc-data.tar.gz -C /var/lib/orthanc/db
               echo "Orthanc data restore complete."
           env:
             - name: AWS_DEFAULT_REGION
