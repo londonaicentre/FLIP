@@ -9,10 +9,13 @@ services, with a focus on the XNAT DICOM import pipeline.
 
 1. [Pods Not Starting](#1-pods-not-starting)
 2. [XNAT DICOM Import Pipeline Issues](#2-xnat-dicom-import-pipeline-issues)
-   - [2.1 The DQR Plugin Fails with PacsNotStorableException](#21-the-dqr-plugin-fails-with-pacsnotstorableexception)
-   - [2.2 Running the Imaging Import Worker Manually](#22-running-the-imaging-import-worker-manually)
-   - [2.3 C-MOVE Testing from the DCMTK Pod](#23-c-move-testing-from-the-dcmtk-pod)
-   - [2.4 Checking DICOM Connectivity](#24-checking-dicom-connectivity)
+   - [2.1 PacsNotStorableException — destination AE/port mismatch](#21-pacsnotstorableexception--destination-aeport-mismatch)
+   - [2.2 Studies Received but Land in the Unassigned Prearchive](#22-studies-received-but-land-in-the-unassigned-prearchive)
+   - [2.3 imaging-api Gets 401 from XNAT (flipServiceAccount)](#23-imaging-api-gets-401-from-xnat-flipserviceaccount)
+   - [2.4 Forcing a Re-pull (status stuck on "Processing")](#24-forcing-a-re-pull-status-stuck-on-processing)
+   - [2.5 Running the Imaging Import Worker Manually](#25-running-the-imaging-import-worker-manually)
+   - [2.6 C-MOVE Testing from the DCMTK Pod](#26-c-move-testing-from-the-dcmtk-pod)
+   - [2.7 Checking DICOM Connectivity](#27-checking-dicom-connectivity)
 3. [OMOP Data Issues](#3-omop-data-issues)
 4. [Trust Registration and Heartbeat](#4-trust-registration-and-heartbeat)
 5. [XNAT HTTPS Issues](#5-xnat-https-issues)
@@ -79,11 +82,13 @@ helm upgrade trust-release deploy/providers/kubernetes -n flip-trust \
 
 ## 2. XNAT DICOM Import Pipeline Issues
 
-### 2.1 The DQR Plugin Fails with PacsNotStorableException
+### 2.1 PacsNotStorableException — destination AE/port mismatch
 
-**Symptom:** The XNAT DQR plugin logs `PacsNotStorableException: null` at
-`BasicDicomQueryRetrieveService.java:320`. This happens even though the PACS
-(Orthanc) is correctly configured with `storable=true` in the XNAT database.
+**Symptom:** Every DQR dequeue cycle (~6 min apart) logs
+`PacsNotStorableException: null` at
+`BasicDicomQueryRetrieveService.java:320`, even though the PACS (Orthanc) is
+correctly configured with `storable=true` in the XNAT database. Orthanc logs
+show zero incoming DICOM — the request fails **before any DICOM connection**.
 
 **Check DQR logs:**
 ```bash
@@ -91,36 +96,198 @@ XNAT_POD=$(kubectl get pods -n flip-trust -l app.kubernetes.io/component=xnat-we
 kubectl exec -n flip-trust "$XNAT_POD" -- tail -30 /data/xnat/home/logs/dqr.log
 ```
 
+**Root Cause:** The exception name is misleading — it is **not** about the
+PACS's `storable` flag. Decompiling the plugin (`javap -c` on
+`dicom-query-retrieve-*.jar` from `/data/xnat/home/plugins/`) shows the actual
+check in `importFromPacsRequest`:
+
+```java
+String aeAndPort = request.getDecodedAeAndPort();   // e.g. "XNAT:8080"
+if (!pacs.isDicomWebEnabled() && !doesScpReceiverExist(aeAndPort)) {
+    throw new PacsNotStorableException(new AeTitle(aeAndPort));
+}
+```
+
+`doesScpReceiverExist` does an **exact `"AE:port"` string match** against the
+configured DICOM SCP receivers. The destination AE on each queued request is
+built by imaging-api as `XNAT:{XNAT_PORT}` (`ImportStudyRequest.port` in
+`imaging_api/routers/schemas.py`). **`XNAT_PORT` is therefore the DICOM SCP
+receiver port (8104), NOT XNAT's web port (8080).** If the chart sets
+`imagingApi.env.XNAT_PORT: "8080"`, every request carries destination
+`XNAT:8080`, no receiver matches, and the dequeue throws.
+
 **Diagnosis:**
 
-1. **Check PACS is registered correctly in XNAT DB:**
+```bash
+# 1. What destination do the queued requests carry?
+kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- psql -U xnat -d xnat -c \
+  "SELECT DISTINCT destination_ae_title FROM xhbm_queued_pacs_request;"
+
+# 2. What receivers exist?
+kubectl exec -n flip-trust "$XNAT_POD" -- \
+  curl -s -u admin:<admin-pass> http://localhost:8080/xapi/dicomscp/
+# Compare: destination_ae_title must equal "<aeTitle>:<port>" of a receiver.
+```
+
+**Fix:**
+
+1. Set `XNAT_PORT: "8104"` in `values.yaml` (`imagingApi.env`) — already the
+   chart default since 2026-06-05 — or patch the live ConfigMap and restart:
+   ```bash
+   kubectl patch configmap trust-release-flip-trust-imaging-api -n flip-trust \
+     --type merge -p '{"data":{"XNAT_PORT":"8104"}}'
+   kubectl rollout restart deployment/trust-release-flip-trust-imaging-api -n flip-trust
+   ```
+2. Already-queued requests keep their wrong destination — fix them in place
+   (DQR retries FAILED queued requests automatically, up to
+   `dqrMaxPacsRequestAttempts`):
    ```bash
    kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- psql -U xnat -d xnat -c \
-     "SELECT id, ae_title, host, storable, enabled FROM xhbm_pacs;"
-   ```
-   Expected: `id=1, ae_title=ORTHANC, host=orthanc, storable=t, enabled=t`
-
-2. **Verify DICOM connectivity from the DCMTK pod:**
-   ```bash
-   dcmtk_pod=$(kubectl get pods -n flip-trust -l run=dcmtk -o jsonpath='{.items[0].metadata.name}')
-   kubectl exec -n flip-trust "$dcmtk_pod" -- echoscu orthanc 4242
-   ```
-   This should return a success message confirming association.
-
-3. **Check the queue status:**
-   ```bash
-   kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- psql -U xnat -d xnat -c \
-     "SELECT status, COUNT(*) FROM xhbm_queued_pacs_request GROUP BY status;"
+     "UPDATE xhbm_queued_pacs_request SET destination_ae_title = 'XNAT:8104'
+      WHERE destination_ae_title = 'XNAT:8080';"
    ```
 
-**Root Cause:** The DQR plugin version 2.3.x (both 2.3.1 and 2.3.2) has a bug
-that throws `PacsNotStorableException` before initiating any DICOM connection.
-Orthanc logs show zero incoming DICOM from XNAT during DQR retries.
+### 2.2 Studies Received but Land in the Unassigned Prearchive
 
-**Workaround:** Use the **Imaging Import Worker** (see §2.2) which bypasses the
-DQR plugin entirely by performing direct C-MOVE operations using `pynetdicom`.
+**Symptom:** C-MOVE works (executed PACS requests reach status `RECEIVED`,
+Orthanc shows outgoing DICOM), but no sessions appear in the project. DQR logs:
 
-### 2.2 Running the Imaging Import Worker
+```
+WARN ... PacsDequeueThread - Cannot build session. 0 prearchive sessions found
+for study 1.2.826... in project <imaging-project-id>.
+```
+
+and `/data/xnat/prearchive/` fills with **top-level timestamp directories**
+(`20260605_101702647/...`) instead of `<project>/<timestamp>/...`.
+
+**Root Cause:** The DICOM SCP receiver is the stock default
+(`identifier: dicomObjectIdentifier`, `customProcessing: false`). Project
+routing and the DQR relabel map (Subject→UUID, Session→accession number — what
+fl-client lookups depend on) are applied by the **DQR plugin's receiver
+identifier**. Without it, received studies cannot be matched to the requesting
+project and fall into *Unassigned*.
+
+**Fix:** Replace the receiver with the DQR-aware one (what the Compose deploy's
+`trust/xnat/xnat/config/configure-xnat.sh` does, and what the chart's
+`xnat-init-job.yaml` now does on every install/upgrade):
+
+```bash
+# Delete the stock receiver (find its id via GET /xapi/dicomscp/)
+kubectl exec -n flip-trust "$XNAT_POD" -- \
+  curl -s -X DELETE -u admin:<admin-pass> http://localhost:8080/xapi/dicomscp/<id>
+
+# Create the DQR receiver
+kubectl exec -n flip-trust "$XNAT_POD" -- \
+  curl -s -X POST -u admin:<admin-pass> -H "Content-Type: application/json" \
+  http://localhost:8080/xapi/dicomscp -d '{
+    "aeTitle": "XNAT", "port": 8104, "enabled": true,
+    "customProcessing": true, "directArchive": true,
+    "identifier": "dqrObjectIdentifier", "anonymizationEnabled": true,
+    "whitelistEnabled": false, "routingExpressionsEnabled": false
+  }'
+```
+
+Also apply + enable the site-wide anonymization script
+(`trust/xnat/xnat/config/anon_script.das`) — the init job does this too:
+
+```bash
+kubectl cp trust/xnat/xnat/config/anon_script.das flip-trust/"$XNAT_POD":/tmp/anon_script.das
+kubectl exec -n flip-trust "$XNAT_POD" -- sh -c '
+  curl -s -X PUT -u admin:<admin-pass> -H "Content-Type: text/plain" \
+    --data-binary @/tmp/anon_script.das http://localhost:8080/xapi/anonymize/site
+  curl -s -X PUT -u admin:<admin-pass> -H "Content-Type: application/json" \
+    -d true http://localhost:8080/xapi/anonymize/site/enabled'
+```
+
+Studies already stranded in the Unassigned prearchive were received **without**
+the relabel map — don't archive them manually; delete them
+(`rm -rf /data/xnat/prearchive/2026*` for top-level timestamp dirs only) and
+re-pull (see §2.4).
+
+> **Note:** With `directArchive: true`, the
+> `Cannot build session. 0 prearchive sessions found` warning still appears on
+> each pull but is **benign** — sessions bypass the prearchive and archive
+> directly. Confirm with
+> `ls /data/xnat/archive/<imaging-project-id>/arc001 | wc -l` or the project's
+> experiment count.
+
+### 2.3 imaging-api Gets 401 from XNAT (flipServiceAccount)
+
+**Symptom:** `create_imaging` tasks fail instantly; trust-api logs
+`External API error 401 for POST http://imaging-api:8000/projects/create-project-from-central-hub-project`
+with an XNAT Tomcat 401 page (`Your login attempt failed...`) in the body. The
+hub marks the task FAILED.
+
+**Root Cause:** The XNAT init job creates `flipServiceAccount` at the DB layer
+with a **fixed bcrypt hash** that does not correspond to the
+`xnat-service-password` value in the chart Secret (which is what imaging-api
+sends as `XNAT_SERVICE_PASSWORD`). Repeated failures also lock the account for
+1 hour (20-attempt lockout).
+
+**Fix:** Sync the password via the REST API (idempotent; the chart's
+`xnat-init-job.yaml` `configure-xnat-web` container now does this on every
+install/upgrade):
+
+```bash
+kubectl exec -n flip-trust "$XNAT_POD" -- \
+  curl -s -X PUT -u admin:<admin-pass> -H "Content-Type: application/json" \
+  http://localhost:8080/xapi/users/flipServiceAccount \
+  -d '{"password": "<xnat-service-password from the chart Secret>"}'
+```
+
+Verify: `curl -u flipServiceAccount:<pass> http://localhost:8080/xapi/users/flipServiceAccount`
+from inside the pod should return 200.
+
+### 2.4 Forcing a Re-pull (status stuck on "Processing")
+
+**Symptom:** A pull went wrong (e.g. §2.2's unrouted studies), the executed
+PACS requests sit at `RECEIVED`/`FAILED`, and the FLIP UI shows the trust
+stuck on "Processing" forever. Re-clicking reimport logs
+`No studies to retry import for project ...`.
+
+**Root Cause:** imaging-api's `get_import_status` classifies an accession as
+**Processing whenever ANY executed PACS request row exists for it — regardless
+of that row's status** — and the reimport path
+(`retry_retrieve_images_for_project`) only re-queues accessions classified
+`Failed`/`QueueFailed`. Executed rows therefore pin the status and block the
+retry.
+
+**Fix:** Delete the executed rows (child table first), then trigger the
+reimport:
+
+```bash
+# 1. Drop the stale executed requests for the imaging project
+kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- psql -U xnat -d xnat -c "
+DELETE FROM xhbm_executed_pacs_request_series_ids WHERE executed_pacs_request IN
+  (SELECT id FROM xhbm_executed_pacs_request WHERE xnat_project='<imaging-project-id>');
+DELETE FROM xhbm_executed_pacs_request WHERE xnat_project='<imaging-project-id>';"
+
+# 2. Trigger the reimport — from the hub UI (re-import button), or directly:
+IMAGING_POD=$(kubectl get pods -n flip-trust -l app.kubernetes.io/component=imaging-api -o jsonpath='{.items[0].metadata.name}')
+IKEY=$(kubectl get secret trust-release-flip-trust-secrets -n flip-trust \
+  -o jsonpath='{.data.trust-internal-service-key}' | base64 --decode)
+# encoded_query = base64url of the cohort SQL (visible decoded in imaging-api logs)
+kubectl exec -n flip-trust "$IMAGING_POD" -- python3 -c "
+import httpx
+r = httpx.put('http://localhost:8000/retrieval/reimport_imaging_project_studies/<imaging-project-id>',
+              params={'encoded_query': '<encoded-query>'},
+              headers={'X-Trust-Internal-Service-Key': '$IKEY'}, timeout=30)
+print(r.status_code, r.text)"
+```
+
+Expect `202 {"message": "Reimport queued", ...}`, then
+`All studies queued successfully` in the imaging-api logs, and archived
+sessions a few minutes later.
+
+### 2.5 Running the Imaging Import Worker
+
+> **Note:** The worker was originally written as a workaround when
+> `PacsNotStorableException` was believed to be a DQR plugin bug. The real
+> cause was the destination AE/port mismatch (§2.1) — with §§2.1–2.3 applied,
+> the DQR pipeline works end-to-end and the worker is **not needed** for
+> normal operation. It remains useful as a diagnostic fallback for moving
+> studies when DQR is unavailable, but it bypasses the DQR relabel map, so
+> sessions it imports are **not** relabelled (Subject UUID / Session=accession).
 
 The Imaging Import Worker is a Kubernetes Job that:
 1. Reads QUEUED PACS requests from the XNAT database
@@ -185,7 +352,7 @@ kubectl exec -n flip-trust "$dcmtk_pod" -- \
   BATCH_SIZE=150 LOG_LEVEL=DEBUG python3 /tmp/imaging-import-worker.py
 ```
 
-### 2.3 C-MOVE Testing from the DCMTK Pod
+### 2.6 C-MOVE Testing from the DCMTK Pod
 
 The DCMTK diagnostic pod (`dcmtk`) contains `movescu`, `findscu`, and `echoscu`
 for manual DICOM testing.
@@ -251,7 +418,7 @@ kubectl exec -n flip-trust "$dcmtk_pod" -- \
   BATCH_SIZE=150 python3 /tmp/imaging-import-worker.py
 ```
 
-### 2.4 Checking DICOM Connectivity
+### 2.7 Checking DICOM Connectivity
 
 #### DICOM Port Map
 
@@ -270,19 +437,12 @@ kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- psql -U xnat -d
   "SELECT id, ae_title, port, direct_archive, custom_processing, identifier FROM xhbm_dicomscpinstance;"
 ```
 
-Expected output: `ae_title=XNAT, port=8104, direct_archive=t, custom_processing=t`
+Expected output:
+`ae_title=XNAT, port=8104, direct_archive=t, custom_processing=t, identifier=dqrObjectIdentifier`
 
-If missing, reconfigure:
-```bash
-kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- psql -U xnat -d xnat -c \
-  "DELETE FROM xhbm_dicomscpinstance WHERE ae_title='XNAT';"
-kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- psql -U xnat -d xnat -c \
-  "INSERT INTO xhbm_dicomscpinstance (created, disabled, enabled, timestamp, \
-   ae_title, anonymization_enabled, custom_processing, direct_archive, identifier, port, \
-   routing_expressions_enabled, whitelist_enabled) \
-   VALUES (NOW(), 'infinity', true, NOW(), 'XNAT', false, true, true, \
-   'dqrObjectIdentifier', 8104, false, false);"
-```
+If missing or wrong, recreate it via the REST API (see §2.2 — prefer the API
+over direct DB inserts: XNAT binds the SCP listener and caches receiver config
+at the service layer, so DB-only changes need a restart to take effect).
 
 ---
 
@@ -306,6 +466,33 @@ kubectl exec -n flip-trust trust-release-flip-trust-omop-db-0 -- \
 ```
 
 Expected: **4,186 persons**, **4,186 image_occurrences**, **5,939 image_features**
+
+### Cohort Queries Fail with `query_failed` (restored backup)
+
+**Symptom:** Every cohort query returns 500 `{"detail": "query_failed"}` from
+data-access-api; its logs show
+`FATAL: password authentication failed for user "data_analyst_reader"`.
+Unqualified table names (`SELECT * FROM person`) may also 400 with
+`The table 'person' does not exist.`
+
+**Root Cause:** The OMOP data directory was restored from a backup that
+**already contains** the `data_analyst_reader` role (with the original
+password) and lacks the database-level `search_path`. The omop-db postStart
+hook's old `IF NOT EXISTS` guard skipped both, so the role's password never
+matched `DATA_ACCESS_POSTGRES_PASSWORD` from the chart Secret.
+
+**Fix:** The chart's `omop-db.yaml` postStart hook now `ALTER ROLE`s the
+password unconditionally and sets the `search_path` on every container start.
+On a live cluster (without restarting omop-db):
+
+```bash
+kubectl exec -n flip-trust trust-release-flip-trust-omop-db-0 -- \
+  psql -U postgres -d trustomopdb -c \
+  "ALTER ROLE data_analyst_reader WITH PASSWORD '<data-access-postgres-password from Secret>';
+   ALTER DATABASE trustomopdb SET search_path = omop, public;"
+# data-access-api pools connections — restart to pick up the new search_path:
+kubectl rollout restart deployment/trust-release-flip-trust-data-access-api -n flip-trust
+```
 
 ### Rebuilding OMOP Data
 
@@ -857,8 +1044,11 @@ kubectl exec -n flip-trust "$XNAT_POD" -- tail -10 /data/xnat/home/logs/dqr.log
 # 6. Helm status
 helm list -n flip-trust
 
-# 7. Run import worker (if DQR is failing)
-python3 deploy/providers/kubernetes/scripts/imaging-import-worker.py
+# 7. If DQR is failing: check destination AE vs SCP receiver first (§2.1),
+#    then receiver identifier (§2.2). The import worker is a last-resort
+#    fallback only (no relabel map):
+kubectl exec -n flip-trust trust-release-flip-trust-xnat-db-0 -- \
+  psql -U xnat -d xnat -c "SELECT DISTINCT destination_ae_title FROM xhbm_queued_pacs_request;"
 
 # 8. FL client connectivity (if training isn't starting)
 FL_POD=$(kubectl get pods -n flip-trust -l app.kubernetes.io/component=fl-client -o jsonpath='{.items[0].metadata.name}')
