@@ -69,9 +69,12 @@ up: deploy ## Deploy the trust K8s release (alias for deploy)
 down: undeploy ## Tear down the trust K8s release (alias for undeploy)
 	@true
 
-deploy-trust-k8s: deploy ## Deploy trust services to K8s; if KIT= is set, re-patches per-trust secrets without overwriting the override file
+deploy-trust-k8s: ## Deploy trust services to K8s; KIT= selects the per-trust override file and re-patches secrets
 ifdef KIT
+	@$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml
 	@$(MAKE) patch-kit-secrets KIT=$(KIT)
+else
+	@$(MAKE) deploy
 endif
 
 undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undeploy)
@@ -159,6 +162,12 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
 		--output-dir $(CHART_DIR) \
 		--no-write-override
+	@for svc in trust-api data-access-api imaging-api imaging-import-worker; do \
+		kubectl rollout restart deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE); \
+	done
+	@for svc in trust-api data-access-api imaging-api imaging-import-worker; do \
+		kubectl rollout status deployment/$(RELEASE_NAME)-flip-trust-$$svc -n $(NAMESPACE) --timeout=120s; \
+	done
 
 sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writes k8s-trust-<KIT>.yaml override)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit KIT=Trust_K8s PROD=stag"; exit 1)
