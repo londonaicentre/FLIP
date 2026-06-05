@@ -339,13 +339,34 @@ update-env: ## Update environment file with Terraform outputs
 .PHONY: ansible-init
 ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed try again for 3 times)
 	@echo "☁️🔗 Initiate ansible and install docker on both EC2 instances"
+	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
+	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
+	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in kit file — is KIT=$(KIT) set and trust/.env.$(KIT).$(KIT_ENV_SUFFIX) present?"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
 	@uv run ansible-playbook site.yml \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
-		-e pgdata_archive=trust1_pgdata_20260129.tar
+		-e trust_num=$(FL_KIT_SLOT_NUMBER) \
+		-e omop_data_version=$(OMOP_DATA_VERSION) \
+		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+
+.PHONY: seed-trust-data
+seed-trust-data: ssh-config ## Load trust-specific OMOP + Orthanc mock data onto the Trust EC2 (re-run after data version bump; requires KIT=)
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make seed-trust-data KIT=Trust_2 PROD=stag"; exit 1)
+	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
+	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
+	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
+	@echo "🗄️  Seeding Trust EC2 with trust$(FL_KIT_SLOT_NUMBER) data (OMOP v$(OMOP_DATA_VERSION), Orthanc v$(ORTHANC_DATA_VERSION))..."
+	@uv run ansible-playbook site.yml \
+		--tags data \
+		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
+		-e fl_kit_date=$(FL_KIT_DATE) \
+		-e trust_num=$(FL_KIT_SLOT_NUMBER) \
+		-e omop_data_version=$(OMOP_DATA_VERSION) \
+		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+	@echo "✅ Trust data seeding complete."
 
 .PHONY: deploy-centralhub
 deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with environment from Terraform
@@ -415,9 +436,15 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 # Read from the trust's kit file (the single source of truth: the kit file's
 # FL_KIT_SLOT is also what trust/Makefile mounts), not duplicated here.
 FL_KIT_SLOT := $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+FL_KIT_SLOT_NUMBER := $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+
+# Data versions read from the canonical .data_version files — these govern both
+# the local update-omop-data / update-orthanc-data scripts and the Ansible plays.
+OMOP_DATA_VERSION := $(shell cat ../../../trust/omop-db/.data_version 2>/dev/null | tr -d ' \n\r\t')
+ORTHANC_DATA_VERSION := $(shell cat ../../../trust/orthanc/.data_version 2>/dev/null | tr -d ' \n\r\t')
 
 .PHONY: deploy-trust
-deploy-trust: ssh-config update-env ## Deploy trust relationships after central hub is deployed
+deploy-trust: ssh-config update-env seed-trust-data ## Deploy trust relationships after central hub is deployed
 	@echo "🔍 Checking trust images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(TRUST_IMAGES); do \
