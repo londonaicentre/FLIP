@@ -550,8 +550,7 @@ add-k8s-trust: ## Open the FL-server NLB to a K8s trust node's public IP (FL tra
 	## `allow-local-trust-nlb` for on-prem hosts.
 	@[ -n "$(K8S_TRUST_IP)" ] || (echo "❌  K8S_TRUST_IP is required (public/egress IP of the K8s trust node). Usage: make add-k8s-trust K8S_TRUST_IP=<ip> PROD=$(PROD)"; exit 1)
 	@echo "🔐 Opening FL-server NLB to K8s trust IP $(K8S_TRUST_IP)..."
-	@cd deploy/providers/AWS && \
-		TF_VAR_K8S_TRUST_IP=$(K8S_TRUST_IP) terraform plan \
+	@TF_VAR_K8S_TRUST_IP=$(K8S_TRUST_IP) terraform plan \
 		-target=aws_security_group_rule.k8s_trust_fl_server_nlb \
 		-out=k8s-trust.tfplan && \
 		TF_VAR_K8S_TRUST_IP=$(K8S_TRUST_IP) terraform apply k8s-trust.tfplan && \
