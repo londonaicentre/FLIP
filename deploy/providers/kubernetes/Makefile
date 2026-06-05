@@ -36,7 +36,7 @@ ifneq ($(strip $(OVERRIDES_FILE)),)
 	VALUES_OPTS := $(VALUES_OPTS) -f $(OVERRIDES_FILE)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init patch-aws-creds
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -69,8 +69,10 @@ up: deploy ## Deploy the trust K8s release (alias for deploy)
 down: undeploy ## Tear down the trust K8s release (alias for undeploy)
 	@true
 
-deploy-trust-k8s: deploy ## Deploy trust services to K8s (alias for deploy)
-	@true
+deploy-trust-k8s: deploy ## Deploy trust services to K8s; if KIT= is set, re-patches per-trust secrets without overwriting the override file
+ifdef KIT
+	@$(MAKE) patch-kit-secrets KIT=$(KIT)
+endif
 
 undeploy-trust-k8s: undeploy ## Remove trust services from K8s (alias for undeploy)
 	@true
@@ -124,6 +126,40 @@ clean: ## Clean up rendered output
 # This target then reads trust/.env.<KIT>.<env>, patches the per-trust keys into the
 # chart's Kubernetes Secret, and writes a secret-free Helm override. Then deploy with
 # `make up OVERRIDES_FILE=k8s-trust-<KIT>.yaml`. Env auto-detected from $(PROD).
+xnat-init: ## Run the XNAT post-install init job manually (use after XNAT web is ready, when initJob.enabled=false)
+	@echo "▶  Rendering XNAT init job from chart templates..."
+	@$(HELM) template $(RELEASE_NAME) $(CHART_DIR) \
+		--namespace $(NAMESPACE) \
+		$(VALUES_OPTS) \
+		--set xnat.initJob.enabled=true \
+		| kubectl apply -n $(NAMESPACE) -f - \
+		--selector app.kubernetes.io/component=xnat-init
+	@echo "⏳  Waiting for xnat-init job to complete (timeout 15m)..."
+	@kubectl wait job \
+		--selector app.kubernetes.io/component=xnat-init \
+		--for=condition=complete \
+		--namespace $(NAMESPACE) \
+		--timeout=15m && \
+	echo "✅  XNAT init complete." || \
+	(echo "❌  XNAT init failed — check logs:"; \
+	 kubectl logs -n $(NAMESPACE) -l app.kubernetes.io/component=xnat-init --tail=40; \
+	 exit 1)
+
+patch-aws-creds: ## Patch current AWS SSO credentials into the fl-client S3 secret (re-run after every helm upgrade or SSO token refresh)
+	@python3 $(CHART_DIR)/patch_aws_creds.py \
+		--namespace $(NAMESPACE) \
+		--secret-name $(RELEASE_NAME)-flip-trust-secrets
+
+patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Secret WITHOUT overwriting the override YAML (safe after helm upgrade)
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make patch-kit-secrets KIT=Trust_K8s PROD=stag"; exit 1)
+	@python3 $(CHART_DIR)/sync_k8s_kit.py \
+		--kit $(KIT) \
+		--env $(ENV) \
+		--namespace $(NAMESPACE) \
+		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
+		--output-dir $(CHART_DIR) \
+		--no-write-override
+
 sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writes k8s-trust-<KIT>.yaml override)
 	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make sync-kit KIT=Trust_K8s PROD=stag"; exit 1)
 	@python3 $(CHART_DIR)/sync_k8s_kit.py \
