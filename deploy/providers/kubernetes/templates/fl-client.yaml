@@ -160,6 +160,27 @@ spec:
             - "/keys/supernode_credentials_1"
             - "--clientappio-api-address"
             - {{ .Values.flClient.flower.supernodeClientAppIoAddress | quote }}
+          {{- else if eq .Values.flBackend "nvflare" }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              chmod +x /app/startup/sub_start.sh /app/startup/stop_fl.sh 2>/dev/null || true
+              export NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS:-0}
+              export MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB:-16}
+              export LOG_LEVEL=${LOG_LEVEL:-INFO}
+              # Copy .default configs shipped in the kit to the expected runtime paths.
+              # The image bakes resources.template.json/log_config.template.json into
+              # /app/local/, but the kit volume-mount replaces that directory, hiding the
+              # templates. The kit ships *.default equivalents — copy them as-is (no
+              # envsubst needed: the values are already correct for this deployment).
+              cp /app/local/resources.json.default /app/local/resources.json 2>/dev/null || true
+              cp /app/local/log_config.json.default /app/local/log_config.json 2>/dev/null || true
+              pkill -f nvflare 2>/dev/null || true
+              rm -f /app/pid.fl /app/daemon_pid.fl
+              cd /app/startup
+              exec ./sub_start.sh
           {{- end }}
           envFrom:
             - configMapRef:
