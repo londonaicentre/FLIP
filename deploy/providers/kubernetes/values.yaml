@@ -171,7 +171,11 @@ imagingApi:
             topologyKey: kubernetes.io/hostname
   env:
     XNAT_URL: "http://xnat-web:8080"
-    XNAT_PORT: "8080"
+    # DICOM SCP receiver port — NOT the web port. DQR import requests are
+    # queued with destination AE "XNAT:{XNAT_PORT}"; XNAT only dequeues them
+    # if a DICOM SCP receiver with that exact AE:port exists (8104, matching
+    # the xnat-web Service dicom-scp port and the Orthanc modality config).
+    XNAT_PORT: "8104"
     PACS_ID: "1"
     XNAT_DATABASE_URL: "postgresql+asyncpg://xnat:xnat@xnat-db:5432/xnat"
     DATA_ACCESS_API_URL: "http://data-access-api:8000"

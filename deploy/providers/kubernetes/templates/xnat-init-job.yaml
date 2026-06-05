@@ -86,7 +86,7 @@ spec:
             - -c
             - |
               set -euo pipefail
-              apk add --no-cache curl >/dev/null 2>&1
+              apk add --no-cache curl jq >/dev/null 2>&1
               XNAT_URL="http://xnat-web:8080"
               ADMIN_USER="{{ .Values.xnat.web.adminUser }}"
               ADMIN_PASS="${XNAT_ADMIN_PASS}"
@@ -139,6 +139,15 @@ spec:
 
               # Assign roles to service account
               SERVICE_USER="${XNAT_SERVICE_USER:-flipServiceAccount}"
+
+              # Sync service-account password from the chart secret so it always
+              # matches XNAT_SERVICE_PASSWORD in imaging-api, even after a backup
+              # restore (the DB-layer user creation above uses a fixed hash).
+              echo "Setting ${SERVICE_USER} password..."
+              curl -s -X PUT "${XNAT_URL}/xapi/users/${SERVICE_USER}" \
+                -H "Cookie: JSESSIONID=${JSESSION}" \
+                -H "Content-Type: application/json" \
+                -d "{\"password\": \"${SERVICE_PASS}\"}" -o /dev/null -w "setServicePassword HTTP:%{http_code}\n" || true
               echo "Assigning roles to ${SERVICE_USER}..."
               curl -sf -X PUT "${XNAT_URL}/xapi/users/${SERVICE_USER}/groups/" \
                 -H "Cookie: JSESSIONID=${JSESSION}" \
@@ -148,6 +157,54 @@ spec:
                 -H "Cookie: JSESSIONID=${JSESSION}" \
                 -H "Content-Type: application/json" \
                 -d '["ContainerManager","DataManager","SiteUser","Administrator","Dqr","non_expiring"]' || true
+
+              # Apply + enable the site-wide anonymization script (mirrors
+              # trust/xnat/xnat/config/configure-xnat.sh in the Compose deploy).
+              echo "Applying site-wide anonymization script..."
+              curl -s -X PUT "${XNAT_URL}/xapi/anonymize/site" \
+                -H "Cookie: JSESSIONID=${JSESSION}" \
+                -H "Content-Type: text/plain" \
+                --data-binary @/cs-config/anon_script.das \
+                -o /dev/null -w "anonScript HTTP:%{http_code}\n" || true
+              curl -s -X PUT "${XNAT_URL}/xapi/anonymize/site/enabled" \
+                -H "Cookie: JSESSIONID=${JSESSION}" \
+                -H "Content-Type: application/json" \
+                -d 'true' -o /dev/null -w "anonEnable HTTP:%{http_code}\n" || true
+
+              # Replace the default DICOM SCP receiver with the DQR-aware one.
+              # The stock receiver uses identifier=dicomObjectIdentifier with
+              # customProcessing=false, which leaves DQR-pulled studies in the
+              # Unassigned prearchive ("Cannot build session. 0 prearchive
+              # sessions found"). DQR needs identifier=dqrObjectIdentifier +
+              # customProcessing so received studies are routed to the
+              # requesting project and the relabel map (Subject UUID /
+              # Session=accession) is applied.
+              echo "Replacing DICOM SCP receiver with DQR-aware config..."
+              for SCP_ID in $(curl -s "${XNAT_URL}/xapi/dicomscp" \
+                  -H "Cookie: JSESSIONID=${JSESSION}" \
+                  | jq -r '.[] | select(.aeTitle == "XNAT") | .id'); do
+                curl -s -X DELETE "${XNAT_URL}/xapi/dicomscp/${SCP_ID}" \
+                  -H "Cookie: JSESSIONID=${JSESSION}" \
+                  -o /dev/null -w "deleteScp(${SCP_ID}) HTTP:%{http_code}\n" || true
+              done
+              curl -s -X POST "${XNAT_URL}/xapi/dicomscp" \
+                -H "Cookie: JSESSIONID=${JSESSION}" \
+                -H "Content-Type: application/json" \
+                -d '{
+                  "aeTitle": "XNAT",
+                  "port": 8104,
+                  "enabled": true,
+                  "customProcessing": true,
+                  "directArchive": true,
+                  "identifier": "dqrObjectIdentifier",
+                  "anonymizationEnabled": true,
+                  "whitelistEnabled": false,
+                  "whitelistText": "",
+                  "routingExpressionsEnabled": false,
+                  "projectRoutingExpression": "",
+                  "subjectRoutingExpression": "",
+                  "sessionRoutingExpression": ""
+                }' -o /dev/null -w "createScp HTTP:%{http_code}\n" || true
 
               # Register PACS
               echo "Registering PACS..."
@@ -190,7 +247,7 @@ spec:
                 curl -sf -X POST "${XNAT_URL}/xapi/pacs/1/availability" \
                   -H "Cookie: JSESSIONID=${JSESSION}" \
                   -H "Content-Type: application/json" \
-                  -d "{\"availabilityEnd\":\"24:00\",\"availabilityStart\":\"00:00\",\"availableNow\":true,\"dayOfWeek\":\"$DAY\",\"enabled\":true,\"pacsId\":1,\"threads\":4,\"utilizationPercent\":100}" || true
+                  -d "{\"availabilityEnd\":\"23:59\",\"availabilityStart\":\"00:00\",\"availableNow\":true,\"dayOfWeek\":\"$DAY\",\"enabled\":true,\"pacsId\":1,\"threads\":4,\"utilizationPercent\":100}" || true
               done
 
               echo "XNAT web configuration complete."
@@ -205,6 +262,14 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
                   key: xnat-service-user
+            - name: SERVICE_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-service-password
+          volumeMounts:
+            - name: cs-config
+              mountPath: /cs-config
           resources:
             requests:
               memory: "64Mi"
@@ -316,10 +381,12 @@ spec:
           configMap:
             name: {{ include "flip-trust.fullname" . }}-xnat-cs-config
 ---
-# Container Service plugin configuration (K8s backend) + dcm2niix command JSON.
-# The two `data:` entries are sourced verbatim from:
+# Container Service plugin configuration (K8s backend) + dcm2niix command JSON
+# + site-wide DICOM anonymization script.
+# The `data:` entries are sourced verbatim from:
 #   trust/xnat/xnat/config/container-service-backend-configuration.kubernetes.json
 #   trust/xnat/xnat/config/dcm2niix_command.json
+#   trust/xnat/xnat/config/anon_script.das
 # Keep them in sync with those source files until the chart can read them via
 # Helm `.Files.Get` (blocked by the source files living outside the chart dir).
 apiVersion: v1
@@ -331,6 +398,65 @@ metadata:
     {{- include "flip-trust.labels" . | nindent 4 }}
     app.kubernetes.io/component: xnat-init
 data:
+  anon_script.das: |
+    version "6.3"
+    // FLIP Site-Wide DICOM Anonymization Script
+    // Compatible with XNAT 1.9.3 (DicomEdit 6.7.x)
+    //
+    // This script is applied to all incoming DICOM data when anonymizationEnabled
+    // is set to true on the SCP receiver. It removes Protected Health Information
+    // (PHI) from DICOM headers to ensure patient privacy.
+
+    // Store XNAT labels into DICOM headers
+    (0010,4000) := project
+    (0010,0010) := subject
+    (0010,0020) := subject
+    (0008,1030) := session
+
+    // Remove direct patient identifiers
+    - (0010,0030)    // Patient Birth Date
+    - (0010,1000)    // Other Patient IDs
+    - (0010,1001)    // Other Patient Names
+    - (0010,1002)    // Other Patient IDs Sequence
+    - (0010,1005)    // Patient Birth Name
+    - (0010,1040)    // Patient Address
+    - (0010,2154)    // Patient Telephone Numbers
+    - (0010,0032)    // Patient Birth Time
+
+    // Remove institutional identifiers
+    - (0008,0080)    // Institution Name
+    - (0008,0081)    // Institution Address
+    - (0008,1040)    // Institutional Department Name
+
+    // Remove physician/operator identifiers
+    - (0008,0090)    // Referring Physician Name
+    - (0008,0092)    // Referring Physician Address
+    - (0008,0094)    // Referring Physician Telephone Numbers
+    - (0008,1048)    // Physician(s) of Record
+    - (0008,1050)    // Performing Physician Name
+    - (0008,1070)    // Operators Name
+
+    // Remove other potentially identifying tags
+    - (0008,0050)    // Accession Number (we use relabelMap for session)
+    - (0010,1090)    // Medical Record Locator
+    - (0010,2160)    // Ethnic Group
+    - (0010,2180)    // Occupation
+    - (0010,21B0)    // Additional Patient History
+    - (0010,4000)    // Patient Comments (after project label stored above)
+    - (0032,1032)    // Requesting Physician
+    - (0040,0006)    // Scheduled Performing Physician Name
+    - (0040,2016)    // Placer Order Number
+    - (0040,2017)    // Filler Order Number
+    - (0040,A123)    // Person Name (in structured reports)
+
+    // Hash UIDs for pseudonymization (repeatable hashing)
+    (0020,000D) := hashUID[(0020,000D)]    // Study Instance UID
+    (0020,000E) := hashUID[(0020,000E)]    // Series Instance UID
+    (0008,0018) := hashUID[(0008,0018)]    // SOP Instance UID
+
+    // Record de-identification method
+    (0012,0062) := "YES"                                    // Patient Identity Removed
+    (0012,0063) := "FLIP Site-Wide Anonymization v1"         // De-identification Method
   container-service-backend-configuration.kubernetes.json: |
     {
         "name": "Kubernetes",
@@ -578,7 +704,7 @@ data:
     for DAY in MONDAY TUESDAY WEDNESDAY THURSDAY FRIDAY SATURDAY SUNDAY; do
       wget -q -O /dev/null --header="${COOKIE}" --header="Content-Type: application/json" \
         --post-data="{
-          \"availabilityEnd\": \"24:00\",
+          \"availabilityEnd\": \"23:59\",
           \"availabilityStart\": \"00:00\",
           \"availableNow\": true,
           \"dayOfWeek\": \"$DAY\",
