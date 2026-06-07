@@ -395,7 +395,9 @@ nvflare-provision-additional-client:
 # Drives a fresh project end-to-end against a running `make up` stack:
 # create → approve → upload model → wait for image pull → start training.
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND (flower or
-# nvflare); both sit in sibling repos (flip-fl-base / flip-fl-base-flower).
+# nvflare). The NVFLARE defaults still target ../../flip-fl-base/tutorials/...
+# (legacy sibling) — the migrated in-repo equivalents now live under
+# fl-apps/tutorials/ and can be passed via MODEL_FILES_DIR= / QUERY_FILE=.
 # Useful for sanity-checking PRs without manually clicking through the UI.
 # See flip-api/Makefile for overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
 e2e_smoke:
