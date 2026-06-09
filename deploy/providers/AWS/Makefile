@@ -180,7 +180,7 @@ create-backend: ## Create Terraform backend S3 bucket - Only run once
 .PHONY: aws-login
 aws-login: ## Login to AWS SSO (required before terraform operations)
 	@echo "🔐 Logging into AWS SSO..."
-	@aws sso login --profile $(AWS_PROFILE)
+	@aws sso login --profile $(AWS_PROFILE) --use-device-code
 	@echo "✅ AWS SSO login successful!"
 
 .PHONY: github-login
