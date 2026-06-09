@@ -44,7 +44,12 @@ spec:
               until pg_isready -h xnat-db -U xnat -d xnat 2>/dev/null; do
                 sleep 3
               done
-              echo "xnat-db is ready. Creating XNAT service account..."
+              echo "xnat-db is ready. Waiting for XNAT to finish schema initialisation (xdat_user table)..."
+              until psql -h xnat-db -U xnat -d xnat -c "SELECT 1 FROM xdat_user LIMIT 0" >/dev/null 2>&1; do
+                echo "  xdat_user not ready yet — waiting 10s for XNAT web to finish DB init..."
+                sleep 10
+              done
+              echo "Schema ready. Creating XNAT service account..."
               psql -h xnat-db -U xnat -d xnat <<-EOSQL
                 DO \$init\$
                 DECLARE
@@ -320,42 +325,54 @@ spec:
               done
 
               echo "Registering Kubernetes backend with the Container Service plugin..."
-              curl -sf -X POST "${XNAT_URL}/xapi/docker/server" \
+              CS_HTTP=$(curl -s -o /tmp/cs_resp.txt -w "%{http_code}" \
+                -X POST "${XNAT_URL}/xapi/docker/server" \
                 -u "${CREDS}" \
                 -H "Content-Type: application/json" \
-                -d @/cs-config/container-service-backend-configuration.kubernetes.json
-              echo ""
+                -d @/cs-config/container-service-backend-configuration.kubernetes.json)
+              if [ "${CS_HTTP}" = "200" ] || [ "${CS_HTTP}" = "201" ]; then
+                echo "Container Service backend registered (HTTP ${CS_HTTP})."
+              else
+                echo "Warning: Container Service backend registration returned HTTP ${CS_HTTP} — may not be supported on this XNAT build."
+                echo "Response: $(cat /tmp/cs_resp.txt)"
+              fi
 
               echo "Checking for an existing ${DCM2NIIX_NAME} command..."
-              EXISTING_ID=$(curl -sf "${XNAT_URL}/xapi/commands?name=${DCM2NIIX_NAME}" \
+              EXISTING_ID=$(curl -s "${XNAT_URL}/xapi/commands?name=${DCM2NIIX_NAME}" \
                 -u "${CREDS}" | jq -r '.[0].id // empty')
               if [ -n "${EXISTING_ID}" ]; then
                 echo "Deleting existing command id=${EXISTING_ID}..."
-                curl -sf -X DELETE "${XNAT_URL}/xapi/commands/${EXISTING_ID}" -u "${CREDS}" || true
+                curl -s -X DELETE "${XNAT_URL}/xapi/commands/${EXISTING_ID}" -u "${CREDS}" -o /dev/null || true
               fi
 
               echo "Registering ${DCM2NIIX_NAME} command..."
-              curl -sf -X POST "${XNAT_URL}/xapi/commands" \
+              DCM_HTTP=$(curl -s -o /tmp/dcm_resp.txt -w "%{http_code}" \
+                -X POST "${XNAT_URL}/xapi/commands" \
                 -u "${CREDS}" \
                 -H "Content-Type: application/json" \
-                -d @/cs-config/dcm2niix_command.json
-              echo ""
+                -d @/cs-config/dcm2niix_command.json)
+              echo "dcm2niix command registration: HTTP ${DCM_HTTP}"
 
               echo "Looking up registered command id and wrapper name..."
-              RESPONSE=$(curl -sf "${XNAT_URL}/xapi/commands?name=${DCM2NIIX_NAME}" -u "${CREDS}")
-              CMD_ID=$(echo "${RESPONSE}" | jq -r '.[0].id')
-              WRAPPER_NAME=$(echo "${RESPONSE}" | jq -r '.[0].xnat[0].name')
-              echo "Command id=${CMD_ID}, wrapper=${WRAPPER_NAME}"
-
-              echo "Enabling ${DCM2NIIX_NAME} command site-wide..."
-              curl -sf -X PUT "${XNAT_URL}/xapi/commands/${CMD_ID}/wrappers/${WRAPPER_NAME}/enabled" \
-                -u "${CREDS}"
+              RESPONSE=$(curl -s "${XNAT_URL}/xapi/commands?name=${DCM2NIIX_NAME}" -u "${CREDS}")
+              CMD_ID=$(echo "${RESPONSE}" | jq -r '.[0].id // empty')
+              WRAPPER_NAME=$(echo "${RESPONSE}" | jq -r '.[0].xnat[0].name // empty')
+              if [ -n "${CMD_ID}" ] && [ -n "${WRAPPER_NAME}" ]; then
+                echo "Command id=${CMD_ID}, wrapper=${WRAPPER_NAME}"
+                echo "Enabling ${DCM2NIIX_NAME} command site-wide..."
+                curl -s -o /dev/null -w "enableCommand HTTP:%{http_code}\n" \
+                  -X PUT "${XNAT_URL}/xapi/commands/${CMD_ID}/wrappers/${WRAPPER_NAME}/enabled" \
+                  -u "${CREDS}" || true
+              else
+                echo "Warning: ${DCM2NIIX_NAME} command not found after registration — skipping enable step."
+              fi
 
               echo "Enabling the Event Service..."
-              curl -sf -X PUT "${XNAT_URL}/xapi/events/prefs" \
+              curl -s -o /dev/null -w "eventService HTTP:%{http_code}\n" \
+                -X PUT "${XNAT_URL}/xapi/events/prefs" \
                 -u "${CREDS}" \
                 -H "Content-Type: application/json" \
-                -d '{"enabled": true}'
+                -d '{"enabled": true}' || true
 
               echo "Container Service + dcm2niix configuration complete."
           env:
