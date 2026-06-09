@@ -521,7 +521,7 @@ observability:
   loki:
     enabled: true
     image:
-      repository: ghcr.io/grafana/loki
+      repository: grafana/loki
       tag: "3.4.0"
       pullPolicy: IfNotPresent
     service:
@@ -542,7 +542,7 @@ observability:
   alloy:
     enabled: true
     image:
-      repository: ghcr.io/grafana/alloy
+      repository: grafana/alloy
       tag: "v1.9.0"
       pullPolicy: IfNotPresent
     service:
@@ -558,7 +558,7 @@ observability:
   grafana:
     enabled: true
     image:
-      repository: ghcr.io/grafana/grafana
+      repository: grafana/grafana
       tag: "11.5.0"
       pullPolicy: IfNotPresent
     service:
