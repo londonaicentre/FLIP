@@ -36,7 +36,7 @@ ifneq ($(strip $(OVERRIDES_FILE)),)
 	VALUES_OPTS := $(VALUES_OPTS) -f $(OVERRIDES_FILE)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init patch-aws-creds
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init patch-aws-creds preflight
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -53,7 +53,16 @@ dry-run: ## Render templates with --debug (dry-run equivalent)
 update-deps: ## Update Helm chart dependencies
 	$(HELM) dependency update $(CHART_DIR)
 
-deploy: ## Deploy the Helm chart to the cluster
+preflight: ## Check all prerequisites before deploying (tools, cluster, files, kit)
+	@PROD="$(PROD)" \
+	 KIT="$(KIT)" \
+	 NAMESPACE="$(NAMESPACE)" \
+	 RELEASE_NAME="$(RELEASE_NAME)" \
+	 OVERRIDES_FILE="$(OVERRIDES_FILE)" \
+	 HELM="$(HELM)" \
+	 bash $(CHART_DIR)/scripts/preflight.sh
+
+deploy: preflight ## Deploy the Helm chart to the cluster
 	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
