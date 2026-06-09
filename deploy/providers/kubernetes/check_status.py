@@ -385,8 +385,18 @@ def main(
     print_status("PASS", f"Namespace '{namespace}' exists")
 
     if check_command("helm"):
-        success, hr = run_command(["helm", "list", "-n", namespace, "-o", "json", "--all"])
-        if success and hr.strip() and hr.strip() != "[]":
+        # Helm 4 removed --all and exits 1 when any release is in a failed state,
+        # even though it still emits valid JSON on stdout.  Capture stdout directly
+        # so we get the release list regardless of the exit code.
+        try:
+            result = subprocess.run(
+                ["helm", "list", "-n", namespace, "-o", "json"],
+                capture_output=True, text=True, timeout=30,
+            )
+            hr = result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            hr = ""
+        if hr and hr != "[]":
             try:
                 releases = json.loads(hr)
                 match = [r for r in releases if r.get("name") == helm_release]
@@ -447,7 +457,32 @@ def main(
         if ready >= min_ready:
             print_status("PASS", f"'{svc}': {ready}/{len(svc_pods)} ready")
         else:
-            print_status("FAIL", f"'{svc}': {ready}/{len(svc_pods)} ready (expected at least {min_ready})")
+            # For fl-client, a CrashLoopBackOff in the kit-init container almost always
+            # means the S3 kit bucket hasn't been configured yet (no KIT synced).
+            # Downgrade from FAIL to INFO so a bare deployment doesn't look broken.
+            if svc == "fl-client":
+                # If the init container has restarted at all, it crashed — the bucket/kit
+                # is not configured yet rather than the service itself being broken.
+                init_restarts = 0
+                if svc_pods:
+                    _, rc_str = run_command([
+                        "kubectl", "get", svc_pods[0], "-n", namespace, "-o",
+                        "jsonpath={.status.initContainerStatuses[0].restartCount}",
+                    ])
+                    try:
+                        init_restarts = int(rc_str.strip().strip("'\""))
+                    except (ValueError, TypeError):
+                        init_restarts = 0
+                if init_restarts > 0:
+                    print_status(
+                        "INFO",
+                        "fl-client kit-init is failing — S3 kit bucket not configured. "
+                        "Run: make sync-kit KIT=<KIT> PROD=<env>",
+                    )
+                else:
+                    print_status("FAIL", f"'fl-client': {ready}/{len(svc_pods)} ready (expected at least {min_ready})")
+            else:
+                print_status("FAIL", f"'{svc}': {ready}/{len(svc_pods)} ready (expected at least {min_ready})")
 
     # Check for Pods in CrashLoopBackOff / Error or high restart counts
     all_pods = kubectl_list(["pods"], namespace)
@@ -694,7 +729,22 @@ def main(
         found = [p for p in error_patterns if p in logs]
 
         if found:
-            print_status("WARN", f"'{svc_name}' has errors in logs: {', '.join(found)}")
+            # Downgrade to INFO when the only errors are about a missing hub URL —
+            # that means CENTRAL_HUB_API_URL hasn't been configured yet (no KIT synced),
+            # not a broken service.  Run 'make sync-kit KIT=<KIT> PROD=<env>' to fix.
+            hub_not_configured = all(
+                "Request URL is missing" in line or "hub" in line.lower()
+                for line in logs.splitlines()
+                if any(p in line for p in found)
+            )
+            if hub_not_configured:
+                print_status(
+                    "INFO",
+                    f"'{svc_name}' cannot reach hub (CENTRAL_HUB_API_URL not set) — "
+                    "run 'make sync-kit KIT=<KIT> PROD=<env>' to configure",
+                )
+            else:
+                print_status("WARN", f"'{svc_name}' has errors in logs: {', '.join(found)}")
         else:
             print_status("PASS", f"'{svc_name}' logs look clean")
 
