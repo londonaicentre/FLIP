@@ -377,11 +377,14 @@ test suite (ruff, mypy, and pytest).
 For the migrated FL base library (now in `flip-utils/`), unit tests can be run with:
 
 ```bash
-make -C flip-utils unit-test
+cd flip-utils && uv run pytest tests/unit -s -vv
 ```
 
-Integration tests for the FL services live under `fl_services/` — see [`flip-utils/README.md`](flip-utils/README.md)
-and [`fl_services/README.md`](fl_services/README.md) for the provisioning and integration-test workflow.
+(The inherited `make unit-test` target documented in [`flip-utils/README.md`](flip-utils/README.md) is part of the
+still-in-progress reconciliation called out at the top of that README — `flip-utils/` does not yet ship a Makefile in
+this mono-repo.) See [`flip-utils/README.md`](flip-utils/README.md) (the "Unit Tests" / "Integration Testing"
+sections — subject to the in-progress reconciliation noted there) for the FL package's tests, and
+[`fl_services/README.md`](fl_services/README.md) for provisioning FL networks.
 
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 
