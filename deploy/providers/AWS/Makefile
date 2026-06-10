@@ -341,14 +341,13 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 	@echo "☁️🔗 Initiate ansible and install docker on both EC2 instances"
 	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
 	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
-	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in kit file — is KIT=$(KIT) set and trust/.env.$(KIT).$(KIT_ENV_SUFFIX) present?"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
 	@uv run ansible-playbook site.yml \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
-		-e trust_num=$(FL_KIT_SLOT_NUMBER) \
+		-e trust_num=$(or $(FL_KIT_SLOT_NUMBER),1) \
 		-e omop_data_version=$(OMOP_DATA_VERSION) \
 		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
 
@@ -693,9 +692,11 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, secrets)
 	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure SSH aliases and provision EC2s with Docker
+	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
 	## 6. deploy-centralhub: bring up the Central Hub (seeds run, fl_kit_slot pool is populated)
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + status: bring up cloud Trust container stack and verify
+	## Prerequisite: create stub kit files first: make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=London PROD=$(PROD)
 full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
 
 .PHONY: full-deploy-with-local-trust
@@ -706,7 +707,8 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, ALB, secrets, on-prem trust NLB rule)
 	## 4. update-env: refresh .env.{PROD} with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
-	## 5. ssh-config + ansible-init: configure SSH aliases, provision EC2s with Docker + FL kit
+	## 5. ssh-config + ansible-init: configure SSH aliases and provision EC2s with Docker
+	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
 	## 6. deploy-centralhub: bring up the Central Hub
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
@@ -739,3 +741,58 @@ full-deploy-hybrid: ## Full hybrid deployment including on-prem trust provisioni
 	echo "✅ Hybrid deployment complete (PROD=$(PROD))." && \
 	echo "➡️  Final manual step: start the on-prem trust stack on the trust host:" && \
 	echo "   cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
+
+.PHONY: preflight-k8s-deploy
+preflight-k8s-deploy: ## Pre-flight checks for full-deploy-with-k8s (Trust_K8s slot, kubectl context, helm)
+	@uv run --no-config scripts/preflight_k8s_deploy.py \
+		--prod "$(PROD)" \
+		$(if $(K8S_TRUST_IP),--k8s-trust-ip "$(K8S_TRUST_IP)")
+
+.PHONY: full-deploy-with-k8s
+full-deploy-with-k8s: ## Full AWS deploy + Trust_K8s registration and K8s chart deployment
+	## Step order:
+	## 1. Detect or validate K8S_TRUST_IP (deployer machine's public egress IP)
+	## 2. preflight-k8s-deploy: fail-fast if Trust_K8s not in FL_KIT_SLOT_NAMES, kubectl/helm missing
+	## 3–9. full-deploy steps (provision AWS infra, central hub, EC2 trust + EC2 status gate)
+	## 10. Scaffold trust/.env.Trust_K8s.<env> if absent (make new-trust, idempotent)
+	## 11. Register Trust_K8s on the hub (register-trusts, idempotent)
+	## 12. Sync hub-shared block into Trust_K8s kit (sync-trust-kit)
+	## 13. Patch Trust_K8s secrets into the K8s cluster Secret (kubernetes sync-kit)
+	## 14. Open FL-server NLB to K8S_TRUST_IP (add-k8s-trust, Terraform -target)
+	## 15. Deploy K8s trust Helm chart (make -C kubernetes up)
+	## 16. Status: K8s trust (make -C kubernetes status) — EC2 trust checked in step 3–9
+	## Prerequisite: add "Trust_K8s" to FL_KIT_SLOT_NAMES in .env.stag before running
+	@_K8S_IP="$(K8S_TRUST_IP)"; \
+	if [ -z "$$_K8S_IP" ]; then \
+		echo "🔍 Detecting K8S_TRUST_IP..."; \
+		_K8S_IP=$$(curl -s --max-time 5 https://api.ipify.org) || { \
+			echo "❌  Cannot auto-detect public IP."; \
+			echo "   Provide it explicitly: make full-deploy-with-k8s K8S_TRUST_IP=<ip> PROD=$(PROD)"; \
+			exit 1; \
+		}; \
+		echo "✅ K8S_TRUST_IP: $$_K8S_IP"; \
+	fi && \
+	$(MAKE) preflight-k8s-deploy PROD=$(PROD) K8S_TRUST_IP=$$_K8S_IP && \
+	$(MAKE) full-deploy PROD=$(PROD) KIT=$(KIT) && \
+	echo "" && \
+	echo "☸️  Setting up Trust_K8s..." && \
+	{ [ -f ../../../trust/.env.Trust_K8s.$(KIT_ENV_SUFFIX) ] || \
+		$(MAKE) -C ../../.. new-trust \
+			TRUST_CODE=Trust_K8s \
+			TRUST_NAME="Kubernetes Trust" \
+			TRUST_REGION=London \
+			PROD=$(PROD); } && \
+	$(MAKE) register-trusts KIT=Trust_K8s PROD=$(PROD) && \
+	$(MAKE) -C ../../.. sync-trust-kit KIT=Trust_K8s PROD=$(PROD) && \
+	$(MAKE) -C ../kubernetes sync-kit KIT=Trust_K8s PROD=$(PROD) && \
+	$(MAKE) add-k8s-trust K8S_TRUST_IP=$$_K8S_IP PROD=$(PROD) && \
+	$(MAKE) -C ../kubernetes up \
+		OVERRIDES_FILE=$(shell pwd)/../kubernetes/k8s-trust-Trust_K8s.yaml \
+		PROD=$(PROD) && \
+	echo "" && \
+	echo "=== K8s Trust Status ===" && \
+	$(MAKE) -C ../kubernetes status PROD=$(PROD) && \
+	echo "" && \
+	echo "✅ full-deploy-with-k8s complete (PROD=$(PROD))." && \
+	echo "   EC2 trust status was verified in the full-deploy step above." && \
+	echo "   K8S_TRUST_IP: $$_K8S_IP (FL-server NLB rule applied)"
