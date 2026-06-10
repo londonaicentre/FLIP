@@ -433,7 +433,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.26" },
     { name = "sqlalchemy", specifier = ">=2.0.39" },
     { name = "sqlglot", specifier = ">=26.33.0" },
-    { name = "starlette", specifier = ">=1.0.1" },
+    { name = "starlette", specifier = ">=1.2.1" },
 ]
 
 [package.metadata.requires-dev]

@@ -831,7 +831,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.26" },
     { name = "requests", specifier = ">=2.33.0" },
     { name = "sqlalchemy", specifier = ">=2.0.39" },
-    { name = "starlette", specifier = ">=1.0.1" },
+    { name = "starlette", specifier = ">=1.2.1" },
     { name = "types-requests", specifier = ">=2.32.0.20250328" },
     { name = "urllib3", specifier = ">=2.7.0" },
     { name = "uvicorn", specifier = ">=0.34.0" },

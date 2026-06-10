@@ -29,7 +29,7 @@ dependencies = [
     "python-multipart>=0.0.26",
     "sqlalchemy>=2.0.39",
     "sqlglot>=26.33.0",
-    "starlette>=1.0.1",
+    "starlette>=1.2.1",
 ]
 
 [dependency-groups]
