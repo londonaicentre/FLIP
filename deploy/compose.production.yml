@@ -69,5 +69,7 @@ services:
       # NoFreeKitSlotError on every registration. Mirrored into the ECS task
       # env via TF_VAR_FL_KIT_SLOT_NAMES (locals.tf).
       - FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
+      # Bridge for images built before FL_KIT_SLOT_NAMES rename (pre-tag-225):
+      - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
     restart: unless-stopped
     container_name: flip-api
