@@ -67,6 +67,7 @@ deploy: preflight ## Deploy the Helm chart to the cluster
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		--timeout 20m \
+		--force-conflicts \
 		$(VALUES_OPTS)
 
 undeploy: ## Remove the Helm release from the cluster
@@ -103,7 +104,7 @@ test: lint template validate ## Run all validation steps
 
 validate: ## Validate rendered templates against Kubernetes schema
 	@if command -v kubeconform >/dev/null 2>&1; then \
-		$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) | kubeconform --kubernetes-version 1.28 --strict; \
+		$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) | kubeconform --kubernetes-version 1.28.0 --strict; \
 	else \
 		echo "⚠️  kubeconform not installed; skipping schema validation"; \
 	fi
