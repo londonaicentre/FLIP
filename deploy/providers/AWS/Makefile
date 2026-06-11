@@ -387,17 +387,13 @@ deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with env
 	@echo "📋 Loading environment variables from Terraform outputs..."
 	@echo "👷 Create docker context if not exists, pointing to flip to ssh://flip"
 	@docker context create flip --docker "host=ssh://flip" || echo "   Context 'flip' already exists"
-	@# Switch to flip context
-	@echo "🔄 Switching to flip Docker context..."
-	@docker context use flip
 	@echo "🧹 Stopping old containers and removing unused images to free disk space..."
-	@docker stop $$(docker ps -aq) 2>/dev/null || true
-	@docker rm $$(docker ps -aq) 2>/dev/null || true
-	@docker image prune -af
+	@docker --context flip stop $$(docker --context flip ps -aq) 2>/dev/null || true
+	@docker --context flip rm $$(docker --context flip ps -aq) 2>/dev/null || true
+	@docker --context flip image prune -af 2>/dev/null || true
 	@echo "🐳 Deploying containers..."
-	@$(MAKE) -C ../../../ up-centralhub-ec2 PROD=${PROD}
+	@DOCKER_CONTEXT=flip $(MAKE) -C ../../../ up-centralhub-ec2 PROD=${PROD}
 	@echo "✅ Deployment complete!"
-	@docker context use default
 
 .PHONY: deploy-ui
 deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalidate CloudFront
@@ -461,18 +457,15 @@ deploy-trust: ssh-config update-env seed-trust-data ## Deploy trust relationship
 	fi
 	@echo "👷 Create docker context if not exists, pointing to flip-trust to ssh://flip-trust"
 	@docker context create flip-trust --docker "host=ssh://flip-trust" || echo "   Context 'flip-trust' already exists"
-	@echo "🔄 Switching to flip-trust Docker context..."
-	@docker context use flip-trust
 	@echo "🐳 Deploying containers to Trust EC2 ..."
-	docker swarm init || echo "   Swarm already initialized"
+	docker --context flip-trust swarm init || echo "   Swarm already initialized"
 	@echo "🔧 Creating Docker networks on Trust EC2..."
-	$(MAKE) -C ../../../ create-networks
-	@echo "🧹 Stopping old containers and removing unused images to free disk space..."
-	@docker stop $$(docker ps -aq) 2>/dev/null || true
-	@docker rm $$(docker ps -aq) 2>/dev/null || true
-	@docker image prune -af
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../ create-networks
+	@echo "🧹 Stopping existing stack for KIT=$(KIT) and pruning unused images..."
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust down-trust-ec2 KIT=$(KIT) PROD=${PROD} 2>/dev/null || true
+	@docker --context flip-trust image prune -af 2>/dev/null || true
 	@echo "🚀 Deploying Trust services..."
-	$(MAKE) -C ../../../ up-trust-ec2 KIT=$(KIT) PROD=${PROD}
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../ up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust deployment complete!"
 
 .PHONY: provision-local-trust
@@ -589,12 +582,9 @@ add-k8s-trust: ## Open the FL-server NLB to a K8s trust node's public IP (FL tra
 .PHONY: down
 down:
 	@echo "🛑 Stopping all containers..."
-	@docker context use flip
-	$(MAKE) -C ../../../ down
-	@docker context use flip-trust
-	$(MAKE) -C ../../../ down
+	DOCKER_CONTEXT=flip $(MAKE) -C ../../../ down
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../ down
 	@echo "✅ Containers stopped and removed"
-	@docker context use default
 
 .PHONY: status
 status: ## Check deployment status
@@ -682,7 +672,7 @@ delete-trust: ## Hard-delete a trust on the hub (frees the name + FL kit slot; c
 	## xnat_project_status). Operator can then UI-add a new trust with the freed name.
 	## Required: NAME=<trust-name> matching trust.name exactly.
 	@[ -n "$(NAME)" ] || (echo "❌ NAME=<trust-name> is required"; exit 1)
-	@NAME=$(NAME) bash scripts/delete-trust.sh
+	@NAME="$(NAME)" bash scripts/delete-trust.sh
 
 .PHONY: full-deploy
 full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trust + Central Hub
