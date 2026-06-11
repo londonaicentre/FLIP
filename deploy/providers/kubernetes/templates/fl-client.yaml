@@ -116,6 +116,7 @@ spec:
               {{- else }}
               aws s3 sync "s3://${S3_BUCKET}/${S3_PATH}" "${DEST_DIR}" --delete
               {{- end }}
+              chmod -R go-rwx "${DEST_DIR}"
               echo "Kit sync complete."
           env:
             - name: AWS_DEFAULT_REGION
@@ -166,7 +167,7 @@ spec:
             - -c
             - |
               set -euo pipefail
-              chmod +x /app/startup/sub_start.sh /app/startup/stop_fl.sh 2>/dev/null || true
+              chmod u+x /app/startup/sub_start.sh /app/startup/stop_fl.sh 2>/dev/null || true
               export NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS:-0}
               export MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB:-16}
               export LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -234,6 +235,14 @@ spec:
             exec:
               command:
 {{ toYaml .Values.flClient.probes.liveness.exec.command | indent 16 }}
+{{- else if eq .Values.flBackend "nvflare" }}
+            # NVFLARE clients make outbound-only connections (no listening port),
+            # so probe the client_train process instead of a TCP socket.
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - pgrep -f nvflare.private.fed.app.client.client_train > /dev/null
 {{- else }}
             tcpSocket:
               port: {{ .Values.flClient.probes.liveness.port }}
@@ -248,6 +257,12 @@ spec:
             exec:
               command:
 {{ toYaml .Values.flClient.probes.readiness.exec.command | indent 16 }}
+{{- else if eq .Values.flBackend "nvflare" }}
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - pgrep -f nvflare.private.fed.app.client.client_train > /dev/null
 {{- else }}
             tcpSocket:
               port: {{ .Values.flClient.probes.readiness.port }}
