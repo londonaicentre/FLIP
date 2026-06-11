@@ -72,12 +72,25 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: {{ include "flip-trust.namespace" . }}
-    # Allow egress to Central Hub and FL server (custom CIDRs)
+    # Allow egress to Central Hub and FL server (custom CIDRs, all ports)
 {{- if .Values.networkPolicies.allowedEgressCIDRs }}
 {{- range .Values.networkPolicies.allowedEgressCIDRs }}
     - to:
         - ipBlock:
             cidr: {{ . | quote }}
+{{- end }}
+{{- end }}
+    # Allow egress to specific CIDRs on specific ports (e.g. FL server gRPC)
+{{- if .Values.networkPolicies.allowedEgressCIDRsWithPorts }}
+{{- range .Values.networkPolicies.allowedEgressCIDRsWithPorts }}
+    - to:
+{{- range .cidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+{{- end }}
+      ports:
+        - port: {{ .port }}
+          protocol: {{ default "TCP" .protocol }}
 {{- end }}
 {{- end }}
     # Allow AWS IMDS (needed for EC2 metadata and IAM roles)

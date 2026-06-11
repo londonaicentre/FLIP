@@ -604,11 +604,16 @@ networkPolicies:
   # metrics scraping). Set to true if your CNI requires explicit carve-outs for
   # kubelet probes or cluster-internal monitoring.
   allowKubeSystemIngress: false
-  # CIDRs that are allowed for egress (in addition to intra-namespace)
-  # Central Hub API URL and FL server NLB should be added here
+  # CIDRs allowed for all-ports egress (in addition to intra-namespace)
   allowedEgressCIDRs: []
   #   - 10.0.0.0/8
-  #   - 172.16.0.0/12
+  # CIDRs allowed for egress on a specific port, e.g. fl-server gRPC (port 8002)
+  # Each entry: cidrs (list of CIDR strings) + port (int) + optional protocol (default TCP)
+  allowedEgressCIDRsWithPorts: []
+  # - cidrs:
+  #     - 13.43.208.193/32
+  #     - 13.43.162.56/32
+  #   port: 8002
   # Egress rules to allow (defaults include DNS/HTTP/HTTPS)
   allowedEgressPorts:
     - port: 53

@@ -12,8 +12,8 @@
     },
     "trustNumber": {
       "type": "integer",
-      "minimum": 1,
-      "description": "Numeric ID for the trust"
+      "minimum": 0,
+      "description": "Numeric ID for the trust (0 reserved for non-numeric FL kit slots such as Trust_K8s)"
     },
     "environment": {
       "type": "string",
@@ -403,7 +403,20 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "enabled": { "type": "boolean" }
+        "enabled": { "type": "boolean" },
+        "allowedEgressCIDRsWithPorts": {
+          "type": "array",
+          "description": "Egress rules combining CIDRs with a specific port (e.g. fl-server gRPC on 8002)",
+          "items": {
+            "type": "object",
+            "required": ["cidrs", "port"],
+            "properties": {
+              "cidrs": { "type": "array", "items": { "type": "string" } },
+              "port": { "type": "integer" },
+              "protocol": { "type": "string", "enum": ["TCP", "UDP", "SCTP"] }
+            }
+          }
+        }
       }
     }
   }
