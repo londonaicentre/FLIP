@@ -18,18 +18,28 @@ the same **zero inbound trust** architecture as the Docker Compose deployment:
 trust services only make outbound connections to the Central Hub and the FL
 server; no inbound ports are exposed from the K8s cluster.
 
-> **⚠️  Early-access — not production-ready.**  
-> This chart is in **early-access** stage. Live deployment testing against a
-> single-node k3s cluster revealed several pre-existing issues that prevent
-> production readiness:
+> **⚠️  Early-access.**
+> The three blockers found in the original single-node k3s validation —
+> `xnat-nginx` exiting after entrypoint, `xnat-web` crash-looping on a DB
+> password mismatch, and the `fl-client` failing to hold its NVFLARE
+> connection — were fixed on branch `376_KubernetesHelmChartForTrust-sideDeployment`
+> (PR [#420](https://github.com/londonaicentre/FLIP/pull/420)). `Trust_K8s` now
+> connects to the stag Central Hub and runs healthy.
 >
-> - `xnat-nginx` exits after entrypoint (no foreground process)
-> - `xnat-web` crash-loops (password mismatch with xnat-db)
-> - `fl-client` fails to maintain a connection over the `stcp` NVFlare transport
+> Remaining work before this chart is production-ready is tracked in:
 >
-> See the [PR validation notes](https://github.com/londonaicentre/FLIP/pull/420)
-> for details. These issues are tracked in the follow-up issues (#527–#530).
-> Production deployments should wait until these are resolved.
+> - [#593](https://github.com/londonaicentre/FLIP/issues/593) — deployment
+>   robustness: automated K8s-trust kit provisioning, egress-config persistence
+>   across `make sync-kit`, and fl-api zombie hardening on the hub.
+> - [#516](https://github.com/londonaicentre/FLIP/issues/516) — NetworkPolicy
+>   egress allowlist audit + threat model.
+> - [#530](https://github.com/londonaicentre/FLIP/issues/530) — RBAC and
+>   PodSecurity hardening.
+>
+> The kernel-7 gRPC issue ([#527](https://github.com/londonaicentre/FLIP/issues/527)),
+> sidecar FL-client mode ([#528](https://github.com/londonaicentre/FLIP/issues/528)),
+> and XNAT/Orthanc Ingress ([#529](https://github.com/londonaicentre/FLIP/issues/529))
+> were triaged and closed as out-of-scope / won't-fix.
 
 ## Prerequisites
 

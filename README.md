@@ -287,7 +287,7 @@ No inbound firewall rules or NAT port-forwarding are needed on the trust host �
 
 ## Kubernetes Trust Deployment
 
-> **Early-access — not production-ready.** Three known issues prevent production use: `xnat-nginx` exits after entrypoint, `xnat-web` crash-loops on DB password mismatch, and `fl-client` fails to sustain the `stcp` NVFlare transport. These are tracked in issues [#527–#530](https://github.com/londonaicentre/FLIP/issues/527). Production deployments should wait until those are resolved.
+> **Early-access.** The three blockers from the original k3s validation (`xnat-nginx` exiting after entrypoint, `xnat-web` crash-looping on a DB password mismatch, and the `fl-client` not holding its NVFLARE connection) are fixed on this branch — `Trust_K8s` now connects to the stag hub and runs healthy. Remaining work before production is tracked in [#593](https://github.com/londonaicentre/FLIP/issues/593) (deployment robustness: automated kit provisioning, egress-config persistence, hub-side fl-api hardening), [#516](https://github.com/londonaicentre/FLIP/issues/516) (NetworkPolicy audit), and [#530](https://github.com/londonaicentre/FLIP/issues/530) (RBAC/PodSecurity). The kernel-7 gRPC (#527), sidecar FL-client (#528), and XNAT/Orthanc Ingress (#529) issues were triaged and closed as out-of-scope.
 
 A K8s trust uses the Helm chart in `deploy/providers/kubernetes/` and follows the same outbound-only architecture as Docker Compose trusts — no inbound ports are exposed from the cluster.
 
