@@ -50,6 +50,7 @@ import argparse
 import base64
 import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -141,6 +142,22 @@ def build_secret_entries(kit: dict[str, str]) -> dict[str, str]:
     return entries
 
 
+def resolve_egress_cidrs(hostname: str) -> list[str]:
+    """Resolve an FL-server hostname to sorted, unique IPv4 ``/32`` CIDRs.
+
+    The egress NetworkPolicy needs the FL-server NLB's current public IPs so the
+    fl-client's outbound gRPC is permitted. Resolving at sync time (rather than
+    hard-pinning) keeps the rule correct across NLB recreation. Returns an empty
+    list if the name can't be resolved (e.g. offline), so the caller can degrade
+    gracefully rather than crash the sync.
+    """
+    try:
+        infos = socket.getaddrinfo(hostname, None, family=socket.AF_INET)
+    except OSError:
+        return []
+    return sorted({f"{info[4][0]}/32" for info in infos})
+
+
 def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
     """Render the Helm values override (no secrets) from kit settings."""
     trust_name = kit.get("TRUST_NAME", code)
@@ -206,6 +223,33 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
                 f'{slot}"'
             )
     lines += fl_section
+
+    # FL-server egress (FLIP#593 pt.3): the default-deny egress NetworkPolicy
+    # drops the fl-client's outbound gRPC to the FL server unless its NLB IPs are
+    # allow-listed on FL_SERVER_PORT. Resolve the NLB IPs at sync time and emit
+    # the block here, so re-running sync-kit *regenerates* it with fresh IPs
+    # rather than silently dropping a hand-added block and severing FL training.
+    nlb_host = kit.get("NLB_SUBDOMAIN", "").strip()
+    fl_port = kit.get("FL_SERVER_PORT", "").strip()
+    if nlb_host and fl_port:
+        lines += ["", "networkPolicies:", "  allowedEgressCIDRsWithPorts:"]
+        cidrs = resolve_egress_cidrs(nlb_host)
+        if cidrs:
+            lines.append("    - cidrs:")
+            lines += [f"        - {cidr}" for cidr in cidrs]
+            lines.append(f"      port: {fl_port}")
+        else:
+            print(
+                f"  ⚠️  Could not resolve FL-server NLB host '{nlb_host}' — egress "
+                "CIDRs left as a TODO in the override. Fill them in before FL training.",
+                file=sys.stderr,
+            )
+            lines += [
+                f"    # TODO: could not resolve {nlb_host} at sync time.",
+                "    # - cidrs:",
+                "    #     - <fl-server-nlb-ip>/32",
+                f"    #   port: {fl_port}",
+            ]
     lines.append("")
     return "\n".join(lines)
 
