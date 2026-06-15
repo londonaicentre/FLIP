@@ -16,25 +16,35 @@ from flip_api.db.models.user_models import Permission, PermissionRef
 
 
 def seed_permissions(session: Session) -> list[str]:
-    """Seed permissions into the database.
+    """Seed permissions into the database, idempotently.
+
+    Idempotency is keyed on the permission ``id`` (the stable :class:`PermissionRef`),
+    not the name — matching ``seed_roles``: a permission may be renamed while keeping
+    its id, so a name-keyed check would miss the existing row and collide on the
+    primary key when re-seeding a live database. An existing permission has its
+    name/description refreshed in place so renames apply.
 
     Args:
-        session (Session): The SQLModel session used for reads and inserts.
+        session (Session): The SQLModel session used for reads and writes.
 
     Returns:
         list[str]: All permission names present after seeding.
     """
     for perm_data in PermissionRef:
-        # Check if permission exists
-        statement = select(Permission).where(Permission.permission_name == perm_data.name)
-        existing_permission = session.exec(statement).first()
-
-        if not existing_permission:
-            # Create new permission
-            new_permission = Permission(
-                id=perm_data.value, permission_name=perm_data.name, permission_description=perm_data.name
+        existing_permission = session.get(Permission, perm_data.value)
+        if existing_permission:
+            # Refresh in place so a rename is applied without re-inserting the
+            # already-present primary key.
+            existing_permission.permission_name = perm_data.name
+            existing_permission.permission_description = perm_data.name
+        else:
+            session.add(
+                Permission(
+                    id=perm_data.value,
+                    permission_name=perm_data.name,
+                    permission_description=perm_data.name,
+                )
             )
-            session.add(new_permission)
 
     session.commit()
 
