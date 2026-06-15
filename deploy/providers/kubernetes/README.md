@@ -99,16 +99,17 @@ the chart's Kubernetes Secret (`trust-release-flip-trust-secrets`), and writes a
 secret-free Helm override `k8s-trust-<CODE>.yaml` carrying the hub URL, FL
 backend, AWS region, the fl-client kit bucket, and the slot-aware NVFLARE kit
 path. Plaintext keys go straight into the Secret over kubectl's TLS channel —
-never to disk. (Run it after the namespace/Secret exist; if they don't yet,
-deploy once first, then re-run.)
+never to disk.
 
 ### 4. Install / upgrade the chart
 
 ```bash
-make -C deploy/providers/kubernetes up OVERRIDES_FILE=k8s-trust-<CODE>.yaml
+make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE> PROD=stag
 ```
 
-Equivalent raw Helm:
+This runs `helm upgrade --install` with the generated override and then
+`patch-kit-secrets` (injects the per-trust keys into the Helm-owned Secret and
+restarts the API deployments). Equivalent raw Helm for the install step:
 
 ```bash
 helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
@@ -117,6 +118,21 @@ helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
   -f deploy/providers/kubernetes/values-secrets.yaml \
   -f deploy/providers/kubernetes/k8s-trust-<CODE>.yaml
 ```
+
+> **⚠️ First-time / clean-install rough edges** (tracked in
+> [#595](https://github.com/londonaicentre/FLIP/issues/595)):
+>
+> - `sync-kit` (step 3) creates the Secret via `kubectl`, so a *fresh* `helm
+>   install` cannot adopt it (`missing key "app.kubernetes.io/managed-by"`). On a
+>   clean namespace, delete it first so Helm owns it:
+>   `kubectl delete secret trust-release-flip-trust-secrets -n flip-trust`.
+> - If the `xnat-init` post-install hook fails (see [#565](https://github.com/londonaicentre/FLIP/issues/565)),
+>   `helm` reports the release failed and `patch-kit-secrets` is skipped, leaving
+>   trust-api on the stale seed key (`401`). Re-run it manually:
+>   `make -C deploy/providers/kubernetes patch-kit-secrets KIT=<CODE> PROD=stag`.
+> - For FL training, `sync-kit` strips the egress NetworkPolicy block each run
+>   (see [#593](https://github.com/londonaicentre/FLIP/issues/593)); re-add it
+>   before relying on the fl-client → fl-server connection.
 
 ### 5. Verify the trust is polling
 

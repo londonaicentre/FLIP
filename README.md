@@ -326,15 +326,17 @@ The per-trust keys (`aes-key-base64`, `trust-api-key`, `trust-internal-service-k
 make -C deploy/providers/kubernetes sync-kit KIT=<CODE> PROD=stag
 ```
 
-This reads `trust/.env.<CODE>.stag`, patches the per-trust keys into the Kubernetes Secret (`trust-release-flip-trust-secrets`), and writes a secret-free Helm override file `deploy/providers/kubernetes/k8s-trust-<CODE>.yaml`. If the namespace or Secret don't exist yet, deploy once first (step 4), then re-run `sync-kit`.
+This reads `trust/.env.<CODE>.stag`, patches the per-trust keys into the Kubernetes Secret (`trust-release-flip-trust-secrets`), and writes a secret-free Helm override file `deploy/providers/kubernetes/k8s-trust-<CODE>.yaml`.
 
 ### 4. Deploy the chart
 
 ```bash
-make -C deploy/providers/kubernetes up OVERRIDES_FILE=k8s-trust-<CODE>.yaml
+make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE> PROD=stag
 ```
 
-Equivalent raw Helm:
+This runs `helm upgrade --install` with the generated override and then
+`patch-kit-secrets` (which injects the per-trust keys into the Helm-owned Secret
+and restarts the API deployments). Equivalent raw Helm for the install step:
 
 ```bash
 helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
@@ -343,6 +345,16 @@ helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
   -f deploy/providers/kubernetes/values-secrets.yaml \
   -f deploy/providers/kubernetes/k8s-trust-<CODE>.yaml
 ```
+
+> **⚠️ First-time / clean-install rough edges** (tracked in [#595](https://github.com/londonaicentre/FLIP/issues/595)):
+> - `sync-kit` (step 3) creates the Secret via `kubectl`, which a *fresh* `helm
+>   install` cannot adopt (`missing key "app.kubernetes.io/managed-by"`). On a
+>   clean namespace, delete it first so Helm owns it:
+>   `kubectl delete secret trust-release-flip-trust-secrets -n flip-trust`.
+> - If the `xnat-init` post-install hook fails, `helm` reports the release failed
+>   and `patch-kit-secrets` is skipped — trust-api then polls with the stale seed
+>   key and gets `401`. Re-run it manually:
+>   `make -C deploy/providers/kubernetes patch-kit-secrets KIT=<CODE> PROD=stag`.
 
 ### 5. Verify the trust is polling
 
