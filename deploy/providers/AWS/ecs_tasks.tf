@@ -143,6 +143,20 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
           awslogs-stream-prefix = "fl-api-net-1"
         }
       }
+
+      # Liveness probe (FLIP#593 pt.1): hit the session-independent /health/
+      # endpoint. If the app process is dead or wedged the check fails and ECS
+      # replaces the task — catching the wedged-but-alive case that removing
+      # uvicorn --reload (entrypoint) does not. The image is python-slim with no
+      # curl, but the venv python is on PATH. startPeriod covers the NVFLARE
+      # workspace/admin-session init at boot.
+      healthCheck = {
+        command     = ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:${local.api_container_port}/health/', timeout=4).getcode()==200 else 1)\""]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 120
+      }
     }
   ])
 

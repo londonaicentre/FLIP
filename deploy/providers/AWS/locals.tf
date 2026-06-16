@@ -131,6 +131,9 @@ locals {
       # never exposed as plain env in the task definition.
     }
     fl_api = {
+      # ENV gates the entrypoint's uvicorn --reload off in prod/stag so a failed
+      # startup is a dead container (replaced by ECS), not a zombie (FLIP#593 pt.1).
+      ENV                = "production"
       FL_ADMIN_DIRECTORY = var.FL_ADMIN_DIRECTORY
     }
   }
