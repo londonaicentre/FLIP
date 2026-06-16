@@ -369,13 +369,13 @@ A `401 "API key is missing"` means the API-key header is mismatched — check `T
 
 ### 6. (FL training only) Open the FL-server NLB
 
-Polling works without any firewall change. For FL training, the fl-client must reach the hub's FL server. Open the NLB security group to the K8s node's egress IP:
+Polling works without any firewall change. For FL training, the fl-client must reach the hub's FL server. Add the K8s node's egress IP to `K8S_TRUST_PUBLIC_IPS` in `.env.stag` (an HCL list, e.g. `K8S_TRUST_PUBLIC_IPS=["1.2.3.4"]`), then reconcile the NLB security group:
 
 ```bash
 make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-egress-ip> PROD=stag
 ```
 
-If the node's egress IP changes later, re-run this command with the new IP.
+This runs a normal `terraform apply` (no `-target`), so re-running with an already-listed IP is a no-op. If the node's egress IP changes, add the new one to the list and re-run.
 
 For full configuration reference, secrets management, troubleshooting, and known limitations see [deploy/providers/kubernetes/README.md](deploy/providers/kubernetes/README.md).
 
