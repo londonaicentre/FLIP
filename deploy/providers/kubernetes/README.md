@@ -156,6 +156,37 @@ reach the hub's FL server, so open the NLB to the node's public/egress IP:
 make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> PROD=stag
 ```
 
+### Provisioning the NVFLARE participant kit (new slot)
+
+For FL *training*, the fl-client pulls an NVFLARE participant kit from S3 (the
+`kitFromS3` path in the generated override). `provision_k8s_kit.py` generates
+that kit from the project CA so a new slot no longer has to be hand-assembled
+(#593 pt.2):
+
+```bash
+python3 deploy/providers/kubernetes/provision_k8s_kit.py \
+  --cert-json        <workspace>/net-1/state/cert.json \
+  --slot             Trust_K8s \
+  --net              net-1 \
+  --server-identity  fl-server-net-1 \
+  --template-startup <workspace>/net-1/services/Trust_1/startup \
+  --out              ./out/Trust_K8s \
+  --s3-uri           s3://<aicentre-bucket>/fl-flare-participant-kits/<date>/net-1/services/Trust_K8s
+```
+
+It produces a `startup/` with a **SAN-bearing** client cert (`DNS:<slot>` — the
+identity NVFLARE matches on), `fed_client.json`, `rootCA.pem`, the static
+launcher scripts (copied from `--template-startup`), and a **flat**
+`signature.json` (RSA-PSS/SHA256 over each file, signed by the project CA — no
+`format_version` wrapper, which would crash NVFLARE). The kit layout and signing
+requirements that used to be tribal knowledge are encoded in the script and its
+tests (`tests/test_provision_k8s_kit.py`).
+
+> **Validation status:** the generated cert SAN and `signature.json` are verified
+> against the project CA in unit tests and were confirmed against a real project
+> CA. End-to-end acceptance by a running NVFLARE fl-server has **not** yet been
+> re-validated on a live deployment — do that before relying on it for training.
+
 ## Configuration Reference
 
 ### Global Settings
