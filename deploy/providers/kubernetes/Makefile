@@ -81,7 +81,8 @@ down: undeploy ## Tear down the trust K8s release (alias for undeploy)
 
 deploy-trust-k8s: ## Deploy trust services to K8s; KIT= selects the per-trust override file and re-patches secrets
 ifdef KIT
-	@$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml
+	@$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || \
+		echo "⚠️  deploy returned non-zero (often a non-fatal post-install hook, e.g. xnat-init — see #565). Continuing to patch per-trust secrets so trust-api gets the correct key and does not poll with the stale seed key (#595)."
 	@$(MAKE) patch-kit-secrets KIT=$(KIT)
 else
 	@$(MAKE) deploy
@@ -170,6 +171,7 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		--env $(ENV) \
 		--namespace $(NAMESPACE) \
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
+		--release-name $(RELEASE_NAME) \
 		--output-dir $(CHART_DIR) \
 		--no-write-override
 	@for svc in trust-api data-access-api imaging-api imaging-import-worker; do \
@@ -186,4 +188,5 @@ sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writ
 		--env $(ENV) \
 		--namespace $(NAMESPACE) \
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
+		--release-name $(RELEASE_NAME) \
 		--output-dir $(CHART_DIR)
