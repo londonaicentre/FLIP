@@ -64,6 +64,23 @@ Usage (single folder):
         --orthanc-url http://localhost:8042 --orthanc-user admin --orthanc-password admin \
         --trust-label Trust_1
 
+Instead of passing connection flags individually, point ``--env-file`` at a trust
+kit / ``.env`` file (e.g. ``.env.prod``) and the loader reads the connection
+values from it:
+
+    uv run scripts/load_xray_omop_dataset.py \
+        --folder /data/.../balanced_synthetic_split/re_final_site1 \
+        --env-file trust/.env.GSTT.production --trust-label Trust_1
+
+The env keys consumed are ``OMOP_POSTGRES_USER`` / ``OMOP_POSTGRES_PASSWORD``
+(must be write-capable — not the read-only ``DATA_ACCESS_*`` role) /
+``OMOP_POSTGRES_DB`` / ``OMOP_DB_PORT`` for OMOP, and ``ORTHANC_USERNAME`` /
+``ORTHANC_PASSWORD`` / ``PACS_UI_PORT`` for Orthanc (the URL is built as
+``http://<--orthanc-host, default localhost>:<PACS_UI_PORT>``). Hosts are not
+read from the env file — its service names are Docker-internal — so they default
+to localhost; pass ``--db-host`` / ``--orthanc-host`` (or ``--orthanc-url``) for
+any other topology. Any explicit flag overrides the corresponding env-file value.
+
 Pass ``--folder`` more than once to load several folders into the same trust
 (e.g. a site's train split + its holdoff split). Use ``--skip-orthanc`` to
 populate OMOP only, ``--skip-omop`` to upload DICOMs only, ``--dry-run`` to
@@ -463,6 +480,61 @@ def load_orthanc(accs: list[Accession], base: str, auth: tuple[str, str], stats:
             stats.orthanc_failed.append(f"{acc.accession_id}: {exc}")
 
 
+# ── Environment-file support ──────────────────────────────────────────────────
+
+# Maps a resolved connection setting to the env-file key it is read from — the
+# names used by the trust kit files (trust/.env.<CODE>.<env>) and the hub .env.*
+# files. OMOP_POSTGRES_* is the write-capable account (the loader INSERTs); the
+# read-only DATA_ACCESS_* role cannot be used here.
+_ENV_KEY_MAP: dict[str, str] = {
+    "db_name": "OMOP_POSTGRES_DB",
+    "db_port": "OMOP_DB_PORT",
+    "db_user": "OMOP_POSTGRES_USER",
+    "db_password": "OMOP_POSTGRES_PASSWORD",
+    "orthanc_user": "ORTHANC_USERNAME",
+    "orthanc_password": "ORTHANC_PASSWORD",
+}
+
+# Built-in fallbacks when neither a flag nor the env file supplies a value.
+_DEFAULTS: dict[str, object] = {
+    "db_host": "localhost",
+    "db_port": 5432,
+    "db_name": "trustomopdb",
+    "db_user": "postgres",
+    "db_password": "",
+    "orthanc_host": "localhost",
+    "orthanc_user": "admin",
+    "orthanc_password": "admin",
+}
+
+
+def parse_env_file(path: Path) -> dict[str, str]:
+    """Parse a ``KEY=VALUE`` env file (``#`` comments, blanks, optional ``export`` and quotes)."""
+    env: dict[str, str] = {}
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        if line.startswith("export "):
+            line = line[len("export ") :]
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            env[key] = value
+    return env
+
+
+def resolve(name: str, cli_value, env: dict[str, str], cast=lambda x: x):
+    """Resolve a setting with precedence: explicit CLI flag > env file > built-in default."""
+    if cli_value is not None:
+        return cli_value
+    env_key = _ENV_KEY_MAP.get(name)
+    if env_key and env.get(env_key):
+        return cast(env[env_key])
+    return _DEFAULTS.get(name)
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 
@@ -470,14 +542,32 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--folder", action="append", required=True, type=Path, help="Site folder (repeatable).")
     p.add_argument("--trust-label", default="", help="Label for logging (e.g. Trust_1).")
-    p.add_argument("--db-host", default="localhost")
-    p.add_argument("--db-port", type=int, default=5432)
-    p.add_argument("--db-name", default="trustomopdb")
-    p.add_argument("--db-user", default="postgres")
-    p.add_argument("--db-password", default="")
-    p.add_argument("--orthanc-url", default="", help="Orthanc base URL; required unless --skip-orthanc.")
-    p.add_argument("--orthanc-user", default="admin")
-    p.add_argument("--orthanc-password", default="admin")
+    p.add_argument(
+        "--env-file",
+        type=Path,
+        default=None,
+        help="Read connection values from a trust kit / .env file (OMOP_POSTGRES_USER, "
+        "OMOP_POSTGRES_PASSWORD, OMOP_POSTGRES_DB, OMOP_DB_PORT, ORTHANC_USERNAME, "
+        "ORTHANC_PASSWORD, PACS_UI_PORT). Explicit flags below override env-file values.",
+    )
+    # Connection flags default to None so an unset flag falls back to the env file
+    # (if any), then to the built-in default in _DEFAULTS. Hosts are not read from
+    # the env file (its service names are Docker-internal); they default to
+    # localhost — pass the flag for any other topology.
+    p.add_argument("--db-host", default=None, help="OMOP host (default: localhost).")
+    p.add_argument("--db-port", type=int, default=None, help="OMOP port (env: OMOP_DB_PORT; default 5432).")
+    p.add_argument("--db-name", default=None, help="OMOP database (env: OMOP_POSTGRES_DB).")
+    p.add_argument("--db-user", default=None, help="OMOP user (env: OMOP_POSTGRES_USER; must be write-capable).")
+    p.add_argument("--db-password", default=None, help="OMOP password (env: OMOP_POSTGRES_PASSWORD).")
+    p.add_argument(
+        "--orthanc-url",
+        default=None,
+        help="Orthanc base URL. If omitted, built from --orthanc-host + the env file's "
+        "PACS_UI_PORT. Required (here or via env file) unless --skip-orthanc.",
+    )
+    p.add_argument("--orthanc-host", default=None, help="Host for the env-built Orthanc URL (default: localhost).")
+    p.add_argument("--orthanc-user", default=None, help="Orthanc user (env: ORTHANC_USERNAME; default admin).")
+    p.add_argument("--orthanc-password", default=None, help="Orthanc password (env: ORTHANC_PASSWORD; default admin).")
     p.add_argument("--skip-omop", action="store_true", help="Do not touch OMOP.")
     p.add_argument("--skip-orthanc", action="store_true", help="Do not touch Orthanc.")
     p.add_argument("--limit", type=int, default=None, help="Only first N accessions per folder (smoke test).")
@@ -487,8 +577,32 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
-    if not args.skip_orthanc and not args.orthanc_url:
-        print("ERROR: --orthanc-url is required unless --skip-orthanc is set.", file=sys.stderr)
+
+    if args.env_file is not None and not args.env_file.exists():
+        print(f"ERROR: --env-file not found: {args.env_file}", file=sys.stderr)
+        return 2
+    env = parse_env_file(args.env_file) if args.env_file else {}
+
+    # Effective connection settings: explicit flag > env file > built-in default.
+    db_host = resolve("db_host", args.db_host, env)
+    db_port = resolve("db_port", args.db_port, env, int)
+    db_name = resolve("db_name", args.db_name, env)
+    db_user = resolve("db_user", args.db_user, env)
+    db_password = resolve("db_password", args.db_password, env)
+    orthanc_user = resolve("orthanc_user", args.orthanc_user, env)
+    orthanc_password = resolve("orthanc_password", args.orthanc_password, env)
+    # Orthanc URL: explicit flag wins; otherwise build from PACS_UI_PORT in the env file.
+    orthanc_url = args.orthanc_url
+    if not orthanc_url and env.get("PACS_UI_PORT"):
+        orthanc_host = resolve("orthanc_host", args.orthanc_host, env)
+        orthanc_url = f"http://{orthanc_host}:{env['PACS_UI_PORT']}"
+
+    if not args.skip_orthanc and not orthanc_url:
+        print(
+            "ERROR: an Orthanc URL is required unless --skip-orthanc is set "
+            "(pass --orthanc-url, or supply PACS_UI_PORT via --env-file).",
+            file=sys.stderr,
+        )
         return 2
 
     folders: list[Path] = []
@@ -507,11 +621,11 @@ def main(argv: list[str]) -> int:
     try:
         if not args.skip_omop:
             conn = psycopg2.connect(
-                host=args.db_host,
-                port=args.db_port,
-                dbname=args.db_name,
-                user=args.db_user,
-                password=args.db_password,
+                host=db_host,
+                port=db_port,
+                dbname=db_name,
+                user=db_user,
+                password=db_password,
             )
 
         for folder in folders:
@@ -530,8 +644,8 @@ def main(argv: list[str]) -> int:
             if not args.skip_orthanc:
                 load_orthanc(
                     accs,
-                    args.orthanc_url,
-                    (args.orthanc_user, args.orthanc_password),
+                    orthanc_url,
+                    (orthanc_user, orthanc_password),
                     stats,
                     args.dry_run,
                 )
