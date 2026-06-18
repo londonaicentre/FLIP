@@ -380,6 +380,10 @@ deploy/providers/AWS/dev/.terraform.lock.hcl
 
 .claude/scheduled_tasks.lock
 
+# Local agent / tooling state (never commit)
+.claude/
+.ralph/
+
 design_handoff*
 CONTEXT.md
 
