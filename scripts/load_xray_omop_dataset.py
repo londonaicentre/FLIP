@@ -93,6 +93,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import io
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -453,11 +454,28 @@ def orthanc_has_accession(base: str, auth: tuple[str, str], accession_id: str) -
 
 
 def upload_dicom(base: str, auth: tuple[str, str], acc: Accession) -> None:
-    """Upload the DICOM to Orthanc unchanged (its AccessionNumber is already the OMOP key)."""
+    """Upload the DICOM to Orthanc, ensuring XNAT-required study tags are present.
+
+    imaging-api's ``Study`` model (the XNAT DQR response) marks ``StudyDescription``
+    and ``ReferringPhysicianName`` as required, so a study missing them fails
+    validation and is silently dropped on import ("No studies found to import").
+    Synthetic/anonymised DICOMs routinely omit these (Type 2/3 fields), so fill a
+    sensible default when absent — the AccessionNumber is already the OMOP key.
+    """
+    ds = pydicom.dcmread(str(acc.dcm_path))
+    if not str(getattr(ds, "StudyDescription", "") or "").strip():
+        ds.StudyDescription = "Chest X-ray"
+    if not str(getattr(ds, "ReferringPhysicianName", "") or "").strip():
+        ds.ReferringPhysicianName = "Synthetic^Referring"
+    # imaging-api's Patient model requires a non-empty sex; align with the OMOP gender.
+    if not str(getattr(ds, "PatientSex", "") or "").strip():
+        ds.PatientSex = _deterministic_demographics(acc.accession_id)[1]
+    buf = io.BytesIO()
+    ds.save_as(buf)
     resp = requests.post(
         f"{base}/instances",
         auth=auth,
-        data=acc.dcm_path.read_bytes(),
+        data=buf.getvalue(),
         headers={"Content-Type": "application/dicom"},
         timeout=120,
     )
