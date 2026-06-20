@@ -463,11 +463,31 @@ The general principle: anywhere a non-root container bind-mounts a host path, pr
 
 ### 3.7 Single net permanently starved of new training jobs
 
-**Symptom**: One FL net never picks up new training jobs even though scheduler logs show jobs being queued. Other nets are fine.
+**Symptom**: A FL net never picks up new training jobs. `flip-api` logs `No available nets, will check again soon... 🔃` every `run_jobs` cycle (every 60s), indefinitely. Newly-initiated models sit in `INITIATED` forever and show no progress in the UI; `fl-api-net-1` reports the trusts as `no_jobs` (nothing actually running).
 
-**Root cause**: `FLScheduler` rows transition to `BUSY` while a job runs. If `prepare_and_start_training` raised mid-flight in a previous cycle, the row was left `BUSY` with no live job — `run_jobs_core` then refused to schedule new work for that net forever.
+**Root cause**: `FLScheduler` rows transition to `BUSY` (with `job_id` set) while a job is picked up. Several paths could leave a row `BUSY` without ever freeing it:
 
-**Fix** (already in place on `develop`): `_recover_stale_busy_schedulers()` runs at the top of every `run_jobs_core` cycle and resets `BUSY` rows whose associated job no longer exists. No manual intervention needed; just confirm the next cycle clears the row.
+- `abort_model_training` → `remove_job_from_queue` **soft-deletes** the job (`status=DELETED`, the row stays in `fl_job`) but did not free the scheduler;
+- `prepare_and_start_training` failing (e.g. `Clients unavailable: Trust_1`) soft-deleted the job and marked the model `ERROR`, but did not free the scheduler;
+- a crash mid-pickup.
+
+`_recover_stale_busy_schedulers()` is the backstop, but the original query keyed on `job_id NOT IN (SELECT id FROM fl_job)` — which **never matches a soft-deleted job** (its row is still present), so a single net was stranded `BUSY` permanently. With one net, this starves all training.
+
+**Fix** (already in place on `develop`): recovery now resets any `BUSY` row that does not point at a live `IN_PROGRESS` job (covers NULL `job_id`, hard-deleted, `DELETED`, and `COMPLETED`), and both leak sites free the scheduler directly. No manual intervention needed; the next cycle clears the row.
+
+**Hot-fix** (existing stuck net, no redeploy) — free any `BUSY` scheduler whose job is in a terminal state. ECS exec must be enabled on the `flip-api` service (the task role also needs `ssmmessages:*`):
+
+```bash
+aws ecs execute-command --cluster flip-cluster --task <task-id> --container flip-api --interactive \
+  --command "/bin/sh -c 'python3 - <<PY
+from sqlmodel import Session
+from sqlalchemy import text
+from flip_api.db.database import engine
+with Session(engine) as s:
+    s.execute(text(\"UPDATE fl_scheduler SET status=:a, job_id=NULL WHERE status=:b AND (job_id IS NULL OR job_id IN (SELECT id FROM fl_job WHERE status IN (:d,:c)))\"), {\"a\":\"AVAILABLE\",\"b\":\"BUSY\",\"d\":\"DELETED\",\"c\":\"COMPLETED\"})
+    s.commit()
+PY'"
+```
 
 ---
 
