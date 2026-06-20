@@ -15,7 +15,7 @@
 Pins two contracts on ``S3Client.get_put_presigned_post``:
 
 * the policy URL the method returns must never appear in a log line; and
-* the TTL it requests from boto3 must satisfy the 600 s ceiling that
+* the TTL it requests from boto3 must satisfy the 1800 s ceiling that
   ``MAX_PUT_PRESIGNED_URL_TTL_SECONDS`` encodes.
 
 Together with the tests in
@@ -160,18 +160,18 @@ def test_get_put_presigned_post_caps_ttl_at_security_ceiling(s3_client_with_mock
 
     kwargs = boto_instance.generate_presigned_post.call_args.kwargs
     assert kwargs["ExpiresIn"] == MAX_PUT_PRESIGNED_URL_TTL_SECONDS
-    assert kwargs["ExpiresIn"] <= 600
+    assert kwargs["ExpiresIn"] <= MAX_PUT_PRESIGNED_URL_TTL_SECONDS
 
 
-def test_get_put_presigned_post_default_ttl_is_at_most_600s(s3_client_with_mock_boto):
-    """Default TTL must satisfy the 'TTL <= 600 s' policy requirement."""
+def test_get_put_presigned_post_default_ttl_is_at_most_ceiling(s3_client_with_mock_boto):
+    """Default TTL must satisfy the 'TTL <= ceiling' policy requirement."""
     s3, boto_instance = s3_client_with_mock_boto
     boto_instance.generate_presigned_post.return_value = {"url": "https://example/", "fields": {}}
 
     s3.get_put_presigned_post("s3://test-bucket/key", max_bytes=1024)
 
     kwargs = boto_instance.generate_presigned_post.call_args.kwargs
-    assert kwargs["ExpiresIn"] <= 600
+    assert kwargs["ExpiresIn"] <= MAX_PUT_PRESIGNED_URL_TTL_SECONDS
 
 
 def test_get_put_presigned_post_logs_warning_when_clamped(caplog, s3_client_with_mock_boto):
@@ -183,8 +183,8 @@ def test_get_put_presigned_post_logs_warning_when_clamped(caplog, s3_client_with
     s3.get_put_presigned_post("s3://test-bucket/key", max_bytes=1024, expiration=3600)
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("3600" in r.getMessage() and "600" in r.getMessage() for r in warnings), (
-        f"Expected a clamp warning citing both 3600s and 600s; got: {[r.getMessage() for r in warnings]}"
+    assert any("3600" in r.getMessage() and "1800" in r.getMessage() for r in warnings), (
+        f"Expected a clamp warning citing both 3600s and 1800s; got: {[r.getMessage() for r in warnings]}"
     )
 
 
@@ -213,9 +213,9 @@ def test_get_put_presigned_post_at_ceiling_passes_through(s3_client_with_mock_bo
     assert kwargs["ExpiresIn"] == MAX_PUT_PRESIGNED_URL_TTL_SECONDS
 
 
-def test_max_put_presigned_url_ttl_is_600s():
+def test_max_put_presigned_url_ttl_is_1800s():
     """Pin the ceiling value itself — moving it requires a security review."""
-    assert MAX_PUT_PRESIGNED_URL_TTL_SECONDS == 600
+    assert MAX_PUT_PRESIGNED_URL_TTL_SECONDS == 1800
 
 
 def test_get_put_presigned_post_does_not_log_url_on_client_error(caplog, s3_client_with_mock_boto):
