@@ -295,7 +295,11 @@ xnat-configure:
 	done
 	CONTAINER=$$(docker ps --filter "name=$(XNAT_PROJECT)_xnat-web" -q); \
 	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-xnat-$(XNAT_PROJECT).log" && bash configure-xnat.sh 2>&1 | tee "$$LOG_FILE"'; \
-	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'
+	docker exec $$CONTAINER bash -c 'set -o pipefail; cd /data/xnat/config && LOG_FILE="configure-dcm2niix-$(XNAT_PROJECT).log" && bash configure-dcm2niix.sh 2>&1 | tee "$$LOG_FILE"'; \
+	if docker exec $$CONTAINER grep -q DX_ELEMENT_SECURITY_REGISTERED /data/xnat/config/configure-xnat-$(XNAT_PROJECT).log 2>/dev/null; then \
+		echo "🔄 dxSessionData was registered — forcing $(XNAT_PROJECT)_xnat-web reload so the new data type loads into element security..."; \
+		docker service update --force $(XNAT_PROJECT)_xnat-web >/dev/null && echo "✅ XNAT reload triggered (loads on boot)."; \
+	fi
 
 create-xnat-network:
 	$(require_kit)
