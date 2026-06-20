@@ -112,8 +112,15 @@ def remove_job_from_queue(model_id: UUID, session: Session) -> None:
             job.status = JobStatus.DELETED
             job.completed = datetime.utcnow()
 
+            # Free any net this job was holding. Soft-deleting the job alone leaves the
+            # scheduler BUSY pointing at a now-DELETED job, permanently starving the net.
+            scheduler = session.exec(select(FLScheduler).where(FLScheduler.job_id == job.id)).first()
+            if scheduler:
+                scheduler.status = NetStatus.AVAILABLE
+                scheduler.job_id = None
+
         session.commit()
-        logger.info("Set job(s) as deleted")
+        logger.info("Set job(s) as deleted and freed associated net(s)")
 
     except SQLAlchemyError as e:
         session.rollback()
@@ -505,6 +512,13 @@ def prepare_and_start_training(model_id: UUID, fl_job_id: UUID, trust_ids: list[
         error_message = str(e)
         logger.info(f"Error message: {error_message}")
         remove_job(fl_job_id, session)
+        # Free the net we were holding. The scheduler was marked BUSY (and its job_id set)
+        # before we got here; without this the BUSY row is left pointing at a now-deleted
+        # job and run_jobs can never schedule new work on this net again (the stale-BUSY
+        # recovery is the backstop, but free it immediately rather than wait a cycle).
+        scheduler = session.exec(select(FLScheduler).where(FLScheduler.job_id == fl_job_id)).first()
+        if scheduler and scheduler.id:
+            revert_scheduler_pickup(scheduler.id, session)
         add_log(model_id, error_message, session, success=False)
         update_model_status(model_id, ModelStatus.ERROR, session)
 

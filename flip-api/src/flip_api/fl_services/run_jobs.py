@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from flip_api.db.database import engine
-from flip_api.domain.schemas.status import NetStatus
+from flip_api.domain.schemas.status import JobStatus, NetStatus
 from flip_api.fl_services.services.fl_scheduler_service import (
     check_for_available_net,
     check_for_queued_jobs,
@@ -25,15 +25,28 @@ from flip_api.utils.logger import logger
 
 
 def _recover_stale_busy_schedulers(db: Session) -> int:
-    """Reset all FLScheduler rows stuck in BUSY to AVAILABLE.
+    """Reset all FLScheduler rows stuck in BUSY without a live job to AVAILABLE.
 
     Uses a single atomic UPDATE statement to avoid read-side races with
     check_for_queued_jobs (which uses with_for_update) and eliminates the
     N+1 query pattern of the previous row-by-row approach.
 
-    BUSY schedulers with no associated job, or whose job has been deleted,
-    are unrecoverable unless cleaned up here. This prevents a single crash
-    from permanently starving a net of new training jobs.
+    A scheduler is only legitimately BUSY while its assigned job is actively
+    running (``IN_PROGRESS``). Any BUSY scheduler that does not point at an
+    IN_PROGRESS job is stranded and must be recovered here, otherwise the net
+    is permanently starved of new training jobs. This covers every way a net
+    can leak:
+
+    - ``job_id`` is NULL (scheduler marked BUSY before a job was assigned, then
+      the run crashed).
+    - The job row was hard-deleted.
+    - The job was **soft-deleted** (``status = DELETED``) — e.g. a user aborted
+      training (`abort_model_training`) or `prepare_and_start_training` failed.
+      The row still exists in ``fl_job``, so the previous ``NOT IN (SELECT id
+      FROM fl_job)`` check never matched it and the net stayed BUSY forever.
+    - The job already ``COMPLETED`` but the scheduler was never freed.
+
+    Only ``IN_PROGRESS`` jobs keep a scheduler BUSY; everything else is reset.
     """
     # Raw column names: SQLModel `alias=` on the FLScheduler model only affects
     # Pydantic API serialisation, not the SQLAlchemy column name — the actual
@@ -43,12 +56,17 @@ def _recover_stale_busy_schedulers(db: Session) -> int:
         UPDATE fl_scheduler
         SET status = :available, job_id = NULL
         WHERE status = :busy
-          AND (job_id IS NULL OR job_id NOT IN (SELECT id FROM fl_job))
+          AND (job_id IS NULL
+               OR job_id NOT IN (SELECT id FROM fl_job WHERE status = :in_progress))
         """
     )
     result = db.execute(
         stmt,
-        {"available": NetStatus.AVAILABLE.value, "busy": NetStatus.BUSY.value},
+        {
+            "available": NetStatus.AVAILABLE.value,
+            "busy": NetStatus.BUSY.value,
+            "in_progress": JobStatus.IN_PROGRESS.value,
+        },
     )
     recovered = result.rowcount  # type: ignore[attr-defined]
     if recovered:
