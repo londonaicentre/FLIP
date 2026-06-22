@@ -13,6 +13,7 @@ medical imaging AI models across healthcare institutions while preserving data p
 FLIP/
 ├── flip-api/           # Central Hub API (Python/FastAPI)
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
+├── flip-utils/         # Shared Python utility package (the `flip` library)
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
 │   ├── data-access-api/# OMOP database queries (Python/FastAPI)
@@ -20,6 +21,8 @@ FLIP/
 │   ├── omop-db/        # Mocked OMOP database (PostgreSQL)
 │   ├── orthanc/        # Mocked PACS server
 │   └── xnat/           # Mocked XNAT neuroimaging service
+├── fl_services/        # FL infrastructure containers (fl-api-base, fl-base, fl-client, fl-server)
+├── fl-apps/            # FL application templates and tutorials (NVFLARE + Flower)
 ├── deploy/             # Docker Compose files (dev/prod, flower/nvflare)
 │   └── providers/
 │       ├── AWS/        # Terraform/OpenTofu IaC + Ansible for AWS deployment
