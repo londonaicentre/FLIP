@@ -66,7 +66,6 @@ const NAMED_ROLE_TONES: Record<string, RoleToneName> = {
     "admin": "magenta",
     "administrator": "magenta",
     "researcher": "steel",
-    "observer": "gray",
     "viewer": "gray",
     "manager": "purple",
     "project manager": "purple",

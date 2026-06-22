@@ -14,7 +14,8 @@
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
 		check-aws-access generate-internal-service-key \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
-		sync-trust-kit sync-trust-kits lock
+		sync-trust-kit sync-trust-kits lock \
+		nvflare-provision nvflare-provision-2-nets nvflare-provision-additional-client
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -236,17 +237,22 @@ restart: down up
 # NOTE: Uses $(UP_PULL_FLAGS) — pulls fresh FL images only when DOCKER_FL_REGISTRY is set
 #       (same logic as `up`); an empty registry keeps locally built flip-fl-base-flower images.
 # NOTE: Client keys must be re-registered before starting clients (Flower only)
+# NOTE: flip-api is recreated first so its startup seeding re-applies FL_BACKEND onto the
+#       FLNets rows — the seeded backend is canonical, so this is how a framework switch
+#       (make restart-fl FL_BACKEND=...) takes effect. --no-deps leaves flip-db untouched.
 restart-fl:
 	@echo "🔄 Restarting FL services ($(FL_BACKEND))..."
 	@echo "🔄 Step 1: Stopping and removing old FL clients..."
 	$(MAKE) -C trust down-fl-clients
-	@echo "🔄 Step 2: Restarting FL APIs and servers..."
+	@echo "🔄 Step 2: Recreating flip-api to re-seed FLNets.fl_backend=$(FL_BACKEND)..."
+	${DOCKER_COMMAND} up -d --force-recreate --no-deps $(UP_PULL_FLAGS) flip-api
+	@echo "🔄 Step 3: Restarting FL APIs and servers..."
 	${DOCKER_COMMAND} up -d --force-recreate --no-deps $(UP_PULL_FLAGS) fl-api-net-1 fl-api-net-2 fl-server-net-1 fl-server-net-2
 	@if [ "$(FL_BACKEND)" = "flower" ]; then \
-		echo "🔄 Step 3: Registering new client keys with FL servers (Flower only)..."; \
+		echo "🔄 Step 4: Registering new client keys with FL servers (Flower only)..."; \
 		${DOCKER_COMMAND} up --force-recreate $(UP_PULL_FLAGS) register-supernode-keys-net-1 register-supernode-keys-net-2; \
 	fi
-	@echo "🔄 Step 4: Starting new FL clients..."
+	@echo "🔄 Step 5: Starting new FL clients..."
 	$(MAKE) -C trust up-fl-clients
 	@echo "✅ FL services restarted successfully!"
 
@@ -372,10 +378,26 @@ lock:
 	done
 	@echo "All uv.lock files regenerated."
 
+# NVFLARE provisioning targets — delegate to deploy/scripts/.
+# The project YML files live in deploy/providers/.
+NET_NUMBER ?= 1
+
+nvflare-provision:
+	deploy/scripts/provision-network.sh deploy/providers/net-${NET_NUMBER}_project.yml $(NET_NUMBER)
+
+nvflare-provision-2-nets:
+	NET_NUMBER=1 $(MAKE) nvflare-provision
+	NET_NUMBER=2 $(MAKE) nvflare-provision
+
+nvflare-provision-additional-client:
+	deploy/scripts/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT)
+
 # Drives a fresh project end-to-end against a running `make up` stack:
 # create → approve → upload model → wait for image pull → start training.
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND (flower or
-# nvflare); both sit in sibling repos (flip-fl-base / flip-fl-base-flower).
+# nvflare). The NVFLARE defaults still target ../../flip-fl-base/tutorials/...
+# (legacy sibling) — the migrated in-repo equivalents now live under
+# fl-apps/tutorials/ and can be passed via MODEL_FILES_DIR= / QUERY_FILE=.
 # Useful for sanity-checking PRs without manually clicking through the UI.
 # See flip-api/Makefile for overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
 e2e_smoke:

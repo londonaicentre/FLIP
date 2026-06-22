@@ -421,8 +421,8 @@ class TestCanContributeToProject:
 
         assert result is False
 
-    def test_observer_member_denied(self):
-        """Observer (no CAN_CREATE_PROJECTS) on a ProjectUserAccess row is still denied."""
+    def test_viewer_member_denied(self):
+        """Viewer (no CAN_CREATE_PROJECTS) on a ProjectUserAccess row is still denied."""
         user_id = uuid4()
         project_id = uuid4()
         db = MagicMock(spec=Session)
@@ -430,14 +430,14 @@ class TestCanContributeToProject:
         mock_project.owner_id = uuid4()
         db.exec.return_value.first.return_value = mock_project
 
-        # Both permission checks return False (Observer holds neither permission)
+        # Both permission checks return False (Viewer holds neither permission)
         with patch(PATCH_HAS_PERMISSIONS, return_value=False):
             result = can_contribute_to_project(user_id, project_id, db)
 
         assert result is False
 
-    def test_observer_member_does_not_consult_membership(self):
-        """Observer is rejected before the membership query runs.
+    def test_viewer_member_does_not_consult_membership(self):
+        """Viewer is rejected before the membership query runs.
 
         Observable effect: only the project lookup hits the DB; no membership query
         is executed. Asserting on db.exec.call_count keeps this resilient to internal
@@ -561,8 +561,8 @@ class TestCanModifyModel:
         # Contribution check is never needed if owner doesn't match.
         mock_contrib.assert_not_called()
 
-    def test_observer_owning_model_still_denied(self):
-        """Defence in depth: even if Model.owner_id matches, an Observer (not a contributor)
+    def test_viewer_owning_model_still_denied(self):
+        """Defence in depth: even if Model.owner_id matches, a Viewer (not a contributor)
         is rejected."""
         user_id = uuid4()
         model_id = uuid4()

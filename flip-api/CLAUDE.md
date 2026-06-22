@@ -64,5 +64,5 @@ make migration_current         # alembic current
 - asyncpg connections via async context managers from `db/database.py`.
 - DB schema is owned by **Alembic** (`db/migrations/`), not `SQLModel.metadata.create_all`. The entrypoint runs `alembic upgrade head` before seeding at boot (fail-fast). Every schema-affecting change to `db/models/*.py` must ship a revision — the integration drift guard (`tests/integration/test_migrations.py`) enforces it. Native-PG-enum gotcha: `ALTER TYPE … ADD VALUE` needs `op.get_context().autocommit_block()`, and downgrades dropping an enum-typed table must `DROP TYPE`.
 - pytest + factory_boy for test data. Fixtures in `conftest.py`.
-- Ruff config: line-length 120, select I/F/E/W/PT/UP* rules.
+- Ruff config: line-length 120, select I/F/E/W/PT + UP006/UP007/UP035/UP042/UP045 (`UP042` enforces `StrEnum` over the legacy `(str, Enum)` pattern).
 - All tests in `tests/unit/` and `tests/integration/`.

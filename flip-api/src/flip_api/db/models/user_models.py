@@ -58,7 +58,7 @@ class RoleRef(Enum):
 
     ADMIN = UUID("64d3145b-034c-4328-b637-8eb54313b7c5")
     RESEARCHER = UUID("10b64ed0-bc90-4c01-9cc3-933c704905c1")
-    OBSERVER = UUID("cdee79c9-a5e1-4b9e-a315-1ec2f3d29efe")
+    VIEWER = UUID("cdee79c9-a5e1-4b9e-a315-1ec2f3d29efe")
 
 
 class UserRole(SQLModel, table=True):

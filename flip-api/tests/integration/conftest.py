@@ -271,7 +271,7 @@ _TEST_BUCKET_SETTINGS: dict[str, tuple[str, str]] = {
     "UPLOADED_MODEL_FILES_BUCKET": ("flip-test-assets", "model_files/uploaded"),
     "SCANNED_MODEL_FILES_BUCKET": ("flip-test-assets", "model_files/scanned"),
     "UPLOADED_FEDERATED_DATA_BUCKET": ("flip-test-assets", "uploaded_federated_data"),
-    "FL_APP_BASE_BUCKET": ("flip-test-assets", "base-application/nvflare"),
+    "FL_APP_BASE_BUCKET": ("flip-test-assets", "base-application"),
     "FL_APP_DESTINATION_BUCKET": ("flip-test-assets", "app_destination_bucket"),
 }
 

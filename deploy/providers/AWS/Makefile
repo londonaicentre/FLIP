@@ -337,7 +337,7 @@ ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed tr
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
-		-e pgdata_archive=trust1_pgdata_20260106.tar.gz
+		-e pgdata_archive=trust1_pgdata_20260129.tar
 
 .PHONY: deploy-centralhub
 deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with environment from Terraform

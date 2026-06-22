@@ -21,19 +21,25 @@ set -euo pipefail
 # and extracts them into the local storage dirs.
 # NOTE this is only intended for use in development / test environments where
 # real DICOM data is not available.
+#
+# Set TRUST=1 or TRUST=2 to update only a single trust; defaults to "all" (both trusts).
 
 # These paths are relative to the location of this script
-REPO_DATA_VERSION_FILE=".data_version"                          # committed in repo
-VOLUMES_DIR="./volumes"                                         # local dir for downloaded archives
-LOCAL_DATA_VERSION_FILE="${VOLUMES_DIR}/.local_data_version"    # tracks local version
+REPO_DATA_VERSION_FILE=".data_version"  # committed in repo
+VOLUMES_DIR="./volumes"                  # local dir for downloaded archives
+# Pre-per-trust marker. Older versions of this script tracked a single shared
+# version here; both trusts now use per-trust markers (.local_data_version_trust<N>).
+LEGACY_DATA_VERSION_FILE="${VOLUMES_DIR}/.local_data_version"
 
-# Per-trust storage dirs fall back to repo-root-relative defaults when the
-# caller (trust/orthanc/Makefile) hasn't sourced them from the kit files
-# (the kit-file refactor moved per-trust paths to unsuffixed names like
-# ORTHANC_STORAGE_DIR, so this script — shared across both trusts — keeps
-# its own legacy-suffixed defaults to stay self-contained).
-: "${ORTHANC_STORAGE_DIR_TRUST_1:=orthanc-storage-trust1}"
-: "${ORTHANC_STORAGE_DIR_TRUST_2:=orthanc-storage-trust2}"
+# Per-trust storage dirs fall back to trust/-relative defaults when the caller
+# (trust/orthanc/Makefile) hasn't sourced them from the kit files — the kit-file
+# refactor on develop moved per-trust paths to the unsuffixed ORTHANC_STORAGE_DIR
+# (e.g. ./orthanc/orthanc-storage-trust1 in trust/.env.<CODE>), so this script —
+# shared across both trusts — keeps its own legacy-suffixed defaults to stay
+# self-contained. Paths are resolved against trust/ by resolve_storage_dir below,
+# so the defaults carry the orthanc/ prefix to match the compose mount.
+: "${ORTHANC_STORAGE_DIR_TRUST_1:=orthanc/orthanc-storage-trust1}"
+: "${ORTHANC_STORAGE_DIR_TRUST_2:=orthanc/orthanc-storage-trust2}"
 
 # Mock data is fetched anonymously over HTTPS from a public Hugging Face dataset
 # (no AWS CLI or credentials required). The dataset is laid out per trust:
@@ -43,78 +49,107 @@ HF_TRUST_DATA_REPO="${HF_TRUST_DATA_REPO:-aicentreflip/trust-data}"
 HF_TRUST_DATA_REVISION="${HF_TRUST_DATA_REVISION:-main}"
 HF_BASE_URL="https://huggingface.co/datasets/${HF_TRUST_DATA_REPO}/resolve/${HF_TRUST_DATA_REVISION}"
 
+# TRUST controls which trust(s) to update: "1", "2", or "all" (default).
+# Validate before env-var checks so TRUST=1 never requires TRUST_2's var.
+TRUST="${TRUST:-all}"
+if [[ "${TRUST}" != "1" && "${TRUST}" != "2" && "${TRUST}" != "all" ]]; then
+  echo "❌ Invalid TRUST value '${TRUST}'. Must be 1, 2, or all." >&2
+  exit 1
+fi
+
+# Resolve ORTHANC_STORAGE_DIR_TRUST_<N> against trust/ — the base Docker Compose
+# uses (--project-directory ., invoked from trust/) — independent of this script's
+# CWD (trust/orthanc).  Absolute paths are honored as-is.
+TRUST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+resolve_storage_dir() {
+  local p="$1"
+  [[ "$p" = /* ]] && printf '%s\n' "$p" || printf '%s/%s\n' "${TRUST_DIR}" "$p"
+}
+
 # --- read desired data version from repo file ---
 DATA_VERSION="$(tr -d ' \n\r\t' < "${REPO_DATA_VERSION_FILE}")"
 
 mkdir -p "${VOLUMES_DIR}"
 
-# Local version of Orthanc data
-LOCAL_VERSION=""
-if [[ -f "${LOCAL_DATA_VERSION_FILE}" ]]; then
-  LOCAL_VERSION="$(tr -d ' \n\r\t' < "${LOCAL_DATA_VERSION_FILE}" || true)"
-fi
-
-# If local version matches desired version, we're done - no need to download/extract again
-if [[ "${LOCAL_VERSION}" == "${DATA_VERSION}" ]]; then
-  echo "✅ Orthanc data already up to date at version ${DATA_VERSION}."
-  exit 0
-fi
-
-# If we reach here, we need to update the local Orthanc data
-if [[ -z "${LOCAL_VERSION}" ]]; then
-  echo "❓ Local Orthanc data version unknown. Will update to version ${DATA_VERSION} just to be safe."
-else
-  echo "🔄 Updating Orthanc data: ${LOCAL_VERSION} -> ${DATA_VERSION}"
-fi
-
 # Archives are gzip-compressed tarballs named .tar on Hugging Face (the .gz is
 # dropped from the name, not the content), grouped under per-trust dirs.
 # tar auto-detects the gzip on extraction, so -xf (no -z) handles them.
-TRUST1_ARCHIVE="trust1_orthanc_data_${DATA_VERSION}.tar"
-TRUST2_ARCHIVE="trust2_orthanc_data_${DATA_VERSION}.tar"
 
-HF_TRUST1_ARCHIVE="${HF_BASE_URL}/trust1/${TRUST1_ARCHIVE}"
-HF_TRUST2_ARCHIVE="${HF_BASE_URL}/trust2/${TRUST2_ARCHIVE}"
-LOCAL_TRUST1_ARCHIVE="${VOLUMES_DIR}/${TRUST1_ARCHIVE}"
-LOCAL_TRUST2_ARCHIVE="${VOLUMES_DIR}/${TRUST2_ARCHIVE}"
+update_trust() {
+  local trust_num="$1"
+  local storage_dir_var="ORTHANC_STORAGE_DIR_TRUST_${trust_num}"
+  local storage_dir; storage_dir="$(resolve_storage_dir "${!storage_dir_var}")"
+  local local_version_file="${VOLUMES_DIR}/.local_data_version_trust${trust_num}"
+  local archive="trust${trust_num}_orthanc_data_${DATA_VERSION}.tar"
+  local hf_url="${HF_BASE_URL}/trust${trust_num}/${archive}"
+  local local_archive="${VOLUMES_DIR}/${archive}"
 
-# If the files do not exist locally, download them.
-# -f: fail on HTTP errors, -S: show errors, -L: follow LFS redirects.
-if [[ ! -f "${LOCAL_TRUST1_ARCHIVE}" ]]; then
-  echo "📦 Downloading ${HF_TRUST1_ARCHIVE}"
-  curl -fSL "${HF_TRUST1_ARCHIVE}" -o "${LOCAL_TRUST1_ARCHIVE}"
-else
-  echo "📦 ${LOCAL_TRUST1_ARCHIVE} already exists, skipping download"
-fi
-
-if [[ ! -f "${LOCAL_TRUST2_ARCHIVE}" ]]; then
-  echo "📦 Downloading ${HF_TRUST2_ARCHIVE}"
-  curl -fSL "${HF_TRUST2_ARCHIVE}" -o "${LOCAL_TRUST2_ARCHIVE}"
-else
-  echo "📦 ${LOCAL_TRUST2_ARCHIVE} already exists, skipping download"
-fi
-
-echo "🗑️ Removing existing orthanc storage dirs..."
-# The dirs are owned by the orthanc container's uid, so removal needs sudo —
-# but sudo prompts for a password in non-interactive runs. Only invoke it when
-# there's actually something to delete (first-run case has no dirs yet).
-for dir in "./${ORTHANC_STORAGE_DIR_TRUST_1}" "./${ORTHANC_STORAGE_DIR_TRUST_2}"; do
-  if [[ -e "${dir}" ]]; then
-    sudo rm -rf "${dir}"
+  local local_version=""
+  if [[ -f "${local_version_file}" ]]; then
+    local_version="$(tr -d ' \n\r\t' < "${local_version_file}" || true)"
+  elif [[ -f "${LEGACY_DATA_VERSION_FILE}" ]]; then
+    # Migrate from the pre-per-trust shared marker: an existing install already
+    # holds this version for both trusts, so adopt it instead of forcing a
+    # needless re-download. The legacy file is removed once both trusts have
+    # migrated (see cleanup after the update_trust calls).
+    local_version="$(tr -d ' \n\r\t' < "${LEGACY_DATA_VERSION_FILE}" || true)"
+    echo "${local_version}" > "${local_version_file}"
   fi
-done
-mkdir -p "./${ORTHANC_STORAGE_DIR_TRUST_1}" "./${ORTHANC_STORAGE_DIR_TRUST_2}"
 
-echo "📁 Extracting archives (will replace existing storage dirs)..."
-tar -xf "${LOCAL_TRUST1_ARCHIVE}" -C "./${ORTHANC_STORAGE_DIR_TRUST_1}"
-tar -xf "${LOCAL_TRUST2_ARCHIVE}" -C "./${ORTHANC_STORAGE_DIR_TRUST_2}"
+  if [[ "${local_version}" == "${DATA_VERSION}" ]]; then
+    echo "✅ Orthanc data for Trust ${trust_num} already up to date at version ${DATA_VERSION}."
+    return
+  fi
 
-# Record the new local data version
-echo "${DATA_VERSION}" > "${LOCAL_DATA_VERSION_FILE}"
-echo "✅ Done. Local Orthanc data version is now ${DATA_VERSION}"
+  if [[ -z "${local_version}" ]]; then
+    echo "❓ Local Orthanc data version for Trust ${trust_num} unknown. Will update to version ${DATA_VERSION} just to be safe."
+  else
+    echo "🔄 Updating Orthanc data for Trust ${trust_num}: ${local_version} -> ${DATA_VERSION}"
+  fi
 
-# Delete the downloaded archives once extracted
-if [[ "${CLEAN_AFTER_UPDATE:-False}" == "True" ]]; then
-  rm -f "${LOCAL_TRUST1_ARCHIVE}" "${LOCAL_TRUST2_ARCHIVE}"
-  echo "🧹 Cleaned up downloaded archives."
+  if [[ ! -f "${local_archive}" ]]; then
+    echo "📦 Downloading ${hf_url}"
+    curl -fSL "${hf_url}" -o "${local_archive}"
+  else
+    echo "📦 ${local_archive} already exists, skipping download"
+  fi
+
+  echo "🗑️  Removing existing orthanc storage dir for Trust ${trust_num}..."
+  # The dir is owned by the orthanc container's uid, so removal needs sudo —
+  # but sudo prompts for a password in non-interactive runs. Only invoke it when
+  # there's actually something to delete (first-run case has no dir yet).
+  if [[ -e "${storage_dir}" ]]; then
+    sudo rm -rf "${storage_dir}"
+  fi
+  mkdir -p "${storage_dir}"
+
+  echo "📁 Extracting archive for Trust ${trust_num}..."
+  tar -xf "${local_archive}" -C "${storage_dir}"
+
+  echo "${DATA_VERSION}" > "${local_version_file}"
+  echo "✅ Done. Local Orthanc data for Trust ${trust_num} is now at version ${DATA_VERSION}"
+
+  if [[ "${CLEAN_AFTER_UPDATE:-False}" == "True" ]]; then
+    rm -f "${local_archive}"
+    echo "🧹 Cleaned up downloaded archive for Trust ${trust_num}."
+  fi
+}
+
+if [[ "${TRUST}" == "1" || "${TRUST}" == "all" ]]; then
+  update_trust 1
+fi
+
+if [[ "${TRUST}" == "2" || "${TRUST}" == "all" ]]; then
+  update_trust 2
+fi
+
+# Remove the orphaned legacy shared marker once both per-trust markers exist, so
+# it doesn't linger invisibly after the migration. Only delete when both trusts
+# have a marker — a single-trust run must not strand the other trust's migration.
+if [[ -f "${LEGACY_DATA_VERSION_FILE}" \
+   && -f "${VOLUMES_DIR}/.local_data_version_trust1" \
+   && -f "${VOLUMES_DIR}/.local_data_version_trust2" ]]; then
+  rm -f "${LEGACY_DATA_VERSION_FILE}"
+  echo "🧹 Removed orphaned legacy version file ${LEGACY_DATA_VERSION_FILE}."
 fi

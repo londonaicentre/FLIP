@@ -57,12 +57,9 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_managed" {
 # never Resource = "*".
 data "aws_iam_policy_document" "ecs_task_execution_secrets" {
   statement {
-    sid     = "ReadFlipApiSecret"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      module.flip_api_secret.secret_arn,
-      module.flip_db.db_instance_master_user_secret_arn,
-    ]
+    sid       = "ReadFlipApiSecret"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [module.flip_api_secret.secret_arn]
   }
 
   statement {
@@ -106,11 +103,19 @@ resource "aws_iam_role" "ecs_flip_api_task" {
 
 data "aws_iam_policy_document" "ecs_flip_api_task" {
   statement {
-    sid     = "ReadFlipApiSecret"
-    actions = ["secretsmanager:GetSecretValue"]
+    sid       = "ReadFlipApiSecret"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [module.flip_api_secret.secret_arn]
+  }
+
+  # Mint IAM auth tokens to connect through RDS Proxy (FLIP#556). Scoped to the
+  # one proxy + the single DB user flip-api connects as — the proxy itself uses
+  # the master secret to reach RDS, so no static DB password lives in the app.
+  statement {
+    sid     = "RdsProxyIamConnect"
+    actions = ["rds-db:connect"]
     resources = [
-      module.flip_api_secret.secret_arn,
-      module.flip_db.db_instance_master_user_secret_arn,
+      "arn:aws:rds-db:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:dbuser:${local.rds_proxy_resource_id}/${var.POSTGRES_USER}",
     ]
   }
 

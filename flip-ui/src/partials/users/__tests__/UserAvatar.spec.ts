@@ -66,14 +66,14 @@ describe("UserAvatar", () => {
                 roleName: "Admin"
             }
         });
-        const observer = mount(UserAvatar, {
+        const viewer = mount(UserAvatar, {
             props: {
                 name: "A B",
-                roleName: "Observer"
+                roleName: "Viewer"
             }
         });
 
         expect(admin.get("[data-test=user-avatar]").attributes("style"))
-            .not.toBe(observer.get("[data-test=user-avatar]").attributes("style"));
+            .not.toBe(viewer.get("[data-test=user-avatar]").attributes("style"));
     });
 });

@@ -38,7 +38,7 @@
                                             <span class="ml-2">query</span>
                                         </h1>
                                         <button
-                                            v-if="!queryLocked && !isObserver"
+                                            v-if="!queryLocked && !isViewer"
                                             type="submit"
                                             form="cohort-query-form"
                                             :disabled="formSubmitting"
@@ -100,7 +100,7 @@ import { useProjectStore } from "@/store/project";
 
 const projectStore = useProjectStore();
 const { project } = storeToRefs(projectStore);
-const { isObserver } = usePermissions();
+const { isViewer } = usePermissions();
 
 const formSubmitting = ref(false);
 const queryLocked = computed(() => projectStore.project?.status !== "UNSTAGED");

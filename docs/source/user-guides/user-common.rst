@@ -4,7 +4,7 @@ Common user functions
 
 .. warning:: Must have a valid FLIP account. If you do not have one, please liaise with your local FLIP system administrator and/or information asset owner (IAO), and provide your email address and confirmation of which role you require.
 
-Although this page covers functions common to all FLIP users regardless of :ref:`rbac-roles` throughout the various stages involved in preparing an AI model for federated learning, actions related to project process flow are described from the perspective of users with the ``researcher`` role. Users with the ``observer`` role have read-only access to projects they are assigned to; actions such as creating projects, running queries and uploading files are not available to observers.
+Although this page covers functions common to all FLIP users regardless of :ref:`rbac-roles` throughout the various stages involved in preparing an AI model for federated learning, actions related to project process flow are described from the perspective of users with the ``researcher`` role. Users with the ``viewer`` role have read-only access to projects they are assigned to; actions such as creating projects, running queries and uploading files are not available to viewers.
 
 Users with the ``admin`` role may perform all the functions of those with the ``researcher`` role, and are additionally solely responsible for approving and un-staging a project. Each user holds exactly one role (see :ref:`rbac-roles`). For more information, please refer to the :ref:`admin-project-and-user-management` subsection or the broader :ref:`sys-admin` section.
 
@@ -314,7 +314,7 @@ Additional files may be uploaded, especially if these are referenced by the vali
 
 **For Flower apps**, the required files differ (e.g. ``client_app.py``, ``pyproject.toml``). See the :ref:`FL nodes documentation <flip-fl-nodes>` for Flower-specific file requirements and job types.
 
-For more information on model training and model files, please see the `FLIP tutorials <https://github.com/londonaicentre/flip-fl-base/tree/main/tutorials>`_.
+For more information on model training and model files, please see the `FLIP tutorials <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/tutorials>`_.
 
 .. warning::
 
