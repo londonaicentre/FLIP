@@ -86,6 +86,18 @@ Pass ``--folder`` more than once to load several folders into the same trust
 populate OMOP only, ``--skip-omop`` to upload DICOMs only, ``--dry-run`` to
 report what would happen without writing, and ``--limit N`` to process only the
 first N accessions of each folder (handy for a quick smoke test).
+
+Holdout tagging: a folder whose name contains ``holdoff``/``holdout`` is stamped
+with a distinct ``procedure_source_value`` (default ``Chest X-ray (holdout)``)
+so a cohort query can isolate the held-out evaluation set with a single WHERE
+clause instead of an unwieldy ``accession_id IN (...)`` list — train folders keep
+``Chest X-ray``. Override either value with ``--procedure-source-value`` /
+``--holdout-source-value``. The loader is idempotent on the tag too: re-running
+over already-loaded folders **re-stamps** existing rows onto the requested value
+(an in-place UPDATE), so data first loaded before holdout tagging existed can be
+fixed by a plain reload — no delete, no re-upload to PACS. Note that after
+re-stamping, the original ``Chest X-ray`` cohort query returns the train split
+only; query the holdout value for the held-out set.
 """
 
 from __future__ import annotations
@@ -140,8 +152,23 @@ LATERALITY_ANATOMY: dict[str, int] = {
 
 DEFAULT_STUDY_DATE = "2026-01-01"  # fallback when a DICOM has no StudyDate
 
+# procedure_source_value discriminators. The base value tags ordinary (train)
+# rows; holdout rows get a distinct value so a cohort query can isolate the
+# held-out evaluation set with a single WHERE clause instead of an unwieldy
+# accession_id IN (...) list. A folder is treated as holdout when its name
+# contains "holdoff"/"holdout" (e.g. ``re_final_site1_holdoff``); override the
+# heuristic or the values with --procedure-source-value / --holdout-source-value.
+DEFAULT_PROCEDURE_SOURCE_VALUE = "Chest X-ray"
+DEFAULT_HOLDOUT_SOURCE_VALUE = "Chest X-ray (holdout)"
+
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def is_holdout_folder(folder: Path) -> bool:
+    """True when a folder holds the held-out split (by name convention)."""
+    name = folder.name.lower()
+    return "holdoff" in name or "holdout" in name
 
 
 def _truthy(value: str | None) -> bool:
@@ -207,6 +234,7 @@ class Counters:
 class Stats:
     omop_inserted: int = 0
     omop_skipped: int = 0
+    omop_restamped: int = 0
     orthanc_uploaded: int = 0
     orthanc_skipped: int = 0
     missing_dcm: list[str] = field(default_factory=list)
@@ -312,9 +340,54 @@ def existing_accessions(cur, candidates: list[str]) -> set[str]:
     return {r[0] for r in cur.fetchall()}
 
 
-def load_omop(cur, accs: list[Accession], counters: Counters, stats: Stats, dry_run: bool) -> None:
-    """Insert the MI-CDM chain for each not-yet-present accession."""
+def restamp_existing(cur, accession_ids: list[str], procedure_source_value: str, dry_run: bool) -> int:
+    """Re-stamp the procedure_source_value of already-present accessions.
+
+    The loader skips accessions already in image_occurrence, so a plain reload
+    would never change their procedure_source_value. This UPDATE makes a reload
+    converge already-loaded rows onto the requested tag (e.g. to mark a split
+    that was first loaded before holdout tagging existed). ``IS DISTINCT FROM``
+    keeps it a no-op when the value already matches, so it is safe to run every
+    time. Returns the number of rows that (would) change.
+    """
+    if not accession_ids:
+        return 0
+    select_changed = (
+        "SELECT COUNT(*) FROM omop.procedure_occurrence pr "
+        "JOIN omop.image_occurrence io ON io.procedure_occurrence_id = pr.procedure_occurrence_id "
+        "WHERE io.accession_id = ANY(%s) AND pr.procedure_source_value IS DISTINCT FROM %s"
+    )
+    cur.execute(select_changed, (accession_ids, procedure_source_value))
+    changed = int(cur.fetchone()[0])
+    if changed and not dry_run:
+        cur.execute(
+            "UPDATE omop.procedure_occurrence pr "
+            "SET procedure_source_value = %s "
+            "FROM omop.image_occurrence io "
+            "WHERE io.procedure_occurrence_id = pr.procedure_occurrence_id "
+            "AND io.accession_id = ANY(%s) AND pr.procedure_source_value IS DISTINCT FROM %s",
+            (procedure_source_value, accession_ids, procedure_source_value),
+        )
+    return changed
+
+
+def load_omop(
+    cur,
+    accs: list[Accession],
+    counters: Counters,
+    stats: Stats,
+    dry_run: bool,
+    procedure_source_value: str = DEFAULT_PROCEDURE_SOURCE_VALUE,
+) -> None:
+    """Insert the MI-CDM chain for each not-yet-present accession.
+
+    Accessions already present are re-stamped to ``procedure_source_value`` in
+    place rather than silently left on a stale tag.
+    """
     present = existing_accessions(cur, [a.accession_id for a in accs])
+    stats.omop_restamped += restamp_existing(
+        cur, sorted(present), procedure_source_value, dry_run
+    )
 
     persons: list[tuple] = []
     visits: list[tuple] = []
@@ -349,7 +422,7 @@ def load_omop(cur, accs: list[Accession], counters: Counters, stats: Stats, dry_
                 PROCEDURE_TYPE_CONCEPT_ID,
                 1,
                 visit_id,
-                "Chest X-ray",
+                procedure_source_value,
             )
         )
         images.append(
@@ -589,6 +662,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--skip-omop", action="store_true", help="Do not touch OMOP.")
     p.add_argument("--skip-orthanc", action="store_true", help="Do not touch Orthanc.")
     p.add_argument("--limit", type=int, default=None, help="Only first N accessions per folder (smoke test).")
+    p.add_argument(
+        "--procedure-source-value",
+        default=DEFAULT_PROCEDURE_SOURCE_VALUE,
+        help=f"OMOP procedure_source_value stamped on non-holdout folders "
+        f"(default {DEFAULT_PROCEDURE_SOURCE_VALUE!r}). The xray cohort query filters on this.",
+    )
+    p.add_argument(
+        "--holdout-source-value",
+        default=DEFAULT_HOLDOUT_SOURCE_VALUE,
+        help=f"procedure_source_value stamped on holdout folders (name contains "
+        f"'holdoff'/'holdout'; default {DEFAULT_HOLDOUT_SOURCE_VALUE!r}). Lets a "
+        f"cohort query isolate the held-out set without a giant accession_id IN (...) list.",
+    )
     p.add_argument("--dry-run", action="store_true", help="Report actions without writing.")
     return p.parse_args(argv)
 
@@ -648,12 +734,18 @@ def main(argv: list[str]) -> int:
 
         for folder in folders:
             accs = read_folder(folder, args.limit)
-            print(f"{tag}{folder.name}: {len(accs)} accession(s) parsed")
+            holdout = is_holdout_folder(folder)
+            proc_source_value = args.holdout_source_value if holdout else args.procedure_source_value
+            split_tag = "holdout" if holdout else "train"
+            print(
+                f"{tag}{folder.name}: {len(accs)} accession(s) parsed "
+                f"[{split_tag}; procedure_source_value={proc_source_value!r}]"
+            )
 
             if not args.skip_omop and conn is not None:
                 with conn.cursor() as cur:
                     counters = seed_counters(cur)
-                    load_omop(cur, accs, counters, stats, args.dry_run)
+                    load_omop(cur, accs, counters, stats, args.dry_run, proc_source_value)
                 if args.dry_run:
                     conn.rollback()
                 else:
@@ -672,7 +764,10 @@ def main(argv: list[str]) -> int:
             conn.close()
 
     print("\n── Summary ──────────────────────────────────────────")
-    print(f"  OMOP   : inserted={stats.omop_inserted}  skipped(existing)={stats.omop_skipped}")
+    print(
+        f"  OMOP   : inserted={stats.omop_inserted}  skipped(existing)={stats.omop_skipped}"
+        f"  restamped(existing)={stats.omop_restamped}"
+    )
     print(f"  Orthanc: uploaded={stats.orthanc_uploaded}  skipped(existing)={stats.orthanc_skipped}")
     if stats.missing_dcm:
         print(f"  ! missing DICOM files: {len(stats.missing_dcm)} (first 5: {stats.missing_dcm[:5]})")

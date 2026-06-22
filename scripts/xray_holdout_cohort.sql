@@ -9,50 +9,31 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
--- Project cohort query for the synthetic chest-X-ray dataset loaded by
--- scripts/load_xray_omop_dataset.py (flip-fl-base "balanced_synthetic_split").
+-- Holdout-only cohort query for the synthetic chest-X-ray dataset.
 --
--- Returns one row per loaded image occurrence with all seven pathology labels as
--- Yes/No, in the same column shape as the FL app's sample_get_dataframe_response.csv
--- (the xray classification tutorial only consumes Effusion / Edema / Lungs in
--- normal arrangement; the other four are returned for completeness).
+-- Identical to xray_project_cohort.sql except it filters on
+-- ``procedure_source_value = 'Chest X-ray (holdout)'`` instead of 'Chest X-ray'.
+-- This is the value load_xray_omop_dataset.py stamps on holdout folders (those
+-- whose name contains 'holdoff'/'holdout'). It returns ONLY the held-out
+-- evaluation split with no accession_id IN (...) list, so the query stays small.
 --
--- Scope: the query is restricted to THIS dataset via
--- ``procedure_occurrence.procedure_source_value = 'Chest X-ray'`` — the value the
--- loader stamps on train folders. Pre-existing FLIP mock data uses 'Chest CT' /
--- 'Spleen CT', so it is excluded, as are holdout folders (which the loader stamps
--- 'Chest X-ray (holdout)' — see xray_holdout_cohort.sql for the held-out split).
--- NOTE: this discriminator is unique to the data currently in the database; if a
--- second chest-X-ray dataset is later loaded with the same loader it would also
--- carry 'Chest X-ray'. For multi-project isolation, stamp a per-project tag at
--- load time (e.g. via --procedure-source-value) and filter on that instead.
---
--- Label concept ids: Effusion 4215818, Edema 4196943, Consolidation 4319884,
--- Infiltration 4264333, Lung Nodule or Mass 4214641 (SNOMED "Mass"),
--- Pneumothorax 253796, Lungs in normal arrangement 40481136. The Yes/No value is
--- read from observation.value_as_concept_id via the image_feature -> observation
--- link (image_feature_event_field_concept_id = 1147304, the "observation" table).
---
--- Verified against the loaded data: returns the train split (1910 for Trust_1
--- site1, 1872 for Trust_2 site2; holdout rows are excluded by the tag), every
--- label matches the source CSV, and the statement passes the data-access-api
--- validate_query() checks (single SELECT, omop-schema-only, literal LIMIT/OFFSET).
+-- Run it on whichever trust holds the holdout data; each trust returns its own
+-- holdout rows (Trust_1 -> 478 site1, Trust_2 -> 468 site2). After re-stamping,
+-- the sibling xray_project_cohort.sql ('Chest X-ray') returns the TRAIN split only.
 
 WITH project_images AS (
     SELECT io.image_occurrence_id, io.accession_id, io.image_occurrence_date, io.modality_concept_id
     FROM omop.image_occurrence io
     JOIN omop.procedure_occurrence pr ON pr.procedure_occurrence_id = io.procedure_occurrence_id
-    WHERE pr.procedure_source_value = 'Chest X-ray'
+    WHERE pr.procedure_source_value = 'Chest X-ray (holdout)'
 ),
 feature_observation AS (
-    -- image_feature rows that link to the observation table (carry the Yes/No labels)
     SELECT ife.image_occurrence_id, ife.image_feature_concept_id, ife.image_feature_event_id
     FROM omop.image_feature ife
     WHERE ife.image_feature_event_field_concept_id = 1147304
       AND ife.image_occurrence_id IN (SELECT image_occurrence_id FROM project_images)
 ),
 observation_value AS (
-    -- pivot the per-label observations to one row per image occurrence
     SELECT fo.image_occurrence_id,
         MAX(CASE WHEN image_feature_concept_id = 4215818  THEN vc.concept_name END) AS effusion,
         MAX(CASE WHEN image_feature_concept_id = 4196943  THEN vc.concept_name END) AS edema,
