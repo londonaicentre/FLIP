@@ -40,17 +40,27 @@ FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in coll
 
 ## Repositories
 
-FLIP spans several repositories:
+This repository is the FLIP mono-repo: Central Hub API, Trust APIs, UI, Docker deployment, **and** the federated
+learning code (base library, FL services, and tutorials) that was previously split across `flip-fl-base` and
+`flip-fl-base-flower`. The FL code now lives under [`flip-utils/`](flip-utils/) (the pip-installable `flip` package),
+[`fl_services/`](fl_services/) (Docker services for FL server/client/API), and [`fl-apps/`](fl-apps/) (job-type
+implementations and tutorials).
 
-| Repository | Description |
+| Subdirectory | Description |
 | --- | --- |
-| [FLIP](https://github.com/londonaicentre/FLIP) | This repo: Central Hub API, Trust APIs, UI, and Docker deployment |
-| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | NVIDIA FLARE federated learning base application library, workflows, and tutorials |
-| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower federated learning base application library, workflows, and tutorials |
+| [`flip-api/`](flip-api/) | Central Hub API service |
+| [`flip-ui/`](flip-ui/) | Frontend UI |
+| [`trust/`](trust/) | Trust-side services (trust-api, imaging-api, data-access-api, mock OMOP / Orthanc / XNAT) |
+| [`deploy/`](deploy/) | Docker Compose and infrastructure-as-code (AWS / on-prem) |
+| [`docs/`](docs/) | Sphinx documentation source (ReadTheDocs) |
+| [`flip-utils/`](flip-utils/) | `flip` Python package — platform logic, NVFLARE components, Flower helpers |
+| [`fl_services/`](fl_services/) | Docker images for FL networks: `fl-server`, `fl-client`, `fl-api-base`, `fl-base` |
+| [`fl-apps/`](fl-apps/) | FL job-type implementations (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) and tutorials |
 
-This repository consolidates all FLIP services in a mono-repo that can be deployed together via Docker Compose. The
-federated learning images are pulled from [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) and
-[flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower).
+The legacy [`flip-fl-base`](https://github.com/londonaicentre/flip-fl-base) and
+[`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) repositories still hold the
+provisioned NVFLARE workspaces and Flower certs used at dev time — see
+[Federated Learning Setup](#federated-learning-setup) below.
 
 ## Deployment
 
@@ -205,7 +215,10 @@ docker compose -f deploy/compose.development.yml run --rm < service name >
 
 ### Federated Learning Setup
 
-The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for federated learning. FLARE requires provisioned certificates and configuration files that are generated in the separate repository [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) (see that repository for instructions on how to provision the workspace).
+The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for
+federated learning. FLARE requires provisioned certificates and configuration files. As of the FL-code migration these
+can be generated from within this repo (`make nvflare-provision-2-nets`, see [`fl_services/README.md`](fl_services/README.md)),
+but until the deploy-side path migration lands the dev compose files still consume the legacy sibling-repo workspaces.
 
 1. **Path Resolution**: `FL_PROVISIONED_DIR` is derived from the `FL_BACKEND` selection inside [`deploy/fl_backend.mk`](deploy/fl_backend.mk) (no longer set in `.env.development`):
 
@@ -218,7 +231,9 @@ The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flo
 
 If you see errors like "fed_client.json does not exist" or "missing startup folder", verify that:
 
-- The [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) repository is cloned as a sibling directory
+- Either the [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) repository is cloned as a sibling directory
+  with a provisioned workspace, **or** override `FL_PROVISIONED_DIR` to point at the workspace you generated from
+  `make nvflare-provision-2-nets`
 - The workspace has been properly provisioned with NVFLARE certificates
 - The `FL_PROVISIONED_DIR` path is correctly resolved (check Makefile output)
 
@@ -245,6 +260,9 @@ The repository is organised as follows:
   - `orthanc`: Contains a mocked PACS service (uses [Orthanc](https://www.orthanc-server.com/))
   - `trust-api`: Contains the trust API service
   - `xnat`: Contains a mocked [XNAT](https://www.xnat.org/) service
+- `flip-utils`: The `flip` Python package — platform logic, NVFLARE components, Flower helpers (migrated from `flip-fl-base`)
+- `fl_services`: Docker images for FL networks — `fl-server`, `fl-client`, `fl-api-base`, `fl-base` (migrated from `flip-fl-base`)
+- `fl-apps`: FL job-type implementations (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) and runnable tutorials
 
 ### Trust Authentication
 

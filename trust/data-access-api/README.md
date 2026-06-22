@@ -21,7 +21,7 @@
 The **data-access-api** executes researcher-supplied SQL queries against the Trust's local OMOP database and returns
 aggregated statistics and dataframes. It is an internal Trust-side service called by the
 [trust-api](../trust-api/) (`/cohort`), [imaging-api](../imaging-api/) (`/cohort/accession-ids`),
-and the [`flip` Python package](https://github.com/londonaicentre/flip-fl-base/tree/main/flip)
+and the [`flip` Python package](https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip)
 shipped to fl-client containers (`/cohort/dataframe`, via `flip.get_dataframe(...)`). All callers
 must authenticate with the trust-internal service key — see [Authentication](#authentication)
 below.
@@ -79,7 +79,7 @@ unauthenticated so liveness probes keep working.
 
 Callers in this repo: trust-api (`/cohort`) and imaging-api (`/cohort/accession-ids`). The fl-client
 container calls `/cohort/dataframe` indirectly: user training code calls `flip.get_dataframe(...)`
-from the [`flip` Python package](https://github.com/londonaicentre/flip-fl-base/tree/main/flip)
+from the [`flip` Python package](https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip)
 (consumed by both NVFLARE and Flower fl-client / fl-server images), and that package reads
 `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and adds the header to its HTTP request. Tutorials
 and user-uploaded `client_app.py` / `server_app.py` do not deal with the header directly.
