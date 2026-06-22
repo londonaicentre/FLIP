@@ -529,7 +529,12 @@ def get_experiments(project_id: str, headers: dict[str, str]) -> list[Experiment
     """
     get_project(project_id, headers)
 
-    response = requests.get(f"{XNAT_URL}/data/projects/{project_id}/experiments", headers=headers)
+    # Use the GLOBAL experiments listing filtered by project, NOT the project-scoped
+    # /data/projects/{id}/experiments. The project-scoped listing is filtered by per-data-type
+    # element security, so sessions whose modality is not registered there (e.g.
+    # xnat:dxSessionData for chest X-rays) are silently omitted — making the import look stuck
+    # at "0 imported". The global listing returns identical fields without that filter.
+    response = requests.get(f"{XNAT_URL}/data/experiments?project={project_id}", headers=headers)
     experiments = [Experiment(**experiment) for experiment in response.json()["ResultSet"]["Result"]]
 
     if response.status_code == 200:

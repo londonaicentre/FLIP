@@ -607,6 +607,27 @@ def test_get_experiments_failure(mock_get_project, mock_get, headers):
         get_experiments("TEST", headers)
 
 
+@patch("imaging_api.services.projects.requests.get")
+@patch("imaging_api.services.projects.get_project")
+def test_get_experiments_uses_unfiltered_global_listing(mock_get_project, mock_get, headers):
+    # Regression guard: get_experiments must query the GLOBAL experiments endpoint filtered by
+    # project, NOT the project-scoped /data/projects/{id}/experiments. The project-scoped listing
+    # is filtered by per-data-type element security, so sessions whose modality is not registered
+    # there (e.g. xnat:dxSessionData for chest X-rays) are silently omitted and the import shows
+    # "0 imported". The global listing returns identical fields without that filter.
+    mock_get_project.return_value = Project(**_PROJECT_DICT)
+    mock_get.return_value = MagicMock(
+        status_code=200,
+        json=MagicMock(return_value={"ResultSet": {"Result": []}}),
+    )
+
+    get_experiments("TEST", headers)
+
+    called_url = mock_get.call_args.args[0]
+    assert called_url.endswith("/data/experiments?project=TEST")
+    assert "/data/projects/TEST/experiments" not in called_url
+
+
 # ===========================================================================
 # get_experiment
 # ===========================================================================
