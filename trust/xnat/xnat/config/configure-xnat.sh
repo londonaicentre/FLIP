@@ -212,75 +212,6 @@ curl -s -X POST "$XNAT_URL/xapi/siteConfig" \
   -H "Content-Type: application/json" \
   -d '{"addOhifViewLinkToProjectListingDefaults": true }'
 
-# Register the DX (digital radiography) image-session data type as a secured element.
-#
-# WHY: XNAT only registers a fixed set of image-session types in element security
-# by default (CR, CT, MR, PET, PET-MR) — `xnat:dxSessionData` is NOT among them,
-# even though the schema defines it. Chest X-rays arrive as DICOM modality "DX",
-# so the DQR import archives them as `xnat:dxSessionData`. Without an element-
-# security row, new projects never grant read access to that type, so the sessions
-# are invisible to every project-scoped query (`/data/projects/{id}/experiments`)
-# — which is exactly what imaging-api polls for import status and what the
-# fl-client uses to retrieve images. The data imports fine but appears "stuck at
-# 0 imported". (The global `/data/experiments?project=` query bypasses project
-# permissions, which is why the data is in XNAT yet hidden per-project.)
-#
-# FIX: register `xnat:dxSessionData` in element security, cloning the flags of the
-# already-present `xnat:crSessionData`. Once registered, every newly-created
-# project auto-grants DX read access to its owner/member/collaborator groups.
-#
-# NOTE: XNAT loads element security into memory at startup, so this row only
-# takes effect after an XNAT restart. There is no REST endpoint to register a
-# data type; the UI "Set Up Additional Data Type" wizard is the only other path,
-# and is a stateful multi-step form unsuitable for scripting — hence the direct,
-# idempotent SQL below, run with the same DB credentials XNAT itself uses. When a
-# row is newly inserted we print the sentinel `DX_ELEMENT_SECURITY_REGISTERED`;
-# the Makefile `xnat-configure` target greps for it and forces a one-time XNAT
-# service reload so the type is live before any project is created.
-echo " "
-echo "Registering xnat:dxSessionData element security..."
-XNAT_CONF="/data/xnat/home/config/xnat-conf.properties"
-DB_URL=$(grep -E '^datasource\.url=' "$XNAT_CONF" | cut -d= -f2-)
-DB_HOST=$(echo "$DB_URL" | sed -E 's#jdbc:postgresql://([^/:]+).*#\1#')
-DB_NAME=$(echo "$DB_URL" | sed -E 's#.*/([^/?]+)(\?.*)?$#\1#')
-DB_USER=$(grep -E '^datasource\.username=' "$XNAT_CONF" | cut -d= -f2-)
-DB_PASS=$(grep -E '^datasource\.password=' "$XNAT_CONF" | cut -d= -f2-)
-dx_sql_out=$(PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 <<'DXSQL'
-DO $$
-DECLARE
-  new_meta INT;
-BEGIN
-  IF EXISTS (SELECT 1 FROM xdat_element_security WHERE element_name = 'xnat:dxSessionData') THEN
-    RAISE NOTICE 'xnat:dxSessionData already registered in element security; skipping.';
-    RETURN;
-  END IF;
-  -- Audit/meta row referenced by element_security_info.
-  INSERT INTO xdat_element_security_meta_data
-    (xft_version, status, activation_date, row_last_modified, insert_date, modified, shareable)
-  VALUES (1, 'active', now(), now(), now(), 0, 1)
-  RETURNING meta_data_id INTO new_meta;
-  -- Clone crSessionData's security flags; only identity columns differ.
-  INSERT INTO xdat_element_security
-    (element_name, secondary_password, secure_ip, secure, browse, sequence, quarantine,
-     pre_load, searchable, secure_read, secure_edit, secure_create, secure_delete, accessible,
-     usage, singular, plural, category, code, element_security_info,
-     element_security_set_element_se_xdat_security_id)
-  SELECT 'xnat:dxSessionData', secondary_password, secure_ip, secure, browse, sequence, quarantine,
-     pre_load, searchable, secure_read, secure_edit, secure_create, secure_delete, accessible,
-     usage, 'DX Session', 'DX Sessions', category, 'DX', new_meta,
-     element_security_set_element_se_xdat_security_id
-  FROM xdat_element_security
-  WHERE element_name = 'xnat:crSessionData';
-  RAISE NOTICE 'Registered xnat:dxSessionData (effective after the next XNAT restart).';
-END $$;
-DXSQL
-)
-echo "$dx_sql_out"
-if echo "$dx_sql_out" | grep -q 'Registered xnat:dxSessionData'; then
-  # Sentinel consumed by the Makefile xnat-configure target to force an XNAT reload.
-  echo "DX_ELEMENT_SECURITY_REGISTERED"
-fi
-
 # Register PACS
 echo "Registering PACS..."
 curl -s -X POST "$XNAT_URL/xapi/pacs" \
@@ -307,7 +238,7 @@ for DAY in MONDAY TUESDAY WEDNESDAY THURSDAY FRIDAY SATURDAY SUNDAY; do
     -u "${XNAT_ADMIN_USER}:${XNAT_ADMIN_PASSWORD}" \
     -H "Content-Type: application/json" \
     -d "{
-      \"availabilityEnd\": \"23:59\",
+      \"availabilityEnd\": \"24:00\",
       \"availabilityStart\": \"00:00\",
       \"availableNow\": true,
       \"dayOfWeek\": \"$DAY\",

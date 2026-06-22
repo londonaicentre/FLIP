@@ -136,8 +136,6 @@ All issues below have been resolved and are documented here for reference.
 
 - **Container can't find data** — Path translation between the XNAT container and host was not configured. Now set automatically during `make up`.
 
-- **DICOM imports succeed but the project shows "0 imported" (chest X-rays / DX modality)** — XNAT registers only a fixed set of image-session data types in element security by default (CR, CT, MR, PET, PET-MR); `xnat:dxSessionData` is **not** among them, even though the schema defines it. Chest X-rays arrive as DICOM modality `DX`, so the DQR import archives them as `xnat:dxSessionData`. Without an element-security row, newly-created projects never grant read access to that type, so the sessions are invisible to every project-scoped query (`/data/projects/{id}/experiments`) — which is what imaging-api polls for import status and what the fl-client uses to retrieve images. The data imports correctly (archived + DB-registered; visible via the admin-only global `/data/experiments?project=` query) but appears stuck at "0 imported". `configure-xnat.sh` now registers `xnat:dxSessionData` in element security at setup (and the `xnat-configure` Make target forces a one-time XNAT reload so it loads), after which every new project auto-grants DX access. **To recover projects created before the fix:** grant the project groups' existing `crSessionData` access to `dxSessionData` and flush the access cache (`DELETE /xapi/access/cache/flush`).
-
 ## Attribution
 
 This directory contains Docker configuration derived from the XNAT docker-compose
