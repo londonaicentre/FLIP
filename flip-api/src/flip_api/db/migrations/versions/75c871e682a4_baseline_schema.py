@@ -37,6 +37,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('name', sa.String(), nullable=False),
     sa.Column('endpoint', sa.String(), nullable=False),
+    sa.Column('fl_backend', sa.Enum('NVFLARE', 'FLOWER', name='flbackend'), nullable=False),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('endpoint'),
     sa.UniqueConstraint('name')
@@ -129,7 +130,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('name', sa.String(), nullable=False),
     sa.Column('description', sa.String(), nullable=False),
-    sa.Column('status', sa.Enum('ERROR', 'STOPPED', 'PENDING', 'INITIATED', 'PREPARED', 'TRAINING_STARTED', 'RESULTS_UPLOADED', name='modelstatus'), nullable=False),
+    sa.Column('status', sa.Enum('ERROR', 'STOPPED', 'PENDING', 'INITIATED', 'PREPARED', 'TRAINING_STARTED', 'RESULTS_UPLOADED', 'RESULTS_UPLOAD_FAILED', name='modelstatus'), nullable=False),
     sa.Column('deleted', sa.Boolean(), nullable=False),
     sa.Column('project_id', sa.Uuid(), nullable=True),
     sa.Column('owner_id', sa.Uuid(), nullable=False),
@@ -292,9 +293,10 @@ def upgrade() -> None:
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('stats', sa.String(), nullable=False),
     sa.Column('stats_received', sa.DateTime(), nullable=False),
-    sa.Column('query_id', sa.Uuid(), nullable=True),
+    sa.Column('query_id', sa.Uuid(), nullable=False),
     sa.ForeignKeyConstraint(['query_id'], ['queries.id'], ),
-    sa.PrimaryKeyConstraint('id')
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('query_id')
     )
     op.create_table('uploaded_files',
     sa.Column('id', sa.Uuid(), nullable=False),
@@ -382,6 +384,7 @@ def downgrade() -> None:
         "modelstatus",
         "jobstatus",
         "netstatus",
+        "flbackend",
         "trustintersectstatus",
         "taskstatus",
         "tasktype",
