@@ -21,7 +21,8 @@ database URL + secret handling as the application:
   ``config.attributes["connection"]`` (the integration suite points this at its
   Testcontainers Postgres). When none is supplied — the CLI / entrypoint path —
   we fall back to ``flip_api.db.database.engine``, which already encapsulates the
-  prod AWS Secrets Manager password lookup and the dev env-var URL.
+  prod RDS-Proxy IAM auth (a per-connection token minted by a ``do_connect`` hook)
+  and the dev env-var URL.
 """
 
 from logging.config import fileConfig
@@ -113,8 +114,9 @@ def run_migrations_online() -> None:
         _configure_and_run(injected)
         return
 
-    # Lazy import so injecting a connection never triggers building the prod
-    # engine (which performs the AWS Secrets Manager lookup at import time).
+    # Lazy import so the injected-connection path never imports flip-api's prod
+    # engine machinery (boto3 + the RDS-Proxy IAM do_connect hook registered at
+    # import time); a supplied Connection already carries its own credentials.
     from flip_api.db.database import engine
 
     with engine.connect() as connection:

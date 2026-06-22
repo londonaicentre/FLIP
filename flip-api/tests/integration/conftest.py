@@ -173,9 +173,15 @@ def integration_engine(pg_container: PostgresContainer):
     )
     # Build the schema from the Alembic migrations — the exact DDL dev/prod apply
     # at boot — instead of SQLModel.metadata.create_all. This makes the integration
-    # suite exercise the migrations and catch any models/migrations drift. begin()
-    # commits the DDL so the per-test sessions opened later see the tables.
-    with engine.begin() as connection:
+    # suite exercise the migrations and catch any models/migrations drift.
+    #
+    # Use a plain connect() (not begin()) and let Alembic own the transaction, exactly
+    # like env.py's entrypoint/CLI path. A migration that uses
+    # op.get_context().autocommit_block() — the documented `ALTER TYPE ... ADD VALUE`
+    # pattern — must own its transaction; wrapping command.upgrade in engine.begin()
+    # makes that raise AssertionError and aborts schema setup for the whole suite.
+    # Alembic commits the DDL itself, so per-test sessions opened later see the tables.
+    with engine.connect() as connection:
         command.upgrade(make_alembic_config(connection), "head")
 
     with Session(engine) as s:

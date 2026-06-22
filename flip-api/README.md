@@ -96,16 +96,20 @@ applied a schema *diff* to an existing database.
 
 - Migration scripts live in `src/flip_api/db/migrations/` (so they ride the dev `src/`
   bind mount and the prod `COPY src/`); config is in `alembic.ini`.
-- `alembic.ini` holds **no** database URL. `env.py` reuses
+- `alembic.ini` holds **no** database URL or credentials. `env.py` reuses
   `flip_api.db.database.engine`, so migrations inherit the exact same connection
-  string and the prod AWS Secrets Manager password lookup. Tests inject their
-  Testcontainers connection via `config.attributes["connection"]` instead.
+  string and the prod RDS-Proxy IAM authentication (a per-connection token minted
+  by a `do_connect` hook). Tests inject their Testcontainers connection via
+  `config.attributes["connection"]` instead.
 
 ### Workflow
 
 Any schema-affecting change to `db/models/*.py` (new column, altered type, dropped
-table, new model) **must ship an Alembic revision**. The integration suite's drift
-guard (`tests/integration/test_migrations.py`) fails CI otherwise.
+table, new model, **or a new value on an existing enum**) **must ship an Alembic
+revision**. The integration suite's drift guard (`tests/integration/test_migrations.py`)
+fails CI otherwise — `compare_metadata` covers tables/columns/types/FKs/indexes, and a
+companion check (`test_no_enum_value_drift`) covers native-enum value changes that
+`compare_metadata` is blind to.
 
 ```bash
 make up                         # bring up flip-db + flip-api at the current head first
@@ -127,8 +131,12 @@ Always hand-review the generated file — autogenerate has two known blind spots
    with an enum column must add an explicit `op.execute("DROP TYPE IF EXISTS <name>")`,
    or a later re-`upgrade` fails with "type already exists" (see the baseline's
    downgrade for the pattern).
-2. **Adding a value to an existing enum** (`ALTER TYPE … ADD VALUE`) cannot run inside a
-   transaction. Wrap it in `with op.get_context().autocommit_block(): op.execute(...)`.
+2. **Adding a value to an existing enum.** Autogenerate will **not** emit this (it diffs
+   only the column's type name), but `test_no_enum_value_drift` fails CI to remind you to
+   hand-write the revision. `ALTER TYPE … ADD VALUE` cannot run inside a transaction —
+   wrap it in `with op.get_context().autocommit_block(): op.execute(...)`. (The
+   integration harness runs migrations on a plain `connect()`, so `autocommit_block`
+   works there too.)
 
 The `queries.queried_trust_ids` column is an `ARRAY(UUID)` (`postgresql.ARRAY(sa.UUID())`)
 — check it survives any regeneration. `env.py` renders SQLModel's `AutoString` as plain

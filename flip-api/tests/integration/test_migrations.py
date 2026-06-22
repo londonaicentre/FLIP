@@ -13,9 +13,15 @@
 """Tests for the Alembic migration chain.
 
 Covers a clean ``upgrade head`` on an empty DB, the **drift guard** (the
-migrations must reproduce ``SQLModel.metadata`` exactly), and a
+migrations must reproduce ``SQLModel.metadata`` exactly), a dedicated
+**enum-value drift guard** (``compare_metadata`` is blind to native PG enum
+value changes, so they are checked separately against ``pg_enum``), and a
 ``downgrade base`` → ``upgrade head`` round-trip (which would fail with a stale
 native PG enum type if the baseline's hand-added ``DROP TYPE`` cleanup were lost).
+
+Migrations are run on a plain ``connect()`` (never ``begin()``) so Alembic owns
+the transaction — the same path the entrypoint/CLI use — otherwise a migration
+using ``op.get_context().autocommit_block()`` would raise ``AssertionError``.
 
 Each test gets a guaranteed-empty database (the ``public`` schema is dropped and
 recreated per test) from a module-scoped throwaway Postgres, kept separate from
@@ -29,7 +35,7 @@ from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Connection, Engine, create_engine, text
+from sqlalchemy import Connection, Engine, Enum, create_engine, text
 from sqlmodel import SQLModel
 from testcontainers.postgres import PostgresContainer
 
@@ -72,7 +78,7 @@ def _script_head(connection: Connection) -> str:
 
 def test_upgrade_head_on_empty_db_reaches_head(empty_db_engine: Engine) -> None:
     """``alembic upgrade head`` on an empty DB succeeds and stamps the head revision."""
-    with empty_db_engine.begin() as connection:
+    with empty_db_engine.connect() as connection:
         command.upgrade(make_alembic_config(connection), "head")
 
     with empty_db_engine.connect() as connection:
@@ -84,11 +90,14 @@ def test_no_drift_between_models_and_migrations(empty_db_engine: Engine) -> None
     """Drift guard: the migrations reproduce ``SQLModel.metadata`` with no diff.
 
     Any schema-affecting change to ``db/models/*.py`` shipped WITHOUT a matching
-    revision makes ``compare_metadata`` report diffs and fails here. The baseline
-    was verified to produce zero diffs (including the native PG enums), so this
-    needs no enum-noise filtering — a non-empty diff is a real drift.
+    revision makes ``compare_metadata`` report diffs and fails here, for tables,
+    columns, types, nullability, FKs, indexes and unique constraints.
+
+    Caveat: ``compare_metadata`` does NOT detect value changes on an existing
+    native PG enum (it only diffs the column's type *name*); that gap is covered
+    separately by ``test_no_enum_value_drift`` below.
     """
-    with empty_db_engine.begin() as connection:
+    with empty_db_engine.connect() as connection:
         command.upgrade(make_alembic_config(connection), "head")
 
     with empty_db_engine.connect() as connection:
@@ -98,17 +107,63 @@ def test_no_drift_between_models_and_migrations(empty_db_engine: Engine) -> None
     assert diffs == [], f"Models and migrations are out of sync — run `make migration MESSAGE=...`. Diffs: {diffs}"
 
 
+def test_no_enum_value_drift(empty_db_engine: Engine) -> None:
+    """Enum-value drift guard: native PG enum labels must match the models.
+
+    ``compare_metadata`` (used by ``test_no_drift_*``) only diffs a column's type
+    *name*, so adding/removing a value on an existing native PG enum — e.g. a new
+    ``ModelStatus`` member — slips through with no diff. Such a change needs a
+    hand-written ``ALTER TYPE ... ADD VALUE`` migration (see the flip-api README);
+    without this guard it would ship with no revision, pass CI, and only fail at
+    runtime with ``invalid input value for enum ...`` on the first write.
+
+    This compares the labels of every native enum type the models declare against
+    the labels actually present in the migrated DB's ``pg_enum`` catalog.
+    """
+    with empty_db_engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
+
+    # The enum labels the models expect, keyed by native PG type name.
+    expected: dict[str, set[str]] = {}
+    for table in SQLModel.metadata.tables.values():
+        for column in table.columns:
+            col_type = column.type
+            if isinstance(col_type, Enum) and col_type.native_enum and col_type.name:
+                expected[col_type.name] = set(col_type.enums)
+
+    assert expected, "no native enum types discovered in the models — introspection broke"
+
+    # The enum labels actually created in the migrated database.
+    with empty_db_engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT t.typname, e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid")
+        ).all()
+    actual: dict[str, set[str]] = {}
+    for row in rows:
+        actual.setdefault(row.typname, set()).add(row.enumlabel)
+
+    drift = {
+        name: {"models": labels, "database": actual.get(name, set())}
+        for name, labels in expected.items()
+        if labels != actual.get(name, set())
+    }
+    assert not drift, (
+        "Native PG enum values drifted from the models — ship a migration adding the new "
+        f"value(s) with `ALTER TYPE ... ADD VALUE` (see flip-api/README.md). Drift: {drift}"
+    )
+
+
 def test_downgrade_base_then_upgrade_head_round_trips(empty_db_engine: Engine) -> None:
     """``upgrade head`` → ``downgrade base`` → ``upgrade head`` is clean.
 
     The re-upgrade only succeeds because ``downgrade`` drops the native PG ENUM
     types; without that cleanup the second upgrade fails with "type already exists".
     """
-    with empty_db_engine.begin() as connection:
+    with empty_db_engine.connect() as connection:
         command.upgrade(make_alembic_config(connection), "head")
-    with empty_db_engine.begin() as connection:
+    with empty_db_engine.connect() as connection:
         command.downgrade(make_alembic_config(connection), "base")
-    with empty_db_engine.begin() as connection:
+    with empty_db_engine.connect() as connection:
         command.upgrade(make_alembic_config(connection), "head")
 
     with empty_db_engine.connect() as connection:
