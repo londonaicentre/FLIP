@@ -5,7 +5,7 @@
 Trust services run at each healthcare institution (cloud EC2 or on-prem). All trust communication is outbound — trusts poll the Central Hub; no inbound ports needed.
 
 | Service | Port | Purpose |
-|---------|------|---------|
+| --------- | ------ | --------- |
 | trust-api | 8020 | API gateway, polls hub for tasks, orchestrates trust |
 | imaging-api | 8001 | DICOM image retrieval from PACS |
 | data-access-api | 8010 | OMOP database queries for cohort analysis |

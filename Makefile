@@ -15,6 +15,7 @@
 		check-aws-access generate-internal-service-key \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock \
+		deploy-trust-k8s undeploy-trust-k8s \
 		nvflare-provision nvflare-provision-2-nets nvflare-provision-additional-client
 
 ifeq ($(PROD),true)
@@ -494,6 +495,15 @@ sync-trust-kits:
 	if [ "$$found" = "0" ]; then \
 	    echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."; \
 	fi
+
+# ---------------------------------------------------------------------------
+# Kubernetes Helm chart targets
+# ---------------------------------------------------------------------------
+deploy-trust-k8s: ## Deploy trust services to Kubernetes via Helm
+	$(MAKE) -C deploy/providers/kubernetes deploy
+
+undeploy-trust-k8s: ## Remove trust services from Kubernetes
+	$(MAKE) -C deploy/providers/kubernetes undeploy
 
 check-aws-access:
 	@echo "🔎 Checking AWS CLI access..."
