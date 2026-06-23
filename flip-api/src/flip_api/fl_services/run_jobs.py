@@ -43,19 +43,12 @@ def _recover_stale_busy_schedulers(db: Session) -> int:
         UPDATE fl_scheduler
         SET status = :available, job_id = NULL
         WHERE status = :busy
-          AND (job_id IS NULL
-               OR job_id NOT IN (SELECT id FROM fl_job
-                                 WHERE status NOT IN (:completed, :deleted)))
+          AND (job_id IS NULL OR job_id NOT IN (SELECT id FROM fl_job))
         """
     )
     result = db.execute(
         stmt,
-        {
-            "available": NetStatus.AVAILABLE.value,
-            "busy": NetStatus.BUSY.value,
-            "completed": "COMPLETED",
-            "deleted": "DELETED",
-        },
+        {"available": NetStatus.AVAILABLE.value, "busy": NetStatus.BUSY.value},
     )
     recovered = result.rowcount  # type: ignore[attr-defined]
     if recovered:
