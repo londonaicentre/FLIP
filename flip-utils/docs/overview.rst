@@ -13,8 +13,6 @@ The FLIP platform uses this package to power federated learning applications
 across multiple job types: standard federated training, distributed evaluation,
 diffusion model training, and custom federated optimization.
 
-Hosted documentation is available on `Read the Docs <https://flip-fl-base.readthedocs.io/en/stable>`_.
-
 Installation
 ~~~~~~~~~~~~
 
@@ -26,13 +24,12 @@ Install the published package from PyPI:
    # or with uv
    uv add flip-utils
 
-To use the latest development version, clone the repository and install from source:
+To use the latest development version, clone the monorepo and install from source:
 
 .. code-block:: bash
 
-   git clone https://github.com/londonaicentre/flip-fl-base.git
-   git checkout develop   # or the desired branch/commit
-   cd flip-fl-base
+   git clone https://github.com/londonaicentre/FLIP.git
+   cd FLIP/flip-utils
    uv sync
    # or
    pip install .
@@ -144,7 +141,7 @@ To test FL applications locally before deploying to production:
       DEV_DATAFRAME=../data/sample_get_dataframe.csv
       JOB_TYPE=standard
 
-2. Place your application files in ``src/<JOB_TYPE>/app/custom/``.
+2. Place your application files in ``fl-apps/<JOB_TYPE>/app/custom/`` (e.g. fl-apps/standard/app/custom/).
 
 3. Run the simulator in Docker:
 
@@ -189,4 +186,10 @@ How the API Reference is Generated
 
 The API reference is built with ``sphinx-autoapi`` and points directly at the
 ``flip/`` source tree. That keeps the reference pages aligned with the code
-without maintaining hand-written module stubs. See the `API Reference <https://flip-fl-base.readthedocs.io/en/stable/reference/index.html>`_ for complete documentation of all public classes and functions.
+without maintaining hand-written module stubs. See the API Reference section of
+the built documentation for complete coverage of all public classes and functions.
+
+.. note::
+
+   The flip-fl-base repository has been merged into the FLIP monorepo.
+   The ``flip-utils`` package lives under ``flip-utils/`` in the `FLIP repository <https://github.com/londonaicentre/FLIP>`_.

@@ -21,7 +21,7 @@
 ## AWS Profiles
 
 | Alias | Environment | Account |
-|-------|-------------|---------|
+| ------- | ------------- | --------- |
 | `stag` | Staging | `flipstag` |
 | `prod` | Production | `flipprod` |
 | `FlipDeveloperAccess-080369786334` | Developer access | — |

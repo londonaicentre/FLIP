@@ -8,5 +8,13 @@ FLIP components
    components/architecture-overview
    components/component-fl-nodes
    components/component-omop-database
+   components/component-user-roles
    components/component-xnat
    components/component-logging-stack
+
+.. note::
+
+   Trust-side services can also be deployed on **Kubernetes** via the Helm chart
+   at ``deploy/providers/kubernetes/``. See the
+   `K8s README <https://github.com/londonaicentre/FLIP/blob/develop/deploy/providers/kubernetes/README.md>`_
+   for details.

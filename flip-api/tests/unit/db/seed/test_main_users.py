@@ -24,8 +24,8 @@ from flip_api.utils.constants import (
     ADMIN_EMAIL_1,
     ADMIN_EMAIL_2,
     ADMIN_EMAIL_3,
-    VIEWER_EMAIL,
     RESEARCHER_EMAIL,
+    VIEWER_EMAIL,
 )
 
 

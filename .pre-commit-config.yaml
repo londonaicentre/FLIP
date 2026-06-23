@@ -34,7 +34,7 @@ repos:
         args: ['--maxkb=1000']
       - id: check-merge-conflict
       - id: check-yaml
-        exclude: '^\.github/workflows/'
+        exclude: '^\.github/workflows/|^deploy/providers/kubernetes/templates/'
       - id: end-of-file-fixer
       - id: detect-private-key
 

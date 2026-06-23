@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//     http://www.apache.org/licenses/LICENSE-2.0
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Grafana Alloy configuration for Kubernetes — scrapes pod logs via
+// local file discovery (replaces Docker socket approach used in compose).
+// Requires pods to write JSON logs to stdout/stderr.
+
+// Discover log files from the local host (K8s pod logs are at /var/log/pods/)
+local.file_match "pod_logs" {
+  path_targets = [
+    {__path__ = "/var/log/pods/*/*/*.log"},
+  ]
+}
+
+// Relabel to extract pod metadata from the file path.
+discovery.relabel "k8s_logs" {
+  targets = []
+
+  rule {
+    source_labels = ["__path__"]
+    regex         = "^/var/log/pods/([^/]+)_([^/]+)_([^/]+)/([^/]+)/(\\d+)\\.log$"
+    target_label  = "namespace"
+    replacement   = "$1"
+  }
+
+  rule {
+    source_labels = ["__path__"]
+    regex         = "^/var/log/pods/([^/]+)_([^/]+)_([^/]+)/([^/]+)/(\\d+)\\.log$"
+    target_label  = "pod"
+    replacement   = "$2"
+  }
+
+  rule {
+    source_labels = ["__path__"]
+    regex         = "^/var/log/pods/([^/]+)_([^/]+)_([^/]+)/([^/]+)/(\\d+)\\.log$"
+    target_label  = "container"
+    replacement   = "$4"
+  }
+
+  rule {
+    source_labels = ["__path__"]
+    regex         = "^/var/log/pods/([^/]+)_([^/]+)_([^/]+)/([^/]+)/(\\d+)\\.log$"
+    target_label  = "service"
+    replacement   = "$1"
+  }
+}
+
+// Read log files and forward to Loki after processing.
+loki.source.file "pod_logs" {
+  targets    = local.file_match.pod_logs.targets
+  forward_to = [loki.process.json_parse.receiver]
+}
+
+// Parse JSON log lines and promote fields to Loki labels.
+loki.process "json_parse" {
+  forward_to = [loki.write.loki.receiver]
+
+  stage.json {
+    expressions = {
+      level      = "level",
+      api        = "api",
+      event      = "event",
+      request_id = "request_id",
+    }
+  }
+
+  stage.labels {
+    values = {
+      level = "",
+      api   = "",
+      event = "",
+    }
+  }
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -21,6 +21,7 @@ This provider manages the **Central Hub** (always in AWS) and, optionally, one o
 | --- | --- | --- |
 | **Cloud** | AWS EC2 (same account as Central Hub) | This provider (`deploy/providers/AWS/`) |
 | **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server, etc.) | [`deploy/providers/local/`](../local/README.md) + selected targets in this Makefile |
+| **Kubernetes** | Any Kubernetes cluster 1.28+ (EKS, AKS, on-prem) | [`deploy/providers/kubernetes/`](../kubernetes/README.md) Helm chart |
 
 In both models, trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound from the trust** to the hub. The hub never makes inbound requests to trusts.
 
@@ -383,7 +384,7 @@ make destroy
 The RDS instance behaves differently per environment, driven by `TF_VAR_environment`:
 
 | Setting                            | `stag` (default) | `prod` (`PROD=true`)              |
-|------------------------------------|------------------|-----------------------------------|
+| ------------------------------------ | ------------------ | ----------------------------------- |
 | `skip_final_snapshot`              | `true`           | `false`                           |
 | `deletion_protection`              | `false`          | `true`                            |
 | `final_snapshot_identifier_prefix` | `flip-database-final` | `flip-database-final`        |
@@ -759,7 +760,7 @@ Both aliases resolve through the SSM tunnel — no public IP or open port 22 is 
 **Troubleshooting SSM Access**
 
 | Problem | Diagnostics | Solution |
-|---------|-------------|----------|
+| --------- | ------------- | ---------- |
 | `Unable to locate credentials` | `aws sts get-caller-identity` returns error | Run `aws sso login --profile $AWS_PROFILE` to refresh session |
 | `SessionManagerPlugin not found` | `command -v session-manager-plugin` returns nothing | Install plugin: `brew install session-manager-plugin` (macOS) or see prerequisites above |
 | `[ERROR] SessionManagerPlugin is not installed` | Session manager plugin is missing or outdated | Upgrade plugin: `brew upgrade session-manager-plugin` or download latest version |
@@ -880,7 +881,7 @@ After deploying, test that emails are delivered correctly by using the **Registe
 ### Email Client Compatibility
 
 | Client | Support | Notes |
-|--------|---------|-------|
+| -------- | --------- | ------- |
 | Gmail Web | Full | CSS gradients supported |
 | Outlook Web | Full | CSS gradients with fallback |
 | Apple Mail | Full | Dark mode compatible |
@@ -901,7 +902,7 @@ Before testing emails:
 ### Troubleshooting Email Issues
 
 | Issue | Solution |
-|-------|----------|
+| ------- | ---------- |
 | Email gradients don't render | Most clients support gradients; solid color fallback in template |
 | Button not clickable | Some clients disable links for security; check email client settings |
 | Text wraps awkwardly | Tables use responsive max-width: 600px (standard) |

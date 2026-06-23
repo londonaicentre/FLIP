@@ -1,0 +1,135 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if .Values.dataAccessApi.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-data-access-api
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-access-api
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-data-access-api
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-access-api
+data:
+  OMOP_DB_SERVICE_NAME: {{ if .Values.omopDb.enabled }}omop-db{{ else }}{{ .Values.omopDb.external.host }}{{ end }}
+  OMOP_POSTGRES_DB: {{ .Values.dataAccessApi.env.OMOP_POSTGRES_DB | quote }}
+  DATA_ACCESS_POSTGRES_USER: {{ .Values.dataAccessApi.env.DATA_ACCESS_POSTGRES_USER | quote }}
+  ENV: {{ .Values.environment | quote }}
+  LOG_LEVEL: {{ .Values.logLevel | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-data-access-api
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-access-api
+spec:
+  replicas: {{ .Values.dataAccessApi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: data-access-api
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: data-access-api
+    spec:
+      enableServiceLinks: false
+      serviceAccountName: {{ include "flip-trust.fullname" . }}-data-access-api
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dataAccessApi.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: data-access-api
+          image: "{{ .Values.dataAccessApi.image.repository }}:{{ .Values.dataAccessApi.image.tag }}"
+          imagePullPolicy: {{ .Values.dataAccessApi.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.dataAccessApi.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "flip-trust.fullname" . }}-data-access-api
+          env:
+            - name: DATA_ACCESS_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: data-access-postgres-password
+            - name: AES_KEY_BASE64
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: aes-key-base64
+            - name: TRUST_INTERNAL_SERVICE_KEY_HEADER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key-header
+            - name: TRUST_INTERNAL_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key
+          resources:
+            {{- toYaml .Values.dataAccessApi.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.dataAccessApi.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.dataAccessApi.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.dataAccessApi.probes.liveness.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.dataAccessApi.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.dataAccessApi.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.dataAccessApi.probes.readiness.timeoutSeconds }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-access-api
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-access-api
+spec:
+  type: {{ .Values.dataAccessApi.service.type }}
+  ports:
+    - port: {{ .Values.dataAccessApi.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "flip-trust.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: data-access-api
+{{- end }}

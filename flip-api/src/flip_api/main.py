@@ -82,7 +82,7 @@ from flip_api.step_functions_services import (
 )
 from flip_api.trusts_services import (
     admin_create_trust,
-    admin_get_trusts,
+    get_trust_statuses,
     get_trusts,
     trusts_health_check,
     update_trust_status,
@@ -229,7 +229,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     retrieve_model_step_function.router,
     # Trust services
     admin_create_trust.router,
-    admin_get_trusts.router,
+    get_trust_statuses.router,
     get_trusts.router,
     trusts_health_check.router,
     update_trust_status.router,
