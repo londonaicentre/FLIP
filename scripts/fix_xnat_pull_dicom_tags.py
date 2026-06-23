@@ -151,19 +151,22 @@ def main(argv: list[str]) -> int:
     if args.limit is not None:
         study_ids = study_ids[: args.limit]
 
-    # ``study_ids`` is derived from an authenticated Orthanc response, so static
-    # analysis treats it (and anything interpolated alongside it) as sensitive.
-    # Log a plain integer count detached from that dataflow instead.
-    study_count = int(len(study_ids))
+    # CodeQL (py/clear-text-logging) classifies the field names we operate on
+    # (``PatientSex``, ``AccessionNumber``, …) and any value read from the
+    # authenticated Orthanc response as sensitive/private. Logs therefore carry
+    # only opaque progress counters — never the field-name list, the study id,
+    # the accession number, or any tag value. The fields being backfilled are
+    # documented in DEFAULTS and the module docstring.
+    total = len(study_ids)
     mode = "DRY-RUN " if args.dry_run else ""
-    print(f"{mode}Scanning {study_count} studies for missing {sorted(wanted)} ...")
+    print(f"{mode}Scanning {total} studies for missing required study tags ...")
 
     fixed = skipped = failed = 0
-    for sid in study_ids:
+    for idx, sid in enumerate(study_ids, start=1):
         try:
             tags = requests.get(f"{base}/studies/{sid}", auth=auth, timeout=30).json().get("MainDicomTags", {})
         except Exception as exc:  # noqa: BLE001
-            print(f"  ! {sid}: cannot read tags: {exc}", file=sys.stderr)
+            print(f"  ! study {idx}/{total}: cannot read tags: {exc}", file=sys.stderr)
             failed += 1
             continue
 
@@ -172,11 +175,8 @@ def main(argv: list[str]) -> int:
             skipped += 1
             continue
 
-        # AccessionNumber is a patient-linkable identifier from the authenticated
-        # PACS response; keep it out of logs. The opaque Orthanc study id (``sid``)
-        # is enough for an operator to locate the study.
         if args.dry_run:
-            print(f"  would fix {sid}: set {sorted(replace)}")
+            print(f"  would fix study {idx}/{total} (missing one or more required tags)")
             fixed += 1
             continue
         try:
@@ -191,7 +191,7 @@ def main(argv: list[str]) -> int:
             if fixed % 100 == 0:
                 print(f"  ... fixed {fixed}")
         except Exception as exc:  # noqa: BLE001
-            print(f"  ! {sid}: modify failed: {exc}", file=sys.stderr)
+            print(f"  ! study {idx}/{total}: modify failed: {exc}", file=sys.stderr)
             failed += 1
 
     print("\n── Summary ──────────────────────────────────────────")
