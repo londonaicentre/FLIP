@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 from fastapi import HTTPException
+from pandas.errors import DatabaseError as PandasDatabaseError
 from psycopg2 import errors as pg_errors
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 
@@ -310,6 +311,82 @@ def test_get_records_undefined_column_with_extraction_failure(mock_read_sql, moc
 
     with pytest.raises(HTTPException, match="The column 'None' does not exist"):
         get_records(query)
+
+
+@patch("pandas.read_sql")
+def test_get_records_pandas_wraps_undefined_table(mock_read_sql):
+    """pandas 3.x wraps SQLAlchemy errors in pandas.errors.DatabaseError.
+
+    When pd.read_sql raises a PandasDatabaseError whose __cause__ is a
+    DBAPIError for an UndefinedTable, get_records must unwrap the chain and
+    return HTTP 400 with the table name — not a generic 500 internal_error.
+    This is a regression test for the pandas 3.x wrapping behaviour introduced
+    alongside the starlette >=1.0.1 bump.
+    """
+    mock_pg_error = pg_errors.UndefinedTable()
+    mock_pg_error.args = ('relation "omop.does_not_exist" does not exist',)
+
+    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
+    mock_dbapi_error.orig = mock_pg_error
+
+    # Simulate the pandas 3.x wrapping: PandasDatabaseError with DBAPIError as __cause__
+    pandas_err = PandasDatabaseError(f"Execution failed on sql '...': {mock_dbapi_error}")
+    pandas_err.__cause__ = mock_dbapi_error
+    mock_read_sql.side_effect = pandas_err
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_records("SELECT * FROM omop.does_not_exist")
+    assert exc_info.value.status_code == 400
+    assert "does not exist" in exc_info.value.detail.lower()
+
+
+@patch("pandas.read_sql")
+def test_get_records_pandas_wraps_undefined_column(mock_read_sql):
+    """pandas 3.x wrapping of UndefinedColumn surfaces as HTTP 400 with column name."""
+    mock_pg_error = pg_errors.UndefinedColumn()
+    mock_pg_error.args = ('column "missing_col" does not exist',)
+
+    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
+    mock_dbapi_error.orig = mock_pg_error
+
+    pandas_err = PandasDatabaseError(f"Execution failed on sql '...': {mock_dbapi_error}")
+    pandas_err.__cause__ = mock_dbapi_error
+    mock_read_sql.side_effect = pandas_err
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_records("SELECT missing_col FROM omop.person")
+    assert exc_info.value.status_code == 400
+    assert "does not exist" in exc_info.value.detail.lower()
+
+
+@patch("pandas.read_sql")
+def test_get_records_pandas_wraps_generic_dbapi_error(mock_read_sql):
+    """pandas 3.x wrapping of a generic DBAPIError surfaces as HTTP 500 query_failed."""
+    mock_pg_error = Exception("connection timeout")
+
+    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
+    mock_dbapi_error.orig = mock_pg_error
+
+    pandas_err = PandasDatabaseError(f"Execution failed on sql '...': {mock_dbapi_error}")
+    pandas_err.__cause__ = mock_dbapi_error
+    mock_read_sql.side_effect = pandas_err
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_records("SELECT * FROM omop.person")
+    assert exc_info.value.detail == "query_failed"
+    assert "connection timeout" not in str(exc_info.value.detail)
+
+
+@patch("pandas.read_sql")
+def test_get_records_pandas_error_without_dbapi_cause(mock_read_sql):
+    """A PandasDatabaseError whose __cause__ is not a DBAPIError collapses to internal_error."""
+    pandas_err = PandasDatabaseError("Execution failed: some low-level driver error")
+    pandas_err.__cause__ = ValueError("unexpected driver error")
+    mock_read_sql.side_effect = pandas_err
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_records("SELECT * FROM omop.person")
+    assert exc_info.value.detail == "internal_error"
 
 
 # Tests for validate_query

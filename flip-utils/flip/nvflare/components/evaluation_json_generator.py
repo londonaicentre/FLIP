@@ -38,7 +38,7 @@ class EvaluationJsonGenerator(FLComponent):
         self._eval_results = {}
         self._json_file_name = json_file_name
 
-    def handle_evaluation_events(self, event_type: str, fl_ctx: FLContext):
+    def handle_evaluation_events(self, event_type: str, fl_ctx: FLContext) -> None:
         if event_type == EventType.START_RUN:
             self._eval_results.clear()
         elif event_type == AppEventType.VALIDATION_RESULT_RECEIVED:
