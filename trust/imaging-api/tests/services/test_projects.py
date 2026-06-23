@@ -602,7 +602,11 @@ def test_get_experiments_success(mock_get_project, mock_get, headers):
 @patch("imaging_api.services.projects.get_project")
 def test_get_experiments_failure(mock_get_project, mock_get, headers):
     mock_get_project.return_value = Project(**_PROJECT_DICT)
-    mock_get.return_value = MagicMock(status_code=500, text="Error")
+    # A real XNAT non-200 serves an HTML/plain-text body, so .json() raises. The status must be
+    # checked before the body is parsed, otherwise the JSON error masks the true HTTP status.
+    mock_get.return_value = MagicMock(
+        status_code=500, text="Error", json=MagicMock(side_effect=ValueError("no json")),
+    )
     with pytest.raises(Exception, match="XNAT experiments fetch failed"):
         get_experiments("TEST", headers)
 
@@ -623,9 +627,11 @@ def test_get_experiments_uses_unfiltered_global_listing(mock_get_project, mock_g
 
     get_experiments("TEST", headers)
 
-    called_url = mock_get.call_args.args[0]
-    assert called_url.endswith("/data/experiments?project=TEST")
-    assert "/data/projects/TEST/experiments" not in called_url
+    called = mock_get.call_args
+    # Global endpoint, project passed as a (URL-encoded) query parameter — NOT the project-scoped path.
+    assert called.args[0].endswith("/data/experiments")
+    assert called.kwargs["params"] == {"project": "TEST"}
+    assert "/data/projects/TEST/experiments" not in called.args[0]
 
 
 # ===========================================================================

@@ -534,13 +534,14 @@ def get_experiments(project_id: str, headers: dict[str, str]) -> list[Experiment
     # element security, so sessions whose modality is not registered there (e.g.
     # xnat:dxSessionData for chest X-rays) are silently omitted — making the import look stuck
     # at "0 imported". The global listing returns identical fields without that filter.
-    response = requests.get(f"{XNAT_URL}/data/experiments?project={project_id}", headers=headers)
-    experiments = [Experiment(**experiment) for experiment in response.json()["ResultSet"]["Result"]]
+    response = requests.get(f"{XNAT_URL}/data/experiments", params={"project": project_id}, headers=headers)
 
-    if response.status_code == 200:
-        return experiments
-    else:
+    # Check the status before parsing: a non-200 XNAT response carries an HTML/plain-text body, so
+    # parsing it as JSON first would raise and mask the real HTTP status.
+    if response.status_code != 200:
         raise Exception(f"Error: XNAT experiments fetch failed: {response.status_code} - {response.text}")
+
+    return [Experiment(**experiment) for experiment in response.json()["ResultSet"]["Result"]]
 
 
 def get_experiment(project_id: str, experiment_id_or_label: str, headers: dict[str, str]) -> dict:
