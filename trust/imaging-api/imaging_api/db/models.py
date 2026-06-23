@@ -32,7 +32,6 @@ class DirectArchiveSessionORM(Base):
     id = Column(Integer, primary_key=True)
     created = Column(DateTime)
     folder_name = Column(String)
-    name = Column(String)
     status = Column(String)
     project = Column(String)
     timestamp = Column(DateTime)
@@ -44,9 +43,6 @@ class DirectArchiveSession(BaseModel):
     id: int
     created: datetime
     folder_name: str
-    # The session label XNAT assigns the directArchive session; for DQR imports this is the
-    # accession number, so it is what links an archive failure back to a cohort accession.
-    name: str | None = None
     status: str
     project: str
 
