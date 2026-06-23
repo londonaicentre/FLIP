@@ -201,11 +201,18 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     # is surfaced to the operator and retried — otherwise it lingers indefinitely as `processing`. Any
     # other status on a record that exists means the import is still in flight. Note: an accession can be
     # both received (executed RECEIVED) and failed (directArchive ERROR); `failed` takes precedence below.
+    # A directArchive session's accession label is `name` (set for DQR imports); fall back to
+    # `folder_name` (which carries the same label) when `name` is NULL, so a NULL-named archive
+    # failure is still attributed to its accession rather than silently dropped.
     failed_accessions = {
-        session.name for session in direct_archive_sessions if session.status == _DIRECT_ARCHIVE_FAILED_STATUS
+        (session.name or session.folder_name)
+        for session in direct_archive_sessions
+        if session.status == _DIRECT_ARCHIVE_FAILED_STATUS
     } | {req.accession_number for req in executed_pacs_requests if req.status == _PACS_REQUEST_FAILED_STATUS}
     in_progress_accessions = {
-        session.name for session in direct_archive_sessions if session.status != _DIRECT_ARCHIVE_FAILED_STATUS
+        (session.name or session.folder_name)
+        for session in direct_archive_sessions
+        if session.status != _DIRECT_ARCHIVE_FAILED_STATUS
     } | {req.accession_number for req in executed_pacs_requests if req.status != _PACS_REQUEST_FAILED_STATUS}
     queued_accessions = {req.accession_number for req in queued_pacs_requests}
 
