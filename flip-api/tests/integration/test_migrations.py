@@ -111,45 +111,54 @@ def test_no_enum_value_drift(empty_db_engine: Engine) -> None:
     """Enum-value drift guard: native PG enum labels must match the models.
 
     ``compare_metadata`` (used by ``test_no_drift_*``) only diffs a column's type
-    *name*, so adding/removing a value on an existing native PG enum — e.g. a new
-    ``ModelStatus`` member — slips through with no diff. Such a change needs a
-    hand-written ``ALTER TYPE ... ADD VALUE`` migration (see the flip-api README);
-    without this guard it would ship with no revision, pass CI, and only fail at
-    runtime with ``invalid input value for enum ...`` on the first write.
+    *name*, so adding, removing, or reordering a value on an existing native PG enum
+    — e.g. a new ``ModelStatus`` member — slips through with no diff. Such a change
+    needs a hand-written ``ALTER TYPE ... ADD VALUE`` migration (see the flip-api
+    README); without this guard it would ship with no revision, pass CI, and only
+    fail at runtime with ``invalid input value for enum ...`` on the first write.
 
-    This compares the labels of every native enum type the models declare against
-    the labels actually present in the migrated DB's ``pg_enum`` catalog.
+    Compares the ordered labels of every native enum type the models declare against
+    those present in the migrated DB's ``pg_enum`` catalog (current schema only).
     """
     with empty_db_engine.connect() as connection:
         command.upgrade(make_alembic_config(connection), "head")
 
-    # The enum labels the models expect, keyed by native PG type name.
-    expected: dict[str, set[str]] = {}
+    # The enum labels the models expect, keyed by native PG type name (ordered).
+    expected: dict[str, list[str]] = {}
     for table in SQLModel.metadata.tables.values():
         for column in table.columns:
             col_type = column.type
             if isinstance(col_type, Enum) and col_type.native_enum and col_type.name:
-                expected[col_type.name] = set(col_type.enums)
+                expected[col_type.name] = list(col_type.enums)
 
     assert expected, "no native enum types discovered in the models — introspection broke"
 
-    # The enum labels actually created in the migrated database.
+    # The enum labels actually created in the migrated database, in sort order so a
+    # reordering (which changes the native enum's order, not just membership) is caught
+    # too. Scope to the current schema so a same-named type elsewhere can't merge in.
     with empty_db_engine.connect() as connection:
         rows = connection.execute(
-            text("SELECT t.typname, e.enumlabel FROM pg_enum e JOIN pg_type t ON t.oid = e.enumtypid")
+            text(
+                "SELECT t.typname, e.enumlabel "
+                "FROM pg_enum e "
+                "JOIN pg_type t ON t.oid = e.enumtypid "
+                "JOIN pg_namespace n ON n.oid = t.typnamespace "
+                "WHERE n.nspname = current_schema() "
+                "ORDER BY t.typname, e.enumsortorder"
+            )
         ).all()
-    actual: dict[str, set[str]] = {}
+    actual: dict[str, list[str]] = {}
     for row in rows:
-        actual.setdefault(row.typname, set()).add(row.enumlabel)
+        actual.setdefault(row.typname, []).append(row.enumlabel)
 
     drift = {
-        name: {"models": labels, "database": actual.get(name, set())}
+        name: {"models": labels, "database": actual.get(name, [])}
         for name, labels in expected.items()
-        if labels != actual.get(name, set())
+        if labels != actual.get(name, [])
     }
     assert not drift, (
-        "Native PG enum values drifted from the models — ship a migration adding the new "
-        f"value(s) with `ALTER TYPE ... ADD VALUE` (see flip-api/README.md). Drift: {drift}"
+        "Native PG enum values drifted from the models — add/reorder via a migration "
+        f"(`ALTER TYPE ... ADD VALUE`; see flip-api/README.md). Drift: {drift}"
     )
 
 
