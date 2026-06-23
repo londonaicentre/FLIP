@@ -36,6 +36,14 @@ from imaging_api.utils.logger import logger
 
 XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 
+# Terminal-failure status values written by XNAT's DQR plugin / prearchive. Confirmed against XNAT
+# 1.9.x source: queued/executed PACS requests use PacsRequest.FAILED_STATUS_TEXT ("FAILED"); a
+# directArchive session uses PrearcUtils.PrearcStatus.ERROR. Any other status on a row that exists
+# means the import is still in flight. A successful directArchive deletes its row, so "successful" is
+# never read from these tables — it is determined solely by the experiment listing.
+_PACS_REQUEST_FAILED_STATUS = "FAILED"
+_DIRECT_ARCHIVE_FAILED_STATUS = "ERROR"
+
 
 async def retrieve_images_for_project(project_id: str, query: str, headers: XNATAuthHeaders) -> bool:
     """
@@ -188,27 +196,36 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
 
     import_status = ImportStatus()
 
+    # Partition the DQR records into terminal-failure vs still-in-flight accessions. A terminal failure
+    # (executed PACS request FAILED, or directArchive session ERROR) must be reported as `failed` so it
+    # is surfaced to the operator and retried — otherwise it lingers indefinitely as `processing`. Any
+    # other status on a record that exists means the import is still in flight. Note: an accession can be
+    # both received (executed RECEIVED) and failed (directArchive ERROR); `failed` takes precedence below.
+    failed_accessions = {
+        session.name for session in direct_archive_sessions if session.status == _DIRECT_ARCHIVE_FAILED_STATUS
+    } | {req.accession_number for req in executed_pacs_requests if req.status == _PACS_REQUEST_FAILED_STATUS}
+    in_progress_accessions = {
+        session.name for session in direct_archive_sessions if session.status != _DIRECT_ARCHIVE_FAILED_STATUS
+    } | {req.accession_number for req in executed_pacs_requests if req.status != _PACS_REQUEST_FAILED_STATUS}
+    queued_accessions = {req.accession_number for req in queued_pacs_requests}
+
     for accession_number in accession_ids:
         # TODO Unlike in the old repo, accession numbers are now not encrypted in OMOP database, so no need to decrypt
         # here.
 
-        # Check if the accession number is in the successfully imported list
+        # "successful" means archived as a queryable experiment — a directArchive that has only been
+        # RECEIVED is not yet archived, so it stays `processing` until the experiment appears.
         if accession_number in successfully_imported_accession_numbers:
             import_status.successful.append(accession_number)
-            continue
-
-        # Check if the accession number is in the executed PACS requests
-        if accession_number in [req.accession_number for req in executed_pacs_requests]:
+        elif accession_number in failed_accessions:
+            import_status.failed.append(accession_number)
+        elif accession_number in in_progress_accessions:
             import_status.processing.append(accession_number)
-            continue
-
-        # Check if the accession number is in the queued PACS requests
-        if accession_number in [req.accession_number for req in queued_pacs_requests]:
+        elif accession_number in queued_accessions:
             import_status.queued.append(accession_number)
-            continue
-
-        # Default if none have been reached
-        import_status.queue_failed.append(accession_number)
+        else:
+            # Never entered the DQR queue (e.g. no matching study on PACS).
+            import_status.queue_failed.append(accession_number)
 
     # Log the import status
     logger.info(
