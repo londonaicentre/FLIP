@@ -112,7 +112,7 @@ def get_flip_constants() -> Union[DevSettings, ProdSettings]:
 class _FlipConstantsProxy:
     """Proxy to provide lazy loading via attribute access."""
 
-    def __getattribute__(self, name: str):
+    def __getattribute__(self, name: str) -> object:
         if name.startswith("_"):
             return object.__getattribute__(self, name)
         return getattr(get_flip_constants(), name)

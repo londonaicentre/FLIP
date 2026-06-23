@@ -28,5 +28,5 @@ class ClientEventHandler(FLComponent):
     def __init__(self):
         super(ClientEventHandler, self).__init__()
 
-    def handle_event(self, event_type: str, fl_ctx: FLContext):
+    def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
         pass

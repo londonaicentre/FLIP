@@ -13,6 +13,12 @@ medical imaging AI models across healthcare institutions while preserving data p
 FLIP/
 ├── flip-api/           # Central Hub API (Python/FastAPI)
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
+├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
+├── fl_services/        # FL Docker services (server, client, API)
+├── fl-apps/
+│   ├── templates/      # FL app templates (standard, fed_opt, evaluation, diffusion_model)
+│   ├── tutorials/      # End-to-end tutorial examples
+│   └── scripts/        # FL app utility scripts
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
 │   ├── data-access-api/# OMOP database queries (Python/FastAPI)
@@ -21,6 +27,8 @@ FLIP/
 │   ├── orthanc/        # Mocked PACS server
 │   └── xnat/           # Mocked XNAT neuroimaging service
 ├── deploy/             # Docker Compose files (dev/prod, flower/nvflare)
+│   ├── workspace/      # Provisioned NVFLARE certificates
+│   ├── scripts/        # Provisioning and deployment scripts
 │   └── providers/
 │       ├── AWS/        # Terraform/OpenTofu IaC + Ansible for AWS deployment
 │       └── local/      # Ansible playbooks for on-premises trust deployment
@@ -29,6 +37,11 @@ FLIP/
 ```
 
 Service-specific details are in `flip-api/CLAUDE.md`, `trust/CLAUDE.md`, `trust/*/CLAUDE.md`, and `deploy/providers/AWS/CLAUDE.md`.
+
+The `flip-utils/`, `fl_services/`, and `fl-apps/` trees were migrated into this mono-repo from the legacy
+`flip-fl-base` (NVFLARE) and `flip-fl-base-flower` (Flower) repositories. Those repositories still hold the
+provisioned workspaces / certs that `deploy/fl_backend.mk` points `FL_PROVISIONED_DIR` at by default — see
+[`README.md#federated-learning-setup`](README.md#federated-learning-setup).
 
 ## Tech Stack
 
@@ -109,9 +122,10 @@ make local_test            # Tests without Docker
 
 Prerequisites:
 - Stack up via `make up` (central hub + trusts + XNAT) with trusts registered; Orthanc PACS seeded with DICOM data so image pull has something to pull.
-- Sibling repo `../flip-fl-base-flower` (Flower) or `../flip-fl-base` (NVFLARE) checked out — its chest-xray tutorial supplies the model files and `query.sql`.
+- The NVFLARE tutorial files are in-tree at `fl-apps/tutorials/` (from the merged flip-fl-base).
+- The Flower tutorial requires the sibling repo `../flip-fl-base-flower` checked out (not yet merged).
 
-Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `../../flip-fl-base/tutorials/image_classification/xray_classification/`. Common overrides:
+Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `fl-apps/tutorials/image_classification/xray_classification/`. For Flower, they point at `../../flip-fl-base-flower/tutorials/xray_classification/`. Common overrides:
 
 ```bash
 make e2e_smoke FL_BACKEND=flower                               # use the Flower tutorial
@@ -317,7 +331,7 @@ The senders construct the header inline at call sites:
 
 - `trust-api/trust_api/services/task_handlers.py::_trust_internal_headers()` — used on outbound imaging-api and data-access-api calls.
 - `imaging-api/imaging_api/services_external/data_access.py` — used on the outbound `/cohort/accession-ids` call.
-- The [`flip` Python package](https://github.com/londonaicentre/flip-fl-base/tree/main/flip) — lives in `flip-fl-base` and is consumed by both the NVFLARE (`flip-fl-base`) and Flower (`flip-fl-base-flower`) fl-client / fl-server images. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth. Adding the header to these wrappers is a single follow-up PR in `flip-fl-base`, required before this branch can ship a working trust deployment.
+- The `flip` Python package — now lives at [`flip-utils/flip/`](flip-utils/flip/) in this mono-repo (was `flip-fl-base`/`flip`), consumed by both the NVFLARE and Flower fl-client / fl-server images built from `fl_services/`. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth.
 
 ## Code Modification Rules
 
@@ -332,10 +346,10 @@ The senders construct the header inline at call sites:
 ## Related Repositories
 
 | Repository | Purpose |
-| ----------- | --------- |
-| [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo |
-| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | NVIDIA FLARE base library |
-| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower base library |
+|-----------|---------|
+| [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo — central hub, trust services, UI, deployment, **and** the FL base library / services / tutorials (under `flip-utils/`, `fl_services/`, `fl-apps/`) |
+| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | Legacy NVFLARE base library repo — code has been migrated into `flip-utils/` + `fl_services/` + `fl-apps/`; the NVFLARE workspace is now provisioned in-tree at `deploy/workspace` (`FL_PROVISIONED_DIR=deploy/workspace`) |
+| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Legacy Flower base library repo — library code has been migrated into `flip-utils/`; still hosts the provisioned Flower certs consumed by dev compose (`FL_PROVISIONED_DIR=../flip-fl-base-flower/certs`) |
 
 ## Documentation Files
 
