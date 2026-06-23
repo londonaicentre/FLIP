@@ -127,7 +127,7 @@ locals {
       # 1800s (MAX_PUT_PRESIGNED_URL_TTL_SECONDS), so multi-GB uploads must
       # complete within 30 minutes or they time out at the edge.
       MAX_MODEL_FILE_BYTES = "5000000000"
-      FL_KIT_SLOT_NAMES              = var.FL_KIT_SLOT_NAMES
+      FL_KIT_SLOT_NAMES    = var.FL_KIT_SLOT_NAMES
     })
     fl_server = {
       LOCAL_DEV                      = "false"
