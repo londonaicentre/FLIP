@@ -18,7 +18,7 @@ router = APIRouter()
 
 
 @router.get("/")
-def index():
+def index() -> dict[str, str]:
     """
     A welcome message for the FLIP FL API.
 
@@ -29,7 +29,7 @@ def index():
 
 
 @router.get("/health/")
-def health():
+def health() -> dict[str, str]:
     """
     Updates of whether the FL API service is healthy.
 

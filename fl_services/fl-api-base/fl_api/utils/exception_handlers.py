@@ -18,30 +18,30 @@ from nvflare.fuel.flare_api.api_spec import JobNotFound
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 
-def http_exception_handler(request: Request, exc: Exception):
+def http_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     e = cast(StarletteHTTPException, exc)
     return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
 
 
-def bad_request_handler(request: Request, exc: ValueError):
+def bad_request_handler(request: Request, exc: ValueError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
-def value_error_handler(request: Request, exc: ValueError):
+def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
-def file_not_found_handler(request: Request, exc: FileNotFoundError):
+def file_not_found_handler(request: Request, exc: FileNotFoundError) -> JSONResponse:
     return JSONResponse(status_code=404, content={"detail": str(exc) or "File not found"})
 
 
-def job_not_found_handler(request: Request, exc: JobNotFound):
+def job_not_found_handler(request: Request, exc: JobNotFound) -> JSONResponse:
     return JSONResponse(status_code=404, content={"detail": str(exc) or "Job not found"})
 
 
-def validation_exception_handler(request: Request, exc: Exception):
+def validation_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=422, content={"detail": str(exc)})
 
 
-def server_error_handler(request: Request, exc: Exception):
+def server_error_handler(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse(status_code=500, content={"detail": f"Internal server error: {str(exc)}"})

@@ -36,7 +36,7 @@ ifeq ($(FL_BACKEND),nvflare)
 DOCKER_FL_API_NAME    := flare-fl-api
 DOCKER_FL_SERVER_NAME := flare-fl-server
 DOCKER_FL_CLIENT_NAME := flare-fl-client
-FL_PROVISIONED_DIR    := ../flip-fl-base/workspace
+FL_PROVISIONED_DIR    := deploy/workspace
 FL_JOBS_DIR           := jobs
 else
 DOCKER_FL_API_NAME    := flower-fl-api

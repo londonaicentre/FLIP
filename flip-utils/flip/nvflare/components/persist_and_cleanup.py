@@ -57,7 +57,7 @@ class PersistToS3AndCleanup(FLComponent):
             self.flip.update_status(self.model_id, ModelStatus.ERROR)
             raise ValueError(f"The model ID: {self.model_id} is not a valid UUID")
 
-    def execute(self, fl_ctx: FLContext):
+    def execute(self, fl_ctx: FLContext) -> None:
         try:
             self.log_info(fl_ctx, "Initializing PersistToS3AndCleanup")
             engine = fl_ctx.get_engine()
@@ -106,7 +106,7 @@ class PersistToS3AndCleanup(FLComponent):
             self.log_exception(fl_ctx, error_msg)
             raise
 
-    def upload_results_to_s3_bucket(self, fl_ctx: FLContext):
+    def upload_results_to_s3_bucket(self, fl_ctx: FLContext) -> None:
         """
         Uploads the final aggregated model and reports to an S3 bucket as a zip file.
         """
@@ -152,7 +152,7 @@ class PersistToS3AndCleanup(FLComponent):
             self.log_error(fl_ctx, str(e))
             raise
 
-    def cleanup(self, fl_ctx: FLContext):
+    def cleanup(self, fl_ctx: FLContext) -> None:
         """
         Cleans up the workspace by deleting the transfer and save directories for the model ID.
         """
