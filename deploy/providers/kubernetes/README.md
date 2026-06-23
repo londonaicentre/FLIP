@@ -150,11 +150,16 @@ override it only if your hub uses a different header.
 ### 6. (FL training only) Open the FL-server NLB
 
 Polling needs nothing more. For FL *training*, the K8s node's FL client must
-reach the hub's FL server, so open the NLB to the node's public/egress IP:
+reach the hub's FL server. Add the node's public/egress IP to
+`K8S_TRUST_PUBLIC_IPS` in the hub env file (an HCL list, e.g.
+`K8S_TRUST_PUBLIC_IPS=["1.2.3.4"]`), then reconcile the NLB:
 
 ```bash
 make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-public-ip> PROD=stag
 ```
+
+This is a normal `terraform apply` (no `-target`), so re-running with an
+already-listed IP is a no-op (idempotent — #596).
 
 ## Configuration Reference
 
@@ -476,7 +481,11 @@ Include:
    `ReadWriteMany` storage class (e.g. NFS/EFS) to mount the same archive/build
    data. Subscriptions are created successfully, but DICOM-to-NIfTI conversion
    will not yet run end-to-end on the K8s deployment until the PVC topology
-   for Jobs is finalised.
+   for Jobs is finalised. **See [DCM2NIIX-K8S.md](DCM2NIIX-K8S.md) (#565)** for
+   the storage analysis, the RWX / single-node fixes (set
+   `xnat.web.persistence.accessMode: ReadWriteMany` for multi-node), and the
+   remaining chart work that must be validated against a live XNAT Container
+   Service.
 
 2. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
    shared across multiple pod replicas. The chart configures Orthanc with
