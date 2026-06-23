@@ -186,7 +186,7 @@ How the API Reference is Generated
 
 The API reference is built with ``sphinx-autoapi`` and points directly at the
 ``flip/`` source tree. That keeps the reference pages aligned with the code
-without maintaining hand-written module stubs. See the `API Reference <https://flip-fl-base.readthedocs.io/en/stable/reference/index.html>`_ for complete documentation of all public classes and functions.
+without maintaining hand-written module stubs. See the :doc:`API Reference <reference/index>` for complete documentation of all public classes and functions.
 
 .. note::
 

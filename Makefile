@@ -363,20 +363,6 @@ integration_test:
 	$(MAKE) -C flip-api integration_test
 	$(MAKE) -C trust integration_test
 
-# NVFLARE provisioning targets — delegates to deploy/scripts/
-# The project YML files live in deploy/providers/
-NET_NUMBER ?= 1
-
-nvflare-provision:
-	deploy/scripts/provision-network.sh deploy/providers/net-${NET_NUMBER}_project.yml $(NET_NUMBER)
-
-nvflare-provision-2-nets:
-	NET_NUMBER=1 $(MAKE) nvflare-provision
-	NET_NUMBER=2 $(MAKE) nvflare-provision
-
-nvflare-provision-additional-client:
-	deploy/scripts/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT)
-
 # Python projects managed by uv; each has its own pyproject.toml + uv.lock.
 UV_PROJECTS := . flip-api docs trust/trust-api trust/imaging-api trust/data-access-api trust/xnat/tests deploy/providers/AWS
 
@@ -393,18 +379,20 @@ lock:
 	@echo "All uv.lock files regenerated."
 
 # NVFLARE provisioning targets — delegate to deploy/scripts/.
-# The project YML files live in deploy/providers/.
+# The project YML files live in deploy/providers/; provisioned output goes to
+# deploy/workspace/ (gitignored), which is where the compose mounts expect it.
 NET_NUMBER ?= 1
+FL_WORKSPACE_DIR ?= deploy/workspace
 
 nvflare-provision:
-	deploy/scripts/provision-network.sh deploy/providers/net-${NET_NUMBER}_project.yml $(NET_NUMBER)
+	deploy/scripts/provision-network.sh deploy/providers/net-${NET_NUMBER}_project.yml $(NET_NUMBER) $(FL_WORKSPACE_DIR)
 
 nvflare-provision-2-nets:
 	NET_NUMBER=1 $(MAKE) nvflare-provision
 	NET_NUMBER=2 $(MAKE) nvflare-provision
 
 nvflare-provision-additional-client:
-	deploy/scripts/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT)
+	deploy/scripts/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT) deploy/providers/net-${NET_NUMBER}_project.yml $(FL_WORKSPACE_DIR)
 
 # Drives a fresh project end-to-end against a running `make up` stack:
 # create → approve → upload model → wait for image pull → start training.

@@ -38,7 +38,7 @@ services:
         UID: ${UID:-1000}
         GID: ${GID:-1000}
         UNAME: ${UNAME:-flip}
-        BASE_REF: ${BASE_REF:-fl-base:dev}
+        BASE_REF: ${BASE_REF:-flare-fl-base:dev}
     environment:
       - NET_ID=net-${NET_NUMBER}
       - LOCAL_DEV=false

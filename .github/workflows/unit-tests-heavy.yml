@@ -38,16 +38,17 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups --extra full
 
-      - name: Run NVFLARE unit tests
+      - name: Run NVFLARE unit tests with coverage
         run: |
           # Run only tests in the nvflare test tree to exercise heavy code paths
-          uv run pytest tests/unit/nvflare -q --maxfail=1
+          uv run pytest tests/unit/nvflare -q --maxfail=1 --cov=flip --cov-report=xml
 
       - name: Upload coverage (optional)
         if: success()
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
           flags: nvflare
           fail_ci_if_error: false

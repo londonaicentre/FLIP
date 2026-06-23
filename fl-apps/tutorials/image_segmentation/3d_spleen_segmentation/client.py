@@ -38,7 +38,7 @@ from model import FLUNet
 from monai.data import DataLoader, Dataset, decollate_batch
 from monai.losses import DiceCELoss
 from monai.metrics import DiceMetric
-from monai.transforms import AsDiscrete, Compose
+from monai.transforms import AsDiscrete
 from nvflare.app_opt.monai import decomposers
 from nvflare.client.tracking import SummaryWriter
 from transforms import get_sliding_window_inferer, get_train_transforms, get_val_transforms
@@ -116,8 +116,8 @@ def _build_loaders(
     train_idx = indices[:split]
     val_idx = indices[split:]
 
-    train_ds = Dataset([pairs[i] for i in train_idx], transform=Compose(get_train_transforms()))
-    val_ds = Dataset([pairs[i] for i in val_idx], transform=Compose(get_val_transforms()))
+    train_ds = Dataset([pairs[i] for i in train_idx], transform=get_train_transforms())
+    val_ds = Dataset([pairs[i] for i in val_idx], transform=get_val_transforms())
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers)
     val_loader = DataLoader(val_ds, batch_size=val_batch_size, shuffle=False, num_workers=num_workers)
@@ -167,7 +167,7 @@ def _validate(
     model.eval()
     dice_acc.reset()
     running_loss = 0.0
-    val_dice: list[float] = []
+    num_batches = 0
 
     for batch in loader:
         images = batch["image"].to(device)
@@ -181,10 +181,13 @@ def _validate(
         preds_d = torch.stack([post_pred(i) for i in preds_d], 0)
         labels_d = torch.stack([post_pred_gt(i) for i in labels], 0)
         dice_acc(y_pred=preds_d, y=labels_d)
-        val_dice.append(dice_acc.aggregate().item())
+        num_batches += 1
 
-    avg_loss = running_loss / max(len(loader), 1)
-    avg_dice = float(np.mean(val_dice)) if val_dice else 0.0
+    # Aggregate once over all batches; aggregate() returns the running mean over
+    # every sample fed since reset(), so calling it per-batch and averaging would
+    # double-count earlier batches.
+    avg_loss = running_loss / max(num_batches, 1)
+    avg_dice = float(dice_acc.aggregate().item()) if num_batches > 0 else 0.0
     return avg_loss, avg_dice
 
 
