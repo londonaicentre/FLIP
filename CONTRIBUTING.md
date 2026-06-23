@@ -41,30 +41,34 @@ When creating issues, please use the appropriate issue template:
 
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London. It is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
-The project spans three repositories:
-
-| Repository | Description |
-| --- | --- |
-| [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo: Central Hub API, Trust APIs, UI, and Docker deployment |
-| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | NVIDIA FLARE federated learning base application library, workflows, and tutorials |
-| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower federated learning base application library, workflows, and tutorials |
-
-The main FLIP repository follows a mono-repo structure with these key services:
+The FLIP repository is a mono-repo: it consolidates the Central Hub API, Trust APIs, UI, Docker deployment, **and**
+the federated learning code (base library, FL services, and tutorials) that was previously split across the legacy
+[`flip-fl-base`](https://github.com/londonaicentre/flip-fl-base) (NVFLARE) and
+[`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) (Flower) repositories. Those repositories
+still hold the provisioned NVFLARE workspaces / Flower certs consumed by the dev compose files (see
+[`README.md#federated-learning-setup`](README.md#federated-learning-setup)), but the FL Python/Docker source is now here.
 
 ```bash
 FLIP/
 ├── deploy/             # Docker deployment files
+│   └── providers/
+│       ├── AWS/            # Terraform for Central Hub + cloud trust (EC2)
+│       ├── kubernetes/     # Helm chart for K8s trust deployment
+│       └── local/          # Ansible for on-premises trust deployment
 ├── docs/               # Sphinx documentation
 ├── flip-api/           # Central Hub API service
 ├── flip-ui/            # UI service
-└── trust/              # Services deployed in individual trust environments
-    ├── data-access-api/    # Data access API
-    ├── imaging-api/        # Imaging API
-    ├── observability/      # Observability stack (Grafana, Loki, Alloy)
-    ├── omop-db/            # Mocked OMOP database
-    ├── orthanc/            # Mocked PACS service (Orthanc)
-    ├── trust-api/          # Trust API
-    └── xnat/               # Mocked XNAT service
+├── trust/              # Services deployed in individual trust environments
+│   ├── data-access-api/    # Data access API
+│   ├── imaging-api/        # Imaging API
+│   ├── observability/      # Observability stack (Grafana, Loki, Alloy)
+│   ├── omop-db/            # Mocked OMOP database
+│   ├── orthanc/            # Mocked PACS service (Orthanc)
+│   ├── trust-api/          # Trust API
+│   └── xnat/               # Mocked XNAT service
+├── flip-utils/         # `flip` Python package — platform logic, NVFLARE components, Flower helpers
+├── fl_services/        # Docker images for FL networks: fl-server, fl-client, fl-api-base, fl-base
+└── fl-apps/            # FL job-type implementations (standard, evaluation, diffusion_model, fed_opt) and tutorials
 ```
 
 ## Setting up the development environment
@@ -374,13 +378,32 @@ make unit_test
 `make tests` is a narrower target that runs `flip-ui` unit and Cypress e2e tests followed by the full `flip-api`
 test suite (ruff, mypy, and pytest).
 
-For the `flip-fl-base` repository, unit tests can be run with:
+For the migrated FL base library (now in `flip-utils/`), unit tests can be run with:
 
 ```bash
-make unit-test
+cd flip-utils && uv run pytest tests/unit -s -vv
 ```
 
-Integration tests for the FL base application are also available (see the [flip-fl-base README](https://github.com/londonaicentre/flip-fl-base#testing) for details).
+(The inherited `make unit-test` target documented in [`flip-utils/README.md`](flip-utils/README.md) is part of the
+still-in-progress reconciliation called out at the top of that README — `flip-utils/` does not yet ship a Makefile in
+this mono-repo.) See [`flip-utils/README.md`](flip-utils/README.md) (the "Unit Tests" / "Integration Testing"
+sections — subject to the in-progress reconciliation noted there) for the FL package's tests, and
+[`fl_services/README.md`](fl_services/README.md) for provisioning FL networks.
+
+**Kubernetes chart testing**: The K8s Helm chart at `deploy/providers/kubernetes/` can be tested with:
+
+```bash
+# Lint + render + schema validation
+make -C deploy/providers/kubernetes test
+
+# Render all FL backend variants
+make -C deploy/providers/kubernetes template-all-backends
+
+# Validate rendered templates against K8s schema (requires kubeconform)
+make -C deploy/providers/kubernetes validate
+```
+
+The chart has a `check_status.py` smoke test script and a `register_k8s_trust.py` registration script. See the [K8s README](deploy/providers/kubernetes/README.md) for details.
 
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 

@@ -10,17 +10,29 @@
 # limitations under the License.
 #
 
-"""Unit tests for the admin trust list endpoint."""
+"""Unit tests for the authenticated trust connection-status endpoint.
+
+This endpoint is deliberately NOT admin-gated: the connection-status page is
+visible to every authenticated role (Researcher, Viewer, Admin). The fields it
+returns are benign trust metadata — no secrets — so any authenticated user may
+read them. Creating a trust (POST /admin/trusts) remains admin-only.
+"""
 
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException, status
+from fastapi.testclient import TestClient
 
+from flip_api.auth.dependencies import verify_token
+from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
-from flip_api.trusts_services.admin_get_trusts import _as_utc_iso, admin_get_trusts
+from flip_api.main import app
+from flip_api.trusts_services.get_trust_statuses import _as_utc_iso, get_trust_statuses
+
+client = TestClient(app)
 
 
 def _make_trust(name: str = "GSTT", code: str = "GST", region: str = "London") -> Trust:
@@ -63,21 +75,7 @@ def _db_with_trusts_and_counts(trusts, count_rows):
     return db
 
 
-@patch("flip_api.trusts_services.admin_get_trusts.has_permissions", return_value=False)
-def test_admin_get_trusts_403_without_admin_permission(mock_perms):
-    db = MagicMock()
-
-    with pytest.raises(HTTPException) as exc_info:
-        admin_get_trusts(db=db, token_id=uuid.uuid4())
-
-    assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
-    # The endpoint must short-circuit before touching the DB.
-    db.exec.assert_not_called()
-    mock_perms.assert_called_once()
-
-
-@patch("flip_api.trusts_services.admin_get_trusts.has_permissions", return_value=True)
-def test_admin_get_trusts_returns_serialised_trusts_with_project_counts(mock_perms):
+def test_get_trust_statuses_returns_serialised_trusts_with_project_counts():
     trust_a = _make_trust("Trust A", "TA", "London")
     trust_b = _make_trust("Trust B", "TB", "Manchester")
     db = _db_with_trusts_and_counts(
@@ -85,7 +83,7 @@ def test_admin_get_trusts_returns_serialised_trusts_with_project_counts(mock_per
         count_rows=[(trust_a.id, 3)],  # Trust B has no rows → count defaults to 0.
     )
 
-    result = admin_get_trusts(db=db, token_id=uuid.uuid4())
+    result = get_trust_statuses(db=db, user_id=uuid.uuid4())
 
     assert len(result) == 2
     by_id = {r.id: r for r in result}
@@ -93,15 +91,23 @@ def test_admin_get_trusts_returns_serialised_trusts_with_project_counts(mock_per
     assert by_id[trust_a.id].name == "Trust A"
     assert by_id[trust_a.id].code == "TA"
     assert by_id[trust_a.id].region == "London"
-    # created_at was tz-aware in the fixture; the helper still tags it Z.
-    assert by_id[trust_a.id].created_at is not None
-    assert by_id[trust_a.id].created_at.endswith("Z")
+    assert by_id[trust_a.id].last_heartbeat is None
     # Trust B was absent from the count rows → defaults to 0.
     assert by_id[trust_b.id].project_count == 0
 
 
-@patch("flip_api.trusts_services.admin_get_trusts.has_permissions", return_value=True)
-def test_admin_get_trusts_drops_null_trust_ids_from_count_aggregation(mock_perms):
+def test_get_trust_statuses_tags_heartbeat_as_utc():
+    trust = _make_trust("Beat", "BT", "London")
+    trust.last_heartbeat = datetime(2026, 5, 27, 12, 0, 0)
+    db = _db_with_trusts_and_counts(trusts=[trust], count_rows=[])
+
+    result = get_trust_statuses(db=db, user_id=uuid.uuid4())
+
+    assert result[0].last_heartbeat is not None
+    assert result[0].last_heartbeat.endswith("Z")
+
+
+def test_get_trust_statuses_drops_null_trust_ids_from_count_aggregation():
     """The count query is a left-join-style group_by; a NULL `trust_id` row
     is a join orphan and must not poison the counts map.
     """
@@ -111,35 +117,32 @@ def test_admin_get_trusts_drops_null_trust_ids_from_count_aggregation(mock_perms
         count_rows=[(None, 99), (trust.id, 5)],
     )
 
-    result = admin_get_trusts(db=db, token_id=uuid.uuid4())
+    result = get_trust_statuses(db=db, user_id=uuid.uuid4())
 
     assert len(result) == 1
     assert result[0].project_count == 5
 
 
-@patch("flip_api.trusts_services.admin_get_trusts.has_permissions", return_value=True)
-def test_admin_get_trusts_returns_empty_list_when_no_trusts(mock_perms):
+def test_get_trust_statuses_returns_empty_list_when_no_trusts():
     db = _db_with_trusts_and_counts(trusts=[], count_rows=[])
 
-    result = admin_get_trusts(db=db, token_id=uuid.uuid4())
+    result = get_trust_statuses(db=db, user_id=uuid.uuid4())
 
     assert result == []
 
 
-@patch("flip_api.trusts_services.admin_get_trusts.has_permissions", return_value=True)
-def test_admin_get_trusts_500_on_database_error(mock_perms):
+def test_get_trust_statuses_500_on_database_error():
     db = MagicMock()
     db.exec.side_effect = Exception("db down")
 
     with pytest.raises(HTTPException) as exc_info:
-        admin_get_trusts(db=db, token_id=uuid.uuid4())
+        get_trust_statuses(db=db, user_id=uuid.uuid4())
 
     assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
     assert "Internal server error" in exc_info.value.detail
 
 
-@patch("flip_api.trusts_services.admin_get_trusts.has_permissions", return_value=True)
-def test_admin_get_trusts_re_raises_inner_http_exception(mock_perms):
+def test_get_trust_statuses_re_raises_inner_http_exception():
     """An HTTPException raised mid-query must surface unchanged — the generic
     500 catch-all is for unexpected errors only, not for HTTP-shaped ones.
     """
@@ -147,7 +150,32 @@ def test_admin_get_trusts_re_raises_inner_http_exception(mock_perms):
     db.exec.side_effect = HTTPException(status_code=418, detail="teapot")
 
     with pytest.raises(HTTPException) as exc_info:
-        admin_get_trusts(db=db, token_id=uuid.uuid4())
+        get_trust_statuses(db=db, user_id=uuid.uuid4())
 
     assert exc_info.value.status_code == 418
     assert exc_info.value.detail == "teapot"
+
+
+def test_endpoint_is_accessible_to_authenticated_non_admin():
+    """Regression for #557: a non-admin (no admin permission anywhere in the
+    call) must get a 200 with the trust list — never a 403. The endpoint has no
+    admin gate, so verifying the token is the only requirement.
+    """
+    trust = _make_trust("Researcher-visible", "RV", "London")
+    db = _db_with_trusts_and_counts(trusts=[trust], count_rows=[(trust.id, 2)])
+
+    app.dependency_overrides[get_session] = lambda: db
+    app.dependency_overrides[verify_token] = lambda: uuid.uuid4()
+    try:
+        response = client.get("/api/trust/status")
+    finally:
+        del app.dependency_overrides[get_session]
+        del app.dependency_overrides[verify_token]
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["name"] == "Researcher-visible"
+    assert body[0]["code"] == "RV"
+    assert body[0]["region"] == "London"
+    assert body[0]["project_count"] == 2

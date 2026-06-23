@@ -707,6 +707,25 @@ resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
   description       = "FL Server/Admin NLB from on-prem Trust (${each.value})"
 }
 
+############################
+# K8s Trust (optional)
+# Activated by setting K8S_TRUST_IP in the env file or via
+# TF_VAR_K8S_TRUST_IP when running `make add-k8s-trust`.
+############################
+
+# Allow the K8s-deployed trust FL client to reach the FL server via the NLB.
+# Same pattern as the on-prem trust rule above.
+resource "aws_security_group_rule" "k8s_trust_fl_server_nlb" {
+  count             = var.K8S_TRUST_IP != "" ? 1 : 0
+  type              = "ingress"
+  from_port         = var.FL_SERVER_PORT
+  to_port           = var.FL_SERVER_PORT
+  protocol          = "tcp"
+  cidr_blocks       = ["${var.K8S_TRUST_IP}/32"]
+  security_group_id = module.fl_server_nlb.security_group_id
+  description       = "FL Server/Admin NLB from K8s Trust"
+}
+
 # Outputs
 output "Keypair" {
   value = var.flip_keypair

@@ -1,0 +1,106 @@
+{{- if and .Values.xnat.enabled .Values.imagingImportWorker.enabled (not .Values.imagingImportWorker.runOnce) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-imaging-import-worker
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: imaging-import-worker
+spec:
+  replicas: {{ .Values.imagingImportWorker.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "flip-trust.fullname" . }}-imaging-import-worker
+      app.kubernetes.io/component: imaging-import-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "flip-trust.fullname" . }}-imaging-import-worker
+        app.kubernetes.io/component: imaging-import-worker
+    spec:
+      serviceAccountName: default
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: import-worker
+          image: "{{ .Values.imagingImportWorker.image.repository }}:{{ .Values.imagingImportWorker.image.tag | default .Values.imageTag }}"
+          imagePullPolicy: {{ .Values.imagingImportWorker.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              apt-get update -qq >/dev/null 2>&1 &&
+              apt-get install -y -qq dcmtk >/dev/null 2>&1 &&
+              pip install psycopg2-binary -q >/dev/null 2>&1 &&
+              python3 /opt/scripts/imaging-import-worker.py
+          env:
+            - name: XNAT_DB_HOST
+              value: "{{ .Release.Name }}-flip-trust-xnat-db-0.xnat-db.{{ .Release.Namespace }}.svc.cluster.local"
+            - name: XNAT_DB_PORT
+              value: "5432"
+            - name: XNAT_DB_USER
+              value: {{ .Values.xnat.db.datasourceUsername | default "xnat" | quote }}
+            - name: XNAT_DB_NAME
+              value: "xnat"
+            - name: XNAT_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-datasource-password
+            - name: ORTHANC_HOST
+              value: {{ .Values.orthanc.host | default "orthanc" | quote }}
+            - name: ORTHANC_PORT
+              value: {{ .Values.orthanc.dicomPort | default "4242" | quote }}
+            - name: ORTHANC_AET
+              value: {{ .Values.orthanc.dicomAet | default "ORTHANC" | quote }}
+            - name: XNAT_AET
+              value: {{ .Values.xnat.web.dicomAet | default "XNAT" | quote }}
+            - name: XNAT_DICOM_HOST
+              value: {{ .Values.xnat.web.host | default (printf "%s-xnat-web" (include "flip-trust.fullname" .)) | quote }}
+            - name: XNAT_DICOM_PORT
+              value: {{ .Values.xnat.web.dicomPort | default "8104" | quote }}
+            - name: WORKER_AET
+              value: {{ .Values.imagingImportWorker.workerAet | default "FLIPIMPORT" | quote }}
+            - name: RUN_ONCE
+              value: "false"
+            - name: BATCH_SIZE
+              value: {{ .Values.imagingImportWorker.batchSize | default "50" | quote }}
+            - name: POLL_INTERVAL
+              value: {{ .Values.imagingImportWorker.pollInterval | default "60" | quote }}
+            - name: PACS_ID
+              value: {{ .Values.imagingImportWorker.pacsId | default "1" | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.imagingImportWorker.logLevel | default "INFO" | quote }}
+            - name: XNAT_URL
+              value: "http://{{ .Values.xnat.web.host | default "xnat-web" }}:8080"
+            - name: XNAT_ADMIN_USER
+              value: {{ .Values.xnat.web.adminUser | quote }}
+            - name: XNAT_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-admin-password
+            - name: PREARCHIVE_PATH
+              value: {{ .Values.xnat.web.prearchivePath | default "/data/xnat/prearchive" | quote }}
+            - name: PREARCHIVE_POLL_SECS
+              value: {{ .Values.imagingImportWorker.prearchivePollSecs | default "10" | quote }}
+          volumeMounts:
+            - name: scripts
+              mountPath: /opt/scripts
+              readOnly: true
+            - name: xnat-data
+              mountPath: {{ .Values.xnat.web.prearchivePath | default "/data/xnat/prearchive" }}
+              subPath: prearchive
+          resources:
+            {{- toYaml .Values.imagingImportWorker.resources | nindent 12 }}
+      volumes:
+        - name: scripts
+          configMap:
+            name: {{ include "flip-trust.fullname" . }}-imaging-import-scripts
+            defaultMode: 0555
+        - name: xnat-data
+          persistentVolumeClaim:
+            claimName: {{ include "flip-trust.fullname" . }}-xnat-web
+{{- end }}

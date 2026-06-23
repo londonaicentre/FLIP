@@ -40,16 +40,26 @@ FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in coll
 
 ## Repositories
 
-FLIP spans several repositories:
+This repository is the FLIP mono-repo: Central Hub API, Trust APIs, UI, Docker deployment, **and** the federated
+learning code (base library, FL services, and tutorials) that was previously split across `flip-fl-base` and
+`flip-fl-base-flower`. The FL code now lives under [`flip-utils/`](flip-utils/) (the pip-installable `flip` package),
+[`fl_services/`](fl_services/) (Docker services for FL server/client/API), and [`fl-apps/`](fl-apps/) (job-type
+implementations and tutorials).
 
-| Repository | Description |
+| Subdirectory | Description |
 | --- | --- |
-| [FLIP](https://github.com/londonaicentre/FLIP) | Mono-repo: Central Hub API, Trust APIs, FL library, UI, and deployment |
-| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower federated learning base application library, workflows, and tutorials (not yet merged) |
+| [`flip-api/`](flip-api/) | Central Hub API service |
+| [`flip-ui/`](flip-ui/) | Frontend UI |
+| [`trust/`](trust/) | Trust-side services (trust-api, imaging-api, data-access-api, mock OMOP / Orthanc / XNAT) |
+| [`deploy/`](deploy/) | Docker Compose and infrastructure-as-code (AWS / on-prem) |
+| [`docs/`](docs/) | Sphinx documentation source (ReadTheDocs) |
+| [`flip-utils/`](flip-utils/) | `flip` Python package — platform logic, NVFLARE components, Flower helpers |
+| [`fl_services/`](fl_services/) | Docker images for FL networks: `fl-server`, `fl-client`, `fl-api-base`, `fl-base` |
+| [`fl-apps/`](fl-apps/) | FL job-type implementations (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) and tutorials |
 
-This repository is a mono-repo consolidating all FLIP services. The NVIDIA FLARE base library
-(`flip-utils`), FL Docker services (`fl_services/`), and FL app templates/tutorials (`fl-apps/`)
-are now in-tree. The Flower counterpart remains in flip-fl-base-flower (separate repo, future merge).
+The NVFLARE workspace is now provisioned in-tree at [`deploy/workspace`](deploy/workspace) (`make nvflare-provision`).
+The legacy [`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) repository still holds the
+provisioned Flower certs used at dev time — see [Federated Learning Setup](#federated-learning-setup) below.
 
 ## Deployment
 
@@ -204,7 +214,10 @@ docker compose -f deploy/compose.development.yml run --rm < service name >
 
 ### Federated Learning Setup
 
-The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for federated learning. FLARE requires provisioned certificates and configuration files that are generated via `make nvflare-provision` and stored in `deploy/workspace/`.
+The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for
+federated learning. FLARE requires provisioned certificates and configuration files that are generated in-tree via
+`make nvflare-provision` (or `make nvflare-provision-2-nets` for a two-network setup, see
+[`fl_services/README.md`](fl_services/README.md)) and stored in `deploy/workspace/`.
 
 1. **Path Resolution**: `FL_PROVISIONED_DIR` is derived from the `FL_BACKEND` selection inside [`deploy/fl_backend.mk`](deploy/fl_backend.mk):
 
@@ -217,16 +230,166 @@ The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flo
 
 If you see errors like "fed_client.json does not exist" or "missing startup folder", verify that:
 
-- The workspace has been properly provisioned (`make nvflare-provision`)
+- The workspace has been properly provisioned with NVFLARE certificates (`make nvflare-provision`)
 - The `FL_PROVISIONED_DIR` path is correctly resolved (check Makefile output)
 - For NVFLARE: the workspace is at `deploy/workspace/`
 
 ## AWS Deployment
 
-For production deployments on AWS, see the [AWS Deployment Guide](deploy/README.md). This covers provisioning
-infrastructure with OpenTofu (Terraform), configuring AWS services, and deploying the platform at scale.
+### Staging environment
 
-For hybrid on-premises trust deployments, see the [On-Prem Trust Deployment Guide](deploy/providers/local/README.md).
+All commands run from `deploy/providers/AWS/`. The Makefile defaults to staging when `PROD` is unset.
+
+**Prerequisites:**
+- `~/.ssh/host-aws` SSH key configured
+- `.env.stag` and per-service `.env` files present (see [deploy/README.md](deploy/README.md))
+- `~/.aws/config` has a `[profile stag]` alias for the staging account
+- `DOCKER_TAG` in `.env.stag` is a published GHCR tag (branch images don't auto-build — trigger `gh workflow run docker_build_flip_api.yml --ref <branch>` if needed)
+
+**One-shot deploy:**
+
+```bash
+cd deploy/providers/AWS
+export AWS_PROFILE=stag
+make full-deploy PROD=stag
+```
+
+This runs the following steps in order:
+
+| Step | Command | What it does |
+|------|---------|--------------|
+| 1 | `make github-login` | Authenticate with GitHub CLI |
+| 2 | `make aws-login` | AWS SSO login |
+| 3 | `make init` | Terraform init with the S3 backend |
+| 4 | `make import-persistent` | Import pre-existing resources (Cognito, Secrets, S3 buckets) — idempotent, safe to re-run |
+| 5 | `make plan` | Review the Terraform execution plan |
+| 6 | `make apply` | Apply infrastructure changes |
+| 7 | `make update-env` | Refresh `.env.stag` with Terraform outputs |
+| 8 | `make ssh-config` | Write SSM-tunnelled `Host flip` / `Host flip-trust` into `~/.ssh/config` |
+| 9 | `make ansible-init` | Configure Trust EC2 with Docker, CloudWatch, and FL assets |
+| 10 | `make deploy-centralhub` | Force-redeploy ECS Fargate services + sync UI to S3 + invalidate CloudFront |
+| 11 | `make register-trusts` | Register trusts on the hub and write per-trust kit files |
+| 12 | `make deploy-trust` | Deploy trust stack to Trust EC2 via Docker Compose |
+| 13 | `make status` | Health checks |
+
+> **Stag note:** staging has ~70 resources missing from Terraform state. `make import-persistent` (step 4) handles this — it probes state before each import and skips already-imported resources, so re-running after a failure is safe.
+
+For subsequent UI-only changes: `make deploy-ui PROD=stag` (no Terraform involved).
+
+For production, replace `PROD=stag` with `PROD=true` and `AWS_PROFILE=prod` throughout.
+
+For full details, prerequisites, and troubleshooting see [deploy/providers/AWS/README.md](deploy/providers/AWS/README.md).
+
+### Hybrid deployment (on-premises trust + AWS hub)
+
+To connect a local Ubuntu host as a trust against the AWS staging hub:
+
+```bash
+# One-shot hybrid deploy (auto-detects your public IP)
+cd deploy/providers/AWS
+make full-deploy-hybrid PROD=stag [LOCAL_TRUST_IP=<public-ip>]
+
+# Then on the trust host: provision it, then start the stack
+make provision-local-trust          # run ON the trust host
+cd ../../..
+env PROD=stag make -C trust up-trust KIT=<CODE>
+```
+
+No inbound firewall rules or NAT port-forwarding are needed on the trust host — all communication is outbound from the trust to the hub. See [deploy/providers/local/README.md](deploy/providers/local/README.md) for full details.
+
+## Kubernetes Trust Deployment
+
+> **Early-access.** The three blockers from the original k3s validation (`xnat-nginx` exiting after entrypoint, `xnat-web` crash-looping on a DB password mismatch, and the `fl-client` not holding its NVFLARE connection) are fixed on this branch — `Trust_K8s` now connects to the stag hub and runs healthy. Remaining work before production is tracked in [#593](https://github.com/londonaicentre/FLIP/issues/593) (deployment robustness: automated kit provisioning, egress-config persistence, hub-side fl-api hardening), [#516](https://github.com/londonaicentre/FLIP/issues/516) (NetworkPolicy audit), and [#530](https://github.com/londonaicentre/FLIP/issues/530) (RBAC/PodSecurity). The kernel-7 gRPC (#527), sidecar FL-client (#528), and XNAT/Orthanc Ingress (#529) issues were triaged and closed as out-of-scope.
+
+A K8s trust uses the Helm chart in `deploy/providers/kubernetes/` and follows the same outbound-only architecture as Docker Compose trusts — no inbound ports are exposed from the cluster.
+
+### 1. Register the trust on the hub
+
+Run from the repo root. `<CODE>` is your trust name (e.g. `Trust_K8s`):
+
+```bash
+make new-trust TRUST_CODE=<CODE> TRUST_NAME="<Human Name>"
+make -C deploy/providers/AWS register-trusts KIT=<CODE> PROD=stag
+make sync-trust-kit KIT=<CODE> PROD=stag
+```
+
+This writes `trust/.env.<CODE>.stag` with the per-trust keys (`TRUST_API_KEY`, `TRUST_INTERNAL_SERVICE_KEY`) and the hub-shared block (`AES_KEY_BASE64`, `CENTRAL_HUB_API_URL`, FL settings). Registration is idempotent — safe to re-run.
+
+### 2. Provide infrastructure secrets
+
+Create `deploy/providers/kubernetes/values-secrets.yaml` with the secrets the kit doesn't own. The required keys are:
+
+| Secret key | Purpose |
+|-----------|---------|
+| `omop-postgres-password` | OMOP PostgreSQL password |
+| `data-access-postgres-password` | Data-access reader DB password |
+| `orthanc-registered-users` | Orthanc registered users (JSON) |
+| `xnat-admin-password` | XNAT admin password |
+| `xnat-service-user` / `xnat-service-password` | XNAT service account |
+| `xnat-datasource-password` | XNAT PostgreSQL password |
+| `grafana-admin-password` | Grafana admin password |
+| `s3-access-key-id` / `s3-secret-access-key` | AWS credentials for the fl-client S3 kit-sync init container |
+
+The per-trust keys (`aes-key-base64`, `trust-api-key`, `trust-internal-service-key*`) are patched into the cluster Secret by `sync-kit` in the next step — do not add them to `values-secrets.yaml`.
+
+### 3. Sync the kit into the cluster
+
+```bash
+make -C deploy/providers/kubernetes sync-kit KIT=<CODE> PROD=stag
+```
+
+This reads `trust/.env.<CODE>.stag`, patches the per-trust keys into the Kubernetes Secret (`trust-release-flip-trust-secrets`), and writes a secret-free Helm override file `deploy/providers/kubernetes/k8s-trust-<CODE>.yaml`.
+
+### 4. Deploy the chart
+
+```bash
+make -C deploy/providers/kubernetes deploy-trust-k8s KIT=<CODE> PROD=stag
+```
+
+This runs `helm upgrade --install` with the generated override and then
+`patch-kit-secrets` (which injects the per-trust keys into the Helm-owned Secret
+and restarts the API deployments). Equivalent raw Helm for the install step:
+
+```bash
+helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
+  --namespace flip-trust --create-namespace \
+  -f deploy/providers/kubernetes/values.yaml \
+  -f deploy/providers/kubernetes/values-secrets.yaml \
+  -f deploy/providers/kubernetes/k8s-trust-<CODE>.yaml
+```
+
+> **⚠️ First-time / clean-install rough edges** (tracked in [#595](https://github.com/londonaicentre/FLIP/issues/595)):
+> - `sync-kit` (step 3) creates the Secret via `kubectl`, which a *fresh* `helm
+>   install` cannot adopt (`missing key "app.kubernetes.io/managed-by"`). On a
+>   clean namespace, delete it first so Helm owns it:
+>   `kubectl delete secret trust-release-flip-trust-secrets -n flip-trust`.
+> - If the `xnat-init` post-install hook fails, `helm` reports the release failed
+>   and `patch-kit-secrets` is skipped — trust-api then polls with the stale seed
+>   key and gets `401`. Re-run it manually:
+>   `make -C deploy/providers/kubernetes patch-kit-secrets KIT=<CODE> PROD=stag`.
+
+### 5. Verify the trust is polling
+
+```bash
+kubectl get pods -n flip-trust
+kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api
+# Expect: POST .../api/trust/heartbeat "HTTP/1.1 200 OK"
+#         GET  .../api/tasks/pending   "HTTP/1.1 200 OK"
+```
+
+A `401 "API key is missing"` means the API-key header is mismatched — check `TRUST_API_KEY_HEADER` in your override file.
+
+### 6. (FL training only) Open the FL-server NLB
+
+Polling works without any firewall change. For FL training, the fl-client must reach the hub's FL server. Open the NLB security group to the K8s node's egress IP:
+
+```bash
+make -C deploy/providers/AWS add-k8s-trust K8S_TRUST_IP=<node-egress-ip> PROD=stag
+```
+
+If the node's egress IP changes later, re-run this command with the new IP.
+
+For full configuration reference, secrets management, troubleshooting, and known limitations see [deploy/providers/kubernetes/README.md](deploy/providers/kubernetes/README.md).
 
 ## Project Structure
 
@@ -247,6 +410,9 @@ The repository is organised as follows:
   - `orthanc`: Contains a mocked PACS service (uses [Orthanc](https://www.orthanc-server.com/))
   - `trust-api`: Contains the trust API service
   - `xnat`: Contains a mocked [XNAT](https://www.xnat.org/) service
+- `flip-utils`: The `flip` Python package — platform logic, NVFLARE components, Flower helpers (migrated from `flip-fl-base`)
+- `fl_services`: Docker images for FL networks — `fl-server`, `fl-client`, `fl-api-base`, `fl-base` (migrated from `flip-fl-base`)
+- `fl-apps`: FL job-type implementations (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) and runnable tutorials
 
 ### Trust Authentication
 
