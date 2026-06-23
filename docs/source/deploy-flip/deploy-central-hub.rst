@@ -215,7 +215,7 @@ place. To apply a schema-changing release, recreate the database so the entrypoi
 FL image compatibility on upgrade
 **********************************
 
-The hub and the trust-side FL base images (``flip-fl-base`` for NVFLARE, ``flip-fl-base-flower`` for
+The FL base images for the hub and trust-side (``flare-fl-base`` for NVFLARE, ``flip-fl-base-flower`` for
 Flower) share a wire contract for training metrics and logs. The metrics and logs endpoints now
 **require** an ``fl_client_name`` field, so the hub and the FL images must be upgraded together:
 
@@ -225,7 +225,7 @@ Flower) share a wire contract for training metrics and logs. The metrics and log
 - Deploy the hub and bump the trust-side FL image tag in the same maintenance window; do not run
   training in the gap.
 
-This pairs with the ``flip-fl-base`` follow-up that adds the trust-internal service-key header to the
+This pairs with the ``flip-utils`` package that adds the trust-internal service-key header to the
 ``flip`` client wrappers (see the **Trust-internal Service Authentication** section in the repo-root
 ``CLAUDE.md``).
 

@@ -11,26 +11,28 @@
     limitations under the License.
 -->
 
-# FLIP-FL-base-FLARE
+# flip-utils — the `flip` Python package
 
 <p align="left">
 <img src="assets/flip-flare-logo.png" height="200" alt='flip-flare-logo' />
 </p>
 
-[![codecov](https://codecov.io/gh/londonaicentre/flip-fl-base/graph/badge.svg)](https://codecov.io/gh/londonaicentre/flip-fl-base)
 [![PyPI version](https://img.shields.io/pypi/v/flip-utils)](https://pypi.org/project/flip-utils/)
-[![Docker - flare-fl-base](https://img.shields.io/badge/docker-flare--fl--base-blue?logo=docker)](https://github.com/londonaicentre/flip-fl-base/pkgs/container/flare-fl-base)
-[![Docker - flare-fl-server](https://img.shields.io/badge/docker-flare--fl--server-blue?logo=docker)](https://github.com/londonaicentre/flip-fl-base/pkgs/container/flare-fl-server)
-[![Docker - flare-fl-client](https://img.shields.io/badge/docker-flare--fl--client-blue?logo=docker)](https://github.com/londonaicentre/flip-fl-base/pkgs/container/flare-fl-client)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![Documentation Status](https://readthedocs.org/projects/londonaicentreflip/badge/?version=latest)](https://londonaicentreflip.readthedocs.io/en/latest/)[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](./LICENSE.md)
+[![Documentation Status](https://readthedocs.org/projects/londonaicentreflip/badge/?version=latest)](https://londonaicentreflip.readthedocs.io/en/latest/)[![License](https://img.shields.io/badge/license-Apache--2.0-green.svg)](../LICENSE.md)
 
-This repository contains the [FLIP](https://github.com/londonaicentre/FLIP) (Federated Learning and Interoperability
-Platform) federated learning base application utilities. It is a monorepo that includes:
+This directory is a sub-tree of the [FLIP](https://github.com/londonaicentre/FLIP) mono-repo. It hosts the
+pip-installable `flip` Python package (published as `flip-utils` on PyPI) that ships inside every FL server / client
+image and is imported as `from flip import ...` by user-uploaded training code. Sibling FL trees in the same mono-repo:
 
-- **[`flip`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, and utilities
-- **[`tutorials/`](./tutorials/)** — example applications you can run on the FLIP platform
-- **[`fl_services/`](./fl_services/)** — Docker services for running FL networks (server, clients, admin API)
+- **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, and utilities (this directory)
+- **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) and runnable tutorials
+- **[`../fl_services/`](../fl_services/)** — Docker images for FL networks (server, clients, admin API)
+
+The rest of this README is largely inherited from the standalone `flip-fl-base` repository (now merged in) and is
+still being reconciled with the mono-repo layout — paths like `tutorials/` and `fl_services/` referred to here are
+the now-sibling top-level `fl-apps/` and `fl_services/` trees, and Make targets called out below run from the
+`flip-utils/` directory.
 
 ## Table of Contents
 
