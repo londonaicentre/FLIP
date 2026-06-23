@@ -227,7 +227,8 @@ down:
 # Clean Docker resources
 clean:
 	${DOCKER_COMMAND} down --rmi local && \
-	docker system prune -f
+	docker system prune -f && \
+	rm -rf ./flip-fl-api/*/transfer/*/
 
 # Stop all services and remove the containers
 restart: down up
