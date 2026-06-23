@@ -1,0 +1,52 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Delete src folder from PR-scoped S3 path on PR merge
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  id-token: write # required for OIDC
+  contents: read
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  cleanup-pr:
+    name: Delete PR-scoped S3 path if merged
+    runs-on: ubuntu-latest
+    environment: flip
+    env:
+      FL_BACKEND: nvflare
+    # Only run when the PR was merged AND it wasn't from a fork (uploads were skipped for forks)
+    if: ${{ github.event.pull_request.merged == true && github.event.pull_request.head.repo.fork == false }}
+
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4.2.1
+        with:
+          role-to-assume: ${{ vars.AWS_DEV_ROLE_TO_ASSUME }}
+          role-session-name: ${{ vars.AWS_ROLE_SESSION_NAME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Delete PR path from S3
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Match your upload prefix; we nuke the whole PR root to be safe.
+          PR_S3_PREFIX: s3://${{ vars.AWS_DEV_S3_BUCKET_NAME }}/base-application-dev/pull-requests/${{ env.PR_NUMBER }}/${{ env.FL_BACKEND }}
+        run: |
+          echo "Removing S3 prefix: ${PR_S3_PREFIX}"
+          aws s3 rm "${PR_S3_PREFIX}" --recursive --only-show-errors

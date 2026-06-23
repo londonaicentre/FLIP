@@ -72,6 +72,19 @@ variable "AES_KEY_BASE64" {
   type = string
 }
 
+variable "K8S_TRUST_IP" {
+  description = "DEPRECATED (kept for back-compat): single public IP of a Kubernetes-deployed trust host. Prefer k8s_trust_public_ips. When set, it is merged into the NLB ingress rule set."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "k8s_trust_public_ips" {
+  description = "Public/egress IPs of Kubernetes-deployed trust nodes. Each IP gets an ingress rule on the FL-server NLB security group. Set via K8S_TRUST_PUBLIC_IPS in the env file (an HCL list). Managed by a normal `terraform apply` — no -target, no drift, idempotent on re-add (mirrors local_trust_public_ips)."
+  type        = list(string)
+  default     = []
+}
+
 variable "INTERNAL_SERVICE_KEY_HASH" {
   description = "SHA-256 hash of the internal service key used for fl-server-to-hub auth"
   type        = string
@@ -81,6 +94,12 @@ variable "INTERNAL_SERVICE_KEY" {
   description = "Raw internal service key used by fl-server to authenticate callbacks to flip-api. Stored in Secrets Manager (FLIP_API secret) and consumed by the fl-server ECS task definition via the secrets block."
   type        = string
   sensitive   = true
+}
+
+variable "FL_KIT_SLOT_NAMES" {
+  description = "JSON list (as a string) of FL kit-slot names that seed the fl_kit_slot pool register_trust claims from on the flip-api ECS task. Empty ⇒ NoFreeKitSlotError on trust registration. Mirrors compose.production.yml; set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
+  type        = string
+  default     = "[]"
 }
 
 variable "docker_image_tag" {

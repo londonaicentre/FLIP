@@ -60,7 +60,7 @@ class ServerEventHandler(FLComponent):
             self.flip.update_status(self.model_id, ModelStatus.ERROR)
             raise ValueError(f"The model ID: {self.model_id} is not a valid UUID")
 
-    def handle_event(self, event_type: str, fl_ctx: FLContext):
+    def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
         self.__set_dependencies(fl_ctx)
 
         self.validation_json_generator.handle_evaluation_events(event_type, fl_ctx)
@@ -118,7 +118,7 @@ class ServerEventHandler(FLComponent):
 
             self.flip.update_status(self.model_id, self.final_status)
 
-    def __set_dependencies(self, fl_ctx: FLContext):
+    def __set_dependencies(self, fl_ctx: FLContext) -> None:
         if self.validation_json_generator is None:
             engine = fl_ctx.get_engine()
             self.validation_json_generator = engine.get_component(self.validation_json_generator_id)

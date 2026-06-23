@@ -313,6 +313,71 @@ You should see calls at `get_dataframe`, `get_by_accession_number`, and `add_res
 
 ---
 
+### 2.7 Trust EC2 Orthanc is empty — all image pulls go straight to QueueFailed
+
+**Symptom**: Every image pull on the EC2 trust shows `QueueFailed=<all>,
+Queued=0, Processing=0, Successful=0` immediately after project approval.
+imaging-api logs show `POST /xapi/dqr/query/studies` returning **204** (no
+content) for every accession — the PACS C-FIND finds nothing. The trust's
+XNAT `dqr.log` is silent (nothing was ever queued).
+
+**Diagnosis**:
+
+```bash
+# Orthanc study count — should be ~4187 for the mock trust1 dataset
+ssh flip-trust 'docker exec trust1-imaging-api-1 python3 -c "
+import httpx
+print(httpx.get(\"http://orthanc:8042/statistics\", auth=(\"admin\",\"admin\"), timeout=5).json())"'
+# CountStudies: 0  →  Orthanc has no data
+
+# Where does Orthanc's data dir actually point?
+ssh flip-trust 'docker inspect trust1-orthanc-1 --format "{{json .Mounts}}"' | python3 -m json.tool
+```
+
+**Root cause**: Compose interpolates the Orthanc bind path
+(`ORTHANC_STORAGE_DIR*` from the kit file / env) **at deploy time on the
+machine driving the deploy**. If the deploy was driven from an admin
+workstation, the workstation's local path (e.g.
+`/home/<user>/.../trust/orthanc/orthanc-storage-trust1`) gets baked into the
+remote compose stack; Docker auto-creates that directory **empty** on the EC2
+host, and Orthanc starts with zero studies. The `up-trust` target's
+`update-orthanc-data` prereq only populates the dir on the machine where it
+runs — not on the EC2.
+
+**Fix (stopgap — seed the live bind dir on the EC2):**
+
+```bash
+ssh flip-trust
+DIR=$(docker inspect trust1-orthanc-1 --format '{{range .Mounts}}{{if eq .Destination "/var/lib/orthanc/db"}}{{.Source}}{{end}}{{end}}')
+# Version from trust/orthanc/.data_version (e.g. 20260106); trust slot from the kit (trust1/trust2)
+curl -fSL -o /tmp/orthanc-data.tar \
+  "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/trust1/trust1_orthanc_data_20260106.tar"
+docker stop trust1-orthanc-1
+sudo rm -rf "$DIR"/*          # wipe the stale empty index
+sudo tar xf /tmp/orthanc-data.tar -C "$DIR"
+docker start trust1-orthanc-1
+rm /tmp/orthanc-data.tar
+```
+
+Verify a cohort accession is findable, then re-trigger the pull from the UI
+(re-import button):
+
+```bash
+docker exec trust1-imaging-api-1 python3 -c "
+import httpx
+r = httpx.post('http://orthanc:8042/tools/find', auth=('admin','admin'),
+               json={'Level':'Study','Query':{'AccessionNumber':'<an accession from OMOP>'},'Limit':1}, timeout=15)
+print('found:', len(r.json()) > 0)"
+```
+
+**Fix (proper)**: Set host-appropriate data dirs in the kit file's Host-local
+profile section and run the data seeding **on the trust host** (the
+`update-orthanc-data` flow), so deploys never inherit the admin workstation's
+paths. Audit the other bind mounts on the host for the same leak —
+`docker inspect <container> --format '{{json .Mounts}}'` per container.
+
+---
+
 ## 3. Application (Pipeline / API)
 
 ### 3.1 API returns 401/403 on all authenticated routes (MFA enforcement)
@@ -392,6 +457,18 @@ UPDATE xnat_project_status SET last_reimport='2020-01-01' WHERE xnat_project_id=
 # 4. Restart imaging-api if it's hung:
 ssh flip-trust "docker restart trust1-imaging-api-1"
 ```
+
+Related states with different causes:
+
+- **`QueueFailed` for every accession right after approval** → the PACS C-FIND
+  finds nothing; usually an empty Orthanc on the trust host — see §2.7.
+- **Stuck on "Processing" with no progress, and re-import logs
+  `No studies to retry import`** → executed PACS request rows pin the status
+  (imaging-api classifies any accession with an executed row as Processing,
+  regardless of row status); the rows must be deleted before re-import works —
+  see §2.4 "Forcing a Re-pull" in
+  `deploy/providers/kubernetes/TROUBLESHOOTING.md` (same procedure on EC2 via
+  `docker exec` into the xnat-db container).
 
 ---
 

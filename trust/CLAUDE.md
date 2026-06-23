@@ -5,13 +5,13 @@
 Trust services run at each healthcare institution (cloud EC2 or on-prem). All trust communication is outbound — trusts poll the Central Hub; no inbound ports needed.
 
 | Service | Port | Purpose |
-|---------|------|---------|
+| --------- | ------ | --------- |
 | trust-api | 8020 | API gateway, polls hub for tasks, orchestrates trust |
 | imaging-api | 8001 | DICOM image retrieval from PACS |
 | data-access-api | 8010 | OMOP database queries for cohort analysis |
 | fl-client | — | FL participant (connects outbound to FL server via NLB) |
 | omop-db | 5432 | Mocked OMOP patient database (PostgreSQL) |
-| orthanc | 4242 | Mocked DICOM PACS server |
+| orthanc | 8042 | Mocked DICOM PACS server (UI/REST; DICOM port 4242 is internal to the trust network and not bound to the host) |
 | xnat | 8104 | Mocked neuroimaging platform |
 | observability | 3000/3100 | Grafana + Loki monitoring stack |
 

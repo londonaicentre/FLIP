@@ -22,7 +22,7 @@ Central Hub REST API. FastAPI + asyncpg + SQLModel. Handles user auth (Cognito),
 ## Service Modules
 
 | Module | Purpose |
-|--------|---------|
+| -------- | --------- |
 | `user_services/` | Register, authenticate, update/delete users, roles, permissions |
 | `project_services/` | Project CRUD, approval workflows |
 | `model_services/` | ML model management, metrics, logs, approvals |

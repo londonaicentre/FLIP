@@ -1,0 +1,659 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ---------------------------------------------------------------------------
+# Global trust-wide configuration
+# ---------------------------------------------------------------------------
+trustName: "Trust_1"
+trustNumber: 1
+environment: production
+logLevel: INFO
+
+# AWS region for S3 bucket access (used by FL client init container and other AWS-integrated services)
+awsRegion: "eu-west-2"
+
+# S3 bucket for uploaded federated data (mounted by FL client)
+uploadedFederatedDataBucket: ""
+
+# FL backend selection — switches image, command, volumes, env for the FL client
+# Supported values: "nvflare" | "flower"
+flBackend: "nvflare"
+
+# Global image pull secrets (optional — for private registries)
+imagePullSecrets: []
+#   - name: my-registry-credentials
+
+# Whether to create the namespace as part of the chart install
+namespace:
+  create: false
+  name: ""
+
+# ---------------------------------------------------------------------------
+# Secrets management
+# ---------------------------------------------------------------------------
+# When secrets.create is true, the chart creates a Secret with the keys listed
+# in the template. The operator must provide the values (e.g. via --set or a
+# separate secrets file). When false, the operator must create the Secret
+# externally before installing the chart.
+secrets:
+  create: false
+  # Name of the existing Secret (when secrets.create=false)
+  existingName: "flip-trust-secrets"
+  # Key-value pairs for the Secret (when secrets.create=true)
+  # These should be provided via --set or a separate values file, not checked in.
+  data:
+    aes-key-base64: ""
+    trust-api-key: ""
+    trust-internal-service-key-header: ""
+    trust-internal-service-key: ""
+    omop-postgres-password: ""
+    data-access-postgres-password: ""
+    orthanc-registered-users: ""
+    xnat-admin-user: ""
+    xnat-admin-password: ""
+    xnat-service-user: ""
+    xnat-service-password: ""
+    xnat-datasource-password: ""
+    grafana-admin-password: ""
+    s3-access-key-id: ""
+    s3-secret-access-key: ""
+
+# ---------------------------------------------------------------------------
+# trust-api — API gateway, polls Central Hub for tasks, orchestrates trust
+# ---------------------------------------------------------------------------
+trustApi:
+  enabled: true
+  image:
+    repository: ghcr.io/londonaicentre/trust-api
+    tag: stag
+    pullPolicy: Always
+  replicas: 1
+  service:
+    port: 8000
+    type: ClusterIP
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - trust-api
+            topologyKey: kubernetes.io/hostname
+  env:
+    CENTRAL_HUB_API_URL: ""
+    # HTTP header the hub reads the per-trust API key from. Must match the hub's
+    # TRUST_API_KEY_HEADER; the platform default (.env.development.example, the
+    # prod/dev compose, and register_trust's Hub-shared block) is "Authorization".
+    # A mismatch makes the hub answer 401 "API key is missing".
+    TRUST_API_KEY_HEADER: "Authorization"  # pragma: allowlist secret
+    POLL_INTERVAL_SECONDS: "5"
+    # Internal service URLs (short names resolve via K8s DNS in same namespace)
+
+# ---------------------------------------------------------------------------
+# imaging-api — DICOM image retrieval from PACS / XNAT
+# ---------------------------------------------------------------------------
+imagingApi:
+  enabled: true
+  image:
+    repository: ghcr.io/londonaicentre/imaging-api
+    tag: stag
+    pullPolicy: Always
+  replicas: 1
+  command:
+    - "uv"
+    - "run"
+    - "python"
+    - "-m"
+    - "uvicorn"
+    - "imaging_api.main:app"
+    - "--host"
+    - "0.0.0.0"
+    - "--port"
+    - "8000"
+  service:
+    port: 8000
+    type: ClusterIP
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - imaging-api
+            topologyKey: kubernetes.io/hostname
+  env:
+    XNAT_URL: "http://xnat-web:8080"
+    # DICOM SCP receiver port — NOT the web port. DQR import requests are
+    # queued with destination AE "XNAT:{XNAT_PORT}"; XNAT only dequeues them
+    # if a DICOM SCP receiver with that exact AE:port exists (8104, matching
+    # the xnat-web Service dicom-scp port and the Orthanc modality config).
+    XNAT_PORT: "8104"
+    PACS_ID: "1"
+    XNAT_DATABASE_URL: "postgresql+asyncpg://xnat:xnat@xnat-db:5432/xnat"
+    DATA_ACCESS_API_URL: "http://data-access-api:8000"
+    BASE_IMAGES_DOWNLOAD_DIR: "/app/data/images"
+
+# ---------------------------------------------------------------------------
+# data-access-api — OMOP database queries for cohort analysis
+# ---------------------------------------------------------------------------
+dataAccessApi:
+  enabled: true
+  image:
+    repository: ghcr.io/londonaicentre/data-access-api
+    tag: stag
+    pullPolicy: Always
+  replicas: 1
+  service:
+    port: 8000
+    type: ClusterIP
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/component
+                  operator: In
+                  values:
+                    - data-access-api
+            topologyKey: kubernetes.io/hostname
+  env:
+    OMOP_DB_SERVICE_NAME: "omop-db"
+    OMOP_POSTGRES_DB: "trustomopdb"
+    DATA_ACCESS_POSTGRES_USER: "data_analyst_reader"
+
+# ---------------------------------------------------------------------------
+# Shared images PVC — used by imaging-api and fl-client to share downloaded
+# DICOM images
+# ---------------------------------------------------------------------------
+sharedImagesPvc:
+  enabled: false
+  storageClassName: ""
+  size: 100Gi
+  accessMode: ReadWriteOnce
+
+# ---------------------------------------------------------------------------
+# FL client — federated learning participant
+# ---------------------------------------------------------------------------
+flClient:
+  enabled: true
+  netId: "net-1"
+  s3EndpointOverride: ""
+  imagesDir: /app/data/images
+  hostAwsMount:
+    enabled: false
+    readOnly: true
+  hostAliases:
+    - ip: "13.43.162.56"
+      hostnames:
+        - "fl-server-net-1"
+  image:
+    repository: ghcr.io/londonaicentre
+    tag: stag
+    pullPolicy: Always
+  nvflare:
+    kitFromS3:
+      enabled: true
+      # S3 bucket holding the FL participant kits (the AI Centre bucket,
+      # AICENTRE_BUCKET_NAME). Required, but deployment-specific — supply it via
+      # the kit override (`make sync-kit` writes it from the kit file). Empty here
+      # so the chart stays env-agnostic; an empty bucket crash-loops the kit-init.
+      bucket: ""
+      kitDate: "20260318"
+      # pathTemplate's trailing segment is the FL kit SLOT the hub assigned
+      # (FL_KIT_SLOT, e.g. Trust_2) — not the cosmetic trustName. `make sync-kit`
+      # pins it to the slot in the generated override. The trustName default below
+      # only works when trustName == the slot.
+      pathTemplate: "fl-flare-participant-kits/{{ .Values.flClient.nvflare.kitFromS3.kitDate }}/net-1/services/{{ .Values.trustName }}"
+  flower:
+    kitFromS3:
+      enabled: true
+      # See the nvflare note above — supply via the kit override (`make sync-kit`).
+      bucket: ""
+      kitDate: "20260401"
+      pathTemplate: "fl-flower-participant-kits/{{ .Values.flClient.flower.kitFromS3.kitDate }}/net-1"
+    superlink: ""
+    supernodeClientAppIoAddress: "127.0.0.1:9094"
+  resources:
+    requests:
+      memory: "8Gi"
+      cpu: "4"
+    limits:
+      memory: "32Gi"
+      cpu: "16"
+  shmSize: 8Gi
+  gpu:
+    enabled: false
+    count: 0
+    operator:
+      # Set to true to enable GPU operator validation resources
+      enabled: false
+  probes:
+    liveness:
+      port: 9094
+      initialDelaySeconds: 60
+      periodSeconds: 30
+    readiness:
+      port: 9094
+      initialDelaySeconds: 30
+      periodSeconds: 15
+  serviceAccount:
+    annotations: {}
+      # eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/fl-client-s3-access
+  sidecar:
+    enabled: false
+
+# ---------------------------------------------------------------------------
+# omop-db — Mocked OMOP patient database (PostgreSQL)
+# ---------------------------------------------------------------------------
+omopDb:
+  enabled: true
+  external:
+    host: ""
+    port: 5432
+  image:
+    repository: ghcr.io/londonaicentre/omop-db
+    tag: latest
+    pullPolicy: Always
+  persistence:
+    enabled: true
+    storageClassName: ""
+    size: 10Gi
+    accessMode: ReadWriteOnce
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  credentials:
+    user: postgres
+    # password is supplied via secrets.data.omop-postgres-password
+  initJob:
+    enabled: true
+    s3Bucket: ""
+    # Archive file name. When empty, derived from trust name + dataVersion:
+    #   {trustName}_pgdata_{dataVersion}.tar.gz
+    # Override to point at a different archive (e.g. reuse Trust_2's data):
+    #   archiveName: "trust2_pgdata_20260129.tar.gz"
+    archiveName: ""
+    dataVersion: "20260129"
+    # AWS profile to use for S3 authentication (uses SSO cached credentials)
+    awsProfile: "default"
+    # Mount host's ~/.aws directory for SSO-based S3 authentication
+    # Enabled for local K8s clusters; disable for EKS (use IRSA instead)
+    hostAwsMount:
+      enabled: false
+      hostPath: "/home/rd24/.aws"
+      readOnly: true
+
+# ---------------------------------------------------------------------------
+# orthanc — Mocked DICOM PACS server
+# ---------------------------------------------------------------------------
+orthanc:
+  enabled: true
+  host: orthanc
+  dicomHost: orthanc
+  dicomPort: 4242
+  dicomAet: ORTHANC
+  external:
+    host: ""
+    port: 8042
+  image:
+    repository: ghcr.io/londonaicentre/orthanc
+    tag: stag
+    pullPolicy: Always
+  replicas: 1
+  service:
+    port: 8042
+    type: ClusterIP
+  persistence:
+    enabled: true
+    storageClassName: ""
+    size: 50Gi
+    accessMode: ReadWriteOnce
+  probes:
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+  initJob:
+    enabled: false
+    s3Bucket: ""
+    # Archive file name. When empty, derived from trust name + dataVersion:
+    #   {trustName}_orthanc_data_{dataVersion}.tar.gz
+    # Override to point at a different archive (e.g. reuse Trust_2's data):
+    #   archiveName: "trust2_orthanc_data_20260106.tar.gz"
+    archiveName: ""
+    dataVersion: "20260106"
+    # AWS profile to use for S3 authentication (uses SSO cached credentials)
+    awsProfile: "default"
+    # Mount host's ~/.aws directory for SSO-based S3 authentication
+    # Enabled for local K8s clusters; disable for EKS (use IRSA instead)
+    hostAwsMount:
+      enabled: false
+      hostPath: "/home/rd24/.aws"
+
+# ---------------------------------------------------------------------------
+# XNAT — Neuroimaging platform (multi-component)
+# ---------------------------------------------------------------------------
+xnat:
+  enabled: true
+  initJob:
+    enabled: true
+  web:
+    enabled: true
+    adminUser: "admin"
+    # DICOM SCP (Service Class Provider) configuration
+    # XNAT listens as AE 'XNAT' on this port to receive C-STORE requests
+    dicomAet: XNAT
+    dicomPort: 8104
+    image:
+      repository: ghcr.io/londonaicentre/xnat-web
+      tag: stag
+      pullPolicy: Always
+    service:
+      port: 8080
+      type: ClusterIP
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 100Gi
+      accessMode: ReadWriteOnce
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1"
+      limits:
+        memory: "4Gi"
+        cpu: "2"
+    probes:
+      liveness:
+        initialDelaySeconds: 120
+        periodSeconds: 20
+        timeoutSeconds: 10
+      readiness:
+        initialDelaySeconds: 30
+        periodSeconds: 15
+        timeoutSeconds: 5
+    plugins:
+      enabled: true
+      image: python:3.12-slim
+      urls:
+        container-service: "https://api.bitbucket.org/2.0/repositories/xnatdev/container-service/downloads/container-service-3.8.0-fat.jar"
+        dicom-query-retrieve: "https://api.bitbucket.org/2.0/repositories/xnatdev/dicom-query-retrieve/downloads/dicom-query-retrieve-2.3.2-xpl.jar"
+        batch-launch: "https://api.bitbucket.org/2.0/repositories/xnatx/xnatx-batch-launch-plugin/downloads/batch-launch-0.9.0-xpl.jar"
+        ohif-viewer: "https://xnat.org/files/ohif-viewer-xnat-plugin/ohif-viewer-3.7.2.jar"
+    env:
+      XNAT_EMAIL: ""
+      XNAT_MIN_HEAP: "1024m"
+      XNAT_MAX_HEAP: "3072m"
+  db:
+    enabled: true
+    datasourceUsername: "xnat"
+    image:
+      repository: ghcr.io/londonaicentre/xnat-db
+      tag: stag
+      pullPolicy: Always
+    service:
+      port: 5432
+      type: ClusterIP
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 20Gi
+      accessMode: ReadWriteOnce
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+  nginx:
+    enabled: true
+    image:
+      repository: ghcr.io/londonaicentre/xnat-nginx
+      tag: stag
+      pullPolicy: Always
+    service:
+      port: 80
+      type: ClusterIP
+    probes:
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 10
+        timeoutSeconds: 5
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 5
+        timeoutSeconds: 3
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+
+# ---------------------------------------------------------------------------
+# Observability Stack — Loki, Alloy, Grafana
+# ---------------------------------------------------------------------------
+observability:
+  enabled: true   # single gate: set false to skip all observability components
+  loki:
+    enabled: true
+    image:
+      repository: grafana/loki
+      tag: "3.4.0"
+      pullPolicy: IfNotPresent
+    service:
+      port: 3100
+      type: ClusterIP
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 10Gi
+      accessMode: ReadWriteOnce
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "200m"
+  alloy:
+    enabled: true
+    image:
+      repository: grafana/alloy
+      tag: "v1.9.0"
+      pullPolicy: IfNotPresent
+    service:
+      port: 12345
+      type: ClusterIP
+    resources:
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+  grafana:
+    enabled: true
+    image:
+      repository: grafana/grafana
+      tag: "11.5.0"
+      pullPolicy: IfNotPresent
+    service:
+      port: 3000
+      type: ClusterIP
+    persistence:
+      enabled: true
+      storageClassName: ""
+      size: 1Gi
+      accessMode: ReadWriteOnce
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "512Mi"
+        cpu: "200m"
+    # adminPassword is supplied via secrets.data.grafana-admin-password
+
+# ---------------------------------------------------------------------------
+# Horizontal Pod Autoscaler configuration
+# ---------------------------------------------------------------------------
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# ---------------------------------------------------------------------------
+# Pod Disruption Budget
+# ---------------------------------------------------------------------------
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# ---------------------------------------------------------------------------
+# Network policies — zero inbound trust model
+# ---------------------------------------------------------------------------
+networkPolicies:
+  enabled: true
+  # When true, allows ingress from kube-system namespace (kubelet health checks,
+  # metrics scraping). Set to true if your CNI requires explicit carve-outs for
+  # kubelet probes or cluster-internal monitoring.
+  allowKubeSystemIngress: false
+  # CIDRs allowed for all-ports egress (in addition to intra-namespace)
+  allowedEgressCIDRs: []
+  #   - 10.0.0.0/8
+  # CIDRs allowed for egress on a specific port, e.g. fl-server gRPC (port 8002)
+  # Each entry: cidrs (list of CIDR strings) + port (int) + optional protocol (default TCP)
+  allowedEgressCIDRsWithPorts: []
+  # - cidrs:
+  #     - 13.43.208.193/32
+  #     - 13.43.162.56/32
+  #   port: 8002
+  # Egress rules to allow (defaults include DNS/HTTP/HTTPS)
+  allowedEgressPorts:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+    - port: 80
+      protocol: TCP
+    - port: 443
+      protocol: TCP
+
+# ---------------------------------------------------------------------------
+# Imaging Import Worker (DQR bypass)
+#
+# Runs a Python-based worker that C-MOVEs studies directly from Orthanc to
+# XNAT, bypassing the buggy DQR plugin (PacsNotStorableException).
+#
+# Can run as a one-shot Job (default) or a CronJob (if a schedule is set).
+# ---------------------------------------------------------------------------
+imagingImportWorker:
+  enabled: true
+  runOnce: false
+  replicas: 1
+  batchSize: 50
+  pollInterval: 60
+  workerAet: FLIPIMPORT
+  pacsId: 1
+  logLevel: INFO
+  prearchivePollSecs: 10
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  restartPolicy: Always
+  image:
+    repository: python
+    tag: "3.12-slim"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"

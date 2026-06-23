@@ -707,6 +707,28 @@ resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
   description       = "FL Server/Admin NLB from on-prem Trust (${each.value})"
 }
 
+############################
+# K8s Trust (optional)
+# Driven by var.k8s_trust_public_ips — set via K8S_TRUST_PUBLIC_IPS in the env
+# file. One ingress rule per IP, keyed by the IP itself (for_each), so the set
+# is reconciled by a normal `terraform apply` and re-adding an existing IP is a
+# no-op — fixing the InvalidPermission.Duplicate from the old -target/count path
+# (#596). The legacy scalar K8S_TRUST_IP is merged in for back-compat.
+############################
+
+# Allow K8s-deployed trust FL clients to reach the FL server via the NLB.
+# Same pattern as the on-prem trust rule above.
+resource "aws_security_group_rule" "k8s_trust_fl_server_nlb" {
+  for_each          = toset(concat(var.k8s_trust_public_ips, var.K8S_TRUST_IP != "" ? [var.K8S_TRUST_IP] : []))
+  type              = "ingress"
+  from_port         = var.FL_SERVER_PORT
+  to_port           = var.FL_SERVER_PORT
+  protocol          = "tcp"
+  cidr_blocks       = ["${each.value}/32"]
+  security_group_id = module.fl_server_nlb.security_group_id
+  description       = "FL Server/Admin NLB from K8s Trust (${each.value})"
+}
+
 # Outputs
 output "Keypair" {
   value = var.flip_keypair

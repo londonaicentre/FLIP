@@ -20,17 +20,24 @@ from flip_api.db.seed.seed_logger import logger
 
 _SLOT_NUMBER_RE = re.compile(r"_(\d+)$")
 
+# Sentinel used as slot_number for names without a trailing integer (e.g. "Trust_K8s").
+# Must be larger than any real slot number so the free-slot query (ORDER BY slot_number ASC)
+# never hands these out before conventional Trust_N slots.  Flower's per-supernode key
+# lookup requires a trailing _<N> suffix; non-numeric names still work for NVFLARE but
+# should be reserved for purpose-built slots (K8s, staging) that are registered explicitly.
+_NON_NUMERIC_SLOT_NUMBER = 10_000
+
 
 def _slot_number(slot_name: str) -> int:
     """Extract the trailing integer from a slot name (``Trust_007`` → ``7``).
 
     Slots are conventionally named with a trailing ``_<N>`` so the Flower side can pick
-    a per-supernode key with the matching ``supernode_credentials_<N>`` suffix. Falls
-    back to 0 for slot names without a trailing integer — those still work for NVFLARE
-    (which only cares about the directory name) but break Flower's per-slot key lookup.
+    a per-supernode key with the matching ``supernode_credentials_<N>`` suffix. Returns
+    ``_NON_NUMERIC_SLOT_NUMBER`` for names without a trailing integer so they sort after
+    all conventional ``Trust_N`` slots in the free-slot claim queue.
     """
     match = _SLOT_NUMBER_RE.search(slot_name)
-    return int(match.group(1)) if match else 0
+    return int(match.group(1)) if match else _NON_NUMERIC_SLOT_NUMBER
 
 
 def seed_fl_kit_slots(session: Session) -> None:

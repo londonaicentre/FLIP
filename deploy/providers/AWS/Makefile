@@ -124,6 +124,10 @@ export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
 # is created per IP. `make allow-local-trust-nlb` applies them.
 LOCAL_TRUST_PUBLIC_IPS ?= []
 export TF_VAR_local_trust_public_ips=$(LOCAL_TRUST_PUBLIC_IPS)
+# K8s trust node egress IPs — one FL-server NLB ingress rule per IP (#596).
+# `make add-k8s-trust` applies them via a normal plan/apply (no -target).
+K8S_TRUST_PUBLIC_IPS ?= []
+export TF_VAR_k8s_trust_public_ips=$(K8S_TRUST_PUBLIC_IPS)
 export TF_VAR_AWS_REGION=${AWS_REGION}
 export TF_VAR_VPC_NAME=${VPC_NAME}
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
@@ -138,6 +142,9 @@ export TF_VAR_TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
 export TF_VAR_INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
 export TF_VAR_FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
 export TF_VAR_ENFORCE_MFA=${ENFORCE_MFA}
+# JSON list of FL kit-slot names; seeds the fl_kit_slot pool register_trust
+# claims from. Empty ⇒ NoFreeKitSlotError on registration. Set in the env file.
+export TF_VAR_FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
 CENTRALHUB_IMAGES = \
 	$(DOCKER_REGISTRY)flip-api:$(DOCKER_TAG)
 
@@ -177,7 +184,7 @@ create-backend: ## Create Terraform backend S3 bucket - Only run once
 .PHONY: aws-login
 aws-login: ## Login to AWS SSO (required before terraform operations)
 	@echo "🔐 Logging into AWS SSO..."
-	@aws sso login --profile $(AWS_PROFILE)
+	@aws sso login --profile $(AWS_PROFILE) --use-device-code
 	@echo "✅ AWS SSO login successful!"
 
 .PHONY: github-login
@@ -312,6 +319,11 @@ apply: ## Apply Terraform configuration to update AWS infrastructure (with envir
 	@echo "🛠️ Applying Terraform configuration..."
 	@terraform apply plan.tfplan
 
+.PHONY: import-cloudfront
+import-cloudfront: ## Import existing CloudFront distribution into terraform state
+	@echo "🔗 Importing existing CloudFront distribution..."
+	@terraform import aws_cloudfront_distribution.flip_ui E31HHLGOWBDENB
+
 .PHONY: forward-trust
 forward-trust: ## SSM port-forward all Trust web UIs and API swagger docs (Ctrl+C to stop)
 	@bash scripts/forward-trust-all.sh
@@ -331,13 +343,33 @@ update-env: ## Update environment file with Terraform outputs
 .PHONY: ansible-init
 ansible-init: ## Initialize Ansible configuration on EC2 instances (if failed try again for 3 times)
 	@echo "☁️🔗 Initiate ansible and install docker on both EC2 instances"
+	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
+	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
 	@uv sync
 	@uv run ansible-galaxy install -r requirements.yml
 	@uv run ansible-playbook site.yml \
 		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
 		-e fl_backend=$(FL_BACKEND) \
 		-e fl_kit_date=$(FL_KIT_DATE) \
-		-e pgdata_archive=trust1_pgdata_20260129.tar
+		-e trust_num=$(or $(FL_KIT_SLOT_NUMBER),1) \
+		-e omop_data_version=$(OMOP_DATA_VERSION) \
+		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+
+.PHONY: seed-trust-data
+seed-trust-data: ssh-config ## Load trust-specific OMOP + Orthanc mock data onto the Trust EC2 (re-run after data version bump; requires KIT=)
+	@[ -n "$(KIT)" ] || (echo "❌  KIT is required. Usage: make seed-trust-data KIT=Trust_2 PROD=stag"; exit 1)
+	@[ -n "$(FL_KIT_SLOT_NUMBER)" ] || (echo "❌  FL_KIT_SLOT_NUMBER not found in trust/.env.$(KIT).$(KIT_ENV_SUFFIX) — run register-trusts first"; exit 1)
+	@[ -n "$(OMOP_DATA_VERSION)" ] || (echo "❌  trust/omop-db/.data_version not found"; exit 1)
+	@[ -n "$(ORTHANC_DATA_VERSION)" ] || (echo "❌  trust/orthanc/.data_version not found"; exit 1)
+	@echo "🗄️  Seeding Trust EC2 with trust$(FL_KIT_SLOT_NUMBER) data (OMOP v$(OMOP_DATA_VERSION), Orthanc v$(ORTHANC_DATA_VERSION))..."
+	@uv run ansible-playbook site.yml \
+		--tags data \
+		-e flip_aicentre_bucket=$(AICENTRE_BUCKET_NAME) \
+		-e fl_kit_date=$(FL_KIT_DATE) \
+		-e trust_num=$(FL_KIT_SLOT_NUMBER) \
+		-e omop_data_version=$(OMOP_DATA_VERSION) \
+		-e orthanc_data_version=$(ORTHANC_DATA_VERSION)
+	@echo "✅ Trust data seeding complete."
 
 .PHONY: deploy-centralhub
 deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with environment from Terraform
@@ -359,17 +391,13 @@ deploy-centralhub: ssh-config ## Deploy FLIP containers to flip context with env
 	@echo "📋 Loading environment variables from Terraform outputs..."
 	@echo "👷 Create docker context if not exists, pointing to flip to ssh://flip"
 	@docker context create flip --docker "host=ssh://flip" || echo "   Context 'flip' already exists"
-	@# Switch to flip context
-	@echo "🔄 Switching to flip Docker context..."
-	@docker context use flip
 	@echo "🧹 Stopping old containers and removing unused images to free disk space..."
-	@docker stop $$(docker ps -aq) 2>/dev/null || true
-	@docker rm $$(docker ps -aq) 2>/dev/null || true
-	@docker image prune -af
+	@docker --context flip stop $$(docker --context flip ps -aq) 2>/dev/null || true
+	@docker --context flip rm $$(docker --context flip ps -aq) 2>/dev/null || true
+	@docker --context flip image prune -af 2>/dev/null || true
 	@echo "🐳 Deploying containers..."
-	@$(MAKE) -C ../../../ up-centralhub-ec2 PROD=${PROD}
+	@DOCKER_CONTEXT=flip $(MAKE) -C ../../../ up-centralhub-ec2 PROD=${PROD}
 	@echo "✅ Deployment complete!"
-	@docker context use default
 
 .PHONY: deploy-ui
 deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalidate CloudFront
@@ -407,9 +435,15 @@ deploy-ui: ## Build flip-ui from the working tree and deploy it to S3 + invalida
 # Read from the trust's kit file (the single source of truth: the kit file's
 # FL_KIT_SLOT is also what trust/Makefile mounts), not duplicated here.
 FL_KIT_SLOT := $(shell sed -n 's/^FL_KIT_SLOT=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+FL_KIT_SLOT_NUMBER := $(shell sed -n 's/^FL_KIT_SLOT_NUMBER=//p' ../../../trust/.env.$(KIT).$(KIT_ENV_SUFFIX) 2>/dev/null)
+
+# Data versions read from the canonical .data_version files — these govern both
+# the local update-omop-data / update-orthanc-data scripts and the Ansible plays.
+OMOP_DATA_VERSION := $(shell cat ../../../trust/omop-db/.data_version 2>/dev/null | tr -d ' \n\r\t')
+ORTHANC_DATA_VERSION := $(shell cat ../../../trust/orthanc/.data_version 2>/dev/null | tr -d ' \n\r\t')
 
 .PHONY: deploy-trust
-deploy-trust: ssh-config update-env ## Deploy trust relationships after central hub is deployed
+deploy-trust: ssh-config update-env seed-trust-data ## Deploy trust relationships after central hub is deployed
 	@echo "🔍 Checking trust images (tag: $(DOCKER_TAG))..."
 	@missing=false; \
 	for image in $(TRUST_IMAGES); do \
@@ -427,18 +461,15 @@ deploy-trust: ssh-config update-env ## Deploy trust relationships after central 
 	fi
 	@echo "👷 Create docker context if not exists, pointing to flip-trust to ssh://flip-trust"
 	@docker context create flip-trust --docker "host=ssh://flip-trust" || echo "   Context 'flip-trust' already exists"
-	@echo "🔄 Switching to flip-trust Docker context..."
-	@docker context use flip-trust
 	@echo "🐳 Deploying containers to Trust EC2 ..."
-	docker swarm init || echo "   Swarm already initialized"
+	docker --context flip-trust swarm init || echo "   Swarm already initialized"
 	@echo "🔧 Creating Docker networks on Trust EC2..."
-	$(MAKE) -C ../../../ create-networks
-	@echo "🧹 Stopping old containers and removing unused images to free disk space..."
-	@docker stop $$(docker ps -aq) 2>/dev/null || true
-	@docker rm $$(docker ps -aq) 2>/dev/null || true
-	@docker image prune -af
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../ create-networks
+	@echo "🧹 Stopping existing stack for KIT=$(KIT) and pruning unused images..."
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../trust down-trust-ec2 KIT=$(KIT) PROD=${PROD} 2>/dev/null || true
+	@docker --context flip-trust image prune -af 2>/dev/null || true
 	@echo "🚀 Deploying Trust services..."
-	$(MAKE) -C ../../../ up-trust-ec2 KIT=$(KIT) PROD=${PROD}
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../ up-trust-ec2 KIT=$(KIT) PROD=${PROD}
 	@echo "✅ Trust deployment complete!"
 
 .PHONY: provision-local-trust
@@ -528,15 +559,40 @@ allow-local-trust-nlb: ## Apply the FL-server NLB ingress rules for the IPs in L
 	@$(MAKE) apply
 	@echo "✅ FL-server NLB security group reconciled."
 
+.PHONY: add-k8s-trust
+add-k8s-trust: ## Open the FL-server NLB to a K8s trust node's public IP (FL training only)
+	## A K8s trust is registered exactly like any other trust — by CODE-named kit:
+	##   make new-trust TRUST_CODE=Trust_K8s TRUST_NAME="..."
+	##   make -C deploy/providers/AWS register-trusts KIT=Trust_K8s PROD=$(PROD)
+	##   make sync-trust-kit KIT=Trust_K8s PROD=$(PROD)
+	##   make -C deploy/providers/kubernetes sync-kit KIT=Trust_K8s PROD=$(PROD)
+	##   make -C deploy/providers/kubernetes up OVERRIDES_FILE=k8s-trust-Trust_K8s.yaml
+	## Polling needs none of the below. This target is the LAST step, needed only for
+	## FL *training*: it opens the FL-server NLB security group to the K8s node's
+	## public/egress IP. Mirrors `allow-local-trust-nlb`: add each node IP to
+	## K8S_TRUST_PUBLIC_IPS in the env file (an HCL list, e.g.
+	## K8S_TRUST_PUBLIC_IPS=["1.2.3.4"]), then this runs a normal full plan/apply.
+	## The IPs are honest config (no -target), so the rule set is idempotent and
+	## re-running with an already-listed IP is a no-op — fixing #596.
+	@if [ -n "$(K8S_TRUST_IP)" ] && ! echo '$(K8S_TRUST_PUBLIC_IPS)' | grep -q '"$(K8S_TRUST_IP)"'; then \
+		echo ""; \
+		echo "❌  $(K8S_TRUST_IP) is not in K8S_TRUST_PUBLIC_IPS (currently $(K8S_TRUST_PUBLIC_IPS))."; \
+		echo "   Add it to K8S_TRUST_PUBLIC_IPS in $(MAIN_ENV_FILE), then re-run, e.g.:"; \
+		echo "       K8S_TRUST_PUBLIC_IPS=[\"$(K8S_TRUST_IP)\"]"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@echo "🔐 Applying FL-server NLB ingress rules for K8S_TRUST_PUBLIC_IPS=$(K8S_TRUST_PUBLIC_IPS)..."
+	@$(MAKE) plan
+	@$(MAKE) apply
+	@echo "✅ FL-server NLB security group reconciled for the K8s trust node(s)."
+
 .PHONY: down
 down:
 	@echo "🛑 Stopping all containers..."
-	@docker context use flip
-	$(MAKE) -C ../../../ down
-	@docker context use flip-trust
-	$(MAKE) -C ../../../ down
+	DOCKER_CONTEXT=flip $(MAKE) -C ../../../ down
+	DOCKER_CONTEXT=flip-trust $(MAKE) -C ../../../ down
 	@echo "✅ Containers stopped and removed"
-	@docker context use default
 
 .PHONY: status
 status: ## Check deployment status
@@ -624,7 +680,7 @@ delete-trust: ## Hard-delete a trust on the hub (frees the name + FL kit slot; c
 	## xnat_project_status). Operator can then UI-add a new trust with the freed name.
 	## Required: NAME=<trust-name> matching trust.name exactly.
 	@[ -n "$(NAME)" ] || (echo "❌ NAME=<trust-name> is required"; exit 1)
-	@NAME=$(NAME) bash scripts/delete-trust.sh
+	@NAME="$(NAME)" bash scripts/delete-trust.sh
 
 .PHONY: full-deploy
 full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trust + Central Hub
@@ -634,9 +690,11 @@ full-deploy: ## Full AWS deployment: provision infrastructure, deploy cloud Trus
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, secrets)
 	## 4. update-env: refresh .env with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
 	## 5. ssh-config + ansible-init: configure SSH aliases and provision EC2s with Docker
+	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
 	## 6. deploy-centralhub: bring up the Central Hub (seeds run, fl_kit_slot pool is populated)
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + status: bring up cloud Trust container stack and verify
+	## Prerequisite: create stub kit files first: make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=London PROD=$(PROD)
 full-deploy: github-login aws-login init import-persistent generate-internal-service-key plan apply update-env ssh-config ansible-init deploy-centralhub register-trusts deploy-trust status
 
 .PHONY: full-deploy-with-local-trust
@@ -647,7 +705,8 @@ full-deploy-with-local-trust: ## Full AWS deployment (honours PROD) plus on-prem
 	## 2. generate-internal-service-key: mint the fl-server→hub key (idempotent)
 	## 3. plan+apply: provision all AWS infrastructure (EC2, RDS, VPC, ALB, secrets, on-prem trust NLB rule)
 	## 4. update-env: refresh .env.{PROD} with Terraform outputs (EC2 IPs, DB endpoint, Cognito IDs)
-	## 5. ssh-config + ansible-init: configure SSH aliases, provision EC2s with Docker + FL kit
+	## 5. ssh-config + ansible-init: configure SSH aliases and provision EC2s with Docker
+	##    (ansible-init uses trust_num=1 by default; re-run with KIT=<CODE> after register-trusts for slot-specific data)
 	## 6. deploy-centralhub: bring up the Central Hub
 	## 7. register-trusts: register every live trust/.env.*.<env> kit on the hub and write kit files
 	## 8. deploy-trust + provision-local-trust + status: bring up cloud + on-prem trust hosts and verify
@@ -680,3 +739,58 @@ full-deploy-hybrid: ## Full hybrid deployment including on-prem trust provisioni
 	echo "✅ Hybrid deployment complete (PROD=$(PROD))." && \
 	echo "➡️  Final manual step: start the on-prem trust stack on the trust host:" && \
 	echo "   cd ../../.. && env PROD=$(PROD) make -C trust up-trust KIT=$(KIT)"
+
+.PHONY: preflight-k8s-deploy
+preflight-k8s-deploy: ## Pre-flight checks for full-deploy-with-k8s (Trust_K8s slot, kubectl context, helm)
+	@uv run --no-config scripts/preflight_k8s_deploy.py \
+		--prod "$(PROD)" \
+		$(if $(K8S_TRUST_IP),--k8s-trust-ip "$(K8S_TRUST_IP)")
+
+.PHONY: full-deploy-with-k8s
+full-deploy-with-k8s: ## Full AWS deploy + Trust_K8s registration and K8s chart deployment
+	## Step order:
+	## 1. Detect or validate K8S_TRUST_IP (deployer machine's public egress IP)
+	## 2. preflight-k8s-deploy: fail-fast if Trust_K8s not in FL_KIT_SLOT_NAMES, kubectl/helm missing
+	## 3–9. full-deploy steps (provision AWS infra, central hub, EC2 trust + EC2 status gate)
+	## 10. Scaffold trust/.env.Trust_K8s.<env> if absent (make new-trust, idempotent)
+	## 11. Register Trust_K8s on the hub (register-trusts, idempotent)
+	## 12. Sync hub-shared block into Trust_K8s kit (sync-trust-kit)
+	## 13. Patch Trust_K8s secrets into the K8s cluster Secret (kubernetes sync-kit)
+	## 14. Open FL-server NLB to K8S_TRUST_IP (add-k8s-trust, Terraform -target)
+	## 15. Deploy K8s trust Helm chart (make -C kubernetes up)
+	## 16. Status: K8s trust (make -C kubernetes status) — EC2 trust checked in step 3–9
+	## Prerequisite: add "Trust_K8s" to FL_KIT_SLOT_NAMES in .env.stag before running
+	@_K8S_IP="$(K8S_TRUST_IP)"; \
+	if [ -z "$$_K8S_IP" ]; then \
+		echo "🔍 Detecting K8S_TRUST_IP..."; \
+		_K8S_IP=$$(curl -s --max-time 5 https://api.ipify.org) || { \
+			echo "❌  Cannot auto-detect public IP."; \
+			echo "   Provide it explicitly: make full-deploy-with-k8s K8S_TRUST_IP=<ip> PROD=$(PROD)"; \
+			exit 1; \
+		}; \
+		echo "✅ K8S_TRUST_IP: $$_K8S_IP"; \
+	fi && \
+	$(MAKE) preflight-k8s-deploy PROD=$(PROD) K8S_TRUST_IP=$$_K8S_IP && \
+	$(MAKE) full-deploy PROD=$(PROD) KIT=$(KIT) && \
+	echo "" && \
+	echo "☸️  Setting up Trust_K8s..." && \
+	{ [ -f ../../../trust/.env.Trust_K8s.$(KIT_ENV_SUFFIX) ] || \
+		$(MAKE) -C ../../.. new-trust \
+			TRUST_CODE=Trust_K8s \
+			TRUST_NAME="Kubernetes Trust" \
+			TRUST_REGION=London \
+			PROD=$(PROD); } && \
+	$(MAKE) register-trusts KIT=Trust_K8s PROD=$(PROD) && \
+	$(MAKE) -C ../../.. sync-trust-kit KIT=Trust_K8s PROD=$(PROD) && \
+	$(MAKE) -C ../kubernetes sync-kit KIT=Trust_K8s PROD=$(PROD) && \
+	$(MAKE) add-k8s-trust K8S_TRUST_IP=$$_K8S_IP PROD=$(PROD) && \
+	$(MAKE) -C ../kubernetes up \
+		OVERRIDES_FILE=$(shell pwd)/../kubernetes/k8s-trust-Trust_K8s.yaml \
+		PROD=$(PROD) && \
+	echo "" && \
+	echo "=== K8s Trust Status ===" && \
+	$(MAKE) -C ../kubernetes status PROD=$(PROD) && \
+	echo "" && \
+	echo "✅ full-deploy-with-k8s complete (PROD=$(PROD))." && \
+	echo "   EC2 trust status was verified in the full-deploy step above." && \
+	echo "   K8S_TRUST_IP: $$_K8S_IP (FL-server NLB rule applied)"
