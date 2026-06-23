@@ -151,8 +151,12 @@ def main(argv: list[str]) -> int:
     if args.limit is not None:
         study_ids = study_ids[: args.limit]
 
+    # ``study_ids`` is derived from an authenticated Orthanc response, so static
+    # analysis treats it (and anything interpolated alongside it) as sensitive.
+    # Log a plain integer count detached from that dataflow instead.
+    study_count = int(len(study_ids))
     mode = "DRY-RUN " if args.dry_run else ""
-    print(f"{mode}Scanning {len(study_ids)} studies in {base} for missing {list(wanted)} ...")
+    print(f"{mode}Scanning {study_count} studies for missing {sorted(wanted)} ...")
 
     fixed = skipped = failed = 0
     for sid in study_ids:
@@ -168,9 +172,11 @@ def main(argv: list[str]) -> int:
             skipped += 1
             continue
 
-        acc = tags.get("AccessionNumber", "?")
+        # AccessionNumber is a patient-linkable identifier from the authenticated
+        # PACS response; keep it out of logs. The opaque Orthanc study id (``sid``)
+        # is enough for an operator to locate the study.
         if args.dry_run:
-            print(f"  would fix {sid} (acc={acc}): set {list(replace)}")
+            print(f"  would fix {sid}: set {sorted(replace)}")
             fixed += 1
             continue
         try:
@@ -185,7 +191,7 @@ def main(argv: list[str]) -> int:
             if fixed % 100 == 0:
                 print(f"  ... fixed {fixed}")
         except Exception as exc:  # noqa: BLE001
-            print(f"  ! {sid} (acc={acc}): modify failed: {exc}", file=sys.stderr)
+            print(f"  ! {sid}: modify failed: {exc}", file=sys.stderr)
             failed += 1
 
     print("\n── Summary ──────────────────────────────────────────")
