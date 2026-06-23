@@ -44,8 +44,10 @@ class DirectArchiveSession(BaseModel):
     id: int
     created: datetime
     folder_name: str
-    # The session label XNAT assigns the directArchive session; for DQR imports this is the
-    # accession number, so it is what links an archive failure back to a cohort accession.
+    # The session label XNAT assigns the directArchive session; for DQR imports this is the accession
+    # number, the join key get_import_status uses to map an archive ERROR back to a cohort accession.
+    # Nullable: non-DQR or unlabelled archive rows have no label, so get_import_status falls back to
+    # folder_name (which carries the same accession) when this is None.
     name: str | None = None
     status: str
     project: str

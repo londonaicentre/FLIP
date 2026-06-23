@@ -36,11 +36,12 @@ from imaging_api.utils.logger import logger
 
 XNATAuthHeaders = Annotated[dict[str, str], Depends(get_xnat_auth_headers)]
 
-# Terminal-failure status values written by XNAT's DQR plugin / prearchive. Confirmed against XNAT
-# 1.9.x source: queued/executed PACS requests use PacsRequest.FAILED_STATUS_TEXT ("FAILED"); a
-# directArchive session uses PrearcUtils.PrearcStatus.ERROR. Any other status on a row that exists
-# means the import is still in flight. A successful directArchive deletes its row, so "successful" is
-# never read from these tables — it is determined solely by the experiment listing.
+# Terminal-failure status values. Verified against XNAT 1.9.3 source — re-check on any XNAT upgrade,
+# since a renamed value would silently misclassify a failed import as in-flight `processing`:
+#   - queued/executed PACS requests (DQR plugin):  PacsRequest.FAILED_STATUS_TEXT == "FAILED"
+#   - directArchive sessions (XNAT prearchive):    PrearcUtils.PrearcStatus.ERROR
+# Any other status on a row that exists means the import is still in flight. A successful directArchive
+# deletes its row, so "successful" is never read from these tables — only from the experiment listing.
 _PACS_REQUEST_FAILED_STATUS = "FAILED"
 _DIRECT_ARCHIVE_FAILED_STATUS = "ERROR"
 
@@ -144,6 +145,13 @@ async def get_import_status(project_id: str, query: str, headers: XNATAuthHeader
     * `Failed`: Studies that failed to import
     * `Queued`: Studies waiting in the queue
     * `QueueFailed`: Studies that couldn't be queued for import
+
+    Known limitation: only *terminal* failures (executed `FAILED`, directArchive `ERROR`) are
+    reported as `Failed`. A study wedged in a non-terminal state with no further transition — e.g.
+    executed `ISSUED` (the C-MOVE was issued but objects never arrive) or a directArchive stuck at
+    `RECEIVING`/`BUILDING` (a hung build that neither errors nor deletes its row) — stays `Processing`
+    indefinitely and is therefore never retried. Detecting "stuck" would need a staleness window
+    (the rows carry `timestamp`); not implemented here.
 
     1. Fetch the cohort's accession IDs from the data access API
     2. Get project experiments
