@@ -494,7 +494,11 @@ Include:
    `ReadWriteMany` storage class (e.g. NFS/EFS) to mount the same archive/build
    data. Subscriptions are created successfully, but DICOM-to-NIfTI conversion
    will not yet run end-to-end on the K8s deployment until the PVC topology
-   for Jobs is finalised.
+   for Jobs is finalised. **See [DCM2NIIX-K8S.md](DCM2NIIX-K8S.md) (#565)** for
+   the storage analysis, the RWX / single-node fixes (set
+   `xnat.web.persistence.accessMode: ReadWriteMany` for multi-node), and the
+   remaining chart work that must be validated against a live XNAT Container
+   Service.
 
 2. **Orthanc SQLite**: Orthanc uses an embedded SQLite database that cannot be
    shared across multiple pod replicas. The chart configures Orthanc with
