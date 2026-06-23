@@ -38,7 +38,7 @@ class CleanupImages(Executor):
 
         super().__init__()
 
-    def execute(self, task_name: str, shareable: Shareable, fl_ctx: FLContext, abort_signal: Signal):
+    def execute(self, task_name: str, shareable: Shareable, fl_ctx: FLContext, abort_signal: Signal) -> Shareable:
         try:
             if task_name in (FlipTasks.POST_VALIDATION, FlipTasks.POST_TASK):
                 cwd = os.getcwd()
