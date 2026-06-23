@@ -57,10 +57,9 @@ implementations and tutorials).
 | [`fl_services/`](fl_services/) | Docker images for FL networks: `fl-server`, `fl-client`, `fl-api-base`, `fl-base` |
 | [`fl-apps/`](fl-apps/) | FL job-type implementations (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) and tutorials |
 
-The legacy [`flip-fl-base`](https://github.com/londonaicentre/flip-fl-base) and
-[`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) repositories still hold the
-provisioned NVFLARE workspaces and Flower certs used at dev time — see
-[Federated Learning Setup](#federated-learning-setup) below.
+The NVFLARE workspace is now provisioned in-tree at [`deploy/workspace`](deploy/workspace) (`make nvflare-provision`).
+The legacy [`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) repository still holds the
+provisioned Flower certs used at dev time — see [Federated Learning Setup](#federated-learning-setup) below.
 
 ## Deployment
 
@@ -216,14 +215,14 @@ docker compose -f deploy/compose.development.yml run --rm < service name >
 ### Federated Learning Setup
 
 The project supports [NVIDIA FLARE](https://developer.nvidia.com/flare) and [Flower Framework](https://flower.ai/) for
-federated learning. FLARE requires provisioned certificates and configuration files. As of the FL-code migration these
-can be generated from within this repo (`make nvflare-provision-2-nets`, see [`fl_services/README.md`](fl_services/README.md)),
-but until the deploy-side path migration lands the dev compose files still consume the legacy sibling-repo workspaces.
+federated learning. FLARE requires provisioned certificates and configuration files that are generated in-tree via
+`make nvflare-provision` (or `make nvflare-provision-2-nets` for a two-network setup, see
+[`fl_services/README.md`](fl_services/README.md)) and stored in `deploy/workspace/`.
 
-1. **Path Resolution**: `FL_PROVISIONED_DIR` is derived from the `FL_BACKEND` selection inside [`deploy/fl_backend.mk`](deploy/fl_backend.mk) (no longer set in `.env.development`):
+1. **Path Resolution**: `FL_PROVISIONED_DIR` is derived from the `FL_BACKEND` selection inside [`deploy/fl_backend.mk`](deploy/fl_backend.mk):
 
-   - `FL_BACKEND=flower` → `../flip-fl-base-flower/certs`
-   - `FL_BACKEND=nvflare` → `../flip-fl-base/workspace`
+   - `FL_BACKEND=flower` → `../flip-fl-base-flower/certs` (sibling repo, not yet merged)
+   - `FL_BACKEND=nvflare` → `deploy/workspace` (in-tree)
 
    The Makefile then converts the relative value to an absolute path so Docker volume mounts work correctly. You can override the resolved path at the command line for a one-off, e.g. `make up FL_PROVISIONED_DIR=/tmp/my-workspace`.
 
@@ -231,11 +230,9 @@ but until the deploy-side path migration lands the dev compose files still consu
 
 If you see errors like "fed_client.json does not exist" or "missing startup folder", verify that:
 
-- Either the [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) repository is cloned as a sibling directory
-  with a provisioned workspace, **or** override `FL_PROVISIONED_DIR` to point at the workspace you generated from
-  `make nvflare-provision-2-nets`
-- The workspace has been properly provisioned with NVFLARE certificates
+- The workspace has been properly provisioned with NVFLARE certificates (`make nvflare-provision`)
 - The `FL_PROVISIONED_DIR` path is correctly resolved (check Makefile output)
+- For NVFLARE: the workspace is at `deploy/workspace/`
 
 ## AWS Deployment
 
@@ -402,6 +399,9 @@ The repository is organised as follows:
 - `docs`: Contains the documentation files
 - `flip-api`: Contains the central hub API service
 - `flip-ui`: Contains the UI service
+- `flip-utils`: Contains the pip-installable flip-utils Python library
+- `fl_services`: Contains the FL Docker services (server, client, admin API)
+- `fl-apps`: Contains FL app templates, tutorials, and utility scripts
 - `trust`: Contains the services that would be deployed in individual trust environments.
   - `data-access-api`: Contains the data access API service
   - `imaging-api`: Contains the imaging API service
