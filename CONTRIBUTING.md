@@ -50,7 +50,11 @@ still hold the provisioned NVFLARE workspaces / Flower certs consumed by the dev
 
 ```bash
 FLIP/
-├── deploy/             # Docker deployment files (compose, AWS IaC, on-prem Ansible)
+├── deploy/             # Docker deployment files
+│   └── providers/
+│       ├── AWS/            # Terraform for Central Hub + cloud trust (EC2)
+│       ├── kubernetes/     # Helm chart for K8s trust deployment
+│       └── local/          # Ansible for on-premises trust deployment
 ├── docs/               # Sphinx documentation
 ├── flip-api/           # Central Hub API service
 ├── flip-ui/            # UI service
@@ -385,6 +389,21 @@ still-in-progress reconciliation called out at the top of that README — `flip-
 this mono-repo.) See [`flip-utils/README.md`](flip-utils/README.md) (the "Unit Tests" / "Integration Testing"
 sections — subject to the in-progress reconciliation noted there) for the FL package's tests, and
 [`fl_services/README.md`](fl_services/README.md) for provisioning FL networks.
+
+**Kubernetes chart testing**: The K8s Helm chart at `deploy/providers/kubernetes/` can be tested with:
+
+```bash
+# Lint + render + schema validation
+make -C deploy/providers/kubernetes test
+
+# Render all FL backend variants
+make -C deploy/providers/kubernetes template-all-backends
+
+# Validate rendered templates against K8s schema (requires kubeconform)
+make -C deploy/providers/kubernetes validate
+```
+
+The chart has a `check_status.py` smoke test script and a `register_k8s_trust.py` registration script. See the [K8s README](deploy/providers/kubernetes/README.md) for details.
 
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 

@@ -1,0 +1,97 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if and .Values.omopDb.enabled .Values.omopDb.initJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-omop-db-init
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: omop-db
+    app.kubernetes.io/part-of: init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: omop-db-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: restore-data
+          image: amazon/aws-cli:2.22.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              # Skip if PostgreSQL data already exists
+              if [ -f /var/lib/postgresql/data/PG_VERSION ]; then
+                echo "PostgreSQL data directory is already populated. Skipping restore."
+                exit 0
+              fi
+              # Install tar (amazon/aws-cli image doesn't ship it)
+              microdnf install -y tar gzip curl 2>/dev/null || yum install -y tar gzip curl 2>/dev/null
+              TRUST_NUM="{{ .Values.trustNumber }}"
+              DATA_VERSION="{{ .Values.omopDb.initJob.dataVersion }}"
+              S3_BUCKET="{{ .Values.omopDb.initJob.s3Bucket }}"
+              if [ -n "$S3_BUCKET" ]; then
+                ARCHIVE_NAME="{{ .Values.omopDb.initJob.archiveName }}"
+                if [ -z "$ARCHIVE_NAME" ]; then
+                  TRUST_NAME="{{ .Values.trustName }}"
+                  ARCHIVE_NAME="${TRUST_NAME}_pgdata_${DATA_VERSION}.tar.gz"
+                fi
+                ARCHIVE_URL="s3://${S3_BUCKET}/omop/${ARCHIVE_NAME}"
+                echo "Downloading OMOP data from S3: ${ARCHIVE_URL}..."
+                aws s3 cp "${ARCHIVE_URL}" /tmp/omop-data.tar
+                tar xf /tmp/omop-data.tar -C /var/lib/postgresql/data
+              else
+                # Fall back to HuggingFace mock data, selecting the correct trust
+                # slot (trustNumber) so trust2 gets trust2's dataset, not trust1's.
+                HF_REPO="aicentreflip/trust-data"
+                HF_REVISION="main"
+                ARCHIVE="trust${TRUST_NUM}_pgdata_${DATA_VERSION}.tar"
+                ARCHIVE_URL="https://huggingface.co/datasets/${HF_REPO}/resolve/${HF_REVISION}/trust${TRUST_NUM}/${ARCHIVE}"
+                echo "Downloading OMOP data from HuggingFace (trust${TRUST_NUM}): ${ARCHIVE_URL}..."
+                curl -fSL "${ARCHIVE_URL}" -o /tmp/omop-data.tar
+                tar xf /tmp/omop-data.tar -C /var/lib/postgresql/data
+              fi
+              echo "OMOP data restore complete."
+          env:
+            - name: AWS_DEFAULT_REGION
+              value: {{ default "eu-west-2" .Values.awsRegion | quote }}
+            - name: AWS_PROFILE
+              value: {{ .Values.omopDb.initJob.awsProfile | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+            - name: host-aws
+              mountPath: /root/.aws
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: data-{{ include "flip-trust.fullname" . }}-omop-db-0
+        {{- if .Values.omopDb.initJob.hostAwsMount.enabled }}
+        - name: host-aws
+          hostPath:
+            path: {{ .Values.omopDb.initJob.hostAwsMount.hostPath | quote }}
+            type: Directory
+        {{- end }}
+{{- end }}
