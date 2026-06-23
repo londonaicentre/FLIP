@@ -356,7 +356,7 @@ def validate_config(config: dict) -> IOverridableConfig:
     """
     validated = IOverridableConfig()
 
-    def is_valid(value):
+    def is_valid(value: object) -> bool:
         return isinstance(value, (int, float)) and TrainingRound.MIN <= value <= TrainingRound.MAX
 
     if not isinstance(config, dict):

@@ -17,6 +17,7 @@ from typing import Any
 import pandas as pd
 import sqlglot
 from fastapi import HTTPException
+from pandas.errors import DatabaseError as PandasDatabaseError
 from psycopg2 import errors as pg_errors
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
@@ -190,6 +191,30 @@ def get_records(
     # UndefinedTable / UndefinedColumn are an intentional exception: they echo
     # back identifiers the OPERATOR typed in their own SQL (against the public
     # OMOP CDM schema), so they leak no data while remaining a useful diagnostic.
+    #
+    # Pandas 3.x wraps SQLAlchemy errors in pandas.errors.DatabaseError (a subclass
+    # of OSError, not SQLAlchemyError) with the original SQLAlchemy exception as
+    # __cause__. We unwrap the cause here so the UndefinedTable / UndefinedColumn
+    # diagnostic path still works when pd.read_sql is used directly.
+    except PandasDatabaseError as e:
+        cause = e.__cause__
+        if isinstance(cause, DBAPIError):
+            orig = cause.orig
+            error_msg = str(orig).strip()
+            if isinstance(orig, pg_errors.UndefinedTable):
+                table_name = extract_missing_identifier(error_msg, r'relation "([^"]+)" does not exist')
+                logger.error(f"UndefinedTable: {error_msg}")
+                raise HTTPException(status_code=400, detail=f"The table '{table_name}' does not exist.") from e
+            elif isinstance(orig, pg_errors.UndefinedColumn):
+                column_name = extract_missing_identifier(error_msg, r'column "([^"]+)" does not exist')
+                logger.error(f"UndefinedColumn: {error_msg}")
+                raise HTTPException(status_code=400, detail=f"The column '{column_name}' does not exist.") from e
+            else:
+                logger.error(f"Database error (via pandas): {error_msg}")
+                raise HTTPException(status_code=500, detail="query_failed") from e
+        logger.error(f"Pandas database error: {str(e)}")
+        raise HTTPException(status_code=500, detail="internal_error") from e
+
     except DBAPIError as e:
         orig = e.orig
         error_msg = str(orig).strip()

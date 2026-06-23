@@ -16,18 +16,27 @@ import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
-import { IAdminTrust } from "@/services/admin-trusts-service";
+import { ITrustStatus } from "@/services/trust-status-service";
 
 import ConnectionStatus from "../ConnectionStatus.vue";
 
-const mockSwrvData = ref<IAdminTrust[] | undefined>(undefined);
+// Capture the (key, fetcher, options) the page wires SWRV with, so a test can
+// assert it polls the authenticated /trust/status endpoint rather than the
+// admin-only /admin/trusts (regression for #557).
+const { swrvCalls } = vi.hoisted(() => ({ swrvCalls: [] as unknown[][] }));
+
+const mockSwrvData = ref<ITrustStatus[] | undefined>(undefined);
 
 vi.mock("swrv", () => ({
-    default: () => ({
-        data: mockSwrvData,
-        mutate: vi.fn(),
-        error: ref(null)
-    })
+    default: (...args: unknown[]) => {
+        swrvCalls.push(args);
+
+        return {
+            data: mockSwrvData,
+            mutate: vi.fn(),
+            error: ref(null)
+        };
+    }
 }));
 
 const stubs = {
@@ -60,13 +69,12 @@ const stubs = {
 const now = Date.now();
 const seconds = (n: number) => new Date(now - n * 1000).toISOString();
 
-const fixture: IAdminTrust[] = [
+const fixture: ITrustStatus[] = [
     {
         id: "t1",
         name: "Zebra NHS Trust",
         code: "ZNT",
         region: "London",
-        created_at: null,
         last_heartbeat: seconds(10),
         project_count: 1
     },
@@ -75,7 +83,6 @@ const fixture: IAdminTrust[] = [
         name: "Acme NHS Trust",
         code: "ANT",
         region: "South West",
-        created_at: null,
         last_heartbeat: null,
         project_count: 7
     },
@@ -84,7 +91,6 @@ const fixture: IAdminTrust[] = [
         name: "Maple NHS Trust",
         code: "MNT",
         region: "North East",
-        created_at: null,
         last_heartbeat: seconds(120),
         project_count: 3
     }
@@ -119,6 +125,7 @@ const codesInOrder = (wrapper: ReturnType<typeof mountPage>): string[] =>
 
 beforeEach(() => {
     mockSwrvData.value = undefined;
+    swrvCalls.length = 0;
 });
 
 describe("ConnectionStatus", () => {
@@ -184,6 +191,25 @@ describe("ConnectionStatus", () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage({ permissions: [] });
         await wrapper.vm.$nextTick();
+        expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(false);
+    });
+
+    it("sources statuses from the authenticated /trust/status endpoint, not admin-only /admin/trusts", () => {
+        // #557: a non-admin polling /admin/trusts gets a 403 → perpetual spinner.
+        // The page must use the non-admin connection-status endpoint instead.
+        mockSwrvData.value = fixture;
+        mountPage({ permissions: [] });
+        expect(swrvCalls[0][0]).toBe("/trust/status");
+    });
+
+    it("lets a non-admin (Researcher / Viewer) load trust statuses with no Add Trust control", async () => {
+        // Acceptance criteria for #557: a non-admin sees the statuses populate
+        // (no perpetual loader) while the admin-only Add Trust control stays hidden.
+        mockSwrvData.value = fixture;
+        const wrapper = mountPage({ permissions: [] });
+        await wrapper.vm.$nextTick();
+        expect(wrapper.find("[data-test='ai-loader']").exists()).toBe(false);
+        expect(wrapper.findAll("[data-test='trust-row']").length).toBe(fixture.length);
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(false);
     });
 

@@ -26,17 +26,24 @@ class IBasicTrust(BaseModel):
     code: str | None = None
 
 
-class IAdminTrust(BaseModel):
+class ITrustStatus(BaseModel):
+    """Connection-status view of a trust, readable by any authenticated user.
+
+    Powers the Connection Status page (trust table + topology). Every field is
+    benign trust metadata — no secrets — so the endpoint that returns this
+    (GET /trust/status) is intentionally not admin-gated. Creating a trust
+    (POST /admin/trusts) stays admin-only.
+    """
+
     id: UUID
     name: str
     code: str | None = None
     region: str | None = None
-    # Timestamps surfaced as strings with an explicit UTC marker (Z) so the
-    # browser doesn't reinterpret a naive datetime as local time and skew the
+    # last_heartbeat is surfaced as a string with an explicit UTC marker (Z) so
+    # the browser doesn't reinterpret a naive datetime as local time and skew the
     # staleness calc. The DB column is `timestamp without time zone` but the
-    # values are written via datetime.now(timezone.utc), so they're already
-    # UTC — we just need to tag them on the wire.
-    created_at: str | None = None
+    # values are written via datetime.now(timezone.utc), so they're already UTC —
+    # we just need to tag it on the wire.
     last_heartbeat: str | None = None
     project_count: int = 0
 
