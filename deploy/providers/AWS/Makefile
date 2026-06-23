@@ -124,6 +124,10 @@ export TF_VAR_FL_SERVER_PORT=${FL_SERVER_PORT}
 # is created per IP. `make allow-local-trust-nlb` applies them.
 LOCAL_TRUST_PUBLIC_IPS ?= []
 export TF_VAR_local_trust_public_ips=$(LOCAL_TRUST_PUBLIC_IPS)
+# K8s trust node egress IPs — one FL-server NLB ingress rule per IP (#596).
+# `make add-k8s-trust` applies them via a normal plan/apply (no -target).
+K8S_TRUST_PUBLIC_IPS ?= []
+export TF_VAR_k8s_trust_public_ips=$(K8S_TRUST_PUBLIC_IPS)
 export TF_VAR_AWS_REGION=${AWS_REGION}
 export TF_VAR_VPC_NAME=${VPC_NAME}
 export TF_VAR_ADMIN_USER_PASSWORD=${ADMIN_USER_PASSWORD}
@@ -564,20 +568,24 @@ add-k8s-trust: ## Open the FL-server NLB to a K8s trust node's public IP (FL tra
 	##   make -C deploy/providers/kubernetes sync-kit KIT=Trust_K8s PROD=$(PROD)
 	##   make -C deploy/providers/kubernetes up OVERRIDES_FILE=k8s-trust-Trust_K8s.yaml
 	## Polling needs none of the below. This target is the LAST step, needed only for
-	## FL *training*: it opens the FL-server NLB security group to the K8s node's public
-	## IP (the cluster's egress address) via the K8S_TRUST_IP terraform rule, mirroring
-	## `allow-local-trust-nlb` for on-prem hosts.
-	@[ -n "$(K8S_TRUST_IP)" ] || (echo "❌  K8S_TRUST_IP is required (public/egress IP of the K8s trust node). Usage: make add-k8s-trust K8S_TRUST_IP=<ip> PROD=$(PROD)"; exit 1)
-	@echo "🔐 Opening FL-server NLB to K8s trust IP $(K8S_TRUST_IP)..."
-	@TF_VAR_K8S_TRUST_IP=$(K8S_TRUST_IP) terraform plan \
-		-target=aws_security_group_rule.k8s_trust_fl_server_nlb \
-		-out=k8s-trust.tfplan && \
-		TF_VAR_K8S_TRUST_IP=$(K8S_TRUST_IP) terraform apply k8s-trust.tfplan && \
-		rm -f k8s-trust.tfplan
-	@echo ""
-	@echo "✅ FL-server NLB now allows the K8s trust node ($(K8S_TRUST_IP))."
-	@echo "   K8S_TRUST_IP is a transient -target var; persist it in the env file"
-	@echo "   so later full applies don't drop the rule."
+	## FL *training*: it opens the FL-server NLB security group to the K8s node's
+	## public/egress IP. Mirrors `allow-local-trust-nlb`: add each node IP to
+	## K8S_TRUST_PUBLIC_IPS in the env file (an HCL list, e.g.
+	## K8S_TRUST_PUBLIC_IPS=["1.2.3.4"]), then this runs a normal full plan/apply.
+	## The IPs are honest config (no -target), so the rule set is idempotent and
+	## re-running with an already-listed IP is a no-op — fixing #596.
+	@if [ -n "$(K8S_TRUST_IP)" ] && ! echo '$(K8S_TRUST_PUBLIC_IPS)' | grep -q '"$(K8S_TRUST_IP)"'; then \
+		echo ""; \
+		echo "❌  $(K8S_TRUST_IP) is not in K8S_TRUST_PUBLIC_IPS (currently $(K8S_TRUST_PUBLIC_IPS))."; \
+		echo "   Add it to K8S_TRUST_PUBLIC_IPS in $(MAIN_ENV_FILE), then re-run, e.g.:"; \
+		echo "       K8S_TRUST_PUBLIC_IPS=[\"$(K8S_TRUST_IP)\"]"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@echo "🔐 Applying FL-server NLB ingress rules for K8S_TRUST_PUBLIC_IPS=$(K8S_TRUST_PUBLIC_IPS)..."
+	@$(MAKE) plan
+	@$(MAKE) apply
+	@echo "✅ FL-server NLB security group reconciled for the K8s trust node(s)."
 
 .PHONY: down
 down:
