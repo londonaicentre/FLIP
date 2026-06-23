@@ -14,7 +14,9 @@
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
 		check-aws-access generate-internal-service-key \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
-		sync-trust-kit sync-trust-kits lock
+		sync-trust-kit sync-trust-kits lock \
+		deploy-trust-k8s undeploy-trust-k8s \
+		nvflare-provision nvflare-provision-2-nets nvflare-provision-additional-client
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -377,10 +379,28 @@ lock:
 	done
 	@echo "All uv.lock files regenerated."
 
+# NVFLARE provisioning targets — delegate to deploy/scripts/.
+# The project YML files live in deploy/providers/; provisioned output goes to
+# deploy/workspace/ (gitignored), which is where the compose mounts expect it.
+NET_NUMBER ?= 1
+FL_WORKSPACE_DIR ?= deploy/workspace
+
+nvflare-provision:
+	deploy/scripts/provision-network.sh deploy/providers/net-${NET_NUMBER}_project.yml $(NET_NUMBER) $(FL_WORKSPACE_DIR)
+
+nvflare-provision-2-nets:
+	NET_NUMBER=1 $(MAKE) nvflare-provision
+	NET_NUMBER=2 $(MAKE) nvflare-provision
+
+nvflare-provision-additional-client:
+	deploy/scripts/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT) deploy/providers/net-${NET_NUMBER}_project.yml $(FL_WORKSPACE_DIR)
+
 # Drives a fresh project end-to-end against a running `make up` stack:
 # create → approve → upload model → wait for image pull → start training.
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND (flower or
-# nvflare); both sit in sibling repos (flip-fl-base / flip-fl-base-flower).
+# nvflare). The NVFLARE defaults still target ../../flip-fl-base/tutorials/...
+# (legacy sibling) — the migrated in-repo equivalents now live under
+# fl-apps/tutorials/ and can be passed via MODEL_FILES_DIR= / QUERY_FILE=.
 # Useful for sanity-checking PRs without manually clicking through the UI.
 # See flip-api/Makefile for overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
 e2e_smoke:
@@ -477,6 +497,15 @@ sync-trust-kits:
 	if [ "$$found" = "0" ]; then \
 	    echo "ℹ️  No trust/.env.*.$(ENV) kits found — nothing to sync."; \
 	fi
+
+# ---------------------------------------------------------------------------
+# Kubernetes Helm chart targets
+# ---------------------------------------------------------------------------
+deploy-trust-k8s: ## Deploy trust services to Kubernetes via Helm
+	$(MAKE) -C deploy/providers/kubernetes deploy
+
+undeploy-trust-k8s: ## Remove trust services from Kubernetes
+	$(MAKE) -C deploy/providers/kubernetes undeploy
 
 check-aws-access:
 	@echo "🔎 Checking AWS CLI access..."

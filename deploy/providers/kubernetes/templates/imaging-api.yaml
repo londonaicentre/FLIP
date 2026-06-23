@@ -1,0 +1,158 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if .Values.imagingApi.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-imaging-api
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: imaging-api
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-imaging-api
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: imaging-api
+data:
+  XNAT_URL: {{ .Values.imagingApi.env.XNAT_URL | quote }}
+  XNAT_PORT: {{ .Values.imagingApi.env.XNAT_PORT | quote }}
+  PACS_ID: {{ .Values.imagingApi.env.PACS_ID | quote }}
+  XNAT_DATABASE_URL: {{ .Values.imagingApi.env.XNAT_DATABASE_URL | quote }}
+  DATA_ACCESS_API_URL: {{ .Values.imagingApi.env.DATA_ACCESS_API_URL | quote }}
+  BASE_IMAGES_DOWNLOAD_DIR: {{ .Values.imagingApi.env.BASE_IMAGES_DOWNLOAD_DIR | quote }}
+  ENV: {{ .Values.environment | quote }}
+  LOG_LEVEL: {{ .Values.logLevel | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-imaging-api
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: imaging-api
+spec:
+  replicas: {{ .Values.imagingApi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: imaging-api
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: imaging-api
+    spec:
+      enableServiceLinks: false
+      serviceAccountName: {{ include "flip-trust.fullname" . }}-imaging-api
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.imagingApi.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: imaging-api
+          image: "{{ .Values.imagingApi.image.repository }}:{{ .Values.imagingApi.image.tag }}"
+          imagePullPolicy: {{ .Values.imagingApi.image.pullPolicy }}
+          {{- if .Values.imagingApi.command }}
+          command:
+            {{- toYaml .Values.imagingApi.command | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.imagingApi.service.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "flip-trust.fullname" . }}-imaging-api
+          env:
+            - name: XNAT_SERVICE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-service-user
+            - name: XNAT_SERVICE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: xnat-service-password
+            - name: AES_KEY_BASE64
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: aes-key-base64
+            - name: TRUST_INTERNAL_SERVICE_KEY_HEADER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key-header
+            - name: TRUST_INTERNAL_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key
+          volumeMounts:
+            - name: images
+              mountPath: {{ .Values.imagingApi.env.BASE_IMAGES_DOWNLOAD_DIR }}
+          resources:
+            {{- toYaml .Values.imagingApi.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.imagingApi.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.imagingApi.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.imagingApi.probes.liveness.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: {{ .Values.imagingApi.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.imagingApi.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.imagingApi.probes.readiness.timeoutSeconds }}
+      volumes:
+        - name: images
+{{- if .Values.sharedImagesPvc.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "flip-trust.fullname" . }}-shared-images
+{{- else }}
+          emptyDir: {}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: imaging-api
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: imaging-api
+spec:
+  type: {{ .Values.imagingApi.service.type }}
+  ports:
+    - port: {{ .Values.imagingApi.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "flip-trust.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: imaging-api
+{{- end }}

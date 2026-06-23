@@ -30,12 +30,18 @@
           - fl_kit_date is defined
           - fl_kit_date | length > 0
         fail_msg: "The fl_kit_date variable must be defined to proceed."
-    - name: ensure pgdata_archive variable is defined
+    - name: ensure omop_data_version variable is defined
       assert:
         that:
-          - pgdata_archive is defined
-          - pgdata_archive | length > 0
-        fail_msg: "The pgdata_archive variable must be defined to proceed (e.g. trust1_pgdata_20260129.tar)."
+          - omop_data_version is defined
+          - omop_data_version | length > 0
+        fail_msg: "omop_data_version must be defined (contents of trust/omop-db/.data_version, e.g. 20260129)."
+    - name: ensure orthanc_data_version variable is defined
+      assert:
+        that:
+          - orthanc_data_version is defined
+          - orthanc_data_version | length > 0
+        fail_msg: "orthanc_data_version must be defined (contents of trust/orthanc/.data_version, e.g. 20260106)."
     - name: initialize Terraform backend for validation
       command: >
         terraform init
@@ -434,19 +440,23 @@
 - name: download and restore OMOP PGDATA on Trust EC2
   hosts: trust_ec2
   become: true
+  tags: [data, omop]
   vars:
     omop_dir: "/opt/flip/omop"
+    # trust_num selects which trust's data package to load (e.g. "1" or "2").
+    # Pass via -e trust_num=2 for Trust_2 hosts. Defaults to "1" for
+    # backwards-compat with single-trust deployments.
+    trust_num: "{{ trust_num | default('1') }}"
+    # omop_data_version is the version string from trust/omop-db/.data_version.
+    # Passed as an extra-var by the Makefile seed-trust-data target.
+    pgdata_trust_dir: "trust{{ trust_num }}"
+    pgdata_archive: "trust{{ trust_num }}_pgdata_{{ omop_data_version }}.tar"
     # Mock data is fetched anonymously over HTTPS from the public Hugging Face
     # dataset (no AWS CLI / credentials needed). Laid out per trust; archives are
     # gzip-compressed tarballs named .tar (tar auto-detects gzip on extraction).
     hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
     hf_trust_data_revision: "{{ trust_data_hf_revision | default('main') }}"
     hf_base_url: "https://huggingface.co/datasets/{{ hf_trust_data_repo }}/resolve/{{ hf_trust_data_revision }}"
-    # Per-trust dataset subdirectory on HF. Kept independent of the archive
-    # filename (matches the dev-script convention) so a renamed or differently
-    # prefixed archive does not silently produce a wrong URL. Override via
-    # extra-vars alongside pgdata_archive if deploying a non-trust1 host.
-    pgdata_trust_dir: "trust1"
   tasks:
     - name: install tar
       apt:
@@ -485,11 +495,18 @@
         chmod 700 {{ omop_dir }}/db_data
       changed_when: false
 
-- name: restore trust1 Orthanc storage on Trust EC2
+- name: restore Orthanc storage on Trust EC2
   hosts: trust_ec2
   become: true
+  tags: [data, orthanc]
   vars:
-    archive: "trust1_orthanc_data_20260106.tar"
+    # trust_num selects which trust's data package to load (e.g. "1" or "2").
+    # Passed via -e trust_num=2 for Trust_2 hosts. Defaults to "1".
+    trust_num: "{{ trust_num | default('1') }}"
+    # orthanc_data_version is the version string from trust/orthanc/.data_version.
+    # Passed as an extra-var by the Makefile seed-trust-data target.
+    orthanc_trust_dir: "trust{{ trust_num }}"
+    archive: "trust{{ trust_num }}_orthanc_data_{{ orthanc_data_version }}.tar"
     base_dir: "/opt/flip/orthanc"
     data_dir: "/opt/flip/orthanc/orthanc-storage"
     # Mock data is fetched anonymously over HTTPS from the public Hugging Face
@@ -498,10 +515,6 @@
     hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
     hf_trust_data_revision: "{{ trust_data_hf_revision | default('main') }}"
     hf_base_url: "https://huggingface.co/datasets/{{ hf_trust_data_repo }}/resolve/{{ hf_trust_data_revision }}"
-    # Per-trust dataset subdirectory on HF. Kept independent of the archive
-    # filename (matches the dev-script convention) so a renamed or differently
-    # prefixed archive does not silently produce a wrong URL.
-    orthanc_trust_dir: "trust1"
   tasks:
     - name: install tar
       apt:

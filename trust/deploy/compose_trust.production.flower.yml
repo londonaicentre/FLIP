@@ -18,8 +18,10 @@ services:
   fl-client-net-1:
     image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
     volumes:
-      # Mount the base images download directory to share images downloaded from XNAT with FL clients
-      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # Mount the base images download directory to share images downloaded from XNAT with FL clients.
+      # Unset in the prod kit → /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER} (see imaging-api in
+      # compose_trust.production.yml for the full rationale; mirrors ORTHANC_STORAGE_DIR's default).
+      - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}:/app/data/images
       # Provisioned Flower secrets (certificates, keys).
       # FL_KIT_DIR is the kit root on the trust host — Ansible-managed
       # /opt/flip/fl-kit on the AWS EC2 trust (see site.yml), or wherever

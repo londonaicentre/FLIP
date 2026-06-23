@@ -91,7 +91,8 @@ PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 # Host path that backs this trust's XNAT bind mounts (parent of xnat-data/
 # and xnat-db-data/). Sourced from the kit file's Host-local profile;
 # falls back to a per-trust default when the kit omits it:
-#   stag/prod → /opt/flip/xnat   (what the Ansible provisioner creates)
+#   stag/prod → /opt/flip/xnat-trust$(TRUST_NUM)   (per-slot dir; isolates
+#               xnat1 / xnat2 when multiple trusts share one EC2 host)
 #   dev       → ./xnat-data-trust$(TRUST_NUM)   (per-stack local dir; isolates
 #               concurrent Trust_1 / Trust_2 stacks on the same host)
 # Override per-host (e.g. on a box where /opt is small and the XNAT archive
@@ -101,7 +102,7 @@ PACS_UI_PORT_EFFECTIVE := $(or $(PACS_UI_PORT),8042)
 # bind-mount it directly without a separate `${XNAT_PATH}/` prefix. Both
 # this recipe and the compose stacks read the same exported var so the
 # dirs Make creates and the dirs compose mounts stay in lockstep.
-XNAT_DATA_DIR ?= $(if $(filter true stag,$(PROD)),/opt/flip/xnat,./xnat-data-trust$(TRUST_NUM))
+XNAT_DATA_DIR ?= $(if $(filter true stag,$(PROD)),/opt/flip/xnat-trust$(TRUST_NUM),./xnat-data-trust$(TRUST_NUM))
 XNAT_DATA_DIR := $(abspath $(XNAT_DATA_DIR))
 export XNAT_DATA_DIR
 

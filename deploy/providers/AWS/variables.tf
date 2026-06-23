@@ -72,6 +72,13 @@ variable "AES_KEY_BASE64" {
   type = string
 }
 
+variable "K8S_TRUST_IP" {
+  description = "Public IP of the Kubernetes-deployed trust host. When set, opens the NLB security group to allow FL client connectivity from this IP."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "INTERNAL_SERVICE_KEY_HASH" {
   description = "SHA-256 hash of the internal service key used for fl-server-to-hub auth"
   type        = string
@@ -81,6 +88,12 @@ variable "INTERNAL_SERVICE_KEY" {
   description = "Raw internal service key used by fl-server to authenticate callbacks to flip-api. Stored in Secrets Manager (FLIP_API secret) and consumed by the fl-server ECS task definition via the secrets block."
   type        = string
   sensitive   = true
+}
+
+variable "FL_KIT_SLOT_NAMES" {
+  description = "JSON list (as a string) of FL kit-slot names that seed the fl_kit_slot pool register_trust claims from on the flip-api ECS task. Empty ⇒ NoFreeKitSlotError on trust registration. Mirrors compose.production.yml; set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
+  type        = string
+  default     = "[]"
 }
 
 variable "docker_image_tag" {

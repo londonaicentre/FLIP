@@ -282,7 +282,12 @@ def get_command_info(container: str, headers: dict[str, str]) -> tuple[int, str]
     if response.status_code != 200:
         raise Exception(f"Error: XNAT command fetch failed: {response.status_code} - {response.text}")
 
-    command = response.json()[0]
+    commands = response.json()
+    if not commands:
+        raise Exception(
+            f"No commands found for container '{container}' - Container Service plugin may not be installed"
+        )
+    command = commands[0]
     return command["id"], command["xnat"][0]["name"]
 
 

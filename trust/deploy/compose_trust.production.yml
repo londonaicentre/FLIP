@@ -88,7 +88,11 @@ services:
       TRUST_INTERNAL_SERVICE_KEY: ${TRUST_INTERNAL_SERVICE_KEY}
     # NOTE the volume BASE_IMAGES_DOWNLOAD_DIR is mounted to share images downloaded from XNAT with FL clients
     volumes:
-      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+      # Unset in the prod kit → fall through to the Ansible-pre-created, uid-1000-owned
+      # /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER} (see site.yml). A relative kit value resolves to
+      # the admin workstation over the ssh docker context, gets auto-created as root, and makes
+      # imaging-api 500 every image download with EACCES → num_samples=0. Mirrors ORTHANC_STORAGE_DIR.
+      - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}:/app/data/images
 
   data-access-api:
     image: ghcr.io/londonaicentre/data-access-api:${DOCKER_TAG}
