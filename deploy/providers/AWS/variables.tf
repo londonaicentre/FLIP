@@ -73,10 +73,16 @@ variable "AES_KEY_BASE64" {
 }
 
 variable "K8S_TRUST_IP" {
-  description = "Public IP of the Kubernetes-deployed trust host. When set, opens the NLB security group to allow FL client connectivity from this IP."
+  description = "DEPRECATED (kept for back-compat): single public IP of a Kubernetes-deployed trust host. Prefer k8s_trust_public_ips. When set, it is merged into the NLB ingress rule set."
   type        = string
   default     = ""
   sensitive   = true
+}
+
+variable "k8s_trust_public_ips" {
+  description = "Public/egress IPs of Kubernetes-deployed trust nodes. Each IP gets an ingress rule on the FL-server NLB security group. Set via K8S_TRUST_PUBLIC_IPS in the env file (an HCL list). Managed by a normal `terraform apply` — no -target, no drift, idempotent on re-add (mirrors local_trust_public_ips)."
+  type        = list(string)
+  default     = []
 }
 
 variable "INTERNAL_SERVICE_KEY_HASH" {
