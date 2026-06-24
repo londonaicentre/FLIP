@@ -31,5 +31,14 @@ echo "🔐 Generating Flower TLS certs + SuperNode key pairs for $NET → $OUT"
 # generate_creds.py writes certificates/ + keys/ into CWD (and clears any existing),
 # so run it inside the per-net output dir.
 ( cd "$OUT" && uv run --no-project --with cryptography "$HERE/generate_creds.py" )
-chmod 644 "$OUT"/keys/supernode_credentials_*
+
+# Tighten permissions. Private keys are owner+group readable only (640): the FL
+# containers read them via the compose `group_add: ${DOCKER_GID}` (the host group),
+# so they never need to be world-readable. The CA private key (ca.key) is only used
+# to sign at generation time and is not read at runtime, so it stays owner-only (600).
+# Public material (certs + .pub keys) is world-readable (644).
+chmod 600 "$OUT"/certificates/ca.key
+chmod 640 "$OUT"/certificates/server.key
+chmod 644 "$OUT"/keys/*.pub
+find "$OUT"/keys -type f ! -name '*.pub' -exec chmod 640 {} +
 echo "✅ $NET ready: certificates=[$(ls "$OUT"/certificates | tr '\n' ' ')] keys=[$(ls "$OUT"/keys | tr '\n' ' ')]"

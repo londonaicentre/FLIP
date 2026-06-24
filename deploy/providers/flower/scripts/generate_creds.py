@@ -217,6 +217,7 @@ def main() -> None:
                 encryption_algorithm=serialization.NoEncryption(),
             )
         )
+    os.chmod(CERT_DIR / "ca.key", 0o600)  # private key: owner-only
     with open(CERT_DIR / "ca.crt", "wb") as f:
         f.write(ca_cert.public_bytes(serialization.Encoding.PEM))
 
@@ -232,6 +233,7 @@ def main() -> None:
                 encryption_algorithm=serialization.NoEncryption(),
             )
         )
+    os.chmod(CERT_DIR / "server.key", 0o600)  # private key: owner-only (wrapper relaxes to 640 for container reads)
     with open(CERT_DIR / "server.pem", "wb") as f:
         f.write(server_cert.public_bytes(serialization.Encoding.PEM))
 
