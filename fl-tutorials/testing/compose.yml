@@ -24,4 +24,7 @@ services:
       - ./tmp/app:/app/job
     shm_size: 32gb
     gpus: all
-    command: nvflare simulator -t 2 -n ${NUM_CLIENTS} -w runs/workspace job
+    # --gpu takes an explicit comma-separated GPU device-id list (NVFLARE has no auto-detect);
+    # without it the simulator leaves the client workers on CPU. Defaults to GPU 0; override with
+    # SIM_GPU (e.g. SIM_GPU=0,1 for multi-GPU) in .env.testing.
+    command: nvflare simulator -t 2 -n ${NUM_CLIENTS} --gpu ${SIM_GPU:-0} -w runs/workspace job
