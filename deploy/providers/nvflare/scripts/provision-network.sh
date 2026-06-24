@@ -16,10 +16,10 @@
 # Usage: ./deploy/providers/nvflare/scripts/provision-network.sh <project_yaml_file> <net_number> [workspace_parent_dir]
 
 # Provisioned output lands under <WORKSPACE_PARENT_DIR>/net-<NET_NUMBER>/. Default
-# to deploy/workspace so it matches the compose mounts, README, and .gitignore.
+# to deploy/providers/nvflare/workspace so it matches the compose mounts, README, and .gitignore.
 PROJECT_YAML="${1:?Error: PROJECT_YAML is required}"
 NET_NUMBER="${2:?Error: NET_NUMBER is required}"
-WORKSPACE_PARENT_DIR="${3:-deploy/workspace}"
+WORKSPACE_PARENT_DIR="${3:-deploy/providers/nvflare/workspace}"
 
 # Other configurations
 VERBOSE="true"

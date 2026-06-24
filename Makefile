@@ -407,11 +407,11 @@ lock:
 	@echo "All uv.lock files regenerated."
 
 # NVFLARE provisioning targets — delegate to the scripts colocated with the project
-# YML files under deploy/providers/nvflare/. Dev output goes to deploy/workspace/
+# YML files under deploy/providers/nvflare/. Dev output goes to deploy/providers/nvflare/workspace/
 # (gitignored), where the compose mounts expect it; stag/prod output goes to
 # workspace-<env>/ (gitignored) for upload to S3 via upload-flare-kits-to-s3.
 NET_NUMBER ?= 1
-FL_WORKSPACE_DIR ?= deploy/workspace
+FL_WORKSPACE_DIR ?= deploy/providers/nvflare/workspace
 NVFLARE_SCRIPTS := deploy/providers/nvflare/scripts
 NVFLARE_PROJECTS := deploy/providers/nvflare
 
