@@ -10,3 +10,6 @@ einops
 pydicom
 matplotlib
 lpips
+# Needed by lpips / MONAI PerceptualLoss (provides torchvision.ops.nms). Must match the base
+# image's torch (>=2.11, cu128); the authoritative pin lives in flip-utils/pyproject.toml.
+torchvision>=0.26.0
