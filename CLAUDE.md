@@ -156,6 +156,16 @@ make -C flip-api create_testing_projects   # Create test projects
 make -C flip-api delete_testing_projects   # Clean up test data
 ```
 
+### Database migrations (flip-api)
+
+flip-api's PostgreSQL schema is owned by **Alembic** (`flip-api/src/flip_api/db/migrations/`), not `SQLModel.metadata.create_all`. The flip-api entrypoint runs `alembic upgrade head` before seeding at boot (fail-fast). Any schema-affecting change to `flip-api/src/flip_api/db/models/*.py` **must** ship a revision in the same PR — the integration drift guard (`flip-api/tests/integration/test_migrations.py`) fails otherwise.
+
+```bash
+make -C flip-api migration MESSAGE="..."   # autogenerate a revision (flip-db must be up); then review it
+make -C flip-api migrate                   # alembic upgrade head
+make -C flip-api migration_current         # show current revision
+```
+
 ### Docker Swarm Commands
 
 ```bash
