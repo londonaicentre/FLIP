@@ -13,7 +13,7 @@ for d in "$SRC_DIR"/*; do
   if [ -d "$d" ]; then
     dname=$(basename "$d")
     # Skip non-template dirs
-    case "$dname" in scripts|runs|tutorials) continue;; esac
+    case "$dname" in scripts|runs) continue;; esac
     REQ_FILE="$d/required_files.json"
     if [ ! -f "$REQ_FILE" ]; then
       echo "Missing required_files.json in $dname" >&2

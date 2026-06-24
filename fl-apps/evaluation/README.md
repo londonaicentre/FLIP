@@ -40,6 +40,12 @@ and retrieves a DXO with the metrics.
 
 ## Test it with the spleen MSD dataset
 
-`make test-evaluation`
+The evaluation tutorial (`evaluation` job type) runs on the local NVFLARE simulator via:
 
-Should run this code with a pre-trained U-Net network on the MSD dataset.
+```bash
+make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation
+```
+
+Download the spleen MSD dataset first (see
+`fl-tutorials/image_evaluation/3d_spleen_segmentation_evaluation/README.md`). This runs
+the code with a pre-trained U-Net network on the MSD dataset.

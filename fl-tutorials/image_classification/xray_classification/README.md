@@ -33,5 +33,18 @@ For metrics, we obtain the loss value, as well as precision, recall and F1-Score
 
 ## How to run?
 
-- set environment variable DEV_DATAFRAME to the path of your CSV containing the OMOP data (with an accession_id and raiology_note columns).
-- set environment variable DEV_IMAGES_DIR to the path where your images are. Note that currently DICOM is the supported format, so images have to be .dcm and must be contained in folders named exactly as the accession ID.
+The quickest path uses the published reference dataset on Hugging Face. From the repo root:
+
+```bash
+make -C fl-tutorials download-xray-data          # fetch + lay out data/xrays_mini_300/
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+```
+
+`download-xray-data` pulls `aicentreflip/flip-fl-base-test-data` and normalises it into
+`fl-tutorials/data/xrays_mini_300/` (gitignored), matching this tutorial's `.env.app` defaults
+(`DEV_IMAGES_DIR`, `DEV_DATAFRAME`). Requires GPUs + the `flare-fl-base` image to run the simulator.
+
+To run against your **own** data instead, point the `.env.app` (or environment) values at it:
+
+- set `DEV_DATAFRAME` to your CSV containing the OMOP data (with an `accession_id` column and the lesion columns named in `config.json`).
+- set `DEV_IMAGES_DIR` to where your images are. DICOM is the supported format, so images must be `.dcm` and contained in folders named exactly as the accession ID.
