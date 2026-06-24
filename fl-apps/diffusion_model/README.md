@@ -31,12 +31,6 @@ plotted in the client folder.
 
 ## Requirements
 
-`monai > 1.3`
+See [requirements.txt](./app/custom/requirements.txt) for the full list of dependencies.
 
-`einops`
-
-`gdown`
-
-`matplotlib` * DEV mode only.
-
-`lpips`
+Note `matplotlib` is only available in dev mode for security reasons, and is not installed in production.
