@@ -68,7 +68,8 @@ FLIP/
 │   └── xnat/               # Mocked XNAT service
 ├── flip-utils/         # `flip` Python package — platform logic, NVFLARE components, Flower helpers
 ├── fl_services/        # Docker images for FL networks: fl-server, fl-client, fl-api-base, fl-base
-└── fl-apps/            # FL job-type implementations (standard, evaluation, diffusion_model, fed_opt) and tutorials
+├── fl-apps/            # FL job-type implementations / app templates (standard, evaluation, diffusion_model, fed_opt)
+└── fl-tutorials/       # End-to-end tutorial examples (xray classification, spleen seg/eval, diffusion)
 ```
 
 ## Setting up the development environment

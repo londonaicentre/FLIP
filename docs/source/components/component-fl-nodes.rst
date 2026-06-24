@@ -54,8 +54,8 @@ For more information about currently supported apps, see the per-job-type implem
 
 Examples of how the same job type (standard -> federated averaging) can run different user-uploaded applications are:
 
-- `xray_classification <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/tutorials/image_classification/xray_classification>`_
-- `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/tutorials/image_segmentation/3d_spleen_segmentation>`_
+- `xray_classification <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/image_classification/xray_classification>`_
+- `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/image_segmentation/3d_spleen_segmentation>`_
 
 Both cases perform a supervised federated averaging training, but the data, architecture and training configuration are different.
 

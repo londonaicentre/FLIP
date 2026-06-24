@@ -55,7 +55,8 @@ implementations and tutorials).
 | [`docs/`](docs/) | Sphinx documentation source (ReadTheDocs) |
 | [`flip-utils/`](flip-utils/) | `flip` Python package — platform logic, NVFLARE components, Flower helpers |
 | [`fl_services/`](fl_services/) | Docker images for FL networks: `fl-server`, `fl-client`, `fl-api-base`, `fl-base` |
-| [`fl-apps/`](fl-apps/) | FL job-type implementations (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) and tutorials |
+| [`fl-apps/`](fl-apps/) | FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) |
+| [`fl-tutorials/`](fl-tutorials/) | End-to-end tutorial examples (xray classification, spleen seg/eval, diffusion) |
 
 The NVFLARE workspace is now provisioned in-tree at [`deploy/workspace`](deploy/workspace) (`make nvflare-provision`).
 The legacy [`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) repository still holds the
@@ -414,7 +415,8 @@ The repository is organised as follows:
 - `flip-ui`: Contains the UI service
 - `flip-utils`: Contains the pip-installable flip-utils Python library
 - `fl_services`: Contains the FL Docker services (server, client, admin API)
-- `fl-apps`: Contains FL app templates, tutorials, and utility scripts
+- `fl-apps`: Contains FL app templates and utility scripts
+- `fl-tutorials`: Contains end-to-end tutorial examples (xray classification, spleen seg/eval, diffusion)
 - `trust`: Contains the services that would be deployed in individual trust environments.
   - `data-access-api`: Contains the data access API service
   - `imaging-api`: Contains the imaging API service
@@ -425,7 +427,8 @@ The repository is organised as follows:
   - `xnat`: Contains a mocked [XNAT](https://www.xnat.org/) service
 - `flip-utils`: The `flip` Python package — platform logic, NVFLARE components, Flower helpers (migrated from `flip-fl-base`)
 - `fl_services`: Docker images for FL networks — `fl-server`, `fl-client`, `fl-api-base`, `fl-base` (migrated from `flip-fl-base`)
-- `fl-apps`: FL job-type implementations (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) and runnable tutorials
+- `fl-apps`: FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`)
+- `fl-tutorials`: Runnable end-to-end tutorial examples (migrated from `flip-fl-base`)
 
 ### Trust Authentication
 

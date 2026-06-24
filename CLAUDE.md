@@ -15,10 +15,8 @@ FLIP/
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl_services/        # FL Docker services (server, client, API)
-├── fl-apps/
-│   ├── templates/      # FL app templates (standard, fed_opt, evaluation, diffusion_model)
-│   ├── tutorials/      # End-to-end tutorial examples
-│   └── scripts/        # FL app utility scripts
+├── fl-apps/            # FL app templates (standard, fed_opt, evaluation, diffusion_model) + utility scripts
+├── fl-tutorials/       # End-to-end tutorial examples (xray classification, spleen seg/eval, diffusion)
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
 │   ├── data-access-api/# OMOP database queries (Python/FastAPI)
@@ -28,18 +26,19 @@ FLIP/
 │   └── xnat/           # Mocked XNAT neuroimaging service
 ├── deploy/             # Docker Compose files (dev/prod, flower/nvflare)
 │   ├── workspace/      # Provisioned NVFLARE certificates
-│   ├── scripts/        # Provisioning and deployment scripts
 │   └── providers/
+│       ├── nvflare/    # NVFLARE network provisioning: net-*_project_*.yml + scripts/ (provision-network, provision-additional-client)
 │       ├── AWS/        # Terraform/OpenTofu IaC + Ansible for AWS deployment
+│       ├── kubernetes/ # Helm chart for Kubernetes trust deployment
 │       └── local/      # Ansible playbooks for on-premises trust deployment
 ├── docs/               # Sphinx documentation (ReadTheDocs)
-└── scripts/            # Utility scripts
+└── scripts/            # Utility scripts (incl. check-fl-provisioned.sh — the `make up` FL-kit guard)
 ```
 
 Service-specific details are in `flip-api/CLAUDE.md`, `trust/CLAUDE.md`, `trust/*/CLAUDE.md`, and `deploy/providers/AWS/CLAUDE.md`.
 
-The `flip-utils/`, `fl_services/`, and `fl-apps/` trees were migrated into this mono-repo from the legacy
-`flip-fl-base` (NVFLARE) and `flip-fl-base-flower` (Flower) repositories. Those repositories still hold the
+The `flip-utils/`, `fl_services/`, `fl-apps/`, and `fl-tutorials/` trees were migrated into this mono-repo from
+the legacy `flip-fl-base` (NVFLARE) and `flip-fl-base-flower` (Flower) repositories. Those repositories still hold the
 provisioned workspaces / certs that `deploy/fl_backend.mk` points `FL_PROVISIONED_DIR` at by default — see
 [`README.md#federated-learning-setup`](README.md#federated-learning-setup).
 
@@ -122,10 +121,10 @@ make local_test            # Tests without Docker
 
 Prerequisites:
 - Stack up via `make up` (central hub + trusts + XNAT) with trusts registered; Orthanc PACS seeded with DICOM data so image pull has something to pull.
-- The NVFLARE tutorial files are in-tree at `fl-apps/tutorials/` (from the merged flip-fl-base).
+- The NVFLARE tutorial files are in-tree at `fl-tutorials/` (from the merged flip-fl-base).
 - The Flower tutorial requires the sibling repo `../flip-fl-base-flower` checked out (not yet merged).
 
-Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `fl-apps/tutorials/image_classification/xray_classification/`. For Flower, they point at `../../flip-fl-base-flower/tutorials/xray_classification/`. Common overrides:
+Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `fl-tutorials/image_classification/xray_classification/`. For Flower, they point at `../../flip-fl-base-flower/tutorials/xray_classification/`. Common overrides:
 
 ```bash
 make e2e_smoke FL_BACKEND=flower                               # use the Flower tutorial
@@ -347,8 +346,8 @@ The senders construct the header inline at call sites:
 
 | Repository | Purpose |
 |-----------|---------|
-| [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo — central hub, trust services, UI, deployment, **and** the FL base library / services / tutorials (under `flip-utils/`, `fl_services/`, `fl-apps/`) |
-| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | Legacy NVFLARE base library repo — code has been migrated into `flip-utils/` + `fl_services/` + `fl-apps/`; the NVFLARE workspace is now provisioned in-tree at `deploy/workspace` (`FL_PROVISIONED_DIR=deploy/workspace`) |
+| [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo — central hub, trust services, UI, deployment, **and** the FL base library / services / app templates / tutorials (under `flip-utils/`, `fl_services/`, `fl-apps/`, `fl-tutorials/`) |
+| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | Legacy NVFLARE base library repo — code has been migrated into `flip-utils/` + `fl_services/` + `fl-apps/` + `fl-tutorials/`; the NVFLARE workspace is now provisioned in-tree at `deploy/workspace` (`FL_PROVISIONED_DIR=deploy/workspace`) |
 | [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Legacy Flower base library repo — library code has been migrated into `flip-utils/`; still hosts the provisioned Flower certs consumed by dev compose (`FL_PROVISIONED_DIR=../flip-fl-base-flower/certs`) |
 
 ## Documentation Files
