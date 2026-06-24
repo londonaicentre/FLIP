@@ -59,6 +59,11 @@ Examples of how the same job type (standard -> federated averaging) can run diff
 
 Both cases perform a supervised federated averaging training, but the data, architecture and training configuration are different.
 
+These tutorials run on the local NVFLARE simulator from the repo root — e.g.
+``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (requires a GPU and the
+``flare-fl-base`` image; see the
+`fl-tutorials/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials>`_ README).
+
 
 .. figure:: ../../images/job_types.jpg
    :alt: Example figure

@@ -160,7 +160,7 @@ uv run pytest -s -vv
 
 ## Tutorials
 
-The [`tutorials/`](./tutorials/) directory contains ready-to-use example applications that can be uploaded to the FLIP platform UI. Each tutorial is designed to work with a specific app type from `src/`.
+The [`../fl-tutorials/`](../fl-tutorials/) directory contains ready-to-use example applications that can be uploaded to the FLIP platform UI. Each tutorial is designed to work with a specific app template from `../fl-apps/`, and runs on the local NVFLARE simulator via `make -C fl-tutorials run-tutorial TUTORIAL=<name>`.
 
 ![FL app structure](./assets/fl_app_structure.png)
 
@@ -172,13 +172,13 @@ The [`tutorials/`](./tutorials/) directory contains ready-to-use example applica
 | `standard` | `image_classification/xray_classification` |
 | `diffusion_model` | `image_synthesis/latent_diffusion_model` |
 | `fed_opt` | `image_segmentation/3d_spleen_segmentation` |
-| `evaluation` | `image_evaluation/3d_spleen_segmentation` |
+| `evaluation` | `image_evaluation/3d_spleen_segmentation_evaluation` |
 
 ---
 
 ## FL Services API
 
-The [`fl-services/`](./fl-services/README.md) directory contains Docker-based NVFLARE services. See the [FL services README](./fl-services/README.md) and the [FL API README](./fl-services/fl-api-base/README.md) for full details on provisioning and the API endpoints.
+The [`../fl-services/`](../fl-services/README.md) directory contains Docker-based NVFLARE services. See the [FL services README](../fl-services/README.md) and the [FL API README](../fl-services/fl-api-base/README.md) for full details on provisioning and the API endpoints.
 
 ### Prerequisites
 

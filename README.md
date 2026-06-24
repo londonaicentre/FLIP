@@ -248,6 +248,21 @@ directory` in the `fl-server` logs, verify that:
 - The `FL_PROVISIONED_DIR` path is correctly resolved (check Makefile output)
 - For NVFLARE: the workspace is at `deploy/workspace/`
 
+### Running the FL tutorials
+
+The in-tree NVFLARE tutorials under [`fl-tutorials/`](fl-tutorials/) run on the local NVFLARE simulator
+(requires a GPU + the `flare-fl-base` image):
+
+```bash
+make -C fl-tutorials download-xray-data                   # one-off: fetch the xray dataset (HF)
+make -C fl-tutorials list-tutorials
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+make -C fl-tutorials run-all-tutorials                    # run every tutorial
+```
+
+The spleen tutorials get their data via `make -C fl-tutorials download-spleen-data`. To build the FL
+images locally first (tagged `:dev`), run `make build-fl`. See each tutorial's README for details.
+
 ## AWS Deployment
 
 ### Staging environment

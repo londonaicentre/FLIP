@@ -133,6 +133,24 @@ make e2e_smoke EXTRA_ARGS="--abort-midway"                     # exercise the FL
 make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
 ```
 
+### Running FL Tutorials Locally
+
+The NVFLARE tutorials live in `fl-tutorials/` and run on the local NVFLARE simulator (needs a GPU +
+the `flare-fl-base` image). Each tutorial carries a `.env.app` and delegates to the shared harness in
+`fl-tutorials/testing/`. From the repo root:
+
+```bash
+make -C fl-tutorials list-tutorials
+make -C fl-tutorials download-xray-data                  # xray dataset (HF); spleen: download-spleen-data
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+make -C fl-tutorials run-all-tutorials                   # all four (heavy; stops on first failure)
+make -C fl-tutorials test-template TEMPLATE=fed_opt      # smoke-test a template that has no tutorial
+```
+
+The simulator GPU id defaults to `0`; override with `SIM_GPU` in `fl-tutorials/testing/.env.testing`.
+To iterate on the FL images, `make build-fl` builds them locally as `:dev` (see `fl-services/README.md`);
+run the stack on them with `make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev`.
+
 ### Linting & Type Checking
 
 ```bash
