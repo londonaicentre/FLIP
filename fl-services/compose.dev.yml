@@ -17,8 +17,6 @@
 services:
   fl-base:
     image: flare-fl-base:dev
-    env_file:
-      - ../.env.development
     build:
       context: ../
       dockerfile: fl-services/fl-base/Dockerfile
