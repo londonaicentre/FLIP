@@ -160,7 +160,6 @@ def test_get_put_presigned_post_caps_ttl_at_security_ceiling(s3_client_with_mock
 
     kwargs = boto_instance.generate_presigned_post.call_args.kwargs
     assert kwargs["ExpiresIn"] == MAX_PUT_PRESIGNED_URL_TTL_SECONDS
-    assert kwargs["ExpiresIn"] <= MAX_PUT_PRESIGNED_URL_TTL_SECONDS
 
 
 def test_get_put_presigned_post_default_ttl_is_at_most_ceiling(s3_client_with_mock_boto):
