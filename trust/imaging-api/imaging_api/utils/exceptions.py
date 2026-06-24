@@ -26,6 +26,19 @@ class AlreadyExistsError(Exception):
     pass
 
 
+class XnatFetchError(Exception):
+    """Exception raised when a read from XNAT returns a non-200 response.
+
+    A typed alternative to a bare ``Exception`` for upstream XNAT fetch failures,
+    so callers can tell "XNAT itself failed" apart from a local/parsing error. A
+    plain ``Exception`` subclass (no custom ``__init__``) so ``str(err)`` keeps
+    rendering the raised message verbatim; the routers' generic ``except Exception``
+    handler continues to surface it as HTTP 500.
+    """
+
+    pass
+
+
 class InternalServerError(Exception):
     """Exception raised for internal server errors."""
 

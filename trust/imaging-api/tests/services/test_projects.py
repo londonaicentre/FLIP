@@ -35,7 +35,7 @@ from imaging_api.services.projects import (
     set_project_prearchive_settings,
     to_create_project,
 )
-from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
+from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError, XnatFetchError
 
 
 @pytest.fixture
@@ -607,7 +607,7 @@ def test_get_experiments_failure(mock_get_project, mock_get, headers):
     mock_get.return_value = MagicMock(
         status_code=500, text="Error", json=MagicMock(side_effect=ValueError("no json")),
     )
-    with pytest.raises(Exception, match="XNAT experiments fetch failed"):
+    with pytest.raises(XnatFetchError, match="XNAT experiments fetch failed"):
         get_experiments("TEST", headers)
 
 

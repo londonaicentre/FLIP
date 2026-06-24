@@ -32,7 +32,7 @@ from imaging_api.routers.schemas import (
 from imaging_api.routers.users import add_user_to_project
 from imaging_api.services.users import create_user_from_central_hub_user, get_user_profile_by
 from imaging_api.utils.enums import ProjectPreArchiveSettings
-from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
+from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError, XnatFetchError
 from imaging_api.utils.logger import logger
 
 XNAT_URL = get_settings().XNAT_URL
@@ -530,7 +530,7 @@ def get_experiments(project_id: str, headers: dict[str, str]) -> list[Experiment
         list[Experiment]: List of XNAT experiment objects.
 
     Raises:
-        Exception: If there is an error while fetching the experiments from XNAT.
+        imaging_api.utils.exceptions.XnatFetchError: If XNAT returns a non-200 response for the experiments listing.
     """
     get_project(project_id, headers)
 
@@ -544,7 +544,7 @@ def get_experiments(project_id: str, headers: dict[str, str]) -> list[Experiment
     # Check the status before parsing: a non-200 XNAT response carries an HTML/plain-text body, so
     # parsing it as JSON first would raise and mask the real HTTP status.
     if response.status_code != 200:
-        raise Exception(f"Error: XNAT experiments fetch failed: {response.status_code} - {response.text}")
+        raise XnatFetchError(f"Error: XNAT experiments fetch failed: {response.status_code} - {response.text}")
 
     return [Experiment(**experiment) for experiment in response.json()["ResultSet"]["Result"]]
 
