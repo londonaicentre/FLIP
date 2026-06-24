@@ -38,17 +38,18 @@ You can also pass `FL_PORT` if you do not want to use the default (which will be
 
 ### Provisioning command
 
-This will run the `nvflare provision` Python command. It is part of the `make nvflare-provision` command, and will
-create the services that are defined in the net-specific yml file.
-It will initially create these services in the `workspace/prod_XX` folder, with default names.
+This runs the `nvflare provision` CLI as part of `make nvflare-provision`. It is executed from the
+`fl_services/fl-api-base` uv project (which declares `nvflare`), so it resolves even though the repo-root `flip`
+project has no dependencies. It creates the services defined in the net-specific yml file, initially under
+`deploy/workspace/net-${NET_NUMBER}/prod_XX`, with default names.
 Inside of these services, you should have at least a `local` and `startup` folder. The `startup` folder contains the
 scripts to start and stop the services (`start.sh`, `stop_fl.sh` etc.), as well as configuration files
 (`fed_[service_name].json`), and signature and certificate files.
 Once these service files are created, the signature and certificate files will link them together and make them not
 re-usable.
 
-After this command is run, the make command will take care of moving every service into the `fl_services` folder, under
-`net-${NET_NUMBER}`. Additionally, files that are not created by the `nvflare provision` command yet are crucial to run
+After this command is run, the make command moves every service into `deploy/workspace/net-${NET_NUMBER}/services/`.
+Additionally, files that are not created by the `nvflare provision` command yet are crucial to run
 the services (e.g. Python API files for the Admin API) will be added from `fl-base` (for client and server) and
 `fl-api-base` (for API).
 
@@ -72,8 +73,8 @@ network the client belongs to.
 This should ensure that the client stays part of the network, without re-creating the other services or altering signed
 files.
 
-There is a helper Makefile target to help with this process:
+There is a helper Makefile target for this process (wrapping `deploy/scripts/provision-additional-client.sh`):
 
 ```sh
-bash provision_client.sh <NET_NUMBER>
+make nvflare-provision-additional-client NET_NUMBER=<NET_NUMBER>
 ```
