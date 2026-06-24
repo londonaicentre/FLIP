@@ -13,7 +13,7 @@
 # release.sh — Build and publish the flip package to PyPI (or TestPyPI)
 #
 # Usage:
-#   ./deploy/release.sh [OPTIONS]
+#   ./flip-utils/release.sh [OPTIONS]
 #
 # Options:
 #   --test         Publish to TestPyPI instead of PyPI
@@ -25,8 +25,8 @@
 #   UV_PUBLISH_TOKEN   PyPI (or TestPyPI) API token
 #
 # Example — publish to TestPyPI first, then PyPI:
-#   UV_PUBLISH_TOKEN=pypi-... ./deploy/release.sh --test
-#   UV_PUBLISH_TOKEN=pypi-... ./deploy/release.sh
+#   UV_PUBLISH_TOKEN=pypi-... ./flip-utils/release.sh --test
+#   UV_PUBLISH_TOKEN=pypi-... ./flip-utils/release.sh
 
 set -euo pipefail
 
