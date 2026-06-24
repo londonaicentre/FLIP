@@ -447,3 +447,4 @@ fl-tutorials/nvflare/testing/runs/workspace/
 fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/uv.lock
 deploy/providers/flower/certs/
 fl-services/flower/runs/
+fl-tutorials/flower/data/
