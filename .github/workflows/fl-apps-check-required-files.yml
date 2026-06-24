@@ -19,12 +19,12 @@ on:
     branches: [develop]
     paths:
       - "fl-apps/**"
-      - ".github/workflows/check-required-files.yml"
+      - ".github/workflows/fl-apps-check-required-files.yml"
   pull_request:
     branches: [develop]
     paths:
       - "fl-apps/**"
-      - ".github/workflows/check-required-files.yml"
+      - ".github/workflows/fl-apps-check-required-files.yml"
 
 permissions:
   contents: read

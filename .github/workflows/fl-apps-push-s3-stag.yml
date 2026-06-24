@@ -10,15 +10,15 @@
 # limitations under the License.
 #
 
-name: Push src folder to S3 (production account) on merge to main (from develop branch)
+name: Push fl-apps folder to S3 (staging account) on merge to develop branch
 
 on:
   push:
     branches:
-      - main
+      - develop
     paths:
       - "fl-apps/**"
-      - ".github/workflows/push-app-to-s3-prod.yml"
+      - ".github/workflows/fl-apps-push-s3-stag.yml"
 
 permissions:
   id-token: write # required for OIDC
@@ -38,7 +38,7 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4.2.1
         with:
-          role-to-assume: ${{ vars.AWS_PROD_ROLE_TO_ASSUME }}
+          role-to-assume: ${{ vars.AWS_STAG_ROLE_TO_ASSUME }}
           role-session-name: ${{ vars.AWS_ROLE_SESSION_NAME }}
           aws-region: ${{ vars.AWS_REGION }}
 
@@ -48,9 +48,9 @@ jobs:
           echo "${{ github.sha }}" > "commit_${SHORT_SHA}.txt"
           echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_ENV
 
-      - name: Sync src folder and commit SHA to S3
+      - name: Sync fl-apps folder and commit SHA to S3
         env:
-          S3_FOLDER_URI: s3://${{ vars.AWS_PROD_S3_BUCKET_NAME }}/base-application/${{ env.FL_BACKEND }}
+          S3_FOLDER_URI: s3://${{ vars.AWS_STAG_S3_BUCKET_NAME }}/base-application/${{ env.FL_BACKEND }}
         run: |
           aws s3 rm "${S3_FOLDER_URI}/" --recursive --exclude "*" --include "commit_*.txt" --only-show-errors
           aws s3 sync fl-apps/ "${S3_FOLDER_URI}/" --delete

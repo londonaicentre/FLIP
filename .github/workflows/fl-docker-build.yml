@@ -18,7 +18,7 @@ on:
     paths:
       - "fl_services/**"
       - "flip-utils/**"
-      - ".github/workflows/docker_build_fl.yml"
+      - ".github/workflows/fl-docker-build.yml"
   workflow_dispatch:
 
 jobs:

@@ -21,12 +21,12 @@ on:
     branches: [main, develop]
     paths:
       - "fl_services/fl-api-base/fl_api/**"
-      - ".github/workflows/fl_api.yml"
+      - ".github/workflows/fl-api-test.yml"
   pull_request:
     branches: [main, develop]
     paths:
       - "fl_services/fl-api-base/fl_api/**"
-      - ".github/workflows/fl_api.yml"
+      - ".github/workflows/fl-api-test.yml"
 jobs:
   flip-fl-api:
     runs-on: ubuntu-latest
