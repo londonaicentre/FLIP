@@ -42,7 +42,7 @@ else
 DOCKER_FL_API_NAME    := flower-fl-api
 DOCKER_FL_SERVER_NAME := flower-superlink
 DOCKER_FL_CLIENT_NAME := flower-supernode
-FL_PROVISIONED_DIR    := ../flip-fl-base-flower/certs
+FL_PROVISIONED_DIR    := deploy/providers/flower/certs
 # Per-net shared host dir mounted as /app/src on fl-api and fl-server: the FL API
 # downloads uploaded bundles to <FL_JOBS_DIR>/net-X/<model_id>/ and the FL server's
 # evaluation ServerApp reads checkpoints from there via the flip-job-dir run-config.
