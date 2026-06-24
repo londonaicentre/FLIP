@@ -23,12 +23,18 @@ import ProjectStaging from "../ProjectStaging.vue";
 const trustA = {
     id: "11111111-1111-1111-1111-111111111111",
     name: "Trust A",
-    code: "TA"
+    code: "TA",
+    region: null,
+    last_heartbeat: null,
+    project_count: 0
 };
 const trustB = {
     id: "22222222-2222-2222-2222-222222222222",
     name: "Trust B",
-    code: "TB"
+    code: "TB",
+    region: null,
+    last_heartbeat: null,
+    project_count: 0
 };
 // `trustNew` represents a trust that joined the platform after the cohort
 // query was run — it has no QueryResult, so it must not appear in the staging
@@ -36,7 +42,10 @@ const trustB = {
 const trustNew = {
     id: "33333333-3333-3333-3333-333333333333",
     name: "Trust New",
-    code: "TN"
+    code: "TN",
+    region: null,
+    last_heartbeat: null,
+    project_count: 0
 };
 
 function mountStaging(stageableTrustIds: string[] | undefined, trusts = [trustA, trustB, trustNew]) {

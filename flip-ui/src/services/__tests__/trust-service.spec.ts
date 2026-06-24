@@ -14,7 +14,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { getTrusts } from "@/services/trust-service";
+import { getTrusts, getTrustStatuses } from "@/services/trust-service";
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -71,6 +71,50 @@ describe("trust-service", () => {
             const result = await getTrusts();
 
             expect(result).toEqual([]);
+        });
+    });
+
+    describe("getTrustStatuses", () => {
+        it("GETs the same authenticated /trust endpoint and returns the array", async () => {
+            // Regression for #557: the Connection Status page must source its
+            // data from an authenticated (non-admin) endpoint so Researcher /
+            // Viewer roles don't get a 403 and a perpetual spinner. Post-#609
+            // that endpoint is the consolidated GET /trust.
+            const statuses = [
+                {
+                    id: "t-1",
+                    name: "Trust_1",
+                    code: "T1",
+                    region: "London",
+                    last_heartbeat: null,
+                    project_count: 2
+                }
+            ];
+            vi.mocked(_http.get).mockResolvedValue({ data: statuses } as never);
+
+            const result = await getTrustStatuses();
+
+            expect(_http.get).toHaveBeenCalledWith("/trust");
+            expect(result).toEqual(statuses);
+        });
+
+        it("returns [] when the backend body is not an array", async () => {
+            // Defensive: the page drives a v-for off this list, so a non-array
+            // body must not crash the table / topology render.
+            vi.mocked(_http.get).mockResolvedValue({ data: { error: "oops" } } as never);
+
+            const result = await getTrustStatuses();
+
+            expect(result).toEqual([]);
+        });
+
+        it("propagates errors so SWRV keeps the loader instead of showing 'no trusts'", async () => {
+            // A genuine fetch failure (e.g. 500) must reject — SWRV then leaves
+            // `trusts` undefined and the page shows its loader, rather than
+            // misreporting an empty federation.
+            vi.mocked(_http.get).mockRejectedValue(new Error("Network Error"));
+
+            await expect(getTrustStatuses()).rejects.toThrow("Network Error");
         });
     });
 });
