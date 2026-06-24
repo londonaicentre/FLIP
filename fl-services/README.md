@@ -19,6 +19,31 @@ This diagram provides an overview of the services:
 
 ![FL Services Architecture](../assets/fl-services_overview.png)
 
+## Images: built in CI, or locally as `:dev`
+
+The four FL images — `flare-fl-base`, `flare-fl-server`, `flare-fl-client`, `flare-fl-api` — are built
+in CI by [`fl-docker-build.yml`](../.github/workflows/fl-docker-build.yml) whenever `fl-services/**` or
+`flip-utils/**` change, and published to GHCR as `:<sha>`, `:stag` (on `develop`) and `:prod` (on `main`).
+Deployments pull them via `DOCKER_FL_TAG`, so a change to fl-api code or the `flip` package flows into the
+next deployment on that tag.
+
+To iterate locally **before pushing**, build them tagged `:dev` from the repo root:
+
+```bash
+make build-fl                  # builds flare-fl-{base,server,client,api}:dev (base first, then derived)
+make build-fl LOCAL_DEV=true   # include dev-only deps (e.g. plotting for the diffusion app)
+```
+
+Then run the stack on those local images instead of GHCR:
+
+```bash
+make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
+```
+
+`DOCKER_FL_REGISTRY=` empties the registry so Docker resolves the local `flare-fl-*:dev` images (see
+[`deploy/fl_backend.mk`](../deploy/fl_backend.mk)). Note `make build` does **not** build these — the deploy
+compose pulls FL images by tag, so their build definitions live only in [`compose.dev.yml`](./compose.dev.yml).
+
 ## Step-by-step provisioning
 
 ### Project yml file

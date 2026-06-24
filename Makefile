@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
+.PHONY: build build-fl dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
 		check-aws-access generate-internal-service-key \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
@@ -103,6 +103,23 @@ build:
 	$(MAKE) -C trust build
 	$(MAKE) -C trust/xnat build
 	@echo "✅ Docker images built successfully!"
+
+# Build the NVFLARE FL service images locally, tagged :dev, for iterating on fl-services/
+# or the flip-utils `flip` package before pushing. The deploy compose pulls FL images from
+# GHCR (DOCKER_FL_TAG), so they are NOT built by `make build`; this uses the build defs in
+# fl-services/compose.dev.yml. fl-base must build first, in its own invocation: a plain
+# `FROM flare-fl-base` in the server/client/api Dockerfiles is invisible to Compose's build
+# graph, so a single `compose build` would build the derived images against a stale base.
+# fl-base's build-only profile keeps it out of `up`; the derived images pull it via BASE_REF.
+# Then run the stack on the freshly-built images with:
+#   make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
+FL_DEV_COMPOSE := docker compose -f fl-services/compose.dev.yml
+build-fl:
+	@echo "🛠️ Building flare-fl-base:dev (base image; LOCAL_DEV=$(LOCAL_DEV))..."
+	LOCAL_DEV=$(LOCAL_DEV) $(FL_DEV_COMPOSE) --profile build-only build fl-base
+	@echo "🛠️ Building flare-fl-{server,api,client}:dev..."
+	$(FL_DEV_COMPOSE) build fl-server flip-fl-api fl-client-1
+	@echo "✅ FL :dev images built. Run them with: make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev"
 
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
