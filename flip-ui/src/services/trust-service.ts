@@ -11,17 +11,25 @@
  * limitations under the License.
  */
 
-
-
-
 import { _http } from "./api";
 
+// Trust list item with connection status — benign metadata only (no secrets),
+// served by the authenticated (non-admin) GET /trust endpoint. Mirrors the
+// backend ITrustStatus schema. The trust pickers only read id/name/code; the
+// Connection Status page additionally uses region / last_heartbeat / project_count.
 export interface ITrustResponse {
     id: string;
     name: string;
-    code?: string | null;
+    code: string | null;
+    region: string | null;
+    last_heartbeat: string | null;
+    project_count: number;
 }
 
+// Bootstrap / picker list. Errors are intentionally swallowed → []: a trust-list
+// failure is not actionable for the user (the surrounding forms already handle
+// "no trusts available" by disabling submit), and throwing would bubble up to a
+// generic SWRV error overlay with no recovery path.
 export async function getTrusts(): Promise<ITrustResponse[]> {
     try {
         const response = await _http.get<ITrustResponse[]>("/trust");
@@ -31,4 +39,15 @@ export async function getTrusts(): Promise<ITrustResponse[]> {
     } catch {
         return [];
     }
+}
+
+// Connection-status view over the same GET /trust endpoint. Readable by any
+// authenticated user (Researcher / Viewer / Admin). Errors are intentionally
+// NOT swallowed: a rejection lets SWRV keep the page's loader rather than
+// rendering a misleading empty federation. Creating a trust stays admin-only
+// (see createAdminTrust in admin-trusts-service).
+export async function getTrustStatuses(): Promise<ITrustResponse[]> {
+    const response = await _http.get<ITrustResponse[]>("/trust");
+
+    return Array.isArray(response.data) ? response.data : [];
 }

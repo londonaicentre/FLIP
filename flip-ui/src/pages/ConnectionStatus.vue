@@ -530,7 +530,7 @@ import FLNetsCard from "@/partials/connection/FLNetsCard.vue";
 import AddTrustModal from "@/partials/trusts/AddTrustModal.vue";
 import TrustKitModal from "@/partials/trusts/TrustKitModal.vue";
 import { ICreatedTrust } from "@/services/admin-trusts-service";
-import { getTrustStatuses, ITrustStatus } from "@/services/trust-status-service";
+import { getTrustStatuses, ITrustResponse } from "@/services/trust-service";
 import { useAuthStore } from "@/store/auth";
 
 const authStore = useAuthStore();
@@ -545,8 +545,8 @@ const hoverTrustId = ref<string | null>(null);
 
 // SWRV handles 5s dedupe + 15s polling so the heartbeat column stays fresh
 // without per-page setInterval bookkeeping. Same pattern as ConnectionStatus.vue.
-const { data: trusts, mutate: refresh } = useSWRV<ITrustStatus[]>(
-    "/trust/status",
+const { data: trusts, mutate: refresh } = useSWRV<ITrustResponse[]>(
+    "trust-connection-status",
     getTrustStatuses,
     {
         dedupingInterval: 5_000,
@@ -563,7 +563,7 @@ type TrustState = "online" | "degraded" | "offline";
 const HEARTBEAT_FRESH_S = 30;
 const HEARTBEAT_DEGRADED_S = 5 * 60;
 
-const trustState = (t: ITrustStatus): TrustState => {
+const trustState = (t: ITrustResponse): TrustState => {
     if (!t.last_heartbeat) return "offline";
     const ageS = (Date.now() - new Date(t.last_heartbeat).getTime()) / 1000;
     if (ageS < HEARTBEAT_FRESH_S) return "online";
@@ -631,7 +631,7 @@ const STATE_RANK: Record<TrustState, number> = {
     online: 2
 };
 
-interface IRenderedTrust extends ITrustStatus {
+interface IRenderedTrust extends ITrustResponse {
     _state: TrustState;
     _uptimePoints: string;
     _uptimeDots: { x: number; y: number }[];
@@ -687,7 +687,7 @@ const sortKey = ref<SortKey>("name");
 const sortDir = ref<SortDir>("asc");
 
 // Heartbeat age in seconds; null heartbeat = oldest (Infinity).
-const heartbeatAge = (t: ITrustStatus): number =>
+const heartbeatAge = (t: ITrustResponse): number =>
     t.last_heartbeat ? (Date.now() - new Date(t.last_heartbeat).getTime()) / 1000 : Infinity;
 
 const SORT_COMPARATORS: Record<SortKey, (a: IRenderedTrust, b: IRenderedTrust) => number> = {
