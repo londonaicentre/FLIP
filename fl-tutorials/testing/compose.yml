@@ -12,7 +12,7 @@
 services:
   nvflare-simulator:
     image: ghcr.io/londonaicentre/flare-fl-base:${FL_BASE_IMAGE_TAG}
-    pull_policy: always
+    pull_policy: missing
     environment:
       - LOCAL_DEV=true
       - DEV_IMAGES_DIR=/images
