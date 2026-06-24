@@ -42,6 +42,14 @@ shell:
 	$(docker_command) run --rm --entrypoint "/bin/bash" $(service_name)
 
 checks:
+# 	Check DOCKER_FL_REGISTRY is set
+	@if [ -z "${DOCKER_FL_REGISTRY}" ]; then \
+		echo "❌ ERROR: DOCKER_FL_REGISTRY not set."; \
+		echo "   Make sure you have set DOCKER_FL_REGISTRY in .env.testing"; \
+		exit 1; \
+	fi
+	@echo "✅ Using DOCKER_FL_REGISTRY: ${DOCKER_FL_REGISTRY}"
+
 # 	Check FL_BASE_IMAGE_TAG is set
 	@if [ -z "${FL_BASE_IMAGE_TAG}" ]; then \
 		echo "❌ ERROR: FL_BASE_IMAGE_TAG not set."; \
