@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-.PHONY: build build-fl dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
+.PHONY: build build-fl fl-up fl-down fl-submit fl-provision dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
 		check-aws-access generate-internal-service-key \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
@@ -113,13 +113,24 @@ build:
 # fl-base's build-only profile keeps it out of `up`; the derived images pull it via BASE_REF.
 # Then run the stack on the freshly-built images with:
 #   make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
-FL_DEV_COMPOSE := docker compose -f fl-services/$(FL_BACKEND)/compose.dev.yml
+# build-fl / fl-up / fl-down / fl-submit / fl-provision forward to the selected
+# backend's Makefile (fl-services/<backend>/Makefile), mirroring the fl-tutorials/
+# forwarder. Each backend owns its image/service names, provisioning, and run loop.
 build-fl:
-	@echo "🛠️ Building flare-fl-base:dev (base image; LOCAL_DEV=$(LOCAL_DEV))..."
-	LOCAL_DEV=$(LOCAL_DEV) $(FL_DEV_COMPOSE) --profile build-only build fl-base
-	@echo "🛠️ Building flare-fl-{server,api,client}:dev..."
-	$(FL_DEV_COMPOSE) build fl-server flip-fl-api fl-client-1
+	@$(MAKE) -C fl-services/$(FL_BACKEND) build LOCAL_DEV=$(LOCAL_DEV)
 	@echo "✅ FL :dev images built. Run them with: make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev"
+
+# Standalone FL services (no hub/trusts) + run a job, per backend. APP names a job
+# folder (Flower); NET_NUMBER selects the net.
+APP ?= numpy
+fl-up:
+	@$(MAKE) -C fl-services/$(FL_BACKEND) up NET_NUMBER=$(NET_NUMBER)
+fl-down:
+	@$(MAKE) -C fl-services/$(FL_BACKEND) down
+fl-submit:
+	@$(MAKE) -C fl-services/$(FL_BACKEND) submit APP=$(APP)
+fl-provision:
+	@$(MAKE) -C fl-services/$(FL_BACKEND) provision NET_NUMBER=$(NET_NUMBER)
 
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
