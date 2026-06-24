@@ -22,8 +22,9 @@ This diagram provides an overview of the services:
 ## Images: built in CI, or locally as `:dev`
 
 The four FL images — `flare-fl-base`, `flare-fl-server`, `flare-fl-client`, `flare-fl-api` — are built
-in CI by [`fl-docker-build.yml`](../.github/workflows/fl-docker-build.yml) whenever `fl-services/**` or
-`flip-utils/**` change, and published to GHCR as `:<sha>`, `:stag` (on `develop`) and `:prod` (on `main`).
+in CI by [`fl-docker-build-nvflare.yml`](../../.github/workflows/fl-docker-build-nvflare.yml) whenever
+`fl-services/nvflare/**` or `flip-utils/**` change, and published to GHCR as `:<sha>`, `:stag` (on `develop`)
+and `:prod` (on `main`).
 Deployments pull them via `DOCKER_FL_TAG`, so a change to fl-api code or the `flip` package flows into the
 next deployment on that tag.
 
@@ -41,14 +42,14 @@ make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
 ```
 
 `DOCKER_FL_REGISTRY=` empties the registry so Docker resolves the local `flare-fl-*:dev` images (see
-[`deploy/fl_backend.mk`](../deploy/fl_backend.mk)). Note `make build` does **not** build these — the deploy
+[`deploy/fl_backend.mk`](../../deploy/fl_backend.mk)). Note `make build` does **not** build these — the deploy
 compose pulls FL images by tag, so their build definitions live only in [`compose.dev.yml`](./compose.dev.yml).
 
 ## Step-by-step provisioning
 
 ### Project yml file
 
-The per-environment project files in [`../deploy/providers/nvflare/`](../deploy/providers/nvflare/)
+The per-environment project files in [`../../deploy/providers/nvflare/`](../../deploy/providers/nvflare/)
 (`net-1_project_dev.yml`, `net-2_project_dev.yml`, `net-1_project_stag.yml`, `net-1_project_prod.yml`)
 define the services available within a network. Modify the relevant one if you want to:
 
@@ -65,7 +66,7 @@ You can also pass `FL_PORT` if you do not want to use the default (which will be
 ### Provisioning command
 
 This runs the `nvflare provision` CLI as part of `make nvflare-provision`. It is executed from the
-`fl-services/fl-api-base` uv project (which declares `nvflare`), so it resolves even though the repo-root `flip`
+`fl-services/nvflare/fl-api-base` uv project (which declares `nvflare`), so it resolves even though the repo-root `flip`
 project has no dependencies. It creates the services defined in the net-specific yml file, initially under
 `deploy/workspace/net-${NET_NUMBER}/prod_XX`, with default names.
 Inside of these services, you should have at least a `local` and `startup` folder. The `startup` folder contains the

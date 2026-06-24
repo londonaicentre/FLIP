@@ -67,9 +67,9 @@ FLIP/
 │   ├── trust-api/          # Trust API
 │   └── xnat/               # Mocked XNAT service
 ├── flip-utils/         # `flip` Python package — platform logic, NVFLARE components, Flower helpers
-├── fl-services/        # Docker images for FL networks: fl-server, fl-client, fl-api-base, fl-base
-├── fl-apps/            # FL job-type implementations / app templates (standard, evaluation, diffusion_model, fed_opt)
-└── fl-tutorials/       # End-to-end tutorial examples (xray classification, spleen seg/eval, diffusion)
+├── fl-services/        # Docker images for FL networks, per backend: fl-services/nvflare/{fl-server,fl-client,fl-api-base,fl-base}
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (+ check_required_files.sh)
+└── fl-tutorials/       # End-to-end tutorial examples per backend: fl-tutorials/nvflare/ (xray classification, spleen seg/eval, diffusion)
 ```
 
 ## Setting up the development environment
@@ -389,7 +389,7 @@ cd flip-utils && uv run pytest tests/unit -s -vv
 still-in-progress reconciliation called out at the top of that README — `flip-utils/` does not yet ship a Makefile in
 this mono-repo.) See [`flip-utils/README.md`](flip-utils/README.md) (the "Unit Tests" / "Integration Testing"
 sections — subject to the in-progress reconciliation noted there) for the FL package's tests, and
-[`fl-services/README.md`](fl-services/README.md) for provisioning FL networks.
+[`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) for provisioning FL networks.
 
 **Kubernetes chart testing**: The K8s Helm chart at `deploy/providers/kubernetes/` can be tested with:
 

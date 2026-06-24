@@ -71,5 +71,5 @@ make -C fl-tutorials download-spleen-data
 make -C fl-tutorials test-template TEMPLATE=fed_opt
 ```
 
-This merges `fl-apps/fed_opt/app` with the spleen tutorial's app_files + data and runs it on the simulator
+This merges `fl-apps/nvflare/fed_opt/app` with the spleen tutorial's app_files + data and runs it on the simulator
 (requires GPUs + the `flare-fl-base` image).

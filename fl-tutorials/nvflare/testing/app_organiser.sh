@@ -30,10 +30,10 @@ if [ ! -f "$DEV_DATAFRAME" ]; then
 fi
 
 # Copy base application files (e.g. config folder, other custom files, etc.)
-# Job-type app templates live at fl-apps/<JOB_TYPE>/app (../../ resolves to the
-# repo root from fl-tutorials/testing/). Migrated from the legacy flip-fl-base src/.
+# Job-type app templates live at fl-apps/nvflare/<JOB_TYPE>/app (../../../ resolves to the
+# repo root from fl-tutorials/nvflare/testing/). Migrated from the legacy flip-fl-base src/.
 mkdir -p ./tmp
-cp -r ../../fl-apps/$JOB_TYPE/app ./tmp/
+cp -r ../../../fl-apps/nvflare/$JOB_TYPE/app ./tmp/
 
 # Copy app files (e.g. trainer.py, validator.py, etc.)
 echo "Copying your app files into the testing app..."

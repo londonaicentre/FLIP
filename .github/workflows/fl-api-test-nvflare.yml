@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-name: Flip FL API CI
+name: Flip NVFLARE FL API CI
 
 permissions:
   id-token: write
@@ -20,19 +20,19 @@ on:
   push:
     branches: [main, develop]
     paths:
-      - "fl-services/fl-api-base/fl_api/**"
-      - ".github/workflows/fl-api-test.yml"
+      - "fl-services/nvflare/fl-api-base/fl_api/**"
+      - ".github/workflows/fl-api-test-nvflare.yml"
   pull_request:
     branches: [main, develop]
     paths:
-      - "fl-services/fl-api-base/fl_api/**"
-      - ".github/workflows/fl-api-test.yml"
+      - "fl-services/nvflare/fl-api-base/fl_api/**"
+      - ".github/workflows/fl-api-test-nvflare.yml"
 jobs:
   flip-fl-api:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./fl-services/fl-api-base/ # Set working directory for subsequent steps
+        working-directory: ./fl-services/nvflare/fl-api-base/ # Set working directory for subsequent steps
 
     steps:
       - name: Checkout code
@@ -41,7 +41,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          # get python version from ./fl-services/fl-api-base/fl_api/.python-version file
+          # get python version from ./fl-services/nvflare/fl-api-base/fl_api/.python-version file
           # if not found, use 3.11
           python-version: "3.12"
 

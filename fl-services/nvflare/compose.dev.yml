@@ -18,8 +18,8 @@ services:
   fl-base:
     image: flare-fl-base:dev
     build:
-      context: ../
-      dockerfile: fl-services/fl-base/Dockerfile
+      context: ../../
+      dockerfile: fl-services/nvflare/fl-base/Dockerfile
       args:
         LOCAL_DEV: ${LOCAL_DEV:-false}
     profiles: ["build-only"]
@@ -30,7 +30,7 @@ services:
     container_name: fl-server-net-${NET_NUMBER}
     image: flare-fl-server:dev
     build:
-      context: ../fl-services/fl-server
+      context: ../../fl-services/nvflare/fl-server
       dockerfile: Dockerfile
       args:
         UID: ${UID:-1000}
@@ -46,16 +46,16 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       # Provisioned secrets from deploy/workspace/ (gitignored)
-      - ../deploy/workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/local:/app/local
-      - ../deploy/workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/startup:/app/startup
-      - ../deploy/workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/transfer:/app/transfer
+      - ../../deploy/workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/local:/app/local
+      - ../../deploy/workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/startup:/app/startup
+      - ../../deploy/workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
 
   flip-fl-api:
     container_name: flip-fl-api-net-${NET_NUMBER}
     image: flare-fl-api:dev
     build:
-      context: ../fl-services/fl-api-base
+      context: ../../fl-services/nvflare/fl-api-base
       dockerfile: Dockerfile
       args:
         UID: ${UID:-1000}
@@ -70,23 +70,23 @@ services:
       - "5679:5679"
     volumes:
       # Provisioned secrets from deploy/workspace/ (gitignored)
-      - ../deploy/workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/local:/app/admin/local
-      - ../deploy/workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/startup:/app/admin/startup
-      - ../deploy/workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/transfer:/app/admin/transfer
+      - ../../deploy/workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/local:/app/admin/local
+      - ../../deploy/workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/startup:/app/admin/startup
+      - ../../deploy/workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/transfer:/app/admin/transfer
       # Static code from fl-services/ (tracked in git)
-      - ../fl-services/fl-api-base/fl_api:/app/fl_api
-      - ../fl-services/fl-api-base/tests:/app/tests
+      - ../../fl-services/nvflare/fl-api-base/fl_api:/app/fl_api
+      - ../../fl-services/nvflare/fl-api-base/tests:/app/tests
       # NOTE the transfer dir in the new provisioning is not straightforward to configure - for now, we keep "transfer"
       # as both the download_dir and upload_dir in fed_admin.json
       # - ../flip-fl-api/transfer_upload:/app/admin/transfer_upload:rw
-      - ../fl-services/fl-api-base/.vscode:/app/.vscode
+      - ../../fl-services/nvflare/fl-api-base/.vscode:/app/.vscode
     command: ["/bin/bash", "/app/entrypoint.sh"]
 
   fl-client-1:
     container_name: fl-client-1-net-${NET_NUMBER}
     image: flare-fl-client:dev
     build:
-      context: ../fl-services/fl-client
+      context: ../../fl-services/nvflare/fl-client
       dockerfile: Dockerfile
       args:
         UID: ${UID:-1000}
@@ -104,9 +104,9 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       # Provisioned secrets from deploy/workspace/ (gitignored)
-      - ../deploy/workspace/net-${NET_NUMBER}/services/Trust_1/local:/app/local
-      - ../deploy/workspace/net-${NET_NUMBER}/services/Trust_1/startup:/app/startup
-      - ../deploy/workspace/net-${NET_NUMBER}/services/Trust_1/transfer:/app/transfer
+      - ../../deploy/workspace/net-${NET_NUMBER}/services/Trust_1/local:/app/local
+      - ../../deploy/workspace/net-${NET_NUMBER}/services/Trust_1/startup:/app/startup
+      - ../../deploy/workspace/net-${NET_NUMBER}/services/Trust_1/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
     shm_size: "32gb"
     gpus: all
@@ -115,7 +115,7 @@ services:
     container_name: fl-client-2-net-${NET_NUMBER}
     image: flare-fl-client:dev
     build:
-      context: ../fl-services/fl-client
+      context: ../../fl-services/nvflare/fl-client
       dockerfile: Dockerfile
       args:
         UID: ${UID:-1000}
@@ -133,9 +133,9 @@ services:
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
       # Provisioned secrets from deploy/workspace/ (gitignored)
-      - ../deploy/workspace/net-${NET_NUMBER}/services/Trust_2/local:/app/local
-      - ../deploy/workspace/net-${NET_NUMBER}/services/Trust_2/startup:/app/startup
-      - ../deploy/workspace/net-${NET_NUMBER}/services/Trust_2/transfer:/app/transfer
+      - ../../deploy/workspace/net-${NET_NUMBER}/services/Trust_2/local:/app/local
+      - ../../deploy/workspace/net-${NET_NUMBER}/services/Trust_2/startup:/app/startup
+      - ../../deploy/workspace/net-${NET_NUMBER}/services/Trust_2/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
     shm_size: "32gb"
     gpus: all

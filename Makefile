@@ -107,13 +107,13 @@ build:
 # Build the NVFLARE FL service images locally, tagged :dev, for iterating on fl-services/
 # or the flip-utils `flip` package before pushing. The deploy compose pulls FL images from
 # GHCR (DOCKER_FL_TAG), so they are NOT built by `make build`; this uses the build defs in
-# fl-services/compose.dev.yml. fl-base must build first, in its own invocation: a plain
+# fl-services/<backend>/compose.dev.yml. fl-base must build first, in its own invocation: a plain
 # `FROM flare-fl-base` in the server/client/api Dockerfiles is invisible to Compose's build
 # graph, so a single `compose build` would build the derived images against a stale base.
 # fl-base's build-only profile keeps it out of `up`; the derived images pull it via BASE_REF.
 # Then run the stack on the freshly-built images with:
 #   make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
-FL_DEV_COMPOSE := docker compose -f fl-services/compose.dev.yml
+FL_DEV_COMPOSE := docker compose -f fl-services/$(FL_BACKEND)/compose.dev.yml
 build-fl:
 	@echo "🛠️ Building flare-fl-base:dev (base image; LOCAL_DEV=$(LOCAL_DEV))..."
 	LOCAL_DEV=$(LOCAL_DEV) $(FL_DEV_COMPOSE) --profile build-only build fl-base
@@ -425,13 +425,24 @@ nvflare-provision-2-nets:
 nvflare-provision-additional-client:
 	$(NVFLARE_SCRIPTS)/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT) $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_dev.yml $(FL_WORKSPACE_DIR)
 
-# Provision the stag/prod FL network from the env-specific project file into a
-# gitignored workspace-<env>/, ready to upload to S3 (see upload-flare-kits-to-s3).
+# Provision the stag/prod FL network into a gitignored workspace-<env>/, ready to
+# upload to S3 (see upload-flare-kits-to-s3). Unlike dev (2 fixed clients), stag/
+# prod over-provision spare client kit slots (FLIP#626): the committed
+# net-${NET_NUMBER}_project_<env>.yml holds a single client template, which
+# generate-project-yaml.sh clones into Trust_1 .. Trust_<N> before provisioning.
+# N defaults to 50 (stag) / 500 (prod); override on the command line, e.g.
+# `make nvflare-provision-prod PROD_NUM_CLIENTS=512`. The generated project YAML
+# lands beside the provisioned output, both in the gitignored workspace-<env>/.
+STAG_NUM_CLIENTS ?= 50
+PROD_NUM_CLIENTS ?= 500
+
 nvflare-provision-stag:
-	$(NVFLARE_SCRIPTS)/provision-network.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_stag.yml $(NET_NUMBER) workspace-stag
+	$(NVFLARE_SCRIPTS)/generate-project-yaml.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_stag.yml $(STAG_NUM_CLIENTS) workspace-stag/net-${NET_NUMBER}_project.generated.yml
+	$(NVFLARE_SCRIPTS)/provision-network.sh workspace-stag/net-${NET_NUMBER}_project.generated.yml $(NET_NUMBER) workspace-stag
 
 nvflare-provision-prod:
-	$(NVFLARE_SCRIPTS)/provision-network.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_prod.yml $(NET_NUMBER) workspace-prod
+	$(NVFLARE_SCRIPTS)/generate-project-yaml.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_prod.yml $(PROD_NUM_CLIENTS) workspace-prod/net-${NET_NUMBER}_project.generated.yml
+	$(NVFLARE_SCRIPTS)/provision-network.sh workspace-prod/net-${NET_NUMBER}_project.generated.yml $(NET_NUMBER) workspace-prod
 
 # Upload the provisioned FLARE participant kits to S3 under the FLARE_KIT_DATE prefix
 # the deploy flow pulls from (deploy/providers/AWS Makefile `provision-local-trust`,

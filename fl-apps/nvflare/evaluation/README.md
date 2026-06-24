@@ -59,5 +59,5 @@ make -C fl-tutorials run-tutorial TUTORIAL=3d_spleen_segmentation_evaluation
 ```
 
 Download the spleen MSD dataset first (see
-`fl-tutorials/image_evaluation/3d_spleen_segmentation_evaluation/README.md`). This runs
+`fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation/README.md`). This runs
 the code with a pre-trained U-Net network on the MSD dataset.

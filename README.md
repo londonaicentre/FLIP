@@ -54,9 +54,9 @@ implementations and tutorials).
 | [`deploy/`](deploy/) | Docker Compose and infrastructure-as-code (AWS / on-prem) |
 | [`docs/`](docs/) | Sphinx documentation source (ReadTheDocs) |
 | [`flip-utils/`](flip-utils/) | `flip` Python package — platform logic, NVFLARE components, Flower helpers |
-| [`fl-services/`](fl-services/) | Docker images for FL networks: `fl-server`, `fl-client`, `fl-api-base`, `fl-base` |
-| [`fl-apps/`](fl-apps/) | FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) |
-| [`fl-tutorials/`](fl-tutorials/) | End-to-end tutorial examples (xray classification, spleen seg/eval, diffusion) |
+| [`fl-services/`](fl-services/) | Docker images for FL networks, nested per backend ([`fl-services/nvflare/`](fl-services/nvflare/): `fl-server`, `fl-client`, `fl-api-base`, `fl-base`) |
+| [`fl-apps/`](fl-apps/) | FL job-type implementations / app templates, nested per backend ([`fl-apps/nvflare/`](fl-apps/nvflare/): `standard`, `evaluation`, `diffusion_model`, `fed_opt`) |
+| [`fl-tutorials/`](fl-tutorials/) | End-to-end tutorial examples, nested per backend ([`fl-tutorials/nvflare/`](fl-tutorials/nvflare/): xray classification, spleen seg/eval, diffusion) |
 
 The NVFLARE workspace is now provisioned in-tree at [`deploy/workspace`](deploy/workspace) (`make nvflare-provision`).
 The legacy [`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) repository still holds the
@@ -230,7 +230,7 @@ kits" — that are generated in-tree and stored in `deploy/workspace/`.
 >
 > Then bring the stack up with `make up`. Provisioning _after_ a `make up` is awkward: Docker will already have
 > created `deploy/workspace/net-*` as **root-owned** bind-mount targets, which block re-provisioning's `rm -rf`
-> until they are removed. See [`fl-services/README.md`](fl-services/README.md) for per-network details and how to
+> until they are removed. See [`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) for per-network details and how to
 > onboard additional clients.
 
 1. **Path Resolution**: `FL_PROVISIONED_DIR` is derived from the `FL_BACKEND` selection inside [`deploy/fl_backend.mk`](deploy/fl_backend.mk):

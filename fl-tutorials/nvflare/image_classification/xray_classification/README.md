@@ -41,7 +41,7 @@ make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
 ```
 
 `download-xray-data` pulls `aicentreflip/flip-fl-base-test-data` and normalises it into
-`fl-tutorials/data/xrays_mini_300/` (gitignored), matching this tutorial's `.env.app` defaults
+`fl-tutorials/nvflare/data/xrays_mini_300/` (gitignored), matching this tutorial's `.env.app` defaults
 (`DEV_IMAGES_DIR`, `DEV_DATAFRAME`). Requires GPUs + the `flare-fl-base` image to run the simulator.
 
 To run against your **own** data instead, point the `.env.app` (or environment) values at it:

@@ -123,21 +123,21 @@ Set via the `JOB_TYPE` environment variable:
 | `diffusion_model` | Two-stage training (VAE encoder + diffusion) |
 | `fed_opt` | Custom federated optimization |
 
-The corresponding configs live in `fl-apps/<job_type>/app/config/`.
+The corresponding configs live in `fl-apps/nvflare/<job_type>/app/config/`.
 
 ### Development Mode
 
 DEV mode lets you run an FL application locally on the NVFLARE simulator before
 deploying. The runnable tutorials live in [`../fl-tutorials/`](../fl-tutorials/); each
 carries a `.env.app` (`JOB_TYPE`, `PATH_TO_APP`, `DEV_IMAGES_DIR`, `DEV_DATAFRAME`) and
-delegates to the shared harness in `fl-tutorials/testing/`.
+delegates to the shared harness in `fl-tutorials/nvflare/testing/`.
 
 1. Get the tutorial's dataset. The xray tutorial pulls a reference dataset from Hugging
    Face (`make -C fl-tutorials download-xray-data`); the spleen tutorials generate their
    own data via their `utils/` scripts (see each tutorial's README).
 
 2. Place any custom application files under the tutorial's `app_files/`; at run time
-   they are merged onto the matching `fl-apps/<JOB_TYPE>/app` template.
+   they are merged onto the matching `fl-apps/nvflare/<JOB_TYPE>/app` template.
 
 3. Run a tutorial on the simulator (requires GPUs + the `flare-fl-base` image):
 
@@ -178,7 +178,7 @@ The [`../fl-tutorials/`](../fl-tutorials/) directory contains ready-to-use examp
 
 ## FL Services API
 
-The [`../fl-services/`](../fl-services/README.md) directory contains Docker-based NVFLARE services. See the [FL services README](../fl-services/README.md) and the [FL API README](../fl-services/fl-api-base/README.md) for full details on provisioning and the API endpoints.
+The [`../fl-services/nvflare/`](../fl-services/nvflare/README.md) directory contains Docker-based NVFLARE services. See the [FL services README](../fl-services/nvflare/README.md) and the [FL API README](../fl-services/nvflare/fl-api-base/README.md) for full details on provisioning and the API endpoints.
 
 ### Prerequisites
 

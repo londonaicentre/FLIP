@@ -85,7 +85,7 @@ delete_testing_projects:
 #
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND so the same
 # `make e2e_smoke` invocation works against either stack. The NVFLARE tutorial
-# is in-tree at fl-tutorials/; the Flower one is still in the sibling
+# is in-tree at fl-tutorials/nvflare/; the Flower one is still in the sibling
 # flip-fl-base-flower repo (not yet migrated). Both reuse the same query.sql
 # against the trust mock OMOP data. Default backend matches
 # deploy/fl_backend.mk (nvflare). Override either path explicitly:
@@ -98,7 +98,7 @@ ifeq ($(FL_BACKEND),flower)
 MODEL_FILES_DIR ?= ../../flip-fl-base-flower/tutorials/xray_classification/app
 QUERY_FILE ?= ../../flip-fl-base-flower/tutorials/xray_classification/query.sql
 else
-MODEL_FILES_DIR ?= ../fl-tutorials/image_classification/xray_classification/app_files
+MODEL_FILES_DIR ?= ../fl-tutorials/nvflare/image_classification/xray_classification/app_files
 QUERY_FILE ?= $(MODEL_FILES_DIR)/../query.sql
 endif
 e2e_smoke:

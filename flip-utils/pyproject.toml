@@ -167,7 +167,7 @@ ignore_missing_imports = true
 # Exclude patterns to avoid duplicate module issues
 exclude = [
     "^tests/",
-    "^fl-services/",
+    "^fl-services/nvflare/",
     "^workspace/",
     "^\\.test_",
     "^\\.venv/",

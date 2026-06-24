@@ -10,15 +10,15 @@
 # limitations under the License.
 #
 
-name: Build and Push FL Docker Images
+name: Build and Push NVFLARE FL Docker Images
 
 on:
   push:
     branches: [main, develop]
     paths:
-      - "fl-services/**"
+      - "fl-services/nvflare/**"
       - "flip-utils/**"
-      - ".github/workflows/fl-docker-build.yml"
+      - ".github/workflows/fl-docker-build-nvflare.yml"
   workflow_dispatch:
 
 jobs:
@@ -95,7 +95,7 @@ jobs:
       - name: Build Base Image
         run: |
           docker build ${BUILD_ARGS} \
-            -f fl-services/fl-base/Dockerfile \
+            -f fl-services/nvflare/fl-base/Dockerfile \
             -t $REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} .
 
           # Tag environment-specific
@@ -135,9 +135,9 @@ jobs:
       - name: Build FL Server Image
         run: |
           docker build ${BUILD_ARGS} \
-            -f fl-services/fl-server/Dockerfile \
+            -f fl-services/nvflare/fl-server/Dockerfile \
             --build-arg BASE_REF=$REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} \
-            -t $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} fl-services/fl-server
+            -t $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} fl-services/nvflare/fl-server
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker tag $REGISTRY/$ORG/$SERVER_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$SERVER_IMAGE:prod
@@ -175,9 +175,9 @@ jobs:
       - name: Build FL Client Image
         run: |
           docker build ${BUILD_ARGS} \
-            -f fl-services/fl-client/Dockerfile \
+            -f fl-services/nvflare/fl-client/Dockerfile \
             --build-arg BASE_REF=$REGISTRY/$ORG/$BASE_IMAGE:${{ github.sha }} \
-            -t $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} fl-services/fl-client
+            -t $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} fl-services/nvflare/fl-client
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker tag $REGISTRY/$ORG/$CLIENT_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$CLIENT_IMAGE:prod
@@ -215,8 +215,8 @@ jobs:
       - name: Build FL API Image
         run: |
           docker build ${BUILD_ARGS} \
-            -f fl-services/fl-api-base/Dockerfile \
-            -t $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} fl-services/fl-api-base
+            -f fl-services/nvflare/fl-api-base/Dockerfile \
+            -t $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} fl-services/nvflare/fl-api-base
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             docker tag $REGISTRY/$ORG/$API_IMAGE:${{ github.sha }} $REGISTRY/$ORG/$API_IMAGE:prod

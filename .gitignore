@@ -435,12 +435,13 @@ fl-apps/required_files_aggregate.json
 .claude/
 
 # fl-tutorials generated / uncommitted artifacts. Replicates the legacy flip-fl-base
-# .gitignore (data/, tutorials/testing/tmp, the spleen-seg uv.lock), scoped to
-# fl-tutorials/ so a bare `data/` doesn't over-match other data/ dirs in the monorepo:
+# .gitignore (data/, tutorials/testing/tmp, the spleen-seg uv.lock), scoped under the
+# per-backend tutorial trees (fl-tutorials/<backend>/) so a bare `data/` doesn't over-match
+# other data/ dirs in the monorepo:
 # - generated tutorial datasets (spleen/xray images + accession CSVs)
 # - testing-harness scratch dir
 # - tutorial uv.lock (tutorials intentionally don't pin a strict lockfile)
-fl-tutorials/data/
-fl-tutorials/testing/tmp/
-fl-tutorials/testing/runs/workspace/
-fl-tutorials/image_segmentation/3d_spleen_segmentation/uv.lock
+fl-tutorials/nvflare/data/
+fl-tutorials/nvflare/testing/tmp/
+fl-tutorials/nvflare/testing/runs/workspace/
+fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/uv.lock
