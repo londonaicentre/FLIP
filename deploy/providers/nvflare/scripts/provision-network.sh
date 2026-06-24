@@ -13,7 +13,7 @@
 #
 
 # Provision an NVFLARE federated learning network
-# Usage: ./scripts/provision-network.sh <project_yaml_file> <net_number>
+# Usage: ./deploy/providers/nvflare/scripts/provision-network.sh <project_yaml_file> <net_number> [workspace_parent_dir]
 
 # Provisioned output lands under <WORKSPACE_PARENT_DIR>/net-<NET_NUMBER>/. Default
 # to deploy/workspace so it matches the compose mounts, README, and .gitignore.

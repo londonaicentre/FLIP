@@ -16,7 +16,8 @@
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock \
 		deploy-trust-k8s undeploy-trust-k8s \
-		nvflare-provision nvflare-provision-2-nets nvflare-provision-additional-client
+		nvflare-provision nvflare-provision-2-nets nvflare-provision-additional-client \
+		nvflare-provision-stag nvflare-provision-prod upload-flare-kits-to-s3
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -141,12 +142,12 @@ _ensure-fl-jobs-dir:
 	fi
 
 # Fail fast (NVFLARE) when the per-net startup kits are missing — delegated to
-# deploy/scripts/check-fl-provisioned.sh (see that script for the why/how). Net IDs
+# scripts/check-fl-provisioned.sh (see that script for the why/how). Net IDs
 # come from NET_ENDPOINTS (same source as _ensure-fl-jobs-dir); the check is a no-op
 # for non-NVFLARE backends.
 _check-fl-provisioned:
 	@FL_BACKEND='$(FL_BACKEND)' NET_ENDPOINTS='$(NET_ENDPOINTS)' FL_PROVISIONED_DIR='$(FL_PROVISIONED_DIR)' \
-		deploy/scripts/check-fl-provisioned.sh
+		scripts/check-fl-provisioned.sh
 
 # Minimal $(MAKE) up
 up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
@@ -387,28 +388,52 @@ lock:
 	done
 	@echo "All uv.lock files regenerated."
 
-# NVFLARE provisioning targets — delegate to deploy/scripts/.
-# The project YML files live in deploy/providers/; provisioned output goes to
-# deploy/workspace/ (gitignored), which is where the compose mounts expect it.
+# NVFLARE provisioning targets — delegate to the scripts colocated with the project
+# YML files under deploy/providers/nvflare/. Dev output goes to deploy/workspace/
+# (gitignored), where the compose mounts expect it; stag/prod output goes to
+# workspace-<env>/ (gitignored) for upload to S3 via upload-flare-kits-to-s3.
 NET_NUMBER ?= 1
 FL_WORKSPACE_DIR ?= deploy/workspace
+NVFLARE_SCRIPTS := deploy/providers/nvflare/scripts
+NVFLARE_PROJECTS := deploy/providers/nvflare
 
 nvflare-provision:
-	deploy/scripts/provision-network.sh deploy/providers/net-${NET_NUMBER}_project.yml $(NET_NUMBER) $(FL_WORKSPACE_DIR)
+	$(NVFLARE_SCRIPTS)/provision-network.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_dev.yml $(NET_NUMBER) $(FL_WORKSPACE_DIR)
 
 nvflare-provision-2-nets:
 	NET_NUMBER=1 $(MAKE) nvflare-provision
 	NET_NUMBER=2 $(MAKE) nvflare-provision
 
 nvflare-provision-additional-client:
-	deploy/scripts/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT) deploy/providers/net-${NET_NUMBER}_project.yml $(FL_WORKSPACE_DIR)
+	$(NVFLARE_SCRIPTS)/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT) $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_dev.yml $(FL_WORKSPACE_DIR)
+
+# Provision the stag/prod FL network from the env-specific project file into a
+# gitignored workspace-<env>/, ready to upload to S3 (see upload-flare-kits-to-s3).
+nvflare-provision-stag:
+	$(NVFLARE_SCRIPTS)/provision-network.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_stag.yml $(NET_NUMBER) workspace-stag
+
+nvflare-provision-prod:
+	$(NVFLARE_SCRIPTS)/provision-network.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_prod.yml $(NET_NUMBER) workspace-prod
+
+# Upload the provisioned FLARE participant kits to S3 under the FLARE_KIT_DATE prefix
+# the deploy flow pulls from (deploy/providers/AWS Makefile `provision-local-trust`,
+# which reads s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/
+# net-N/services/<slot>/). Run with PROD=stag|true so AICENTRE_BUCKET_NAME + FLARE_KIT_DATE
+# load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload for real.
+FL_KIT_WORKSPACE := $(if $(filter true,$(PROD)),workspace-prod,workspace-stag)
+DRYRUN ?= --dryrun
+upload-flare-kits-to-s3:
+	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true"; exit 1; }
+	@[ -n "$(FLARE_KIT_DATE)" ] || { echo "❌ FLARE_KIT_DATE not set — run with PROD=stag|true"; exit 1; }
+	@echo "⬆️  Uploading FLARE kits (net-$(NET_NUMBER), $(FL_KIT_WORKSPACE)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
+	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) --delete $(DRYRUN)
 
 # Drives a fresh project end-to-end against a running `make up` stack:
 # create → approve → upload model → wait for image pull → start training.
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND (flower or
-# nvflare). The NVFLARE defaults still target ../../flip-fl-base/tutorials/...
-# (legacy sibling) — the migrated in-repo equivalents now live under
-# fl-apps/tutorials/ and can be passed via MODEL_FILES_DIR= / QUERY_FILE=.
+# nvflare). The NVFLARE defaults target the in-tree tutorial under
+# fl-tutorials/; the Flower one is still the legacy sibling
+# ../../flip-fl-base-flower/tutorials/... — override via MODEL_FILES_DIR= / QUERY_FILE=.
 # Useful for sanity-checking PRs without manually clicking through the UI.
 # See flip-api/Makefile for overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
 e2e_smoke:

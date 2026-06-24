@@ -73,7 +73,7 @@ network the client belongs to.
 This should ensure that the client stays part of the network, without re-creating the other services or altering signed
 files.
 
-There is a helper Makefile target for this process (wrapping `deploy/scripts/provision-additional-client.sh`):
+There is a helper Makefile target for this process (wrapping `deploy/providers/nvflare/scripts/provision-additional-client.sh`):
 
 ```sh
 make nvflare-provision-additional-client NET_NUMBER=<NET_NUMBER>
