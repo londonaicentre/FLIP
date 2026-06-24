@@ -145,7 +145,8 @@ up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jo
 # Only needed for the Flower backend (NVFLARE doesn't use FL_JOBS_DIR).
 _ensure-fl-jobs-dir:
 	@if [ "$(FL_BACKEND)" = "flower" ]; then \
-		nets=$$(printf '%s' '$(NET_ENDPOINTS)' | python3 -c "import json,sys; d=sys.stdin.read().strip(); print(' '.join(json.loads(d).keys()) if d else '')"); \
+		command -v jq >/dev/null 2>&1 || { echo "❌ _ensure-fl-jobs-dir: jq not found on PATH; required to parse NET_ENDPOINTS" >&2; exit 1; }; \
+		nets=$$(printf '%s' '$(NET_ENDPOINTS)' | jq -r 'keys_unsorted | join(" ")' 2>/dev/null) || nets=""; \
 		if [ -z "$$nets" ]; then \
 			echo "❌ _ensure-fl-jobs-dir: NET_ENDPOINTS is empty or unparseable; cannot derive net IDs" >&2; \
 			exit 1; \

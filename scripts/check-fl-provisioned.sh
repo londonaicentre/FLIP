@@ -35,10 +35,18 @@ if [ "${FL_BACKEND}" != "nvflare" ]; then
     exit 0
 fi
 
-# Empty *or* unparseable NET_ENDPOINTS both collapse to an empty `nets` (stderr from a
-# bad parse is suppressed and `|| nets=""` keeps `set -e` from aborting first), so the
-# guard below reports either case with one clear message.
-nets=$(printf '%s' "${NET_ENDPOINTS}" | python3 -c "import json,sys; d=sys.stdin.read().strip(); print(' '.join(json.loads(d).keys()) if d else '')" 2>/dev/null) || nets=""
+# jq derives the net IDs from NET_ENDPOINTS' JSON keys; require it explicitly (it's already
+# used across the repo) so a minimal environment fails with a clear message rather than a
+# cryptic parse error.
+if ! command -v jq >/dev/null 2>&1; then
+    echo "❌ check-fl-provisioned: jq not found on PATH; required to parse NET_ENDPOINTS" >&2
+    exit 1
+fi
+
+# Empty *or* unparseable NET_ENDPOINTS both collapse to an empty `nets` (jq's stderr is
+# suppressed and `|| nets=""` keeps `set -e` from aborting first), so the guard below
+# reports either case with one clear message.
+nets=$(printf '%s' "${NET_ENDPOINTS}" | jq -r 'keys_unsorted | join(" ")' 2>/dev/null) || nets=""
 if [ -z "${nets}" ]; then
     echo "❌ check-fl-provisioned: NET_ENDPOINTS is empty or unparseable; cannot derive net IDs" >&2
     exit 1

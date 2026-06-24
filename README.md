@@ -71,6 +71,7 @@ provisioned Flower certs used at dev time — see [Federated Learning Setup](#fe
 - [Make](https://formulae.brew.sh/formula/make)
 - [UV](https://docs.astral.sh/uv) - Python environment management tool
 - postgresql-client (install with `apt install postgresql-client postgresql-client-common` on Debian/Ubuntu)
+- [jq](https://jqlang.github.io/jq/) - JSON processor used by several `make` targets (install with `apt install jq` on Debian/Ubuntu, or `brew install jq`)
 
 > For developer tooling and IDE setup, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
