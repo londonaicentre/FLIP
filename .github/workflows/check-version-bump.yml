@@ -1,0 +1,90 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+name: Check version bump for PR to main
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "flip-utils/**"
+      - "flip-utils/pyproject.toml"
+      - ".github/workflows/check-version-bump.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  version-check:
+    if: github.event.pull_request.head.ref == 'develop'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # required to fetch all tags for comparison
+
+      - name: Check version consistency and bump
+        run: |
+          set -euo pipefail
+
+          # ── Extract version from single source of truth ──────────────────
+          NEW_VERSION=$(grep -m1 '__version__' flip-utils/flip/__init__.py | sed 's/.*= *"\(.*\)"/\1/')
+
+          echo "flip-utils/flip/__init__.py version: ${NEW_VERSION}"
+
+          # ── Check 2: validate semver format (MAJOR.MINOR.PATCH) ───────────
+          if ! [[ "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo ""
+            echo "ERROR: '${NEW_VERSION}' is not a valid semantic version (expected MAJOR.MINOR.PATCH)."
+            exit 1
+          fi
+
+          # ── Resolve latest released version from git tags ─────────────────
+          # Tags are created by the release workflow in the form vMAJOR.MINOR.PATCH
+          LATEST_TAG=$(git tag --list 'v*.*.*' | sort -V | tail -n1)
+
+          if [[ -z "$LATEST_TAG" ]]; then
+            echo ""
+            echo "No previous release tags found — first release, version ${NEW_VERSION} is accepted."
+            exit 0
+          fi
+
+          LATEST_VERSION="${LATEST_TAG#v}"
+          echo "Latest released version: ${LATEST_VERSION} (tag: ${LATEST_TAG})"
+
+          # ── Check 3: new version must be strictly greater than latest ─────
+          # sort -V orders by semver; the greater version will appear last.
+          HIGHEST=$(printf '%s\n' "$LATEST_VERSION" "$NEW_VERSION" | sort -V | tail -n1)
+
+          if [[ "$NEW_VERSION" == "$LATEST_VERSION" ]]; then
+            echo ""
+            echo "ERROR: Version has not been bumped."
+            echo "  Current (PR)  : ${NEW_VERSION}"
+            echo "  Latest release: ${LATEST_VERSION}"
+            echo ""
+            echo "Increment the version in flip-utils/flip/__init__.py before merging to main."
+            exit 1
+          fi
+
+          if [[ "$HIGHEST" != "$NEW_VERSION" ]]; then
+            echo ""
+            echo "ERROR: New version ${NEW_VERSION} is lower than the latest release ${LATEST_VERSION}."
+            echo ""
+            echo "Versions must always move forward. Use a higher MAJOR.MINOR.PATCH value."
+            exit 1
+          fi
+
+          echo ""
+          echo "Version check passed: ${LATEST_VERSION} → ${NEW_VERSION}"

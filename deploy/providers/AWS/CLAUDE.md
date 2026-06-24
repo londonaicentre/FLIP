@@ -7,13 +7,14 @@
 | `main.tf` | Provider config, VPC, subnets, IGW, NAT, route tables, RDS instance, Secrets Manager, SES |
 | `services.tf` | S3 buckets, Cognito |
 | `rds_proxy.tf` | RDS Proxy + IAM DB auth (proxy, IAM role/policy, SG, `rds-db:connect`) — see FLIP#556 |
-| `ecs.tf` | ECS cluster, task definitions, IAM execution roles |
+| `ecs.tf` | ECS cluster, ALB, target groups, listeners |
 | `ecs_services.tf` | ECS Fargate services (flip-api, FL services) |
-| `ecs_tasks.tf` | ECS task definitions for Central Hub services |
-| `ecs_fl.tf` | FL-specific ECS resources |
+| `ecs_tasks.tf` | ECS task definitions for Central Hub services (flip-api + FL) |
+| `ecs_efs_provision.tf` | EFS access points + ECS provisioning task for FL workspace |
+| `ecs_sg.tf` | ECS security groups |
 | `certificate.tf` | ACM certificates (ALB + CloudFront) |
 | `cloudfront.tf` | CloudFront distribution for flip-ui |
-| `iam.tf` | IAM roles, instance profiles, SSM policies |
+| `iam_ecs.tf` | IAM roles, instance profiles, SSM policies |
 | `parameter_store.tf` | SSM Parameter Store entries |
 | `backend.tf` | S3 backend + DynamoDB lock |
 | `variables.tf` | All Terraform variables with defaults |
