@@ -15,7 +15,7 @@ FLIP/
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
 ├── fl_services/        # FL Docker services (server, client, API)
-├── fl-apps/            # FL app templates (standard, fed_opt, evaluation, diffusion_model) + utility scripts
+├── fl-apps/            # FL app templates (standard, fed_opt, evaluation, diffusion_model) + check_required_files.sh (CI validator)
 ├── fl-tutorials/       # End-to-end tutorial examples (xray classification, spleen seg/eval, diffusion)
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)

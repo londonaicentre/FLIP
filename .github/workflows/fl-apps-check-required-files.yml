@@ -36,4 +36,4 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Run check_required_files.sh
-        run: bash fl-apps/scripts/check_required_files.sh
+        run: bash fl-apps/check_required_files.sh

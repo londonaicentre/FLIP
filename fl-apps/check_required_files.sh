@@ -2,18 +2,18 @@
 set -e
 cd "$(dirname "$0")"
 
-SRC_DIR=".."
-AGG_FILE="../required_files_aggregate.json"
+SRC_DIR="."
+AGG_FILE="./required_files_aggregate.json"
 FAIL=0
 
 echo '{}' > "$AGG_FILE"
 
-# Only consider template dirs under fl-apps (parent of scripts/)
+# Only consider template dirs under fl-apps/ (the script now lives at fl-apps/)
 for d in "$SRC_DIR"/*; do
   if [ -d "$d" ]; then
     dname=$(basename "$d")
     # Skip non-template dirs
-    case "$dname" in scripts|runs) continue;; esac
+    case "$dname" in runs) continue;; esac
     REQ_FILE="$d/required_files.json"
     if [ ! -f "$REQ_FILE" ]; then
       echo "Missing required_files.json in $dname" >&2
