@@ -76,8 +76,7 @@ full = [
     "nibabel>=5.3.2",
     "pydicom>=3.0.2",
     # scikit-learn and timm are NOT MONAI extras, so declare them directly
-    # for FL apps that import them. timm pulls torchvision from the cu128
-    # index pinned in [tool.uv.sources] below.
+    # for FL apps that import them.
     "scikit-learn>=1.5.0",
     "timm>=1.0.0",
     # Pin torch>=2.11,<2.12 (was 2.9.1 via MONAI transitive) so the NVFlare
@@ -86,6 +85,12 @@ full = [
     # default, which matches host NVIDIA driver 575.x. 2.12 ships cu130
     # which needs driver >=580.
     "torch>=2.11.0,<2.12",
+    # torchvision MUST be a direct dep, kept in lock-step with torch (0.26 <-> 2.11).
+    # timm pulls it in transitively, but [tool.uv.sources] index pins only apply to
+    # DIRECT deps — a transitive-only torchvision resolves from PyPI's default build
+    # and mismatches torch's cu128 ABI ("operator torchvision::nms does not exist").
+    # Declaring it here routes it through the pinned cu128 index (-> 0.26.0+cu128).
+    "torchvision>=0.26.0,<0.27",
 ]
 
 [tool.uv]
