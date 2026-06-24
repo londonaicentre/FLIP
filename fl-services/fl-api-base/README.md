@@ -117,7 +117,7 @@ Parameters:
 - `target_type`: type of target (client or server)
 - `targets`: list of specific targets
 
-_Who calls it_: Central Hub API in fl_services
+_Who calls it_: Central Hub API in fl-services
 
 
 #### check_server_status
@@ -126,7 +126,7 @@ It provides the status of the Central Hub FL server.
 
 Method type: GET
 
-_Who calls it_: Central Hub API in fl_services
+_Who calls it_: Central Hub API in fl-services
 
 
 #### check_client_status
@@ -138,7 +138,7 @@ Method type: GET
 Parameters:
 - `targets`: list of specific targets (e.g. client-1)
 
-_Who calls it_: Central Hub API in fl_services
+_Who calls it_: Central Hub API in fl-services
 
 
 3) **FL-API endpoints that are not used in FLIP**

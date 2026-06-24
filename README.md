@@ -43,7 +43,7 @@ FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in coll
 This repository is the FLIP mono-repo: Central Hub API, Trust APIs, UI, Docker deployment, **and** the federated
 learning code (base library, FL services, and tutorials) that was previously split across `flip-fl-base` and
 `flip-fl-base-flower`. The FL code now lives under [`flip-utils/`](flip-utils/) (the pip-installable `flip` package),
-[`fl_services/`](fl_services/) (Docker services for FL server/client/API), and [`fl-apps/`](fl-apps/) (job-type
+[`fl-services/`](fl-services/) (Docker services for FL server/client/API), and [`fl-apps/`](fl-apps/) (job-type
 implementations and tutorials).
 
 | Subdirectory | Description |
@@ -54,7 +54,7 @@ implementations and tutorials).
 | [`deploy/`](deploy/) | Docker Compose and infrastructure-as-code (AWS / on-prem) |
 | [`docs/`](docs/) | Sphinx documentation source (ReadTheDocs) |
 | [`flip-utils/`](flip-utils/) | `flip` Python package — platform logic, NVFLARE components, Flower helpers |
-| [`fl_services/`](fl_services/) | Docker images for FL networks: `fl-server`, `fl-client`, `fl-api-base`, `fl-base` |
+| [`fl-services/`](fl-services/) | Docker images for FL networks: `fl-server`, `fl-client`, `fl-api-base`, `fl-base` |
 | [`fl-apps/`](fl-apps/) | FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) |
 | [`fl-tutorials/`](fl-tutorials/) | End-to-end tutorial examples (xray classification, spleen seg/eval, diffusion) |
 
@@ -229,7 +229,7 @@ kits" — that are generated in-tree and stored in `deploy/workspace/`.
 >
 > Then bring the stack up with `make up`. Provisioning _after_ a `make up` is awkward: Docker will already have
 > created `deploy/workspace/net-*` as **root-owned** bind-mount targets, which block re-provisioning's `rm -rf`
-> until they are removed. See [`fl_services/README.md`](fl_services/README.md) for per-network details and how to
+> until they are removed. See [`fl-services/README.md`](fl-services/README.md) for per-network details and how to
 > onboard additional clients.
 
 1. **Path Resolution**: `FL_PROVISIONED_DIR` is derived from the `FL_BACKEND` selection inside [`deploy/fl_backend.mk`](deploy/fl_backend.mk):
@@ -414,7 +414,7 @@ The repository is organised as follows:
 - `flip-api`: Contains the central hub API service
 - `flip-ui`: Contains the UI service
 - `flip-utils`: Contains the pip-installable flip-utils Python library
-- `fl_services`: Contains the FL Docker services (server, client, admin API)
+- `fl-services`: Contains the FL Docker services (server, client, admin API)
 - `fl-apps`: Contains FL app templates and utility scripts
 - `fl-tutorials`: Contains end-to-end tutorial examples (xray classification, spleen seg/eval, diffusion)
 - `trust`: Contains the services that would be deployed in individual trust environments.
@@ -426,7 +426,7 @@ The repository is organised as follows:
   - `trust-api`: Contains the trust API service
   - `xnat`: Contains a mocked [XNAT](https://www.xnat.org/) service
 - `flip-utils`: The `flip` Python package — platform logic, NVFLARE components, Flower helpers (migrated from `flip-fl-base`)
-- `fl_services`: Docker images for FL networks — `fl-server`, `fl-client`, `fl-api-base`, `fl-base` (migrated from `flip-fl-base`)
+- `fl-services`: Docker images for FL networks — `fl-server`, `fl-client`, `fl-api-base`, `fl-base` (migrated from `flip-fl-base`)
 - `fl-apps`: FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`)
 - `fl-tutorials`: Runnable end-to-end tutorial examples (migrated from `flip-fl-base`)
 

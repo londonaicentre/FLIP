@@ -155,7 +155,7 @@ select = ['I', 'F', 'E', 'W', 'PT']
 [tool.pytest.ini_options]
 testpaths = ["tests/unit"]
 # Exclude subdirectories that have their own pyproject.toml and dependencies
-norecursedirs = ["fl_services", "fl-base", ".venv", "workspace", ".test_*"]
+norecursedirs = ["fl-services", "fl-base", ".venv", "workspace", ".test_*"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -167,7 +167,7 @@ ignore_missing_imports = true
 # Exclude patterns to avoid duplicate module issues
 exclude = [
     "^tests/",
-    "^fl_services/",
+    "^fl-services/",
     "^workspace/",
     "^\\.test_",
     "^\\.venv/",

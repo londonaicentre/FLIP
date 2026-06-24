@@ -17,7 +17,7 @@ This folder contains base code to create NVIDIA FLARE federated learning network
 
 This diagram provides an overview of the services:
 
-![FL Services Architecture](../assets/fl_services_overview.png)
+![FL Services Architecture](../assets/fl-services_overview.png)
 
 ## Step-by-step provisioning
 
@@ -39,7 +39,7 @@ You can also pass `FL_PORT` if you do not want to use the default (which will be
 ### Provisioning command
 
 This runs the `nvflare provision` CLI as part of `make nvflare-provision`. It is executed from the
-`fl_services/fl-api-base` uv project (which declares `nvflare`), so it resolves even though the repo-root `flip`
+`fl-services/fl-api-base` uv project (which declares `nvflare`), so it resolves even though the repo-root `flip`
 project has no dependencies. It creates the services defined in the net-specific yml file, initially under
 `deploy/workspace/net-${NET_NUMBER}/prod_XX`, with default names.
 Inside of these services, you should have at least a `local` and `startup` folder. The `startup` folder contains the

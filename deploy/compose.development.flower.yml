@@ -129,7 +129,7 @@ services:
       - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
       # Dev-overlay: edits to the sibling-repo script apply without a rebuild.
       # Same script is baked into the image, so removal still works.
-      - ${FL_PROVISIONED_DIR}/../fl_services/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
+      - ${FL_PROVISIONED_DIR}/../fl-services/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-1:
@@ -193,7 +193,7 @@ services:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro
       # See net-1 above — symmetric dev-overlay.
-      - ${FL_PROVISIONED_DIR}/../fl_services/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
+      - ${FL_PROVISIONED_DIR}/../fl-services/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-2:

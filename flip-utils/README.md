@@ -28,11 +28,11 @@ image and is imported as `from flip import ...` by user-uploaded training code. 
 - **[`flip-utils/flip/`](./flip/)** — pip-installable Python package with platform logic, NVFLARE components, and utilities (this directory)
 - **[`../fl-apps/`](../fl-apps/)** — FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`)
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples
-- **[`../fl_services/`](../fl_services/)** — Docker images for FL networks (server, clients, admin API)
+- **[`../fl-services/`](../fl-services/)** — Docker images for FL networks (server, clients, admin API)
 
 The rest of this README is largely inherited from the standalone `flip-fl-base` repository (now merged in) and is
-still being reconciled with the mono-repo layout — paths like `tutorials/` and `fl_services/` referred to here are
-the now-sibling top-level `fl-tutorials/` and `fl_services/` trees, and Make targets called out below run from the
+still being reconciled with the mono-repo layout — paths like `tutorials/` and `fl-services/` referred to here are
+the now-sibling top-level `fl-tutorials/` and `fl-services/` trees, and Make targets called out below run from the
 `flip-utils/` directory.
 
 ## Table of Contents
@@ -178,7 +178,7 @@ The [`tutorials/`](./tutorials/) directory contains ready-to-use example applica
 
 ## FL Services API
 
-The [`fl_services/`](./fl_services/README.md) directory contains Docker-based NVFLARE services. See the [FL services README](./fl_services/README.md) and the [FL API README](./fl_services/fl-api-base/README.md) for full details on provisioning and the API endpoints.
+The [`fl-services/`](./fl-services/README.md) directory contains Docker-based NVFLARE services. See the [FL services README](./fl-services/README.md) and the [FL API README](./fl-services/fl-api-base/README.md) for full details on provisioning and the API endpoints.
 
 ### Prerequisites
 

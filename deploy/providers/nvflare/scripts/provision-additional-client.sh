@@ -50,7 +50,7 @@ fi
 
 # List all client folders in latest prod directory
 PROD_CLIENTS=( $(find "$PROD_DIR" -maxdepth 1 -type d -name 'Trust_*') )
-# List all client folders in fl_services/net-N
+# List all client folders in fl-services/net-N
 FL_SERVICES_CLIENTS=( $(find "$FL_SERVICES" -maxdepth 1 -type d -name 'Trust_*') )
 
 # Debug output
@@ -59,7 +59,7 @@ echo "[DEBUG] workspace/services dir: $FL_SERVICES"
 echo "[DEBUG] Clients in prod: ${PROD_CLIENTS[@]}"
 echo "[DEBUG] Clients in workspace/services: ${FL_SERVICES_CLIENTS[@]}"
 
-# 5. For each client in prod, copy only if not already present in fl_services
+# 5. For each client in prod, copy only if not already present in fl-services
 SERVER_DIR="${FL_SERVICES}/fl-server-net-${NET_NUMBER}"
 
 for CLIENT_DIR in "${PROD_CLIENTS[@]}"; do
@@ -69,7 +69,7 @@ for CLIENT_DIR in "${PROD_CLIENTS[@]}"; do
   if [ ! -d "$DEST_DIR" ]; then
     echo "[DEBUG] New client detected: $CLIENT_NAME"
     
-    # Copy the entire client directory from prod to fl_services
+    # Copy the entire client directory from prod to fl-services
     cp -r "$CLIENT_DIR" "$FL_SERVICES/"
     echo "[DEBUG] Copied $CLIENT_NAME to $DEST_DIR"
     
@@ -120,6 +120,6 @@ for CLIENT_DIR in "${PROD_CLIENTS[@]}"; do
 #           echo "[DEBUG] $CLIENT_NAME already present in $COMPOSE_FILE, skipping append."
 #         fi
   else
-    echo "[DEBUG] Client already exists in fl_services: $CLIENT_NAME (skipping)"
+    echo "[DEBUG] Client already exists in fl-services: $CLIENT_NAME (skipping)"
   fi
 done
