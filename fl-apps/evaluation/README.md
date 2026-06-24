@@ -21,6 +21,18 @@ The evaluation pipeline loads the model weights in the server side, and then sen
 The custom-code `evaluator.py` is used to then obtain the metrics, which are saved under `evaluation_results.json`
 file in the server evaluation folder.
 
+## Execution sequence
+
+**Server — `config_fed_server.json` `workflows` (run in order):**
+
+1. `init_evaluation` — `flip.nvflare.controllers.InitEvaluation`
+2. `site_validate` — `flip.nvflare.controllers.ModelEval`
+
+**Client — `config_fed_client.json` `executors` (by task):**
+
+- `init_task`, `post_task` → `flip.nvflare.components.CleanupImages`
+- `evaluation` → `flip.nvflare.executors.RUN_EVALUATOR`
+
 ## What does the user upload?
 
 The user uploads:

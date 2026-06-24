@@ -20,6 +20,26 @@ As this training has two stages, there are global and local rounds specific for 
 
 This code is compatible with a single `trainer.py` and `validator.py` files with training loops for different phases, and `models.py` files containing the different stages under the same network.
 
+## Execution sequence
+
+Two stages run back to back: the autoencoder (`_ae`) is trained and validated first, then the diffusion model (`_dm`).
+
+**Server — `config_fed_server.json` `workflows` (run in order):**
+
+1. `init_training` — `flip.nvflare.controllers.InitTraining`
+2. `scatter_and_gather_ae` — `flip.nvflare.controllers.ScatterAndGatherLDM` (stage 1: autoencoder)
+3. `cross_site_validate_ae` — `flip.nvflare.controllers.CrossSiteModelEval`
+4. `scatter_and_gather_dm` — `flip.nvflare.controllers.ScatterAndGatherLDM` (stage 2: diffusion)
+5. `cross_site_validate_dm` — `flip.nvflare.controllers.CrossSiteModelEval`
+
+**Client — `config_fed_client.json` `executors` (by task):**
+
+- `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
+- `train_ae` → `flip.nvflare.executors.RUN_TRAINER`
+- `train_dm`, `submit_model` → `flip.nvflare.executors.RUN_TRAINER`
+- `validate_ae` → `flip.nvflare.executors.RUN_VALIDATOR`
+- `validate_dm` → `flip.nvflare.executors.RUN_VALIDATOR`
+
 ## Validation metrics
 
 For security purposes, plotting is disable in production, with metrics being the only thing being sent to the server.

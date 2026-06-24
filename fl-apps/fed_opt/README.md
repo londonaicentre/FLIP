@@ -19,6 +19,22 @@ This app differs from Federated Averaging in that the server has a persistent op
 
 It is based on the paper "Adaptive Federated Optimization" by Reddi S. et al. (2020), and on NVFlare's implementation in their CIFAR10 tutorial available at: <https://github.com/NVIDIA/NVFlare/tree/2.4/examples/advanced/cifar10/cifar10-sim/jobs/cifar10_fedopt/cifar10_fedopt>.
 
+## Execution sequence
+
+The control flow is the same as the [`standard`](../standard/README.md) job — the FedOpt difference is the server-side shareable generator / optimizer (a component), not the workflow order.
+
+**Server — `config_fed_server.json` `workflows` (run in order):**
+
+1. `init_training` — `flip.nvflare.controllers.InitTraining`
+2. `scatter_and_gather` — `flip.nvflare.controllers.ScatterAndGather`
+3. `cross_site_validate` — `flip.nvflare.controllers.CrossSiteModelEval`
+
+**Client — `config_fed_client.json` `executors` (by task):**
+
+- `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
+- `train`, `submit_model` → `flip.nvflare.executors.RUN_TRAINER`
+- `validate` → `flip.nvflare.executors.RUN_VALIDATOR`
+
 ## Technical differences
 
 This app differs in that the Shareable Generator at the server is different and holds an optimizer and a learning rate scheduler that can be customised by the user.

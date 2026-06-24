@@ -35,6 +35,20 @@ For each global round (`global_rounds` in `config_fed_server.json`):
 Orchestration is the standard NVFLARE Scatter-and-Gather workflow; the privileged image cleanup runs via
 `flip.nvflare.components.CleanupImages` on the `init_training` / `post_validation` tasks.
 
+## Execution sequence
+
+**Server — `config_fed_server.json` `workflows` (run in order):**
+
+1. `init_training` — `flip.nvflare.controllers.InitTraining`
+2. `scatter_and_gather` — `flip.nvflare.controllers.ScatterAndGather`
+3. `cross_site_validate` — `flip.nvflare.controllers.CrossSiteModelEval`
+
+**Client — `config_fed_client.json` `executors` (by task):**
+
+- `init_training`, `post_validation` → `flip.nvflare.components.CleanupImages`
+- `train`, `submit_model` → `flip.nvflare.executors.RUN_TRAINER`
+- `validate` → `flip.nvflare.executors.RUN_VALIDATOR`
+
 ## What does the user upload?
 
 The required files (see [`required_files.json`](./required_files.json)) are:
