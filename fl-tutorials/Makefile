@@ -19,6 +19,7 @@
 #   make list-tutorials
 #   make run-tutorial TUTORIAL=xray_classification
 #   make run-all-tutorials      # runs every tutorial (heavy; stops on first failure)
+#   make test-template TEMPLATE=fed_opt   # smoke-test a template that has no tutorial
 #
 # Datasets land (gitignored) under data/ where each tutorial's .env.app expects them:
 #   - xray_classification: reference dataset from Hugging Face (download-xray-data)
@@ -34,7 +35,13 @@ XRAY_DATA_REPO := aicentreflip/flip-fl-base-test-data
 NUM_CASES ?= 10
 SPLEEN_DIR := image_segmentation/3d_spleen_segmentation
 
-.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data
+# Template smoke-test: which fl-apps/<template> to exercise, and the tutorial whose
+# app_files + data drive it. fed_opt has no tutorial of its own, so it borrows the
+# spleen-segmentation tutorial (matching the legacy `make test-spleen-fedopt`).
+TEMPLATE ?= fed_opt
+TEMPLATE_TUTORIAL ?= image_segmentation/3d_spleen_segmentation
+
+.PHONY: list-tutorials run-tutorial run-all-tutorials download-xray-data download-spleen-data test-template
 
 # Download the x-ray reference dataset from Hugging Face and normalise it into the
 # layout image_classification/xray_classification/.env.app expects (data/xrays_mini_300/,
@@ -76,3 +83,12 @@ run-all-tutorials:
 		echo "🚀 Running NVFLARE tutorial $$(basename $$d)"; \
 		$(MAKE) -C "$$d" run || { echo "❌ tutorial $$(basename $$d) failed"; exit 1; }; \
 	done
+
+# Smoke-test an fl-apps/<template> on the NVFLARE simulator using a tutorial's app_files
+# + data. Mainly for templates with no dedicated tutorial (e.g. fed_opt): it runs the
+# tutorial with JOB_TYPE overridden to the template, so app_organiser.sh merges
+# fl-apps/<TEMPLATE>/app with the tutorial's app_files. Requires the dataset
+# (make download-spleen-data) + GPUs + the flare-fl-base image.
+test-template:
+	@echo "🧪 Smoke-testing template '$(TEMPLATE)' via $(TEMPLATE_TUTORIAL) app_files + data"
+	$(MAKE) -C $(TEMPLATE_TUTORIAL) run JOB_TYPE=$(TEMPLATE)
