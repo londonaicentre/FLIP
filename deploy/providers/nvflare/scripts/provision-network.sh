@@ -74,6 +74,19 @@ get_participant_name_by_type() {
     "$project_yaml" | head -n 1
 }
 
+# Like get_participant_name_by_type but returns every matching name (one per
+# line), not just the first. Used to restructure all clients regardless of how
+# many the project YAML declares — the generator may have expanded it to N (see
+# generate-project-yaml.sh).
+get_participant_names_by_type() {
+  local project_yaml="$1"
+  local participant_type="$2"
+
+  yq -r \
+    ".participants[] | select(.type == \"${participant_type}\") | .name" \
+    "$project_yaml"
+}
+
 # Function to restructure a participant's files
 restructure_participant() {
     local participant_name="$1"
@@ -168,9 +181,17 @@ echo "Identified server participant name: ${SERVER_NAME}"
 ADMIN_NAME="$(get_participant_name_by_type "$PROJECT_YAML" admin)"
 echo "Identified admin participant name: ${ADMIN_NAME}"
 
-# TODO this is hardcoded to 2 clients for now -- make this dynamic later
-restructure_participant "Trust_1" "Trust_1" 1
-restructure_participant "Trust_2" "Trust_2" 1
+# Restructure every client participant. The count is driven entirely by the
+# project YAML (dev declares 2; stag/prod are expanded to N by
+# generate-project-yaml.sh), so nothing here is hardcoded to a client count.
+client_count=0
+while IFS= read -r client_name; do
+    [[ -z "${client_name}" ]] && continue
+    restructure_participant "${client_name}" "${client_name}" 1
+    client_count=$((client_count + 1))
+done < <(get_participant_names_by_type "$PROJECT_YAML" client)
+echo "Restructured ${client_count} client participant(s)"
+
 restructure_participant "${SERVER_NAME}" "fl-server-net-${NET_NUMBER}" 0
 restructure_participant "${ADMIN_NAME}" "flip-fl-api-net-${NET_NUMBER}" 0
 

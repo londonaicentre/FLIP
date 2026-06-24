@@ -25,6 +25,13 @@ participants:
     host_names: [fl.stag.flip.aicentre.co.uk, fl-server-net-1]
     default_host: fl.stag.flip.aicentre.co.uk
 #    docker_comm_port: 8005
+  # Single client TEMPLATE. `make nvflare-provision-stag` runs
+  # deploy/providers/nvflare/scripts/generate-project-yaml.sh to clone this block
+  # into Trust_1 .. Trust_<STAG_NUM_CLIENTS> (default 50) before provisioning.
+  # We over-provision spare kit slots so onboarding a new trust just claims a
+  # pre-minted slot — never a re-provision, which would rotate every existing
+  # trust's certs and force a fleet-wide redeploy. See FLIP#626. Edit this block
+  # to change settings applied to *all* generated clients.
   - name: Trust_1
     type: client
     org: AICentre
@@ -36,15 +43,6 @@ participants:
     # The value must be a hostname that the external trainer can reach via the network.
     # listening_host: site-1-lh
 #    docker_comm_port: 8006
-    enable_byoc: true
-    resource:
-      num_of_gpus: 1
-      mem_per_gpu_in_GiB: 16
-  - name: Trust_2
-    type: client
-    org: AICentre
-    connect_to:
-      host: fl.stag.flip.aicentre.co.uk
     enable_byoc: true
     resource:
       num_of_gpus: 1
