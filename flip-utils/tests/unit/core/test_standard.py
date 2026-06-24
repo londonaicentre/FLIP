@@ -18,11 +18,28 @@ from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
+from pydantic import HttpUrl, TypeAdapter
 from requests import HTTPError
 
 from flip.constants import ModelStatus, ResourceType
-from flip.core.standard import FLIPStandardDev, FLIPStandardProd
+from flip.core.standard import FLIPStandardDev, FLIPStandardProd, _join_url
 from flip.exceptions import ResultsUploadError
+
+
+class TestURLConstruction:
+    """Regression tests for service URL construction."""
+
+    def test_join_url_normalises_pydantic_http_url_trailing_slash(self):
+        """Pydantic HttpUrl adds a trailing slash to bare hosts; API paths must not become //path."""
+        base_url = TypeAdapter(HttpUrl).validate_python("http://data-access-api:8000")
+
+        assert _join_url(base_url, "/cohort/dataframe") == "http://data-access-api:8000/cohort/dataframe"
+
+    def test_join_url_preserves_base_path(self):
+        """Hub internal URLs may include /api, so joining must not discard the base path."""
+        assert _join_url("https://hub.example.com/api/", "/model/model-123/metrics") == (
+            "https://hub.example.com/api/model/model-123/metrics"
+        )
 
 
 class TestFLIPStandardDevGetDataframe:

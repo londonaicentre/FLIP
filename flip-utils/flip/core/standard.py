@@ -73,6 +73,11 @@ def _hub_internal_headers() -> dict[str, str]:
     return {FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY}
 
 
+def _join_url(base_url: object, path: str) -> str:
+    """Join a service base URL and API path without introducing double slashes."""
+    return f"{str(base_url).rstrip('/')}/{path.lstrip('/')}"
+
+
 class FLIPStandardProd(FLIPBase):
     """Production implementation of FLIP for standard job types.
 
@@ -120,7 +125,7 @@ class FLIPStandardProd(FLIPBase):
             "query": query,
         }
 
-        endpoint = f"{FlipConstants.DATA_ACCESS_API_URL}/cohort/dataframe"
+        endpoint = _join_url(FlipConstants.DATA_ACCESS_API_URL, "cohort/dataframe")
 
         response = requests.post(
             endpoint,
@@ -171,7 +176,7 @@ class FLIPStandardProd(FLIPBase):
             "accession_id": accession_id,
         }
 
-        endpoint = f"{FlipConstants.IMAGING_API_URL}/download/images/{FlipConstants.NET_ID}"
+        endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"download/images/{FlipConstants.NET_ID}")
 
         for resource in resources:
             if resource != ResourceType.SEGMENTATION:
@@ -245,7 +250,7 @@ class FLIPStandardProd(FLIPBase):
             "files": files,
         }
 
-        endpoint = f"{FlipConstants.IMAGING_API_URL}/upload/images/{FlipConstants.NET_ID}"
+        endpoint = _join_url(FlipConstants.IMAGING_API_URL, f"upload/images/{FlipConstants.NET_ID}")
 
         response = requests.put(
             endpoint,
@@ -271,7 +276,7 @@ class FLIPStandardProd(FLIPBase):
         if Utils.is_valid_uuid(model_id) is False:
             raise ValueError(f"Invalid model ID: {model_id}, cant update model status")
 
-        endpoint = f"{FlipConstants.FLIP_API_INTERNAL_URL}/model/{model_id}/status/{new_model_status.value}"
+        endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/status/{new_model_status.value}")
 
         self.logger.info(f"Attempting to update model status to [{new_model_status}]")
         try:
@@ -315,7 +320,7 @@ class FLIPStandardProd(FLIPBase):
             result=value,
         ).model_dump()
 
-        endpoint = f"{FlipConstants.FLIP_API_INTERNAL_URL}/model/{model_id}/metrics"
+        endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/metrics")
 
         self.logger.info(f"Attempting to send metrics raised by {client_name}...")
 
@@ -363,7 +368,7 @@ class FLIPStandardProd(FLIPBase):
             log=formatted_exception,
         ).model_dump()
 
-        endpoint = f"{FlipConstants.FLIP_API_INTERNAL_URL}/model/{model_id}/logs"
+        endpoint = _join_url(FlipConstants.FLIP_API_INTERNAL_URL, f"model/{model_id}/logs")
 
         self.logger.info(f"Attempting to send the exception raised by {client_name} to the Central Hub...")
 
