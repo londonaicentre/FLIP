@@ -389,7 +389,6 @@ workspace-prod/
 # FL app integration test output
 .test_data/
 .test_runs/
-fl-apps/runs/workspace/
 
 # NVFLARE provisioned secrets — NEVER commit to version control
 **/signature.json
@@ -419,7 +418,6 @@ workspace-prod/
 # FL app integration test output
 .test_data/
 .test_runs/
-fl-apps/runs/workspace/
 
 # NVFLARE provisioned secrets — NEVER commit to version control
 **/signature.json
