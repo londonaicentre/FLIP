@@ -44,6 +44,9 @@ endif
 
 include deploy/fl_backend.mk
 
+# Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
+export DOCKER_GID := $(shell id -g)
+
 COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 

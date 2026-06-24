@@ -72,6 +72,8 @@ services:
   fl-server-net-1:
     container_name: fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    # Read the host-provisioned 640 TLS keys via the host group (dev only).
+    group_add: ["${DOCKER_GID:-1000}"]
     volumes:
       # Mount the AWS credentials (needed to upload model results to S3).
       # The image runs as `app` (uid 49999) with HOME=/app, so the mount
@@ -143,6 +145,8 @@ services:
   fl-server-net-2:
     container_name: fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    # Read the host-provisioned 640 TLS keys via the host group (dev only).
+    group_add: ["${DOCKER_GID:-1000}"]
     volumes:
       # Mount the AWS credentials (needed to upload model results to S3).
       # The image runs as `app` (uid 49999) with HOME=/app, so the mount

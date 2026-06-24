@@ -17,6 +17,8 @@ services:
 
   fl-client-net-1:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    # Read the host-provisioned 640 TLS keys via the host group (dev only).
+    group_add: ["${DOCKER_GID:-1000}"]
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
@@ -57,6 +59,8 @@ services:
 
   fl-client-net-2:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    # Read the host-provisioned 640 TLS keys via the host group (dev only).
+    group_add: ["${DOCKER_GID:-1000}"]
     volumes:
       # Mount the base images download directory to share images downloaded from XNAT with FL clients
       - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
