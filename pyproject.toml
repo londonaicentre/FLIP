@@ -33,10 +33,6 @@ python_files = ["test_*.py", "*_test.py"]
 addopts = []
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
-[tool.pytest.ini_options_debug]
-python_files = ["test_*.py", "*_test.py"]
-filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
-
 [tool.ruff]
 line-length = 120
 target-version = "py312"
