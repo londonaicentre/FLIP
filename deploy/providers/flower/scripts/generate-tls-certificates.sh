@@ -39,6 +39,11 @@ echo "🔐 Generating Flower TLS certs + SuperNode key pairs for $NET → $OUT"
 # Public material (certs + .pub keys) is world-readable (644).
 chmod 600 "$OUT"/certificates/ca.key
 chmod 640 "$OUT"/certificates/server.key
+# Public certs must be world-readable (644) so the container user can read them even
+# under a restrictive operator umask (e.g. 077) — generate_creds.py writes them under
+# the operator's umask. ca.crt verifies the server; server.pem is the SuperLink's cert
+# chain. Both are mounted read-only into the FL containers.
+chmod 644 "$OUT"/certificates/ca.crt "$OUT"/certificates/server.pem
 chmod 644 "$OUT"/keys/*.pub
 find "$OUT"/keys -type f ! -name '*.pub' -exec chmod 640 {} +
 echo "✅ $NET ready: certificates=[$(ls "$OUT"/certificates | tr '\n' ' ')] keys=[$(ls "$OUT"/keys | tr '\n' ' ')]"
