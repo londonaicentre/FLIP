@@ -1,0 +1,307 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- if .Values.flClient.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-client
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+  {{- with .Values.flClient.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-client
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+data:
+  NET_ID: {{ .Values.flClient.netId | quote }}
+  NUM_AVAILABLE_GPUS: {{ .Values.flClient.gpu.count | quote }}
+  MEMORY_PER_GPU_IN_GIB: "7"
+  LOCAL_DEV: "false"
+  MIN_CLIENTS: "1"
+  IMAGES_DIR: {{ .Values.flClient.imagesDir | quote }}
+  DATA_ACCESS_API_URL: "http://data-access-api:8000"
+  IMAGING_API_URL: "http://imaging-api:8000"
+{{- if eq .Values.flBackend "flower" }}
+  SUPERNODE_NAME: {{ .Values.trustName | quote }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "flip-trust.fullname" . }}-fl-client-{{ .Values.flClient.netId }}
+  namespace: {{ include "flip-trust.namespace" . }}
+  labels:
+    {{- include "flip-trust.labels" . | nindent 4 }}
+    app.kubernetes.io/component: fl-client
+    flip/network: {{ .Values.flClient.netId }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "flip-trust.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: fl-client
+      flip/network: {{ .Values.flClient.netId }}
+  template:
+    metadata:
+      labels:
+        {{- include "flip-trust.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: fl-client
+        flip/network: {{ .Values.flClient.netId }}
+      {{- if .Values.flClient.gpu.enabled }}
+      annotations:
+        nvidia.com/gpu: {{ .Values.flClient.gpu.count | quote }}
+      {{- end }}
+    spec:
+      enableServiceLinks: false
+      hostAliases:
+      {{- range .Values.flClient.hostAliases }}
+        - ip: {{ .ip | quote }}
+          hostnames:
+          {{- range .hostnames }}
+            - {{ . | quote }}
+          {{- end }}
+      {{- end }}
+      serviceAccountName: {{ include "flip-trust.fullname" . }}-fl-client
+      {{- if .Values.imagePullSecrets }}
+      imagePullSecrets:
+{{ include "flip-trust.imagePullSecrets" . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.flClient.gpu.enabled }}
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      {{- end }}
+      {{- if or (and (eq .Values.flBackend "nvflare") .Values.flClient.nvflare.kitFromS3.enabled) (and (eq .Values.flBackend "flower") .Values.flClient.flower.kitFromS3.enabled) }}
+      initContainers:
+        - name: kit-init
+          image: amazon/aws-cli:2.22.0
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              {{- if eq .Values.flBackend "nvflare" }}
+              S3_PATH="{{ tpl .Values.flClient.nvflare.kitFromS3.pathTemplate . }}"
+              S3_BUCKET="{{ .Values.flClient.nvflare.kitFromS3.bucket }}"
+              DEST_DIR="/opt/fl-client/kit"
+              {{- else }}
+              S3_PATH="{{ tpl .Values.flClient.flower.kitFromS3.pathTemplate . }}"
+              S3_BUCKET="{{ .Values.flClient.flower.kitFromS3.bucket }}"
+              DEST_DIR="/opt/fl-client/kit"
+              {{- end }}
+              echo "Syncing s3://${S3_BUCKET}/${S3_PATH} to ${DEST_DIR}..."
+              {{- if .Values.flClient.s3EndpointOverride }}
+              aws s3 sync "s3://${S3_BUCKET}/${S3_PATH}" "${DEST_DIR}" --delete --endpoint-url {{ .Values.flClient.s3EndpointOverride | quote }}
+              {{- else }}
+              aws s3 sync "s3://${S3_BUCKET}/${S3_PATH}" "${DEST_DIR}" --delete
+              {{- end }}
+              chmod -R go-rwx "${DEST_DIR}"
+              echo "Kit sync complete."
+          env:
+            - name: AWS_DEFAULT_REGION
+              value: {{ default "eu-west-2" .Values.awsRegion | quote }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: s3-access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: s3-secret-access-key
+            - name: AWS_SESSION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: aws-session-token
+          volumeMounts:
+            - name: fl-client-kit
+              mountPath: /opt/fl-client/kit
+            - name: images
+              mountPath: {{ .Values.flClient.imagesDir }}
+{{- if .Values.flClient.hostAwsMount.enabled }}
+            - name: host-aws
+              mountPath: /root/.aws
+              readOnly: {{ .Values.flClient.hostAwsMount.readOnly }}
+{{- end }}
+      {{- end }}
+      containers:
+        - name: fl-client
+          image: {{ include "flip-trust.flClientImage" . }}
+          imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if eq .Values.flBackend "flower" }}
+          command:
+            - "--root-certificates"
+            - "/certs/ca.crt"
+            - "--superlink"
+            - {{ .Values.flClient.flower.superlink | quote }}
+            - "--auth-supernode-private-key"
+            - "/keys/supernode_credentials_1"
+            - "--clientappio-api-address"
+            - {{ .Values.flClient.flower.supernodeClientAppIoAddress | quote }}
+          {{- else if eq .Values.flBackend "nvflare" }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+              chmod u+x /app/startup/sub_start.sh /app/startup/stop_fl.sh 2>/dev/null || true
+              export NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS:-0}
+              export MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB:-16}
+              export LOG_LEVEL=${LOG_LEVEL:-INFO}
+              # Copy .default configs shipped in the kit to the expected runtime paths.
+              # The image bakes resources.template.json/log_config.template.json into
+              # /app/local/, but the kit volume-mount replaces that directory, hiding the
+              # templates. The kit ships *.default equivalents — copy them as-is (no
+              # envsubst needed: the values are already correct for this deployment).
+              cp /app/local/resources.json.default /app/local/resources.json 2>/dev/null || true
+              cp /app/local/log_config.json.default /app/local/log_config.json 2>/dev/null || true
+              pkill -f nvflare 2>/dev/null || true
+              rm -f /app/pid.fl /app/daemon_pid.fl
+              cd /app/startup
+              exec ./sub_start.sh
+          {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "flip-trust.fullname" . }}-fl-client
+          env:
+            - name: UPLOADED_FEDERATED_DATA_BUCKET
+              value: {{ .Values.uploadedFederatedDataBucket | default "" | quote }}
+            {{- if .Values.flClient.gpu.enabled }}
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "0"
+            {{- end }}
+            - name: TRUST_INTERNAL_SERVICE_KEY_HEADER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key-header
+            - name: TRUST_INTERNAL_SERVICE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.secrets.create }}{{ include "flip-trust.fullname" . }}-secrets{{ else }}{{ .Values.secrets.existingName }}{{ end }}
+                  key: trust-internal-service-key
+          volumeMounts:
+            - name: images
+              mountPath: {{ .Values.flClient.imagesDir }}
+            - name: dshm
+              mountPath: /dev/shm
+          {{- if eq .Values.flBackend "nvflare" }}
+            - name: fl-client-kit
+              mountPath: /app/local
+              subPath: local
+            - name: fl-client-kit
+              mountPath: /app/startup
+              subPath: startup
+            - name: fl-client-kit
+              mountPath: /app/transfer
+              subPath: transfer
+          {{- else }}
+            - name: fl-client-kit
+              mountPath: /certs
+              subPath: certificates
+            - name: fl-client-kit
+              mountPath: /keys
+              subPath: keys
+          {{- end }}
+          resources:
+            {{- toYaml .Values.flClient.resources | nindent 12 }}
+          livenessProbe:
+{{- if .Values.flClient.probes.liveness.exec }}
+            exec:
+              command:
+{{ toYaml .Values.flClient.probes.liveness.exec.command | indent 16 }}
+{{- else if eq .Values.flBackend "nvflare" }}
+            # NVFLARE clients make outbound-only connections (no listening port),
+            # so probe the client_train process instead of a TCP socket.
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - pgrep -f nvflare.private.fed.app.client.client_train > /dev/null
+{{- else }}
+            tcpSocket:
+              port: {{ .Values.flClient.probes.liveness.port }}
+{{- end }}
+            initialDelaySeconds: {{ .Values.flClient.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.flClient.probes.liveness.periodSeconds }}
+{{- if .Values.flClient.probes.liveness.failureThreshold }}
+            failureThreshold: {{ .Values.flClient.probes.liveness.failureThreshold }}
+{{- end }}
+          readinessProbe:
+{{- if .Values.flClient.probes.readiness.exec }}
+            exec:
+              command:
+{{ toYaml .Values.flClient.probes.readiness.exec.command | indent 16 }}
+{{- else if eq .Values.flBackend "nvflare" }}
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - pgrep -f nvflare.private.fed.app.client.client_train > /dev/null
+{{- else }}
+            tcpSocket:
+              port: {{ .Values.flClient.probes.readiness.port }}
+{{- end }}
+            initialDelaySeconds: {{ .Values.flClient.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.flClient.probes.readiness.periodSeconds }}
+{{- if .Values.flClient.probes.readiness.failureThreshold }}
+            failureThreshold: {{ .Values.flClient.probes.readiness.failureThreshold }}
+{{- end }}
+      volumes:
+        - name: images
+{{- if .Values.sharedImagesPvc.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "flip-trust.fullname" . }}-shared-images
+{{- else }}
+          emptyDir: {}
+{{- end }}
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.flClient.shmSize }}
+        - name: fl-client-kit
+{{- if .Values.flClient.nvflare.kitFromS3.enabled }}
+          emptyDir: {}
+{{- else if .Values.flClient.kitHostPath }}
+          hostPath:
+            path: {{ .Values.flClient.kitHostPath | quote }}
+            type: Directory
+{{- else }}
+          emptyDir: {}
+{{- end }}
+{{- if .Values.flClient.hostAwsMount.enabled }}
+        - name: host-aws
+          hostPath:
+            path: {{ .Values.flClient.hostAwsMount.hostPath | quote }}
+            type: Directory
+{{- end }}
+{{- end }}

@@ -15,16 +15,19 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { useAuthStore } from "@/store/auth";
-
 import AuthLayout from "@/layouts/AuthLayout.vue";
+import { useAuthStore } from "@/store/auth";
 
 // The layout uses useRoute() to pick the current page — mock it per test so
 // we can simulate navigation to Login, mfa-verify, mfa-setup etc.
-const currentRoute = { name: "", path: "" };
+const currentRoute = {
+    name: "",
+    path: ""
+};
 
 vi.mock("vue-router", async (importOriginal) => {
     const actual = await importOriginal<typeof import("vue-router")>();
+
     return {
         ...actual,
         useRoute: () => currentRoute
@@ -41,9 +44,7 @@ vi.mock("@/router", () => ({
 
 const mockAmplifySignOut = vi.fn();
 
-vi.mock("aws-amplify/auth", () => ({
-    signOut: (...args: unknown[]) => mockAmplifySignOut(...args)
-}));
+vi.mock("aws-amplify/auth", () => ({ signOut: (...args: unknown[]) => mockAmplifySignOut(...args) }));
 
 function mountLayout(route: { name: string; path: string }): VueWrapper {
     currentRoute.name = route.name;
@@ -78,7 +79,10 @@ describe("AuthLayout — Back to log in button", () => {
         locationAssign = vi.fn();
         Object.defineProperty(window, "location", {
             configurable: true,
-            value: { ...window.location, assign: locationAssign }
+            value: {
+                ...window.location,
+                assign: locationAssign
+            }
         });
     });
 
@@ -90,19 +94,28 @@ describe("AuthLayout — Back to log in button", () => {
     });
 
     test("is hidden on the Login page itself (already there)", () => {
-        const wrapper = mountLayout({ name: "auth-Login", path: "/auth/login" });
+        const wrapper = mountLayout({
+            name: "auth-Login",
+            path: "/auth/login"
+        });
 
         expect(wrapper.find("[data-test='back-to-login']").exists()).toBe(false);
     });
 
     test("is rendered on the MFA-verify page", () => {
-        const wrapper = mountLayout({ name: "auth-mfa-verify", path: "/auth/mfa-verify" });
+        const wrapper = mountLayout({
+            name: "auth-mfa-verify",
+            path: "/auth/mfa-verify"
+        });
 
         expect(wrapper.find("[data-test='back-to-login']").exists()).toBe(true);
     });
 
     test("is rendered on the MFA-setup page", () => {
-        const wrapper = mountLayout({ name: "auth-mfa-setup", path: "/auth/mfa-setup" });
+        const wrapper = mountLayout({
+            name: "auth-mfa-setup",
+            path: "/auth/mfa-setup"
+        });
 
         expect(wrapper.find("[data-test='back-to-login']").exists()).toBe(true);
     });
@@ -112,7 +125,10 @@ describe("AuthLayout — Back to log in button", () => {
         // after a failed MFA attempt (Amplify + router-guard could bounce
         // the user straight back). The handler must do a hard navigation
         // so nothing can short-circuit it.
-        const wrapper = mountLayout({ name: "auth-mfa-verify", path: "/auth/mfa-verify" });
+        const wrapper = mountLayout({
+            name: "auth-mfa-verify",
+            path: "/auth/mfa-verify"
+        });
         const authStore = useAuthStore();
         authStore.signInStep = "CONFIRM_SIGN_IN_WITH_TOTP_CODE";
         const localStorageClear = vi.spyOn(Storage.prototype, "clear");
@@ -136,7 +152,10 @@ describe("AuthLayout — Back to log in button", () => {
             () => new Promise<void>(resolve => { resolveSignOut = resolve; })
         );
 
-        const wrapper = mountLayout({ name: "auth-mfa-verify", path: "/auth/mfa-verify" });
+        const wrapper = mountLayout({
+            name: "auth-mfa-verify",
+            path: "/auth/mfa-verify"
+        });
         const authStore = useAuthStore();
 
         await wrapper.find("[data-test='back-to-login']").trigger("click");

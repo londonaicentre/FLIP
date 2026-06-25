@@ -28,7 +28,7 @@ router = APIRouter(prefix="/site", tags=["site_services"])
 
 # [#114] ✅
 @router.get("/details", response_model=ISiteDetails)
-def get_details(db: Session = Depends(get_session), user_id: UUID = Depends(verify_token)):
+def get_details(db: Session = Depends(get_session), user_id: UUID = Depends(verify_token)) -> ISiteDetails:
     """
     Fetch current site details.
 
@@ -56,7 +56,7 @@ def update_details(
     site_details: ISiteDetails,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> ISiteDetails:
     """
     Update site details.
 

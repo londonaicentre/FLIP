@@ -41,30 +41,35 @@ When creating issues, please use the appropriate issue template:
 
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London. It is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
-The project spans three repositories:
-
-| Repository | Description |
-| --- | --- |
-| [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo: Central Hub API, Trust APIs, UI, and Docker deployment |
-| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | NVIDIA FLARE federated learning base application library, workflows, and tutorials |
-| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Flower federated learning base application library, workflows, and tutorials |
-
-The main FLIP repository follows a mono-repo structure with these key services:
+The FLIP repository is a mono-repo: it consolidates the Central Hub API, Trust APIs, UI, Docker deployment, **and**
+the federated learning code (base library, FL services, and tutorials) that was previously split across the legacy
+[`flip-fl-base`](https://github.com/londonaicentre/flip-fl-base) (NVFLARE) and
+[`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) (Flower) repositories. Those repositories
+still hold the provisioned NVFLARE workspaces / Flower certs consumed by the dev compose files (see
+[`README.md#federated-learning-setup`](README.md#federated-learning-setup)), but the FL Python/Docker source is now here.
 
 ```bash
 FLIP/
 ├── deploy/             # Docker deployment files
+│   └── providers/
+│       ├── AWS/            # Terraform for Central Hub + cloud trust (EC2)
+│       ├── kubernetes/     # Helm chart for K8s trust deployment
+│       └── local/          # Ansible for on-premises trust deployment
 ├── docs/               # Sphinx documentation
 ├── flip-api/           # Central Hub API service
 ├── flip-ui/            # UI service
-└── trust/              # Services deployed in individual trust environments
-    ├── data-access-api/    # Data access API
-    ├── imaging-api/        # Imaging API
-    ├── observability/      # Observability stack (Grafana, Loki, Alloy)
-    ├── omop-db/            # Mocked OMOP database
-    ├── orthanc/            # Mocked PACS service (Orthanc)
-    ├── trust-api/          # Trust API
-    └── xnat/               # Mocked XNAT service
+├── trust/              # Services deployed in individual trust environments
+│   ├── data-access-api/    # Data access API
+│   ├── imaging-api/        # Imaging API
+│   ├── observability/      # Observability stack (Grafana, Loki, Alloy)
+│   ├── omop-db/            # Mocked OMOP database
+│   ├── orthanc/            # Mocked PACS service (Orthanc)
+│   ├── trust-api/          # Trust API
+│   └── xnat/               # Mocked XNAT service
+├── flip-utils/         # `flip` Python package — platform logic, NVFLARE components, Flower helpers
+├── fl-services/        # Docker images for FL networks, per backend: fl-services/nvflare/{fl-server,fl-client,fl-api-base,fl-base}
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (+ check_required_files.sh)
+└── fl-tutorials/       # End-to-end tutorial examples per backend: fl-tutorials/nvflare/ (xray classification, spleen seg/eval, diffusion)
 ```
 
 ## Setting up the development environment
@@ -76,6 +81,11 @@ In addition to the [deployment prerequisites](README.md#prerequisites), you'll n
 - [Python 3.12+](https://www.python.org/downloads/)
 - [UV](https://docs.astral.sh/uv) - Python environment management tool (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - [act](https://github.com/nektos/act) - Run GitHub Actions locally (install via [Homebrew](https://brew.sh/): `brew install act`)
+- **GHCR login** — `make up` pulls the repo-built service images from GitHub Container Registry by default, so authenticate once with a PAT that has `read:packages`:
+  ```bash
+  echo "$GHCR_PAT" | docker login ghcr.io -u <your-github-username> --password-stdin
+  ```
+  Building everything locally instead (no GHCR access needed) is `make up BUILD=true` — see [Running the stack](#running-the-stack-pull-vs-build) below.
 
 ### Recommended IDE Setup
 
@@ -119,6 +129,50 @@ uv add <package-name> --group <group>  # dependency in a named group
 The `pyproject.toml` file is the source of truth for dependencies. The Python version in `.python-version` must match
 the version used in the service's Dockerfile.
 
+### Dependency cooldown (supply-chain protection)
+
+Recent npm and PyPI supply-chain attacks follow a consistent pattern: a maintainer's credentials are compromised, a
+malicious release is published, the community detects it, and the package is yanked — usually within a few hours. To
+keep poisoned releases out of FLIP's CI, developer machines, and Trust-side containers, FLIP enforces a **72-hour
+cooldown** on dependency installs:
+
+> No FLIP build, CI or local, may install a Python or JavaScript package whose release timestamp on its upstream
+> registry (PyPI / npm) is less than 72 hours old. This applies to direct **and** transitive dependencies.
+
+The policy is enforced through native package-manager configuration:
+
+- **uv (Python)** — every `pyproject.toml` sets `tool.uv.exclude-newer = "3 days"`, so `uv lock` and `uv add` never
+  resolve a release younger than 72 hours (the `uv.lock` records this as a rolling `exclude-newer-span`). The
+  **Dependency Cooldown Check** job in [`secret-scanning.yml`](.github/workflows/secret-scanning.yml) runs
+  `uv lock --check` on every project, failing CI if a lockfile drifts from its manifest or was generated under a
+  wider `exclude-newer` window than the committed manifest allows.
+- **npm (JavaScript)** — `flip-ui/.npmrc` sets `min-release-age=3`, so `npm install` refuses to resolve a release
+  younger than 72 hours. This key was introduced in npm 11.10, so `flip-ui/Dockerfile` and the `test_flip_ui.yml`
+  workflow use Node 24 LTS (which ships npm >= 11.10); Node 22 LTS bundles npm 10.x and silently ignores the key.
+  CI installs use `npm ci`, which fails on any `package-lock.json` / `package.json` mismatch. npm only enforces
+  `min-release-age` at lockfile-write time (`npm install <pkg>`), not when installing from a pinned
+  `package-lock.json`, so the npm cooldown rests on `.npmrc` rather than a CI gate.
+
+There is no automated dependency-update bot wired into the repo today. Dependency bumps are hand-rolled PRs; the
+two layers above (uv `exclude-newer` and npm `min-release-age` at install time, `uv lock --check` in CI) catch a
+too-fresh package regardless of how it arrived in the lockfile.
+
+The cooldown applies automatically when you run `uv add <package>` or `npm install <package>` — a release younger
+than 72 hours is simply not selected. Run `make lock` to refresh every `uv.lock` after a dependency change.
+
+#### Emergency override
+
+For a genuine same-day patch of an active CVE, the cooldown can be bypassed for the single package that needs it:
+
+- **uv** — add an `exclude-newer-package` entry under `[tool.uv]` for that package (for example
+  `exclude-newer-package = { "<package>" = "<recent-timestamp>" }`) and re-run `uv lock`. The entry is committed, so
+  the exception is visible in the pull request and `uv lock --check` still passes.
+- **npm** — run `npm install <package> --min-release-age=0`, which overrides the `.npmrc` setting for that one
+  command.
+
+Any override must be justified in the pull-request description. Use it only for security patches that genuinely
+cannot wait 72 hours.
+
 ### Environment variables
 
 Environment variables for local development are defined in [`.env.development.example`](.env.development.example). This file uses
@@ -130,20 +184,20 @@ To get started, copy the example file:
 cp .env.development.example .env.development
 ```
 
-Then generate per-trust API keys, the internal service key, and the per-trust internal service keys (the trust
-keys must be done before `make up`; the internal service key is also generated automatically by `make up`):
+Then generate the internal service key (also generated automatically by `make up`):
 
 ```bash
-make generate-trust-api-keys
 make generate-internal-service-key
-make generate-trust-internal-service-keys
 ```
 
-These commands write all API keys directly into `.env.development`: trust plaintext keys
-in `TRUST_API_KEYS` (JSON dict) with their hashes in `TRUST_API_KEY_HASHES`, `INTERNAL_SERVICE_KEY`
-with `INTERNAL_SERVICE_KEY_HASH` for fl-server-to-hub authentication, and per-trust plaintext keys in
-`TRUST_INTERNAL_SERVICE_KEYS` (JSON dict) for trust-internal service-to-service authentication. No
-separate key files are used.
+This writes `INTERNAL_SERVICE_KEY` with `INTERNAL_SERVICE_KEY_HASH` into `.env.development` for
+fl-server-to-hub authentication.
+
+Trusts are registered on the **running hub** with `make register-trusts` (shipped dev roster) or
+`make register-trust KIT=<CODE>` (one trust), which inserts each `trust` row (with its
+`api_key_hash`), claims an FL kit slot, and fills that trust's kit file `trust/.env.<CODE>.<env>`
+carrying `TRUST_API_KEY` and `TRUST_INTERNAL_SERVICE_KEY`. `make up` runs `register-trusts`
+automatically once the hub is up.
 
 Docker services receive these variables via the `env_file` directive in the
 compose file — avoid hardcoding values in Dockerfiles or compose files directly.
@@ -151,19 +205,18 @@ compose file — avoid hardcoding values in Dockerfiles or compose files directl
 **Authentication environment variables:**
 
 - `TRUST_API_KEY_HEADER` — HTTP header name for trust-to-hub authentication.
-- `TRUST_API_KEYS` — JSON dict mapping trust names to their plaintext API keys.
-- `TRUST_API_KEY_HASHES` — hub-side JSON dict mapping trust names to SHA-256 hashes of their API keys.
+- `TRUST_API_KEY` — single per-trust plaintext API key. Lives only in that trust's kit file
+  (`trust/.env.<CODE>.<env>`), written by `make register-trusts`; never on the hub.
 - `INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for fl-server-to-hub authentication.
 - `INTERNAL_SERVICE_KEY` — internal service key used by the fl-server on the Central Hub.
 - `INTERNAL_SERVICE_KEY_HASH` — hub-side SHA-256 hash of the internal service key.
 - `TRUST_INTERNAL_SERVICE_KEY_HEADER` — HTTP header name for trust-internal service auth (default
   `X-Trust-Internal-Service-Key`). Sent by every caller (trust-api, imaging-api, fl-client) on every
   call to imaging-api or data-access-api.
-- `TRUST_INTERNAL_SERVICE_KEYS` — JSON dict of per-trust plaintext keys. Each trust uses a distinct key;
-  `trust/Makefile` extracts the per-trust value at deploy time and injects it into every trust-internal
-  container as `TRUST_INTERNAL_SERVICE_KEY`. The hub never sees these keys — they live only in trust-side
-  env. Distinct from `INTERNAL_SERVICE_KEY*` (which protects fl-server → flip-api on the Central Hub).
-  See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the threat model.
+- `TRUST_INTERNAL_SERVICE_KEY` — single per-trust plaintext key, in that trust's kit file
+  (`trust/.env.<CODE>.<env>`), minted by `register_trust`. Read by every trust-internal container. The hub
+  never sees it. Distinct from `INTERNAL_SERVICE_KEY*` (which protects fl-server → flip-api on the
+  Central Hub). See [`CLAUDE.md`](CLAUDE.md#trust-internal-service-authentication) for the threat model.
 
 FL clients (trust side) intentionally do **not** receive Central Hub API credentials. Only the fl-server (on the Central
 Hub) communicates with flip-api. FL clients relay metrics and exceptions to the fl-server, which forwards them.
@@ -215,6 +268,26 @@ make ci
 ```
 
 This runs all jobs defined in `.github/workflows/` locally.
+
+### Running the stack (pull vs. build)
+
+In development (`PROD` unset), `make up` **pulls** the repo-built service images
+(`flip-api`, `trust-api`, `imaging-api`, `data-access-api`, `orthanc`) from GHCR
+instead of building them — each carries `image:` + `pull_policy: always` in the dev
+compose, and your local `src/` is bind-mounted on top, so editing a `.py` still
+hot-reloads against the pulled image. Startup is fast and matches the published
+`:stag` artifact's environment.
+
+```bash
+make up                # pull GHCR images (default; requires `docker login ghcr.io`)
+make up BUILD=true     # rebuild the repo-built services from local source instead
+```
+
+Use `BUILD=true` when you've changed **dependencies** (`uv.lock`/`pyproject.toml`),
+system packages, or a `Dockerfile` — those live in the image layer, so a plain
+`make up` (which pulls) won't pick them up. `flip-ui` always builds locally (it has
+no GHCR image). Stag/prod (`PROD=stag|true`) are unaffected: they run the prod
+compose with baked images and no bind-mounts.
 
 ## The contribution process
 
@@ -303,16 +376,35 @@ To run unit tests across all services in the main repository from the root:
 make unit_test
 ```
 
-`make tests` is a narrower target that runs `flip-ui` unit tests followed by the full `flip-api` test suite (ruff,
-mypy, and pytest).
+`make tests` is a narrower target that runs `flip-ui` unit and Cypress e2e tests followed by the full `flip-api`
+test suite (ruff, mypy, and pytest).
 
-For the `flip-fl-base` repository, unit tests can be run with:
+For the migrated FL base library (now in `flip-utils/`), unit tests can be run with:
 
 ```bash
-make unit-test
+cd flip-utils && uv run pytest tests/unit -s -vv
 ```
 
-Integration tests for the FL base application are also available (see the [flip-fl-base README](https://github.com/londonaicentre/flip-fl-base#testing) for details).
+(The inherited `make unit-test` target documented in [`flip-utils/README.md`](flip-utils/README.md) is part of the
+still-in-progress reconciliation called out at the top of that README — `flip-utils/` does not yet ship a Makefile in
+this mono-repo.) See [`flip-utils/README.md`](flip-utils/README.md) (the "Unit Tests" / "Integration Testing"
+sections — subject to the in-progress reconciliation noted there) for the FL package's tests, and
+[`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) for provisioning FL networks.
+
+**Kubernetes chart testing**: The K8s Helm chart at `deploy/providers/kubernetes/` can be tested with:
+
+```bash
+# Lint + render + schema validation
+make -C deploy/providers/kubernetes test
+
+# Render all FL backend variants
+make -C deploy/providers/kubernetes template-all-backends
+
+# Validate rendered templates against K8s schema (requires kubeconform)
+make -C deploy/providers/kubernetes validate
+```
+
+The chart has a `check_status.py` smoke test script and a `register_k8s_trust.py` registration script. See the [K8s README](deploy/providers/kubernetes/README.md) for details.
 
 **Testing fixtures**: For testing APIs and integration tests, we use [pytest fixtures](https://docs.pytest.org/en/latest/how-to/fixtures.html). Shared fixtures are defined in `conftest.py` files. In some cases, [`factory_boy`](https://factoryboy.readthedocs.io/) is used to create test data following production data structures.
 
@@ -348,9 +440,13 @@ This rule applies across all services: `flip-api/tests/`, `trust/trust-api/tests
 
 ##### flip-api: real-Postgres integration tests via Testcontainers
 
-`flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema from `SQLModel.metadata`, seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
+`flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema by running the **Alembic migrations** (`alembic upgrade head`) — the same DDL dev/prod apply at boot — then seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
 
 CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) are out of scope for this fixture and are skip-marked at the file level until ticket B2 lands.
+
+##### flip-api: database migrations (Alembic)
+
+flip-api's PostgreSQL schema is owned by Alembic, not `SQLModel.metadata.create_all`. **Any schema-affecting change to `db/models/*.py` must ship a migration revision** in the same PR — run `make migration MESSAGE="..."` from `flip-api/` (flip-db must be up), review the autogenerated file (native PG enums + the `ARRAY(UUID)` column), and apply it with `make migrate`. The integration suite builds its schema from these migrations, and `tests/integration/test_migrations.py` is a **drift guard**: a model change without a matching revision makes the suite fail. See [`flip-api/README.md`](flip-api/README.md#database-migrations) for the full workflow and the enum gotchas.
 
 #### Signing your work
 

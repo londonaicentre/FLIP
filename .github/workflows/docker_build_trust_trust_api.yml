@@ -14,18 +14,26 @@ name: Build and Push Docker Image for Trust API
 
 on:
   workflow_dispatch:
-  push:
+  # Publish only after the trust-api test suite ("Trust - Trust API CI") completes
+  # on main/develop; the job-level `if` below gates on its success. The test
+  # workflow is path-filtered, but to more than trust/trust-api/** (it also runs
+  # on trust/data-access-api/**, trust/observability/**, etc.), so this build can
+  # republish the trust-api image even when only those sibling paths changed.
+  workflow_run:
+    workflows: ["Trust - Trust API CI"]
+    types: [completed]
     branches: [main, develop]
-    paths:
-      - "trust/trust-api/**"
-      - "trust/observability/log_config/**"
-      - ".github/workflows/docker_build_trust_trust_api.yml"
 
 permissions:
   contents: read
 
 jobs:
   build-and-push:
+    # Only publish when the upstream test run passed. workflow_dispatch (manual)
+    # has no workflow_run context, so allow it through unconditionally.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions: # override top-level read-only default to allow GHCR push
       contents: read
@@ -44,8 +52,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
-          repository: ${{ github.event.workflow_run.head_repository.full_name }}
-          ref: ${{ github.event.workflow_run.head_sha }}
+          # workflow_run.* is empty on manual workflow_dispatch runs, so fall
+          # back to the dispatched ref so manual builds check out correctly.
+          repository: ${{ github.event.workflow_run.head_repository.full_name || github.repository }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Determine tags
         id: tags
@@ -53,18 +63,32 @@ jobs:
           GH_REF_NAME: ${{ github.ref_name }}
           GH_EVENT_NAME: ${{ github.event_name }}
           GH_REF: ${{ github.ref }}
+          GH_SHA: ${{ github.sha }}
           GH_WR_BRANCH: ${{ github.event.workflow_run.head_branch }}
           GH_WR_EVENT: ${{ github.event.workflow_run.event }}
+          GH_WR_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          TAGS="${REGISTRY}/${IMAGE_NAME}:${{ github.sha }}"
+          # On a workflow_run trigger, github.sha / github.ref_name point at the
+          # default branch (where this workflow definition lives), NOT the commit
+          # that was tested and checked out. Use the triggering run's head_sha /
+          # head_branch so the :<sha> and :<branch> tags match the built code.
+          if [[ "$GH_EVENT_NAME" == "workflow_run" ]]; then
+            SHA="$GH_WR_SHA"
+            REF_NAME="$GH_WR_BRANCH"
+          else
+            SHA="$GH_SHA"
+            REF_NAME="$GH_REF_NAME"
+          fi
+
+          TAGS="${REGISTRY}/${IMAGE_NAME}:${SHA}"
 
           # Branch name sanitization
-          SAFE_REF_NAME=$(echo "$GH_REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
+          SAFE_REF_NAME=$(echo "$REF_NAME" | sed 's/[^a-zA-Z0-9]/-/g')
           TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${SAFE_REF_NAME}"
 
           # Branch number (if starts with number)
-          if [[ "$GH_REF_NAME" =~ ^[0-9]+ ]]; then
-              BRANCH_NUM=$(echo "$GH_REF_NAME" | grep -oE '^[0-9]+')
+          if [[ "$REF_NAME" =~ ^[0-9]+ ]]; then
+              BRANCH_NUM=$(echo "$REF_NAME" | grep -oE '^[0-9]+')
               TAGS="${TAGS},${REGISTRY}/${IMAGE_NAME}:${BRANCH_NUM}"
           fi
 

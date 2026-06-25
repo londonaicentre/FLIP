@@ -85,10 +85,11 @@ common pattern:
 
 **Network policy**
 
-- Allow outbound HTTPS (port 443) from the FLIP host to the Central Hub FLIP API endpoint
-  (e.g. ``https://app.flip.aicentre.co.uk``).
-- Allow outbound gRPC or HTTP to the FL Server endpoint (configurable port; e.g.
-  ``fl.flip.aicentre.co.uk:8002``).
+- Allow outbound HTTPS (port 443) from the FLIP host to the Central Hub FLIP API endpoint —
+  the ALB (e.g. ``https://app.flip.aicentre.co.uk``).
+- Allow outbound gRPC or HTTP to the FL Server endpoint — a **separate** host fronted by its
+  own load balancer (the NLB), on its configurable port (e.g. ``fl.app.flip.aicentre.co.uk:8002``).
+  Allowlisting the API host alone is not sufficient.
 - No inbound ports need to be opened on the TRE perimeter.
 
 **Output review**
@@ -170,8 +171,10 @@ Key environment variables (set via ``.env`` or Docker secrets):
      - Description
    * - ``CENTRAL_HUB_API_URL``
      - Hub endpoint the Trust API polls for tasks.
-   * - ``TRUST_NAME``
-     - Identifier matching the ``Trust.name`` record in the hub database (e.g. ``Trust_1``).
+   * - ``EXPECTED_TRUST_ID``
+     - Optional self-check. If set and the hub resolves this host's API key to a
+       different trust *id*, trust-api exits instead of acting as the wrong
+       trust. Kept in the trust's kit file.
    * - ``TRUST_API_KEY`` / ``TRUST_API_KEY_HEADER``
      - Per-trust authentication header used on every outbound request.
    * - ``AES_KEY_BASE64``
@@ -185,10 +188,11 @@ Key environment variables (set via ``.env`` or Docker secrets):
 
 .. admonition:: Network requirements
 
-   The TRE must whitelist outbound connections to two endpoints:
+   The TRE must whitelist outbound connections to **two separate endpoints** — different
+   hostnames behind different load balancers, so both must be allowlisted:
 
-   - The Central Hub FLIP API (HTTPS, port 443; e.g. ``https://app.flip.aicentre.co.uk``)
-   - The FL Server (gRPC or HTTP, configurable port; e.g. ``fl.flip.aicentre.co.uk:8002``)
+   - The Central Hub FLIP API — the ALB (HTTPS, port 443; e.g. ``https://app.flip.aicentre.co.uk``)
+   - The FL Server — the NLB (gRPC or HTTP, configurable port; e.g. ``fl.app.flip.aicentre.co.uk:8002``)
 
    No inbound ports need to be opened on the TRE.
 
@@ -277,7 +281,8 @@ Networking
 - **Outbound HTTPS** to the Central Hub FLIP API endpoint on AWS
   (e.g. ``https://app.flip.aicentre.co.uk``).
 
-- **Outbound gRPC or HTTP** to the FL Server endpoint (e.g. ``fl.flip.aicentre.co.uk:8002``).
+- **Outbound gRPC or HTTP** to the FL Server endpoint — a separate host fronted by the NLB
+  (e.g. ``fl.app.flip.aicentre.co.uk:8002``).
   If the TRE's network inspection
   appliances block HTTP/2 (required for gRPC), most FL frameworks offer HTTP/REST transport
   fallbacks (e.g. NVIDIA FLARE's HTTP driver, Flower's REST transport) that work over

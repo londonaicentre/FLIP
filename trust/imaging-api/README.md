@@ -151,7 +151,7 @@ Key environment variables (set in [`.env.development.example`](../../.env.develo
 imaging-api exposes privileged XNAT operations via a service account. To prevent any container on the trust Docker network — or any operator with SSM port-forward access — from acting as that service account, every router except `/health` requires callers to send `TRUST_INTERNAL_SERVICE_KEY` in the configured header. imaging-api compares the header against its own copy of the same per-trust key with a constant-time compare.
 
 Direct callers in this repo: trust-api. The fl-client container calls imaging-api indirectly via
-the [`flip` Python package](https://github.com/londonaicentre/flip-fl-base/tree/main/flip)
+the [`flip` Python package](https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip)
 (consumed by both NVFLARE and Flower fl-client / fl-server images) —
 `flip.get_by_accession_number(...)` and friends read `TRUST_INTERNAL_SERVICE_KEY` from
 `os.environ` and add the header to every HTTP request. User training code (`client_app.py`,
@@ -159,13 +159,7 @@ the [`flip` Python package](https://github.com/londonaicentre/flip-fl-base/tree/
 
 imaging-api is also a *sender*: it forwards the same key on every call to data-access-api `/cohort/accession-ids`, which now has the same auth check on its `/cohort` router.
 
-Each trust has a distinct key. Generate them with:
-
-```bash
-make -C ../../flip-api generate-trust-internal-service-keys
-```
-
-This populates `TRUST_INTERNAL_SERVICE_KEYS` (a JSON dict keyed by trust name) in your env file. `trust/Makefile` extracts the per-trust value into each trust-internal container's environment at deploy time as `TRUST_INTERNAL_SERVICE_KEY`, mirroring how `TRUST_API_KEYS` is handled.
+Each trust has a distinct key. A trust's `TRUST_INTERNAL_SERVICE_KEY` is minted by `register_trust` (`make register-trusts`) and written into that trust's kit file (`trust/.env.<CODE>.<env>`), which `trust/Makefile` `-include`s so every trust-internal container inherits it.
 
 For more on the threat model, see the **Trust-internal Service Authentication** section in [`CLAUDE.md`](../../CLAUDE.md).
 

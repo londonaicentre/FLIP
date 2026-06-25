@@ -21,6 +21,7 @@ This provider manages the **Central Hub** (always in AWS) and, optionally, one o
 | --- | --- | --- |
 | **Cloud** | AWS EC2 (same account as Central Hub) | This provider (`deploy/providers/AWS/`) |
 | **Hybrid / On-Premises** | Any Ubuntu host (home lab, hospital server, etc.) | [`deploy/providers/local/`](../local/README.md) + selected targets in this Makefile |
+| **Kubernetes** | Any Kubernetes cluster 1.28+ (EKS, AKS, on-prem) | [`deploy/providers/kubernetes/`](../kubernetes/README.md) Helm chart |
 
 In both models, trusts poll the Central Hub for tasks over HTTPS — all communication is **outbound from the trust** to the hub. The hub never makes inbound requests to trusts.
 
@@ -47,7 +48,7 @@ Your AWS IAM role/user needs the following permissions for provisioning infrastr
 - **Secrets Manager**: Full access for storing database credentials and API secrets
 - **IAM**: Create and manage roles for EC2 instances and ECS task execution / task roles
 - **Application + Network Load Balancers**: Create and manage both the ALB (HTTPS API traffic) and the NLB (FL server TCP/gRPC traffic)
-- **ECS / Fargate**: `ecs:*` (cluster, task definitions, services); ECR pull for ECS task images
+- **ECS / Fargate**: `ecs:*` (cluster, task definitions, services). Task images come from **GHCR** (`ghcr.io/londonaicentre/...`) — no AWS-side image registry permissions needed (no ECR mirror). The ECR API/DKR VPC endpoints in `vpc_endpoints.tf` are kept only for the bootstrap EFS-provisioning job (`amazon/aws-cli`, pulled from ECR Public).
 - **EFS**: `elasticfilesystem:*` for the shared workspace volumes mounted into FL Fargate tasks
 - **CloudFront + WAFv2**: Create and manage the UI distribution and the WebACL attached to it
 - **ACM**: Issue / import certificates in both `eu-west-2` (ALB origin) and `us-east-1` (CloudFront viewer)
@@ -103,8 +104,9 @@ This command executes the following steps in order:
 8. **`ssh-config`**: Update `~/.ssh/config` with EC2 instance IPs
 9. **`ansible-init`**: Configure EC2 instances with Docker, CloudWatch, and FL assets (Trust EC2 only — the Central Hub no longer runs application containers on its EC2 host)
 10. **`deploy-centralhub`**: Force-redeploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) and sync the UI to S3 + invalidate CloudFront
-11. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
-12. **`status`**: Run comprehensive health checks
+11. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and fill each kit with hub-shared values
+12. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
+13. **`status`**: Run comprehensive health checks
 
 ### flip-ui on S3 + CloudFront
 
@@ -228,11 +230,16 @@ make ssh-config
 # 8. Setup EC2 instances with Ansible
 make ansible-init
 
-# 9. Deploy services
+# 9. Deploy the Central Hub
 make deploy-centralhub
+
+# 10. Register every locally-present trust kit file on the hub and fill each kit with hub-shared values
+make register-trusts
+
+# 11. Deploy trust services
 make deploy-trust
 
-# 9. Check status
+# 12. Check status
 make status
 ```
 
@@ -377,7 +384,7 @@ make destroy
 The RDS instance behaves differently per environment, driven by `TF_VAR_environment`:
 
 | Setting                            | `stag` (default) | `prod` (`PROD=true`)              |
-|------------------------------------|------------------|-----------------------------------|
+| ------------------------------------ | ------------------ | ----------------------------------- |
 | `skip_final_snapshot`              | `true`           | `false`                           |
 | `deletion_protection`              | `false`          | `true`                            |
 | `final_snapshot_identifier_prefix` | `flip-database-final` | `flip-database-final`        |
@@ -448,32 +455,35 @@ Recommended orchestration target (works for both `PROD=stag` and `PROD=true`):
 
 ```bash
 cd deploy/providers/AWS
-make full-deploy-hybrid PROD=<stag|true> LOCAL_TRUST_IP=<public-ip> [LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key]
+make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 ```
 
-This wrapper target runs the full AWS deployment, provisions the local trust, and redeploys the Central Hub so the new secret values are loaded. `PROD` is inherited from the environment — omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP via `curl ipify.org`.
+This wrapper target runs the full AWS deployment, provisions the on-prem trust host, and redeploys the Central Hub so the new secret values are loaded. `PROD` is inherited from the environment — omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP via `curl ipify.org`.
 You still need to:
 
-1. Start the trust stack on the host: `cd trust && env PROD=<stag|true> make up-local-trust`
+1. Start the trust stack on the host: `cd ../../.. && env PROD=<stag|true> make -C trust up-trust KIT=<CODE>` (the trust code you registered)
 2. Verify the trust can poll the hub (check trust-api logs for successful task polling)
 
-Or run provisioning directly:
+Or onboard the trust step by step — the trust operator provisions their own host,
+and the FLIP admin opens the firewall once the operator reports their public IP:
 
 ```bash
+# On the trust host (trust operator) — provision, then start the stack
 cd deploy/providers/AWS
+set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')   # fish; bash differs
+make provision-local-trust KIT=<CODE>
+cd ../../.. && env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
 
-# Remote host (via SSH)
-make add-local-trust LOCAL_TRUST_IP=<public-ip> LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key
-
-# Local machine (no SSH)
-set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
-make add-local-trust LOCAL_TRUST_IP=<public-ip>
+# On the FLIP side (admin), once the operator reports their host's public IP:
+#   add it to LOCAL_TRUST_PUBLIC_IPS (an HCL list) in .env.stag / .env.production, e.g.
+#   LOCAL_TRUST_PUBLIC_IPS=["1.2.3.4"]
+cd deploy/providers/AWS
+make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>
 ```
 
-After provisioning, complete the manual steps printed by the target:
+`allow-local-trust-nlb` runs a normal `terraform plan`/`apply` — the IPs are real config, so later full applies stay idempotent (no `-target`, no drift).
 
-1. Start the trust stack on the host: `cd trust && env PROD=stag make up-local-trust`
-2. Verify the trust can poll the hub (check trust-api logs for successful task polling)
+Verify the trust can poll the hub (check trust-api logs for successful task polling).
 
 Full details are in the [local provider README](../local/README.md).
 
@@ -613,7 +623,7 @@ the direction of the request flow.
   - Automatic Docker network creation for inter-service communication
   - No inbound ports open — access via SSM (`ssh flip-trust`) and SSM port forwarding for XNAT/Orthanc debugging (`make forward-trust`)
 - **ALB (Application Load Balancer)**: HTTPS-only entrypoint for API traffic. **Internal** (`internal = true`), lives in the **private subnets** — it has no public IP and no internet-facing path. CloudFront reaches it via an `aws_cloudfront_vpc_origin` (AWS-managed ENI in this VPC). The ALB security group accepts HTTPS:443 only from the AWS-managed `CloudFront-VPCOrigins-Service-SG` (Option 2 in the AWS VPC origins docs — the documented most-restrictive pattern; a `vpc_cidr` rule would not work because AWS evaluates VPC-origin SG checks against the service-managed SG, not the ENI source IP). The `https-listener` returns 404 by default and routes `/api/*` to the `ecs-flip-api` target group (`target_type=ip`, port 8000). The legacy `http-redirect` listener on port 80 exists as a belt-and-braces fallback only — its SG has no port-80 ingress, so it is unreachable externally.
-- **NLB (Network Load Balancer)**: TCP pass-through entrypoint for FL server traffic. Lives in the **public subnets**. Listens on `FL_SERVER_PORT` and forwards to the `ecs-fl-server-tcp` target group (`target_type=ip`) so the `fl-server-net-1` Fargate task receives the connection. The NLB security group ingress is allow-listed: NAT Gateway public IP (so the AWS-resident Trust EC2 can reach the FL server) plus any `local_trust_public_ip` set in the env file (so an on-prem trust can reach it). HTTP/2 gRPC framing is opaque to the NLB and forwarded as-is.
+- **NLB (Network Load Balancer)**: TCP pass-through entrypoint for FL server traffic. Lives in the **public subnets**. Listens on `FL_SERVER_PORT` and forwards to the `ecs-fl-server-tcp` target group (`target_type=ip`) so the `fl-server-net-1` Fargate task receives the connection. The NLB security group ingress is allow-listed: NAT Gateway public IP (so the AWS-resident Trust EC2 can reach the FL server) plus any `local_trust_public_ip` set in the env file (so an on-prem trust can reach it). HTTP/2 gRPC framing is opaque to the NLB and forwarded as-is. **Why an NLB and not the ALB?** NVFLARE FL traffic is end-to-end mutual-TLS over gRPC, and an ALB (Layer 7) terminates TLS, which breaks NVFLARE's own certificate handshake. An NLB (Layer 4) does raw TCP pass-through, so the FL client and FL server complete their mTLS handshake untouched.
 - **CloudFront + WAFv2**: Edge distribution that serves the `flip-ui` static site from S3 and forwards `/api/*` to the internal ALB via an `aws_cloudfront_vpc_origin` (HTTPS-only). A WAFv2 WebACL is attached to the distribution for L7 protection; WAF logs are shipped to CloudWatch Logs.
 - **ACM**: Two certificates — one in `eu-west-2` for the ALB, one in `us-east-1` for the CloudFront viewer.
 - **Route53**: `A` alias records for the canonical subdomain (→ CloudFront) and for the FL-server NLB.
@@ -653,7 +663,7 @@ Trust services can run on AWS EC2 or on-premises. Both models use the same Docke
 - Automatic Docker network creation for inter-service communication
 - Runs in a private subnet with no inbound ports — XNAT and Orthanc accessible only via SSM port forwarding for debugging
 
-**On-Premises Trust** — provisioned via `make add-local-trust` and the Ansible playbook in [`deploy/providers/local/`](../local/README.md):
+**On-Premises Trust** — provisioned via `make provision-local-trust` and the Ansible playbook in [`deploy/providers/local/`](../local/README.md):
 
 - Same Docker Compose stack, running on a local Ubuntu host
 - No inbound port forwarding or firewall rules needed — all trust communication is outbound
@@ -750,7 +760,7 @@ Both aliases resolve through the SSM tunnel — no public IP or open port 22 is 
 **Troubleshooting SSM Access**
 
 | Problem | Diagnostics | Solution |
-|---------|-------------|----------|
+| --------- | ------------- | ---------- |
 | `Unable to locate credentials` | `aws sts get-caller-identity` returns error | Run `aws sso login --profile $AWS_PROFILE` to refresh session |
 | `SessionManagerPlugin not found` | `command -v session-manager-plugin` returns nothing | Install plugin: `brew install session-manager-plugin` (macOS) or see prerequisites above |
 | `[ERROR] SessionManagerPlugin is not installed` | Session manager plugin is missing or outdated | Upgrade plugin: `brew upgrade session-manager-plugin` or download latest version |
@@ -871,7 +881,7 @@ After deploying, test that emails are delivered correctly by using the **Registe
 ### Email Client Compatibility
 
 | Client | Support | Notes |
-|--------|---------|-------|
+| -------- | --------- | ------- |
 | Gmail Web | Full | CSS gradients supported |
 | Outlook Web | Full | CSS gradients with fallback |
 | Apple Mail | Full | Dark mode compatible |
@@ -892,7 +902,7 @@ Before testing emails:
 ### Troubleshooting Email Issues
 
 | Issue | Solution |
-|-------|----------|
+| ------- | ---------- |
 | Email gradients don't render | Most clients support gradients; solid color fallback in template |
 | Button not clickable | Some clients disable links for security; check email client settings |
 | Text wraps awkwardly | Tables use responsive max-width: 600px (standard) |

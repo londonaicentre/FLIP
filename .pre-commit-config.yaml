@@ -34,6 +34,54 @@ repos:
         args: ['--maxkb=1000']
       - id: check-merge-conflict
       - id: check-yaml
-        exclude: '^\.github/workflows/'
+        exclude: '^\.github/workflows/|^deploy/providers/kubernetes/templates/'
       - id: end-of-file-fixer
       - id: detect-private-key
+
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        files: ^deploy/providers/AWS/.*\.ya?ml$
+
+  # Verify each uv project's lockfile is in sync with its pyproject.toml. The
+  # `--check` flag makes uv-lock a verifier (fails on drift) instead of an
+  # actor (silently regenerates). Use `make lock` to regenerate when a
+  # pyproject.toml legitimately changes. uv-lock operates on a single project,
+  # so this monorepo needs one entry per project, each scoped (via files:) to
+  # that project's manifest and lockfile.
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.11.16
+    hooks:
+      - id: uv-lock
+        name: uv-lock (root)
+        args: ['--check']
+        files: '^(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (flip-api)
+        args: ['--check', '--project', 'flip-api']
+        files: '^flip-api/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (docs)
+        args: ['--check', '--project', 'docs']
+        files: '^docs/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (trust-api)
+        args: ['--check', '--project', 'trust/trust-api']
+        files: '^trust/trust-api/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (imaging-api)
+        args: ['--check', '--project', 'trust/imaging-api']
+        files: '^trust/imaging-api/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (data-access-api)
+        args: ['--check', '--project', 'trust/data-access-api']
+        files: '^trust/data-access-api/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (xnat-tests)
+        args: ['--check', '--project', 'trust/xnat/tests']
+        files: '^trust/xnat/tests/(pyproject\.toml|uv\.lock|uv\.toml)$'
+      - id: uv-lock
+        name: uv-lock (aws-deploy)
+        args: ['--check', '--project', 'deploy/providers/AWS']
+        files: '^deploy/providers/AWS/(pyproject\.toml|uv\.lock|uv\.toml)$'

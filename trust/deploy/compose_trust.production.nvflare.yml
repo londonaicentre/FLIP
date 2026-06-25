@@ -18,12 +18,24 @@ services:
   fl-client-net-1:
     image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
     volumes:
-      # Mount the base images download directory to share images downloaded from XNAT with FL clients
-      - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
-      # Provisioned NVFLARE secrets (certificates, fed_client.json)
-      - /opt/flip/services/${TRUST_NAME}/local:/app/local
-      - /opt/flip/services/${TRUST_NAME}/startup:/app/startup
-      - /opt/flip/services/${TRUST_NAME}/transfer:/app/transfer
+      # Mount the base images download directory to share images downloaded from XNAT with FL clients.
+      # Unset in the prod kit → /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER} (see imaging-api in
+      # compose_trust.production.yml for the full rationale; mirrors ORTHANC_STORAGE_DIR's default).
+      - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}:/app/data/images
+      # Provisioned NVFLARE secrets (certificates, fed_client.json).
+      # FL_KIT_DIR is the kit root on the trust host — Ansible-managed
+      # /opt/flip/fl-kit on the AWS EC2 trust (see site.yml), or wherever
+      # the on-prem operator extracted their selectively-synced kit (see
+      # the `make onboard-onprem-trust` checklist). The
+      # net-1/services/${FL_KIT_SLOT}/ prefix mirrors the S3 bundle's own
+      # layout — no Ansible-side flattening so EC2 and on-prem hosts
+      # share the same compose mount shape. Keyed on the FL kit SLOT (the
+      # pre-provisioned participant identity, e.g. Trust_1), NOT the trust's
+      # display name — the two differ once a trust is registered under an
+      # arbitrary name (name≠slot), and the nvflare material is slot-keyed.
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/local:/app/local
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/startup:/app/startup
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/transfer:/app/transfer
     environment:
       - NET_ID=net-1
       - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
@@ -31,7 +43,6 @@ services:
       - LOCAL_DEV=false
       - MIN_CLIENTS=${MIN_CLIENTS}
       - IMAGES_DIR=/app/data/images
-      - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
       # FL clients intentionally do not have access to Central Hub API credentials.
       # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
       - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
@@ -42,7 +53,7 @@ services:
       - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
       - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
     shm_size: '8gb'
-    # gpus: all
+    # GPU passthrough via compose_trust.production.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
 
   # TODO add second FL network when needed
   # fl-client-net-2:
@@ -51,9 +62,9 @@ services:
   #     # Mount the base images download directory to share images downloaded from XNAT with FL clients
   #     - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
   #     # Provisioned NVFLARE secrets (certificates, fed_client.json)
-  #     - /opt/flip/services/${TRUST_NAME}/local:/app/local
-  #     - /opt/flip/services/${TRUST_NAME}/startup:/app/startup
-  #     - /opt/flip/services/${TRUST_NAME}/transfer:/app/transfer
+  #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/local:/app/local
+  #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
+  #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/transfer:/app/transfer
   #   environment:
   #     - NET_ID=net-2
   #     - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
@@ -61,13 +72,12 @@ services:
   #     - LOCAL_DEV=false
   #     - MIN_CLIENTS=${MIN_CLIENTS}
   #     - IMAGES_DIR=/app/data/images
-  #     - UPLOADED_FEDERATED_DATA_BUCKET=${UPLOADED_FEDERATED_DATA_BUCKET}
   #     # FL clients intentionally do not have access to Central Hub API credentials.
   #     # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
   #     - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
   #     - IMAGING_API_URL=${IMAGING_API_URL}
   #   shm_size: '8gb'
-  #   # gpus: all
+  #   # GPU passthrough: add fl-client-net-2 to compose_trust.production.gpu.yml when enabling this net
 
 networks:
   default:

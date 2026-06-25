@@ -38,4 +38,8 @@ line-length = 120
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["I", "F", "E", "W", "PT"]
+select = ["I", "F", "E", "W", "PT", "UP042"]
+
+[tool.uv]
+# 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
+exclude-newer = "3 days"

@@ -104,7 +104,7 @@ resource "aws_ecs_task_definition" "efs_provision" {
         # NVFLARE participant kits are signed at provision time (signature.json
         # over each file). Editing any file post-sync trips
         # LoadResult.INVALID_SIGNATURE on fl-api startup, so the kit must be
-        # regenerated upstream (see net-1_project_stag.yml in flip-fl-base)
+        # regenerated upstream (see deploy/providers/nvflare/net-1_project_stag.yml)
         # whenever a hostname/SAN changes and re-uploaded to S3 under a new
         # FLARE_KIT_DATE prefix.
         #

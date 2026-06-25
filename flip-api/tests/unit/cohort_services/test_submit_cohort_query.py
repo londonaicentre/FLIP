@@ -103,6 +103,58 @@ def test_submit_cohort_query_multiple_trusts(mock_request, sample_query, mock_en
     assert all(t.statusCode == 202 for t in response.trust)
 
 
+def test_submit_cohort_query_persists_queried_trust_ids(
+    mock_request, sample_query, mock_encrypt, mock_can_modify
+):
+    """The dispatched trust IDs must land on Queries.queried_trust_ids so the
+    per-trust UI can render trusts that errored or never responded — otherwise
+    the panel only knows about trusts that posted a QueryResult and loses
+    visibility of dispatch-time failures."""
+    trust_a = uuid.uuid4()
+    trust_b = uuid.uuid4()
+    mock_trust_a = MagicMock(id=trust_a)
+    mock_trust_a.name = "Trust A"
+    mock_trust_b = MagicMock(id=trust_b)
+    mock_trust_b.name = "Trust B"
+
+    mock_db = MagicMock()
+    mock_query_row = MagicMock()
+    # Two exec calls: first returns the trust list, second returns the Queries row.
+    mock_db.exec.side_effect = [
+        MagicMock(all=MagicMock(return_value=[mock_trust_a, mock_trust_b])),
+        MagicMock(first=MagicMock(return_value=mock_query_row)),
+    ]
+
+    submit_cohort_query(mock_request, sample_query, mock_db, user_id)
+
+    assert mock_query_row.queried_trust_ids == [trust_a, trust_b]
+    assert mock_db.commit.called
+
+
+def test_submit_cohort_query_warns_when_query_row_missing(
+    mock_request, sample_query, mock_encrypt, mock_can_modify, caplog
+):
+    """If the Queries row is missing (save_cohort_query never persisted), the tasks are still
+    queued and committed, but a warning is logged so the upstream gap is visible instead of
+    silently dropping queried_trust_ids."""
+    mock_trust = MagicMock(id=uuid.uuid4())
+    mock_trust.name = "Trust A"
+
+    mock_db = MagicMock()
+    # First exec → trust list; second exec → Queries lookup returns None (row absent).
+    mock_db.exec.side_effect = [
+        MagicMock(all=MagicMock(return_value=[mock_trust])),
+        MagicMock(first=MagicMock(return_value=None)),
+    ]
+
+    response = submit_cohort_query(mock_request, sample_query, mock_db, user_id)
+
+    assert mock_db.add.called
+    assert mock_db.commit.called
+    assert len(response.trust) == 1
+    assert "queried_trust_ids was not persisted" in caplog.text
+
+
 @patch("flip_api.cohort_services.submit_cohort_query.can_modify_project", return_value=True)
 def test_submit_cohort_query_forbidden_sql(mock_can_modify, mock_auth_request):
     """Queries with forbidden SQL commands should be rejected."""

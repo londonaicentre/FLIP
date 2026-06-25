@@ -46,8 +46,9 @@ or the full stack:
 make up
 ```
 
-API documentation (Swagger UI) is available at the port defined by `TRUST_API_PORT` in
-[`.env.development.example`](../../.env.development.example):
+API documentation (Swagger UI) is available at the port defined by `TRUST_API_PORT` in this
+trust's kit file (`trust/.env.<CODE>.<env>`; templates: `trust/.env.GSTT.development.example`,
+`trust/.env.KCH.development.example`, default `8020`):
 
 ```
 http://localhost:<TRUST_API_PORT>/docs
@@ -55,25 +56,28 @@ http://localhost:<TRUST_API_PORT>/docs
 
 ## Configuration
 
-Key environment variables (set in [`.env.development.example`](../../.env.development.example)):
+Key environment variables. Per-trust values (ports, keys, expected trust id) live in this
+trust's kit file (`trust/.env.<CODE>.<env>`); hub-shared values (`AES_KEY_BASE64`,
+`CENTRAL_HUB_API_URL`) are synced into the kit's Hub-shared block by
+`make register-trust KIT=<CODE>` (live in prod, inherited from the hub `.env.<env>` in dev):
 
 | Variable | Description |
 | --- | --- |
-| `TRUST_NAME` | Name of this Trust instance (must match `Trust.name` in hub DB, e.g. `Trust_1`) |
+| `EXPECTED_TRUST_ID` | Optional self-check. If set, trust-api aborts at startup when the hub-resolved trust id does not match this value |
 | `DATA_ACCESS_API_URL` | Internal URL of the data-access-api |
 | `IMAGING_API_URL` | Internal URL of the imaging-api |
 | `CENTRAL_HUB_API_URL` | URL of the Central Hub API (for task polling) |
-| `TRUST_API_KEY` | Per-trust API key for authenticating with the Central Hub. Keys are stored in `TRUST_API_KEYS` JSON dict; generate with `make generate-trust-api-keys` |
+| `TRUST_API_KEY` | Per-trust API key for authenticating with the Central Hub. Lives in this trust's kit file (`trust/.env.<CODE>.<env>`), written by `make register-trust KIT=<CODE>` |
 | `AES_KEY_BASE64` | Base64-encoded AES-256 key shared with the hub, used to decrypt encrypted task payloads |
 | `POLL_INTERVAL_SECONDS` | Polling frequency in seconds (default: 5) |
 | `TRUST_INTERNAL_SERVICE_KEY_HEADER` | Header name for trust-internal service auth (default `X-Trust-Internal-Service-Key`) |
-| `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Generated alongside the other trust keys via `make generate-trust-internal-service-keys` (run from the repo root or `flip-api/`). |
+| `TRUST_INTERNAL_SERVICE_KEY` | Per-trust plaintext key. Forwarded outbound on every call to imaging-api and data-access-api so those services can authenticate the caller. Minted by `register_trust` (`make register-trust KIT=<CODE>`) into this trust's kit file (`trust/.env.<CODE>.<env>`). |
 
 ## Authentication
 
 trust-api authenticates **outbound** in two directions:
 
-- **To the Central Hub**: every request carries `TRUST_API_KEY` in the `TRUST_API_KEY_HEADER`. The hub validates against the SHA-256 hash stored in `TRUST_API_KEY_HASHES`.
+- **To the Central Hub**: every request carries `TRUST_API_KEY` in the `TRUST_API_KEY_HEADER`. The hub validates against the `api_key_hash` column on the trust's row in the `trust` table.
 - **To sibling trust services** (imaging-api, data-access-api): every request carries `TRUST_INTERNAL_SERVICE_KEY` in the configured header. Receivers compare with `hmac.compare_digest` against their own copy of the same per-trust key. See the **Trust-internal Service Authentication** section in [`CLAUDE.md`](../../CLAUDE.md) for the threat model.
 
 trust-api itself does **not** receive inbound requests from the hub or any external caller — it only polls outbound — so it does not validate an inbound trust-internal header.
@@ -84,7 +88,7 @@ The trust-api task poller is designed to run as a **single replica per trust**. 
 task-claim endpoint does not use row-level database locking, so running multiple poller replicas
 for the same trust would cause duplicate task execution.
 
-If horizontal scaling is needed, the hub endpoint (`GET /tasks/{trust_name}/pending`) must be
+If horizontal scaling is needed, the hub endpoint (`GET /tasks/pending`) must be
 updated to use `SELECT ... FOR UPDATE SKIP LOCKED` to ensure each task is claimed by exactly
 one replica.
 

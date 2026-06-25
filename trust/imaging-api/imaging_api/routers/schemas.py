@@ -38,7 +38,10 @@ _XML_FORBIDDEN_CHARS = ("<", ">", "&")
 class User(BaseModel):
     """Represents a user profile on XNAT."""
 
-    lastModified: int
+    # XNAT omits lastModified for never-modified users (e.g. a freshly configured
+    # admin that has only logged in), so it must be optional — otherwise parsing
+    # the user list fails and project creation 500s.
+    lastModified: int | None = None
     username: str
     enabled: bool
     id: int
@@ -154,7 +157,7 @@ class Experiment(BaseModel):
     """
     Short representation of an experiment on XNAT, it is the result of the REST API call
 
-    ``GET f"{XNAT_URL}/data/projects/{project_id}/experiments"``
+    ``GET f"{XNAT_URL}/data/experiments?project={project_id}"``
     """
 
     id: str = Field(..., alias="ID")
@@ -216,14 +219,14 @@ class ImportStudy(BaseModel):
     accession_number: str = Field(..., alias="accessionNumber")
     relabel_map: dict[str, str] = Field(default={}, alias="relabelMap")
 
-    def set_relabel_map(self):
+    def set_relabel_map(self) -> None:
         """Sets the relabel_map dictionary for subject and session."""
         self.relabel_map = {
             "Subject": str(uuid.uuid4()),  # Generate new UUID for Subject
             "Session": self.accession_number,
         }
 
-    def __init__(self, **data):
+    def __init__(self, **data: object) -> None:
         """Initializes the ImportStudy instance and sets the relabel_map."""
         super().__init__(**data)
         self.set_relabel_map()
@@ -241,7 +244,7 @@ class ImportStudyRequest(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def deduplicate_and_parse_studies(cls, data):
+    def deduplicate_and_parse_studies(cls, data: dict) -> dict:
         """Deduplicates and parses studies before validation.
 
         Args:

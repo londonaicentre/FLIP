@@ -129,7 +129,7 @@
 }
 
 .CodeMirror * {
-    @apply  !font-mono text-base;
+    @apply  !font-mono text-sm;
 }
 
 .CodeMirror-line {

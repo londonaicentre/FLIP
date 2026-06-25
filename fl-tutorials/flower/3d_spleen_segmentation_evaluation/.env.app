@@ -1,0 +1,1 @@
+MODEL_CHECKPOINT_URL=https://huggingface.co/aicentreflip/tutorials-evaluation-3d-seg-model/resolve/main/model.pt

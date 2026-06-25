@@ -95,10 +95,9 @@ def stage_project_endpoint(
             detail=f"Project with ID: {project_id} is not '{ProjectStatus.UNSTAGED}' and cannot be staged.",
         )
 
-    # Check for query and trustsQueried (assuming ProjectResponseSchema has a nested query object)
-    # The original TS code checks `query?.trustsQueried`.
-    # This implies that if `query` is null/undefined OR `trustsQueried` is null/undefined/0, it's an error.
-    if not project_data.query or project_data.query.trusts_queried is None or project_data.query.trusts_queried <= 0:
+    # Staging needs a cohort query that produced at least one trust result —
+    # without that, there's nothing to stage against.
+    if not project_data.query or not project_data.query.queried_trust_ids:
         error_msg = (
             f"Project with ID: {project_id} does not have a valid cohort query with trusts queried and cannot"
             " be staged."
@@ -108,7 +107,67 @@ def stage_project_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error_msg,
         )
-    logger.debug(f"Project {project_id} has query with {project_data.query.trusts_queried} trusts queried.")
+    logger.debug(
+        f"Project {project_id} has query with {len(project_data.query.queried_trust_ids)} trusts queried."
+    )
+
+    # Four guards, each catching a distinct way an operator could end up
+    # staging on a trust they don't have a usable cohort for. The UI already
+    # filters the selector — these guard direct API callers.
+    queried_trust_ids = set(project_data.query.queried_trust_ids)
+    responded_trust_ids = set(project_data.query.responded_trust_ids)
+    errored_trust_ids = set(project_data.query.errored_trust_ids)
+    empty_trust_ids = set(project_data.query.empty_trust_ids)
+
+    # (1) Late-joiners: trust joined the platform after the query was
+    # dispatched, so it isn't in the queried set at all.
+    unqueried_trust_ids = [tid for tid in payload.trusts if tid not in queried_trust_ids]
+    if unqueried_trust_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Trusts {unqueried_trust_ids} were not part of the cohort query for project {project_id} "
+                "and cannot be staged."
+            ),
+        )
+
+    # (2) Never-responded: trust was dispatched but the hub holds no
+    # QueryResult — no cohort count, so the project would be committed to
+    # data we never received.
+    unresponded_trust_ids = [tid for tid in payload.trusts if tid not in responded_trust_ids]
+    if unresponded_trust_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Trusts {unresponded_trust_ids} have not returned cohort query results for project "
+                f"{project_id} and cannot be staged."
+            ),
+        )
+
+    # (3) Errored: trust replied, but with an error blob — no usable count.
+    failed_trust_ids = [tid for tid in payload.trusts if tid in errored_trust_ids]
+    if failed_trust_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Trusts {failed_trust_ids} returned an error for the cohort query for project "
+                f"{project_id} and cannot be staged."
+            ),
+        )
+
+    # (4) Empty cohort: trust replied successfully but with 0 records — either a
+    # genuine zero match or a privacy-suppressed below-threshold count (#519).
+    # Either way there's no cohort to build an imaging project against, so the
+    # trust isn't stage-eligible.
+    empty_cohort_trust_ids = [tid for tid in payload.trusts if tid in empty_trust_ids]
+    if empty_cohort_trust_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Trusts {empty_cohort_trust_ids} returned no cohort records (zero or privacy-suppressed) "
+                f"for project {project_id} and cannot be staged."
+            ),
+        )
 
     try:
         stage_project_service(

@@ -169,6 +169,8 @@ def register_user_step_function_endpoint(
         return IRegisterUserDto(
             user_id=user_id,
             email=register_response.email,
+            name=register_response.name,
+            organisation=register_response.organisation,
             roles=register_response.roles,
         )
 

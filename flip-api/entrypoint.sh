@@ -38,7 +38,17 @@ until pg_isready -h $DB_HOST; do
   sleep 1
 done
 
->&2 echo "Postgres is up - executing seeding command"
+>&2 echo "Postgres is up - applying Alembic migrations"
+# Alembic owns the schema (replaces the old SQLModel.metadata.create_all). Fail fast:
+# a non-zero migration exit must NOT seed or start FastAPI, so a half-applied schema
+# never serves traffic. Runs from /app where alembic.ini lives.
+uv run alembic upgrade head
+if [ $? -ne 0 ]; then
+    >&2 echo "Alembic migration failed - exiting"
+    exit 1
+fi
+
+>&2 echo "Migrations applied - executing seeding command"
 ${seed_cmd}
 
 # Check if seeding was successful

@@ -48,7 +48,7 @@ Each local Trust host runs:
 | data-access-api | 8000 | HTTP (internal) |
 | fl-client | — | TCP (connects outbound to FL server via NLB) |
 
-The `up-local-trust` stack does **not** publish these container ports to the host (see `trust/deploy/compose_trust.local.yml`) — services communicate over the internal Docker network only, which lets the local-trust stack coexist on a developer laptop with `make up` (whose dev `trust1` instance binds host ports `8001`/`8010`/`8020` via `trust/deploy/compose_trust-1_override.yml`). When the same images run on a cloud Trust EC2 (production compose), the container ports are mapped to host ports `IMAGING_API_PORT` (8001), `DATA_ACCESS_API_PORT` (8010), and `TRUST_API_PORT` (8020) — see `.env.development.example`.
+The on-prem trust kit (`trust/.env.<CODE>.production`) can default `IMAGING_API_PORT` / `DATA_ACCESS_API_PORT` / `TRUST_API_PORT` to host ports shifted off the first dev trust's allocation (`8005` / `8014` / `8024` vs the dev `8001` / `8010` / `8020`), so the prod-pointed stack coexists on a developer laptop with `make up` (whose first dev trust binds the original ports via `trust/deploy/compose_trust-1_override.yml`). A real on-prem operator on a dedicated host can revert the kit-file values to standard `8001` / `8010` / `8020` if their tooling expects them.
 
 ## Prerequisites
 
@@ -76,50 +76,47 @@ cd deploy/providers/AWS
 ### Recommended end-to-end target (hybrid)
 
 ```bash
-make full-deploy-hybrid PROD=<stag|true> LOCAL_TRUST_IP=<public-ip> [LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key]
+make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<public-ip>]
 ```
 
-This wrapper target runs the full AWS + local trust provisioning pipeline, updates the trust configuration in AWS Secrets Manager (per-trust `TRUST_API_KEY`, `AES_KEY_BASE64`, and `TRUST_API_KEY_HASHES`), and redeploys Central Hub so the new secret values are loaded. `PROD` is inherited from the environment and supports both staging (`stag`) and production (`true`). Omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP.
-You still need to start the local trust stack on the trust host:
+This wrapper target runs the full AWS + on-prem trust provisioning pipeline and registers the trust on the running hub (`make register-trusts`) — inserting the `trust` row with its `api_key_hash`, claiming an FL kit slot, and writing the per-trust kit file. No hub redeploy is needed. `PROD` is inherited from the environment and supports both staging (`stag`) and production (`true`). Omit `LOCAL_TRUST_IP` to auto-detect the operator machine's public IP.
+
+You still need to start the on-prem trust stack on the trust host:
 
 ```bash
-cd trust
-env PROD=<stag|true> make up-local-trust
+cd ../../..
+env PROD=<stag|true> make -C trust up-trust KIT=<CODE>
 ```
 
-### Provision a remote trust host (via SSH)
+Use the trust code you registered, whose kit file is `trust/.env.<CODE>.production`.
+
+### Provision the trust host
+
+Run this **on the trust host** — there is no SSH path:
 
 ```bash
-make add-local-trust \
-  LOCAL_TRUST_IP=<public-ip> \
-  LOCAL_TRUST_SSH_KEY=~/.ssh/trust_key
-```
-
-### Provision the local machine as the trust host (no SSH)
-
-```bash
-# Set the sudo password (fish shell)
+# Set the sudo password (fish shell; bash: read -rsp ... && export ANSIBLE_BECOME_PASS)
 set -x ANSIBLE_BECOME_PASS (read -s -P 'Sudo password: ')
 
-make add-local-trust LOCAL_TRUST_IP=<public-ip>
+make provision-local-trust
 ```
 
-### What `add-local-trust` does
+### What `provision-local-trust` does
 
 1. Runs the Ansible playbook (`site_local_trust.yml`) which:
    - Installs Docker and required system packages
    - Creates application directories under `/opt/flip/`
-2. Downloads the `Trust_2` FL participant kit from S3 and deploys it to `/opt/flip/services/Trust_2/{startup,local,transfer}` on the trust host.
-3. Runs a targeted `terraform apply` to:
-   - Add security group rules allowing FL traffic from the local trust's public IP
+2. Downloads the FL participant kit from S3 and stages it under `/tmp`, printing the `sudo rsync` commands to deploy it into `${FL_KIT_DIR}/net-1/...` (default `/opt/flip/fl-kit/net-1/...`).
+
+Opening the AWS FL-server NLB to the trust's public IP is a **separate** step — `make allow-local-trust-nlb LOCAL_TRUST_IP=<public-ip>` — run by the FLIP admin once the operator reports their IP.
 
 ### Post-provisioning manual steps
 
 1. **Start the trust stack** on the trust host:
 
    ```bash
-   cd trust
-   env PROD=stag make up-local-trust
+   cd ../../..
+   env PROD=stag make -C trust up-trust KIT=<CODE>   # the trust code you registered
    ```
 
 2. **Verify** the trust can poll the hub (check trust-api logs for successful task polling).
@@ -134,24 +131,21 @@ Any machine with the correct credentials can act as a trust — the hub identifi
 
 | Variable | Purpose |
 | --- | --- |
-| `TRUST_NAME` | Must match a name in the hub's `TRUST_NAMES` list (e.g. `Trust_2`) |
-| `TRUST_API_KEY` | Per-trust secret key (generated by `make generate-trust-api-keys`) |
+| `TRUST_API_KEY` | Per-trust secret key, from the trust's kit file written by `make register-trusts` |
 | `CENTRAL_HUB_API_URL` | Hub URL the trust polls (e.g. `https://app.flip.aicentre.co.uk`) |
 | `AES_KEY_BASE64` | Shared encryption key for trust-hub payloads |
 
 **Hub-side prerequisites** (before the trust can connect):
 
-1. `TRUST_NAMES` must include this trust's name
-2. `TRUST_API_KEY_HASHES` must contain the SHA-256 hash of this trust's API key
-3. The hub must be redeployed with the updated secrets (`make deploy-centralhub`)
+1. The trust must be registered on the hub — run `make register-trusts`, or use the Add-Trust button on the Connection status page. Registration inserts the `trust` row with its `api_key_hash` and claims an FL kit slot. No hub redeploy is needed.
 
-The `full-deploy-with-local-trust` / `full-deploy-hybrid` targets handle key generation and hub redeployment automatically (both honour `PROD=stag|true`). When using `add-local-trust` standalone, keys must already be configured.
+The `full-deploy-with-local-trust` / `full-deploy-hybrid` targets handle trust registration automatically (both honour `PROD=stag|true`). When provisioning a trust standalone with `provision-local-trust`, the trust must already be registered.
 
 ## Ansible Playbook Details
 
 ### `site_local_trust.yml`
 
-The main playbook. It can be run standalone or via the `add-local-trust` Makefile target.
+The main playbook. It can be run standalone or via the `provision-local-trust` Makefile target.
 
 **Optional variables:**
 
@@ -190,6 +184,11 @@ uv run ansible-galaxy install -r deploy/providers/local/requirements.yml
 
 **No inbound port forwarding is needed.** Trusts poll the hub outbound for tasks, and FL clients connect outbound to the FL server via the NLB. All communication is trust-initiated.
 
+The host/network firewall must allow outbound to **two separate Central Hub hosts** (different load balancers — both must be allowlisted):
+
+- **`app.flip.aicentre.co.uk`** — the ALB (HTTPS API, port 443).
+- **`fl.app.flip.aicentre.co.uk`** — the NLB (FL gRPC, default port 8002).
+
 ### Dynamic Public IP
 
 The NLB security group allowlists the trust's public IP for FL traffic. If the public IP changes (common with residential broadband), update it:
@@ -210,5 +209,6 @@ TF_VAR_local_trust_public_ip=<new-ip> make -C deploy/providers/AWS plan apply
 ## Related Documentation
 
 - [AWS Provider README](../AWS/README.md) — Central Hub and cloud Trust deployment
+- [Kubernetes Provider README](../kubernetes/README.md) — K8s-based trust deployment via Helm
 - [Trust README](../../../trust/README.md) — Trust service stack details
 - [Deploy README](../../README.md) — General deployment prerequisites (AWS CLI, SSH keys, GHCR login)

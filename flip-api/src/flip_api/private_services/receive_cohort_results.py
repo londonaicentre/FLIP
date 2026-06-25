@@ -18,7 +18,7 @@ from sqlmodel import Session, col, select
 
 from flip_api.auth.access_manager import authenticate_trust
 from flip_api.db.database import get_session
-from flip_api.db.models.main_models import QueryResult, QueryStats, Trust
+from flip_api.db.models.main_models import Queries, QueryResult, QueryStats, Trust
 from flip_api.domain.schemas.private import (
     AggregatedCohortStats,
     AggregatedFieldResult,
@@ -30,6 +30,40 @@ from flip_api.domain.schemas.private import (
 from flip_api.utils.logger import logger
 
 router = APIRouter(tags=["private_services"])
+
+
+# Whitelist of error categories the trust side may set on a failed cohort task.
+# Anything outside this set is collapsed to ``internal_error`` so a future
+# code path that accidentally leaks raw psycopg / SQLAlchemy text never
+# reaches the cohort UI. The trust-side mapping happens at source in
+# trust/data-access-api/data_access_api/services/cohort.py — this is
+# belt-and-braces only. Update both lists together.
+_ALLOWED_TRUST_ERROR_CATEGORIES: frozenset[str] = frozenset(
+    {"query_failed", "query_timeout", "internal_error"}
+)
+
+
+def _redact_trust_error(raw: str | None) -> str:
+    """Collapse a trust-side error string to a safe enum category.
+
+    Args:
+        raw (str | None): The error string the trust reported on the failed
+            cohort task, if any.
+
+    Returns:
+        str: One of ``_ALLOWED_TRUST_ERROR_CATEGORIES``. ``internal_error``
+        is the default for anything unrecognised — including ``None``, raw
+        psycopg traceback fragments, and wrapped ``"500: ..."`` strings the
+        trust-api gateway constructs from upstream HTTPException bodies.
+    """
+    if not raw:
+        return "internal_error"
+    # Trust-api wraps upstream HTTPException details as "<status>: <detail>";
+    # the trailing token is what data-access-api set as the category.
+    candidate = raw.split(":", 1)[-1].strip().lower()
+    if candidate in _ALLOWED_TRUST_ERROR_CATEGORIES:
+        return candidate
+    return "internal_error"
 
 
 def _save_individual_result(db: Session, cohort_results: OmopCohortResults) -> None:
@@ -55,6 +89,8 @@ def _save_individual_result(db: Session, cohort_results: OmopCohortResults) -> N
     data_to_store = json.dumps({
         "record_count": cohort_results.record_count,
         "data": [d.model_dump() for d in cohort_results.data],
+        "error": cohort_results.error,
+        "suppressed": cohort_results.suppressed,
     })
 
     # Try to retrieve existing result
@@ -122,6 +158,15 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
     )
 
     try:
+        # Serialize aggregation for this query: take a blocking row lock on the parent
+        # Queries row before the read-modify-write below, so concurrent trust POSTs
+        # aggregate one-at-a-time instead of racing on the single QueryStats row (a stale
+        # pass could otherwise clobber a fuller one and drop a responded trust — #579).
+        # _save_individual_result has already committed this trust's QueryResult row, so
+        # once the lock is held the re-read sees every result posted so far. The lock is
+        # released by the commit at the end of this block.
+        db.exec(select(Queries).where(Queries.id == query_id).with_for_update()).first()
+
         rows = db.exec(statement).all()
         logger.debug(f"Response: {rows} for query_id: {query_id}")
 
@@ -154,10 +199,33 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
             parsed_trust_data_list.append(TrustSpecificData(**json.loads(json_str_data)))
 
         # 3. Aggregate
-        total_record_count = sum(ptd.record_count for ptd in parsed_trust_data_list)
+        # Errored trusts don't contribute to record_count or field aggregates —
+        # they only populate trust_errors so the UI can show a red chip.
+        total_record_count = sum(ptd.record_count for ptd in parsed_trust_data_list if not ptd.error)
+
+        trust_record_counts: dict[str, int] = {}
+        trust_errors: dict[str, str] = {}
+        trust_suppressed: list[str] = []
+        # error and suppressed are mutually exclusive by construction — data-access-api
+        # never sets both — so the suppressed flag is only read in the non-errored branch.
+        for i, ptd in enumerate(parsed_trust_data_list):
+            trust_id_str = fetched_data.trust_id[i]
+            if ptd.error:
+                # S-8: redact to a safe category before storing. Raw psycopg
+                # text could otherwise reach project members via the UI.
+                trust_errors[trust_id_str] = _redact_trust_error(ptd.error)
+            else:
+                trust_record_counts[trust_id_str] = ptd.record_count
+                # A suppressed trust still "responded successfully" (count 0), so it
+                # belongs in trust_record_counts; trust_suppressed flags it so the UI
+                # shows a suppression chip instead of a literal 0 (issue #519).
+                if ptd.suppressed:
+                    trust_suppressed.append(trust_id_str)
 
         all_field_names: set[str] = set()
         for trust_data_item in parsed_trust_data_list:
+            if trust_data_item.error:
+                continue
             if trust_data_item.data:
                 for datum in trust_data_item.data:
                     all_field_names.add(datum.name)
@@ -170,6 +238,8 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
             for field_name in sorted(list(all_field_names)):  # Sort for consistent output
                 current_field_trust_results: list[AggregatedTrustFieldResult] = []
                 for i, trust_specific_data_item in enumerate(parsed_trust_data_list):
+                    if trust_specific_data_item.error:
+                        continue
                     # Only include trusts that contributed to the record count for this field
                     if trust_specific_data_item.record_count > 0 and trust_specific_data_item.data:
                         matching_omop_datum = None
@@ -200,6 +270,9 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
         final_aggregated_stats = AggregatedCohortStats(
             record_count=total_record_count,
             trusts_results=aggregated_field_results,
+            trust_record_counts=trust_record_counts,
+            trust_errors=trust_errors,
+            trust_suppressed=trust_suppressed,
         )
 
         # 4. Save aggregated stats
@@ -245,7 +318,7 @@ def _aggregate_and_save_results(db: Session, query_id: UUID) -> None:
 def receive_cohort_results_endpoint(
     cohort_results: OmopCohortResults,
     db: Session = Depends(get_session),
-    authenticated_trust: str = Depends(authenticate_trust),
+    authenticated_trust: Trust = Depends(authenticate_trust),
 ) -> dict[str, str]:
     """
     Receives cohort query results from a single trust, saves them,
@@ -254,7 +327,7 @@ def receive_cohort_results_endpoint(
     Args:
         cohort_results (OmopCohortResults): The cohort results sent by the trust.
         db (Session): Database session.
-        authenticated_trust (str): Authenticated trust name (validated by dependency).
+        authenticated_trust (Trust): Trust resolved from the API key by the dependency.
 
     Returns:
         dict[str, str]: A message indicating successful processing of cohort results.
@@ -262,13 +335,13 @@ def receive_cohort_results_endpoint(
     Raises:
         HTTPException: If there is an error during processing, saving individual results, or aggregating results.
     """
-    # Verify the authenticated trust owns this result
-    trust = db.exec(select(Trust).where(Trust.name == authenticated_trust)).first()
-    if not trust or trust.id != cohort_results.trust_id:
+    # Verify the authenticated trust owns this result — the payload's trust_id
+    # must match the trust the API key resolved to.
+    if authenticated_trust.id != cohort_results.trust_id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
-                f"Trust '{authenticated_trust}' is not authorised to submit results "
+                f"Trust '{authenticated_trust.name}' is not authorised to submit results "
                 f"for trust_id {cohort_results.trust_id}"
             ),
         )

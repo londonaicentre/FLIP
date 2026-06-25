@@ -10,19 +10,12 @@
 # limitations under the License.
 #
 
-# if tag PROD=true is passed, set PROD=true
-ifeq ($(PROD),true)
-MAIN_ENV_FILE=../../.env.production
-else ifeq ($(PROD),stag)
-MAIN_ENV_FILE=../../.env.stag
-else
-MAIN_ENV_FILE=../../.env.development
-endif
-
-# replace environment variables by the values from the .env files
-ifneq ("$(wildcard $(MAIN_ENV_FILE))","")
-include $(MAIN_ENV_FILE)
-export $(shell sed 's/=.*//' $(MAIN_ENV_FILE))
+# Pull defaults from the per-trust kit example (the only tracked env source —
+# the real kit file is gitignored and may not exist on a dev box).
+KIT_ENV_FILE=../.env.GSTT.development.example
+ifneq ("$(wildcard $(KIT_ENV_FILE))","")
+include $(KIT_ENV_FILE)
+export $(shell sed 's/=.*//' $(KIT_ENV_FILE))
 endif
 
 network1 = deploy_trust-network-1
@@ -35,16 +28,16 @@ run_clean = run --rm --remove-orphans
 # Using the run command ignores the port mapping
 up-test-omop-trust1:
 # 	This will just be used for testing
-	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST1} \
-	OMOP_DB_PORT=${OMOP_DB_PORT_TRUST_1} \
+	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR} \
+	OMOP_DB_PORT=${OMOP_DB_PORT} \
 	TRUST_NETWORK_NAME=${network1} \
 	TRUST_NAME=Trust_1 \
 	$(docker_command) up $(service_name) --pull always
 
 down-test-omop-trust1:
 # 	This will just be used for testing
-	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR_TRUST1} \
-	OMOP_DB_PORT=${OMOP_DB_PORT_TRUST_1} \
+	BASE_IMAGES_DOWNLOAD_DIR=${BASE_IMAGES_DOWNLOAD_DIR} \
+	OMOP_DB_PORT=${OMOP_DB_PORT} \
 	TRUST_NETWORK_NAME=${network1} \
 	TRUST_NAME=Trust_1 \
 	$(docker_command) down --remove-orphans $(service_name) -v
@@ -53,6 +46,7 @@ shell:
 	docker exec -it $$(docker ps -qf "name=$(service_name)") /bin/bash
 
 # Sync mock omop data (used in development / staging environments where real data is not available)
-# Needs AWS account credentials configured to run S3 commands
+# Fetched anonymously from the public Hugging Face dataset (no AWS CLI / credentials needed)
+# Pass TRUST=1 or TRUST=2 to update only a single trust; defaults to all.
 update-omop-data:
-	CLEAN_AFTER_UPDATE=True AICENTRE_BUCKET_NAME=$(AICENTRE_BUCKET_NAME) ./update_omop_data.sh
+	TRUST=$(TRUST) CLEAN_AFTER_UPDATE=True ./update_omop_data.sh
