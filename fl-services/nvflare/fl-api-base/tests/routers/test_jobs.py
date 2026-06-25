@@ -127,3 +127,20 @@ def test_delete_job_success(client):
 def test_delete_job_not_found(client):
     response = client.delete("/delete_job/9999")
     assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+def test_submit_job_rejects_non_uuid(client):
+    """Production submit is UUID-strict: a non-UUID job_folder is rejected with 400."""
+    response = client.post("/submit_job/not-a-uuid")
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+def test_submit_job_accepts_uuid(client, override_session):
+    """A UUID job_folder is accepted and forwarded to the session unchanged."""
+    override_session.submit_job.return_value = "job-1234"
+    model_id = "c7f72374-0752-473f-a28f-592e4d8b7a47"
+
+    response = client.post(f"/submit_job/{model_id}")
+
+    assert response.status_code == status.HTTP_200_OK
+    override_session.submit_job.assert_called_once_with(model_id)

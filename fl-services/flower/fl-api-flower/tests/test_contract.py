@@ -29,7 +29,8 @@ def test_docs_and_openapi_contract(client):
         "/check_server_status",
         "/check_client_status",
         "/list_runs",
-        "/submit_run/{app_folder}",
+        "/submit_run/{job_folder}",
+        "/submit_tutorial/{tutorial_name}",
         "/abort_run/{run_id}",
         "/upload_app/{model_id}",
     ):
@@ -43,7 +44,7 @@ def test_docs_and_openapi_contract(client):
         "application/json"
     ]["schema"]
     list_schema = spec["paths"]["/list_runs"]["get"]["responses"]["200"]["content"]["application/json"]["schema"]
-    submit_schema = spec["paths"]["/submit_run/{app_folder}"]["post"]["responses"]["200"]["content"][
+    submit_schema = spec["paths"]["/submit_run/{job_folder}"]["post"]["responses"]["200"]["content"][
         "application/json"
     ]["schema"]
     abort_schema = spec["paths"]["/abort_run/{run_id}"]["delete"]["responses"]["200"]["content"]["application/json"][

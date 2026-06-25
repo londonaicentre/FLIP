@@ -68,7 +68,7 @@ make up                   # start fl-api, superlink, supernode-1, supernode-2
 Then submit the run against the `fl-api` control plane:
 
 ```bash
-curl -X POST http://localhost:8000/submit_run/xray_classification
+curl -X POST http://localhost:8000/submit_tutorial/xray_classification
 ```
 
 The compose file (`deploy/compose.yml`) wires everything correctly:

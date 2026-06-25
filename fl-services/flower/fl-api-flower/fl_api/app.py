@@ -38,7 +38,7 @@ from fl_api.schemas import (
     normalize_status,
 )
 from fl_api.utils.upload import upload_application
-from fl_api.utils.validation import safe_join, validate_app_folder_name
+from fl_api.utils.validation import safe_join, validate_app_folder_name, validate_model_id
 
 logger = logging.getLogger("uvicorn")
 
@@ -159,21 +159,31 @@ def _parse_flwr_payload(result: subprocess.CompletedProcess[str], action_name: s
         ) from err
 
 
-def _validate_app_folder(app_folder: str) -> Path:
-    # app_folder is an uploaded-model UUID or a static tutorial folder name, so it can't be
-    # restricted to an allow-list; instead reject traversal sequences and confirm the
-    # resolved path stays under the src root. Uploaded apps and tutorial apps both live
-    # there: the FL API downloads bundles into FLOWER_SRC_ROOT/<model_id>, alongside the
-    # tutorial folders.
-    validate_app_folder_name(app_folder)
-    job_dir = safe_join(_get_src_root(), app_folder)
+def _resolve_job_dir(folder: str) -> Path:
+    # Resolve <src_root>/<folder> with traversal containment and confirm it exists. The name
+    # itself is validated by the caller (a UUID for production submit, a charset-guarded
+    # folder name for tutorials) before we get here.
+    job_dir = safe_join(_get_src_root(), folder)
     if not job_dir.is_dir():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Job folder path does not exist: {job_dir}",
         )
-
     return job_dir
+
+
+def _validate_job_folder(job_folder: str) -> Path:
+    # Production submit: flip-api submits an uploaded model by its uuid4 (the cross-backend
+    # /submit_job contract, same `job_folder` shape as fl-api-base), so it must be a UUID.
+    validate_model_id(job_folder)
+    return _resolve_job_dir(job_folder)
+
+
+def _validate_tutorial_folder(tutorial_name: str) -> Path:
+    # Tutorial submit: pre-baked tutorial folders (e.g. "numpy", "xray_classification") are
+    # submitted by name, not a UUID, so they get a charset/traversal guard instead.
+    validate_app_folder_name(tutorial_name)
+    return _resolve_job_dir(tutorial_name)
 
 
 def _get_federation_nodes(src_root: Path) -> list[dict[str, Any]]:
@@ -313,11 +323,7 @@ def list_runs() -> list[JobMetadata]:
     return _parse_runs_payload(payload)
 
 
-@app.post("/submit_run/{app_folder}", status_code=status.HTTP_200_OK, response_model=str)
-@app.post("/submit_job/{app_folder}", include_in_schema=False)  # alias, hide from docs
-def submit_run(app_folder: str) -> str:
-    job_dir = _validate_app_folder(app_folder)
-
+def _submit_from_job_dir(job_dir: Path, label: str) -> str:
     global _submission_in_progress
 
     # config.toml holds the run-config overrides for this app. It may sit on a
@@ -355,7 +361,7 @@ def submit_run(app_folder: str) -> str:
         except HTTPException as err:
             raise HTTPException(
                 status_code=err.status_code,
-                detail=f"Failed to submit job from folder {app_folder}: {err.detail}",
+                detail=f"Failed to submit job from folder {label}: {err.detail}",
             ) from err
 
         response_payload = _parse_flwr_payload(result, "submit")
@@ -376,7 +382,7 @@ def submit_run(app_folder: str) -> str:
 
         logger.info(
             "Submitted Flower job from '%s' using command: %s",
-            app_folder,
+            label,
             " ".join(command),
         )
         return resp.run_id
@@ -385,6 +391,21 @@ def submit_run(app_folder: str) -> str:
             _submission_in_progress = False
         if run_config_path is not None:
             os.unlink(run_config_path)
+
+
+@app.post("/submit_run/{job_folder}", status_code=status.HTTP_200_OK, response_model=str)
+@app.post("/submit_job/{job_folder}", include_in_schema=False)  # alias flip-api calls with a UUID
+def submit_run(job_folder: str) -> str:
+    # Production path: flip-api submits an uploaded model by its UUID (the cross-backend
+    # /submit_job contract). UUID-strict, so a non-UUID can never reach the job dir or flwr.
+    return _submit_from_job_dir(_validate_job_folder(job_folder), job_folder)
+
+
+@app.post("/submit_tutorial/{tutorial_name}", status_code=status.HTTP_200_OK, response_model=str)
+def submit_tutorial(tutorial_name: str) -> str:
+    # Tutorial path: pre-baked tutorial folders are submitted by name (not a UUID), e.g.
+    # `numpy` / `xray_classification`. Charset/traversal-guarded, contained under the src root.
+    return _submit_from_job_dir(_validate_tutorial_folder(tutorial_name), tutorial_name)
 
 
 def _find_terminal_run(src_root: Path, run_id: str) -> JobMetadata | None:
