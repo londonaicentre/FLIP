@@ -206,6 +206,41 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
                 f'{slot}"'
             )
     lines += fl_section
+
+    # FL-server egress (FLIP#593 pt.3): the default-deny egress NetworkPolicy
+    # drops the fl-client's outbound gRPC to the FL server unless FL_SERVER_PORT
+    # is allow-listed. The FL server sits behind an internet-facing NLB with
+    # AWS-managed IPs that rotate on recreation (and DNS returns a reordered
+    # subset), so pinning resolved /32s would relocate the very drift it tries to
+    # fix. Instead emit a PORT-ONLY egress rule: add FL_SERVER_PORT to
+    # allowedEgressPorts (the template supports a no-CIDR port entry). This is
+    # immune to NLB IP churn — K8s NetworkPolicy can't match DNS names anyway —
+    # and re-running sync-kit regenerates it deterministically rather than
+    # silently dropping a hand-added block and severing FL training.
+    #
+    # Helm replaces (not merges) list values across `-f` files, so the override's
+    # allowedEgressPorts must restate the chart defaults (DNS/HTTP/HTTPS, kept in
+    # sync with values.yaml) alongside the FL-server port — otherwise the
+    # override would wipe the default egress allowlist.
+    fl_port = kit.get("FL_SERVER_PORT", "").strip()
+    if fl_port:
+        lines += [
+            "",
+            "networkPolicies:",
+            "  # Restates the chart-default egress ports (values.yaml) plus the",
+            "  # fl-client → fl-server gRPC port; Helm replaces this list wholesale.",
+            "  allowedEgressPorts:",
+            "    - port: 53",
+            "      protocol: UDP",
+            "    - port: 53",
+            "      protocol: TCP",
+            "    - port: 80",
+            "      protocol: TCP",
+            "    - port: 443",
+            "      protocol: TCP",
+            f"    - port: {fl_port}  # fl-client → fl-server gRPC (FL_SERVER_PORT)",
+            "      protocol: TCP",
+        ]
     lines.append("")
     return "\n".join(lines)
 
