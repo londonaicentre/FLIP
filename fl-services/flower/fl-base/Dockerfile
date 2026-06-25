@@ -30,9 +30,12 @@ WORKDIR /app
 # --extra-index-url points pip at PyTorch's CUDA-12.8 wheel index. Combined with
 # flip-utils' "torch>=2.11,<2.12" pin, pip picks torch 2.11.x+cu128 — the highest
 # torch that runs on the host NVIDIA driver 575.x (cu13 wheels need driver >=580).
-COPY flip-utils/pyproject.toml flip-utils/README.md /tmp/flip-utils/
-COPY flip-utils/docs/ /tmp/flip-utils/docs/
-COPY flip-utils/flip/ /tmp/flip-utils/flip/
+# --chown=app:app: flwr/base runs as the non-root `app` user, and COPY defaults
+# to root ownership — so without this the `rm -rf /tmp/flip-utils` below fails
+# with "Permission denied" (app cannot unlink root-owned files under sticky /tmp).
+COPY --chown=app:app flip-utils/pyproject.toml flip-utils/README.md /tmp/flip-utils/
+COPY --chown=app:app flip-utils/docs/ /tmp/flip-utils/docs/
+COPY --chown=app:app flip-utils/flip/ /tmp/flip-utils/flip/
 RUN python -m pip install -U --no-cache-dir "/tmp/flip-utils[full]" \
       --extra-index-url https://download.pytorch.org/whl/cu128 \
   && rm -rf /tmp/flip-utils
