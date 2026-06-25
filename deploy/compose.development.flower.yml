@@ -194,7 +194,7 @@ services:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro
       # See net-1 above — symmetric dev-overlay.
-      - ${FL_PROVISIONED_DIR}/../fl-services/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
+      - ${FL_PROVISIONED_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-2:
