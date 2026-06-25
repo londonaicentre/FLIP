@@ -844,8 +844,8 @@ def test_extract_current_job_data_success(mock_http_get):
     assert result.job_id == "job123"
     assert result.status == "RUNNING"
 
-    # Verify correct HTTP endpoint called
-    mock_http_get.assert_called_once_with(f"{net_endpoint}/list_jobs")
+    # Verify correct HTTP endpoint called (with the generous Flower-aware timeout)
+    mock_http_get.assert_called_once_with(f"{net_endpoint}/list_jobs", timeout=30)
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")

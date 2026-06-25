@@ -27,13 +27,16 @@ import httpx
 from flip_api.utils.logger import logger
 
 
-def http_get(url: str, request_id: str | None = None) -> Any:
+def http_get(url: str, request_id: str | None = None, timeout: float | None = None) -> Any:
     """Perform an HTTP GET request to the specified URL with optional request ID for tracing.
 
     Args:
         url (str): The URL to GET.
         request_id (str | None): Optional value for the ``x-request-id`` header used for
             distributed tracing.
+        timeout (float | None): Optional request timeout in seconds. When None, httpx defaults
+            are used (5s) — too tight for slower Flower FL API endpoints, so pass an explicit
+            value for those (see ``check_client_status``).
 
     Returns:
         Any: Parsed JSON body when the response is JSON; otherwise the raw response text.
@@ -45,7 +48,10 @@ def http_get(url: str, request_id: str | None = None) -> Any:
     headers = {"x-request-id": request_id} if request_id else {}
     with httpx.Client() as client:
         try:
-            response = client.get(url, headers=headers)
+            if timeout is None:
+                response = client.get(url, headers=headers)
+            else:
+                response = client.get(url, headers=headers, timeout=timeout)
             response.raise_for_status()
             try:
                 return response.json()
