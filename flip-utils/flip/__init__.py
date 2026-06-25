@@ -38,4 +38,4 @@ from flip.exceptions import ResultsUploadError
 
 __all__ = ["FLIP", "FLIPBase", "ResultsUploadError"]
 
-__version__ = "0.1.8"
+__version__ = "0.3.0"

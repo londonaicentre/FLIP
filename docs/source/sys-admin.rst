@@ -10,8 +10,11 @@ System administration
    sys-admin/admin-project-and-user-management
    sys-admin/admin-user-roles
    sys-admin/admin-platform-support
-   sys-admin/admin-tre-deployment
-   sys-admin/admin-logging
+
+.. seealso::
+
+   - Deploying a FLIP node inside a TRE: :doc:`/deploy-flip/deploy-flip-node-in-tre`
+   - Logging & observability stack: :doc:`/components/component-logging-stack`
 
 .. note::
 

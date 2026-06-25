@@ -572,8 +572,15 @@ def update_fl_scheduler(model_id: UUID, session: Session) -> None:
     try:
         logger.debug(f"Attempting to update the FL job to {JobStatus.COMPLETED} for model: {model_id}")
 
-        # Get and update the job
-        job_stmt = select(FLJob).where(FLJob.model_id == model_id)
+        # Get the latest non-deleted job for this model. Use created DESC so a
+        # model that has been retried (multiple jobs) always releases the
+        # scheduler pinned to the most recent job, not a stale earlier one.
+        job_stmt = (
+            select(FLJob)
+            .where(FLJob.model_id == model_id, FLJob.status != JobStatus.DELETED)
+            .order_by(cast(Column, FLJob.created).desc())
+            .limit(1)
+        )
         job = session.exec(job_stmt).first()
         if job:
             job.status = JobStatus.COMPLETED
@@ -588,7 +595,21 @@ def update_fl_scheduler(model_id: UUID, session: Session) -> None:
                 session.add(scheduler)
 
         session.commit()
-        logger.info("The FL job status and FL scheduler status have been updated successfully.")
+        if job and scheduler:
+            logger.info(
+                "FL job %s set to COMPLETED, scheduler %s released to AVAILABLE.",
+                job.id,
+                scheduler.id,
+            )
+        elif job:
+            logger.warning(
+                "FL job %s set to COMPLETED, but no scheduler found for job_id=%s "
+                "(scheduler may have already been reassigned).",
+                job.id,
+                job.id,
+            )
+        else:
+            logger.info("No active FL job found for model; scheduler status unchanged.")
 
     except SQLAlchemyError as e:
         session.rollback()

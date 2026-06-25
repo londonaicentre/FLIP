@@ -33,6 +33,11 @@ COPY pyproject.toml uv.lock ./
 RUN chown -R ${UNAME}:${UNAME} /app
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
+# alembic.ini is read by `alembic upgrade head` at boot (entrypoint) and by the
+# `make migration*` targets. It is NOT bind-mounted in dev (unlike src/ and
+# entrypoint.sh), so changing it requires `make up BUILD=true`. The migrations
+# package itself lives under src/ and rides the existing mount / COPY.
+COPY alembic.ini /app/alembic.ini
 WORKDIR /app
 USER ${UNAME}
 

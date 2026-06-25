@@ -27,6 +27,10 @@ spec:
         - name: import-worker
           image: "{{ .Values.imagingImportWorker.image.repository }}:{{ .Values.imagingImportWorker.image.tag | default .Values.imageTag }}"
           imagePullPolicy: {{ .Values.imagingImportWorker.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           command:
             - sh
             - -c

@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
+from pydantic import HttpUrl
 from requests import HTTPError
 
 from flip.constants import ModelStatus, ResourceType
@@ -195,6 +196,36 @@ class TestFLIPStandardProdGetDataframe:
             assert isinstance(df, pd.DataFrame)
             assert len(df) == 1
             assert df["accession_id"].iloc[0] == "ACC001"
+
+    def test_get_dataframe_endpoint_has_no_double_slash_with_httpurl(self, flip_prod):
+        """Regression (FLIP#652): a host-only pydantic HttpUrl must not yield a double slash.
+
+        In production DATA_ACCESS_API_URL is a pydantic v2 ``HttpUrl``, which serializes a
+        host-only URL with a trailing slash (``http://data-access-api:8000/``). Naive
+        f-string concatenation then built ``.../8000//cohort/dataframe`` — a path Starlette
+        does not route, so data-access-api returned 404 and the trainer crashed before any
+        image fetch (a root cause of the num_samples=0 / NaN clog). The earlier test mocked
+        the URL as a bare ``str`` (no trailing slash) and only substring-checked the path, so
+        it never caught this. Pin the real ``HttpUrl`` type and assert the exact endpoint.
+        """
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.text = json.dumps([{"accession_id": "ACC001", "label": 0}])
+
+        with (
+            patch("flip.core.standard.FlipConstants") as mock_constants,
+            patch("flip.core.standard.requests.post", return_value=mock_response) as mock_post,
+        ):
+            mock_constants.DATA_ACCESS_API_URL = HttpUrl("http://data-access-api:8000")
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY_HEADER = "x-trust-internal-service-key"
+            mock_constants.TRUST_INTERNAL_SERVICE_KEY = "test-trust-internal-key"
+
+            flip_prod.get_dataframe(project_id="proj-1", query="SELECT * FROM table")
+
+            called_url = mock_post.call_args[0][0]
+            assert called_url == "http://data-access-api:8000/cohort/dataframe"
+            # No empty path segment anywhere after the scheme.
+            assert "//" not in called_url.split("://", 1)[1]
 
     def test_get_dataframe_forwards_empty_key_header(self, flip_prod):
         """Header is always sent, even when TRUST_INTERNAL_SERVICE_KEY is the default empty string.

@@ -109,12 +109,16 @@ def update_model_status(
         audit_model_action(model_id, audit_action, user_id, session)
         session.commit()
 
-    if status in [
-        ModelStatus.ERROR,
-        ModelStatus.STOPPED,
-        ModelStatus.RESULTS_UPLOADED,
-        ModelStatus.RESULTS_UPLOAD_FAILED,
-    ]:
+    if (
+        status
+        in [
+            ModelStatus.ERROR,
+            ModelStatus.STOPPED,
+            ModelStatus.RESULTS_UPLOADED,
+            ModelStatus.RESULTS_UPLOAD_FAILED,
+        ]
+        and previous_status != status
+    ):
         fl_scheduler_service.update_fl_scheduler(model_id, session)
 
     return status

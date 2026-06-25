@@ -10,13 +10,14 @@
 # limitations under the License.
 #
 
-.PHONY: build dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
+.PHONY: build build-fl dev prod clean stop up down up-no-trust up-trusts central-fl central-hub \
 		restart restart-fl restart-no-trust ci tests debug create-networks remove-networks recreate-networks consolidate-deps \
 		check-aws-access generate-internal-service-key \
 		register-trust register-trusts new-trust _wait-for-hub integration_test \
 		sync-trust-kit sync-trust-kits lock \
 		deploy-trust-k8s undeploy-trust-k8s \
-		nvflare-provision nvflare-provision-2-nets nvflare-provision-additional-client
+		nvflare-provision nvflare-provision-2-nets nvflare-provision-additional-client \
+		nvflare-provision-stag nvflare-provision-prod upload-flare-kits-to-s3
 
 ifeq ($(PROD),true)
 MAIN_ENV_FILE=.env.production
@@ -103,10 +104,27 @@ build:
 	$(MAKE) -C trust/xnat build
 	@echo "✅ Docker images built successfully!"
 
+# Build the NVFLARE FL service images locally, tagged :dev, for iterating on fl-services/
+# or the flip-utils `flip` package before pushing. The deploy compose pulls FL images from
+# GHCR (DOCKER_FL_TAG), so they are NOT built by `make build`; this uses the build defs in
+# fl-services/<backend>/compose.dev.yml. fl-base must build first, in its own invocation: a plain
+# `FROM flare-fl-base` in the server/client/api Dockerfiles is invisible to Compose's build
+# graph, so a single `compose build` would build the derived images against a stale base.
+# fl-base's build-only profile keeps it out of `up`; the derived images pull it via BASE_REF.
+# Then run the stack on the freshly-built images with:
+#   make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
+FL_DEV_COMPOSE := docker compose -f fl-services/$(FL_BACKEND)/compose.dev.yml
+build-fl:
+	@echo "🛠️ Building flare-fl-base:dev (base image; LOCAL_DEV=$(LOCAL_DEV))..."
+	LOCAL_DEV=$(LOCAL_DEV) $(FL_DEV_COMPOSE) --profile build-only build fl-base
+	@echo "🛠️ Building flare-fl-{server,api,client}:dev..."
+	$(FL_DEV_COMPOSE) build fl-server flip-fl-api fl-client-1
+	@echo "✅ FL :dev images built. Run them with: make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev"
+
 # Run all services
 # Pull/build behaviour is governed by $(UP_PULL_FLAGS): pulls fresh FL images
 # when DOCKER_FL_REGISTRY is set, builds from source on BUILD=true, no-op otherwise.
-up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jobs-dir
+up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
 	@echo "🚢 Starting all services..."
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
@@ -127,7 +145,8 @@ up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jo
 # Only needed for the Flower backend (NVFLARE doesn't use FL_JOBS_DIR).
 _ensure-fl-jobs-dir:
 	@if [ "$(FL_BACKEND)" = "flower" ]; then \
-		nets=$$(printf '%s' '$(NET_ENDPOINTS)' | python3 -c "import json,sys; d=sys.stdin.read().strip(); print(' '.join(json.loads(d).keys()) if d else '')"); \
+		command -v jq >/dev/null 2>&1 || { echo "❌ _ensure-fl-jobs-dir: jq not found on PATH; required to parse NET_ENDPOINTS" >&2; exit 1; }; \
+		nets=$$(printf '%s' '$(NET_ENDPOINTS)' | jq -r 'keys_unsorted | join(" ")' 2>/dev/null) || nets=""; \
 		if [ -z "$$nets" ]; then \
 			echo "❌ _ensure-fl-jobs-dir: NET_ENDPOINTS is empty or unparseable; cannot derive net IDs" >&2; \
 			exit 1; \
@@ -140,8 +159,16 @@ _ensure-fl-jobs-dir:
 		done; \
 	fi
 
+# Fail fast (NVFLARE) when the per-net startup kits are missing — delegated to
+# scripts/check-fl-provisioned.sh (see that script for the why/how). Net IDs
+# come from NET_ENDPOINTS (same source as _ensure-fl-jobs-dir); the check is a no-op
+# for non-NVFLARE backends.
+_check-fl-provisioned:
+	@FL_BACKEND='$(FL_BACKEND)' NET_ENDPOINTS='$(NET_ENDPOINTS)' FL_PROVISIONED_DIR='$(FL_PROVISIONED_DIR)' \
+		scripts/check-fl-provisioned.sh
+
 # Minimal $(MAKE) up
-up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir
+up-no-trust: generate-internal-service-key create-networks _ensure-fl-jobs-dir _check-fl-provisioned
 	@echo "🚢 Starting central hub API services..."
 	@echo "🧠 FL_BACKEND=$(FL_BACKEND) ($(FL_BACKEND_COMPOSE_FILE))"
 	${DOCKER_COMMAND} up --remove-orphans -d $(UP_PULL_FLAGS)
@@ -379,28 +406,63 @@ lock:
 	done
 	@echo "All uv.lock files regenerated."
 
-# NVFLARE provisioning targets — delegate to deploy/scripts/.
-# The project YML files live in deploy/providers/; provisioned output goes to
-# deploy/workspace/ (gitignored), which is where the compose mounts expect it.
+# NVFLARE provisioning targets — delegate to the scripts colocated with the project
+# YML files under deploy/providers/nvflare/. Dev output goes to deploy/workspace/
+# (gitignored), where the compose mounts expect it; stag/prod output goes to
+# workspace-<env>/ (gitignored) for upload to S3 via upload-flare-kits-to-s3.
 NET_NUMBER ?= 1
 FL_WORKSPACE_DIR ?= deploy/workspace
+NVFLARE_SCRIPTS := deploy/providers/nvflare/scripts
+NVFLARE_PROJECTS := deploy/providers/nvflare
 
 nvflare-provision:
-	deploy/scripts/provision-network.sh deploy/providers/net-${NET_NUMBER}_project.yml $(NET_NUMBER) $(FL_WORKSPACE_DIR)
+	$(NVFLARE_SCRIPTS)/provision-network.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_dev.yml $(NET_NUMBER) $(FL_WORKSPACE_DIR)
 
 nvflare-provision-2-nets:
 	NET_NUMBER=1 $(MAKE) nvflare-provision
 	NET_NUMBER=2 $(MAKE) nvflare-provision
 
 nvflare-provision-additional-client:
-	deploy/scripts/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT) deploy/providers/net-${NET_NUMBER}_project.yml $(FL_WORKSPACE_DIR)
+	$(NVFLARE_SCRIPTS)/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT) $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_dev.yml $(FL_WORKSPACE_DIR)
+
+# Provision the stag/prod FL network into a gitignored workspace-<env>/, ready to
+# upload to S3 (see upload-flare-kits-to-s3). Unlike dev (2 fixed clients), stag/
+# prod over-provision spare client kit slots (FLIP#626): the committed
+# net-${NET_NUMBER}_project_<env>.yml holds a single client template, which
+# generate-project-yaml.sh clones into Trust_1 .. Trust_<N> before provisioning.
+# N defaults to 50 (stag) / 500 (prod); override on the command line, e.g.
+# `make nvflare-provision-prod PROD_NUM_CLIENTS=512`. The generated project YAML
+# lands beside the provisioned output, both in the gitignored workspace-<env>/.
+STAG_NUM_CLIENTS ?= 50
+PROD_NUM_CLIENTS ?= 500
+
+nvflare-provision-stag:
+	$(NVFLARE_SCRIPTS)/generate-project-yaml.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_stag.yml $(STAG_NUM_CLIENTS) workspace-stag/net-${NET_NUMBER}_project.generated.yml
+	$(NVFLARE_SCRIPTS)/provision-network.sh workspace-stag/net-${NET_NUMBER}_project.generated.yml $(NET_NUMBER) workspace-stag
+
+nvflare-provision-prod:
+	$(NVFLARE_SCRIPTS)/generate-project-yaml.sh $(NVFLARE_PROJECTS)/net-${NET_NUMBER}_project_prod.yml $(PROD_NUM_CLIENTS) workspace-prod/net-${NET_NUMBER}_project.generated.yml
+	$(NVFLARE_SCRIPTS)/provision-network.sh workspace-prod/net-${NET_NUMBER}_project.generated.yml $(NET_NUMBER) workspace-prod
+
+# Upload the provisioned FLARE participant kits to S3 under the FLARE_KIT_DATE prefix
+# the deploy flow pulls from (deploy/providers/AWS Makefile `provision-local-trust`,
+# which reads s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/
+# net-N/services/<slot>/). Run with PROD=stag|true so AICENTRE_BUCKET_NAME + FLARE_KIT_DATE
+# load from the matching .env. Defaults to a dry run — pass DRYRUN= to upload for real.
+FL_KIT_WORKSPACE := $(if $(filter true,$(PROD)),workspace-prod,workspace-stag)
+DRYRUN ?= --dryrun
+upload-flare-kits-to-s3:
+	@[ -n "$(AICENTRE_BUCKET_NAME)" ] || { echo "❌ AICENTRE_BUCKET_NAME not set — run with PROD=stag|true"; exit 1; }
+	@[ -n "$(FLARE_KIT_DATE)" ] || { echo "❌ FLARE_KIT_DATE not set — run with PROD=stag|true"; exit 1; }
+	@echo "⬆️  Uploading FLARE kits (net-$(NET_NUMBER), $(FL_KIT_WORKSPACE)) → s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) $(DRYRUN)"
+	aws s3 sync ./$(FL_KIT_WORKSPACE)/net-$(NET_NUMBER) s3://$(AICENTRE_BUCKET_NAME)/fl-flare-participant-kits/$(FLARE_KIT_DATE)/net-$(NET_NUMBER) --delete $(DRYRUN)
 
 # Drives a fresh project end-to-end against a running `make up` stack:
 # create → approve → upload model → wait for image pull → start training.
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND (flower or
-# nvflare). The NVFLARE defaults still target ../../flip-fl-base/tutorials/...
-# (legacy sibling) — the migrated in-repo equivalents now live under
-# fl-apps/tutorials/ and can be passed via MODEL_FILES_DIR= / QUERY_FILE=.
+# nvflare). The NVFLARE defaults target the in-tree tutorial under
+# fl-tutorials/; the Flower one is still the legacy sibling
+# ../../flip-fl-base-flower/tutorials/... — override via MODEL_FILES_DIR= / QUERY_FILE=.
 # Useful for sanity-checking PRs without manually clicking through the UI.
 # See flip-api/Makefile for overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
 e2e_smoke:

@@ -69,6 +69,10 @@ spec:
         - name: data-access-api
           image: "{{ .Values.dataAccessApi.image.repository }}:{{ .Values.dataAccessApi.image.tag }}"
           imagePullPolicy: {{ .Values.dataAccessApi.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.dataAccessApi.service.port }}

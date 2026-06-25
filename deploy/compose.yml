@@ -21,7 +21,7 @@ services:
       - ../.env.development
     build:
       context: ../
-      dockerfile: fl_services/fl-base/Dockerfile
+      dockerfile: fl-services/nvflare/fl-base/Dockerfile
       args:
         LOCAL_DEV: ${LOCAL_DEV:-false}
     profiles: ["build-only"]
@@ -32,7 +32,7 @@ services:
     container_name: fl-server-net-${NET_NUMBER}
     image: flare-fl-server:dev
     build:
-      context: ../fl_services/fl-server
+      context: ../fl-services/nvflare/fl-server
       dockerfile: Dockerfile
       args:
         UID: ${UID:-1000}
@@ -57,7 +57,7 @@ services:
     container_name: flip-fl-api-net-${NET_NUMBER}
     image: flare-fl-api:dev
     build:
-      context: ../fl_services/fl-api-base
+      context: ../fl-services/nvflare/fl-api-base
       dockerfile: Dockerfile
       args:
         UID: ${UID:-1000}
@@ -75,20 +75,20 @@ services:
       - ../workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/local:/app/admin/local
       - ../workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/startup:/app/admin/startup
       - ../workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/transfer:/app/admin/transfer
-      # Static code from fl_services/ (tracked in git)
-      - ../fl_services/fl-api-base/fl_api:/app/fl_api
-      - ../fl_services/fl-api-base/tests:/app/tests
+      # Static code from fl-services/ (tracked in git)
+      - ../fl-services/nvflare/fl-api-base/fl_api:/app/fl_api
+      - ../fl-services/nvflare/fl-api-base/tests:/app/tests
       # NOTE the transfer dir in the new provisioning is not straightforward to configure - for now, we keep "transfer"
       # as both the download_dir and upload_dir in fed_admin.json
       # - ../flip-fl-api/transfer_upload:/app/admin/transfer_upload:rw
-      - ../fl_services/fl-api-base/.vscode:/app/.vscode
+      - ../fl-services/nvflare/fl-api-base/.vscode:/app/.vscode
     command: ["/bin/bash", "/app/entrypoint.sh"]
 
   fl-client-1:
     container_name: fl-client-1-net-${NET_NUMBER}
     image: flare-fl-client:dev
     build:
-      context: ../fl_services/fl-client
+      context: ../fl-services/nvflare/fl-client
       dockerfile: Dockerfile
       args:
         UID: ${UID:-1000}
@@ -117,7 +117,7 @@ services:
     container_name: fl-client-2-net-${NET_NUMBER}
     image: flare-fl-client:dev
     build:
-      context: ../fl_services/fl-client
+      context: ../fl-services/nvflare/fl-client
       dockerfile: Dockerfile
       args:
         UID: ${UID:-1000}
