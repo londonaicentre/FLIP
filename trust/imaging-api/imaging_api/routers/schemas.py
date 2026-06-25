@@ -157,7 +157,7 @@ class Experiment(BaseModel):
     """
     Short representation of an experiment on XNAT, it is the result of the REST API call
 
-    ``GET f"{XNAT_URL}/data/projects/{project_id}/experiments"``
+    ``GET f"{XNAT_URL}/data/experiments?project={project_id}"``
     """
 
     id: str = Field(..., alias="ID")
