@@ -57,7 +57,13 @@ class RUN_EVALUATOR(Executor):
             working_dir = Path.cwd()
 
             # Model weights are loaded in the server, and shouldn't be available in the client side.
-            weight_files = [i for i in os.listdir(working_dir) if ".pt" in i or ".pth" in i]
+            # Match the .pt/.pth suffix strictly (not as a substring, so model.ptx / report.pth.json
+            # are left alone) and only target regular files, so a directory named e.g. foo.pt is skipped.
+            weight_files = [
+                i
+                for i in os.listdir(working_dir)
+                if i.endswith((".pt", ".pth")) and os.path.isfile(os.path.join(working_dir, i))
+            ]
             for wf in weight_files:
                 self.log_info(fl_ctx, f"Removing unsafe pytorch file at: {wf} from the client application folder.")
                 os.remove(os.path.join(working_dir, wf))

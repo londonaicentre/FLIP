@@ -87,6 +87,34 @@ class TestRunEvaluator:
         assert not (tmp_path / "weights.pth").exists()
         assert (tmp_path / "data.txt").exists()
 
+    def test_execute_weight_strip_is_suffix_strict_and_file_only(self, tmp_path, monkeypatch):
+        """Only files whose name ends in .pt/.pth are stripped; lookalikes and directories are left alone."""
+        # Non-weight files that merely contain ".pt"/".pth" as a substring must survive.
+        (tmp_path / "model.ptx").write_bytes(b"")
+        (tmp_path / "report.pth.json").write_text("{}")
+        # A directory named like a weight file must not be passed to os.remove (which would raise).
+        (tmp_path / "checkpoints.pt").mkdir()
+        # A genuine weight file is still removed.
+        (tmp_path / "model.pt").write_bytes(b"")
+        monkeypatch.chdir(tmp_path)
+
+        evaluator = RUN_EVALUATOR()
+        evaluator.log_info = MagicMock()
+        evaluator.log_error = MagicMock()
+
+        mock_output = MagicMock()
+        mock_evaluator_instance = MagicMock()
+        mock_evaluator_instance.execute.return_value = mock_output
+        evaluator._evaluator = mock_evaluator_instance
+
+        result = evaluator.execute("eval", MagicMock(), MagicMock(), MagicMock())
+
+        assert result == mock_output
+        assert not (tmp_path / "model.pt").exists()
+        assert (tmp_path / "model.ptx").exists()
+        assert (tmp_path / "report.pth.json").exists()
+        assert (tmp_path / "checkpoints.pt").is_dir()
+
     @patch("evaluator.FLIP_EVALUATOR")
     def test_execute_exception_handling(self, mock_uploaded_evaluator):
         """Test execute method exception handling"""

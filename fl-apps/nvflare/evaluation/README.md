@@ -48,7 +48,8 @@ and retrieves a DXO with the metrics.
     (in dictionary `model_paths`).
 
   `evaluator.py` may return any JSON-serialisable metrics (for example a dict of floats and/or lists of floats);
-  they are saved verbatim to the per-model evaluation results, so there is no output schema to declare.
+  they are saved verbatim into `evaluation_results.json`, keyed by data site (then by the model name your
+  evaluator returns), so there is no output schema to declare.
 
 ## Test it with the spleen MSD dataset
 
