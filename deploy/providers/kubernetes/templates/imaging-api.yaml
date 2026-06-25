@@ -72,6 +72,10 @@ spec:
         - name: imaging-api
           image: "{{ .Values.imagingApi.image.repository }}:{{ .Values.imagingApi.image.tag }}"
           imagePullPolicy: {{ .Values.imagingApi.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- if .Values.imagingApi.command }}
           command:
             {{- toYaml .Values.imagingApi.command | nindent 12 }}

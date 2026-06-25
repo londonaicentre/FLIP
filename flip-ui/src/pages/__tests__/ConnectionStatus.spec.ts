@@ -16,16 +16,16 @@ import { mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ref } from "vue";
 
-import { ITrustStatus } from "@/services/trust-status-service";
+import { ITrustResponse } from "@/services/trust-service";
 
 import ConnectionStatus from "../ConnectionStatus.vue";
 
 // Capture the (key, fetcher, options) the page wires SWRV with, so a test can
-// assert it polls the authenticated /trust/status endpoint rather than the
-// admin-only /admin/trusts (regression for #557).
+// assert it polls the authenticated, consolidated /trust endpoint (under its own
+// SWRV cache key) rather than the admin-only /admin/trusts (regression for #557).
 const { swrvCalls } = vi.hoisted(() => ({ swrvCalls: [] as unknown[][] }));
 
-const mockSwrvData = ref<ITrustStatus[] | undefined>(undefined);
+const mockSwrvData = ref<ITrustResponse[] | undefined>(undefined);
 
 vi.mock("swrv", () => ({
     default: (...args: unknown[]) => {
@@ -69,7 +69,7 @@ const stubs = {
 const now = Date.now();
 const seconds = (n: number) => new Date(now - n * 1000).toISOString();
 
-const fixture: ITrustStatus[] = [
+const fixture: ITrustResponse[] = [
     {
         id: "t1",
         name: "Zebra NHS Trust",
@@ -194,12 +194,14 @@ describe("ConnectionStatus", () => {
         expect(wrapper.find("[data-test='add-trust-btn']").exists()).toBe(false);
     });
 
-    it("sources statuses from the authenticated /trust/status endpoint, not admin-only /admin/trusts", () => {
+    it("sources statuses from the authenticated /trust endpoint, not admin-only /admin/trusts", () => {
         // #557: a non-admin polling /admin/trusts gets a 403 → perpetual spinner.
-        // The page must use the non-admin connection-status endpoint instead.
+        // The page must use the non-admin endpoint instead — post-#609 the
+        // consolidated GET /trust, fetched here under a distinct SWRV cache key
+        // so its 15s poll stays independent of the app-wide /trust bootstrap.
         mockSwrvData.value = fixture;
         mountPage({ permissions: [] });
-        expect(swrvCalls[0][0]).toBe("/trust/status");
+        expect(swrvCalls[0][0]).toBe("trust-connection-status");
     });
 
     it("lets a non-admin (Researcher / Viewer) load trust statuses with no Add Trust control", async () => {
