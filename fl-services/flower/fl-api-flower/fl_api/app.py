@@ -19,6 +19,7 @@ import tempfile
 import threading
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import grpc
 from fastapi import FastAPI, HTTPException, Query, status
@@ -38,7 +39,7 @@ from fl_api.schemas import (
     normalize_status,
 )
 from fl_api.utils.upload import upload_application
-from fl_api.utils.validation import safe_join, validate_model_id, validate_tutorial_folder_name
+from fl_api.utils.validation import safe_join, validate_tutorial_folder_name
 
 logger = logging.getLogger("uvicorn")
 
@@ -170,13 +171,6 @@ def _resolve_job_dir(folder: str) -> Path:
             detail=f"Job folder path does not exist: {job_dir}",
         )
     return job_dir
-
-
-def _validate_job_folder(job_folder: str) -> Path:
-    # Production submit: flip-api submits an uploaded model by its uuid4 (the cross-backend
-    # /submit_job contract, same `job_folder` shape as fl-api-base), so it must be a UUID.
-    validate_model_id(job_folder)
-    return _resolve_job_dir(job_folder)
 
 
 def _validate_tutorial_folder(tutorial_name: str) -> Path:
@@ -395,10 +389,20 @@ def _submit_from_job_dir(job_dir: Path, label: str) -> str:
 
 @app.post("/submit_run/{job_folder}", status_code=status.HTTP_200_OK, response_model=str)
 @app.post("/submit_job/{job_folder}", include_in_schema=False)  # alias flip-api calls with a UUID
-def submit_run(job_folder: str) -> str:
-    # Production path: flip-api submits an uploaded model by its UUID (the cross-backend
-    # /submit_job contract). UUID-strict, so a non-UUID can never reach the job dir or flwr.
-    return _submit_from_job_dir(_validate_job_folder(job_folder), job_folder)
+def submit_run(job_folder: UUID) -> str:
+    """Submit the uploaded application in ``job_folder`` to the Flower control plane.
+
+    Args:
+        job_folder (UUID): The Central Hub model_id. The uploaded application lives in
+            ``FLOWER_SRC_ROOT/<model_id>`` (created by ``/upload_app/{model_id}``), so the
+            submit "job folder" and the upload "model_id" are the same UUID — flip-api calls
+            this via the ``/submit_job`` alias. FastAPI rejects any non-UUID path segment
+            with 422 before the handler runs, so the folder name is guaranteed safe.
+
+    Returns:
+        str: The Flower run id of the submitted job.
+    """
+    return _submit_from_job_dir(_resolve_job_dir(str(job_folder)), str(job_folder))
 
 
 @app.post("/submit_tutorial/{tutorial_name}", status_code=status.HTTP_200_OK, response_model=str)
@@ -467,16 +471,16 @@ def abort_run(run_id: int) -> JobMetadata:
 
 
 @app.post("/upload_app/{model_id}", status_code=status.HTTP_200_OK)
-def upload_app(model_id: str, body: UploadAppRequest) -> dict[str, str]:
+def upload_app(model_id: UUID, body: UploadAppRequest) -> dict[str, str]:
     """
     Upload an application to the server.
 
     Args:
-        model_id (str): The ID of the model to associate the application with.
+        model_id (UUID): The ID of the model to associate the application with.
         body (UploadAppRequest): The request body containing the application details.
 
     Returns:
         dict[str, str]: A dictionary containing the status of the upload.
     """
     upload_dir = _get_src_root()
-    return upload_application(model_id, body, upload_dir=upload_dir)
+    return upload_application(str(model_id), body, upload_dir=upload_dir)

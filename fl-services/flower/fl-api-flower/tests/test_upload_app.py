@@ -309,12 +309,12 @@ num_server_rounds = 3
 
 
 def test_upload_app_rejects_non_uuid_model_id(client, upload_dir):
-    """A non-UUID model_id (e.g. a traversal attempt) is rejected before any filesystem write."""
+    """A non-UUID model_id is rejected by FastAPI's UUID path-param validation (422)."""
     body = UploadAppRequest(project_id="p", cohort_query="*", trusts=["t"], bundle_urls=[])
 
     response = client.post("/upload_app/not-a-uuid", json=body.model_dump())
 
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 def test_upload_app_rejects_path_traversal_bundle_url(client, upload_dir):
