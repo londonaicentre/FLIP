@@ -125,6 +125,30 @@ define require_kit
 	fi
 endef
 
+# Deploy-time guard: every XNAT password the compose stacks substitute is a
+# bare ${VAR} with no default (docker-compose-stack.yml), so an empty value
+# silently brings up a broken/insecure XNAT — admin auth 401s ("Site has not
+# yet been configured" forever, see the export note above) and Postgres comes
+# up with a blank superuser password — instead of failing. Refuse to deploy if
+# any are empty. Covers both sources: XNAT_DATASOURCE_* (trust/xnat/.env) and
+# XNAT_ADMIN_*/XNAT_SERVICE_* (the kit file). Checks the exported process env
+# (the same values `docker stack deploy` substitutes), not just Make vars.
+XNAT_REQUIRED_PASSWORDS := XNAT_ADMIN_INITIAL_PASSWORD XNAT_ADMIN_PASSWORD \
+	XNAT_SERVICE_PASSWORD XNAT_DATASOURCE_PASSWORD XNAT_DATASOURCE_ADMIN_PASSWORD
+define require_xnat_passwords
+	@missing=""; \
+	for v in $(XNAT_REQUIRED_PASSWORDS); do \
+		if [ -z "$$(printenv $$v 2>/dev/null)" ]; then missing="$$missing $$v"; fi; \
+	done; \
+	if [ -n "$$missing" ]; then \
+		echo "❌ Refusing to deploy XNAT for KIT=$(KIT): empty password(s):$$missing"; \
+		echo "   These are substituted into the compose stack with no default, so an empty"; \
+		echo "   value yields a broken/insecure XNAT. Set XNAT_DATASOURCE_* in trust/xnat/.env"; \
+		echo "   and XNAT_ADMIN_*/XNAT_SERVICE_* in the kit file ($(KIT_FILE)), then retry."; \
+		exit 1; \
+	fi
+endef
+
 # Build XNAT Docker images locally (mirrors CI workflow)
 # Requires AWS CLI access to download WAR and plugins from S3
 build:
@@ -177,6 +201,7 @@ up:
 # trust/Makefile's up-trust calls this so a trust comes up complete.
 up-xnat: create-xnat-network
 	$(require_kit)
+	$(require_xnat_passwords)
 	$(MAKE) down-xnat KIT=$(KIT)
 	$(MAKE) xnat-reset KIT=$(KIT)
 	XNAT_PATH=${XNAT_PATH} \
