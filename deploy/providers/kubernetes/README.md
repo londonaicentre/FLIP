@@ -369,10 +369,23 @@ sync secrets from AWS Secrets Manager or HashiCorp Vault.
 ### Security Model
 
 - **NetworkPolicies**: Default-deny-ingress, allow-intra-namespace, allow-egress
-  to Central Hub and FL server only
+  to Central Hub and FL server only (audit & threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md), #516)
 - **No LoadBalancer or NodePort** for application services (all ClusterIP)
 - **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
 - **FL clients**: No Central Hub credentials; connect outbound to FL server only
+- **ServiceAccounts**: each stateless service runs under its own ServiceAccount
+  with no RBAC role bindings (none of the pods call the Kubernetes API — least
+  privilege by default).
+- **Pod Security & container hardening** (#530): the chart-created namespace
+  carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
+  by default — tune via `podSecurity.*`), and the stateless services
+  (trust-api, imaging-api, data-access-api, fl-client, imaging-import-worker)
+  apply a container `securityContext` (`allowPrivilegeEscalation: false`, drop
+  `ALL` capabilities, `seccompProfile: RuntimeDefault`) from `.Values.securityContext`.
+  `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
+  **Remaining for full `restricted` enforcement:** the stateful images
+  (`xnat-web`, `xnat-db`, `omop-db`, `orthanc`) need `fsGroup`/chown init
+  containers before they can run non-root — tracked under #530.
 
 ## Development
 

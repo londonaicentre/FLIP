@@ -77,6 +77,10 @@ spec:
         - name: trust-api
           image: "{{ .Values.trustApi.image.repository }}:{{ .Values.trustApi.image.tag }}"
           imagePullPolicy: {{ .Values.trustApi.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.trustApi.service.port }}
