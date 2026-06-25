@@ -44,7 +44,7 @@ def test_stamp_helm_ownership_issues_label_and_annotate(monkeypatch):
     assert "--overwrite" in label and "--overwrite" in annotate
     assert "meta.helm.sh/release-name=trust-release" in annotate
     assert "meta.helm.sh/release-namespace=flip-trust" in annotate
-    assert ["-n", "flip-trust"] == label[3:5]  # namespaced
+    assert ["-n", "flip-trust"] == label[4:6]  # namespaced
 
 
 def test_patch_k8s_secret_stamps_ownership_on_create(monkeypatch):
@@ -67,6 +67,33 @@ def test_patch_k8s_secret_stamps_ownership_on_create(monkeypatch):
     assert "create" in verbs          # secret created
     assert "label" in verbs           # ...then stamped
     assert "annotate" in verbs
+
+
+def test_patch_k8s_secret_heals_ownership_on_existing(monkeypatch):
+    """An already-present Secret must be merge-patched and (re-)stamped Helm-owned
+    with --overwrite, so a pre-existing unowned Secret becomes adoptable (the #595
+    heal path)."""
+    calls = []
+
+    class _Res:
+        returncode = 0  # secret already exists → patch path
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        return _Res()
+
+    monkeypatch.setattr(sync_k8s_kit.subprocess, "run", fake_run)
+    sync_k8s_kit.patch_k8s_secret(
+        "trust-release-flip-trust-secrets", "flip-trust",
+        {"trust-api-key": "x"}, "trust-release",
+    )
+    verbs = [c[1] for c in calls]
+    assert "patch" in verbs           # existing secret merge-patched
+    assert "label" in verbs           # ...then (re-)stamped
+    assert "annotate" in verbs
+    label = next(c for c in calls if c[1] == "label")
+    annotate = next(c for c in calls if c[1] == "annotate")
+    assert "--overwrite" in label and "--overwrite" in annotate
 
 
 def test_stamp_helm_ownership_default_namespace(monkeypatch):

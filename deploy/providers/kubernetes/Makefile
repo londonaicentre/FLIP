@@ -67,7 +67,6 @@ deploy: preflight ## Deploy the Helm chart to the cluster
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		--timeout 20m \
-		--force-conflicts \
 		$(VALUES_OPTS)
 
 undeploy: ## Remove the Helm release from the cluster
@@ -81,9 +80,13 @@ down: undeploy ## Tear down the trust K8s release (alias for undeploy)
 
 deploy-trust-k8s: ## Deploy trust services to K8s; KIT= selects the per-trust override file and re-patches secrets
 ifdef KIT
-	@$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || \
-		echo "⚠️  deploy returned non-zero (often a non-fatal post-install hook, e.g. xnat-init — see #565). Continuing to patch per-trust secrets so trust-api gets the correct key and does not poll with the stale seed key (#595)."
-	@$(MAKE) patch-kit-secrets KIT=$(KIT)
+	@rc=0; \
+	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=$$?; \
+	if [ $$rc -ne 0 ]; then \
+		echo "⚠️  deploy returned non-zero ($$rc) — often a non-fatal post-install hook (e.g. xnat-init — see #565), but it may be a genuine Helm failure. Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then re-exiting with the deploy status."; \
+	fi; \
+	$(MAKE) patch-kit-secrets KIT=$(KIT); \
+	exit $$rc
 else
 	@$(MAKE) deploy
 endif
