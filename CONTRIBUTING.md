@@ -107,6 +107,18 @@ Other useful tools:
 - [Postman](https://www.postman.com/) — API testing
 - [Homebrew](https://brew.sh/) — package manager for macOS/Linux
 
+#### Open the multi-root workspace (not the folder)
+
+FLIP is a monorepo of independent Python sub-projects, each with its own `.venv` and `pyproject.toml`. Open it via the
+checked-in [`flip.code-workspace`](flip.code-workspace) — **File → Open Workspace from File…** — rather than opening the
+repo root as a plain folder. The multi-root workspace lets Pylance use each folder's own interpreter and Ruff its own
+config; for example, `nvflare` imports resolve only when `fl-services/nvflare/fl-api-base` is using its own `.venv`.
+Opening the repo root as a single folder applies one interpreter (flip-api) to every file, so cross-project imports such
+as `nvflare` show up as unresolved.
+
+After opening, confirm the per-folder interpreter with **Python: Select Interpreter** (it prompts for the folder first,
+then the `.venv`), and run **Developer: Reload Window** if an import is still flagged.
+
 ### Python environment management
 
 FLIP uses [UV](https://docs.astral.sh/uv) for all Python services. Each service has a `pyproject.toml` and a
