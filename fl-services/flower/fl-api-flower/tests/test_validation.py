@@ -19,21 +19,8 @@ from fastapi import HTTPException
 from fl_api.utils.validation import (
     safe_join,
     validate_bundle_url,
-    validate_model_id,
     validate_tutorial_folder_name,
 )
-
-
-def test_validate_model_id_accepts_uuid():
-    model_id = str(uuid4())
-    assert validate_model_id(model_id) == model_id
-
-
-@pytest.mark.parametrize("bad", ["", "not-a-uuid", "../etc", "abc/def", "test-model-123"])
-def test_validate_model_id_rejects_non_uuid(bad):
-    with pytest.raises(HTTPException) as exc:
-        validate_model_id(bad)
-    assert exc.value.status_code == 400
 
 
 @pytest.mark.parametrize("name", ["numpy", "3d_spleen_segmentation_evaluation", str(uuid4()), "app-trust1"])

@@ -55,10 +55,10 @@ def test_submit_job_alias_with_uuid_success(client, src_root, mock_flwr_run):
 
 @pytest.mark.parametrize("endpoint", ["/submit_run", "/submit_job"])
 def test_production_submit_rejects_non_uuid(client, src_root, endpoint):
-    """A non-UUID (e.g. a tutorial folder name) is rejected with 400 on the production endpoints."""
+    """A non-UUID (e.g. a tutorial folder name) is rejected by FastAPI UUID validation (422)."""
     response = client.post(f"{endpoint}/numpy")
 
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 # --- Tutorial submit: /submit_tutorial is name-based (still traversal-guarded) ---
@@ -164,12 +164,4 @@ def test_validate_tutorial_folder_rejects_traversal(src_root, bad):
     """Tutorial folder names with traversal sequences or separators are rejected (400)."""
     with pytest.raises(HTTPException) as exc:
         app_module._validate_tutorial_folder(bad)
-    assert exc.value.status_code == 400
-
-
-@pytest.mark.parametrize("bad", ["numpy", "not-a-uuid", "../etc"])
-def test_validate_job_folder_rejects_non_uuid(src_root, bad):
-    """The production submit validator requires a UUID."""
-    with pytest.raises(HTTPException) as exc:
-        app_module._validate_job_folder(bad)
     assert exc.value.status_code == 400

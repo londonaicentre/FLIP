@@ -10,28 +10,13 @@
 # limitations under the License.
 #
 
-from uuid import uuid4
-
 import pytest
 from fastapi import HTTPException
 
 from fl_api.utils.validation import (
     safe_join,
     validate_bundle_url,
-    validate_model_id,
 )
-
-
-def test_validate_model_id_accepts_uuid():
-    model_id = str(uuid4())
-    assert validate_model_id(model_id) == model_id
-
-
-@pytest.mark.parametrize("bad", ["", "not-a-uuid", "../etc", "abc/def", "test-model-123"])
-def test_validate_model_id_rejects_non_uuid(bad):
-    with pytest.raises(HTTPException) as exc:
-        validate_model_id(bad)
-    assert exc.value.status_code == 400
 
 
 def test_safe_join_returns_contained_path(tmp_path):

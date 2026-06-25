@@ -28,7 +28,7 @@ from fl_api.utils.prepare_config import (
     validate_config,
 )
 from fl_api.utils.schemas import FLAggregators, TrainingRound, UploadAppRequest
-from fl_api.utils.validation import safe_join, validate_bundle_url, validate_model_id
+from fl_api.utils.validation import safe_join, validate_bundle_url
 
 
 def _infer_app_folder_name(model_id: str, s3_file_dir: str) -> str:
@@ -139,11 +139,8 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     """
     logger.info(f"Received request to upload app: {model_id}")
 
-    # model_id is the path component for the job dir; flip-api always sends a uuid4, so
-    # anything else is rejected before it can traverse out of the upload dir.
-    validate_model_id(model_id)
-
-    # This section takes care of taking every uploaded file and copying it to the model_id path.
+    # model_id is the Central Hub model UUID (validated as a UUID by the endpoint); it names
+    # the per-model job dir. This section copies every uploaded file into that dir.
 
     bundle_urls = body.bundle_urls  # Retrieve the files that the user has uploaded to the platform.
 

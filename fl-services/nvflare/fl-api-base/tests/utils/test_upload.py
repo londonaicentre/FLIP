@@ -222,13 +222,6 @@ def test_validate_config_invalid_weights():
         validate_config(bad_weights)
 
 
-def test_upload_app_rejects_non_uuid_model_id(mock_upload_correct_request):
-    """A non-UUID model_id (e.g. a traversal attempt) is rejected before any filesystem write."""
-    with pytest.raises(HTTPException) as exc:
-        upload_application("not-a-uuid", mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
-    assert exc.value.status_code == 400
-
-
 def test_upload_app_rejects_non_https_bundle_url():
     """Non-https bundle URLs (SSRF vector, e.g. the metadata endpoint) are rejected."""
     body = UploadAppRequest(

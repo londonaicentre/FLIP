@@ -22,7 +22,6 @@ that becomes a filesystem path or an outbound fetch is validated here first.
 
 import os
 import re
-import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -31,31 +30,6 @@ from fastapi import HTTPException, status
 # Tutorial folders are submitted by name (e.g. "numpy", "3d_spleen_segmentation_evaluation"),
 # so the tutorial submit path can't be UUID-only; this guards the name instead.
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
-
-
-def validate_model_id(model_id: str) -> str:
-    """Reject any ``model_id`` that is not a canonical UUID.
-
-    flip-api (the only caller) always sends a ``uuid4``; a non-UUID value is either a bug
-    or an attempt to smuggle path-traversal sequences into the upload directory name.
-
-    Args:
-        model_id (str): The model identifier taken from the request path.
-
-    Returns:
-        str: The validated ``model_id``, unchanged.
-
-    Raises:
-        HTTPException: 400 if ``model_id`` is not a valid UUID.
-    """
-    try:
-        uuid.UUID(model_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid model_id: {model_id!r} is not a valid UUID.",
-        ) from None
-    return model_id
 
 
 def validate_tutorial_folder_name(name: str) -> str:

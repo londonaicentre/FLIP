@@ -130,9 +130,9 @@ def test_delete_job_not_found(client):
 
 
 def test_submit_job_rejects_non_uuid(client):
-    """Production submit is UUID-strict: a non-UUID job_folder is rejected with 400."""
+    """Production submit is UUID-strict: FastAPI rejects a non-UUID job_folder with 422."""
     response = client.post("/submit_job/not-a-uuid")
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
 def test_submit_job_accepts_uuid(client, override_session):
