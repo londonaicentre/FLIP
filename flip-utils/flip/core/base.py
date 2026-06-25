@@ -19,7 +19,6 @@ This module contains the abstract base class for all FLIP implementations.
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Union
 
 import pandas as pd
 
@@ -68,7 +67,7 @@ class FLIPBase(ABC):
         self,
         project_id: str,
         accession_id: str,
-        resource_type: Union[ResourceType, List[ResourceType]] = ResourceType.NIFTI,
+        resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI,
     ) -> Path:
         """
         Returns the path to the data for the given accession number.
@@ -89,7 +88,7 @@ class FLIPBase(ABC):
         accession_id: str,
         scan_id: str,
         resource_id: str,
-        files: List[str],
+        files: list[str],
     ) -> None:
         """
         Adds specific image to XNAT for an accession ID.
@@ -198,7 +197,7 @@ class FLIPBase(ABC):
         if not isinstance(accession_id, str):
             raise TypeError(f"expect accession_id to be string, but got {type(accession_id)}")
 
-    def check_resource_type(self, resource_type: Union[ResourceType, List[ResourceType]]) -> List[ResourceType]:
+    def check_resource_type(self, resource_type: ResourceType | list[ResourceType]) -> list[ResourceType]:
         """
         Check whether resource type is valid and returns them reformatted.
 

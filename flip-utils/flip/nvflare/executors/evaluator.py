@@ -13,7 +13,6 @@
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 from nvflare.apis.dxo import from_shareable
 from nvflare.apis.executor import Executor
@@ -27,11 +26,11 @@ from flip.constants import PTConstants
 
 
 class MetricsValidator:
-    def __init__(self, input_evaluation: Dict, input_models: List):
+    def __init__(self, input_evaluation: dict, input_models: list):
         self.input_evaluation = input_evaluation
         self.input_models = input_models
 
-    def validate(self, input_evaluation) -> Tuple[bool, str]:
+    def validate(self, input_evaluation) -> tuple[bool, str]:
         for model, evaluation in input_evaluation.items():
             if model not in self.input_models:
                 return False, f"Model '{model}' is not in the list of input models."
@@ -43,7 +42,7 @@ class MetricsValidator:
                     return success, message
         return True, "Successfully validated all models."
 
-    def validate_element(self, element, original_element) -> Tuple[bool, str]:
+    def validate_element(self, element, original_element) -> tuple[bool, str]:
         for key, value in element.items():
             if key not in original_element.keys():
                 return False, "Wrong metric in evaluation."
