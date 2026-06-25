@@ -302,6 +302,10 @@ networkPolicies:
     - "172.16.0.0/12"
 ```
 
+For the full audit of what egress is allowed and why, the residual risk (notably
+443-to-anywhere), and a hardening guide, see
+[NETWORK-POLICY.md](NETWORK-POLICY.md) (#516).
+
 ## Secrets Reference
 
 The following keys must be present in the Secret (either created by the chart
