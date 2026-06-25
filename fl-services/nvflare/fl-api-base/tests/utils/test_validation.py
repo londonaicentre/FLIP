@@ -17,7 +17,6 @@ from fastapi import HTTPException
 
 from fl_api.utils.validation import (
     safe_join,
-    validate_app_folder_name,
     validate_bundle_url,
     validate_model_id,
 )
@@ -32,18 +31,6 @@ def test_validate_model_id_accepts_uuid():
 def test_validate_model_id_rejects_non_uuid(bad):
     with pytest.raises(HTTPException) as exc:
         validate_model_id(bad)
-    assert exc.value.status_code == 400
-
-
-@pytest.mark.parametrize("name", ["app", "app-trust1", "3d_spleen_segmentation_evaluation", str(uuid4())])
-def test_validate_app_folder_name_accepts_valid(name):
-    assert validate_app_folder_name(name) == name
-
-
-@pytest.mark.parametrize("bad", ["", "..", "../etc", "a/b", "a\\b", ".hidden", "a b", "a;b"])
-def test_validate_app_folder_name_rejects_traversal_and_illegal(bad):
-    with pytest.raises(HTTPException) as exc:
-        validate_app_folder_name(bad)
     assert exc.value.status_code == 400
 
 

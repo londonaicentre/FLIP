@@ -20,16 +20,11 @@ that becomes a filesystem path or an outbound fetch is validated here first.
 """
 
 import os
-import re
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 
 from fastapi import HTTPException, status
-
-# app_folder is either an uploaded-model UUID or a pre-baked tutorial folder
-# (e.g. "numpy", "3d_spleen_segmentation_evaluation"), so it cannot be UUID-only.
-_SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 def validate_model_id(model_id: str) -> str:
@@ -55,29 +50,6 @@ def validate_model_id(model_id: str) -> str:
             detail=f"Invalid model_id: {model_id!r} is not a valid UUID.",
         ) from None
     return model_id
-
-
-def validate_app_folder_name(name: str) -> str:
-    """Reject app/job folder names that could escape the source root.
-
-    Accepts uploaded-model UUIDs and the pre-baked tutorial folder names; rejects path
-    separators, parent references, hidden names and empty values.
-
-    Args:
-        name (str): The app folder name taken from the request path.
-
-    Returns:
-        str: The validated name, unchanged.
-
-    Raises:
-        HTTPException: 400 if the name contains traversal sequences or illegal characters.
-    """
-    if not name or ".." in name or name.startswith(".") or not _SAFE_NAME.match(name):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid app folder name: {name!r}.",
-        )
-    return name
 
 
 def safe_join(base: Path, *parts: str) -> Path:

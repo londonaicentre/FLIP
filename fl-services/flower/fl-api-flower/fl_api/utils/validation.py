@@ -28,8 +28,8 @@ from urllib.parse import urlparse
 
 from fastapi import HTTPException, status
 
-# app_folder is either an uploaded-model UUID or a pre-baked tutorial folder
-# (e.g. "numpy", "3d_spleen_segmentation_evaluation"), so it cannot be UUID-only.
+# Tutorial folders are submitted by name (e.g. "numpy", "3d_spleen_segmentation_evaluation"),
+# so the tutorial submit path can't be UUID-only; this guards the name instead.
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
@@ -58,14 +58,15 @@ def validate_model_id(model_id: str) -> str:
     return model_id
 
 
-def validate_app_folder_name(name: str) -> str:
-    """Reject app/job folder names that could escape the source root.
+def validate_tutorial_folder_name(name: str) -> str:
+    """Reject tutorial folder names that could escape the source root.
 
-    Accepts uploaded-model UUIDs and the pre-baked tutorial folder names; rejects path
-    separators, parent references, hidden names and empty values.
+    Accepts the pre-baked tutorial folder names (e.g. ``numpy``); rejects path separators,
+    parent references, hidden names and empty values. Production submit uses
+    ``validate_model_id`` instead — it only ever receives a UUID.
 
     Args:
-        name (str): The app folder name taken from the request path.
+        name (str): The tutorial folder name taken from the request path.
 
     Returns:
         str: The validated name, unchanged.
@@ -76,7 +77,7 @@ def validate_app_folder_name(name: str) -> str:
     if not name or ".." in name or name.startswith(".") or not _SAFE_NAME.match(name):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid app folder name: {name!r}.",
+            detail=f"Invalid tutorial folder name: {name!r}.",
         )
     return name
 
