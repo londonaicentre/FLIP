@@ -29,13 +29,17 @@ assertions.
 
 import os
 from collections.abc import Generator
+from pathlib import Path
 from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import boto3
 import pytest
+from alembic import command
+from alembic.config import Config
 from moto import mock_aws
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 from sqlmodel import Session, SQLModel, create_engine
 from sqlmodel.pool import StaticPool
 from testcontainers.postgres import PostgresContainer
@@ -55,6 +59,25 @@ from flip_api.db.seed.permissions import seed_permissions
 from flip_api.db.seed.role_permissions import seed_role_permissions
 from flip_api.db.seed.roles import seed_roles
 from flip_api.main import app
+
+# flip-api/alembic.ini, resolved relative to this file (tests/integration/conftest.py).
+_ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
+
+
+def make_alembic_config(connection: Connection) -> Config:
+    """Build an Alembic ``Config`` bound to an already-open connection.
+
+    Args:
+        connection (Connection): An open connection (the Testcontainers Postgres)
+            that ``env.py`` runs migrations against via ``config.attributes["connection"]``.
+
+    Returns:
+        Config: An Alembic config pointing at flip-api/alembic.ini with the
+            connection injected, ready for ``command.upgrade`` / ``command.downgrade``.
+    """
+    cfg = Config(str(_ALEMBIC_INI))
+    cfg.attributes["connection"] = connection
+    return cfg
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -148,7 +171,18 @@ def integration_engine(pg_container: PostgresContainer):
         echo=False,
         poolclass=StaticPool,
     )
-    SQLModel.metadata.create_all(engine)
+    # Build the schema from the Alembic migrations — the exact DDL dev/prod apply
+    # at boot — instead of SQLModel.metadata.create_all. This makes the integration
+    # suite exercise the migrations and catch any models/migrations drift.
+    #
+    # Use a plain connect() (not begin()) and let Alembic own the transaction, exactly
+    # like env.py's entrypoint/CLI path. A migration that uses
+    # op.get_context().autocommit_block() — the documented `ALTER TYPE ... ADD VALUE`
+    # pattern — must own its transaction; wrapping command.upgrade in engine.begin()
+    # makes that raise AssertionError and aborts schema setup for the whole suite.
+    # Alembic commits the DDL itself, so per-test sessions opened later see the tables.
+    with engine.connect() as connection:
+        command.upgrade(make_alembic_config(connection), "head")
 
     with Session(engine) as s:
         seed_permissions(s)

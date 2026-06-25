@@ -36,7 +36,7 @@ ifneq ($(strip $(OVERRIDES_FILE)),)
 	VALUES_OPTS := $(VALUES_OPTS) -f $(OVERRIDES_FILE)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init patch-aws-creds preflight
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init patch-aws-creds preflight template-egress-variants
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -128,6 +128,20 @@ template-all-backends: ## Render templates for all FL backend variants
 		--set observability.grafana.enabled=false \
 		> /dev/null
 	@echo "✅ All backend variants rendered successfully"
+
+template-egress-variants: ## Render the egress NetworkPolicy in default / hardened-CIDR / disabled shapes (#516 CI coverage)
+	@echo "=== Default egress ==="
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) --show-only templates/network-policy.yaml > /dev/null
+	@echo "=== Hardened (CIDR-scoped) egress ==="
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) \
+		--set networkPolicies.allowedEgressCIDRs[0]=10.20.0.0/24 \
+		--set networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=13.43.162.56/32 \
+		--set networkPolicies.allowedEgressCIDRsWithPorts[0].port=8002 \
+		--show-only templates/network-policy.yaml > /dev/null
+	@echo "=== NetworkPolicies disabled ==="
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) \
+		--set networkPolicies.enabled=false --show-only templates/network-policy.yaml || true
+	@echo "✅ Egress NetworkPolicy variants render. See NETWORK-POLICY.md (#516)."
 
 clean: ## Clean up rendered output
 	@rm -f $(CHART_DIR)/*.rendered.yaml

@@ -16,4 +16,11 @@ metadata:
   name: {{ include "flip-trust.namespace" . }}
   labels:
     {{- include "flip-trust.labels" . | nindent 4 }}
+    {{- if .Values.podSecurity.enabled }}
+    # Pod Security Standards (FLIP#530). enforce=baseline is non-breaking;
+    # restricted is surfaced via warn/audit until the stateful images are hardened.
+    pod-security.kubernetes.io/enforce: {{ .Values.podSecurity.enforce | quote }}
+    pod-security.kubernetes.io/warn: {{ .Values.podSecurity.warn | quote }}
+    pod-security.kubernetes.io/audit: {{ .Values.podSecurity.audit | quote }}
+    {{- end }}
 {{- end }}

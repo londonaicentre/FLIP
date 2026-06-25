@@ -10,7 +10,7 @@
 # limitations under the License.
 #
 
-from sqlmodel import Session, SQLModel
+from sqlmodel import Session
 
 from flip_api.db.database import engine
 from flip_api.db.seed.banner import seed_banner
@@ -32,8 +32,9 @@ def main() -> None:
         Exception: Any error encountered during seeding is re-raised after rolling back the
             session.
     """
-    logger.debug("Creating database tables...")
-    SQLModel.metadata.create_all(engine)
+    # Schema is created by `alembic upgrade head` in the entrypoint, before this
+    # runs (previously this was SQLModel.metadata.create_all). Seeding now assumes
+    # the schema is already at head and only inserts idempotent essential data.
     logger.debug("About to seed the database...")
 
     with Session(engine) as session:

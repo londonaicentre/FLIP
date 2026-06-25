@@ -1,0 +1,54 @@
+# Copyright (c) 2026 Flower Labs GmbH
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+[project]
+name = "flip-fl-api-flower"
+version = "0.1.0"
+description = "FL API for Flower deployment runtime."
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.11",
+    "flwr>=1.27.0",
+    "pydantic>=2.11.0",
+    "pydantic-settings>=2.11.0",
+    "tomlkit>=0.14.0",
+    "uvicorn>=0.34.0",
+]
+
+[dependency-groups]
+dev = [
+    "grpcio>=1.60",
+    "grpcio-health-checking>=1.60",
+    "httpx>=0.28.1",
+    "mypy>=1.19.1",
+    "pytest-cov>=6.0.0",
+    "pytest>=8.3.5",
+    "ruff>=0.15.0",
+    "types-requests>=2.32.0.20250515",
+]
+
+[tool.coverage.report]
+exclude_lines = ["if __name__ == .__main__.:"]
+omit = ["*.venv/*", "*/tests/*", "*/__init__.py"]
+
+[tool.pytest.ini_options]
+python_files = ["test_*.py", "*_test.py"]
+addopts = []
+filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
+
+[tool.ruff]
+line-length = 120
+ 
+[tool.ruff.lint]
+preview = true
+select = ['I', 'F', 'E', 'W', 'PT']

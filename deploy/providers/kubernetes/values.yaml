@@ -37,6 +37,33 @@ namespace:
   name: ""
 
 # ---------------------------------------------------------------------------
+# Pod Security & container hardening (FLIP#530)
+# ---------------------------------------------------------------------------
+# Pod Security Standards labels applied to the chart-created namespace. Defaults
+# are non-breaking: enforce `baseline` (which the stateful images satisfy) while
+# `restricted` is surfaced via warn/audit so violations show up without blocking.
+# Tighten `enforce` to `restricted` once the stateful services (xnat/orthanc/
+# postgres) gain fsGroup/chown init containers — see README "Known Limitations".
+podSecurity:
+  enabled: true
+  enforce: baseline
+  warn: restricted
+  audit: restricted
+
+# Container-level securityContext applied to the stateless services (the API
+# pods + fl-client + imaging-import-worker). The defaults are safe for any
+# image — they do NOT require a non-root image. runAsNonRoot and
+# readOnlyRootFilesystem are intentionally left unset because they depend on the
+# image; enable them per-deployment once validated against the image.
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  seccompProfile:
+    type: RuntimeDefault
+
+# ---------------------------------------------------------------------------
 # Secrets management
 # ---------------------------------------------------------------------------
 # When secrets.create is true, the chart creates a Secret with the keys listed
