@@ -57,6 +57,27 @@ def _trust_internal_headers() -> dict[str, str]:
     return {FlipConstants.TRUST_INTERNAL_SERVICE_KEY_HEADER: FlipConstants.TRUST_INTERNAL_SERVICE_KEY}
 
 
+def _join_url(base: object, path: str) -> str:
+    """Join a base URL with a path, tolerating a trailing slash on the base.
+
+    Pydantic v2 serializes a host-only ``HttpUrl`` with a trailing slash
+    (e.g. ``http://data-access-api:8000/``), so naive f-string concatenation
+    with ``/cohort/dataframe`` yields a double slash (``//cohort/dataframe``)
+    that Starlette does not route — producing a spurious ``404 Not Found``.
+    Normalising the base before joining keeps every trust-internal and
+    hub-internal call working regardless of whether the configured URL carries
+    a trailing slash. See FLIP#652.
+
+    Args:
+        base: The base URL (``str`` or pydantic ``HttpUrl``).
+        path: The path to append (a leading slash is optional).
+
+    Returns:
+        str: ``<base-without-trailing-slash>/<path-without-leading-slash>``.
+    """
+    return f"{str(base).rstrip('/')}/{path.lstrip('/')}"
+
+
 def _hub_internal_headers() -> dict[str, str]:
     """Return the auth header sent on every hub-internal call.
 
@@ -71,11 +92,6 @@ def _hub_internal_headers() -> dict[str, str]:
         the hub internal-service key.
     """
     return {FlipConstants.INTERNAL_SERVICE_KEY_HEADER: FlipConstants.INTERNAL_SERVICE_KEY}
-
-
-def _join_url(base_url: object, path: str) -> str:
-    """Join a service base URL and API path without introducing double slashes."""
-    return f"{str(base_url).rstrip('/')}/{path.lstrip('/')}"
 
 
 class FLIPStandardProd(FLIPBase):
