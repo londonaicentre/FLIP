@@ -177,6 +177,35 @@ If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_
 
 ---
 
+### 1.9 Verifying which FL image an ECS task pulled — GuardDuty sidecar digest trap
+
+**Symptom**: After a `force-new-deployment` of `fl-server-net-1` / `fl-api-net-1`, you check the running task's image digest against the GHCR tag to confirm the new build is live. One container's `imageDigest` does **not** match the GHCR `:stag`/`:prod` manifest, and worse, querying GHCR for that digest returns **HTTP 404** (it does not exist in GHCR at all). Looks like the task is running a stale/unknown image.
+
+**Root cause**: GuardDuty Runtime Monitoring injects a sidecar container (`aws-guardduty-agent-*`) into every Fargate task. `aws ecs describe-tasks` returns `containers` as an **array**, and the GuardDuty agent often sorts **first** — so a query like `containers[0].imageDigest` reads the *agent's* digest, not the FL app container's. The GuardDuty agent image lives in an **AWS-internal ECR**, never GHCR, which is exactly why its digest 404s when you look it up in `ghcr.io`. The FL app container is a *different* element of the same array and its digest matches GHCR fine.
+
+**Fix**: Select the container **by name**, never by index:
+
+```bash
+TASK_ARN=$(aws ecs list-tasks --cluster flip-cluster --service-name fl-server-net-1 \
+  --profile prod --region eu-west-2 --query 'taskArns[0]' --output text)
+aws ecs describe-tasks --cluster flip-cluster --tasks "$TASK_ARN" \
+  --profile prod --region eu-west-2 \
+  --query "tasks[0].containers[?name=='fl-server-net-1'].imageDigest" --output text
+# Compare against the GHCR tag (anonymous pull token):
+IMG=flare-fl-server
+TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:londonaicentre/$IMG:pull" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+  -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+  -D - -o /dev/null "https://ghcr.io/v2/londonaicentre/$IMG/manifests/stag" \
+  | grep -i docker-content-digest
+```
+
+The two digests will match. To confirm the tag was rebuilt by a specific merge, fetch the config blob's `created` timestamp (follow the redirect with `curl -sL` on `/v2/.../blobs/<config-digest>`) — e.g. the #624 FL-deps rebuild produced `flare-fl-server:stag` / `flare-fl-api:stag` configs created `2026-06-24T15:54–15:55Z`, immediately after the develop merge's FL image build completed (~15:55Z). A digest that 404s in GHCR is the GuardDuty sidecar, not a stale FL image.
+
+---
+
 ## 2. Deployment (Ansible / Docker)
 
 ### 2.1 Docker volume mount parse failure (`empty section between colons`)
@@ -187,13 +216,23 @@ If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_
 invalid spec: :/var/lib/orthanc/db: empty section between colons
 ```
 
-**Root cause**: The `ORTHANC_STORAGE_DIR_TRUST_1` environment variable is missing from the `.env.stag` file, resulting in an empty host path for the Orthanc Docker volume mount.
+**Root cause**: `ORTHANC_STORAGE_DIR` is missing from the per-trust kit file
+(`trust/.env.<KIT>`), so the Orthanc compose mount expands to an empty host
+path. The compose files (`trust/deploy/compose_trust.{development,production}.yml`)
+both consume the unsuffixed `${ORTHANC_STORAGE_DIR}` — the older
+`_TRUST_{1,2}` suffixed names from `.env.stag` were retired by the
+per-trust-kit refactor.
 
-**Fix**: Add to `.env.stag`:
+**Fix**: Set the host-local profile entry in the kit file:
 
 ```
-ORTHANC_STORAGE_DIR_TRUST_1=/opt/flip/orthanc/orthanc-storage
+ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage-trust1
 ```
+
+The trust kit `.example` templates carry this key in their **Host-local
+profile** section; if you bootstrapped a kit before the refactor, copy the
+key from a current template (e.g. `trust/.env.GSTT.development.example` or the
+base `trust/.env.example`) and adjust the path for the trust host.
 
 ---
 
@@ -303,6 +342,71 @@ You should see calls at `get_dataframe`, `get_by_accession_number`, and `add_res
 
 ---
 
+### 2.7 Trust EC2 Orthanc is empty — all image pulls go straight to QueueFailed
+
+**Symptom**: Every image pull on the EC2 trust shows `QueueFailed=<all>,
+Queued=0, Processing=0, Successful=0` immediately after project approval.
+imaging-api logs show `POST /xapi/dqr/query/studies` returning **204** (no
+content) for every accession — the PACS C-FIND finds nothing. The trust's
+XNAT `dqr.log` is silent (nothing was ever queued).
+
+**Diagnosis**:
+
+```bash
+# Orthanc study count — should be ~4187 for the mock trust1 dataset
+ssh flip-trust 'docker exec trust1-imaging-api-1 python3 -c "
+import httpx
+print(httpx.get(\"http://orthanc:8042/statistics\", auth=(\"admin\",\"admin\"), timeout=5).json())"'
+# CountStudies: 0  →  Orthanc has no data
+
+# Where does Orthanc's data dir actually point?
+ssh flip-trust 'docker inspect trust1-orthanc-1 --format "{{json .Mounts}}"' | python3 -m json.tool
+```
+
+**Root cause**: Compose interpolates the Orthanc bind path
+(`ORTHANC_STORAGE_DIR*` from the kit file / env) **at deploy time on the
+machine driving the deploy**. If the deploy was driven from an admin
+workstation, the workstation's local path (e.g.
+`/home/<user>/.../trust/orthanc/orthanc-storage-trust1`) gets baked into the
+remote compose stack; Docker auto-creates that directory **empty** on the EC2
+host, and Orthanc starts with zero studies. The `up-trust` target's
+`update-orthanc-data` prereq only populates the dir on the machine where it
+runs — not on the EC2.
+
+**Fix (stopgap — seed the live bind dir on the EC2):**
+
+```bash
+ssh flip-trust
+DIR=$(docker inspect trust1-orthanc-1 --format '{{range .Mounts}}{{if eq .Destination "/var/lib/orthanc/db"}}{{.Source}}{{end}}{{end}}')
+# Version from trust/orthanc/.data_version (e.g. 20260106); trust slot from the kit (trust1/trust2)
+curl -fSL -o /tmp/orthanc-data.tar \
+  "https://huggingface.co/datasets/aicentreflip/trust-data/resolve/main/trust1/trust1_orthanc_data_20260106.tar"
+docker stop trust1-orthanc-1
+sudo rm -rf "$DIR"/*          # wipe the stale empty index
+sudo tar xf /tmp/orthanc-data.tar -C "$DIR"
+docker start trust1-orthanc-1
+rm /tmp/orthanc-data.tar
+```
+
+Verify a cohort accession is findable, then re-trigger the pull from the UI
+(re-import button):
+
+```bash
+docker exec trust1-imaging-api-1 python3 -c "
+import httpx
+r = httpx.post('http://orthanc:8042/tools/find', auth=('admin','admin'),
+               json={'Level':'Study','Query':{'AccessionNumber':'<an accession from OMOP>'},'Limit':1}, timeout=15)
+print('found:', len(r.json()) > 0)"
+```
+
+**Fix (proper)**: Set host-appropriate data dirs in the kit file's Host-local
+profile section and run the data seeding **on the trust host** (the
+`update-orthanc-data` flow), so deploys never inherit the admin workstation's
+paths. Audit the other bind mounts on the host for the same leak —
+`docker inspect <container> --format '{{json .Mounts}}'` per container.
+
+---
+
 ## 3. Application (Pipeline / API)
 
 ### 3.1 API returns 401/403 on all authenticated routes (MFA enforcement)
@@ -382,6 +486,18 @@ UPDATE xnat_project_status SET last_reimport='2020-01-01' WHERE xnat_project_id=
 # 4. Restart imaging-api if it's hung:
 ssh flip-trust "docker restart trust1-imaging-api-1"
 ```
+
+Related states with different causes:
+
+- **`QueueFailed` for every accession right after approval** → the PACS C-FIND
+  finds nothing; usually an empty Orthanc on the trust host — see §2.7.
+- **Stuck on "Processing" with no progress, and re-import logs
+  `No studies to retry import`** → executed PACS request rows pin the status
+  (imaging-api classifies any accession with an executed row as Processing,
+  regardless of row status); the rows must be deleted before re-import works —
+  see §2.4 "Forcing a Re-pull" in
+  `deploy/providers/kubernetes/TROUBLESHOOTING.md` (same procedure on EC2 via
+  `docker exec` into the xnat-db container).
 
 ---
 
@@ -473,11 +589,14 @@ The general principle: anywhere a non-root container bind-mounts a host path, pr
 
 ---
 
-### 4.2 Missing `ORTHANC_STORAGE_DIR_TRUST_1` env var
+### 4.2 Missing `ORTHANC_STORAGE_DIR` env var
 
 **Symptom**: `make deploy-trust` fails with Docker volume mount parse error.
 
-**Fix**: Add `ORTHANC_STORAGE_DIR_TRUST_1=/opt/flip/orthanc/orthanc-storage` to `.env.stag`.
+**Fix**: Add `ORTHANC_STORAGE_DIR=/opt/flip/orthanc/orthanc-storage` to the
+per-trust kit file `trust/.env.<KIT>` (see 2.1 for the full root-cause
+context — the compose files consume the unsuffixed name and read from the
+kit, not `.env.stag`).
 
 ---
 
@@ -498,9 +617,11 @@ The general principle: anywhere a non-root container bind-mounts a host path, pr
 **Root cause**: The `dhcp.tf` resource associates a new DHCP options set (with `flip.local` search domain) to the VPC. Existing EC2 instances won't pick up the new options until their DHCP lease expires and renews (typically 24-72 hours for AWS default, or a reboot). Until renewal, the instances continue using the previous (default) DHCP options.
 
 **Fix**: Reboot the EC2 instance to force an immediate DHCP renewal:
+
 ```bash
 aws ec2 reboot-instances --instance-ids <instance-id> --profile FlipDeveloperAccess
 ```
+
 Or wait for the lease to renew naturally. This only matters if the instance needs to resolve `flip.local` domains (which it doesn't during PR 1 — ECS Fargate tasks are the consumers in PR 2).
 
 ---

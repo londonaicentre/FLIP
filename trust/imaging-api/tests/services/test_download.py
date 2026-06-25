@@ -161,6 +161,69 @@ class TestUnzipFile:
 
             assert os.path.exists(zip_path)
 
+    def test_new_name_path_traversal_raises_value_error(self):
+        """new_name with path traversal segments is rejected before rename."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create a valid zip file
+            zip_name = "test-scans-NIFTI"
+            zip_path = os.path.join(tmp_dir, f"{zip_name}.zip")
+            inner_dir = os.path.join(tmp_dir, zip_name)
+            os.makedirs(inner_dir)
+            with open(os.path.join(inner_dir, "scan.nii"), "w") as f:
+                f.write("nifti-data")
+
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.write(os.path.join(inner_dir, "scan.nii"), f"{zip_name}/scan.nii")
+
+            shutil.rmtree(inner_dir)
+
+            with pytest.raises(ValueError, match="Path traversal detected in new_name"):
+                unzip_file(zip_path, tmp_dir, "../etc/passwd")
+
+            # The zip file is not cleaned up when the rename is rejected
+            assert os.path.exists(zip_path)
+
+    def test_new_name_with_deep_traversal_raises_value_error(self):
+        """new_name with deeply nested path traversal is also rejected."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            zip_name = "test-scans-NIFTI"
+            zip_path = os.path.join(tmp_dir, f"{zip_name}.zip")
+            inner_dir = os.path.join(tmp_dir, zip_name)
+            os.makedirs(inner_dir)
+            with open(os.path.join(inner_dir, "scan.nii"), "w") as f:
+                f.write("nifti-data")
+
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.write(os.path.join(inner_dir, "scan.nii"), f"{zip_name}/scan.nii")
+
+            shutil.rmtree(inner_dir)
+
+            with pytest.raises(ValueError, match="Path traversal detected in new_name"):
+                unzip_file(zip_path, tmp_dir, "foo/../../etc/passwd")
+
+            assert os.path.exists(zip_path)
+
+    def test_new_name_safe_renamedir_passes(self):
+        """A safe new_name must still work after the traversal validation."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            zip_name = "test-scans-NIFTI"
+            zip_path = os.path.join(tmp_dir, f"{zip_name}.zip")
+            inner_dir = os.path.join(tmp_dir, zip_name)
+            os.makedirs(inner_dir)
+            with open(os.path.join(inner_dir, "scan.nii"), "w") as f:
+                f.write("nifti-data")
+
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.write(os.path.join(inner_dir, "scan.nii"), f"{zip_name}/scan.nii")
+
+            shutil.rmtree(inner_dir)
+
+            result = unzip_file(zip_path, tmp_dir, "ACC123")
+
+            assert result == os.path.join(tmp_dir, "ACC123")
+            assert os.path.exists(os.path.join(result, "scan.nii"))
+            assert not os.path.exists(zip_path)
+
 
 # ── download_and_unzip_images ──
 

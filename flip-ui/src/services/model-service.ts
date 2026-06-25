@@ -16,6 +16,7 @@
 
 import { TrustsResults } from "@/interfaces/cohort-query/types";
 import { FileInfo, FileTableRow } from "@/interfaces/model/types";
+import type { IStep } from "@/interfaces/steps";
 import { _http, IPaginatedResponse } from "@/services/api";
 
 export interface IModelMetricData {
@@ -31,7 +32,7 @@ export interface IModelMetricData {
 }
 
 export interface IInitTraining {
-    trusts: string[];
+    trust_ids: string[];
 }
 
 export interface IModel {
@@ -68,6 +69,10 @@ export interface IModelDashboard {
     status: ModelStatus;
     query: IModelDashboardQuery,
     files: FileInfo[];
+    creationTimestamp?: string | null;
+    preparedAt?: string | null;
+    trainingStartedAt?: string | null;
+    resultsUploadedAt?: string | null;
 }
 
 export interface IModelCreate {
@@ -94,12 +99,25 @@ export interface IPreSignedUrlBody {
     contentType: string | null;
 }
 
+/**
+ * Server-issued presigned POST policy. ``fields`` must be appended to a
+ * ``multipart/form-data`` body verbatim, with the file last under the field
+ * name ``file``. ``maxBytes`` mirrors the size cap baked into the policy so
+ * the UI can fail fast on oversized files.
+ */
+export interface IPreSignedUploadPolicy {
+    url: string;
+    fields: Record<string, string>;
+    maxBytes: number;
+}
+
 export type ModelStatus =
     "PENDING" |
     "INITIATED" |
     "PREPARED" |
     "TRAINING_STARTED" |
     "RESULTS_UPLOADED" |
+    "RESULTS_UPLOAD_FAILED" |
     "ERROR" |
     "STOPPED"
 
@@ -111,6 +129,9 @@ export enum ModelStatusEnum {
     "PREPARED",
     "TRAINING_STARTED",
     "RESULTS_UPLOADED",
+    // Appended last so the existing ordinal comparisons keep working: training
+    // finished but the results upload failed, so it sorts after RESULTS_UPLOADED.
+    "RESULTS_UPLOAD_FAILED",
 }
 
 const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
@@ -119,6 +140,7 @@ const MODEL_STATUS_LABELS: Record<ModelStatus, string> = {
     PREPARED: "Model Prepared",
     TRAINING_STARTED: "Training Started",
     RESULTS_UPLOADED: "Results Uploaded",
+    RESULTS_UPLOAD_FAILED: "Results Upload Failed",
     ERROR: "Error",
     STOPPED: "Stopped"
 };
@@ -130,7 +152,82 @@ export function modelStatusLabel(status: ModelStatus | undefined): string {
 
 /** True for terminal failure / cancellation states (drives the red-cross icon). */
 export function isModelStatusError(status: ModelStatus | undefined): boolean {
-    return status === "ERROR" || status === "STOPPED";
+    return status === "ERROR" || status === "STOPPED" || status === "RESULTS_UPLOAD_FAILED";
+}
+
+/**
+ * Maps a string model status (e.g. "PENDING") to its ModelStatusEnum ordinal.
+ * Unknown or undefined statuses fall back to ERROR, so a stale UI bundle that
+ * receives a newer status degrades gracefully instead of crashing.
+ */
+export function getStatusEnumValue(status: string | undefined): number {
+    if (status && status in ModelStatusEnum) {
+        const value = ModelStatusEnum[status as keyof typeof ModelStatusEnum];
+        // Numeric enums carry a reverse mapping, so a numeric-string key like "0"
+        // resolves to the member NAME (a string), not an ordinal. Only return real
+        // numeric ordinals; anything else degrades to ERROR below.
+        if (typeof value === "number") {
+            return value;
+        }
+    }
+
+    return ModelStatusEnum.ERROR;
+}
+
+/**
+ * Builds the four-step lifecycle tracker (Created → Prepared → Training → Uploaded)
+ * shown on the model page, derived from the model's single status value.
+ *
+ * When training is stopped or errors, prior completed steps stay completed (✅)
+ * rather than showing 🚫. RESULTS_UPLOAD_FAILED means training finished but the
+ * post-training results upload failed, so "Training" stays completed and only
+ * "Results Uploaded" shows the error. See issue #29.
+ *
+ * Per-step dates (creation/prepared/training/results timestamps) are layered on
+ * by the caller, which holds the model record; this helper is purely status-driven.
+ */
+export function buildModelSteps(status: ModelStatus | undefined): IStep[] {
+    const statusValue = getStatusEnumValue(status);
+    const isStopped = statusValue === ModelStatusEnum.STOPPED;
+    const isError = statusValue === ModelStatusEnum.ERROR;
+    const isUploadFailed = statusValue === ModelStatusEnum.RESULTS_UPLOAD_FAILED;
+    // RESULTS_UPLOAD_FAILED (ordinal 7) already satisfies the >= PREPARED / > TRAINING_STARTED
+    // comparisons in the "completed" flags below, so isUploadFailed is technically redundant
+    // there today. It is kept explicit so the steps stay correct if the enum is reordered, and
+    // to mirror its load-bearing use in the inProgress / error flags.
+
+    return [
+        {
+            id: "01",
+            name: "Model Created",
+            completed: true
+        },
+        {
+            id: "02",
+            name: "Model Prepared",
+            description: statusValue === ModelStatusEnum.INITIATED ? "Model Queued" : undefined,
+            inProgress: statusValue === ModelStatusEnum.INITIATED,
+            completed: statusValue >= ModelStatusEnum.PREPARED || isStopped || isError || isUploadFailed
+        },
+        {
+            id: "03",
+            name: "Training",
+            description:
+                (statusValue >= ModelStatusEnum.PREPARED && statusValue < ModelStatusEnum.RESULTS_UPLOADED)
+                    ? "In Progress" : undefined,
+            inProgress: statusValue >= ModelStatusEnum.PREPARED && !isStopped && !isError && !isUploadFailed,
+            completed: statusValue > ModelStatusEnum.TRAINING_STARTED || isUploadFailed,
+            error: isError,
+            stopped: isStopped
+        },
+        {
+            id: "04",
+            name: "Results Uploaded",
+            completed: statusValue === ModelStatusEnum.RESULTS_UPLOADED,
+            error: isError || isUploadFailed,
+            stopped: isStopped
+        }
+    ];
 }
 
 /**
@@ -241,17 +338,32 @@ export async function deleteModel(url: string): Promise<void> {
     await _http.delete<never>(url);
 }
 
-export async function uploadModelFile(url: string, file: Blob): Promise<void> {
-    await fetch(url, {
-        method: "PUT",
-        body: file,
-        headers: { "Content-Type": file.type }
+export async function uploadModelFile(policy: IPreSignedUploadPolicy, file: File): Promise<void> {
+    const form = new FormData();
+    for (const [key, value] of Object.entries(policy.fields)) {
+        form.append(key, value);
+    }
+    form.append("file", file);
+
+    const response = await fetch(policy.url, {
+        method: "POST",
+        body: form
     });
+
+    if (!response.ok) {
+        // S3 rejects oversized or policy-violating uploads at the edge —
+        // surface that as a thrown error so the caller can mark the file
+        // ERROR rather than silently treating an HTML/XML 4xx body as a
+        // successful upload.
+        throw new Error(`Upload rejected by storage (status ${response.status})`);
+    }
 }
 
-export async function getPreSignedUrl(url: string, body: IPreSignedUrlBody): Promise<string | null> {
-
-    const response = await _http.post<string>(url, body);
+export async function getPreSignedUrl(
+    url: string,
+    body: IPreSignedUrlBody
+): Promise<IPreSignedUploadPolicy | null> {
+    const response = await _http.post<IPreSignedUploadPolicy>(url, body);
 
     return response.data ?? null;
 }

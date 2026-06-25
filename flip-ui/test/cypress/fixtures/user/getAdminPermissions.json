@@ -1,5 +1,6 @@
 {
     "permissions": [
+        "CanCreateProjects",
         "CanManageUsers",
         "CanUnstageProjects",
         "CanAccessAdminPanel"

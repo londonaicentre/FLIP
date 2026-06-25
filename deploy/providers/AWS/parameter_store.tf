@@ -51,9 +51,22 @@ resource "aws_ssm_parameter" "flip_app_bundles_bucket" {
   value       = local.flip_app_bundles_bucket_uri
 }
 
-resource "aws_ssm_parameter" "internal_service_key_header" {
-  name        = "${local.ssm_prefix}/internal_service_key_header"
-  description = "HTTP header name for fl-server -> flip-api auth"
+# Networking values published for cross-account consumers. aicentre-iac's
+# network_account_flip module reads these from the FLIP-Prod account to
+# back the cross-account TGW VPC attachment (single authoritative value
+# avoids tag-collision ambiguity during VPC migrations).
+
+resource "aws_ssm_parameter" "vpc_id" {
+  name        = "${local.ssm_prefix}/networking/vpc_id"
+  description = "FLIP-Prod VPC ID — consumed cross-account by aicentre-iac's TGW VPC attachment"
   type        = "String"
-  value       = "X-Internal-Service-Key"
+  value       = module.flip_vpc.vpc_id
 }
+
+resource "aws_ssm_parameter" "private_subnet_ids" {
+  name        = "${local.ssm_prefix}/networking/private_subnet_ids"
+  description = "FLIP-Prod private subnet IDs (comma-separated) — consumed cross-account by aicentre-iac's TGW VPC attachment"
+  type        = "StringList"
+  value       = join(",", module.flip_vpc.private_subnets)
+}
+

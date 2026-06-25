@@ -101,6 +101,6 @@ describe("Cohort Query Page - OMOP", () => {
 
         cy.wait("@emptyCohortResults");
 
-        cy.getBySel("no-results-message").should("contain", "No results to show");
+        cy.getBySel("no-results-message").should("contain", "did not return enough records");
     });
 });

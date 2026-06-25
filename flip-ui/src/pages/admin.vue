@@ -78,7 +78,7 @@ redirect: /admin/users # Can be set to any page within the "admin" section
                                 </nav>
                             </aside>
                         </nav>
-                        <div class="p-4 mx-auto grow xl:overflow-y-auto">
+                        <div class="px-8 pt-8 pb-8 mx-auto grow xl:overflow-y-auto">
                             <router-view />
                         </div>
                     </div>

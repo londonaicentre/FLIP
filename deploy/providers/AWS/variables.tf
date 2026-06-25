@@ -72,9 +72,17 @@ variable "AES_KEY_BASE64" {
   type = string
 }
 
-variable "TRUST_API_KEY_HASHES" {
-  description = "JSON string mapping trust names to SHA-256 hashes of their API keys"
+variable "K8S_TRUST_IP" {
+  description = "DEPRECATED (kept for back-compat): single public IP of a Kubernetes-deployed trust host. Prefer k8s_trust_public_ips. When set, it is merged into the NLB ingress rule set."
   type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "k8s_trust_public_ips" {
+  description = "Public/egress IPs of Kubernetes-deployed trust nodes. Each IP gets an ingress rule on the FL-server NLB security group. Set via K8S_TRUST_PUBLIC_IPS in the env file (an HCL list). Managed by a normal `terraform apply` — no -target, no drift, idempotent on re-add (mirrors local_trust_public_ips)."
+  type        = list(string)
+  default     = []
 }
 
 variable "INTERNAL_SERVICE_KEY_HASH" {
@@ -88,16 +96,32 @@ variable "INTERNAL_SERVICE_KEY" {
   sensitive   = true
 }
 
+variable "FL_KIT_SLOT_NAMES" {
+  description = "JSON list (as a string) of FL kit-slot names that seed the fl_kit_slot pool register_trust claims from on the flip-api ECS task. Empty ⇒ NoFreeKitSlotError on trust registration. Mirrors compose.production.yml; set via the env file (TF_VAR_FL_KIT_SLOT_NAMES)."
+  type        = string
+  default     = "[]"
+}
+
 variable "docker_image_tag" {
   description = "Docker image tag for flip-api and flip-ui"
   type        = string
   default     = ""
+
+  validation {
+    condition     = lower(var.docker_image_tag) != "latest" && !endswith(lower(var.docker_image_tag), "-latest")
+    error_message = "docker_image_tag must not be 'latest' (case-insensitive). Use an explicit immutable tag."
+  }
 }
 
 variable "flip_fl_image_tag" {
   description = "Docker image tag for FL services (fl-api, fl-server, fl-client)"
   type        = string
   default     = ""
+
+  validation {
+    condition     = lower(var.flip_fl_image_tag) != "latest" && !endswith(lower(var.flip_fl_image_tag), "-latest")
+    error_message = "flip_fl_image_tag must not be 'latest' (case-insensitive). Use an explicit immutable tag."
+  }
 }
 
 variable "docker_registry" {
@@ -278,16 +302,13 @@ variable "SES_VERIFIED_EMAIL" {
 variable "XNAT_PORT" {
   description = "Port for XNAT service"
   type        = number
+  default     = 8104
 }
 
 variable "PACS_UI_PORT" {
   description = "Port for Orthanc PACS UI"
   type        = number
-}
-
-variable "TRUST_NAMES" {
-  description = "JSON-array string of registered trust names, e.g. [\"Trust_1\",\"Trust_2\"]. Consumed by flip-api to validate inbound trust API calls."
-  type        = string
+  default     = 8042
 }
 
 variable "TRUST_API_KEY_HEADER" {
@@ -297,9 +318,8 @@ variable "TRUST_API_KEY_HEADER" {
 }
 
 variable "INTERNAL_SERVICE_KEY_HEADER" {
-  description = "HTTP header name carrying the internal service key on fl-server-to-flip-api callbacks."
+  description = "HTTP header name carrying the internal service key on fl-server-to-flip-api callbacks. Required — no default so every env file must set it explicitly."
   type        = string
-  default     = "X-Internal-Service-Key"
 }
 
 variable "FL_ADMIN_DIRECTORY" {
@@ -309,13 +329,26 @@ variable "FL_ADMIN_DIRECTORY" {
 }
 
 variable "ENFORCE_MFA" {
-  description = "Gate authenticated routes on TOTP enrolment. Defaults to true; flip-api Settings default also enforces this when unset."
-  type        = string
-  default     = "true"
-}
-
-variable "local_trust_public_ip" {
-  description = "Public IP of an on-premises Trust host. When non-empty, AWS security group rules are created to allow consolidated FL communication on port 8002 from this IP to the Central Hub."
+  description = <<-EOT
+    Gate authenticated routes on TOTP enrolment. Leave unset for the secure
+    default — flip-api's Pydantic Settings anchors `ENFORCE_MFA = True` when
+    the env var is absent from the container. Set explicitly (typically
+    `false` in `.env.stag`) only to override for testing. Empty string is
+    treated as unset and the variable is omitted from the ECS task env so
+    the Settings default applies.
+  EOT
   type        = string
   default     = ""
+}
+
+variable "local_trust_public_ips" {
+  description = "Public IPs of on-premises Trust hosts. Each IP gets an ingress rule on the FL-server NLB security group allowing FL communication to the Central Hub. Set via LOCAL_TRUST_PUBLIC_IPS in the env file."
+  type        = list(string)
+  default     = []
+}
+
+variable "ecs_exec_enabled" {
+  description = "Enable ECS Exec (execute-command) on Fargate tasks. Default false; set to true for debugging sessions via 'aws ecs execute-command'."
+  type        = bool
+  default     = false
 }

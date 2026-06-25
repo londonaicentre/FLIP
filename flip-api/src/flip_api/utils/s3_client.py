@@ -21,10 +21,25 @@ from botocore.exceptions import ClientError, EndpointConnectionError
 from flip_api.config import get_settings
 from flip_api.utils.logger import logger
 
+# S3's ``content-length-range`` policy condition caps the **total HTTP body**
+# size (file bytes + multipart framing: boundary strings, the key /
+# Content-Type / policy / x-amz-signature form fields, and the file part's
+# own Content-Disposition header — typically ~500B to a few KB). Without
+# this buffer, a file at exactly the size cap would be rejected at the S3
+# edge because the encoded request is unavoidably larger. 16 KB is well
+# above any realistic multipart overhead and is 0.015% of the 100 MB
+# default cap — negligible storage-cost slack in exchange for a clean
+# "file bytes <= MAX_MODEL_FILE_BYTES" semantic the UI guard mirrors.
+_MULTIPART_OVERHEAD_BUFFER_BYTES = 16 * 1024
+
 # Upper bound on PUT pre-signed URL lifetime. A leaked URL is a writable
 # capability against the upload bucket, so the leak window must stay tight.
-# 600s is the security ceiling — callers may pass less.
-MAX_PUT_PRESIGNED_URL_TTL_SECONDS = 600
+# 1800s (30 min) is the security ceiling — callers may pass less. It was
+# raised from 600s to accommodate large model-file uploads (up to the 5 GB
+# MAX_MODEL_FILE_BYTES cap): a multi-GB upload can't reliably finish inside a
+# 10-minute window on a typical link, and an expired policy aborts the
+# transfer at the S3 edge. Moving this value requires a security review.
+MAX_PUT_PRESIGNED_URL_TTL_SECONDS = 1800
 
 
 def parse_s3_path(s3_path: str) -> tuple[str, str]:
@@ -51,7 +66,7 @@ def hash_s3_key(key: str) -> str:
 class S3Client:
     """S3 client wrapper for S3 operations."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize S3 client with AWS credentials."""
         self.client = boto3.client("s3", region_name=get_settings().AWS_REGION)
 
@@ -78,44 +93,77 @@ class S3Client:
         )
         return url
 
-    def get_put_presigned_url(self, s3_path: str, expiration: int = MAX_PUT_PRESIGNED_URL_TTL_SECONDS) -> str:
-        """Generate a pre-signed URL for uploading a file to S3.
+    def get_put_presigned_post(
+        self,
+        s3_path: str,
+        max_bytes: int,
+        content_type: str | None = None,
+        expiration: int = MAX_PUT_PRESIGNED_URL_TTL_SECONDS,
+    ) -> dict[str, Any]:
+        """
+        Generate a pre-signed POST policy for uploading a file to S3 with
+        explicit size and (optional) content-type constraints baked in.
+
+        S3 enforces the policy at the edge: multipart/form-data POSTs whose
+        body exceeds ``max_bytes`` or whose Content-Type form field doesn't
+        match the policy are rejected before any bytes land in the bucket.
+        The single-PUT URL produced by ``generate_presigned_url("put_object",
+        ...)`` carries no such constraints, which is the whole point of
+        using POST here instead.
 
         Args:
             s3_path (str): Full S3 path (e.g., ``s3://bucket-name/key``).
-            expiration (int): URL expiration time in seconds. Values above
+            max_bytes (int): Hard cap on the **file** size in bytes. The
+                condition actually sent to S3 is
+                ``max_bytes + _MULTIPART_OVERHEAD_BUFFER_BYTES`` because S3
+                measures the whole encoded request body, not just the file
+                part — see the module-level comment for why.
+            content_type (str | None): If provided, the policy locks
+                Content-Type to this exact value. If ``None``, any
+                Content-Type is accepted but the size cap still applies.
+            expiration (int): URL/policy expiration (seconds). Values above
                 ``MAX_PUT_PRESIGNED_URL_TTL_SECONDS`` are silently clamped to
                 the ceiling — a warning is logged so an over-limit caller
                 leaves an audit trail. Silent clamping is deliberate: the
                 ceiling is a hard security policy, never an error condition.
 
         Returns:
-            str: Pre-signed URL string.
+            dict[str, Any]: ``{"url": ..., "fields": {...}}`` — pass through
+            to the client as multipart/form-data POST.
 
         Raises:
-            Exception: If URL generation fails.
+            Exception: If policy generation fails.
         """
         bucket, key = parse_s3_path(s3_path)
         ttl = min(expiration, MAX_PUT_PRESIGNED_URL_TTL_SECONDS)
         if expiration > MAX_PUT_PRESIGNED_URL_TTL_SECONDS:
             logger.warning(
-                f"Requested PUT pre-signed URL TTL {expiration}s exceeds the "
+                f"Requested PUT pre-signed POST TTL {expiration}s exceeds the "
                 f"{MAX_PUT_PRESIGNED_URL_TTL_SECONDS}s security ceiling; clamped to {ttl}s."
             )
         try:
-            url = self.client.generate_presigned_url(
-                "put_object",
-                Params={"Bucket": bucket, "Key": key},
+            request_body_cap = max_bytes + _MULTIPART_OVERHEAD_BUFFER_BYTES
+            conditions: list[Any] = [["content-length-range", 0, request_body_cap]]
+            fields: dict[str, str] = {}
+            if content_type is not None:
+                conditions.append({"Content-Type": content_type})
+                fields["Content-Type"] = content_type
+
+            response = self.client.generate_presigned_post(
+                Bucket=bucket,
+                Key=key,
+                Fields=fields,
+                Conditions=conditions,
                 ExpiresIn=ttl,
             )
-            # Never log the URL itself: the query string carries
+            # Never log the policy ``url`` itself: it carries
             # X-Amz-Signature / X-Amz-Credential, and writable capability
             # leaks chain into FL supply-chain attacks.
             logger.info(
-                "Generated pre-signed PUT URL "
+                "Generated pre-signed POST policy "
                 f"bucket={bucket} key_hash={hash_s3_key(key)} expires_in={ttl}"
             )
-            return url
+            return response
         except ClientError as e:
             # Log a structured line without the traceback. ``logger.exception``
             # would emit ``str(e)`` via the formatter, and a future boto error
@@ -124,10 +172,10 @@ class S3Client:
             # is an enum-like string (``AccessDenied``, ``NoSuchBucket``, …).
             error_code = e.response.get("Error", {}).get("Code", "Unknown")
             logger.error(
-                f"Error generating pre-signed PUT URL bucket={bucket} "
+                f"Error generating pre-signed POST policy bucket={bucket} "
                 f"key_hash={hash_s3_key(key)} error_code={error_code}"
             )
-            raise Exception("Unable to create a pre-signed URL") from e
+            raise Exception("Unable to create a pre-signed POST policy") from e
 
     def delete_object(self, s3_path: str) -> None:
         """

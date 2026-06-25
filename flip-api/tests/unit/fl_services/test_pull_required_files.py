@@ -12,8 +12,11 @@
 
 import json
 
+import pytest
+
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import pull_required_files
-from flip_api.utils.constants import JOB_TYPES_REQUIRED_FILES_FILE
+from flip_api.utils.constants import job_types_required_files_name
 
 
 def test_pull_required_files_json_to_assets_success(tmp_path, monkeypatch):
@@ -22,29 +25,40 @@ def test_pull_required_files_json_to_assets_success(tmp_path, monkeypatch):
         def read(self):
             return b'{"standard": ["trainer.py", "validator.py", "models.py", "config.json"]}'
 
+    captured = {}
+
     class DummyS3:
         def get_object(self, bucket_path):
+            captured["bucket_path"] = bucket_path
             return {"Body": DummyBody()}
 
     monkeypatch.setattr(pull_required_files, "S3Client", lambda: DummyS3())
     monkeypatch.setattr(
         pull_required_files,
         "get_settings",
-        lambda: type("X", (), {"FL_APP_BASE_BUCKET": "bucket", "FL_BACKEND": "nvflare"})(),
+        lambda: type("X", (), {"FL_APP_BASE_BUCKET": "bucket"})(),
     )
     assets_dir = tmp_path / "assets"
-    assets_dir.mkdir()
+    # The per-backend file is resolved via required_job_types_file; point it at tmp_path.
     monkeypatch.setattr(
-        pull_required_files, "REQUIRED_JOB_TYPES_FILE", assets_dir / JOB_TYPES_REQUIRED_FILES_FILE
+        pull_required_files,
+        "required_job_types_file",
+        lambda fl_backend: assets_dir / job_types_required_files_name(fl_backend),
     )
-    pull_required_files.pull_required_files_json_to_assets()
-    with open(assets_dir / JOB_TYPES_REQUIRED_FILES_FILE) as f:
+
+    pull_required_files.pull_required_files_json_to_assets(FLBackend.NVFLARE)
+
+    # Pulled from the per-backend S3 prefix
+    assert captured["bucket_path"] == "bucket/nvflare/required_files.json"
+    # Written to the per-backend local file
+    dest = assets_dir / job_types_required_files_name(FLBackend.NVFLARE)
+    with open(dest) as f:
         data = json.load(f)
     assert data["standard"] == ["trainer.py", "validator.py", "models.py", "config.json"]
 
 
-def test_pull_required_files_json_to_assets_fallback(tmp_path, monkeypatch):
-    # Mock S3Client.get_object to raise Exception
+def test_pull_required_files_json_to_assets_raises_on_s3_failure(tmp_path, monkeypatch):
+    # S3 is the single source of truth — a failure raises (no checked-in/in-code fallback).
     class DummyS3:
         def get_object(self, bucket_path):
             raise Exception("S3 unavailable")
@@ -53,14 +67,17 @@ def test_pull_required_files_json_to_assets_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(
         pull_required_files,
         "get_settings",
-        lambda: type("X", (), {"FL_APP_BASE_BUCKET": "bucket", "FL_BACKEND": "nvflare"})(),
+        lambda: type("X", (), {"FL_APP_BASE_BUCKET": "bucket"})(),
     )
     assets_dir = tmp_path / "assets"
-    assets_dir.mkdir()
     monkeypatch.setattr(
-        pull_required_files, "REQUIRED_JOB_TYPES_FILE", assets_dir / JOB_TYPES_REQUIRED_FILES_FILE
+        pull_required_files,
+        "required_job_types_file",
+        lambda fl_backend: assets_dir / job_types_required_files_name(fl_backend),
     )
-    pull_required_files.pull_required_files_json_to_assets()
-    with open(assets_dir / JOB_TYPES_REQUIRED_FILES_FILE) as f:
-        data = json.load(f)
-    assert data["standard"] == ["trainer.py", "validator.py", "models.py", "config.json"]
+
+    with pytest.raises(Exception, match="S3 unavailable"):
+        pull_required_files.pull_required_files_json_to_assets(FLBackend.NVFLARE)
+
+    # Nothing was written
+    assert not (assets_dir / job_types_required_files_name(FLBackend.NVFLARE)).exists()

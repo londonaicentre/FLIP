@@ -41,7 +41,7 @@ def download_file(
     Download a 'model file' (file uploaded by a user to train/evaluate a model).
 
     Important: Do not confuse with the 'retrieve_federated_results' endpoint which is for downloading 'model results'
-    generated as a result of a training/evaluation job and are stored in a different S3 bucket. While 'observer' users
+    generated as a result of a training/evaluation job and are stored in a different S3 bucket. While 'viewer' users
     can download 'model results' using the 'retrieve_federated_results' endpoint, only users with 'modify' access to a
     model can download 'model files' using this 'download_file' endpoint.
 

@@ -22,6 +22,7 @@ from flip_api.domain.interfaces.fl import (
     ISchedulerResponse,
 )
 from flip_api.domain.schemas.status import JobStatus, ModelStatus, NetStatus
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_scheduler_service
 from flip_api.utils.exceptions import NotFoundError
 
@@ -47,16 +48,10 @@ def scheduler_id():
 
 
 def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
-    from flip_api.domain.interfaces.fl import JobTypes
-
     with (
         patch(
-            "flip_api.fl_services.services.fl_scheduler_service.get_settings",
-            return_value=MagicMock(FL_BACKEND="nvflare"),
-        ),
-        patch(
             "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",
-            return_value=(2, JobTypes.standard),
+            return_value="s3://dest/model",
         ) as mock_bundle,
         patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
         patch(
@@ -66,12 +61,14 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
         patch("flip_api.fl_services.services.fl_scheduler_service.start_training") as mock_start,
         patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
     ):
-        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name")
+        # The net self-reports its backend, so resolve_backend(session, net) returns it
+        # without touching the DB or any boot-time env var.
+        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
 
         fl_scheduler_service.prepare_and_start_training(
             model_id=model_id,
             fl_job_id=fl_job_id,
-            clients=["client1"],
+            trust_ids=[uuid4()],
             session=fake_session,
         )
 
@@ -84,28 +81,27 @@ def test_prepare_and_start_training_success(fake_session, model_id, fl_job_id):
 def test_prepare_and_start_training_failure(fake_session, model_id, fl_job_id):
     with (
         patch(
-            "flip_api.fl_services.services.fl_scheduler_service.get_settings",
-            return_value=MagicMock(FL_BACKEND="nvflare"),
-        ),
-        patch(
             "flip_api.fl_services.services.fl_scheduler_service.bundle_nvflare_application",
             side_effect=Exception("bundle failed"),
         ),
+        patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id") as mock_get_net,
         patch("flip_api.fl_services.services.fl_scheduler_service.remove_job") as mock_remove,
         patch("flip_api.fl_services.services.fl_scheduler_service.add_log") as mock_log,
         patch("flip_api.fl_services.services.fl_scheduler_service.update_model_status") as mock_status,
     ):
+        # Net reports nvflare so the nvflare bundler (patched to raise) is the path taken.
+        mock_get_net.return_value = INetDetails(endpoint="endpoint", name="net-name", fl_backend=FLBackend.NVFLARE)
         with pytest.raises(Exception, match="bundle failed"):
             fl_scheduler_service.prepare_and_start_training(
                 model_id=model_id,
                 fl_job_id=fl_job_id,
-                clients=["client1"],
+                trust_ids=[uuid4()],
                 session=fake_session,
             )
 
         mock_remove.assert_called_once_with(fl_job_id, fake_session)
         mock_status.assert_called_once_with(model_id, ModelStatus.ERROR, fake_session)
-        mock_log.assert_called()
+        mock_log.assert_called_once_with(model_id, "bundle failed", fake_session, success=False)
 
 
 def test_update_fl_scheduler_success(fake_session, model_id, fl_job_id):
@@ -187,13 +183,14 @@ def test_revert_scheduler_pickup_not_found(fake_session):
 
 
 def test_get_net_by_model_id(fake_session, model_id):
-    fake_session.exec.return_value.first.return_value = ("endpoint", "name")
+    fake_session.exec.return_value.first.return_value = ("endpoint", "name", FLBackend.NVFLARE)
 
     result = fl_scheduler_service.get_net_by_model_id(model_id, fake_session)
 
     assert isinstance(result, INetDetails)
     assert result.endpoint == "endpoint"
     assert result.name == "name"
+    assert result.fl_backend == FLBackend.NVFLARE
 
 
 def test_get_net_by_model_id_not_found(fake_session, model_id):
@@ -203,12 +200,13 @@ def test_get_net_by_model_id_not_found(fake_session, model_id):
 
 
 def test_get_net_by_name(fake_session):
-    fake_session.exec.return_value.first.return_value = ("endpoint", "net-name")
+    fake_session.exec.return_value.first.return_value = ("endpoint", "net-name", FLBackend.FLOWER)
 
     result = fl_scheduler_service.get_net_by_name("net-name", fake_session)
 
     assert isinstance(result, INetDetails)
     assert result.name == "net-name"
+    assert result.fl_backend == FLBackend.FLOWER
 
 
 def test_get_net_by_name_not_found(fake_session):
@@ -219,7 +217,10 @@ def test_get_net_by_name_not_found(fake_session):
 
 
 def test_get_nets(fake_session):
-    fake_session.exec.return_value.all.return_value = [("endpoint", "net1"), ("endpoint2", "net2")]
+    fake_session.exec.return_value.all.return_value = [
+        ("endpoint", "net1", FLBackend.NVFLARE),
+        ("endpoint2", "net2", FLBackend.FLOWER),
+    ]
 
     results = fl_scheduler_service.get_nets(fake_session)
 
@@ -256,24 +257,27 @@ def test_check_for_available_net_none(fake_session):
 
 
 def test_check_for_queued_jobs_success(fake_session, scheduler_id, model_id):
+    trust_id = uuid4()
+    trust = MagicMock(id=trust_id)
     job = MagicMock()
     job.id = uuid4()
     job.model_id = model_id
-    job.clients = ["client1"]
+    job.trusts = [trust]
 
     scheduler = MagicMock()
 
     fake_session.exec.side_effect = [
         MagicMock(first=MagicMock(return_value=job)),
-        MagicMock(first=MagicMock(return_value=True)),  # validate_trusts returns True
     ]
     fake_session.get.return_value = scheduler
 
-    with patch("flip_api.fl_services.services.fl_scheduler_service.validate_trusts", return_value=True):
+    with patch("flip_api.fl_services.services.fl_scheduler_service.validate_trust_ids", return_value=True) as v:
         result = fl_scheduler_service.check_for_queued_jobs(scheduler_id, fake_session)
 
     assert isinstance(result, IJobResponse)
     assert result.model_id == job.model_id
+    assert result.trust_ids == [trust_id]
+    v.assert_called_once_with(model_id, [trust_id], fake_session)
     fake_session.commit.assert_called()
 
 
@@ -323,3 +327,32 @@ def test_get_required_training_details_no_query(fake_session, model_id):
 
     with pytest.raises(NotFoundError, match="No cohort query found for this project"):
         fl_scheduler_service.get_required_training_details(model_id, fake_session)
+
+
+# get_slot_names_by_trust_ids — added in the connection-status PR.
+
+def test_get_slot_names_by_trust_ids_empty_input_returns_empty(fake_session):
+    """An empty input is a "no trusts to resolve" sentinel — return {} without
+    issuing a DB query.
+    """
+    result = fl_scheduler_service.get_slot_names_by_trust_ids([], fake_session)
+
+    assert result == {}
+    fake_session.exec.assert_not_called()
+
+
+def test_get_slot_names_by_trust_ids_maps_assigned_slots(fake_session):
+    """Rows from FLKitSlot are folded into a {trust_id: slot_name} map; rows
+    whose trust_id is NULL are filtered out (slot exists but is unassigned).
+    """
+    trust_a = uuid4()
+    trust_b = uuid4()
+    fake_session.exec.return_value.all.return_value = [
+        (trust_a, "Trust_1"),
+        (None, "Trust_unassigned"),
+        (trust_b, "Trust_2"),
+    ]
+
+    result = fl_scheduler_service.get_slot_names_by_trust_ids([trust_a, trust_b], fake_session)
+
+    assert result == {trust_a: "Trust_1", trust_b: "Trust_2"}

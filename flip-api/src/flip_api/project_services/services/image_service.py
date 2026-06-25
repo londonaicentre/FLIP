@@ -170,7 +170,7 @@ def delete_imaging_project(imaging_project: ImagingProject, db: Session) -> bool
         statement = (
             update(XNATProjectStatus)
             .where(col(XNATProjectStatus.id) == imaging_project.id)
-            .values(retrieve_image_status=XNATImageStatus.DELETED.value)
+            .values(retrieve_image_status=XNATImageStatus.DELETED)
         )
         db.execute(statement)
         db.commit()
@@ -408,6 +408,18 @@ def reimport_failed_studies(
                 "Time specified in PROJECT_REIMPORT_RATE has not been exceeded for project "
                 f"{query.xnat_project_id} at trust {query.trust_name} "
                 f"(Last reimport: {last_reimport_time_utc}, Next eligible: {next_eligible})"
+            )
+            continue
+
+        # Reimport only retries failed studies, so a project whose studies have all imported has
+        # nothing to do. Skip it (without burning a reimport_count slot) rather than queueing no-op
+        # reimports until MAX_REIMPORT_COUNT. When no status result is known yet we proceed, so
+        # genuinely failed studies still get retried.
+        latest_status = _get_latest_imaging_status(query.trust_id, query.xnat_project_id, db)
+        if latest_status is not None and latest_status.failed_count == 0 and latest_status.queue_failed_count == 0:
+            logger.info(
+                f"All studies already imported for project {query.xnat_project_id} at trust "
+                f"{query.trust_name} (failed=0, queue_failed=0). Skipping reimport."
             )
             continue
 

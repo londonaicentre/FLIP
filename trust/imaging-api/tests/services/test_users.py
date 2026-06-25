@@ -119,6 +119,27 @@ def test_get_xnat_users_success(mock_get, headers):
 
 
 @patch("imaging_api.services.users.requests.get")
+def test_get_xnat_users_admin_missing_last_modified(mock_get, headers):
+    """XNAT omits lastModified for a never-modified user (e.g. a freshly
+    configured admin that has logged in). Parsing must not fail — the field is
+    optional — otherwise get_xnat_users raises and project creation 500s."""
+    mock_get.return_value = MagicMock(
+        status_code=200,
+        json=MagicMock(return_value=[
+            {
+                "username": "admin", "enabled": True, "id": 1, "secured": True,
+                "email": "admin@test.com", "verified": True, "firstName": "Admin",
+                "lastName": "User", "lastSuccessfulLogin": 1780012450777,
+            },
+        ]),
+    )
+    users = get_xnat_users(headers)
+    assert len(users) == 1
+    assert users[0].username == "admin"
+    assert users[0].lastModified is None
+
+
+@patch("imaging_api.services.users.requests.get")
 def test_get_xnat_users_failure(mock_get, headers):
     mock_get.return_value = MagicMock(status_code=500, text="Server Error")
     # The function creates User objects before checking status code, but still

@@ -57,12 +57,9 @@ resource "aws_iam_role_policy_attachment" "ecs_task_execution_managed" {
 # never Resource = "*".
 data "aws_iam_policy_document" "ecs_task_execution_secrets" {
   statement {
-    sid     = "ReadFlipApiSecret"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      module.flip_api_secret.secret_arn,
-      module.flip_db.db_instance_master_user_secret_arn,
-    ]
+    sid       = "ReadFlipApiSecret"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [module.flip_api_secret.secret_arn]
   }
 
   statement {
@@ -71,6 +68,17 @@ data "aws_iam_policy_document" "ecs_task_execution_secrets" {
     resources = [
       "arn:aws:ssm:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:parameter/flip/*",
     ]
+  }
+
+  statement {
+    sid = "KmsDecryptFlipKey"
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey",
+      "kms:GenerateDataKeyWithoutPlaintext",
+      "kms:DescribeKey",
+    ]
+    resources = [aws_kms_key.flip_app_key.arn]
   }
 }
 
@@ -95,11 +103,19 @@ resource "aws_iam_role" "ecs_flip_api_task" {
 
 data "aws_iam_policy_document" "ecs_flip_api_task" {
   statement {
-    sid     = "ReadFlipApiSecret"
-    actions = ["secretsmanager:GetSecretValue"]
+    sid       = "ReadFlipApiSecret"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [module.flip_api_secret.secret_arn]
+  }
+
+  # Mint IAM auth tokens to connect through RDS Proxy (FLIP#556). Scoped to the
+  # one proxy + the single DB user flip-api connects as — the proxy itself uses
+  # the master secret to reach RDS, so no static DB password lives in the app.
+  statement {
+    sid     = "RdsProxyIamConnect"
+    actions = ["rds-db:connect"]
     resources = [
-      module.flip_api_secret.secret_arn,
-      module.flip_db.db_instance_master_user_secret_arn,
+      "arn:aws:rds-db:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:dbuser:${local.rds_proxy_resource_id}/${var.POSTGRES_USER}",
     ]
   }
 
@@ -150,6 +166,32 @@ data "aws_iam_policy_document" "ecs_flip_api_task" {
       "${aws_s3_bucket.aicentre_bucket.arn}/*",
     ]
   }
+
+  statement {
+    sid = "KmsDecryptFlipKey"
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey",
+      "kms:GenerateDataKeyWithoutPlaintext",
+      "kms:DescribeKey",
+    ]
+    resources = [aws_kms_key.flip_app_key.arn]
+  }
+
+  # Ephemeral SSM parameter handoff for register_trust (S-1 fix).
+  # `register-trusts.sh` mints a one-off parameter under this prefix before
+  # spawning the ECS task; the task writes the kit JSON here as a
+  # SecureString (encrypted with the AWS-managed `alias/aws/ssm`, no extra
+  # KMS grant needed); the deploy script reads + deletes it immediately
+  # after. Scope is intentionally narrow — only the ephemeral prefix.
+  statement {
+    sid = "SsmTrustKitEphemeralWrite"
+    actions = [
+      "ssm:PutParameter",
+      "ssm:DeleteParameter",
+    ]
+    resources = ["arn:aws:ssm:${var.AWS_REGION}:${data.aws_caller_identity.current.account_id}:parameter/flip/trust-kits/ephemeral/*"]
+  }
 }
 
 resource "aws_iam_role_policy" "ecs_flip_api_task" {
@@ -181,7 +223,7 @@ resource "aws_iam_role" "ecs_fl_api_task" {
 # minimal: read its INTERNAL_SERVICE_KEY from the FLIP_API secret (so it can
 # call back to flip-api on /api/model/{id}/status) and write training results
 # to the dedicated flip-fl-results bucket. Crucially, it has NO access to
-# AES_KEY_BASE64, TRUST_API_KEY_HASHES, the model-files-uploads or app-bundles
+# AES_KEY_BASE64, the model-files-uploads or app-bundles
 # buckets, or any flip-api-only data. The secret is shared today (single
 # FLIP_API secret) so the execution role's GetSecretValue covers fetch; the
 # task role here only needs to expose ListSecretVersionIds for runtime
@@ -232,6 +274,17 @@ data "aws_iam_policy_document" "ecs_fl_server_task" {
       variable = "s3:prefix"
       values   = ["fl-flare-participant-kits/*", "fl-flare-participant-kits"]
     }
+  }
+
+  statement {
+    sid = "KmsDecryptFlipKey"
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey",
+      "kms:GenerateDataKeyWithoutPlaintext",
+      "kms:DescribeKey",
+    ]
+    resources = [aws_kms_key.flip_app_key.arn]
   }
 }
 

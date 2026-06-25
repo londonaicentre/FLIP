@@ -140,10 +140,13 @@ describe("Project Page: STAGED", () => {
         cy.contains("You must select a minimum of one trust when approving.")
             .should("be.visible");
 
-        cy.getBySel("trust-staged-0").click();
+        // ProjectApproval.vue sorts trusts alphabetically by code (fallback: name) —
+        // the fixture's three trusts go GSTT (0), Kings (1), UCLH (2). Pick indices
+        // 1 + 2 so the approve body lines up with the test's expected (KCH + UCLH).
+        cy.getBySel("trust-staged-1").click();
         cy.contains("You must select a minimum of one trust when approving.")
             .should("not.exist");
-        cy.getBySel("trust-staged-1").click();
+        cy.getBySel("trust-staged-2").click();
 
         cy.getBySel("approve-project-btn").click();
 
@@ -259,37 +262,36 @@ describe("Project Page: Researcher & Owner [APPROVED]", () => {
         cy.getBySel("project-creation-incomplete-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585").should("exist");
         cy.getBySel("project-creation-incomplete-df8f0069-ad2c-44a7-b082-10e84d453b24").should("not.exist");
 
+        // Import-bar stats are now always rendered (deliberately, so every trust card
+        // shares the same body height — see ProjectStatus.vue comment). Trusts without
+        // an importStatus payload default to 0 across all four counters.
         cy.getBySel("successful-imports-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("successful-imports-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("successful-imports-df8f0069-ad2c-44a7-b082-10e84d453b24")
-            .should("exist")
-            .contains(12);
+            .should("have.text", "12");
 
         cy.getBySel("processing-imports-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("processing-imports-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("processing-imports-df8f0069-ad2c-44a7-b082-10e84d453b24")
-            .should("exist")
-            .contains(2);
+            .should("have.text", "2");
 
         cy.getBySel("queued-imports-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("queued-imports-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("queued-imports-df8f0069-ad2c-44a7-b082-10e84d453b24")
-            .should("exist")
-            .contains(212);
+            .should("have.text", "212");
 
         cy.getBySel("failed-imports-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("failed-imports-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585")
-            .should("not.exist");
+            .should("have.text", "0");
         cy.getBySel("failed-imports-df8f0069-ad2c-44a7-b082-10e84d453b24")
-            .should("exist")
-            .contains(26);
+            .should("have.text", "26");
 
         cy.getBySel("project-reimport-status-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
             .should("exist")
@@ -299,9 +301,16 @@ describe("Project Page: Researcher & Owner [APPROVED]", () => {
             .should("exist")
             .contains("Reimport attempts");
 
-        cy.getBySel("import-status-warning-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
-            .should("exist")
-            .contains("Awaiting study import status from trust.");
+        // The standalone "Awaiting study import status from trust." warning was
+        // replaced by an inline "no imports yet" subtitle on the import-bar
+        // (rowTotal === 0 branch in ProjectStatus.vue). KCH has no importStatus
+        // payload, so its trust card should carry that subtitle — and the
+        // big retrieved-% should fall back to the em-dash.
+        cy.getBySel("pct-retrieved-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
+            .should("have.text", "—");
+        cy.getBySel("trust-name-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2")
+            .closest("li")
+            .should("contain.text", "no imports yet");
 
         cy.getBySel("project-reimport-status-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585")
             .should("not.exist");
@@ -319,15 +328,7 @@ describe("Project Page: Researcher & Owner [APPROVED]", () => {
         cy.getBySel("trust-name-df8f0069-ad2c-44a7-b082-10e84d453b24").should("exist");
         cy.getBySel("overview-project-creation").contains("2/3");
         cy.getBySel("overview-image-retrieval").contains("12");
-        cy.getBySel("filter-project-status").type("UCLH", { force: true });
-        cy.getBySel("trust-name-7e51a830-7b09-4bf7-b91a-0b4e1c36d3b2").should("not.exist");
-        cy.getBySel("trust-name-5d512a2b-747e-4b1f-ad9d-f65fdb3c6585").should("not.exist");
-        cy.getBySel("trust-name-df8f0069-ad2c-44a7-b082-10e84d453b24").should("exist");
-        cy.getBySel("overview-project-creation").contains("2/3");
-        cy.getBySel("overview-image-retrieval").contains("12");
-
-        cy.getBySel("filter-project-status").clear().type("GARBAGE");
-        cy.getBySel("no-project-status-message").should("exist");
+        cy.getBySel("filter-project-status").should("not.exist");
     });
 
     it("Can't be edited", () => {

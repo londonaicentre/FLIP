@@ -31,9 +31,7 @@ _XML_FORBIDDEN_CHARS = ("<", ">", "&")
 
 def _reject_xml_control_chars(v: str) -> str:
     if any(c in v for c in _XML_FORBIDDEN_CHARS):
-        raise ValueError(
-            f"name must not contain XML control characters {_XML_FORBIDDEN_CHARS}"
-        )
+        raise ValueError(f"name must not contain XML control characters {_XML_FORBIDDEN_CHARS}")
     return v
 
 
@@ -41,8 +39,41 @@ class IProjectQuery(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     name: str = Field()
     query: str = Field()
-    trusts_queried: int | None = Field(default=None, alias="trustsQueried")
+    # Trust IDs the query was dispatched to at submit time. Drives the
+    # per-trust panel's visibility set: a trust that errored or never
+    # responded (offline, hub rejected its error report) stays visible —
+    # as an error chip or a "running" pulse — instead of vanishing.
+    # ``len(queried_trust_ids)`` is the "trusts queried" count.
+    queried_trust_ids: list[UUID] = Field(default_factory=list, alias="queriedTrustIds")
+    # Subset of ``queried_trust_ids`` whose ``TrustTask`` is still PENDING
+    # — the trust hasn't polled the hub for it yet. UI renders these with
+    # a "queued" chip instead of "running" so the operator can tell the
+    # difference between "we sent it, awaiting pickup" and "trust is
+    # actively processing".
+    pending_trust_ids: list[UUID] = Field(default_factory=list, alias="pendingTrustIds")
+    # Subset of ``queried_trust_ids`` whose ``TrustTask`` was cancelled
+    # (typically because the project was approved without them). UI shows
+    # these as a greyed-out "skipped" chip — they were dispatched but the
+    # work was abandoned before they could pick it up.
+    cancelled_trust_ids: list[UUID] = Field(default_factory=list, alias="cancelledTrustIds")
+    # Subset of ``queried_trust_ids`` that posted any QueryResult row
+    # (successful or errored). The staging guard requires this — a trust
+    # that was dispatched but never replied has no cohort count and so
+    # must not be stage-eligible. Combined with ``errored_trust_ids``,
+    # the stageable set is ``responded - errored``.
+    responded_trust_ids: list[UUID] = Field(default_factory=list, alias="respondedTrustIds")
+    # Subset of ``responded_trust_ids`` whose data blob carried a
+    # non-null ``error``. Excluded from staging — even though we got a
+    # reply, we have no usable cohort count.
+    errored_trust_ids: list[UUID] = Field(default_factory=list, alias="erroredTrustIds")
+    # Subset of ``responded_trust_ids`` (disjoint from ``errored_trust_ids``) whose
+    # cohort count is 0 — either a genuine zero match or a privacy-suppressed
+    # below-threshold count (see issue #519). Excluded from staging: there is no
+    # cohort to build an imaging project against.
+    empty_trust_ids: list[UUID] = Field(default_factory=list, alias="emptyTrustIds")
     total_cohort: int | None = Field(default=None, alias="totalCohort")
+    created: str | None = Field(default=None)
+    created_by: str | None = Field(default=None, alias="createdBy")
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -65,16 +96,48 @@ class IProjectResponse(BaseModel):
     )
 
 
+class IApprovedTrust(BaseModel):
+    id: UUID
+    name: str
+    code: str | None = None
+    approved: bool
+    approved_at: str | None = Field(default=None, alias="approvedAt")
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+
+
 # Base Pydantic Models (Interfaces)
 class IProject(BaseModel):  # Base for IProject to avoid repetition
     id: UUID = Field(default_factory=uuid4)
     name: str = Field(default="")
     description: str = Field(default="")
     owner_id: UUID = Field(..., alias="ownerId")
+    # Display name of the owner — populated from UserProfile by the list
+    # endpoint so cards/rows can show "Owned by …" without a follow-up
+    # round-trip per project. Null only if the owner has no UserProfile row
+    # (very old seeded users). The detail endpoint returns `IProjectResponse`
+    # instead of this base class and does not surface this field.
+    owner_name: str | None = Field(default=None, alias="ownerName")
+    # Total users with project access — includes the owner, who's auto-added
+    # to ProjectUserAccess on project creation (so the UI doesn't need to +1).
+    user_count: int = Field(default=0, alias="userCount")
     deleted: bool = Field(default=False)
     approved: bool | None = None
     creation_timestamp: str = Field(..., alias="creationtimestamp")  # This is a string to match the Vue.js handling
+    # Most-recent STAGE audit row's timestamp. Null if the project was never
+    # staged (i.e. it's still in UNSTAGED). String for the same Vue.js
+    # handling reason as creation_timestamp.
+    staged_at: str | None = Field(default=None, alias="stagedAt")
     status: ProjectStatus = Field(default=ProjectStatus.UNSTAGED)
+    # Participating trusts + most-recent cohort query. Optional so the list
+    # endpoint can omit them when batch-loading isn't worth it; the detail
+    # endpoint always populates both. Lives on IProject (not just IReturnedProject)
+    # so the projects-list UI can render trust chips + cohort sizes without a
+    # follow-up round-trip per row.
+    approved_trusts: list[IApprovedTrust] | None = Field(default=None, alias="approvedTrusts")
+    query: IProjectQuery | None = Field(default=None)
 
     model_config = ConfigDict(
         populate_by_name=True,
@@ -82,16 +145,8 @@ class IProject(BaseModel):  # Base for IProject to avoid repetition
     )
 
 
-class IApprovedTrust(BaseModel):
-    id: UUID
-    name: str
-    approved: bool
-
-
 class IReturnedProject(IProject):  # Extends IProject
     owner_email: EmailStr = Field(..., alias="ownerEmail")
-    approved_trusts: list[IApprovedTrust] | None = Field(default=None, alias="approvedTrusts")
-    query: IProjectQuery | None = Field(default=None)
     users: list[CognitoUser]
     model_config = ConfigDict(populate_by_name=True)
 
@@ -121,7 +176,7 @@ class IEditProject(BaseModel):
 
     # Handles cases where no users are added when editing a project (in which case the input is '[null]')
     @validator("users", pre=True)
-    def replace_null_list(cls, value):
+    def replace_null_list(cls, value: list[UUID] | None) -> list[UUID]:
         if value is None:
             return []
         if isinstance(value, list) and all(v is None for v in value):

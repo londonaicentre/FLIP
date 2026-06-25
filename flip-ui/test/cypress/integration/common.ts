@@ -67,22 +67,35 @@ export const validProjectWithQuery = {
         name: "Some test query",
         query: "Some Query > 3000",
         totalCohort: 32567,
-        trustsQueried: 2
+        queriedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            erroredTrustIds: [],
+            respondedTrustIds: ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"],
+            pendingTrustIds: [],
+            cancelledTrustIds: []
     }
 };
 
 export const validUsers: IProjectUser[] = [
     {
         id: "ad1fbfc0-e6dc-40e1-9a6c-0019cf490fa3",
-        email: "test1@exmple.com"
+        email: "test1@exmple.com",
+        name: "Test User One",
+        organisation: "Example Org",
+        isDisabled: false
     },
     {
         id: "2635f591-1430-4d20-86e2-c0ee88c0a0c5",
-        email: "test2@exmple.com"
+        email: "test2@exmple.com",
+        name: "Test User Two",
+        organisation: "Example Org",
+        isDisabled: false
     },
     {
         id: "9057b483-d483-47a1-af3b-72ca23893caa",
-        email: "test3@exmple.com"
+        email: "test3@exmple.com",
+        name: "Test User Three",
+        organisation: "Example Org",
+        isDisabled: false
     }
 ];
 

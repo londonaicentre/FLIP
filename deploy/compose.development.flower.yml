@@ -21,12 +21,13 @@ services:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
+      - ${FL_JOBS_DIR}/net-1:/app/src
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-1:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
-      - FLOWER_SRC_ROOT=/app
+      - FLOWER_SRC_ROOT=/app/src
     ports:
       - "${FL_API_PORT}:8000"
       - "5679:5679"
@@ -48,12 +49,13 @@ services:
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_API_NAME}:${DOCKER_FL_TAG}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
+      - ${FL_JOBS_DIR}/net-2:/app/src
     environment:
       - DEBUG=${DEBUG}
       - SUPERLINK_ADDRESS=fl-server-net-2:9093
       - SUPERLINK_HEALTH_ADDRESS=fl-server-net-2:9097
       - SUPERLINK_ROOT_CERTIFICATES=/certs/ca.crt
-      - FLOWER_SRC_ROOT=/app
+      - FLOWER_SRC_ROOT=/app/src
     depends_on:
       - fl-server-net-2
     networks:
@@ -83,6 +85,10 @@ services:
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
+      # Shared with FL API: uploaded app bundles (sources + checkpoint) live under
+      # /app/src/<model_id>; the evaluation ServerApp reads the checkpoint from
+      # the path in the flip-job-dir run-config value the FL API injects at submit.
+      - ${FL_JOBS_DIR}/net-1:/app/src
     environment:
       - NET_ID=net-1
       - LOCAL_DEV=false
@@ -127,13 +133,18 @@ services:
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-1:9093
       - FL_API_ADDRESS=http://flip-fl-api-net-1:8000
-      - TRUST_NAMES=${TRUST_NAMES}
+      # The script reads ${TRUST_NAMES} as a label list, but the underlying identity it's
+      # labelling is the per-slot SuperNode key — one entry per provisioned slot. Feed
+      # FL_KIT_SLOT_NAMES through so trusts admin-created later (and bound to a slot via
+      # FLKitSlot.assigned_to_trust_id) still get their node_id mapped on net startup.
+      - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
-      # Dev-overlay: edits to the sibling-repo script apply without a rebuild.
-      # Same script is baked into the image, so removal still works.
-      - ${FL_PROVISIONED_DIR}/../fl_services/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
+      # Dev-overlay: edits to the register-supernode-keys.sh script apply without a rebuild.
+      # Lands in-tree at fl-services/flower/ with the Flower migration (#622); same script is
+      # baked into the image, so removal still works.
+      - ${FL_PROVISIONED_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-1:
@@ -159,6 +170,10 @@ services:
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
+      # Shared with FL API: uploaded app bundles (sources + checkpoint) live under
+      # /app/src/<model_id>; the evaluation ServerApp reads the checkpoint from
+      # the path in the flip-job-dir run-config value the FL API injects at submit.
+      - ${FL_JOBS_DIR}/net-2:/app/src
     environment:
       - NET_ID=net-2
       - LOCAL_DEV=false
@@ -201,12 +216,13 @@ services:
     environment:
       - SUPERLINK_ADDRESS=fl-server-net-2:9093
       - FL_API_ADDRESS=http://flip-fl-api-net-2:8000
-      - TRUST_NAMES=${TRUST_NAMES}
+      # See net-1 above — feed FL_KIT_SLOT_NAMES so all provisioned slots get labelled.
+      - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro
       # See net-1 above — symmetric dev-overlay.
-      - ${FL_PROVISIONED_DIR}/../fl_services/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
+      - ${FL_PROVISIONED_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-2:

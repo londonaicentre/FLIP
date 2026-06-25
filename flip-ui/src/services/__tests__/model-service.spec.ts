@@ -14,24 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { _http } from "@/services/api";
-import { clearJobTypesCache,
-    createModel,
-    DEFAULT_JOB_TYPE,
-    deleteModel,
-    editModel,
-    fetchJobTypes,
-    getDownloadUrlForResults,
-    getLogsForModel,
-    getModel,
-    getModelFileStatus,
-    getModelMetrics,
-    getModels,
-    getPreSignedUrl,
-    getRequiredFilesForJobType,
-    initialiseTraining,
-    isValidJobType,
-    stopTraining,
-    uploadModelFile } from "@/services/model-service";
+import { buildModelSteps, clearJobTypesCache, createModel, DEFAULT_JOB_TYPE, deleteModel, editModel, fetchJobTypes, getDownloadUrlForResults, getLogsForModel, getModel, getModelFileStatus, getModelMetrics, getModels, getPreSignedUrl, getRequiredFilesForJobType, getStatusEnumValue, initialiseTraining, isValidJobType, type ModelStatus, ModelStatusEnum, stopTraining, uploadModelFile } from "@/services/model-service";
 
 vi.mock("@/services/api", () => ({
     _http: {
@@ -231,28 +214,77 @@ describe("model-service", () => {
             global.fetch = originalFetch;
         });
 
-        it("PUTs the blob to the pre-signed URL with the blob's content type", async () => {
-            // Pinned to PUT + the file's own content type because S3's
-            // pre-signed URLs sign the method and Content-Type header — a
-            // POST or a default `application/octet-stream` would be
-            // rejected by the bucket policy.
+        it("POSTs multipart/form-data with the policy fields then the file last", async () => {
+            // S3 presigned POST signs the policy fields, so the form body
+            // must carry every server-issued field verbatim and the file
+            // must come last under the field name `file` — anything else
+            // is rejected by the bucket policy at the edge.
             const fetchMock = vi.fn().mockResolvedValue({ ok: true });
             global.fetch = fetchMock as unknown as typeof fetch;
-            const blob = new Blob(["payload"], { type: "application/json" });
+            const file = new File(["payload"], "trainer.py", { type: "text/x-python" });
+            const policy = {
+                url: "https://signed.example/upload",
+                fields: {
+                    key: "models/m-1/trainer.py",
+                    "Content-Type": "text/x-python",
+                    policy: "base64-policy",
+                    "x-amz-signature": "sig"
+                },
+                maxBytes: 100 * 1024 * 1024
+            };
 
-            await uploadModelFile("https://signed.example/upload", blob);
+            await uploadModelFile(policy, file);
 
-            expect(fetchMock).toHaveBeenCalledWith("https://signed.example/upload", {
-                method: "PUT",
-                body: blob,
-                headers: { "Content-Type": "application/json" }
-            });
+            expect(fetchMock).toHaveBeenCalledTimes(1);
+            const [calledUrl, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+            expect(calledUrl).toBe("https://signed.example/upload");
+            expect(init.method).toBe("POST");
+            expect(init.body).toBeInstanceOf(FormData);
+            const form = init.body as FormData;
+            expect(Array.from(form.keys())).toEqual([
+                "key",
+                "Content-Type",
+                "policy",
+                "x-amz-signature",
+                "file"
+            ]);
+            expect(form.get("key")).toBe("models/m-1/trainer.py");
+            expect(form.get("Content-Type")).toBe("text/x-python");
+            expect(form.get("file")).toBe(file);
+        });
+
+        it("throws when the storage backend rejects the upload", async () => {
+            // S3 returns 4xx (with an XML body) for policy violations such
+            // as oversized objects. Surfacing this as a thrown error lets
+            // the caller mark the file ERROR instead of silently treating
+            // a rejection as success.
+            global.fetch = vi.fn().mockResolvedValue({
+                ok: false,
+                status: 403
+            }) as unknown as typeof fetch;
+            const policy = {
+                url: "https://signed.example/upload",
+                fields: { key: "models/m-1/trainer.py" },
+                maxBytes: 100 * 1024 * 1024
+            };
+
+            await expect(
+                uploadModelFile(policy, new File(["payload"], "trainer.py"))
+            ).rejects.toThrow(/status 403/);
         });
     });
 
     describe("getPreSignedUrl", () => {
-        it("returns the presigned URL string from the response", async () => {
-            vi.mocked(_http.post).mockResolvedValue({ data: "https://signed/upload" } as never);
+        it("returns the presigned POST policy from the response", async () => {
+            const policy = {
+                url: "https://signed/upload",
+                fields: {
+                    key: "models/m-1/trainer.py",
+                    "Content-Type": "text/x-python"
+                },
+                maxBytes: 100 * 1024 * 1024
+            };
+            vi.mocked(_http.post).mockResolvedValue({ data: policy } as never);
 
             const result = await getPreSignedUrl(
                 "/files/upload",
@@ -269,7 +301,7 @@ describe("model-service", () => {
                     contentType: "text/x-python"
                 }
             );
-            expect(result).toBe("https://signed/upload");
+            expect(result).toEqual(policy);
         });
 
         it("returns null when the backend returns no body", async () => {
@@ -291,14 +323,14 @@ describe("model-service", () => {
     });
 
     describe("training control", () => {
-        it("initialiseTraining POSTs to /fl/initiate/{modelId} with the trust list", async () => {
+        it("initialiseTraining POSTs to /fl/initiate/{modelId} with the trust id list", async () => {
             vi.mocked(_http.post).mockResolvedValue({ data: undefined } as never);
 
-            await initialiseTraining("m-1", { trusts: ["t-1", "t-2"] });
+            await initialiseTraining("m-1", { trust_ids: ["t-1", "t-2"] });
 
             expect(_http.post).toHaveBeenCalledWith(
                 "/fl/initiate/m-1",
-                { trusts: ["t-1", "t-2"] }
+                { trust_ids: ["t-1", "t-2"] }
             );
         });
 
@@ -385,6 +417,80 @@ describe("model-service", () => {
             const result = await getModelMetrics("/metrics/m-1");
 
             expect(result).toEqual(metrics);
+        });
+    });
+
+    describe("buildModelSteps", () => {
+        const stepByName = (status: ModelStatus | undefined, name: string) => {
+            const step = buildModelSteps(status).find(s => s.name === name);
+            if (!step) throw new Error(`step "${name}" not found`);
+
+            return step;
+        };
+
+        it("returns the four model lifecycle steps in order", () => {
+            expect(buildModelSteps("PENDING").map(s => s.name)).toEqual([
+                "Model Created",
+                "Model Prepared",
+                "Training",
+                "Results Uploaded"
+            ]);
+        });
+
+        it("RESULTS_UPLOADED marks every step completed", () => {
+            expect(buildModelSteps("RESULTS_UPLOADED").every(s => s.completed)).toBe(true);
+        });
+
+        it("ERROR flags Training as an error", () => {
+            // A genuine training failure should still surface on the Training milestone.
+            const step = stepByName("ERROR", "Training");
+            expect(step.error).toBe(true);
+            expect(step.completed).toBeFalsy();
+        });
+
+        it("RESULTS_UPLOAD_FAILED keeps Training completed (training did finish)", () => {
+            // The bug this fixes: an upload failure must not paint the Training
+            // milestone as failed, because training itself completed successfully.
+            const step = stepByName("RESULTS_UPLOAD_FAILED", "Training");
+            expect(step.completed).toBe(true);
+            expect(step.error).toBeFalsy();
+            expect(step.inProgress).toBeFalsy();
+        });
+
+        it("RESULTS_UPLOAD_FAILED flags Results Uploaded as the failed step", () => {
+            const step = stepByName("RESULTS_UPLOAD_FAILED", "Results Uploaded");
+            expect(step.error).toBe(true);
+            expect(step.completed).toBeFalsy();
+        });
+
+        it("RESULTS_UPLOAD_FAILED keeps Model Prepared completed", () => {
+            expect(stepByName("RESULTS_UPLOAD_FAILED", "Model Prepared").completed).toBe(true);
+        });
+
+        it("an unrecognised status degrades to error handling without throwing", () => {
+            // getStatusEnumValue maps anything unknown to ERROR so a stale UI bundle
+            // receiving a newer status degrades gracefully rather than crashing.
+            expect(() => buildModelSteps("NONSENSE" as ModelStatus)).not.toThrow();
+            expect(stepByName("NONSENSE" as ModelStatus, "Training").error).toBe(true);
+        });
+    });
+
+    describe("getStatusEnumValue", () => {
+        it("maps a known status name to its ordinal", () => {
+            expect(getStatusEnumValue("RESULTS_UPLOAD_FAILED")).toBe(ModelStatusEnum.RESULTS_UPLOAD_FAILED);
+        });
+
+        it("falls back to ERROR for undefined or unrecognised status", () => {
+            expect(getStatusEnumValue(undefined)).toBe(ModelStatusEnum.ERROR);
+            expect(getStatusEnumValue("NONSENSE")).toBe(ModelStatusEnum.ERROR);
+        });
+
+        it("falls back to ERROR for a numeric-string key (numeric-enum reverse mapping)", () => {
+            // ModelStatusEnum["0"] reverse-maps to the member NAME ("PENDING"), a string —
+            // not an ordinal. The guard must reject it and still return a number.
+            const result = getStatusEnumValue("0");
+            expect(typeof result).toBe("number");
+            expect(result).toBe(ModelStatusEnum.ERROR);
         });
     });
 });

@@ -1,0 +1,97 @@
+/*
+ * Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+/* Override table width restrictions. */
+.wy-table-responsive table td,
+.wy-table-responsive table th {
+    white-space: normal;
+}
+
+.wy-table-responsive {
+    margin-bottom: 24px;
+    max-width: 100%;
+    overflow: visible;
+}
+
+.wy-table-responsive th p {
+    margin-bottom: unset;
+}
+
+.wy-nav-content {
+    max-width: 1200px !important;
+}
+
+.wy-side-nav-search,
+.wy-nav-top {
+    background: #8d1b60;
+}
+
+.wy-side-nav-search a:link,
+.wy-nav-top a:link {
+    color: #fff;
+}
+
+.wy-side-nav-search a:visited,
+.wy-nav-top a:visited {
+    color: #fff;
+}
+
+.wy-side-nav-search a:hover,
+.wy-nav-top a:hover {
+    color: #fff;
+}
+
+.wy-menu-vertical a:link,
+.wy-menu-vertical a:visited {
+    color: #d9d9d9;
+}
+
+.wy-menu-vertical a:active {
+    background-color: #e82678;
+}
+
+.wy-side-nav-search > div.version {
+    color: rgba(0, 0, 0, 0.3);
+}
+
+.wy-nav-content {
+    max-width: 80%;
+}
+
+.floatleftcol {
+    float: left;
+    max-width: 60%;
+    padding-right: 20px;
+}
+
+a:link,
+a:visited {
+    color: #8d1b60;
+}
+
+a:hover {
+    color: #e82678;
+}
+
+p {
+    margin-bottom: 1em;
+}
+
+.rst-content dl dt {
+    font-weight: unset;
+    margin-bottom: 0;
+}
+
+.rst-content .section ul p {
+    margin-bottom: 0;
+}

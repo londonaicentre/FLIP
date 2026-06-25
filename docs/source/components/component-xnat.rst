@@ -251,21 +251,12 @@ The following XNAT Event Service API endpoints are used by FLIP for managing per
 FLIP XNAT methods
 *****************
 
-The following methods are available to be used in training, located in the `flip-utils package <https://flip-fl-base.readthedocs.io/en/latest/index.html>`_:
+The following methods are available to be used in training, located in the `flip-utils package <https://github.com/londonaicentre/FLIP/tree/develop/flip-utils>`_:
 
 - ``get_dataframe(self, project_id: str, query: str) -> DataFrame``
     This retrieves data in the form of a Dataframe containing, at the minimum, accession IDs. The method takes in the project ID and the project query as parameters. These values are already passed in as parameters to the trainer to be used.
 
-- ``get_by_accession_number(self, project_id: str, accession_id: str) -> Path``
-    This downloads scans and places them in a directory made available for NVIDIA FLARE to utilise. The method takes in the project ID as a parameter as well as an accession ID, which can be  obtained from `get_dataframe`. It returns the path to where the scans are stored.
+- ``get_by_accession_number(project_id: str, accession_id: str, resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI) -> Path``
+    Downloads scans of the requested resource type (``NIFTI`` by default) and places them in a directory made available to the FL training script. Takes the project ID and an accession ID (which can be obtained from ``get_dataframe``) and an optional ``resource_type`` (single value or list). Returns the path to where the scans are stored.
 
-- ``add_resource(self, project_id: str, accession_id: str, scan_id: str, resource_id: str, files: List[str])``
-    This allows uploading scans to XNAT under the project that the model to. Scans are to be placed in the `uploads` directory. The method does not have a return type. It supports the following required parameters:
-
-    - project ID
-    - accession ID
-    - scan ID (ID/label of the directory at the scan level)
-    - resource ID (ID/label of the directory at the resource level)
-    - a list of files corresponding to the names of the files that reside within the `uploads` directory that you wish to upload, e.g. [`scan-1.dcm`, `scan-2.dcm`, ...].
-
-    The list of files could also point to locations in subfolders relative to the uploads directory, e.g. [`subfolder/scans/scan-1.dcm`, `scan-2.dcm`], where `scan-1` has the path `uploads/subfolder/scans/scan-1.dcm` and `scan-2` has the path `uploads/scan-2.dcm`.
+See the :doc:`/components/component-fl-nodes` documentation for the full list of ``flip.*`` calls available to user training code.

@@ -28,9 +28,9 @@ def update_status(
     Update the status of an existing XNAT project
 
     Args:
-        trust_id (str): ID of the trust
-        xnat_project_id (str): ID of the XNAT project
-        project_id (str): ID of the project
+        trust_id (UUID): ID of the trust
+        xnat_project_id (UUID): ID of the XNAT project
+        project_id (UUID): ID of the project
         status (XNATImageStatus): Status to set
         db (Session): Database session
 
@@ -69,12 +69,12 @@ def insert_status(
     Insert a new XNAT project status record
 
     Args:
-        trust_id (str): ID of the trust
-        xnat_project_id (str): ID of the XNAT project
-        project_id (str): ID of the project
+        trust_id (UUID): ID of the trust
+        xnat_project_id (UUID): ID of the XNAT project
+        project_id (UUID): ID of the project
         status (XNATImageStatus): Status to set
         db (Session): Database session
-        query_id (str | None): Optional query ID
+        query_id (UUID | None): Optional query ID
 
     Returns:
         int: Number of rows inserted

@@ -64,15 +64,19 @@ User Management
 The User Management area facilitates:
 
 - Registration of new users
-- Assignment of user roles
+- Assignment of a user's role
 - Disabling and re-enabling of user accounts
 - Resetting of user passwords
+
+.. note::
+
+   Roles are **exclusive** — each user holds exactly one role at a time. See :ref:`rbac-roles` for the available roles and the permissions each grants.
 
 Register User
 ^^^^^^^^^^^^^
 
 1. Click the 'Register User' button
-2. Enter the new user's email address and assigned roles e.g., ``admin``, ``researcher`` and/or ``observer``
+2. Enter the new user's email address and select a single role (``admin``, ``researcher`` or ``viewer``)
 3. Click the 'Register User' button
 4. The user will be emailed a one-time password to use on their :ref:`initial-login`
 
@@ -99,21 +103,21 @@ FLIP does not facilitate the deletion of user accounts, but rather enables accou
 
    Enabling a user.
 
-Manage Roles
-^^^^^^^^^^^^
+Manage Role
+^^^^^^^^^^^
 
 .. note::
 
-   A user's roles may be re-assigned at any time.
+   A user's role may be re-assigned at any time. Each user holds exactly one role.
 
 1. Select the user from the user list
-2. Add or remove the roles as appropriate
+2. Choose the new role from the radio list (``admin``, ``researcher`` or ``viewer``)
 3. Click the 'Save User' button
 
 .. figure:: ../assets/admin/role-assignment.gif
    :align: center
 
-   Re-assigning roles to a user.
+   Re-assigning a user's role.
 
 Reset Password
 ^^^^^^^^^^^^^^

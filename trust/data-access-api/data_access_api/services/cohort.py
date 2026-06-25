@@ -17,6 +17,7 @@ from typing import Any
 import pandas as pd
 import sqlglot
 from fastapi import HTTPException
+from pandas.errors import DatabaseError as PandasDatabaseError
 from psycopg2 import errors as pg_errors
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
@@ -182,6 +183,38 @@ def get_records(
         set_cached_result(query, df, params)
         return df
 
+    # Error responses are deliberately category-only (S-8): the trust forwards
+    # this HTTPException detail to the central hub, which surfaces it through
+    # the cohort UI to every project member. Raw psycopg / SQLAlchemy text can
+    # leak row values, constraint names, and connection-pool internals — so we
+    # log the full error here for ops and return only a category to the caller.
+    # UndefinedTable / UndefinedColumn are an intentional exception: they echo
+    # back identifiers the OPERATOR typed in their own SQL (against the public
+    # OMOP CDM schema), so they leak no data while remaining a useful diagnostic.
+    #
+    # Pandas 3.x wraps SQLAlchemy errors in pandas.errors.DatabaseError (a subclass
+    # of OSError, not SQLAlchemyError) with the original SQLAlchemy exception as
+    # __cause__. We unwrap the cause here so the UndefinedTable / UndefinedColumn
+    # diagnostic path still works when pd.read_sql is used directly.
+    except PandasDatabaseError as e:
+        cause = e.__cause__
+        if isinstance(cause, DBAPIError):
+            orig = cause.orig
+            error_msg = str(orig).strip()
+            if isinstance(orig, pg_errors.UndefinedTable):
+                table_name = extract_missing_identifier(error_msg, r'relation "([^"]+)" does not exist')
+                logger.error(f"UndefinedTable: {error_msg}")
+                raise HTTPException(status_code=400, detail=f"The table '{table_name}' does not exist.") from e
+            elif isinstance(orig, pg_errors.UndefinedColumn):
+                column_name = extract_missing_identifier(error_msg, r'column "([^"]+)" does not exist')
+                logger.error(f"UndefinedColumn: {error_msg}")
+                raise HTTPException(status_code=400, detail=f"The column '{column_name}' does not exist.") from e
+            else:
+                logger.error(f"Database error (via pandas): {error_msg}")
+                raise HTTPException(status_code=500, detail="query_failed") from e
+        logger.error(f"Pandas database error: {str(e)}")
+        raise HTTPException(status_code=500, detail="internal_error") from e
+
     except DBAPIError as e:
         orig = e.orig
         error_msg = str(orig).strip()
@@ -198,14 +231,14 @@ def get_records(
 
         else:
             logger.error(f"Database error: {error_msg}")
-            raise HTTPException(status_code=500, detail=f"Database error: {error_msg}") from e
+            raise HTTPException(status_code=500, detail="query_failed") from e
 
     except SQLAlchemyError as e:
         logger.error(f"SQLAlchemy error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"SQLAlchemy error: {str(e)}") from e
+        raise HTTPException(status_code=500, detail="internal_error") from e
     except Exception as e:
         logger.error(f"Unexpected error executing query: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error executing query: {str(e)}") from e
+        raise HTTPException(status_code=500, detail="internal_error") from e
 
 
 def get_counts(df: pd.DataFrame) -> dict:
@@ -369,13 +402,21 @@ def make_other_category(results: list[dict], min_count: int = COHORT_QUERY_THRES
 
 
 def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: int) -> StatisticsResponse:
-    """
-    Returns aggregated statistics from the query results.
+    """Returns aggregated statistics from the query results.
 
     - Counts the number of records.
     - Aggregates the number of occurrences of each unique value per column.
 
-    If the number of records is less than the threshold, an empty response is returned.
+    Below-threshold counts are privacy-suppressed by returning a ``StatisticsResponse``
+    with ``record_count=0``, empty ``data`` and ``suppressed=True`` — the count itself is
+    suppressed, not just the per-field breakdown. A genuine zero is suppressed identically
+    to a small (1..threshold-1) count, so the two are indistinguishable on the wire and the
+    response cannot be used to infer that >=1 patient matched (membership disclosure — issue
+    #519, security review). The ``suppressed`` flag only tells the hub/UI to render a
+    "below-threshold" chip instead of a bare 0; it does not reveal which 0s were genuine.
+    Suppression is intentional rather than an HTTPException so the trust still has a normal
+    response to forward to the hub; raising here previously caused trust-api to skip the hub
+    callback and leave the per-trust UI status stuck.
 
     Args:
         df (pd.DataFrame): Query results dataframe.
@@ -383,32 +424,37 @@ def get_statistics(df: pd.DataFrame, query_input: CohortQueryInput, threshold: i
         threshold (int): Minimum number of records required to return results.
 
     Returns:
-        StatisticsResponse: Contains the aggregated statistics.
-
-    Raises:
-        HTTPException: If the request cannot be processed.
+        StatisticsResponse: Contains the aggregated statistics, or a 0-count empty response
+        when below ``COHORT_QUERY_THRESHOLD``.
     """
     record_count = len(df)
 
-    # Create StatisticsResponse
+    if record_count < COHORT_QUERY_THRESHOLD:
+        # Privacy-suppress every below-threshold count, INCLUDING a genuine zero: a true
+        # zero and a small (1..threshold-1) count return identically (record_count=0,
+        # suppressed=True) so the response can't reveal that >=1 patient matched.
+        # Distinguishing them would leak membership/existence (issue #519, security review).
+        logger.info(
+            f"Query returned {record_count} records (< {COHORT_QUERY_THRESHOLD});"
+            " returning privacy-suppressed 0-count response"
+        )
+        return StatisticsResponse(
+            query_id=query_input.query_id,
+            trust_id=query_input.trust_id,
+            record_count=0,
+            created=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
+            data=[],
+            suppressed=True,
+        )
+
     stats = StatisticsResponse(
         query_id=query_input.query_id,
         trust_id=query_input.trust_id,
         record_count=record_count,
         created=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
-        data=[],
+        data=[get_counts(df), get_null_counts(df)],
+        suppressed=False,
     )
-
-    if record_count < COHORT_QUERY_THRESHOLD:
-        logger.info(
-            f"Query returned insufficient results ({COHORT_QUERY_THRESHOLD}, {record_count})"
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=f"Query returned insufficient results ({COHORT_QUERY_THRESHOLD}, {record_count})",
-        )
-    stats.data = []
-    stats.data += [get_counts(df), get_null_counts(df)]
 
     if "person_id" in df.columns:
         logger.info("person_id column found in the query results; including age and sex distribution calculations.")

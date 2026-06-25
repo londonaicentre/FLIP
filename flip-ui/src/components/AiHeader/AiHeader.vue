@@ -15,34 +15,54 @@
     <Popover
         v-slot="{ open, close }"
         as="header"
-        class="flex flex-row items-center py-0 xl:py-3.5 w-full align-middle bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-4 shrink-0"
+        class="flex flex-row items-center h-14 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-4 xl:px-6 shrink-0"
     >
-        <div class="flex items-center flex-shrink-0 h-full xl:hidden">
-            <PopoverButton class="outline-none">
-                <icon-heroicons-outline-menu-alt-1 />
-            </PopoverButton>
-        </div>
+        <!-- Mobile menu button -->
+        <PopoverButton class="outline-none xl:hidden mr-3" data-test="mobile-menu-btn">
+            <icon-heroicons-outline-menu-alt-1 class="w-6 h-6" />
+        </PopoverButton>
 
-        <div class="w-[120px] xl:hidden h-full items-center justify-center flex flex-shrink-0 py-2">
-            <router-link to="/">
-                <logo v-if="!isDark" class="h-[50px] w-auto mx-auto" />
-                <logoDark v-else class="h-[50px] w-auto mx-auto" />
+        <!-- Logo (left) — London AI Centre + FLIP marks -->
+        <router-link to="/" class="flex items-center gap-3 flex-shrink-0 mr-4 xl:mr-9">
+            <img src="/images/aicentre-logo-transparent.png" alt="London AI Centre" class="h-12 w-auto">
+            <img src="/images/flip-logo-icon.png" alt="FLIP" class="h-8 w-auto">
+        </router-link>
+
+        <!-- Vertical divider (desktop) -->
+        <div class="hidden xl:block w-px h-6 bg-gray-200 dark:bg-gray-700 mr-2" />
+
+        <!-- Desktop top-nav (hidden on mobile — uses popover instead) -->
+        <nav
+            class="hidden xl:flex flex-row items-stretch h-full"
+            aria-label="Primary"
+            data-test="top-nav"
+        >
+            <router-link
+                v-for="item in navigation"
+                :key="item.name"
+                :to="item.href"
+                class="relative inline-flex items-center px-4 text-sm font-semibold transition-colors"
+                :class="item.current
+                    ? 'text-gray-900 dark:text-gray-100'
+                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+            >
+                {{ item.name }}
+                <span
+                    v-if="item.current"
+                    aria-hidden="true"
+                    class="absolute left-3 right-3 -bottom-px h-[3px] bg-primary-500 rounded-t"
+                />
             </router-link>
-        </div>
+        </nav>
 
-        <div class="w-[100px] xl:hidden h-full items-center justify-center flex flex-shrink-0">
-            <img :src="nhsLogo" class="mx-auto rounded h-1/2">
-        </div>
+        <!-- Spacer -->
+        <div class="flex-grow" />
 
-        <div class="flex-row items-center justify-center flex-grow hidden h-full xl:flex">
-            <div class="flex-grow text-2xl font-semibold font-heading " data-test="header-title">
-                {{ title }}
-            </div>
-        </div>
-        <div class="flex flex-row items-center justify-end h-full grow xl:flex-grow-0">
+        <!-- Deployment-mode badge + right-side slot (user dropdown) -->
+        <div class="flex flex-row items-center justify-end h-full">
             <div
                 v-if="useSiteDetailsStore().deploymentMode"
-                v-tippy="{placement: 'bottom-end', content: 'Platform updates are in progress'}"
+                v-tippy="{ placement: 'bottom-end', content: 'Platform updates are in progress' }"
                 data-test="deployment-mode-status"
                 class="relative w-16 mr-6 bg-gray-100 dark:bg-gray-700 px-3.5 py-2 rounded-md flex items-center justify-center"
             >
@@ -55,7 +75,7 @@
             <slot />
         </div>
 
-        <!-- MOBILE MENU -->
+        <!-- MOBILE MENU (popover panel, unchanged behavior) -->
         <TransitionRoot as="template" :show="open">
             <div class="xl:hidden">
                 <TransitionChild
@@ -88,9 +108,9 @@
                         >
                             <div class="pt-3 pb-2 divide-y dark:divide-gray-700">
                                 <div class="flex items-start justify-between px-4">
-                                    <div>
-                                        <logo v-if="!isDark" class="h-[50px] w-auto mx-auto" />
-                                        <logoDark v-else class="h-[50px] w-auto mx-auto" />
+                                    <div class="flex items-center gap-3">
+                                        <img src="/images/aicentre-logo-transparent.png" alt="London AI Centre" class="h-[50px] w-auto">
+                                        <img src="/images/flip-logo-icon.png" alt="FLIP" class="h-[42px] w-auto">
                                     </div>
                                     <div class="-mr-2">
                                         <PopoverButton
@@ -106,8 +126,11 @@
                                         v-for="item in navigation"
                                         :key="item.name"
                                         :to="item.href"
-                                        :class="[{ 'bg-gray-100 font-semibold dark:bg-gray-800 dark:text-gray-300 dark:hover:text-gray-300': item.current },
-                                                 { 'text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 dark:hover:bg-gray-800 font-medium': !item.current }]"
+                                        :class="[
+                                            item.current
+                                                ? 'bg-gray-100 font-semibold dark:bg-gray-800 dark:text-gray-300 dark:hover:text-gray-300'
+                                                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 dark:hover:bg-gray-800 font-medium'
+                                        ]"
                                         class="block px-3 py-2 text-base rounded-md"
                                         @click="close"
                                     >
@@ -124,20 +147,18 @@
 </template>
 
 <script setup lang="ts">
-import { Popover,
-    PopoverButton,
-    PopoverPanel,
-    TransitionChild,
-    TransitionRoot } from "@headlessui/vue";
+import { Popover, PopoverButton, PopoverPanel, TransitionChild, TransitionRoot } from "@headlessui/vue";
+import { directive as vTippy } from "vue-tippy";
 
-import nhsLogo from "/images/nhs-logo.png";
-import logo from "@/assets/logo.svg?component";
-import logoDark from "@/assets/logo_dark.svg?component";
 import AiPopoverOverlay from "@/components/AiPopoverOverlay/AiPopoverOverlay.vue";
 import useNavigation from "@/composables/navigation";
 import { useSiteDetailsStore } from "@/store/siteDetailsStore";
 
 export interface IAIHeaderProps {
+    // Kept for backwards-compat with callers that still pass `:title`. The
+    // page itself owns its title now (rendered inside the page body), so this
+    // prop is read but not displayed — removing it later is a separate clean-up
+    // touching every layout that mounts AiHeader.
     title: string;
     currentPage: string;
     isDark: boolean;
