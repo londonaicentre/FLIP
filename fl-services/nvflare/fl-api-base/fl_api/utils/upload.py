@@ -28,6 +28,7 @@ from fl_api.utils.prepare_config import (
     validate_config,
 )
 from fl_api.utils.schemas import FLAggregators, TrainingRound, UploadAppRequest
+from fl_api.utils.validation import safe_join, validate_bundle_url, validate_model_id
 
 
 def _infer_app_folder_name(model_id: str, s3_file_dir: str) -> str:
@@ -138,12 +139,16 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     """
     logger.info(f"Received request to upload app: {model_id}")
 
+    # model_id is the path component for the job dir; flip-api always sends a uuid4, so
+    # anything else is rejected before it can traverse out of the upload dir.
+    validate_model_id(model_id)
+
     # This section takes care of taking every uploaded file and copying it to the model_id path.
 
     bundle_urls = body.bundle_urls  # Retrieve the files that the user has uploaded to the platform.
 
     # We create the job app in the upload dir folder
-    job_dir = Path.cwd() / upload_dir / model_id
+    job_dir = safe_join(Path.cwd() / upload_dir, model_id)
 
     # If the job directory already exists, we remove it to avoid conflicts with previous uploads.
     if job_dir.exists():
@@ -161,6 +166,9 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     for url in bundle_urls:
         logger.info(f"Downloading file from {url}")
 
+        # The FL API fetches each URL server-side, so reject non-https / off-origin URLs.
+        validate_bundle_url(url)
+
         path = urlparse(url).path
         s3_file_dir, file_name = str(Path(path).parent), Path(path).name
 
@@ -174,10 +182,12 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         app_folder_name, relative_dir = _relative_dir_for_download(model_id, s3_file_dir, file_name)
         app_folder_names.add(app_folder_name)
 
-        dest_dir = job_dir / relative_dir
+        # relative_dir + file_name derive from the (untrusted) S3 URL path; contain both
+        # under job_dir so a crafted URL can't escape the upload sandbox.
+        dest_dir = safe_join(job_dir, relative_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
 
-        dest_path = dest_dir / file_name
+        dest_path = safe_join(dest_dir, file_name)
         dest_path.write_bytes(content)
         logger.info(f"Downloaded file {dest_path}")
 
@@ -186,7 +196,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     # Require meta.json if more than one app folder is present
     logger.debug(f"App folder names identified: {app_folder_names}")
     if len(app_folder_names) > 1:
-        meta_json_path = job_dir / META
+        meta_json_path = safe_join(job_dir, META)
         if not meta_json_path.exists():
             error_message = (
                 f"Application must contain a {META} file in the root of the application folder if you have"
@@ -204,7 +214,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
 
     for app_folder_name in sorted(app_folder_names):
         logger.info(f"Configuring application folder: {app_folder_name}")
-        app_folder_path = job_dir / app_folder_name
+        app_folder_path = safe_join(job_dir, app_folder_name)
 
         # Grab config values from the uploaded config.json
         config_path = app_folder_path / "custom" / "config.json"
