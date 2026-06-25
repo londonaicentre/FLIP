@@ -69,6 +69,18 @@ KIT_TO_SECRET_KEY = {  # maps env-var name -> Secret key (names only, no values)
 # the Hub-shared block filled by `make sync-trust-kit`.
 REQUIRED_KIT_KEYS = ("TRUST_API_KEY", "AES_KEY_BASE64", "CENTRAL_HUB_API_URL")
 
+# The chart names its Secret "<release>-flip-trust-secrets" (fullname + suffix).
+# Stripping the suffix recovers the Helm release name, used to stamp ownership
+# metadata so `helm upgrade --install` can adopt a Secret this script created.
+_SECRET_NAME_SUFFIX = "-flip-trust-secrets"
+
+
+def derive_release_name(secret_name: str) -> str:
+    """Best-effort Helm release name from the chart Secret name (FLIP#595)."""
+    if secret_name.endswith(_SECRET_NAME_SUFFIX):
+        return secret_name[: -len(_SECRET_NAME_SUFFIX)]
+    return secret_name
+
 
 def _is_placeholder(value: str) -> bool:
     """True if a kit value is empty or still a scaffolding placeholder (<...>)."""
@@ -96,15 +108,44 @@ def _kubectl_ns(namespace: str) -> list[str]:
     return ["-n", namespace] if namespace and namespace != "default" else []
 
 
-def patch_k8s_secret(secret_name: str, namespace: str, entries: dict[str, str]) -> None:
+def stamp_helm_ownership(secret_name: str, namespace: str, release_name: str) -> None:
+    """Stamp Helm ownership metadata on a Secret so `helm upgrade --install`
+    adopts it instead of aborting (FLIP#595).
+
+    Without these, a fresh ``helm install`` errors:
+        Secret "<name>" ... cannot be imported into the current release:
+        missing key "app.kubernetes.io/managed-by": must be set to "Helm"
+
+    Idempotent via ``--overwrite`` — also heals a Secret created by an earlier
+    run of this script (or a prior chart version) that lacks the metadata.
+    """
+    ns = _kubectl_ns(namespace)
+    rel_ns = namespace or "default"
+    subprocess.run(
+        ["kubectl", "label", "secret", secret_name, *ns,
+         "app.kubernetes.io/managed-by=Helm", "--overwrite"],
+        check=True,
+    )
+    subprocess.run(
+        ["kubectl", "annotate", "secret", secret_name, *ns,
+         f"meta.helm.sh/release-name={release_name}",
+         f"meta.helm.sh/release-namespace={rel_ns}", "--overwrite"],
+        check=True,
+    )
+
+
+def patch_k8s_secret(secret_name: str, namespace: str, entries: dict[str, str], release_name: str) -> None:
     """Create or merge-patch a Kubernetes Secret with the given entries.
 
-    Values are passed to kubectl directly — never written to disk.
+    Values are passed to kubectl directly — never written to disk. The Secret is
+    stamped with Helm ownership metadata (see :func:`stamp_helm_ownership`) so a
+    later ``helm upgrade --install`` adopts it rather than failing (FLIP#595).
 
     Args:
         secret_name: Secret resource name (chart default: ``<release>-flip-trust-secrets``).
         namespace: Kubernetes namespace.
         entries: Mapping of Secret key -> plaintext value.
+        release_name: Helm release name to record as the Secret's owner.
     """
     ns = _kubectl_ns(namespace)
     exists = subprocess.run(
@@ -127,7 +168,9 @@ def patch_k8s_secret(secret_name: str, namespace: str, entries: dict[str, str]) 
         subprocess.run(args, check=True)
         verb = "Created"
 
-    print(f"  ✓ {verb} Kubernetes Secret entries.")
+    stamp_helm_ownership(secret_name, namespace, release_name)
+
+    print(f"  ✓ {verb} Kubernetes Secret entries (Helm-owned by release '{release_name}').")
     print("    Plaintext values went straight to Kubernetes — not persisted to disk.")
 
 
@@ -247,7 +290,8 @@ def render_override(kit: dict[str, str], code: str, aws_region: str) -> str:
 
 def main(code: str, env: str, namespace: str, secret_name: str,
          output_dir: Path, aws_region: str, apply_secret: bool,
-         write_override: bool = True) -> None:
+         write_override: bool = True, release_name: str | None = None) -> None:
+    release_name = release_name or derive_release_name(secret_name)
     repo_root = Path(__file__).resolve().parents[3]
     kit_path = repo_root / "trust" / f".env.{code}.{env}"
 
@@ -283,7 +327,7 @@ def main(code: str, env: str, namespace: str, secret_name: str,
         ).returncode == 0
         if ns_present:
             print("🔐 Patching per-trust secrets into the Kubernetes Secret…")
-            patch_k8s_secret(secret_name, namespace, entries)
+            patch_k8s_secret(secret_name, namespace, entries, release_name)
             print()
         else:
             print(f"ⓘ  Namespace '{namespace}' not found — skipping Secret patch.")
@@ -332,6 +376,11 @@ if __name__ == "__main__":
         help="Chart-created Secret name (default for release 'trust-release')",
     )
     parser.add_argument(
+        "--release-name",
+        default=None,
+        help="Helm release name for Secret ownership stamping (default: derived from --secret-name)",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path(__file__).resolve().parent,
@@ -368,4 +417,5 @@ if __name__ == "__main__":
         aws_region=args.aws_region,
         apply_secret=args.apply_secret,
         write_override=args.write_override,
+        release_name=args.release_name,
     )
