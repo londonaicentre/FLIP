@@ -148,8 +148,9 @@ class FLIP_EVALUATOR(Executor):
         for model_name, dice_scores in metric_results.items():
             output_results[model_name] = {
                 "spleen": {
+                    # Aggregate metric only — per-sample (row-level) scores are an individual-level
+                    # disclosure (membership inference, cohort-size leak) and are not returned.
                     "mean_dice": np.mean(dice_scores[:, 1]).item(),
-                    "raw_dice": [float(i) for i in dice_scores[:, 1]],
                 }
             }
 
