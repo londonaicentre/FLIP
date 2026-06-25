@@ -431,7 +431,6 @@ workspace-prod/
 # flip-utils build artifacts
 flip-utils/dist/
 .ralph/
-fl-apps/required_files_aggregate.json
 .claude/
 
 # fl-tutorials generated / uncommitted artifacts. Replicates the legacy flip-fl-base
