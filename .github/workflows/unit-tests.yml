@@ -16,7 +16,7 @@ on:
   push:
     paths:
       - "flip-utils/**"
-      - "fl_services/fl-api-base/**"
+      - "fl-services/nvflare/fl-api-base/**"
       - ".github/workflows/unit-tests.yml"
 
 permissions:
@@ -69,7 +69,7 @@ jobs:
         environment: flip
         defaults:
             run:
-                working-directory: ./fl_services/fl-api-base
+                working-directory: ./fl-services/nvflare/fl-api-base
 
         steps:
             - name: Checkout repository

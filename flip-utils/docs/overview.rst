@@ -141,7 +141,7 @@ To test FL applications locally before deploying to production:
       DEV_DATAFRAME=../data/sample_get_dataframe.csv
       JOB_TYPE=standard
 
-2. Place your application files in ``fl-apps/<JOB_TYPE>/app/custom/`` (e.g. fl-apps/standard/app/custom/).
+2. Place your application files in ``fl-apps/nvflare/<JOB_TYPE>/app/custom/`` (e.g. fl-apps/nvflare/standard/app/custom/).
 
 3. Run the simulator in Docker:
 

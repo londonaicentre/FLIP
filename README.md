@@ -43,7 +43,7 @@ FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in coll
 This repository is the FLIP mono-repo: Central Hub API, Trust APIs, UI, Docker deployment, **and** the federated
 learning code (base library, FL services, and tutorials) that was previously split across `flip-fl-base` and
 `flip-fl-base-flower`. The FL code now lives under [`flip-utils/`](flip-utils/) (the pip-installable `flip` package),
-[`fl_services/`](fl_services/) (Docker services for FL server/client/API), and [`fl-apps/`](fl-apps/) (job-type
+[`fl-services/`](fl-services/) (Docker services for FL server/client/API), and [`fl-apps/`](fl-apps/) (job-type
 implementations and tutorials).
 
 | Subdirectory | Description |
@@ -54,8 +54,9 @@ implementations and tutorials).
 | [`deploy/`](deploy/) | Docker Compose and infrastructure-as-code (AWS / on-prem) |
 | [`docs/`](docs/) | Sphinx documentation source (ReadTheDocs) |
 | [`flip-utils/`](flip-utils/) | `flip` Python package — platform logic, NVFLARE components, Flower helpers |
-| [`fl_services/`](fl_services/) | Docker images for FL networks: `fl-server`, `fl-client`, `fl-api-base`, `fl-base` |
-| [`fl-apps/`](fl-apps/) | FL job-type implementations (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) and tutorials |
+| [`fl-services/`](fl-services/) | Docker images for FL networks, nested per backend ([`fl-services/nvflare/`](fl-services/nvflare/): `fl-server`, `fl-client`, `fl-api-base`, `fl-base`) |
+| [`fl-apps/`](fl-apps/) | FL job-type implementations / app templates, nested per backend ([`fl-apps/nvflare/`](fl-apps/nvflare/): `standard`, `evaluation`, `diffusion_model`, `fed_opt`) |
+| [`fl-tutorials/`](fl-tutorials/) | End-to-end tutorial examples, nested per backend ([`fl-tutorials/nvflare/`](fl-tutorials/nvflare/): xray classification, spleen seg/eval, diffusion) |
 
 The NVFLARE workspace is now provisioned in-tree at [`deploy/workspace`](deploy/workspace) (`make nvflare-provision`).
 The legacy [`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) repository still holds the
@@ -70,6 +71,7 @@ provisioned Flower certs used at dev time — see [Federated Learning Setup](#fe
 - [Make](https://formulae.brew.sh/formula/make)
 - [UV](https://docs.astral.sh/uv) - Python environment management tool
 - postgresql-client (install with `apt install postgresql-client postgresql-client-common` on Debian/Ubuntu)
+- [jq](https://jqlang.github.io/jq/) - JSON processor used by several `make` targets (install with `apt install jq` on Debian/Ubuntu, or `brew install jq`)
 
 > For developer tooling and IDE setup, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -228,7 +230,7 @@ kits" — that are generated in-tree and stored in `deploy/workspace/`.
 >
 > Then bring the stack up with `make up`. Provisioning _after_ a `make up` is awkward: Docker will already have
 > created `deploy/workspace/net-*` as **root-owned** bind-mount targets, which block re-provisioning's `rm -rf`
-> until they are removed. See [`fl_services/README.md`](fl_services/README.md) for per-network details and how to
+> until they are removed. See [`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) for per-network details and how to
 > onboard additional clients.
 
 1. **Path Resolution**: `FL_PROVISIONED_DIR` is derived from the `FL_BACKEND` selection inside [`deploy/fl_backend.mk`](deploy/fl_backend.mk):
@@ -246,6 +248,21 @@ directory` in the `fl-server` logs, verify that:
 - The workspace was provisioned with NVFLARE startup kits (`make nvflare-provision-2-nets`) **before** `make up`
 - The `FL_PROVISIONED_DIR` path is correctly resolved (check Makefile output)
 - For NVFLARE: the workspace is at `deploy/workspace/`
+
+### Running the FL tutorials
+
+The in-tree NVFLARE tutorials under [`fl-tutorials/`](fl-tutorials/) run on the local NVFLARE simulator
+(requires a GPU + the `flare-fl-base` image):
+
+```bash
+make -C fl-tutorials download-xray-data                   # one-off: fetch the xray dataset (HF)
+make -C fl-tutorials list-tutorials
+make -C fl-tutorials run-tutorial TUTORIAL=xray_classification
+make -C fl-tutorials run-all-tutorials                    # run every tutorial
+```
+
+The spleen tutorials get their data via `make -C fl-tutorials download-spleen-data`. To build the FL
+images locally first (tagged `:dev`), run `make build-fl`. See each tutorial's README for details.
 
 ## AWS Deployment
 
@@ -413,8 +430,9 @@ The repository is organised as follows:
 - `flip-api`: Contains the central hub API service
 - `flip-ui`: Contains the UI service
 - `flip-utils`: Contains the pip-installable flip-utils Python library
-- `fl_services`: Contains the FL Docker services (server, client, admin API)
-- `fl-apps`: Contains FL app templates, tutorials, and utility scripts
+- `fl-services`: Contains the FL Docker services (server, client, admin API)
+- `fl-apps`: Contains FL app templates and utility scripts
+- `fl-tutorials`: Contains end-to-end tutorial examples (xray classification, spleen seg/eval, diffusion)
 - `trust`: Contains the services that would be deployed in individual trust environments.
   - `data-access-api`: Contains the data access API service
   - `imaging-api`: Contains the imaging API service
@@ -424,8 +442,9 @@ The repository is organised as follows:
   - `trust-api`: Contains the trust API service
   - `xnat`: Contains a mocked [XNAT](https://www.xnat.org/) service
 - `flip-utils`: The `flip` Python package — platform logic, NVFLARE components, Flower helpers (migrated from `flip-fl-base`)
-- `fl_services`: Docker images for FL networks — `fl-server`, `fl-client`, `fl-api-base`, `fl-base` (migrated from `flip-fl-base`)
-- `fl-apps`: FL job-type implementations (`standard`, `evaluation`, `diffusion_model`, `fed_opt`) and runnable tutorials
+- `fl-services`: Docker images for FL networks — `fl-server`, `fl-client`, `fl-api-base`, `fl-base` (migrated from `flip-fl-base`)
+- `fl-apps`: FL job-type implementations / app templates (`standard`, `evaluation`, `diffusion_model`, `fed_opt`)
+- `fl-tutorials`: Runnable end-to-end tutorial examples (migrated from `flip-fl-base`)
 
 ### Trust Authentication
 

@@ -61,6 +61,14 @@ make aws-login                                # AWS SSO login
 - **Cognito**: `flip-user-pool` with email auth
 - **Container registry**: **GHCR** (`ghcr.io/londonaicentre/`) for every FLIP image (flip-api, flare-fl-api, flare-fl-server, flower-superlink, trust-api, imaging-api, data-access-api, orthanc, omop-db, XNAT). ECS Fargate task definitions pull directly from GHCR — `var.docker_registry` in `variables.tf` defaults to it; trust EC2 / on-prem hosts do too. **There is no ECR mirror.** A surgical centralhub redeploy (per `project_prod_ecs_deploy.md` — don't `make apply` for prod) is: GH workflow `workflow_dispatch` to build the branch image to GHCR → `aws ecs register-task-definition` with the branch tag → `aws ecs update-service --force-new-deployment`. The flip-ui bundle ships separately via `make deploy-ui` (it's static assets in S3, not a container image).
 
+## Verifying a Central-Hub FL redeploy
+
+A surgical FL redeploy is `aws ecs update-service --force-new-deployment` on `fl-server-net-1` / `fl-api-net-1` (Fargate re-pulls the `:stag`/`:prod` tag on every task start — no task-def revision needed). To confirm the new image is actually running, compare the task's image digest to the GHCR tag — **but select the container by name, not by array index**:
+
+- `aws ecs describe-tasks` returns `containers` as an array, and the **GuardDuty Runtime Monitoring sidecar** (`aws-guardduty-agent-*`) usually sorts first. Querying `containers[0].imageDigest` reads the *agent's* digest, not the FL container's.
+- The GuardDuty agent image lives in an AWS-internal ECR, **never GHCR**, so its digest returns **HTTP 404** when looked up in `ghcr.io`. A 404 digest is the sidecar — not a stale FL image. (This burned a full investigation on 2026-06-24: `66446df3…` was the GuardDuty agent; the real `fl-server-net-1` digest `29b10362…` matched `:stag` exactly. Both `flare-fl-server:stag` and `flare-fl-api:stag` were rebuilt by the #624 FL-deps merge, configs created `15:54–15:55Z`.)
+- Always query `tasks[0].containers[?name=='fl-server-net-1'].imageDigest`. Full verification recipe (GHCR token, manifest digest, config `created` timestamp) is in [`TROUBLESHOOTING.md` §1.9](TROUBLESHOOTING.md).
+
 ## State Management
 
 - Remote state in S3 (`FLIP_TFSTATE_BUCKET_NAME`) with DynamoDB locking
