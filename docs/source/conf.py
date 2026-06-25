@@ -30,12 +30,15 @@ sys.path.insert(0, os.path.abspath("../../flip-api/src"))
 sys.path.insert(0, os.path.abspath("../../trust/data-access-api"))
 sys.path.insert(0, os.path.abspath("../../trust/imaging-api"))
 sys.path.insert(0, os.path.abspath("../../trust/trust-api"))
+# Include flip-utils package (migrated from flip-fl-base).
+# Insert the package *parent* dir so `import flip` resolves to flip-utils/flip/__init__.py.
+sys.path.insert(0, os.path.abspath("../../flip-utils"))
 
 # sys.path.insert(0, os.path.abspath('.'))
 
 # -- Project information -----------------------------------------------------
 project = "FLIP"
-copyright = "2025, The London AI Centre for Value-Based Healthcare"
+copyright = "2026, The London AI Centre for Value-Based Healthcare"
 author = "The London AI Centre for Value-Based Healthcare"
 
 # The full version of the documentation, including alpha/beta/rc tags
@@ -72,6 +75,8 @@ autoapi_dirs = [
     "../../trust/data-access-api",
     "../../trust/imaging-api",
     "../../trust/trust-api",
+    # include flip-utils package for API docs
+    "../../flip-utils/flip",
 ]
 autoapi_ignore = [
     "*/.venv/*",

@@ -1,0 +1,85 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# NOTE Important: any sections specified in base configs will be overridden if you specify the same sections in the
+# inheriting service configs below
+
+services:
+
+  fl-client-net-1:
+    image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+    volumes:
+      # Mount the base images download directory to share images downloaded from XNAT with FL clients.
+      # Unset in the prod kit → /opt/flip/data/trust-${FL_KIT_SLOT_NUMBER} (see imaging-api in
+      # compose_trust.production.yml for the full rationale; mirrors ORTHANC_STORAGE_DIR's default).
+      - ${BASE_IMAGES_DOWNLOAD_DIR:-/opt/flip/data/trust-${FL_KIT_SLOT_NUMBER}}:/app/data/images
+      # Provisioned NVFLARE secrets (certificates, fed_client.json).
+      # FL_KIT_DIR is the kit root on the trust host — Ansible-managed
+      # /opt/flip/fl-kit on the AWS EC2 trust (see site.yml), or wherever
+      # the on-prem operator extracted their selectively-synced kit (see
+      # the `make onboard-onprem-trust` checklist). The
+      # net-1/services/${FL_KIT_SLOT}/ prefix mirrors the S3 bundle's own
+      # layout — no Ansible-side flattening so EC2 and on-prem hosts
+      # share the same compose mount shape. Keyed on the FL kit SLOT (the
+      # pre-provisioned participant identity, e.g. Trust_1), NOT the trust's
+      # display name — the two differ once a trust is registered under an
+      # arbitrary name (name≠slot), and the nvflare material is slot-keyed.
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/local:/app/local
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/startup:/app/startup
+      - ${FL_KIT_DIR}/net-1/services/${FL_KIT_SLOT}/transfer:/app/transfer
+    environment:
+      - NET_ID=net-1
+      - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
+      - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
+      - LOCAL_DEV=false
+      - MIN_CLIENTS=${MIN_CLIENTS}
+      - IMAGES_DIR=/app/data/images
+      # FL clients intentionally do not have access to Central Hub API credentials.
+      # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
+      - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+      - IMAGING_API_URL=${IMAGING_API_URL}
+      # Trust-internal service auth — fl-client must send this header on every imaging-api call
+      # so the imaging-api can distinguish authorised callers from anything else on the trust network.
+      # This key is per-trust and never leaves the trust environment.
+      - TRUST_INTERNAL_SERVICE_KEY_HEADER=${TRUST_INTERNAL_SERVICE_KEY_HEADER}
+      - TRUST_INTERNAL_SERVICE_KEY=${TRUST_INTERNAL_SERVICE_KEY}
+    shm_size: '8gb'
+    # GPU passthrough via compose_trust.production.gpu.yml overlay (gated on NUM_AVAILABLE_GPUS)
+
+  # TODO add second FL network when needed
+  # fl-client-net-2:
+  #   image: ghcr.io/londonaicentre/${DOCKER_FL_CLIENT_NAME}:${DOCKER_FL_TAG}
+  #   volumes:
+  #     # Mount the base images download directory to share images downloaded from XNAT with FL clients
+  #     - ${BASE_IMAGES_DOWNLOAD_DIR}:/app/data/images
+  #     # Provisioned NVFLARE secrets (certificates, fed_client.json)
+  #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/local:/app/local
+  #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/startup:/app/startup
+  #     - ${FL_KIT_DIR}/net-2/services/${FL_KIT_SLOT}/transfer:/app/transfer
+  #   environment:
+  #     - NET_ID=net-2
+  #     - NUM_AVAILABLE_GPUS=${NUM_AVAILABLE_GPUS}
+  #     - MEMORY_PER_GPU_IN_GIB=${MEMORY_PER_GPU_IN_GIB}
+  #     - LOCAL_DEV=false
+  #     - MIN_CLIENTS=${MIN_CLIENTS}
+  #     - IMAGES_DIR=/app/data/images
+  #     # FL clients intentionally do not have access to Central Hub API credentials.
+  #     # Only the fl-server (on the Central Hub) communicates with flip-api via INTERNAL_SERVICE_KEY.
+  #     - DATA_ACCESS_API_URL=${DATA_ACCESS_API_URL}
+  #     - IMAGING_API_URL=${IMAGING_API_URL}
+  #   shm_size: '8gb'
+  #   # GPU passthrough: add fl-client-net-2 to compose_trust.production.gpu.yml when enabling this net
+
+networks:
+  default:
+    external: true
+    name: ${TRUST_NETWORK_NAME}

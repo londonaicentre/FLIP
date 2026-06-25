@@ -13,91 +13,84 @@
 
 <!-- eslint-disable vue/multi-word-component-names -->
 <template>
-    <Form v-slot="{ errors }" class="w-full h-full" :validation-schema="schema" @submit="initTraining">
-        <AiCard class="flex flex-col h-full overflow-hidden">
-            <div class="flex flex-col h-full">
-                <div class="flex flex-col">
-                    <div class="p-4 md:flex md:items-center md:justify-between">
-                        <div class="flex-1 min-w-0">
-                            <h1 class="text-lg font-semibold font-heading">
-                                <span>Training</span>
-                            </h1>
-                        </div>
-                        <div class="flex mt-4 md:mt-0 md:ml-4">
-                            <AiButton
-                                v-if="!isObserver"
-                                primary
-                                type="submit"
-                                :disabled="!canTrain"
-                                :loading="formSubmitting"
-                                data-test="initiate-training-btn"
-                                class="mr-2"
-                            >
-                                Initiate Training
-                            </AiButton>
-                            <TrainingActionsMenu v-if="!isObserver" :status="getStatus" />
-                        </div>
-                    </div>
-                </div>
-                <div v-if="getStatus === ModelStatusEnum.PENDING" class="flex flex-col h-full overflow-y-auto">
-                    <span>
-                        <AiAlert
-                            v-if="!allFilesUploaded"
-                            variant="info"
-                            :close="false"
-                            :rounded="false"
-                            :bordered="false"
-                        >
-                            <template v-if="missingFiles.length">
-                                For job type <strong><code>{{ jobType }}</code></strong>, required files are:
-                                <template v-for="(f, i) in requiredFiles" :key="f">
-                                    <code>{{ f }}</code><template v-if="i < requiredFiles.length - 1">, </template>
-                                </template>.
-                                <br>
-                                Missing:
-                                <template v-for="(f, i) in missingFiles" :key="f">
-                                    <code>{{ f }}</code><template v-if="i < missingFiles.length - 1">, </template>
-                                </template>
+    <Form
+        ref="formRef"
+        v-slot="{ errors }"
+        class="flex flex-col w-full h-full"
+        :validation-schema="schema"
+        @submit="initTraining"
+    >
+        <AiCard v-if="getStatus === ModelStatusEnum.PENDING" class="flex flex-col flex-1 min-h-0 overflow-hidden">
+            <template v-if="!allFilesUploaded">
+                <AiAlert
+                    variant="info"
+                    :close="false"
+                    :rounded="false"
+                    :bordered="false"
+                >
+                    <template v-if="missingFiles.length">
+                        For <template v-if="flBackendLabel">
+                            <strong><code>{{ flBackendLabel }}</code></strong> and
+                        </template>job type <strong><code>{{ jobType }}</code></strong>, required files are:
+                        <template v-for="(f, i) in requiredFiles" :key="f">
+                            <code>{{ f }}</code><template v-if="i < requiredFiles.length - 1">
+                                ,
                             </template>
-                            <template v-else>
-                                All required model files must be uploaded before starting training.
-                            </template>
-                        </AiAlert>
-                    </span>
+                        </template>.
+                    </template>
+                    <template v-else>
+                        All required model files must be uploaded before starting training.
+                    </template>
+                </AiAlert>
+                <AiAlert
+                    v-if="missingFiles.length"
+                    variant="warning"
+                    :close="false"
+                    :rounded="false"
+                    :bordered="false"
+                >
+                    Missing:
+                    <template v-for="(f, i) in missingFiles" :key="f">
+                        <code>{{ f }}</code><template v-if="i < missingFiles.length - 1">
+                            ,
+                        </template>
+                    </template>
+                </AiAlert>
+            </template>
 
-                    <div class="flex flex-col h-full pt-4 overflow-y-auto grow">
-                        <TrainingOptions :errors="errors" />
-                    </div>
-                </div>
-
-                <div v-if="getStatus !== ModelStatusEnum.PENDING" class="flex flex-col h-full overflow-hidden">
-                    <div class="flex flex-row w-full h-full max-h-[78vh] md:max-h-min border-t border-gray-200 dark:border-gray-700">
-                        <div class="flex flex-col w-full overflow-y-auto divide-y divide-gray-100 dark:divide-gray-700 grow">
-                            <div class="flex justify-end w-full p-2">
-                                <div
-                                    v-tippy="{ placement: 'left' }"
-                                    class="p-2 transition bg-gray-100 border border-gray-300 rounded cursor-pointer dark:bg-gray-700 dark:border-gray-600 group"
-                                    :content="showLogs ? 'Hide Logs' : 'Show logs'"
-                                    @click="toggleLogs"
-                                >
-                                    <icon-heroicons-outline-chevron-double-right
-                                        class="w-5 h-5 text-gray-400 dark:group-hover:text-gray-400 group-hover:text-gray-500 dark:text-gray-300"
-                                        :class="[showLogs ? '' : 'rotate-180']"
-                                    />
-                                </div>
-                            </div>
-                            <div class="relative w-full h-full p-4 overflow-auto">
-                                <TrainingMetrics :in-progress="!finished" />
-                            </div>
-                        </div>
-
-                        <div v-if="showLogs" class="h-full border-l 2xl:w-96 bg-gray-50 dark:bg-gray-800 dark:border-l-gray-700 border-l-gray-300">
-                            <Timeline data-test="training-timeline" :complete="finished ?? false" />
-                        </div>
-                    </div>
-                </div>
+            <div class="flex flex-col flex-1 pt-4 overflow-y-auto">
+                <TrainingOptions :errors="errors" />
             </div>
         </AiCard>
+
+        <div v-else class="flex flex-row flex-1 min-h-0 gap-4 items-start">
+            <AiCard class="flex flex-col flex-1 min-w-0 p-4">
+                <TrainingMetrics :in-progress="!finished" />
+            </AiCard>
+
+            <AiCard class="2xl:w-96 w-80 shrink-0 self-stretch max-h-[70vh] flex flex-col py-4 pl-4 pr-1">
+                <div class="flex items-center gap-2 shrink-0 mb-3">
+                    <span class="relative flex items-center justify-center w-2 h-2">
+                        <span
+                            v-if="!finished"
+                            data-test="live-activity-ping"
+                            class="absolute inline-flex w-full h-full rounded-full opacity-60 bg-primary-500 animate-ping"
+                        />
+                        <span
+                            data-test="live-activity-dot"
+                            class="relative inline-flex w-2 h-2 rounded-full"
+                            :class="liveActivityDotClass"
+                        />
+                    </span>
+                    <h2 class="text-base font-heading font-semibold text-gray-900 dark:text-gray-100">
+                        Live activity
+                    </h2>
+                </div>
+                <div class="flex-1 min-h-0 overflow-y-auto">
+                    <Timeline data-test="training-timeline" :complete="finished ?? false" />
+                </div>
+            </AiCard>
+        </div>
     </Form>
 </template>
 
@@ -108,15 +101,14 @@ import { useRoute } from "vue-router";
 import { array, lazy, object, string } from "yup";
 
 import AiAlert from "@/components/AiAlert/AiAlert.vue";
-import { IInitTraining, initialiseTraining,
-    JobTypes,
+import AiCard from "@/components/AiCard/AiCard.vue";
+import { getStatusEnumValue, IInitTraining, initialiseTraining,
+    JobType,
     ModelStatus,
     ModelStatusEnum } from "@/services/model-service";
-import { useAuthStore } from "@/store/auth";
 import { Snackbar } from "@/utils/snackbar";
 
 import Timeline from "./Timeline.vue";
-import TrainingActionsMenu from "./TrainingActionsMenu.vue";
 import TrainingMetrics from "./TrainingMetrics.vue";
 import TrainingOptions from "./TrainingOptions.vue";
 
@@ -126,19 +118,15 @@ interface ITrainingProps {
     allFilesUploaded: boolean;
     requiredFiles: string[];
     uploadedFileNames: string[];
-    jobType: JobTypes;
+    jobType: JobType;
+    flBackendLabel?: string;
 }
 
 const props = defineProps<ITrainingProps>();
 
 const emits = defineEmits(["started"]);
 
-const authStore = useAuthStore();
-const isObserver = computed(() => !authStore.hasPermissions(["CanManageProjects"]));
-
 const route = useRoute();
-
-const showLogs = ref(true);
 
 /**
  * Computes the list of files that are still missing (required but not uploaded).
@@ -149,8 +137,8 @@ const missingFiles = computed(() => {
 
 const schema = object().shape({
     enriched: string().required("Please confirm data enrichment."),
-    trusts: lazy(trusts =>
-        (Array.isArray(trusts)
+    trust_ids: lazy(trustIds =>
+        (Array.isArray(trustIds)
             ?
             array()
                 .of(string().required())
@@ -162,16 +150,42 @@ const schema = object().shape({
 
 const formSubmitting = ref(false);
 
+// Form is owned by Training so the vee-validate context wraps TrainingOptions's
+// fields, but the submit trigger lives in the page header. Page calls
+// initiateTraining() via a ref to fire the native form submit, which lets
+// vee-validate validate and route into the existing @submit handler.
+const formRef = ref<{ $el?: HTMLFormElement } | null>(null);
+
+defineExpose({
+    initiateTraining() {
+        const el = formRef.value?.$el;
+        if (el && typeof el.requestSubmit === "function") {
+            el.requestSubmit();
+        }
+    },
+    isSubmitting: formSubmitting
+});
+
 const getStatus = computed(() => {
-    return ModelStatusEnum[props.status];
+    return getStatusEnumValue(props.status);
 });
 
 const finished = computed(() => {
     return [
         ModelStatusEnum.ERROR,
         ModelStatusEnum.RESULTS_UPLOADED,
+        ModelStatusEnum.RESULTS_UPLOAD_FAILED,
         ModelStatusEnum.STOPPED
-    ].includes(ModelStatusEnum[props.status]);
+    ].includes(getStatus.value);
+});
+
+const isError = computed(() => getStatus.value === ModelStatusEnum.ERROR);
+
+const liveActivityDotClass = computed(() => {
+    if (isError.value) return "bg-red-600";
+    if (finished.value) return "bg-gray-400";
+
+    return "bg-primary-600";
 });
 
 const initTraining = async (formData: unknown): Promise<void> => {
@@ -185,11 +199,11 @@ const initTraining = async (formData: unknown): Promise<void> => {
 
     formSubmitting.value = true;
 
-    const { trusts } = formData as IInitTraining;
+    const { trust_ids } = formData as IInitTraining;
 
     // If it is only one trust, add to an array
     const arr: string[] = [];
-    const requestData: IInitTraining = { trusts: arr.concat(trusts) };
+    const requestData: IInitTraining = { trust_ids: arr.concat(trust_ids) };
 
     try {
         await initialiseTraining(
@@ -209,10 +223,6 @@ const initTraining = async (formData: unknown): Promise<void> => {
 
         formSubmitting.value = false;
     }
-};
-
-const toggleLogs = () => {
-    showLogs.value = !showLogs.value;
 };
 
 </script>

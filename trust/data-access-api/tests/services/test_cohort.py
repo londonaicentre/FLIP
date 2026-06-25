@@ -15,6 +15,7 @@ from unittest.mock import patch
 import pandas as pd
 import pytest
 from fastapi import HTTPException
+from pandas.errors import DatabaseError as PandasDatabaseError
 from psycopg2 import errors as pg_errors
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 
@@ -81,13 +82,17 @@ def test_get_statistics(mock_read_sql, mock_df):
 
     # Check the record count
     assert stats.record_count == 21
+    # An above-threshold count is a genuine result, not privacy-suppressed.
+    assert stats.suppressed is False
 
 
 @patch("pandas.read_sql")
 def test_get_statistics_below_threshold(mock_read_sql, mock_df_below_threshold):
-    """
-    Test the get_statistics function with a DataFrame that has fewer records than the threshold.
-    This should return an empty data list in the StatisticsResponse.
+    """Below-threshold returns ``record_count=0`` with empty data.
+
+    Privacy suppression is a normal outcome, not an error; raising HTTPException
+    here previously caused trust-api to skip reporting back to the hub, leaving
+    the per-trust UI status stuck on "running".
     """
     mock_read_sql.return_value = mock_df_below_threshold
 
@@ -98,18 +103,20 @@ def test_get_statistics_below_threshold(mock_read_sql, mock_df_below_threshold):
         query="SELECT * FROM omop.radiology_occurrence WHERE omop.radiology_occurrence.manufacturer = 'Discovery'",
         trust_id="mock_trust",
     )
-    with pytest.raises(HTTPException) as excinfo:
-        get_statistics(mock_df_below_threshold, query_input, threshold=10)
-    assert excinfo.value.status_code == 400
+    stats = get_statistics(mock_df_below_threshold, query_input, threshold=10)
+    assert stats.record_count == 0
+    assert stats.data == []
+    assert stats.query_id == "2"
+    assert stats.trust_id == "mock_trust"
+    # Below-threshold count is privacy-suppressed; the flag drives the UI's "below-threshold"
+    # chip (a genuine zero is suppressed the same way, so it reveals no membership) (#519).
+    assert stats.suppressed is True
 
 
 @patch("data_access_api.services.cohort.COHORT_QUERY_THRESHOLD", 10)
 @patch("pandas.read_sql")
 def test_get_statistics_fails_global_threshold(mock_read_sql):
-    """
-    Test get_statistics when record count is above the requested threshold
-    but below the global COHORT_QUERY_THRESHOLD.
-    """
+    """Record count above caller threshold but below the global threshold also returns 0."""
     # Create a dataframe with 8 records (between 5 and 10)
     mock_df_medium = pd.DataFrame({
         "modality": ["CT"] * 8,
@@ -128,12 +135,34 @@ def test_get_statistics_fails_global_threshold(mock_read_sql):
     )
 
     # Pass a low threshold (5) so the first check (record_count < threshold) passes (8 < 5 is False)
-    # But the global check (len(df) < COHORT_QUERY_THRESHOLD) should fail (8 < 10 is True)
-    with pytest.raises(HTTPException) as excinfo:
-        get_statistics(mock_df_medium, query_input, threshold=5)
+    # but the global check (len(df) < COHORT_QUERY_THRESHOLD) fails (8 < 10 is True).
+    stats = get_statistics(mock_df_medium, query_input, threshold=5)
+    assert stats.record_count == 0
+    assert stats.data == []
+    assert stats.suppressed is True
 
-    assert excinfo.value.status_code == 400
-    assert "Query returned insufficient results" in excinfo.value.detail
+
+@patch("pandas.read_sql")
+def test_get_statistics_genuine_zero_is_suppressed(mock_read_sql):
+    """Privacy regression: a genuine zero match is suppressed IDENTICALLY to a small
+    below-threshold count (``record_count=0``, ``suppressed=True``). Distinguishing the two
+    would leak that >=1 patient matched a narrow query — keep this bit closed (#519,
+    security review)."""
+    mock_df_empty = pd.DataFrame({"modality": [], "manufacturer": [], "accession_id": []})
+    mock_read_sql.return_value = mock_df_empty
+
+    query_input = CohortQueryInput(
+        encrypted_project_id="my_project",
+        query_id="4",
+        query_name="query_4",
+        query="SELECT * FROM omop.radiology_occurrence WHERE 1 = 0",
+        trust_id="mock_trust",
+    )
+
+    stats = get_statistics(mock_df_empty, query_input, threshold=10)
+    assert stats.record_count == 0
+    assert stats.data == []
+    assert stats.suppressed is True
 
 
 @patch("pandas.read_sql")
@@ -194,35 +223,44 @@ def test_get_records_other_dbapi_error(mock_read_sql):
 
     query = "SELECT * FROM test_table"
 
-    with pytest.raises(Exception, match="Database error: some database error"):
+    # S-8: error details are category-only — raw psycopg text stays in trust
+    # logs but never reaches the HTTPException body (which the hub forwards
+    # to every project member via the cohort UI).
+    with pytest.raises(HTTPException) as exc_info:
         get_records(query)
+    assert exc_info.value.detail == "query_failed"
+    assert "some database error" not in str(exc_info.value.detail)
 
 
 @patch("pandas.read_sql")
 def test_get_records_sqlalchemy_error(mock_read_sql):
-    """
-    Test get_records with SQLAlchemyError.
+    """SQLAlchemy errors collapse to ``internal_error`` — the raw text
+    (which can include connection strings, pool internals) stays in logs.
     """
     mock_sqlalchemy_error = SQLAlchemyError("SQLAlchemy connection error")
     mock_read_sql.side_effect = mock_sqlalchemy_error
 
     query = "SELECT * FROM test_table"
 
-    with pytest.raises(Exception, match="SQLAlchemy error: SQLAlchemy connection error"):
+    with pytest.raises(HTTPException) as exc_info:
         get_records(query)
+    assert exc_info.value.detail == "internal_error"
+    assert "SQLAlchemy connection error" not in str(exc_info.value.detail)
 
 
 @patch("pandas.read_sql")
 def test_get_records_generic_exception(mock_read_sql):
+    """Any other exception collapses to ``internal_error`` — defence in depth
+    against a future code path that lets a row value bubble up via ``str(e)``.
     """
-    Test get_records with generic Exception.
-    """
-    mock_read_sql.side_effect = Exception("Unexpected error")
+    mock_read_sql.side_effect = Exception("Unexpected error with row value 12345")
 
     query = "SELECT * FROM test_table"
 
-    with pytest.raises(Exception, match="Unexpected error executing query: Unexpected error"):
+    with pytest.raises(HTTPException) as exc_info:
         get_records(query)
+    assert exc_info.value.detail == "internal_error"
+    assert "12345" not in str(exc_info.value.detail)
 
 
 @patch("data_access_api.services.cohort.extract_missing_identifier")
@@ -273,6 +311,82 @@ def test_get_records_undefined_column_with_extraction_failure(mock_read_sql, moc
 
     with pytest.raises(HTTPException, match="The column 'None' does not exist"):
         get_records(query)
+
+
+@patch("pandas.read_sql")
+def test_get_records_pandas_wraps_undefined_table(mock_read_sql):
+    """pandas 3.x wraps SQLAlchemy errors in pandas.errors.DatabaseError.
+
+    When pd.read_sql raises a PandasDatabaseError whose __cause__ is a
+    DBAPIError for an UndefinedTable, get_records must unwrap the chain and
+    return HTTP 400 with the table name — not a generic 500 internal_error.
+    This is a regression test for the pandas 3.x wrapping behaviour introduced
+    alongside the starlette >=1.0.1 bump.
+    """
+    mock_pg_error = pg_errors.UndefinedTable()
+    mock_pg_error.args = ('relation "omop.does_not_exist" does not exist',)
+
+    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
+    mock_dbapi_error.orig = mock_pg_error
+
+    # Simulate the pandas 3.x wrapping: PandasDatabaseError with DBAPIError as __cause__
+    pandas_err = PandasDatabaseError(f"Execution failed on sql '...': {mock_dbapi_error}")
+    pandas_err.__cause__ = mock_dbapi_error
+    mock_read_sql.side_effect = pandas_err
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_records("SELECT * FROM omop.does_not_exist")
+    assert exc_info.value.status_code == 400
+    assert "does not exist" in exc_info.value.detail.lower()
+
+
+@patch("pandas.read_sql")
+def test_get_records_pandas_wraps_undefined_column(mock_read_sql):
+    """pandas 3.x wrapping of UndefinedColumn surfaces as HTTP 400 with column name."""
+    mock_pg_error = pg_errors.UndefinedColumn()
+    mock_pg_error.args = ('column "missing_col" does not exist',)
+
+    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
+    mock_dbapi_error.orig = mock_pg_error
+
+    pandas_err = PandasDatabaseError(f"Execution failed on sql '...': {mock_dbapi_error}")
+    pandas_err.__cause__ = mock_dbapi_error
+    mock_read_sql.side_effect = pandas_err
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_records("SELECT missing_col FROM omop.person")
+    assert exc_info.value.status_code == 400
+    assert "does not exist" in exc_info.value.detail.lower()
+
+
+@patch("pandas.read_sql")
+def test_get_records_pandas_wraps_generic_dbapi_error(mock_read_sql):
+    """pandas 3.x wrapping of a generic DBAPIError surfaces as HTTP 500 query_failed."""
+    mock_pg_error = Exception("connection timeout")
+
+    mock_dbapi_error = DBAPIError("statement", "params", mock_pg_error)
+    mock_dbapi_error.orig = mock_pg_error
+
+    pandas_err = PandasDatabaseError(f"Execution failed on sql '...': {mock_dbapi_error}")
+    pandas_err.__cause__ = mock_dbapi_error
+    mock_read_sql.side_effect = pandas_err
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_records("SELECT * FROM omop.person")
+    assert exc_info.value.detail == "query_failed"
+    assert "connection timeout" not in str(exc_info.value.detail)
+
+
+@patch("pandas.read_sql")
+def test_get_records_pandas_error_without_dbapi_cause(mock_read_sql):
+    """A PandasDatabaseError whose __cause__ is not a DBAPIError collapses to internal_error."""
+    pandas_err = PandasDatabaseError("Execution failed: some low-level driver error")
+    pandas_err.__cause__ = ValueError("unexpected driver error")
+    mock_read_sql.side_effect = pandas_err
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_records("SELECT * FROM omop.person")
+    assert exc_info.value.detail == "internal_error"
 
 
 # Tests for validate_query

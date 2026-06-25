@@ -82,25 +82,6 @@ def test_verify_token_rejects_token_missing_username(credentials, user_sub):
         mock_is_enabled.assert_not_called()
 
 
-def test_verify_token_accepts_id_token_username_claim(credentials, user_sub):
-    """ID tokens spell the Username claim 'cognito:username'; accept either."""
-    with (
-        patch("flip_api.auth.dependencies._decode_verified_claims") as mock_decode,
-        patch("flip_api.auth.dependencies.is_mfa_enabled") as mock_is_enabled,
-    ):
-        mock_decode.return_value = {
-            "sub": user_sub,
-            "cognito:username": "user@example.com",
-            "token_use": "id",
-        }
-        mock_is_enabled.return_value = True
-
-        result = verify_token(credentials)
-
-        assert str(result) == user_sub
-        mock_is_enabled.assert_called_once()
-
-
 def test_verify_token_no_mfa_skips_gate(credentials, user_sub):
     """The bootstrap variant never touches the MFA helper — it's for pre-enrolment callers."""
     with (
@@ -234,7 +215,11 @@ def test_extract_user_id_rejects_non_uuid_sub():
 
 
 # ---------------------------------------------------------------------------
-# Audience / issuer / client_id validation (PR #343)
+# Issuer / token_use / client_id validation
+#
+# Cognito access tokens (the only token type flip-ui sends post-#344) carry
+# `client_id`, not `aud`. The verifier rejects any other token_use value —
+# `id`, `refresh`, or anything Cognito has yet to invent.
 # ---------------------------------------------------------------------------
 
 TEST_REGION = "eu-west-2"
@@ -277,17 +262,6 @@ def _bearer(token: str = "fake.jwt.token") -> HTTPAuthorizationCredentials:
     return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
 
-def _id_token_payload(sub: str | None = None, aud: str = TEST_APP_CLIENT_ID) -> dict:
-    return {
-        "sub": sub or str(uuid4()),
-        "aud": aud,
-        "iss": EXPECTED_ISSUER,
-        "token_use": "id",
-        "cognito:username": "user@example.com",
-        "exp": 9999999999,
-    }
-
-
 def _access_token_payload(sub: str | None = None, client_id: str = TEST_APP_CLIENT_ID) -> dict:
     return {
         "sub": sub or str(uuid4()),
@@ -300,12 +274,6 @@ def _access_token_payload(sub: str | None = None, client_id: str = TEST_APP_CLIE
 
 
 class TestVerifyTokenSuccess:
-    def test_valid_id_token_returns_user_uuid(self, mock_settings, mock_jwks):
-        sub = str(uuid4())
-        with patch(PATCH_JWT_DECODE, return_value=_id_token_payload(sub=sub)):
-            user_id = verify_token(_bearer())
-        assert user_id == UUID(sub)
-
     def test_valid_access_token_returns_user_uuid(self, mock_settings, mock_jwks):
         sub = str(uuid4())
         with patch(PATCH_JWT_DECODE, return_value=_access_token_payload(sub=sub)):
@@ -313,43 +281,30 @@ class TestVerifyTokenSuccess:
         assert user_id == UUID(sub)
 
     def test_jwt_decode_called_with_issuer_and_algorithm(self, mock_settings, mock_jwks):
-        with patch(PATCH_JWT_DECODE, return_value=_id_token_payload()) as decode:
+        with patch(PATCH_JWT_DECODE, return_value=_access_token_payload()) as decode:
             verify_token(_bearer())
         kwargs = decode.call_args.kwargs
         assert kwargs["algorithms"] == ["RS256"]
         assert kwargs["issuer"] == EXPECTED_ISSUER
+        # Cognito access tokens don't carry `aud`, so PyJWT's audience check is
+        # disabled — `client_id` is verified manually inside `_decode_cognito_jwt`.
         assert kwargs["options"]["verify_aud"] is False
         assert set(kwargs["options"]["require"]) >= {"exp", "iss", "sub", "token_use"}
 
     def test_jwks_url_uses_configured_pool(self, mock_settings, mock_jwks):
-        with patch(PATCH_JWT_DECODE, return_value=_id_token_payload()):
+        with patch(PATCH_JWT_DECODE, return_value=_access_token_payload()):
             verify_token(_bearer())
         mock_jwks.assert_called_once_with(EXPECTED_JWKS_URL)
 
 
-class TestVerifyTokenAudienceValidation:
-    def test_id_token_with_wrong_aud_rejected(self, mock_settings, mock_jwks):
-        payload = _id_token_payload(aud="some-other-app-client")
-        with patch(PATCH_JWT_DECODE, return_value=payload):
-            with pytest.raises(HTTPException) as exc_info:
-                verify_token(_bearer())
-        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-        assert exc_info.value.detail == "Could not validate credentials"
-
-    def test_id_token_missing_aud_rejected(self, mock_settings, mock_jwks):
-        payload = _id_token_payload()
-        del payload["aud"]
-        with patch(PATCH_JWT_DECODE, return_value=payload):
-            with pytest.raises(HTTPException) as exc_info:
-                verify_token(_bearer())
-        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
-
+class TestVerifyTokenClientIdValidation:
     def test_access_token_with_wrong_client_id_rejected(self, mock_settings, mock_jwks):
         payload = _access_token_payload(client_id="some-other-app-client")
         with patch(PATCH_JWT_DECODE, return_value=payload):
             with pytest.raises(HTTPException) as exc_info:
                 verify_token(_bearer())
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail == "Could not validate credentials"
 
     def test_access_token_missing_client_id_rejected(self, mock_settings, mock_jwks):
         payload = _access_token_payload()
@@ -359,8 +314,26 @@ class TestVerifyTokenAudienceValidation:
                 verify_token(_bearer())
         assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
 
+    def test_id_token_rejected(self, mock_settings, mock_jwks):
+        # ID tokens are no longer accepted — flip-ui sends access tokens only.
+        # A token with `token_use="id"` (even one that is otherwise valid and
+        # bound to our app client via `aud`) must 401 so a UI-issued identity
+        # token cannot be replayed against the API as authorisation.
+        payload = {
+            "sub": str(uuid4()),
+            "aud": TEST_APP_CLIENT_ID,
+            "iss": EXPECTED_ISSUER,
+            "token_use": "id",
+            "cognito:username": "user@example.com",
+            "exp": 9999999999,
+        }
+        with patch(PATCH_JWT_DECODE, return_value=payload):
+            with pytest.raises(HTTPException) as exc_info:
+                verify_token(_bearer())
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+
     def test_unknown_token_use_rejected(self, mock_settings, mock_jwks):
-        payload = _id_token_payload()
+        payload = _access_token_payload()
         payload["token_use"] = "refresh"
         with patch(PATCH_JWT_DECODE, return_value=payload):
             with pytest.raises(HTTPException) as exc_info:
@@ -398,7 +371,7 @@ class TestVerifyTokenJwtErrors:
 
 class TestVerifyTokenSubject:
     def test_non_uuid_sub_rejected(self, mock_settings, mock_jwks):
-        payload = _id_token_payload(sub="not-a-uuid")
+        payload = _access_token_payload(sub="not-a-uuid")
         with patch(PATCH_JWT_DECODE, return_value=payload):
             with pytest.raises(HTTPException) as exc_info:
                 verify_token(_bearer())

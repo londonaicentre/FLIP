@@ -28,3 +28,61 @@ resource "aws_service_discovery_private_dns_namespace" "flip_local" {
   description = "Private DNS for ECS service-to-service resolution"
   vpc         = module.flip_vpc.vpc_id
 }
+
+############################
+# Per-service registries
+############################
+
+resource "aws_service_discovery_service" "flip_api" {
+  count = var.enable_service_discovery ? 1 : 0
+  name  = "flip-api"
+
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.flip_local[0].id
+    dns_records {
+      ttl  = 60
+      type = "A"
+    }
+    routing_policy = "MULTIVALUE"
+  }
+
+  health_check_custom_config {
+    failure_threshold = 1
+  }
+}
+
+resource "aws_service_discovery_service" "fl_api" {
+  count = var.enable_service_discovery ? 1 : 0
+  name  = "fl-api-net-1"
+
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.flip_local[0].id
+    dns_records {
+      ttl  = 60
+      type = "A"
+    }
+    routing_policy = "MULTIVALUE"
+  }
+
+  health_check_custom_config {
+    failure_threshold = 1
+  }
+}
+
+resource "aws_service_discovery_service" "fl_server" {
+  count = var.enable_service_discovery ? 1 : 0
+  name  = "fl-server-net-1"
+
+  dns_config {
+    namespace_id = aws_service_discovery_private_dns_namespace.flip_local[0].id
+    dns_records {
+      ttl  = 60
+      type = "A"
+    }
+    routing_policy = "MULTIVALUE"
+  }
+
+  health_check_custom_config {
+    failure_threshold = 1
+  }
+}

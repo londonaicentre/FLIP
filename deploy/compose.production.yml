@@ -28,18 +28,33 @@ services:
     environment:
       - ENV=production
       - ENFORCE_MFA=${ENFORCE_MFA:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
       # - AWS_PROFILE=${AWS_PROFILE} # in production, AWS credentials are retrieved from the instance role
       - AWS_REGION=${AWS_REGION}
+      # Force boto3 to mint presigned URLs against the regional S3 endpoint
+      # (e.g. s3.eu-west-2.amazonaws.com) instead of the legacy global one
+      # (s3.amazonaws.com). DNS for a freshly created bucket in a non-us-east-1
+      # region can take up to ~24h to propagate on the global endpoint — the
+      # bucket-split rollout (FLIP#24) hit a 500 from the global endpoint on
+      # the new uploads bucket until propagation completed. Regional endpoints
+      # never have this lag and are AWS's recommended path for non-us-east-1
+      # buckets anyway.
+      # `:?` makes docker compose abort if AWS_REGION is empty — without the
+      # guard the URL becomes `https://s3..amazonaws.com` and boto3 fails late
+      # at request time with an opaque EndpointConnectionError, which is
+      # exactly the kind of CORS-preflight-failure surprise this env var is
+      # supposed to prevent.
+      - AWS_ENDPOINT_URL_S3=https://s3.${AWS_REGION:?AWS_REGION must be set in the env file}.amazonaws.com
       - AWS_COGNITO_USER_POOL_ID=${AWS_COGNITO_USER_POOL_ID}
       - AWS_COGNITO_APP_CLIENT_ID=${AWS_COGNITO_APP_CLIENT_ID}
       - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_SECRET_ARN=${POSTGRES_SECRET_ARN} # in production, password is retrieved from AWS Secrets Manager
+      - POSTGRES_SECRET_ARN=${POSTGRES_SECRET_ARN} # unused since FLIP#556 (ECS prod uses RDS Proxy IAM); legacy EC2/compose path only — retirement tracked in #505
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT}
       - POSTGRES_DB=${POSTGRES_DB}
       - TRUST_API_KEY_HEADER=${TRUST_API_KEY_HEADER}
       - INTERNAL_SERVICE_KEY_HEADER=${INTERNAL_SERVICE_KEY_HEADER}
-      # in production, TRUST_API_KEY_HASHES, INTERNAL_SERVICE_KEY_HASH, and AES_KEY_BASE64 are retrieved from AWS Secrets Manager at runtime
+      # in production, INTERNAL_SERVICE_KEY_HASH and AES_KEY_BASE64 are retrieved from AWS Secrets Manager at runtime
       - AWS_SECRET_NAME=${AWS_SECRET_NAME}
       - AWS_SES_ADMIN_EMAIL_ADDRESS=${AWS_SES_ADMIN_EMAIL_ADDRESS}
       - AWS_SES_SENDER_EMAIL_ADDRESS=${AWS_SES_SENDER_EMAIL_ADDRESS}
@@ -50,6 +65,11 @@ services:
       - FL_APP_DESTINATION_BUCKET=${FL_APP_DESTINATION_BUCKET}
       - NET_ENDPOINTS=${NET_ENDPOINTS}
       - FL_BACKEND=${FL_BACKEND}
-      - TRUST_NAMES=${TRUST_NAMES}
+      # Seeds the fl_kit_slot pool that register_trust claims from. Empty ⇒
+      # NoFreeKitSlotError on every registration. Mirrored into the ECS task
+      # env via TF_VAR_FL_KIT_SLOT_NAMES (locals.tf).
+      - FL_KIT_SLOT_NAMES=${FL_KIT_SLOT_NAMES}
+      # Bridge for images built before FL_KIT_SLOT_NAMES rename (pre-tag-225):
+      - TRUST_NAMES=${FL_KIT_SLOT_NAMES}
     restart: unless-stopped
     container_name: flip-api

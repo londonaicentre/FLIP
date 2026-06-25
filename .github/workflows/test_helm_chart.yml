@@ -1,0 +1,138 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Test Helm Chart
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - "deploy/providers/kubernetes/**"
+      - ".github/workflows/test_helm_chart.yml"
+  push:
+    branches: [develop, main]
+    paths:
+      - "deploy/providers/kubernetes/**"
+      - ".github/workflows/test_helm_chart.yml"
+  workflow_dispatch:
+
+jobs:
+  helm-lint:
+    name: Helm Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.0"
+
+      - name: Lint chart
+        run: helm lint deploy/providers/kubernetes/
+
+  helm-template:
+    name: Helm Template
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.0"
+
+      - name: Render template (default/nvflare)
+        run: helm template trust-release deploy/providers/kubernetes/ > /dev/null
+
+      - name: Render template (flower backend)
+        run: helm template trust-release deploy/providers/kubernetes/ --set flBackend=flower > /dev/null
+
+      - name: Render template (all services disabled)
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ \
+            --set trustApi.enabled=false \
+            --set imagingApi.enabled=false \
+            --set dataAccessApi.enabled=false \
+            --set flClient.enabled=false \
+            --set omopDb.enabled=false \
+            --set orthanc.enabled=false \
+            --set xnat.enabled=false \
+            --set observability.loki.enabled=false \
+            --set observability.alloy.enabled=false \
+            --set observability.grafana.enabled=false \
+            > /dev/null
+
+      - name: Render template (external service override)
+        run: |
+          helm template trust-release deploy/providers/kubernetes/ \
+            --set omopDb.enabled=false \
+            --set omopDb.external.host=test.example.com \
+            > /dev/null
+
+  kind-e2e:
+    name: kind E2E
+    runs-on: ubuntu-latest
+    needs: [helm-lint, helm-template]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "v3.16.0"
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: flip-helm-test
+
+      - name: Create namespace and secrets
+        run: |
+          kubectl create namespace flip-trust 2>/dev/null || true
+          kubectl label namespace flip-trust app.kubernetes.io/managed-by=Helm --overwrite
+          kubectl annotate namespace flip-trust \
+            meta.helm.sh/release-name=trust-release \
+            meta.helm.sh/release-namespace=flip-trust \
+            --overwrite
+          kubectl apply -f deploy/providers/kubernetes/ci/test-secret.yaml
+
+      - name: Install chart
+        run: |
+          helm install trust-release deploy/providers/kubernetes/ \
+            --namespace flip-trust \
+            -f deploy/providers/kubernetes/ci/test-values.yaml \
+            --set secrets.existingName=flip-trust-secrets \
+            --set trustApi.env.CENTRAL_HUB_API_URL=http://test-hub.example.com/api
+
+      - name: Check pod status
+        run: |
+          kubectl get pods -n flip-trust
+          kubectl wait --for=condition=ready pod \
+            -l app.kubernetes.io/instance=trust-release \
+            --namespace flip-trust \
+            --timeout=120s
+
+      - name: Verify services
+        run: |
+          kubectl get svc -n flip-trust
+          kubectl get pods -n flip-trust
+
+      - name: Debug on failure
+        if: failure()
+        run: |
+          kubectl describe pods -n flip-trust
+          kubectl logs -n flip-trust -l app.kubernetes.io/component=trust-api --tail=50

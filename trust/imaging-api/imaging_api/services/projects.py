@@ -12,6 +12,7 @@
 
 import urllib.parse
 import uuid
+import xml.etree.ElementTree as ET
 from typing import Any
 
 import requests
@@ -31,10 +32,17 @@ from imaging_api.routers.schemas import (
 from imaging_api.routers.users import add_user_to_project
 from imaging_api.services.users import create_user_from_central_hub_user, get_user_profile_by
 from imaging_api.utils.enums import ProjectPreArchiveSettings
-from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError
+from imaging_api.utils.exceptions import AlreadyExistsError, NotFoundError, XnatFetchError
 from imaging_api.utils.logger import logger
 
 XNAT_URL = get_settings().XNAT_URL
+
+# Register the xnat namespace prefix once at module load. ET.register_namespace
+# mutates a process-global mapping; doing it here (rather than per-call) makes
+# the global-state nature explicit and avoids re-registering on every project
+# creation. The URI matches the value passed to create_payload_for_project_creation
+# from create_project, so the serializer emits the historical xmlns:xnat="…" form.
+ET.register_namespace("xnat", f"{XNAT_URL}/data/projects")
 
 
 def get_project_from_central_hub_project_id(central_hub_project_id: str, headers: dict[str, str]) -> Project:
@@ -126,6 +134,11 @@ def create_payload_for_project_creation(
     """
     Creates the payload for creating a new project in XNAT.
 
+    Builds the XML using ``xml.etree.ElementTree`` so that XML control characters
+    (``<``, ``>``, ``&``, ``"``, ``'``) in any field are escaped as entity
+    references rather than interpolated raw — this defeats XML injection that
+    could otherwise mutate the projectData document sent to XNAT.
+
     Args:
         xnat_projects_uri (str): XNAT projects URI.
         project_id (str): Unique identifier for the project.
@@ -136,14 +149,12 @@ def create_payload_for_project_creation(
     Returns:
         str: XML payload for creating the project.
     """
-    payload = f"""
-    <xnat:projectData xmlns:xnat="{xnat_projects_uri}">
-        <ID>{project_id}</ID>
-        <secondary_ID>{project_secondary_id}</secondary_ID>
-        <name>{project_name}</name>
-        <description>{project_description}</description>
-    </xnat:projectData>"""
-    return payload
+    root = ET.Element(f"{{{xnat_projects_uri}}}projectData")
+    ET.SubElement(root, "ID").text = project_id
+    ET.SubElement(root, "secondary_ID").text = project_secondary_id
+    ET.SubElement(root, "name").text = project_name
+    ET.SubElement(root, "description").text = project_description
+    return ET.tostring(root, encoding="unicode", short_empty_elements=False)
 
 
 def create_project(
@@ -271,7 +282,12 @@ def get_command_info(container: str, headers: dict[str, str]) -> tuple[int, str]
     if response.status_code != 200:
         raise Exception(f"Error: XNAT command fetch failed: {response.status_code} - {response.text}")
 
-    command = response.json()[0]
+    commands = response.json()
+    if not commands:
+        raise Exception(
+            f"No commands found for container '{container}' - Container Service plugin may not be installed"
+        )
+    command = commands[0]
     return command["id"], command["xnat"][0]["name"]
 
 
@@ -514,17 +530,23 @@ def get_experiments(project_id: str, headers: dict[str, str]) -> list[Experiment
         list[Experiment]: List of XNAT experiment objects.
 
     Raises:
-        Exception: If there is an error while fetching the experiments from XNAT.
+        imaging_api.utils.exceptions.XnatFetchError: If XNAT returns a non-200 response for the experiments listing.
     """
     get_project(project_id, headers)
 
-    response = requests.get(f"{XNAT_URL}/data/projects/{project_id}/experiments", headers=headers)
-    experiments = [Experiment(**experiment) for experiment in response.json()["ResultSet"]["Result"]]
+    # Use the GLOBAL experiments listing filtered by project, NOT the project-scoped
+    # /data/projects/{id}/experiments. The project-scoped listing is filtered by per-data-type
+    # element security, so sessions whose modality is not registered there (e.g.
+    # xnat:dxSessionData for chest X-rays) are silently omitted — making the import look stuck
+    # at "0 imported". The global listing returns identical fields without that filter.
+    response = requests.get(f"{XNAT_URL}/data/experiments", params={"project": project_id}, headers=headers)
 
-    if response.status_code == 200:
-        return experiments
-    else:
-        raise Exception(f"Error: XNAT experiments fetch failed: {response.status_code} - {response.text}")
+    # Check the status before parsing: a non-200 XNAT response carries an HTML/plain-text body, so
+    # parsing it as JSON first would raise and mask the real HTTP status.
+    if response.status_code != 200:
+        raise XnatFetchError(f"Error: XNAT experiments fetch failed: {response.status_code} - {response.text}")
+
+    return [Experiment(**experiment) for experiment in response.json()["ResultSet"]["Result"]]
 
 
 def get_experiment(project_id: str, experiment_id_or_label: str, headers: dict[str, str]) -> dict:

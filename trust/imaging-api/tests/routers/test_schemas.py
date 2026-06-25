@@ -12,6 +12,9 @@
 
 from uuid import uuid4
 
+import pytest
+from pydantic import ValidationError
+
 from imaging_api.routers.schemas import CentralHubProject, ImportStudyRequest
 
 
@@ -25,6 +28,30 @@ def test_central_hub_project_defaults_dicom_to_nifti_true():
         users=[],
     )
     assert project.dicom_to_nifti is True
+
+
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "evil<script>",
+        "name>tag",
+        "amp&injection",
+        "</name><name>spoof",
+    ],
+)
+def test_central_hub_project_rejects_xml_control_chars_in_name(bad_name: str):
+    """
+    project_name must not carry XML control characters that could inject into
+    the XNAT projectData payload built by imaging-api.
+    """
+    with pytest.raises(ValidationError, match="XML control characters"):
+        CentralHubProject(
+            project_id=uuid4(),
+            trust_id=uuid4(),
+            project_name=bad_name,
+            query="SELECT 1",
+            users=[],
+        )
 
 
 def test_import_study_request_deduplicates_studies():

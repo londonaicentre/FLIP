@@ -1,7 +1,7 @@
-# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# you may obtain a copy of the License at
 #     http://www.apache.org/licenses/LICENSE-2.0
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -13,112 +13,149 @@
 name: Import Acceptance Criteria from Issues
 
 on:
-    pull_request:
-        types: [opened]
-
-permissions:
-  contents: read
+  pull_request:
+    types: [opened, edited, reopened]
 
 jobs:
-    import-acceptance-criteria:
-        runs-on: ubuntu-latest
-        permissions: # override top-level read-only default to allow PR updates
-            pull-requests: write
-            issues: read
+  import-acceptance-criteria:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: read
 
-        steps:
-            - name: Check for linked issues and import acceptance criteria
-              uses: actions/github-script@v7
-              with:
-                  github-token: ${{ secrets.GITHUB_TOKEN }}
-                  script: |
-                      const pr = context.payload.pull_request;
-                      const prBody = pr.body || '';
+    steps:
+      - name: Set PR title from linked issue
+        if: github.event.action == 'opened'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const branchName = context.payload.pull_request.head.ref;
+            const match = branchName.match(/^(\d+)-/);
 
-                      // Check if acceptance criteria already exists in PR
-                      if (prBody.includes('## Acceptance Criteria')) {
-                        console.log('Acceptance criteria already exists in PR body');
-                        return;
-                      }
+            if (!match) {
+              console.log(`Branch '${branchName}' does not start with an issue number. Skipping title update.`);
+              return;
+            }
 
-                      // Regex to find issue references (e.g., "fixes #123", "closes #456", "resolves #789")
-                      const issueRegex = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
-                      const matches = [...prBody.matchAll(issueRegex)];
+            const issueNumber = parseInt(match[1]);
 
-                      if (matches.length === 0) {
-                        console.log('No linked issues found in PR description');
-                        return;
-                      }
+            try {
+              const issue = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+              });
 
-                      // Collect acceptance criteria from all linked issues
-                      const allAcceptanceCriteria = [];
+              const currentBody = context.payload.pull_request.body || '';
+              const updatedBody = currentBody.replace(/^(## Fixes)\s*$/m, `$1 #${issueNumber}`);
 
-                      for (const match of matches) {
-                        const issueNumber = parseInt(match[1]);
-                        
-                        try {
-                          // Fetch the issue
-                          const issue = await github.rest.issues.get({
-                            owner: context.repo.owner,
-                            repo: context.repo.repo,
-                            issue_number: issueNumber
-                          });
-                          
-                          const issueBody = issue.data.body || '';
-                          
-                          // Extract acceptance criteria section from issue body
-                          // Handles both form-based issues and markdown issues
-                          const criteriaRegex = /(?:###\s*Acceptance [Cc]riteria|Acceptance [Cc]riteria)\s*\n+([\s\S]*?)(?=\n###|\n##|$)/;
-                          const criteriaMatch = issueBody.match(criteriaRegex);
-                          
-                          if (criteriaMatch && criteriaMatch[1].trim()) {
-                            allAcceptanceCriteria.push({
-                              issueNumber: issueNumber,
-                              criteria: criteriaMatch[1].trim()
-                            });
-                            console.log(`Found acceptance criteria in issue #${issueNumber}`);
-                          } else {
-                            console.log(`No acceptance criteria found in issue #${issueNumber}`);
-                          }
-                        } catch (error) {
-                          console.error(`Error fetching issue #${issueNumber}:`, error.message);
-                        }
-                      }
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+                title: issue.data.title,
+                body: updatedBody,
+              });
 
-                      if (allAcceptanceCriteria.length === 0) {
-                        console.log('No acceptance criteria found in any linked issues');
-                        return;
-                      }
+              console.log(`PR title set to: "${issue.data.title}"`);
+              console.log(`PR body updated with Fixes #${issueNumber}`);
+            } catch (error) {
+              console.error(`Could not set PR title from issue #${issueNumber}: ${error.message}`);
+            }
 
-                      // Build the acceptance criteria section for the PR
-                      let criteriaSection = '\n\n## Acceptance Criteria\n\n';
+      - name: Check for linked issues and import acceptance criteria
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            const prBody = pr.body || '';
 
-                      if (allAcceptanceCriteria.length === 1) {
-                        criteriaSection += `*Imported from issue #${allAcceptanceCriteria[0].issueNumber}*\n\n`;
-                        criteriaSection += allAcceptanceCriteria[0].criteria;
-                      } else {
-                        for (const item of allAcceptanceCriteria) {
-                          criteriaSection += `### From issue #${item.issueNumber}\n\n`;
-                          criteriaSection += item.criteria + '\n\n';
-                        }
-                      }
+            // Check if acceptance criteria already exists in PR
+            if (prBody.includes('## Acceptance Criteria')) {
+              console.log('Acceptance criteria already exists in PR body');
+              return;
+            }
 
-                      // Update the PR description
-                      const updatedBody = prBody + criteriaSection;
+            // Regex to find issue references (e.g., "fixes #123", "closes #456", "resolves #789")
+            const issueRegex = /(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+            const matches = [...prBody.matchAll(issueRegex)];
 
-                      await github.rest.pulls.update({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        pull_number: pr.number,
-                        body: updatedBody
-                      });
+            if (matches.length === 0) {
+              console.log('No linked issues found in PR description');
+              return;
+            }
 
-                      console.log('Successfully updated PR with acceptance criteria');
+            // Collect acceptance criteria from all linked issues
+            const allAcceptanceCriteria = [];
 
-                      // Add a comment to notify about the import
-                      await github.rest.issues.createComment({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        issue_number: pr.number,
-                        body: `✅ Acceptance criteria have been automatically imported from the linked issue(s) and added to the PR description.`
-                      });
+            for (const match of matches) {
+              const issueNumber = parseInt(match[1]);
+
+              try {
+                // Fetch the issue
+                const issue = await github.rest.issues.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issueNumber
+                });
+
+                const issueBody = issue.data.body || '';
+
+                // Extract acceptance criteria section from issue body
+                // Handles both form-based issues and markdown issues
+                const criteriaRegex = /(?:###\s*Acceptance [Cc]riteria|Acceptance [Cc]riteria)\s*\n+([\s\S]*?)(?=\n###|\n##|$)/;
+                const criteriaMatch = issueBody.match(criteriaRegex);
+
+                if (criteriaMatch && criteriaMatch[1].trim()) {
+                  allAcceptanceCriteria.push({
+                    issueNumber: issueNumber,
+                    criteria: criteriaMatch[1].trim()
+                  });
+                  console.log(`Found acceptance criteria in issue #${issueNumber}`);
+                } else {
+                  console.log(`No acceptance criteria found in issue #${issueNumber}`);
+                }
+              } catch (error) {
+                console.error(`Error fetching issue #${issueNumber}:`, error.message);
+              }
+            }
+
+            if (allAcceptanceCriteria.length === 0) {
+              console.log('No acceptance criteria found in any linked issues');
+              return;
+            }
+
+            // Build the acceptance criteria section for the PR
+            let criteriaSection = '\n\n## Acceptance Criteria\n\n';
+
+            if (allAcceptanceCriteria.length === 1) {
+              criteriaSection += `*Imported from issue #${allAcceptanceCriteria[0].issueNumber}*\n\n`;
+              criteriaSection += allAcceptanceCriteria[0].criteria;
+            } else {
+              for (const item of allAcceptanceCriteria) {
+                criteriaSection += `### From issue #${item.issueNumber}\n\n`;
+                criteriaSection += item.criteria + '\n\n';
+              }
+            }
+
+            // Update the PR description
+            const updatedBody = prBody + criteriaSection;
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              body: updatedBody
+            });
+
+            console.log('Successfully updated PR with acceptance criteria');
+
+            // Add a comment to notify about the import
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: `✅ Acceptance criteria have been automatically imported from the linked issue(s) and added to the PR description.`
+            });

@@ -10,82 +10,190 @@
 # limitations under the License.
 #
 
+"""Unit tests for the authenticated trust-list endpoint (GET /trust).
+
+This single list-of-trusts endpoint powers both the trust pickers and the
+Connection Status page. It is deliberately NOT admin-gated: every authenticated
+role (Researcher, Viewer, Admin) may read it. The fields it returns are benign
+trust metadata — no secrets. Creating a trust (POST /admin/trusts) remains
+admin-only.
+"""
+
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+import pytest
+from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
 from flip_api.auth.dependencies import verify_token
 from flip_api.db.database import get_session
 from flip_api.db.models.main_models import Trust
-from flip_api.domain.interfaces.trust import IBasicTrust
 from flip_api.main import app
-from flip_api.trusts_services.get_trusts import get_trusts
+from flip_api.trusts_services.get_trusts import _as_utc_iso, get_trusts
 
-# Create a test client instance
 client = TestClient(app)
 
-# Mock data to be returned from the database
-# Note it can be instantiated with partial fields and it won't complain
-# When a class is declared with table=True, SQLModel treats it as a database model, not a strict validation schema.
-# This bypasses Pydantic-style validation for missing required fields!!
-mock_trusts_data = [
-    Trust(id=uuid.uuid4(), name="Trust A"),
-    Trust(id=uuid.uuid4(), name="Trust B"),
-]
+
+def _make_trust(name: str = "GSTT", code: str = "GST", region: str = "London") -> Trust:
+    return Trust(
+        id=uuid.uuid4(),
+        name=name,
+        code=code,
+        region=region,
+        api_key_hash="hash",
+        created_at=datetime(2026, 1, 1, 9, 0, 0, tzinfo=timezone.utc),
+    )
 
 
-def test_get_trusts_success():
-    # Mock the db session and exec function
-    mock_db = MagicMock()
-    mock_db.exec.return_value.all.return_value = mock_trusts_data
+class TestAsUtcIso:
+    """`_as_utc_iso` tags naive timestamps so the browser doesn't treat them as local."""
 
-    # Make the test request to the endpoint
-    results = get_trusts(db=mock_db, user_id=uuid.uuid4())
+    def test_returns_none_for_none(self):
+        assert _as_utc_iso(None) is None
 
-    # Assert that the response body matches the mock data
-    assert results == [IBasicTrust(id=str(trust.id), name=trust.name) for trust in mock_trusts_data]
+    def test_appends_z_marker_and_millisecond_precision(self):
+        # The Trust columns are `timestamp without time zone`; persistence
+        # strips the tz, but the helper must still output a UTC-tagged ISO.
+        dt = datetime(2026, 5, 27, 12, 34, 56, 789000)
+        out = _as_utc_iso(dt)
+        assert out is not None
+        assert out.endswith("Z")
+        assert out == "2026-05-27T12:34:56.789Z"
 
 
-def test_get_trusts_endpoint_success():
-    # Mock the db session and exec function
-    mock_db = MagicMock()
-    mock_db.exec.return_value.all.return_value = mock_trusts_data
+def _db_with_trusts_and_counts(trusts, count_rows):
+    """Return a session mock whose two `.exec(...).all()` calls drive the
+    endpoint's two queries (trust list, then per-trust project counts).
+    """
+    db = MagicMock()
+    trust_exec = MagicMock()
+    trust_exec.all.return_value = trusts
+    count_exec = MagicMock()
+    count_exec.all.return_value = count_rows
+    db.exec.side_effect = [trust_exec, count_exec]
+    return db
 
-    # Mock the get_session dependency to return the mocked db session
-    app.dependency_overrides[get_session] = lambda: mock_db
+
+def test_get_trusts_returns_serialised_trusts_with_project_counts():
+    trust_a = _make_trust("Trust A", "TA", "London")
+    trust_b = _make_trust("Trust B", "TB", "Manchester")
+    db = _db_with_trusts_and_counts(
+        trusts=[trust_a, trust_b],
+        count_rows=[(trust_a.id, 3)],  # Trust B has no rows → count defaults to 0.
+    )
+
+    result = get_trusts(db=db, user_id=uuid.uuid4())
+
+    assert len(result) == 2
+    by_id = {r.id: r for r in result}
+    assert by_id[trust_a.id].project_count == 3
+    assert by_id[trust_a.id].name == "Trust A"
+    assert by_id[trust_a.id].code == "TA"
+    assert by_id[trust_a.id].region == "London"
+    assert by_id[trust_a.id].last_heartbeat is None
+    # Trust B was absent from the count rows → defaults to 0.
+    assert by_id[trust_b.id].project_count == 0
+
+
+def test_get_trusts_tags_heartbeat_as_utc():
+    trust = _make_trust("Beat", "BT", "London")
+    trust.last_heartbeat = datetime(2026, 5, 27, 12, 0, 0)
+    db = _db_with_trusts_and_counts(trusts=[trust], count_rows=[])
+
+    result = get_trusts(db=db, user_id=uuid.uuid4())
+
+    assert result[0].last_heartbeat is not None
+    assert result[0].last_heartbeat.endswith("Z")
+
+
+def test_get_trusts_drops_null_trust_ids_from_count_aggregation():
+    """The count query is a left-join-style group_by; a NULL `trust_id` row
+    is a join orphan and must not poison the counts map.
+    """
+    trust = _make_trust("Solo", "SOLO", "South")
+    db = _db_with_trusts_and_counts(
+        trusts=[trust],
+        count_rows=[(None, 99), (trust.id, 5)],
+    )
+
+    result = get_trusts(db=db, user_id=uuid.uuid4())
+
+    assert len(result) == 1
+    assert result[0].project_count == 5
+
+
+def test_get_trusts_returns_empty_list_when_no_trusts():
+    db = _db_with_trusts_and_counts(trusts=[], count_rows=[])
+
+    result = get_trusts(db=db, user_id=uuid.uuid4())
+
+    assert result == []
+
+
+def test_get_trusts_500_on_database_error():
+    db = MagicMock()
+    db.exec.side_effect = Exception("db down")
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_trusts(db=db, user_id=uuid.uuid4())
+
+    assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "Internal server error" in exc_info.value.detail
+
+
+def test_get_trusts_re_raises_inner_http_exception():
+    """An HTTPException raised mid-query must surface unchanged — the generic
+    500 catch-all is for unexpected errors only, not for HTTP-shaped ones.
+    """
+    db = MagicMock()
+    db.exec.side_effect = HTTPException(status_code=418, detail="teapot")
+
+    with pytest.raises(HTTPException) as exc_info:
+        get_trusts(db=db, user_id=uuid.uuid4())
+
+    assert exc_info.value.status_code == 418
+    assert exc_info.value.detail == "teapot"
+
+
+def test_endpoint_is_accessible_to_authenticated_non_admin():
+    """Regression for #557: a non-admin (no admin permission anywhere in the
+    call) must get a 200 with the trust list — never a 403. The endpoint has no
+    admin gate, so verifying the token is the only requirement.
+    """
+    trust = _make_trust("Researcher-visible", "RV", "London")
+    db = _db_with_trusts_and_counts(trusts=[trust], count_rows=[(trust.id, 2)])
+
+    app.dependency_overrides[get_session] = lambda: db
     app.dependency_overrides[verify_token] = lambda: uuid.uuid4()
+    try:
+        response = client.get("/api/trust")
+    finally:
+        del app.dependency_overrides[get_session]
+        del app.dependency_overrides[verify_token]
 
-    # Make the test request to the endpoint
-    response = client.get("/api/trust")
-
-    # Assert that the response status code is 200
     assert response.status_code == 200
-    # Assert that the response body matches the mock data
-    assert response.json() == [{"id": str(trust.id), "name": trust.name} for trust in mock_trusts_data]
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["name"] == "Researcher-visible"
+    assert body[0]["code"] == "RV"
+    assert body[0]["region"] == "London"
+    assert body[0]["project_count"] == 2
 
-    # Clean up the dependency override
-    del app.dependency_overrides[get_session]
-    del app.dependency_overrides[verify_token]
 
+def test_endpoint_returns_generic_500_detail_on_database_error():
+    """The merged endpoint surfaces a generic 500 body — no exception text leak."""
+    db = MagicMock()
+    db.exec.side_effect = Exception("Database error")
 
-def test_get_trusts_error():
-    # Mock the db session and make the exec call raise an exception
-    mock_db = MagicMock()
-    mock_db.exec.side_effect = Exception("Database error")
-
-    # Mock the get_session dependency to return the mocked db session
-    app.dependency_overrides[get_session] = lambda: mock_db
+    app.dependency_overrides[get_session] = lambda: db
     app.dependency_overrides[verify_token] = lambda: uuid.uuid4()
+    try:
+        response = client.get("/api/trust")
+    finally:
+        del app.dependency_overrides[get_session]
+        del app.dependency_overrides[verify_token]
 
-    # Make the test request to the endpoint
-    response = client.get("/api/trust")
-
-    # Assert that the response status code is 500 (Internal Server Error)
     assert response.status_code == 500
-    # Assert the error message in the response
-    assert response.json() == {"detail": "Internal server error: Database error"}
-
-    # Clean up the dependency override
-    del app.dependency_overrides[get_session]
-    del app.dependency_overrides[verify_token]
+    assert response.json() == {"detail": "Internal server error"}

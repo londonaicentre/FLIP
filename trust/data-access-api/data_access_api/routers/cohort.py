@@ -87,32 +87,34 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
     """
     Receives a cohort query and returns the aggregated statistics.
 
+    Below-threshold results are privacy-suppressed: any count below the threshold —
+    including a genuine zero — comes back as a normal ``StatisticsResponse`` with
+    ``record_count=0``, empty ``data`` and ``suppressed=True``, *not* an HTTP error.
+    Returning an error here caused trust-api to skip reporting back to the hub, which left
+    the per-trust UI status stuck on "running". A true zero and a small below-threshold
+    count are deliberately indistinguishable so the response can't reveal that >=1 patient
+    matched; the ``suppressed`` flag only tells the hub/UI to show a "below-threshold" chip
+    rather than a bare 0 (issue #519).
+
     Args:
         query_input (data_access_api.routers.schema.CohortQueryInput): The input data for the cohort query.
 
     Returns:
-        StatisticsResponse: The aggregated statistics from the query results.
+        StatisticsResponse: The aggregated statistics from the query results, or a 0-count response
+        when the count is below ``COHORT_QUERY_THRESHOLD``.
 
     Raises:
-        HTTPException: If there is an error during the execution of the query or if the query returns too few records.
+        HTTPException: If there is an error during the execution of the query.
     """
     logger.info("Received cohort query")
 
     minimum_cohort_size = get_settings().COHORT_QUERY_THRESHOLD
     logger.info(f"Minimum cohort size needed to return statistics: {minimum_cohort_size}")
 
-    # Validate the query
-    try:
-        validate_query(query_input.query)
-    except ValueError as e:
-        logger.error(f"Invalid query: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+    validate_query(query_input.query)
 
     # On the original implementation get_records was invoked within get_statistics. However, to better handle
     # exceptions and log the query execution, we separate the two calls here.
-    # Execute the query and get the DataFrame
-    # TODO: Move this check to centralhub and use the aggregated results only, here we are using partial results from
-    # each trust
     safe_query = _parse_and_emit(query_input.query)
 
     try:
@@ -122,12 +124,6 @@ def receive_cohort_query(query_input: CohortQueryInput) -> StatisticsResponse:
         df = df.dropna(axis=1, how="all")  # Ignore entirely empty columns
         # drop duplicate columns
         df = df.loc[:, ~df.columns.duplicated()]
-
-        if len(df) < minimum_cohort_size:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Query returned too few records: {len(df)} (minimum required: {minimum_cohort_size})",
-            )
     except Exception as e:
         logger.error(f"Error executing query: {str(e)}")
         raise e
@@ -164,12 +160,7 @@ def get_dataframe(query_input: DataframeQuery) -> dict[str, list[Any]]:
 
     logger.info(f"Received DataFrame query for project {project_id}")
 
-    # Validate the query
-    try:
-        validate_query(query_input.query)
-    except ValueError as e:
-        logger.error(f"Invalid query: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+    validate_query(query_input.query)
 
     safe_query = _parse_and_emit(query_input.query)
 
@@ -207,11 +198,7 @@ def get_accession_ids(query_input: DataframeQuery) -> AccessionIdsResponse:
 
     logger.info(f"Received accession-ids query for project {project_id}")
 
-    try:
-        validate_query(query_input.query)
-    except ValueError as e:
-        logger.error(f"Invalid query: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
+    validate_query(query_input.query)
 
     # Parse and re-emit the caller's SQL via sqlglot to break any injection
     # taint chain.  sqlglot also strips trailing semicolons so the inner query

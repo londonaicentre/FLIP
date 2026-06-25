@@ -68,6 +68,7 @@ def invoke_model_status_update_endpoint(
             ModelStatus.PREPARED: "This model has been prepared and will begin training.",
             ModelStatus.TRAINING_STARTED: "Training has started for this model.",
             ModelStatus.RESULTS_UPLOADED: "The results of this model have been uploaded and can now be downloaded.",
+            ModelStatus.RESULTS_UPLOAD_FAILED: "Training completed successfully, but uploading the results failed.",
         }.get(model_status)
 
         if log_message:
@@ -75,7 +76,7 @@ def invoke_model_status_update_endpoint(
                 model_id,
                 log_message,
                 db,
-                success=model_status not in [ModelStatus.ERROR, ModelStatus.STOPPED],
+                success=model_status not in [ModelStatus.ERROR, ModelStatus.STOPPED, ModelStatus.RESULTS_UPLOAD_FAILED],
             )
 
         logger.info(f"Status of model {model_id} updated successfully to {model_status}")

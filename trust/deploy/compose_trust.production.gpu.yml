@@ -1,0 +1,31 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# GPU passthrough overlay (production). Applied by trust/Makefile only when the kit
+# declares NUM_AVAILABLE_GPUS > 0 (see GPU_OVERRIDE). Kept out of the base prod compose
+# so a GPU-less host — the AWS EC2 t3.xlarge test trust — brings the fl-client up
+# CPU-only instead of failing with a "could not select device driver ... [[gpu]]" error.
+# Real on-prem trusts set NUM_AVAILABLE_GPUS >= 1 and get the host GPU(s) reserved for
+# the fl-client. `count` tracks NUM_AVAILABLE_GPUS so the Docker reservation and the
+# fl-client app's own GPU hint stay in lockstep; to pin specific GPUs later, replace
+# `count` with `device_ids: ["0", "2"]` (the two are mutually exclusive in the spec).
+
+services:
+
+  fl-client-net-1:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${NUM_AVAILABLE_GPUS}
+              capabilities: [gpu]

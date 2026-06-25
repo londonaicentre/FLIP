@@ -11,4 +11,4 @@
 #
 
 volumes/*/db_data
-volumes/.local_data_version
+volumes/.local_data_version*

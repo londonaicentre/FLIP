@@ -15,9 +15,8 @@ import { createTestingPinia } from "@pinia/testing";
 import { flushPromises, mount, VueWrapper } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import { useAuthStore } from "@/store/auth";
-
 import Login from "@/pages/auth/Login.vue";
+import { useAuthStore } from "@/store/auth";
 
 // Router is imported at module-scope by the page, so it has to be mocked
 // before any Login import resolves. The spies here let us assert which
@@ -55,9 +54,7 @@ vi.mock("@/utils/snackbar", () => ({
 // short-circuit straight to /projects. Default is "no session" — each
 // suite re-arms it if we want to exercise the short-circuit path.
 const mockFetchAuthSession = vi.fn();
-vi.mock("aws-amplify/auth", () => ({
-    fetchAuthSession: (...args: unknown[]) => mockFetchAuthSession(...args)
-}));
+vi.mock("aws-amplify/auth", () => ({ fetchAuthSession: (...args: unknown[]) => mockFetchAuthSession(...args) }));
 
 interface AuthStoreState {
     signInStep: string | null;
@@ -135,7 +132,12 @@ describe("Login page", () => {
     describe("onBeforeMount short-circuit", () => {
         test("redirects to /projects when the user already has an access token", async () => {
             mockFetchAuthSession.mockResolvedValueOnce({
-                tokens: { accessToken: { payload: {}, toString: () => "tok" } }
+                tokens: {
+                    accessToken: {
+                        payload: {},
+                        toString: () => "tok"
+                    }
+                }
             });
 
             mountLogin();
@@ -232,7 +234,10 @@ describe("Login page", () => {
             // set that explicitly — the default mfaRequired=null would
             // prevent the enrolment redirect from firing even with
             // mfaEnabled=false.
-            const wrapper = mountLogin({ mfaEnabled: false, mfaRequired: true });
+            const wrapper = mountLogin({
+                mfaEnabled: false,
+                mfaRequired: true
+            });
             await flushPromises();
             const authStore = useAuthStore();
             (authStore.signIn as unknown as ReturnType<typeof vi.fn>).mockImplementationOnce(
@@ -262,7 +267,10 @@ describe("Login page", () => {
                     authStore.user = {
                         username: "u",
                         userId: "u",
-                        attributes: { sub: "s", email: "u@e.com" },
+                        attributes: {
+                            sub: "s",
+                            email: "u@e.com"
+                        },
                         permissions: []
                     };
                 }
@@ -290,7 +298,10 @@ describe("Login page", () => {
                     authStore.user = {
                         username: "u",
                         userId: "u",
-                        attributes: { sub: "s", email: "u@e.com" },
+                        attributes: {
+                            sub: "s",
+                            email: "u@e.com"
+                        },
                         permissions: []
                     };
                 }
@@ -316,7 +327,10 @@ describe("Login page", () => {
 
             expect(mockSnackbarShow).toHaveBeenCalledTimes(1);
             const [payload] = mockSnackbarShow.mock.calls[0];
-            expect(payload).toMatchObject({ type: "error", title: "Error" });
+            expect(payload).toMatchObject({
+                type: "error",
+                title: "Error"
+            });
             expect(mockViewProjects).not.toHaveBeenCalled();
             expect(mockMfaSetup).not.toHaveBeenCalled();
             expect(mockMfaVerify).not.toHaveBeenCalled();

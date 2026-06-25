@@ -36,7 +36,7 @@
                     :border="true"
                     :data-test="dataTest"
                     autocomplete="none"
-                    :height="200"
+                    :height="height"
                     v-bind="inputProps"
                     class="cursor-text text-gray-400 overflow-hidden rounded dark:!ring-primary-400 ring-primary-500 ring-2 ring-offset-2 dark:ring-offset-gray-900"
                     @input="handleChange"
@@ -74,6 +74,7 @@ interface ICodeTextAreaProps {
     dataTest?: string;
     initialValue?: string;
     mode?: string;
+    height?: number;
 }
 
 const siteSettings = useSiteSettings();
@@ -89,6 +90,7 @@ const props = withDefaults(
         hint: "",
         initialValue: "",
         mode: "text/x-pgsql",
+        height: 200,
         inputProps: undefined
     }
 );

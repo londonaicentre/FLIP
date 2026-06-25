@@ -37,7 +37,19 @@ exports[`AI Chip Select > renders the component successfully 1`] = `
       </svg>
     </span>
   </button>
-  <!---->
+  <transition-stub
+    appear="false"
+    css="true"
+    enteractiveclass="transition duration-100 ease-out"
+    enterfromclass="transform scale-95 opacity-0"
+    entertoclass="transform scale-100 opacity-100"
+    leaveactiveclass="transition duration-75 ease-in"
+    leavefromclass="transform scale-100 opacity-100"
+    leavetoclass="transform scale-95 opacity-0"
+    persisted="false"
+  >
+    <!---->
+  </transition-stub>
   
   
   <!--v-if-->

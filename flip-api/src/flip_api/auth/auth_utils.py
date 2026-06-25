@@ -10,27 +10,12 @@
 # limitations under the License.
 #
 
-import os
 from uuid import UUID
 
-from fastapi.security import OAuth2PasswordBearer
-from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from flip_api.db.models.user_models import PermissionRef, Role, RolePermission, UserRole
 from flip_api.utils.logger import logger
-
-# OAuth2 scheme for token authentication
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-# JWT settings
-SECRET_KEY = os.getenv("SECRET_KEY", "default-secret-key")  # Load from environment variables
-ALGORITHM = "HS256"
-
-
-class TokenPayload(BaseModel):
-    sub: str
-    exp: int | None = None
 
 
 def has_permissions(user_id: UUID, required_permissions: list[PermissionRef], db: Session) -> bool:

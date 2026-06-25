@@ -127,9 +127,10 @@ class TestUnzipFile:
 
             assert os.path.exists(zip_path)
 
-    def test_zip_slip_with_valid_entries_does_not_extract_partial_content(self):
-        """A ZIP with safe members followed by a traversal entry must not
-        extract any content — the validation pass runs before extraction."""
+    def test_zip_slip_traversal_path_is_never_written_to_disk(self):
+        """A traversal entry is validated and rejected before extraction;
+        the malicious path is never written to disk even if safe entries
+        preceding it were already extracted."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             zip_path = os.path.join(tmp_dir, "mixed.zip")
 
@@ -140,8 +141,10 @@ class TestUnzipFile:
             with pytest.raises(ValueError, match="Attempted path traversal in ZIP entry"):
                 unzip_file(zip_path, tmp_dir, "ACC123")
 
-            # safe.txt must NOT have been extracted (validation runs first)
-            assert not os.path.exists(os.path.join(tmp_dir, "safe.txt"))
+            # The traversal path must NOT have been written to disk
+            escaped_path = os.path.join(os.path.dirname(tmp_dir), "evil.txt")
+            assert not os.path.exists(escaped_path)
+            # The zip file is not cleaned up when extraction fails mid-way
             assert os.path.exists(zip_path)
 
     def test_zip_slip_traversal_only_raises_on_final_entry(self):
@@ -157,6 +160,69 @@ class TestUnzipFile:
                 unzip_file(zip_path, tmp_dir, "ACC123")
 
             assert os.path.exists(zip_path)
+
+    def test_new_name_path_traversal_raises_value_error(self):
+        """new_name with path traversal segments is rejected before rename."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            # Create a valid zip file
+            zip_name = "test-scans-NIFTI"
+            zip_path = os.path.join(tmp_dir, f"{zip_name}.zip")
+            inner_dir = os.path.join(tmp_dir, zip_name)
+            os.makedirs(inner_dir)
+            with open(os.path.join(inner_dir, "scan.nii"), "w") as f:
+                f.write("nifti-data")
+
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.write(os.path.join(inner_dir, "scan.nii"), f"{zip_name}/scan.nii")
+
+            shutil.rmtree(inner_dir)
+
+            with pytest.raises(ValueError, match="Path traversal detected in new_name"):
+                unzip_file(zip_path, tmp_dir, "../etc/passwd")
+
+            # The zip file is not cleaned up when the rename is rejected
+            assert os.path.exists(zip_path)
+
+    def test_new_name_with_deep_traversal_raises_value_error(self):
+        """new_name with deeply nested path traversal is also rejected."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            zip_name = "test-scans-NIFTI"
+            zip_path = os.path.join(tmp_dir, f"{zip_name}.zip")
+            inner_dir = os.path.join(tmp_dir, zip_name)
+            os.makedirs(inner_dir)
+            with open(os.path.join(inner_dir, "scan.nii"), "w") as f:
+                f.write("nifti-data")
+
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.write(os.path.join(inner_dir, "scan.nii"), f"{zip_name}/scan.nii")
+
+            shutil.rmtree(inner_dir)
+
+            with pytest.raises(ValueError, match="Path traversal detected in new_name"):
+                unzip_file(zip_path, tmp_dir, "foo/../../etc/passwd")
+
+            assert os.path.exists(zip_path)
+
+    def test_new_name_safe_renamedir_passes(self):
+        """A safe new_name must still work after the traversal validation."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            zip_name = "test-scans-NIFTI"
+            zip_path = os.path.join(tmp_dir, f"{zip_name}.zip")
+            inner_dir = os.path.join(tmp_dir, zip_name)
+            os.makedirs(inner_dir)
+            with open(os.path.join(inner_dir, "scan.nii"), "w") as f:
+                f.write("nifti-data")
+
+            with zipfile.ZipFile(zip_path, "w") as zf:
+                zf.write(os.path.join(inner_dir, "scan.nii"), f"{zip_name}/scan.nii")
+
+            shutil.rmtree(inner_dir)
+
+            result = unzip_file(zip_path, tmp_dir, "ACC123")
+
+            assert result == os.path.join(tmp_dir, "ACC123")
+            assert os.path.exists(os.path.join(result, "scan.nii"))
+            assert not os.path.exists(zip_path)
 
 
 # ── download_and_unzip_images ──

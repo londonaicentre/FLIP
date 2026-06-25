@@ -14,12 +14,21 @@ import uuid
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from imaging_api.config import get_settings
 
 PACS_ID = get_settings().PACS_ID
 XNAT_PORT = get_settings().XNAT_PORT
+
+# Blocks the three characters most likely to enable structural XML injection
+# in the XNAT projectData payload built by imaging_api.services.projects. This
+# is not exhaustive — ElementTree also escapes " and ' where they're significant
+# (attribute values), but project_name lands as element text where they aren't,
+# so blocking them at this layer is unnecessary. The serializer is the canonical
+# defence; this validator is the trust-boundary fail-fast that returns a 422
+# instead of letting the corrupted entity reach XNAT.
+_XML_FORBIDDEN_CHARS = ("<", ">", "&")
 
 # #########################
 # Users
@@ -29,7 +38,10 @@ XNAT_PORT = get_settings().XNAT_PORT
 class User(BaseModel):
     """Represents a user profile on XNAT."""
 
-    lastModified: int
+    # XNAT omits lastModified for never-modified users (e.g. a freshly configured
+    # admin that has only logged in), so it must be optional — otherwise parsing
+    # the user list fails and project creation 500s.
+    lastModified: int | None = None
     username: str
     enabled: bool
     id: int
@@ -116,6 +128,15 @@ class CentralHubProject(BaseModel):
     users: list[CentralHubUser] = []
     dicom_to_nifti: bool = True
 
+    @field_validator("project_name")
+    @classmethod
+    def _reject_xml_control_chars(cls, v: str) -> str:
+        if any(c in v for c in _XML_FORBIDDEN_CHARS):
+            raise ValueError(
+                f"project_name must not contain XML control characters {_XML_FORBIDDEN_CHARS}"
+            )
+        return v
+
 
 class Subject(BaseModel):
     """
@@ -136,7 +157,7 @@ class Experiment(BaseModel):
     """
     Short representation of an experiment on XNAT, it is the result of the REST API call
 
-    ``GET f"{XNAT_URL}/data/projects/{project_id}/experiments"``
+    ``GET f"{XNAT_URL}/data/experiments?project={project_id}"``
     """
 
     id: str = Field(..., alias="ID")
@@ -198,14 +219,14 @@ class ImportStudy(BaseModel):
     accession_number: str = Field(..., alias="accessionNumber")
     relabel_map: dict[str, str] = Field(default={}, alias="relabelMap")
 
-    def set_relabel_map(self):
+    def set_relabel_map(self) -> None:
         """Sets the relabel_map dictionary for subject and session."""
         self.relabel_map = {
             "Subject": str(uuid.uuid4()),  # Generate new UUID for Subject
             "Session": self.accession_number,
         }
 
-    def __init__(self, **data):
+    def __init__(self, **data: object) -> None:
         """Initializes the ImportStudy instance and sets the relabel_map."""
         super().__init__(**data)
         self.set_relabel_map()
@@ -223,7 +244,7 @@ class ImportStudyRequest(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def deduplicate_and_parse_studies(cls, data):
+    def deduplicate_and_parse_studies(cls, data: dict) -> dict:
         """Deduplicates and parses studies before validation.
 
         Args:

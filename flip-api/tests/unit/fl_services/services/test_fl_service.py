@@ -11,14 +11,13 @@
 #
 
 import json
-from enum import Enum
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
 
 from flip_api.config import Settings
-from flip_api.domain.interfaces import fl as fl_interfaces
+from flip_api.db.models.main_models import Trust
 from flip_api.domain.interfaces.fl import (
     IClientStatus,
     IJobMetaData,
@@ -26,6 +25,7 @@ from flip_api.domain.interfaces.fl import (
     IStartTrainingBody,
 )
 from flip_api.domain.schemas.status import ClientStatus
+from flip_api.domain.schemas.types import FLBackend
 from flip_api.fl_services.services import fl_service
 
 
@@ -56,27 +56,19 @@ def mocked_settings():
 
 
 @pytest.fixture
-def mock_job_types_file(tmp_path, monkeypatch):
-    """Mock the JSON job-types file and rebuild JobTypes from it."""
-    job_types_config = {
+def mock_job_types_file():
+    """Provide the set of valid job types for the parametrized bundler tests.
+
+    Job types are data (the per-backend manifest keys), not an enum. The bundler tests drive
+    ``JobRequiredFiles.is_valid_job_type`` from this mapping so a name absent from it (e.g.
+    "invalid") is rejected with ``UnknownJobTypeError``.
+    """
+    return {
         "standard": ["trainer.py", "validator.py", "models.py", "config.json"],
         "diffusion_model": ["trainer.py", "validator.py", "models.py", "config.json"],
         "fed_opt": ["trainer.py", "validator.py", "models.py", "config.json"],
         "evaluation": ["trainer.py", "validator.py", "models.py", "config.json"],
     }
-    mock_file = tmp_path / "job_types_required_files.json"
-    mock_file.write_text(json.dumps(job_types_config), encoding="utf-8")
-
-    monkeypatch.setattr(fl_interfaces, "REQUIRED_JOB_TYPES_FILE", mock_file)
-    monkeypatch.setattr(fl_interfaces, "_JOB_TYPES_CONFIG", fl_interfaces._load_job_types_config())
-    monkeypatch.setattr(
-        fl_interfaces,
-        "JobTypes",
-        Enum("JobTypes", {job_type: job_type for job_type in fl_interfaces._JOB_TYPES_CONFIG.keys()}),  # type: ignore[misc]
-    )
-    monkeypatch.setattr(fl_service, "JobTypes", fl_interfaces.JobTypes)
-
-    return job_types_config
 
 
 @patch("flip_api.fl_services.services.fl_service.http_post")
@@ -127,14 +119,14 @@ def test_fetch_server_status_success(mock_check_server):
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
 def test_fetch_client_status_success(mock_check_client):
     mock_check_client.return_value = [
-        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS.value),
-        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY.value),
+        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
+        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY),
     ]
     status = fl_service.fetch_client_status("endpoint")
     assert status[0].name == "Trust_1"
-    assert status[0].status == ClientStatus.NO_JOBS.value
+    assert status[0].status == ClientStatus.NO_JOBS
     assert status[1].name == "Trust_2"
-    assert status[1].status == ClientStatus.NO_REPLY.value
+    assert status[1].status == ClientStatus.NO_REPLY
 
 
 def test_get_fl_backend_job_id_by_model_id_not_found(model_id, fake_session):
@@ -151,76 +143,65 @@ def test_add_fl_backend_job_id_raises_if_job_missing(fl_job_id, fake_session):
         fl_service.add_fl_backend_job_id(fl_job_id, str(uuid4()), fake_session)
 
 
-@patch("flip_api.fl_services.services.fl_service.get_settings")
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_all_offline(mock_get_status, mock_settings):
-    mock_settings.return_value.FL_BACKEND = "nvflare"
+def test_validate_client_availability_all_offline(mock_get_status):
+    # The backend is passed in explicitly now (resolved per-net at runtime), not read from settings.
     mock_get_status.return_value = [
-        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY.value),
-        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS.value),
+        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY),
+        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
     ]
 
     with pytest.raises(ValueError, match="Clients unavailable: trust-1"):
-        fl_service.validate_client_availability(["trust-1"], "endpoint")
+        fl_service.validate_client_availability(["trust-1"], "endpoint", FLBackend.NVFLARE)
 
 
-@patch("flip_api.fl_services.services.fl_service.get_settings")
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_some_online(mock_get_status, mock_settings):
-    mock_settings.return_value.FL_BACKEND = "nvflare"
+def test_validate_client_availability_some_online(mock_get_status):
     mock_get_status.return_value = [
-        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY.value),
-        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS.value),
+        IClientStatus(name="Trust_2", status=ClientStatus.NO_REPLY),
+        IClientStatus(name="Trust_1", status=ClientStatus.NO_JOBS),
     ]
 
     # This has to raise an error for Trust_2 only.
     with pytest.raises(ValueError, match="Clients unavailable: Trust_2"):
-        fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint")
+        fl_service.validate_client_availability(["Trust_2", "Trust_1"], "endpoint", FLBackend.NVFLARE)
 
 
-@patch("flip_api.fl_services.services.fl_service.get_settings")
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_empty_statuses(mock_get_status, mock_settings):
-    mock_settings.return_value.FL_BACKEND = "nvflare"
+def test_validate_client_availability_empty_statuses(mock_get_status):
     mock_get_status.return_value = []
 
     with pytest.raises(ValueError, match="Unable to fetch client statuses"):
-        fl_service.validate_client_availability(["trust-1"], "endpoint")
+        fl_service.validate_client_availability(["trust-1"], "endpoint", FLBackend.NVFLARE)
 
 
-@patch("flip_api.fl_services.services.fl_service.get_settings")
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_flower_soft_on_empty(mock_get_status, mock_settings):
+def test_validate_client_availability_flower_soft_on_empty(mock_get_status):
     """Flower backend: empty client statuses logs warning instead of raising."""
-    mock_settings.return_value.FL_BACKEND = "flower"
     mock_get_status.return_value = []
 
     # Should NOT raise — Flower degrades gracefully
-    fl_service.validate_client_availability(["Trust_1"], "endpoint")
+    fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.FLOWER)
 
 
-@patch("flip_api.fl_services.services.fl_service.get_settings")
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_flower_soft_on_unavailable(mock_get_status, mock_settings):
+def test_validate_client_availability_flower_soft_on_unavailable(mock_get_status):
     """Flower backend: unavailable clients logs warning instead of raising."""
-    mock_settings.return_value.FL_BACKEND = "flower"
     mock_get_status.return_value = [
-        IClientStatus(name="Trust_1", status=ClientStatus.DISCONNECTED.value),
+        IClientStatus(name="Trust_1", status=ClientStatus.DISCONNECTED),
     ]
 
     # Should NOT raise — Flower degrades gracefully
-    fl_service.validate_client_availability(["Trust_1"], "endpoint")
+    fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.FLOWER)
 
 
-@patch("flip_api.fl_services.services.fl_service.get_settings")
 @patch("flip_api.fl_services.services.fl_service.check_client_status")
-def test_validate_client_availability_nvflare_still_raises(mock_get_status, mock_settings):
+def test_validate_client_availability_nvflare_still_raises(mock_get_status):
     """NVFLARE backend: empty client statuses still raises ValueError."""
-    mock_settings.return_value.FL_BACKEND = "nvflare"
     mock_get_status.return_value = []
 
     with pytest.raises(ValueError, match="Unable to fetch client statuses"):
-        fl_service.validate_client_availability(["Trust_1"], "endpoint")
+        fl_service.validate_client_availability(["Trust_1"], "endpoint", FLBackend.NVFLARE)
 
 
 @patch("flip_api.fl_services.services.fl_service.http_delete")
@@ -258,10 +239,13 @@ def test_start_training_with_config(
     mock_submit.assert_called_once()
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_nvflare_application_success(mock_s3, mock_required, mock_verify, model_id, mocked_settings):
+def test_bundle_nvflare_application_success(
+    mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
+):
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
@@ -279,7 +263,7 @@ def test_bundle_nvflare_application_success(mock_s3, mock_required, mock_verify,
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],
-        [f"{base_bucket}/standard/app/file1.py"],
+        [f"{base_bucket}/nvflare/standard/app/file1.py"],
         [],  # Destination bucket
     ]
     mock_client.copy_object.return_value = None
@@ -292,7 +276,7 @@ def test_bundle_nvflare_application_success(mock_s3, mock_required, mock_verify,
 
     # assert that the copy_object was called for each file including the bucket names
     mock_client.copy_object.assert_any_call(
-        f"{base_bucket}/standard/app/file1.py",
+        f"{base_bucket}/nvflare/standard/app/file1.py",
         f"{dest_bucket}/{model_id}/app/file1.py",
     )
     mock_client.copy_object.assert_any_call(
@@ -301,12 +285,13 @@ def test_bundle_nvflare_application_success(mock_s3, mock_required, mock_verify,
     )
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 @patch("flip_api.fl_services.services.fl_service.logger")
 def test_bundle_nvflare_application_model_files_overwrite(
-    mock_logger, mock_s3, mock_required, mock_verify, model_id, mocked_settings
+    mock_logger, mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
 ):
     """
     Test that if a file in the model files has the same name as a file in the base application, the model file is not
@@ -331,8 +316,8 @@ def test_bundle_nvflare_application_model_files_overwrite(
         f"{model_bucket}/{model_id}/flip.py",  # user trying to overwrite the flip.py in base with one in model files
     ]
     base_files = [
-        f"{base_bucket}/standard/app/custom/flip.py",
-        f"{base_bucket}/standard/app/config/config_fed_client.json",
+        f"{base_bucket}/nvflare/standard/app/custom/flip.py",
+        f"{base_bucket}/nvflare/standard/app/config/config_fed_client.json",
     ]
     # Destination bucket is empty at first
     mock_client.list_objects.side_effect = [
@@ -371,6 +356,7 @@ def test_bundle_nvflare_application_model_files_overwrite(
             )
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type")
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
@@ -388,6 +374,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
     mock_s3,
     mock_required,
     mock_verify,
+    mock_is_valid,
     model_id,
     mocked_settings,
     job_type,
@@ -398,11 +385,13 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
     job types does not.
 
     Mocks the required files to be consistent with the job type provided in the config, so that the only reason for
-    failure in the invalid case is the wrong job type.
+    failure in the invalid case is the wrong job type. Validity is driven by the manifest keys
+    (mock_job_types_file), so "invalid" is rejected.
     """
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
+    mock_is_valid.side_effect = lambda jt, backend: jt in mock_job_types_file
     mock_client = mock_s3.return_value
     # Return a config.json containing the job_type string for this parametrized run
     mock_client.get_object.return_value = {
@@ -416,7 +405,7 @@ def test_bundle_nvflare_application_file_wrong_job_type_in_config(
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],
-        [f"{base_bucket}/{job_type}/app/file1.py"],
+        [f"{base_bucket}/nvflare/{job_type}/app/file1.py"],
         [],  # Destination bucket
     ]
     mock_client.copy_object.return_value = None
@@ -452,7 +441,7 @@ def test_bundle_nvflare_application_wrong_files(mock_s3, mock_required, mock_ver
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],  # Missing trainer.py
-        [f"{base_bucket}/standard/app/file1.py"],
+        [f"{base_bucket}/nvflare/standard/app/file1.py"],
         [],  # Destination bucket
     ]
     mock_client.copy_object.return_value = None
@@ -462,9 +451,10 @@ def test_bundle_nvflare_application_wrong_files(mock_s3, mock_required, mock_ver
         _ = fl_service.bundle_nvflare_application(model_id)
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
-def test_bundle_flower_application_success(mock_s3, mock_required, model_id, mocked_settings):
+def test_bundle_flower_application_success(mock_s3, mock_required, mock_is_valid, model_id, mocked_settings):
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
@@ -481,8 +471,8 @@ def test_bundle_flower_application_success(mock_s3, mock_required, model_id, moc
             f"{model_bucket}/{model_id}/config.json",
         ],
         [
-            f"{base_bucket}/standard/app/server_app.py",
-            f"{base_bucket}/standard/pyproject.toml",
+            f"{base_bucket}/flower/standard/app/server_app.py",
+            f"{base_bucket}/flower/standard/pyproject.toml",
         ],
         [],
     ]
@@ -493,7 +483,7 @@ def test_bundle_flower_application_success(mock_s3, mock_required, model_id, moc
 
     assert dest_bucket_s3_path == f"{dest_bucket}/{model_id}"
     mock_client.copy_object.assert_any_call(
-        f"{base_bucket}/standard/app/server_app.py",
+        f"{base_bucket}/flower/standard/app/server_app.py",
         f"{dest_bucket}/{model_id}/app/server_app.py",
     )
     mock_client.copy_object.assert_any_call(
@@ -502,11 +492,12 @@ def test_bundle_flower_application_success(mock_s3, mock_required, model_id, moc
     )
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 @patch("flip_api.fl_services.services.fl_service.logger")
 def test_bundle_flower_application_model_files_overwrite(
-    mock_logger, mock_s3, mock_required, model_id, mocked_settings
+    mock_logger, mock_s3, mock_required, mock_is_valid, model_id, mocked_settings
 ):
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
@@ -524,8 +515,8 @@ def test_bundle_flower_application_model_files_overwrite(
         f"{model_bucket}/{model_id}/server_app.py",
     ]
     base_files = [
-        f"{base_bucket}/standard/app/server_app.py",
-        f"{base_bucket}/standard/pyproject.toml",
+        f"{base_bucket}/flower/standard/app/server_app.py",
+        f"{base_bucket}/flower/standard/pyproject.toml",
     ]
     mock_client.list_objects.side_effect = [
         model_files,
@@ -559,6 +550,8 @@ def test_bundle_flower_application_model_files_overwrite(
             )
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type")
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 @pytest.mark.parametrize(
@@ -574,30 +567,44 @@ def test_bundle_flower_application_model_files_overwrite(
 def test_bundle_flower_application_file_wrong_job_type_in_config(
     mock_s3,
     mock_required,
+    mock_verify,
+    mock_is_valid,
     model_id,
     mocked_settings,
     job_type,
     mock_job_types_file,
 ):
+    """
+    Test that providing an invalid job type into the config.json raises an error while providing valid
+    job types does not.
+
+    Mocks the required files to be consistent with the job type provided in the config, so that the only reason for
+    failure in the invalid case is the wrong job type. Validity is driven by the manifest keys
+    (mock_job_types_file), so "invalid" is rejected.
+    """
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
 
+    mock_is_valid.side_effect = lambda jt, backend: jt in mock_job_types_file
     mock_client = mock_s3.return_value
+    # Return a config.json containing the job_type string for this parametrized run
     mock_client.get_object.return_value = {
         "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": job_type}).encode("utf-8")))
     }
-    mock_required.return_value = ["client_app.py", "models.py"]
+    mock_required.return_value = ["trainer.py", "validator.py", "models.py", "config.json"]
     mock_client.list_objects.side_effect = [
         [
-            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/validator.py",
+            f"{model_bucket}/{model_id}/trainer.py",
             f"{model_bucket}/{model_id}/models.py",
             f"{model_bucket}/{model_id}/config.json",
         ],
-        [f"{base_bucket}/{job_type}/app/server_app.py"],
-        [],
+        [f"{base_bucket}/flower/{job_type}/app/file1.py"],
+        [],  # Destination bucket
     ]
     mock_client.copy_object.return_value = None
-    mock_client.object_exists.return_value = False
+    mock_client.object_exists.return_value = False  # No files exist yet
+    mock_verify.return_value = None
 
     if job_type == "invalid":
         with pytest.raises(
@@ -625,7 +632,7 @@ def test_bundle_flower_application_wrong_files(mock_s3, mock_required, mocked_se
             f"{model_bucket}/{model_id}/client_app.py",
             f"{model_bucket}/{model_id}/config.json",
         ],  # Missing models.py
-        [f"{base_bucket}/standard/app/server_app.py"],
+        [f"{base_bucket}/flower/standard/app/server_app.py"],
         [],
     ]
     mock_client.copy_object.return_value = None
@@ -827,8 +834,8 @@ def test_extract_current_job_data_success(mock_http_get):
 
     # Mock backend job list response
     mock_http_get.return_value = [
-        {"job_id": "job123", "status": "RUNNING", "job_name": "myjob"},
-        {"job_id": "job999", "status": "FINISHED", "job_name": "oldjob"},
+        {"job_id": "job123", "status": "RUNNING"},
+        {"job_id": "job999", "status": "FINISHED"},
     ]
 
     result = extract_current_job_data(net_endpoint, fl_backend_job_id)
@@ -842,15 +849,14 @@ def test_extract_current_job_data_success(mock_http_get):
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
-def test_extract_current_job_data_not_found(mock_http_get):
+def test_extract_current_job_data_not_found_returns_none(mock_http_get):
     from flip_api.fl_services.services.fl_service import extract_current_job_data
 
-    mock_http_get.return_value = [{"job_id": "other", "status": "RUNNING", "job_name": "otherjob"}]
+    mock_http_get.return_value = [{"job_id": "other", "status": "RUNNING"}]
     net_endpoint = "http://fl-api-endpoint"
     fl_backend_job_id = "missing-job"
 
-    with pytest.raises(ValueError, match=f"Could not find job ID {fl_backend_job_id}"):
-        extract_current_job_data(net_endpoint, fl_backend_job_id)
+    assert extract_current_job_data(net_endpoint, fl_backend_job_id) is None
 
 
 @patch("flip_api.fl_services.services.fl_service.http_get")
@@ -861,8 +867,8 @@ def test_extract_current_job_data_multiple_found(mock_http_get):
     fl_backend_job_id = "duplicate-job"
 
     mock_http_get.return_value = [
-        {"job_id": "duplicate-job", "status": "RUNNING", "job_name": "duplicate-job"},
-        {"job_id": "duplicate-job", "status": "RUNNING", "job_name": "duplicate-job"},
+        {"job_id": "duplicate-job", "status": "RUNNING"},
+        {"job_id": "duplicate-job", "status": "RUNNING"},
     ]
 
     with pytest.raises(ValueError, match="Multiple running jobs found"):
@@ -888,7 +894,7 @@ def test_abort_model_training_success(
     mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
     mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
     mock_fetch_server_status.return_value = {"status": "stopped"}
-    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", job_name=str(model_id), status="RUNNING")
+    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
 
     request = MagicMock()
     request.scope = {"request_id": "req-id"}
@@ -898,17 +904,83 @@ def test_abort_model_training_success(
     mock_abort.assert_called_once_with("http://fl-api-endpoint", "job123")
 
 
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+def test_abort_model_training_idempotent_when_no_running_job(
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
+    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
+    mock_fetch_server_status.return_value = {"status": "stopped"}
+    mock_extract_current_job_data.return_value = None
+
+    request = MagicMock()
+    request.scope = {"request_id": "req-id"}
+    request.path_params = {"target": "server", "clients": None}
+
+    # No running job -> idempotent no-op: must not raise and must not call abort_job.
+    fl_service.abort_model_training(request, model_id, fake_session)
+    mock_abort.assert_not_called()
+
+
 def test_add_fl_job_creates_job(model_id, fake_session):
-    clients = ["client1", "client2"]
-    fl_service.add_fl_job(model_id, clients, fake_session)
+    trusts = [Trust(id=uuid4(), name="client1"), Trust(id=uuid4(), name="client2")]
+    fl_service.add_fl_job(model_id, trusts, fake_session)
+
     fake_session.add.assert_called_once()
     fake_session.commit.assert_called_once()
     fake_session.refresh.assert_called_once()
+
+    # The persisted FLJob attaches the Trust rows via the `fl_job_trust` link relationship.
+    persisted_job = fake_session.add.call_args.args[0]
+    assert persisted_job.trusts == trusts
 
 
 def test_add_fl_job_rollback_on_exception(model_id):
     fake_session = MagicMock()
     fake_session.add.side_effect = Exception("DB Error")
     with pytest.raises(Exception, match="DB Error"):
-        fl_service.add_fl_job(model_id, ["client1"], fake_session)
+        fl_service.add_fl_job(model_id, [Trust(id=uuid4(), name="client1")], fake_session)
     fake_session.rollback.assert_called_once()
+
+
+@patch("flip_api.fl_services.get_status.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_nets")
+@patch("flip_api.fl_services.services.fl_service.Session")
+def test_keep_fl_api_session_alive_pings_each_net(mock_session, mock_get_nets, mock_fetch):
+    # The keep-alive poll pings every net's check_server_status; it no longer reconciles any backend.
+    mock_session.return_value.__enter__.return_value = MagicMock()
+    mock_get_nets.return_value = [
+        MagicMock(endpoint="http://net1:8000"),
+        MagicMock(endpoint="http://net2:8000"),
+    ]
+
+    fl_service.keep_fl_api_session_alive()
+
+    assert mock_fetch.call_count == 2
+    mock_fetch.assert_any_call("http://net1:8000")
+    mock_fetch.assert_any_call("http://net2:8000")
+
+
+@patch("flip_api.fl_services.get_status.fetch_server_status", side_effect=Exception("boom"))
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_nets")
+@patch("flip_api.fl_services.services.fl_service.Session")
+def test_keep_fl_api_session_alive_swallows_errors(mock_session, mock_get_nets, mock_fetch):
+    # A failed status check for one net must not propagate (it is logged and ignored).
+    mock_session.return_value.__enter__.return_value = MagicMock()
+    mock_get_nets.return_value = [MagicMock(endpoint="http://net1:8000")]
+
+    fl_service.keep_fl_api_session_alive()
+
+    mock_fetch.assert_called_once_with("http://net1:8000")

@@ -30,16 +30,43 @@ resource "aws_ssm_parameter" "flip_api_internal_url" {
   value       = "http://${local.service_discovery_names.flip_api}:${local.api_container_port}/api"
 }
 
-resource "aws_ssm_parameter" "uploaded_federated_data_bucket" {
-  name        = "${local.ssm_prefix}/uploaded_federated_data_bucket"
-  description = "S3 URI prefix for FL training results (must NOT default to s3://default-bucket)"
+resource "aws_ssm_parameter" "flip_model_files_uploads_bucket" {
+  name        = "${local.ssm_prefix}/flip_model_files_uploads_bucket"
+  description = "S3 URI of the researcher model-files-uploads bucket (browser presigned-PUT target today; flips to presigned POST once PR #438 lands; flip-api reads/deletes)"
   type        = "String"
-  value       = local.uploaded_federated_data_uri
+  value       = local.flip_model_files_uploads_bucket_uri
 }
 
-resource "aws_ssm_parameter" "internal_service_key_header" {
-  name        = "${local.ssm_prefix}/internal_service_key_header"
-  description = "HTTP header name for fl-server -> flip-api auth"
+resource "aws_ssm_parameter" "flip_fl_results_bucket" {
+  name        = "${local.ssm_prefix}/flip_fl_results_bucket"
+  description = "S3 URI of the FL training-results bucket (fl-server writes; researcher downloads via browser presigned-GET)"
   type        = "String"
-  value       = "X-Internal-Service-Key"
+  value       = local.flip_fl_results_bucket_uri
 }
+
+resource "aws_ssm_parameter" "flip_app_bundles_bucket" {
+  name        = "${local.ssm_prefix}/flip_app_bundles_bucket"
+  description = "S3 URI of the FL app-bundles bucket (server-only; flip-api copies base → destination during FL bundling)"
+  type        = "String"
+  value       = local.flip_app_bundles_bucket_uri
+}
+
+# Networking values published for cross-account consumers. aicentre-iac's
+# network_account_flip module reads these from the FLIP-Prod account to
+# back the cross-account TGW VPC attachment (single authoritative value
+# avoids tag-collision ambiguity during VPC migrations).
+
+resource "aws_ssm_parameter" "vpc_id" {
+  name        = "${local.ssm_prefix}/networking/vpc_id"
+  description = "FLIP-Prod VPC ID — consumed cross-account by aicentre-iac's TGW VPC attachment"
+  type        = "String"
+  value       = module.flip_vpc.vpc_id
+}
+
+resource "aws_ssm_parameter" "private_subnet_ids" {
+  name        = "${local.ssm_prefix}/networking/private_subnet_ids"
+  description = "FLIP-Prod private subnet IDs (comma-separated) — consumed cross-account by aicentre-iac's TGW VPC attachment"
+  type        = "StringList"
+  value       = join(",", module.flip_vpc.private_subnets)
+}
+

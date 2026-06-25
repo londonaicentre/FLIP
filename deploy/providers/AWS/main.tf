@@ -19,11 +19,18 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
   }
 }
 
 provider "aws" {
   region = var.AWS_REGION
+}
+
+provider "null" {
 }
 
 ############################
@@ -32,6 +39,11 @@ provider "aws" {
 
 data "aws_availability_zones" "available" {}
 
+# Cross-stack: aicentre-iac's network_account_flip module reads
+# /flip/networking/vpc_id and /flip/networking/private_subnet_ids from
+# this account's SSM (see parameter_store.tf) to back the cross-account
+# TGW VPC attachment. If you recreate or rename this VPC, plan against
+# aicentre-iac immediately afterwards.
 module "flip_vpc" {
   source               = "terraform-aws-modules/vpc/aws"
   version              = "~> 6.0"
@@ -71,6 +83,15 @@ module "ec2_security_group" {
   ]
 }
 
+# Tag the secgroup module SGs for drift detection.
+# Remove these aws_security_group_tags resources if the secgroup module
+# ever adds a `tags` variable — until then, we tag externally.
+resource "aws_ec2_tag" "ec2_security_group_flip_sg" {
+  resource_id = module.ec2_security_group.security_group.id
+  key         = "FlipSG"
+  value       = "true"
+}
+
 # Trust Security Group for Trust EC2 instance
 # NOTE: Trust API port removed — trusts now poll the hub outbound (no inbound connections needed).
 # XNAT and PACS UI ports kept for direct researcher access to imaging tools.
@@ -82,6 +103,12 @@ module "trust_security_group" {
   description = "Security group for FLIP Trust EC2 instance (no inbound - access via SSM Session Manager and SSM port forwarding)"
 
   ingress_rules = []
+}
+
+resource "aws_ec2_tag" "trust_security_group_flip_sg" {
+  resource_id = module.trust_security_group.security_group.id
+  key         = "FlipSG"
+  value       = "true"
 }
 
 # Only allow FL server traffic that arrives through the NLB, not direct client or VPC access.
@@ -111,6 +138,16 @@ module "rds_security_group" {
   ]
   block_all_outbound = true
 }
+
+resource "aws_ec2_tag" "rds_security_group_flip_sg" {
+  resource_id = module.rds_security_group.security_group.id
+  key         = "FlipSG"
+  value       = "true"
+}
+
+# flip-api reaches Postgres only through RDS Proxy (rds_proxy.tf), never
+# directly — so RDS ingress comes from the proxy SG (rds_proxy.tf), not the
+# flip-api task SG.
 
 ############################
 # RDS PostgreSQL Database
@@ -150,6 +187,7 @@ module "flip_api_secret" {
   version     = "2.0.0"
   name        = "FLIP_API"
   description = "FLIP_API"
+  kms_key_id  = aws_kms_key.flip_app_key.arn
 
   # Set recovery window to allow secret recovery after accidental deletion
   # To permanently delete: remove from state first with: terraform state rm module.flip_api_secret
@@ -157,7 +195,6 @@ module "flip_api_secret" {
 
   secret_string = jsonencode({
     aes_key                   = var.AES_KEY_BASE64
-    trust_api_key_hashes      = var.TRUST_API_KEY_HASHES
     internal_service_key_hash = var.INTERNAL_SERVICE_KEY_HASH
     internal_service_key      = var.INTERNAL_SERVICE_KEY
   })
@@ -211,9 +248,20 @@ resource "aws_iam_role_policy" "ec2_secret" {
 }
 
 # Scoped S3 access — limited to FLIP application buckets only.
-# - flip_bucket: model files / FL results / FL app destination (flip-api).
+# - flip-model-files-uploads / flip-fl-results / flip-app-bundles: the three
+#   buckets that replaced the previous single flip_bucket (model file uploads,
+#   FL results,
+#   FL app bundles). flip-api on EC2 uses the instance role for boto3 creds
+#   (see compose.production.yml — AWS_PROFILE is commented out in prod with
+#   the explicit note "credentials are retrieved from the instance role"), so
+#   this grant must cover every application bucket flip-api touches.
 # - aicentre_bucket: FL participant kits, fetched via `aws s3 cp` during
 #   Ansible provisioning on the Central Hub host.
+#
+# Once flip-api is migrated to an ECS Fargate task (PR 2), its IAM identity
+# becomes the task role in iam_ecs.tf and these three new-bucket grants can
+# be dropped from the EC2 role, leaving only the aicentre_bucket grant
+# (consumed by Ansible) here.
 resource "aws_iam_role_policy" "s3_access" {
   name = "flip-s3-scoped"
   role = module.ec2_role.iam_role_name
@@ -222,8 +270,10 @@ resource "aws_iam_role_policy" "s3_access" {
     Version = "2012-10-17"
     Statement = [{
       Effect = "Allow"
+      # See iam_ecs.tf for the rationale on dropping `s3:CopyObject` — it's
+      # not a real IAM action and AWS server-side copy already rolls up under
+      # the GetObject (source) + PutObject (destination) grants below.
       Action = [
-        "s3:CopyObject",
         "s3:DeleteObject",
         "s3:GetBucketLocation",
         "s3:GetObject",
@@ -232,8 +282,12 @@ resource "aws_iam_role_policy" "s3_access" {
         "s3:PutObject",
       ]
       Resource = [
-        aws_s3_bucket.flip_bucket.arn,
-        "${aws_s3_bucket.flip_bucket.arn}/*",
+        module.flip_model_files_uploads_bucket.bucket_arn,
+        "${module.flip_model_files_uploads_bucket.bucket_arn}/*",
+        module.flip_fl_results_bucket.bucket_arn,
+        "${module.flip_fl_results_bucket.bucket_arn}/*",
+        module.flip_app_bundles_bucket.bucket_arn,
+        "${module.flip_app_bundles_bucket.bucket_arn}/*",
         aws_s3_bucket.aicentre_bucket.arn,
         "${aws_s3_bucket.aicentre_bucket.arn}/*",
       ]
@@ -399,52 +453,44 @@ resource "aws_instance" "ec2_instance" {
   }
 }
 
-# AWS-managed prefix list containing CloudFront origin-facing egress IPs.
-# Used to restrict ALB ingress to CloudFront only, so the ALB cannot be
-# reached directly from the internet — a WAF attached to the distribution
-# cannot be bypassed if CloudFront is the only path to the ALB.
-data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
-  name = "com.amazonaws.global.cloudfront.origin-facing"
-}
-
 # Application Load Balancer
 #
-# Only HTTPS (443) ingress is configured. The security group denies everything
-# else from the internet by default:
-# - Port 80 (ALB_HTTP_PORT): CloudFront already redirects viewer HTTP to HTTPS
-#   at the edge (default_cache_behavior.viewer_protocol_policy=redirect-to-https)
-#   and never dials the origin over HTTP (origin_protocol_policy=https-only).
-#   The http-redirect listener still exists as a belt-and-braces fallback but
-#   is intentionally unreachable externally.
-# - API_PORT / FL_API_PORT: no external consumer. flip-api is reached via
-#   CloudFront → ALB /api/* rule on HTTPS:443; the FL API is docker-network-only
-#   (see check_status.py — health checks `docker exec` into the container, and
-#   NET_ENDPOINTS uses the internal docker hostname).
+# Internal (no public IP). CloudFront reaches it via aws_cloudfront_vpc_origin
+# (see cloudfront.tf) over an AWS-managed ENI inside this VPC — the ALB has
+# no internet exposure and the prefix-list-based ingress rule of the old
+# public-ALB design is no longer needed.
 #
-# The 443 rule references the AWS-managed `com.amazonaws.global.cloudfront.origin-facing`
-# prefix list. AWS counts an SG rule referencing a managed prefix list against
-# the per-SG rule quota using the list's `MaxEntries`, not its current size —
-# so a single reference consumes the majority of the default 60-rule quota.
-# That's why we can only afford one prefix-list-backed ingress rule here.
+# Ingress on 443 is added separately as `aws_security_group_rule.alb_ingress_https_from_cloudfront`
+# in cloudfront.tf, with source = the CloudFront-VPCOrigins-Service-SG that AWS
+# creates after the VPC origin is provisioned (AWS docs Option 2 in
+# https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-vpc-origins.html).
+# We learned the hard way that a vpc_cidr-based rule does NOT permit VPC-origin
+# traffic — AWS scopes VPC-origin SG checks to the service-managed SG (or the
+# CloudFront managed prefix list), not the ENI's source IP. The rule lives
+# outside this module so the chain (ALB SG → ALB → VPC origin → service-SG
+# data source → SG rule) doesn't form a cycle.
+# The HTTP listener still exists as a redirect-to-HTTPS belt-and-braces but
+# the SG denies inbound 80 by default.
 module "alb_security_group" {
-  source      = "./modules/secgroup"
-  name        = "alb-security-group"
-  vpc_id      = module.flip_vpc.vpc_id
-  description = "Security group for FLIP ALB"
-  ingress_rules = [
-    {
-      port            = var.ALB_HTTPS_PORT
-      description     = "HTTPS traffic from CloudFront"
-      prefix_list_ids = [data.aws_ec2_managed_prefix_list.cloudfront_origin_facing.id]
-    }
-  ]
+  source        = "./modules/secgroup"
+  name          = "alb-security-group"
+  vpc_id        = module.flip_vpc.vpc_id
+  description   = "Security group for FLIP ALB"
+  ingress_rules = []
+}
+
+resource "aws_ec2_tag" "alb_security_group_flip_sg" {
+  resource_id = module.alb_security_group.security_group.id
+  key         = "FlipSG"
+  value       = "true"
 }
 
 module "alb" {
   source                     = "terraform-aws-modules/alb/aws"
   name                       = "flip-alb"
   vpc_id                     = module.flip_vpc.vpc_id
-  subnets                    = module.flip_vpc.public_subnets
+  internal                   = true
+  subnets                    = module.flip_vpc.private_subnets
   security_groups            = [module.alb_security_group.security_group.id]
   enable_deletion_protection = false
 
@@ -473,44 +519,14 @@ module "alb" {
         protocol    = "HTTPS"
         status_code = "HTTP_301"
       }
-    },
-    "api-listener" = {
-      port     = var.API_PORT
-      protocol = "HTTP"
-      forward = {
-        target_group_key = "ec2-instance-api"
-      }
-    },
-    "fl-api-listener" = {
-      port     = var.FL_API_PORT
-      protocol = "HTTP"
-      forward = {
-        target_group_key = "ec2-instance-fl-api"
-      }
     }
   }
 
-  # UI is served from S3 + CloudFront; no ec2-instance-ui target group.
-  target_groups = {
-    ec2-instance-api = {
-      port      = var.API_PORT
-      protocol  = "HTTP"
-      target_id = aws_instance.ec2_instance.id
-
-      health_check = {
-        enabled  = true
-        protocol = "HTTP"
-        path     = "/api/health"
-        port     = "traffic-port"
-        matcher  = "200"
-      }
-    },
-    ec2-instance-fl-api = {
-      port      = var.FL_API_PORT
-      protocol  = "HTTP"
-      target_id = aws_instance.ec2_instance.id
-    }
-  }
+  # No EC2-instance target groups — the EC2 host no longer runs application
+  # containers (they run on ECS Fargate). Legacy `api-listener` and
+  # `fl-api-listener` listeners were removed in PR #452 review; the ALB
+  # only routes the https-listener /api/* path to the ECS target group.
+  target_groups = {}
 }
 
 # Network Load Balancer for FL server TCP/TLS pass-through
@@ -522,6 +538,7 @@ module "fl_server_nlb" {
   subnets                    = module.flip_vpc.public_subnets
   enable_deletion_protection = false
   create_security_group      = true
+  security_group_tags        = { FlipSG = "true" }
 
   # NLB only accepts trusted client sources - allow-list only the trusted client egress IPs
   # TODO explore 'internal' NLB plus private connectivity instead of an internet-facing NLB
@@ -545,33 +562,25 @@ module "fl_server_nlb" {
     }
   }
 
+  # Listener forwards directly to the ECS Fargate TG defined as a standalone
+  # aws_lb_target_group below. We bypass the module's target_groups map
+  # because that map only supports target_type=instance bound to an EC2 id;
+  # Fargate awsvpc requires target_type=ip with no pre-registered targets.
   listeners = {
     "fl-server-tcp-listener" = {
       port     = var.FL_SERVER_PORT
       protocol = "TCP"
       forward = {
-        target_group_key = "ec2-instance-fl-server-tcp"
+        target_group_arn = aws_lb_target_group.ecs_fl_server_tcp.arn
       }
     }
   }
 
-  target_groups = {
-    ec2-instance-fl-server-tcp = {
-      port        = var.FL_SERVER_PORT
-      protocol    = "TCP"
-      target_type = "instance"
-      target_id   = aws_instance.ec2_instance.id
-
-      health_check = {
-        enabled             = true
-        protocol            = "TCP"
-        port                = "traffic-port"
-        healthy_threshold   = 3
-        unhealthy_threshold = 3
-        interval            = 30
-      }
-    }
-  }
+  # No module-managed target groups - the ECS TG is the standalone resource
+  # below. Leaving the legacy `ec2-instance-fl-server-tcp` definition would
+  # keep the EC2 instance attached as an unhealthy target and contradict the
+  # post-cutover state.
+  target_groups = {}
 }
 
 data "aws_route53_zone" "subdomain" {
@@ -593,6 +602,32 @@ resource "aws_route53_record" "alb" {
   }
 }
 
+# Target group for the fl-server-net-1 ECS Fargate service. Registered by
+# the ECS service via the load_balancer block in ecs_services.tf - we never
+# attach instance/IP targets here. target_type=ip is required for awsvpc
+# Fargate tasks. NLB protocol must be TCP - HTTP/2 gRPC framing is opaque
+# to the NLB and forwarded as-is.
+resource "aws_lb_target_group" "ecs_fl_server_tcp" {
+  name        = "ecs-fl-server-tcp"
+  port        = var.FL_SERVER_PORT
+  protocol    = "TCP"
+  target_type = "ip"
+  vpc_id      = module.flip_vpc.vpc_id
+
+  health_check {
+    enabled             = true
+    protocol            = "TCP"
+    port                = "traffic-port"
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+    interval            = 30
+  }
+
+  # Match flip-api TG (30s) - long deregistration on rolling deploys would
+  # block training-round handshakes against a draining task.
+  deregistration_delay = 30
+}
+
 resource "aws_route53_record" "fl_server_nlb" {
   zone_id = data.aws_route53_zone.subdomain.zone_id
   name    = var.flip_nlb_subdomain
@@ -605,14 +640,43 @@ resource "aws_route53_record" "fl_server_nlb" {
   }
 }
 
-# Listener rule for path-based routing to the API namespace
+# Target group for the flip-api ECS Fargate service. Registered by the ECS
+# service itself via the load_balancer block in ecs_services.tf - we never
+# attach instance/IP targets here from terraform. target_type=ip is required
+# for awsvpc Fargate tasks (each task gets an ENI; the IP is what ECS
+# registers, not an instance id).
+resource "aws_lb_target_group" "ecs_flip_api" {
+  name        = "ecs-flip-api"
+  port        = local.api_container_port
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = module.flip_vpc.vpc_id
+
+  health_check {
+    enabled  = true
+    protocol = "HTTP"
+    path     = "/api/health"
+    port     = "traffic-port"
+    matcher  = "200"
+  }
+
+  # ECS rolling deploys briefly need both old + new tasks present; a long
+  # deregistration delay would stretch every cutover. 30s is enough for
+  # in-flight requests to drain without holding rollouts hostage.
+  deregistration_delay = 30
+}
+
+# Listener rule for path-based routing to the API namespace. Forwards /api/*
+# to the ECS Fargate target group above. The legacy `ec2-instance-api`
+# target group on the EC2 host is kept in module.alb for state continuity
+# but no longer wired to a listener rule.
 resource "aws_lb_listener_rule" "api_routing" {
   listener_arn = module.alb.listeners["https-listener"].arn
   priority     = 98
 
   action {
     type             = "forward"
-    target_group_arn = module.alb.target_groups["ec2-instance-api"].arn
+    target_group_arn = aws_lb_target_group.ecs_flip_api.arn
   }
 
   condition {
@@ -624,21 +688,45 @@ resource "aws_lb_listener_rule" "api_routing" {
 
 ############################
 # On-Premises Trust (optional)
-# Activated by setting local_trust_public_ip in the env file or via
-# TF_VAR_local_trust_public_ip when running `make add-local-trust`.
+# Driven by var.local_trust_public_ips — set via LOCAL_TRUST_PUBLIC_IPS in the
+# env file. One ingress rule is created per IP; `make allow-local-trust-nlb`
+# applies them. Because the IPs are real config (not a transient -target var),
+# a normal `terraform apply` reconciles these rules without drift.
 ############################
 
-# Allow the local (on-prem) trust FL client to reach the FL server via the NLB.
+# Allow on-prem trust FL clients to reach the FL server via the NLB.
 # Without this rule the NLB security group drops the connection before it reaches the EC2.
 resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
-  count             = var.local_trust_public_ip != "" ? 1 : 0
+  for_each          = toset(var.local_trust_public_ips)
   type              = "ingress"
   from_port         = var.FL_SERVER_PORT
   to_port           = var.FL_SERVER_PORT
   protocol          = "tcp"
-  cidr_blocks       = ["${var.local_trust_public_ip}/32"]
+  cidr_blocks       = ["${each.value}/32"]
   security_group_id = module.fl_server_nlb.security_group_id
-  description       = "FL Server/Admin NLB from on-prem Trust"
+  description       = "FL Server/Admin NLB from on-prem Trust (${each.value})"
+}
+
+############################
+# K8s Trust (optional)
+# Driven by var.k8s_trust_public_ips — set via K8S_TRUST_PUBLIC_IPS in the env
+# file. One ingress rule per IP, keyed by the IP itself (for_each), so the set
+# is reconciled by a normal `terraform apply` and re-adding an existing IP is a
+# no-op — fixing the InvalidPermission.Duplicate from the old -target/count path
+# (#596). The legacy scalar K8S_TRUST_IP is merged in for back-compat.
+############################
+
+# Allow K8s-deployed trust FL clients to reach the FL server via the NLB.
+# Same pattern as the on-prem trust rule above.
+resource "aws_security_group_rule" "k8s_trust_fl_server_nlb" {
+  for_each          = toset(concat(var.k8s_trust_public_ips, var.K8S_TRUST_IP != "" ? [var.K8S_TRUST_IP] : []))
+  type              = "ingress"
+  from_port         = var.FL_SERVER_PORT
+  to_port           = var.FL_SERVER_PORT
+  protocol          = "tcp"
+  cidr_blocks       = ["${each.value}/32"]
+  security_group_id = module.fl_server_nlb.security_group_id
+  description       = "FL Server/Admin NLB from K8s Trust (${each.value})"
 }
 
 # Outputs
@@ -684,6 +772,11 @@ output "DbEndpoint" {
 output "DbSecretArn" {
   description = "RDS Database Secret ARN"
   value       = module.flip_db.db_instance_master_user_secret_arn
+}
+
+output "DbProxyEndpoint" {
+  description = "RDS Proxy endpoint (flip-api connects here with IAM auth)"
+  value       = aws_db_proxy.flip_db.endpoint
 }
 
 output "CognitoUserPoolId" {

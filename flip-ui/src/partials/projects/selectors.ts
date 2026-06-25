@@ -25,7 +25,6 @@ export const CreateProjectModal = {
 
 export const ProjectStatusComponent = {
     container: "[data-test=project-status-container]",
-    filterInput: "[data-test=filter-project-status]",
     noProjectStatusMessage: "[data-test=no-project-status-message]",
     overviewProjectCreation: "[data-test=overview-project-creation]",
     overviewImageRetrieval: "[data-test=overview-image-retrieval]"

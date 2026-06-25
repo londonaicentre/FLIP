@@ -15,31 +15,29 @@ FROM python:3.12-slim-bookworm AS development
 ARG UID
 ARG GID
 ARG UNAME
-ARG DEBUG_PORT
 RUN groupadd -g ${GID} ${UNAME}
 # Create a user with the same UID and GID as the host user with home directory at /home/${UNAME}
 RUN useradd -u ${UID} -g ${GID} -m -d /home/${UNAME} -s /bin/bash ${UNAME}
 
 # Add uv
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.11.16 /uv /uvx /bin/
 
 WORKDIR /app
 
-# Sync the project into a new environment, using the frozen lockfile
+# Sync the project into a new environment, using the lockfile
 COPY pyproject.toml uv.lock ./
 
 RUN chown -R ${UNAME}:${UNAME} /app
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 USER ${UNAME}
-RUN uv sync --frozen
+RUN uv sync --locked
 
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Expose the application port
 EXPOSE 8000
-EXPOSE ${DEBUG_PORT}
 
 # Run FastAPI application using uvicorn via uv
 CMD ["./entrypoint.sh"]

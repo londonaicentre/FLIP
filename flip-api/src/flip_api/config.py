@@ -15,12 +15,20 @@ from typing import Literal
 from pydantic import EmailStr, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from flip_api.domain.schemas.types import FLBackend
+
 
 class Settings(BaseSettings):
     """Common settings shared across all environments (development and production)."""
 
     # Environment flag
     ENV: Literal["development", "production"] = "development"
+
+    # Application log level. Defaults to INFO so any unknown environment
+    # (prod, stag, any new deploy) emits at INFO and avoids leaking the
+    # contents of debug-only diagnostics. Dev compose may override to DEBUG
+    # for local development.
+    LOG_LEVEL: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     model_config = SettingsConfigDict(
         env_file=f"../.env.{ENV}",
@@ -49,7 +57,11 @@ class Settings(BaseSettings):
     UPLOADED_FEDERATED_DATA_BUCKET: str
     FL_APP_BASE_BUCKET: str
     FL_APP_DESTINATION_BUCKET: str
-    PRE_SIGNED_URL: str | None = None
+
+    # Hard cap on model-file uploads. Bound on the presigned POST policy so
+    # S3 rejects oversized payloads at the edge — the hub never sees them.
+    MAX_MODEL_FILE_BYTES: int = 100 * 1024 * 1024
+    PRE_SIGNED_URL_EXPIRATION_SECONDS: int = 3600
 
     # Reimport imaging project studies
     PROJECT_REIMPORT_RATE: int = 60  # How often to reimport studies for a given project (in minutes)
@@ -71,10 +83,19 @@ class Settings(BaseSettings):
 
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
-    TRUST_NAMES: list[str]
+    # FL kit slot pool names — pre-provisioned in flip-fl-base (workspace/net-N/services/<slot>).
+    # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
+    # free slot regardless of the trust's friendly name. Defaults to [] so existing dev
+    # envs aren't required to set it; in that case the pool is empty until the admin
+    # provisions kits and adds them here.
+    FL_KIT_SLOT_NAMES: list[str] = []
 
-    # FL settings
-    FL_BACKEND: Literal["nvflare", "flower"] = "nvflare"
+    # FL backend written onto the FLNets.fl_backend column at seed time (seed_fl_nets). This is
+    # canonical: flip-api reads it only at seeding, and the seeded value is never reconciled at
+    # runtime. To switch frameworks, `make restart-fl FL_BACKEND=...` recreates flip-api so this
+    # seeding re-runs and overwrites the backend on every net. Also used at the deploy layer
+    # (compose/Makefile) to pick which fl-* images to run. See fl_scheduler_service.resolve_backend.
+    FL_BACKEND: FLBackend = FLBackend.NVFLARE
 
     # MFA enforcement gate. Defaults to True so every unknown environment
     # (prod, stag, any new deploy) requires TOTP enrolment. Dev compose
@@ -102,6 +123,46 @@ class Settings(BaseSettings):
             return v
         return v.lower() in ("true", "1")    # type: ignore[union-attr]
 
+    @field_validator("LOG_LEVEL", mode="before")
+    @classmethod
+    def coerce_log_level(cls, v: object) -> object:
+        """Treat empty-string or None LOG_LEVEL as the default INFO; uppercase string input.
+
+        Non-string, non-empty input is returned unchanged so the downstream
+        Literal validator rejects it loudly, instead of ``.upper()`` raising
+        ``AttributeError`` mid-validation on e.g. ``Settings(LOG_LEVEL=10)``.
+        """
+        if v is None or v == "":
+            return "INFO"
+        if isinstance(v, str):
+            return v.upper()
+        return v
+
+    @field_validator("MAX_MODEL_FILE_BYTES", mode="before")
+    @classmethod
+    def coerce_empty_max_model_file_bytes(cls, v: object) -> object:
+        """Treat empty-string MAX_MODEL_FILE_BYTES as the default 100 MiB.
+
+        GitHub Actions environments inject empty-string env vars for every
+        var that isn't explicitly set in the environment scope; Pydantic
+        treats that as a real override and rejects it against ``int``.
+        Same shape as ``coerce_empty_env`` / ``coerce_empty_mfa``.
+        """
+        if v is None or v == "":
+            return 100 * 1024 * 1024
+        return v
+
+    @field_validator("PRE_SIGNED_URL_EXPIRATION_SECONDS", mode="before")
+    @classmethod
+    def coerce_empty_pre_signed_url_expiration(cls, v: object) -> object:
+        """Treat empty-string PRE_SIGNED_URL_EXPIRATION_SECONDS as the default 3600s.
+
+        Same rationale as ``coerce_empty_max_model_file_bytes``.
+        """
+        if v is None or v == "":
+            return 3600
+        return v
+
     # Trust task queue settings
     HEARTBEAT_TIMEOUT_SECONDS: int = 30  # How long since last heartbeat before a trust is considered offline
     TASK_STALE_TIMEOUT_MINUTES: int = 30  # Tasks older than this in IN_PROGRESS are considered stale
@@ -122,15 +183,17 @@ class DevSettings(Settings):
 
     AES_KEY_BASE64: str  # in dev, get AES key from env variable
 
-    TRUST_API_KEY_HASHES: dict[str, str]  # in dev, get API key hashes for each trust from env variable
     INTERNAL_SERVICE_KEY_HASH: str  # in dev, get internal service auth key hash from env variable
 
 
 class ProdSettings(Settings):
-    """Settings specific to production environment."""
+    """Settings specific to production environment.
+
+    Production authenticates to Postgres via RDS Proxy with per-connection IAM
+    tokens (see db/database.py), so there is no static DB password setting here.
+    """
 
     ENV: Literal["production"] = "production"
-    POSTGRES_SECRET_ARN: str  # in prod, get DB password from secrets manager, using this ARN
 
 
 # Eager load once (for app use)

@@ -11,6 +11,8 @@
 #
 
 import uuid
+from dataclasses import dataclass
+from uuid import UUID
 
 import factory
 
@@ -23,9 +25,28 @@ from flip_api.db.models.main_models import (
     Trust,
     TrustTask,
 )
-from flip_api.db.models.user_models import Role, User, UserRole
+from flip_api.db.models.user_models import Role, UserRole
 from flip_api.domain.interfaces.user import IRoles
 from flip_api.domain.schemas.status import TaskStatus, TaskType
+
+
+@dataclass
+class _Identity:
+    """Stand-in for a Cognito user identity in tests.
+
+    Cognito is the source of truth for user identity — there is no local
+    users table — so the only thing test fixtures need is a
+    Cognito-sub-shaped ``id`` (and optionally an ``email``) to thread
+    through ``UserRole.user_id``, ``Projects.owner_id``, etc. This
+    lightweight type lets ``UserFactory`` keep producing objects with the
+    ``.id`` / ``.email`` / ``.is_disabled`` attributes test code already
+    expects, mirroring the real :class:`~flip_api.domain.schemas.users.CognitoUser`
+    shape closely enough for UID-threading without pulling Pydantic in.
+    """
+
+    id: UUID
+    email: str
+    is_disabled: bool = False
 
 
 class ProjectFactory(factory.Factory):
@@ -60,16 +81,21 @@ class ModelFactory(factory.Factory):
 
 
 class UserFactory(factory.Factory):
-    """Factory for creating User instances."""
+    """Factory for a Cognito-shaped identity (id + email + is_disabled).
+
+    No DB row is produced — the result is a plain dataclass; tests use
+    ``user_factory().id`` as a stand-in for a Cognito ``sub`` UUID. The
+    factory survives the removal of the local users table so existing
+    tests that read ``.id`` / ``.email`` keep working without touching
+    every callsite.
+    """
 
     class Meta:
-        model = User
+        model = _Identity
 
     id = factory.LazyFunction(uuid.uuid4)
     email = factory.Faker("email")
-    enabled = True
-    created_at = factory.Faker("date_time")
-    updated_at = factory.Faker("date_time")
+    is_disabled = False
 
 
 class RoleFactory(factory.Factory):

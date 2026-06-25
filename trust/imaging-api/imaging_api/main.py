@@ -15,6 +15,7 @@ from log_config import LoggingMiddleware
 
 # Ensure structured logging is configured on import
 import imaging_api.utils.logger  # noqa: F401
+from imaging_api.config import get_settings
 from imaging_api.routers.download import router as download_router
 from imaging_api.routers.health import router as health_router
 from imaging_api.routers.imaging import router as imaging_router
@@ -23,13 +24,19 @@ from imaging_api.routers.retrieval import router as retrieval_router
 from imaging_api.routers.upload import router as upload_router
 from imaging_api.routers.users import router as users_router
 
+# Disable Swagger / OpenAPI / ReDoc in production. Imaging-api proxies privileged
+# XNAT operations; leaking its full route + schema map to anyone who reaches the
+# port (e.g. via a misconfigured SSM port-forward) is a free recon win.
+_docs_enabled = get_settings().ENV != "production"
+
 app = FastAPI(
     title="Imaging API",
     description="An API to interact with XNAT, including creating projects, users, querying from PACS, "
     "downloading and uploading files",
     version="0.1.0",
-    docs_url="/docs",  # Swagger UI
-    redoc_url="/redoc",  # ReDoc UI
+    docs_url="/docs" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
 )
 
 app.add_middleware(LoggingMiddleware)

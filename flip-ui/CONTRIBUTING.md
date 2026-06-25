@@ -64,6 +64,14 @@ These are the same names the backend services read — no `VITE_AWS_*` duplicati
 Set `VITE_LOCAL=true` to enable local mock mode (bypasses Cognito authentication, useful for UI development without
 a running backend).
 
+> **`VITE_LOCAL=true` must never appear in CI or any production-style build.** Vite inlines the flag at build time,
+> so a bundle built with it short-circuits the Cognito session check in
+> [`src/utils/auth.ts`](src/utils/auth.ts) and enables the MirageJS mock in [`src/main.ts`](src/main.ts) — every
+> guarded route becomes reachable without authentication. `npm run build` and `npm run build:deploy` will refuse
+> to start when `VITE_LOCAL=true` is set in the environment (see
+> [`scripts/check-build-flags.mjs`](scripts/check-build-flags.mjs)). The Cypress / unit-test CI workflows already
+> set `VITE_LOCAL=false`; do not change that. Use the flag only with `npm run dev`.
+
 ### Build for production
 
 ```bash

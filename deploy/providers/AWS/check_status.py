@@ -24,13 +24,16 @@ PREREQUISITES:
 
 WHAT IT CHECKS:
   ✓ AWS Resources (EC2 instances, RDS, S3, Secrets Manager)
-  ✓ Network Connectivity (SSH via SSM, HTTP) for both Central Hub & Trust EC2
-  ✓ Application Endpoints (UI, API, FL API on Central Hub)
-  ✓ Trust Endpoints (Trust API, Imaging API, Data Access API on Trust EC2)
-  ✓ Docker Containers (Central Hub & Trust EC2)
-  ✓ Trust Services (FL clients, OMOP database, Trust APIs)
+  ✓ Network Connectivity (SSH via SSM, HTTP) for Central Hub bastion & Trust EC2
+  ✓ Application Endpoints (UI + flip-api via ALB/CloudFront)
+  ✓ ECS services (flip-api, fl-api-net-N, fl-server-net-N) — desired vs running,
+    deployment rollout state, ALB/NLB target group health
+  ✓ Trust Endpoints (Trust API, Imaging API, Data Access API on Trust EC2 — /health)
+  ✓ Trust Services (FL clients, OMOP database, Trust APIs) via Docker on Trust EC2
   ✓ System Resources (disk, memory) on both EC2 instances
-  ✓ CloudWatch Logs for both Central Hub & Trust EC2
+  ✓ CloudWatch Logs (ECS log groups for flip-api / fl-server / fl-api,
+    EC2 log groups for the SSM bastion + Trust EC2)
+  ✓ Recent error scans against CloudWatch (no docker exec required)
 
 EXIT CODES:
   0 - All checks passed (warnings are acceptable)
@@ -51,7 +54,11 @@ from pathlib import Path
 
 import click
 
-flip_bucket_name = os.getenv("FLIP_BUCKET_NAME")
+flip_application_bucket_names = [
+    ("model file uploads", os.getenv("FLIP_MODEL_FILES_UPLOADS_BUCKET_NAME")),
+    ("FL results", os.getenv("FLIP_FL_RESULTS_BUCKET_NAME")),
+    ("app bundles", os.getenv("FLIP_APP_BUNDLES_BUCKET_NAME")),
+]
 
 
 # Color codes for terminal output
@@ -491,47 +498,20 @@ def check_vpc_endpoints() -> None:
 
 
 def check_trust_pipeline() -> None:
-    """Check Trust task pipeline health: recent FAILED tasks.
+    """Trust task pipeline health used to query the DB via ``docker exec flip-api``.
 
-    Detects: CREATE_IMAGING or REIMPORT_STUDIES stuck in FAILED state.
+    flip-api now runs on ECS Fargate with ``enableExecuteCommand=false`` so the
+    in-container DB query is no longer reachable from the smoke test. Checking
+    the pipeline state still has value, but it requires a bastion container
+    that holds DB credentials and the right SG egress to RDS — that is not yet
+    in place. Surface the gap as INFO so operators know the check exists in
+    intent but not in implementation, and skip cleanly.
     """
-    print_status("INFO", "Checking Trust_1 task pipeline health...")
-
-    py = """\
-import asyncpg, os, json, boto3, asyncio
-async def m():
-    c = boto3.client("secretsmanager", region_name="eu-west-2")
-    s = c.get_secret_value(SecretId=os.environ["POSTGRES_SECRET_ARN"])
-    d = json.loads(s["SecretString"])
-    p = d.get("password", "")
-    conn = await asyncpg.connect(
-        host=os.environ["DB_HOST"], port=5432,
-        user=os.environ["POSTGRES_USER"], database=os.environ["POSTGRES_DB"], password=p,
+    print_status(
+        "INFO",
+        "Trust task pipeline DB check skipped — requires ECS Exec or a bastion task on the ECS network "
+        "(both unavailable). Run the ad-hoc query in TROUBLESHOOTING.md §5 from a developer workstation.",
     )
-    rows = await conn.fetch(
-        "SELECT task_type, status FROM trust_task ORDER BY created_at DESC LIMIT 5"
-    )
-    for row in rows:
-        print(row[0], row[1])
-    await conn.close()
-asyncio.run(m())
-"""
-    success, output = run_remote_python("flip", "flip-api", py, timeout=25)
-
-    if not success or "Traceback" in output:
-        print_status("INFO", "Could not query Trust_1 task pipeline (SSH or DB unavailable)")
-        return
-
-    critical = {"CREATE_IMAGING", "REIMPORT_STUDIES"}
-    failed_count = sum(
-        1
-        for line in output.split("\n")
-        if line and line.split(" ", 1)[-1] == "FAILED" and line.split(" ", 1)[0] in critical
-    )
-    if failed_count:
-        print_status("FAIL", f"{failed_count} critical Trust_1 task(s) in FAILED state")
-    else:
-        print_status("PASS", "No critical Trust_1 tasks in FAILED state")
 
 
 def check_xnat_health() -> None:
@@ -577,172 +557,358 @@ print(r.status_code, r.headers.get("content-type", "").split(";")[0])
 
 
 def check_reimport_status() -> None:
-    """Warn if any approved projects have zero reimports after >10 minutes."""
-    print_status("INFO", "Checking for projects stuck without reimports...")
-
-    py = """\
-import asyncpg, os, json, boto3, asyncio
-async def m():
-    c = boto3.client("secretsmanager", region_name="eu-west-2")
-    s = c.get_secret_value(SecretId=os.environ["POSTGRES_SECRET_ARN"])
-    d = json.loads(s["SecretString"])
-    p = d.get("password", "")
-    conn = await asyncpg.connect(
-        host=os.environ["DB_HOST"], port=5432,
-        user=os.environ["POSTGRES_USER"], database=os.environ["POSTGRES_DB"], password=p,
-    )
-    rows = await conn.fetch(
-        "SELECT p.id, p.name, x.reimport_count, x.retrieve_image_status, x.last_reimport "
-        "FROM xnat_project_status x "
-        "JOIN projects p ON x.project_id = p.id "
-        "WHERE x.reimport_count = 0 "
-        "AND x.last_reimport < NOW() - interval '10 minutes' "
-        "AND p.status = 'APPROVED'"
-    )
-    for row in rows:
-        print(str(row[0])[:8], str(row[1])[:30], row[2], row[3])
-    await conn.close()
-asyncio.run(m())
-"""
-    success, output = run_remote_python("flip", "flip-api", py, timeout=25)
-
-    if not success or "Traceback" in output:
-        print_status("INFO", "Could not check reimport status (advanced check)")
-        return
-
-    stuck = [l for l in output.split("\n") if l.strip()]
-    if stuck:
-        for line in stuck:
-            print_status("WARN", f"Project {line} — zero reimports, may be stuck")
-    else:
-        print_status("PASS", "No projects stuck with zero reimports")
-
-
-def check_fl_server_clients() -> None:
-    """Verify the FL server has connected clients (Trust_1)."""
-    print_status("INFO", "Checking FL server clients...")
-    success, output = run_ssh_command(
-        "",
-        "flip",
-        "docker logs fl-server-net-1 2>&1 | grep -c 'Re-activate the client' | tail -1",
-        timeout=10,
-    )
-    if not success:
-        print_status("INFO", "Could not check FL server logs (SSH unavailable)")
-        return
-
-    count = int(output.strip() or "0")
-    if count > 0:
-        print_status("PASS", f"FL server has re-activated clients at least once (found {count})")
-    else:
-        success2, output2 = run_ssh_command(
-            "",
-            "flip",
-            "docker logs fl-server-net-1 2>&1 | grep 'Client: New' | tail -3",
-            timeout=10,
-        )
-        if success2 and output2.strip():
-            print_status("PASS", "FL server has connected clients")
-        else:
-            print_status("WARN", "FL server has no connected clients — check NLB and trust FL client")
-
-
-def check_container_errors() -> None:
-    """Scan central hub container logs for recent errors."""
-    print_status("INFO", "Scanning central hub container logs for recent errors...")
-    success, output = run_ssh_command(
-        "",
-        "flip",
-        "docker logs flip-api --since 5m 2>&1 | grep -cE ' ERROR |Traceback|Exception|Name or service not known' || echo 0",
-        timeout=15,
+    """Stuck-reimport check used the same ``docker exec flip-api`` path that
+    the trust pipeline check did. Same blocker post-ECS — surface the gap and
+    skip rather than silently passing.
+    """
+    print_status(
+        "INFO",
+        "Reimport-stall check skipped — same ECS Exec dependency as the trust pipeline check. "
+        "Verify manually via the SQL in TROUBLESHOOTING.md §5 if you suspect a stall.",
     )
 
-    if not success:
-        print_status("INFO", "Could not scan container logs (SSH unavailable)")
-        return
 
+def _filter_log_events(log_group: str, pattern: str, minutes: int = 60) -> tuple[bool, list[str]]:
+    """Return matching CloudWatch log messages from the last N minutes.
+
+    Args:
+        log_group: CloudWatch log group name (e.g. ``/ecs/flip-api``).
+        pattern: CloudWatch Logs filter pattern (terms separated by spaces are
+            ANDed; quoted phrases match literally; prefix with ``?`` for OR).
+        minutes: Lookback window in minutes.
+
+    Returns:
+        Tuple of (success, list of message strings). On API/parse failure,
+        success is False and the list is empty.
+    """
+    import time
+
+    start_time_ms = int((time.time() - minutes * 60) * 1000)
+    success, output = run_aws_command([
+        "logs",
+        "filter-log-events",
+        "--log-group-name",
+        log_group,
+        "--start-time",
+        str(start_time_ms),
+        "--filter-pattern",
+        pattern,
+        "--query",
+        "events[].message",
+        "--output",
+        "json",
+    ])
+    if not success or not output:
+        return False, []
     try:
-        count = int(output.strip().split("\n")[-1])
-    except ValueError:
-        count = 0
-    if count == 0:
-        print_status("PASS", "No errors in flip-api logs (last 5 min)")
-    elif count <= 5:
-        print_status("WARN", f"{count} error(s) in flip-api logs (last 5 min) — review if recurring")
-    else:
-        print_status("FAIL", f"{count} errors in flip-api logs (last 5 min) — investigate immediately")
+        return True, json.loads(output)
+    except json.JSONDecodeError:
+        return False, []
+
+
+def check_fl_server_clients(net_numbers: list[int]) -> None:
+    """Verify the ECS fl-server log shows trust FL clients connected.
+
+    Reads ``/ecs/fl-server-net-N`` CloudWatch logs (last 24h) for the
+    ``Re-activate the client`` line NVFLARE emits when a registered client
+    reconnects. Falls back to ``Client: New`` for first-time registrations.
+    """
+    print_status("INFO", "Checking FL server clients (CloudWatch /ecs/fl-server-net-N)...")
+    for net in net_numbers:
+        log_group = f"/ecs/fl-server-net-{net}"
+        ok, events = _filter_log_events(log_group, '"Re-activate the client"', minutes=24 * 60)
+        if ok and events:
+            print_status("PASS", f"fl-server-net-{net} has re-activated clients ({len(events)} events in 24h)")
+            continue
+        ok2, events2 = _filter_log_events(log_group, '"Client: New"', minutes=24 * 60)
+        if ok2 and events2:
+            print_status("PASS", f"fl-server-net-{net} has new client registrations ({len(events2)} events in 24h)")
+        elif ok or ok2:
+            print_status(
+                "WARN",
+                f"fl-server-net-{net} has no connected clients in last 24h — "
+                "check NLB target group health and trust fl-client logs",
+            )
+        else:
+            print_status("INFO", f"Could not query CloudWatch log group {log_group}")
+
+
+def check_container_errors(net_numbers: list[int]) -> None:
+    """Scan ECS log groups for recent errors.
+
+    Pulls from ``/ecs/flip-api``, ``/ecs/fl-api-net-N``, and
+    ``/ecs/fl-server-net-N`` over the last 5 minutes and counts events
+    matching ERROR / Traceback / Exception / DNS resolution failures.
+    """
+    print_status("INFO", "Scanning ECS log groups for recent errors (last 5 min)...")
+    pattern = '?ERROR ?Traceback ?Exception ?"Name or service not known"'
+
+    log_groups = ["/ecs/flip-api"]
+    for net in net_numbers:
+        log_groups += [f"/ecs/fl-api-net-{net}", f"/ecs/fl-server-net-{net}"]
+
+    for log_group in log_groups:
+        ok, events = _filter_log_events(log_group, pattern, minutes=5)
+        if not ok:
+            print_status("INFO", f"Could not query CloudWatch log group {log_group}")
+            continue
+        count = len(events)
+        if count == 0:
+            print_status("PASS", f"No errors in {log_group} (last 5 min)")
+        elif count <= 5:
+            print_status("WARN", f"{count} error(s) in {log_group} (last 5 min) — review if recurring")
+        else:
+            print_status("FAIL", f"{count} errors in {log_group} (last 5 min) — investigate immediately")
 
 
 def check_net_endpoints_consistency() -> None:
-    """Verify NET_ENDPOINTS env var matches the fl_nets database table."""
-    print_status("INFO", "Checking NET_ENDPOINTS consistency (env vs DB)...")
-    env_value = os.getenv("NET_ENDPOINTS", "{}")
-    try:
-        env_nets = json.loads(env_value.replace("'", '"'))
-    except json.JSONDecodeError:
-        print_status("WARN", "NET_ENDPOINTS not set or invalid JSON")
-        return
+    """NET_ENDPOINTS env-vs-DB consistency.
 
-    py = """\
-import asyncpg, os, json, boto3, asyncio
-async def m():
-    c = boto3.client("secretsmanager", region_name="eu-west-2")
-    s = c.get_secret_value(SecretId=os.environ["POSTGRES_SECRET_ARN"])
-    d = json.loads(s["SecretString"])
-    p = d.get("password", "")
-    conn = await asyncpg.connect(
-        host=os.environ["DB_HOST"], port=5432,
-        user=os.environ["POSTGRES_USER"], database=os.environ["POSTGRES_DB"], password=p,
+    Used to query the DB via ``docker exec flip-api`` on EC2. Same blocker as
+    ``check_trust_pipeline``. The env-vs-DB cache divergence the original
+    check guarded against is also less load-bearing now that NET_ENDPOINTS
+    points at Cloud Map FQDNs (resolution is done by the VPC resolver, not
+    cached anywhere).
+    """
+    print_status(
+        "INFO",
+        "NET_ENDPOINTS env-vs-DB check skipped — required ``docker exec flip-api`` and is now "
+        "obsolete with Cloud Map (FQDNs resolve via the VPC resolver, not the fl_nets cache).",
     )
-    rows = await conn.fetch("SELECT name, endpoint FROM fl_nets")
-    for r in rows:
-        print(str(r[0]), str(r[1]))
-    await conn.close()
-asyncio.run(m())
-"""
-    success, output = run_remote_python("flip", "flip-api", py, timeout=25)
-
-    if not success or "Traceback" in output:
-        print_status("INFO", "Could not check NET_ENDPOINTS consistency (advanced check)")
-        return
-
-    db_nets = {}
-    for line in output.strip().split("\n"):
-        parts = line.split(" ", 1)
-        if len(parts) == 2:
-            db_nets[parts[0]] = parts[1]
-
-    for net_name, endpoint in env_nets.items():
-        db_value = db_nets.get(net_name, "")
-        if db_value and db_value != endpoint:
-            print_status("FAIL", f"NET_ENDPOINTS mismatch for {net_name}: env={endpoint}, DB={db_value}")
-        elif not db_value:
-            print_status("WARN", f"NET_ENDPOINTS for {net_name} not found in fl_nets table")
-        else:
-            print_status("PASS", f"NET_ENDPOINTS consistent for {net_name}")
 
 
 def check_mfa_config() -> None:
-    """Check ENFORCE_MFA configuration on flip-api."""
-    print_status("INFO", "Checking MFA enforcement configuration...")
-    success, output = run_ssh_command(
-        "",
-        "flip",
-        'docker exec flip-api python3 -c "from flip_api.config import get_settings; print(get_settings().ENFORCE_MFA)"',
-        timeout=10,
-    )
+    """ENFORCE_MFA configuration on flip-api.
 
-    if not success:
-        print_status("INFO", "Could not check MFA config (SSH unavailable)")
+    Read directly from the ECS task definition ``environment`` block — this
+    is the source of truth for what the running container sees. The Settings
+    default is ``true``; absence of an explicit ``false`` is a pass.
+    """
+    print_status("INFO", "Checking ENFORCE_MFA on flip-api ECS task definition...")
+    success, output = run_aws_command([
+        "ecs",
+        "describe-services",
+        "--cluster",
+        "flip-cluster",
+        "--services",
+        "flip-api",
+        "--query",
+        "services[0].taskDefinition",
+        "--output",
+        "text",
+    ])
+    if not success or not output:
+        print_status("INFO", "Could not read flip-api task definition")
         return
 
-    value = output.strip().lower()
+    success2, td = run_aws_command([
+        "ecs",
+        "describe-task-definition",
+        "--task-definition",
+        output.strip(),
+        "--query",
+        "taskDefinition.containerDefinitions[0].environment",
+        "--output",
+        "json",
+    ])
+    if not success2 or not td:
+        print_status("INFO", "Could not read flip-api task definition environment")
+        return
+
+    try:
+        env = {e["name"]: e["value"] for e in json.loads(td)}
+    except (json.JSONDecodeError, KeyError, TypeError):
+        print_status("WARN", "Could not parse flip-api task definition environment")
+        return
+
+    value = env.get("ENFORCE_MFA", "<unset — Settings default true>").lower()
     if value == "false":
-        print_status("WARN", "ENFORCE_MFA=false — TOTP enforcement disabled")
-    elif value == "true":
-        print_status("PASS", "ENFORCE_MFA=true — TOTP enforcement enabled")
+        print_status("WARN", "ENFORCE_MFA=false on flip-api task — TOTP enforcement disabled")
+    elif value == "true" or "default" in value:
+        print_status("PASS", f"ENFORCE_MFA={value} — TOTP enforcement enabled")
     else:
-        print_status("WARN", f"Unexpected ENFORCE_MFA value: {value}")
+        print_status("WARN", f"Unexpected ENFORCE_MFA value on flip-api task: {value}")
+
+
+# ── ECS-specific deep checks ──────────────────────────────────────
+
+
+def check_ecs_services_running(net_numbers: list[int]) -> None:
+    """Verify each ECS service has runningCount == desiredCount and no failed deployment.
+
+    A service is considered healthy when:
+      • status == ACTIVE
+      • runningCount == desiredCount (and desiredCount > 0)
+      • the latest deployment rolloutState == COMPLETED (or the service hasn't
+        deployed yet but is steady)
+
+    Mid-rollout transitions (IN_PROGRESS) downgrade to WARN — useful for
+    distinguishing "currently rolling" from "stuck rolling".
+    """
+    print_status("INFO", "Checking ECS service rollout state...")
+    services = ["flip-api"] + [f"fl-api-net-{n}" for n in net_numbers] + [f"fl-server-net-{n}" for n in net_numbers]
+    success, output = run_aws_command([
+        "ecs",
+        "describe-services",
+        "--cluster",
+        "flip-cluster",
+        "--services",
+        *services,
+        "--query",
+        (
+            "services[].{name:serviceName,status:status,desired:desiredCount,"
+            "running:runningCount,"
+            "deployments:deployments[?status==`PRIMARY`].rolloutState | [0]}"
+        ),
+        "--output",
+        "json",
+    ])
+    if not success or not output:
+        print_status("FAIL", "Could not describe ECS services")
+        return
+
+    try:
+        data = json.loads(output)
+    except json.JSONDecodeError:
+        print_status("WARN", "Could not parse ECS service data")
+        return
+
+    for svc in data:
+        name = svc.get("name", "?")
+        status = svc.get("status", "?")
+        desired = svc.get("desired", 0)
+        running = svc.get("running", 0)
+        rollout = svc.get("deployments") or "?"
+        if status == "ACTIVE" and desired == running and desired > 0 and rollout == "COMPLETED":
+            print_status("PASS", f"ECS service '{name}' is steady ({running}/{desired}, {rollout})")
+        elif rollout == "IN_PROGRESS":
+            print_status("WARN", f"ECS service '{name}' deployment in progress ({running}/{desired})")
+        elif rollout == "FAILED":
+            print_status("FAIL", f"ECS service '{name}' deployment FAILED ({running}/{desired})")
+        else:
+            print_status(
+                "FAIL",
+                f"ECS service '{name}' unhealthy: "
+                f"status={status}, {running}/{desired}, rollout={rollout}",
+            )
+
+
+def check_ecs_target_group_health() -> None:
+    """Verify ALB + NLB target groups for ECS services have all targets healthy.
+
+    Hits both ``ecs-flip-api`` (ALB, HTTP 8000, target_type=ip) and
+    ``ecs-fl-server-tcp`` (NLB, TCP 8002, target_type=ip). target_type=ip
+    means each Fargate task ENI registers as a separate target.
+    """
+    print_status("INFO", "Checking ECS target group health (ALB + NLB)...")
+
+    success, tgs = run_aws_command([
+        "elbv2",
+        "describe-target-groups",
+        "--query",
+        "TargetGroups[?starts_with(TargetGroupName, `ecs-`)].{name:TargetGroupName,arn:TargetGroupArn}",
+        "--output",
+        "json",
+    ])
+    if not success or not tgs:
+        print_status("WARN", "Could not list ECS target groups")
+        return
+
+    try:
+        tg_list = json.loads(tgs)
+    except json.JSONDecodeError:
+        print_status("WARN", "Could not parse target group data")
+        return
+
+    if not tg_list:
+        print_status("WARN", "No ECS target groups found (expected ecs-flip-api and ecs-fl-server-tcp)")
+        return
+
+    for tg in tg_list:
+        name = tg.get("name", "?")
+        arn = tg.get("arn", "")
+        if not arn:
+            continue
+        success2, health = run_aws_command([
+            "elbv2",
+            "describe-target-health",
+            "--target-group-arn",
+            arn,
+            "--query",
+            "TargetHealthDescriptions[].{id:Target.Id,state:TargetHealth.State,reason:TargetHealth.Reason}",
+            "--output",
+            "json",
+        ])
+        if not success2 or not health:
+            print_status("WARN", f"Target group '{name}': could not query health")
+            continue
+        try:
+            targets = json.loads(health)
+        except json.JSONDecodeError:
+            print_status("WARN", f"Target group '{name}': could not parse health")
+            continue
+        if not targets:
+            print_status("FAIL", f"Target group '{name}' has no registered targets")
+            continue
+        unhealthy = [t for t in targets if t.get("state") != "healthy"]
+        if not unhealthy:
+            print_status("PASS", f"Target group '{name}' has {len(targets)} healthy target(s)")
+        else:
+            for t in unhealthy:
+                print_status(
+                    "FAIL",
+                    f"Target group '{name}': target {t.get('id', '?')} is "
+                    f"{t.get('state', '?')} ({t.get('reason', '')})",
+                )
+
+
+def check_ecs_log_streams(net_numbers: list[int]) -> None:
+    """Verify ECS log groups have log streams written within the last hour.
+
+    Stale log streams indicate a task that crashed and never restarted (or a
+    misconfigured awslogs driver).
+    """
+    import time
+
+    print_status("INFO", "Checking ECS log groups for recent activity...")
+    log_groups = ["/ecs/flip-api"]
+    for net in net_numbers:
+        log_groups += [f"/ecs/fl-api-net-{net}", f"/ecs/fl-server-net-{net}"]
+    threshold_ms = int((time.time() - 60 * 60) * 1000)
+
+    for log_group in log_groups:
+        success, output = run_aws_command([
+            "logs",
+            "describe-log-streams",
+            "--log-group-name",
+            log_group,
+            "--order-by",
+            "LastEventTime",
+            "--descending",
+            "--max-items",
+            "1",
+            "--query",
+            "logStreams[0].lastEventTimestamp",
+            "--output",
+            "text",
+        ])
+        # ``--max-items 1`` adds a NextToken line ("None" or token) after the
+        # value, so take just the first line.
+        first_line = output.strip().split("\n", 1)[0] if output else ""
+        if not first_line or first_line == "None":
+            print_status("WARN", f"{log_group} has no log streams")
+            continue
+        try:
+            last_ts = int(first_line)
+        except ValueError:
+            print_status("WARN", f"{log_group}: could not parse lastEventTimestamp ({first_line!r})")
+            continue
+        if last_ts >= threshold_ms:
+            age_min = int((time.time() * 1000 - last_ts) / 60000)
+            print_status("PASS", f"{log_group} active (last event {age_min} min ago)")
+        else:
+            age_min = int((time.time() * 1000 - last_ts) / 60000)
+            print_status("WARN", f"{log_group} stale (last event {age_min} min ago)")
 
 
 @click.command()
@@ -920,16 +1086,24 @@ def main(
     else:
         print_status("FAIL", "RDS endpoint not found")
 
-    # Check S3 bucket
-    print_status("INFO", "Checking S3 bucket...")
-    success, _ = run_aws_command(["s3", "ls", f"s3://{flip_bucket_name}"])
-    if success:
-        print_status("PASS", f"S3 bucket '{flip_bucket_name}' is accessible")
-    else:
-        print_status(
-            "WARN",
-            f"S3 bucket '{flip_bucket_name}' not accessible (may need different name or permissions)",
-        )
+    # Check FLIP application S3 buckets
+    print_status("INFO", "Checking FLIP application S3 buckets...")
+    for label, bucket_name in flip_application_bucket_names:
+        if not bucket_name:
+            print_status("WARN", f"{label} bucket env var not set in environment")
+            continue
+        success, _ = run_aws_command(["s3", "ls", f"s3://{bucket_name}"])
+        if success:
+            print_status("PASS", f"S3 bucket '{bucket_name}' ({label}) is accessible")
+        else:
+            # FAIL (not WARN): an inaccessible application bucket means the
+            # flip-api data plane is broken (uploads, presigned downloads, FL
+            # result retrieval all dead). WARN here would let the final exit
+            # code stay 0 and let a CI/monitoring consumer report green.
+            print_status(
+                "FAIL",
+                f"S3 bucket '{bucket_name}' ({label}) not accessible (may need different name or permissions)",
+            )
 
     # Check Secrets Manager
     print_status("INFO", "Checking Secrets Manager...")
@@ -1092,95 +1266,18 @@ def main(
     if not skip_endpoints:
         print_section("Application Endpoint Checks")
 
-        # Central Hub EC2 ports
-        UI_PORT = os.getenv("UI_PORT", "")
-        API_PORT = os.getenv("API_PORT", "")
-        FL_API_PORT = os.getenv("FL_API_PORT", "")
-
-        # Check UI via HTTPS domain alias
+        # Public endpoints via CloudFront / ALB. flip-api now runs on ECS
+        # Fargate behind the ALB, so the legacy EC2 ``http://localhost:8080``
+        # check has been retired — the ALB endpoint is the source of truth.
         check_http_endpoint(f"https://{alb_subdomain}", "FLIP UI", 200)
-
-        # Check API health endpoint via ALB
-        check_http_endpoint(f"https://{alb_subdomain}/api/health", "FLIP API Health (ALB)", 200)
-
-        # Check API docs endpoint via ALB
-        check_http_endpoint(f"https://{alb_subdomain}/api/docs", "FLIP API Docs (ALB)", 200)
-
-        # Check FL API health and docs endpoints via docker exec using urllib.request
-        # (curl is not present in the NVFlare-based FL API containers; iptables also blocks
-        # loopback→bridge traffic from the EC2 host, so we exec directly into
-        # the container instead of curling from the host; urllib.request is stdlib
-        # so it is always available regardless of installed packages)
-        for net_num in configured_net_numbers:
-            container = f"flip-fl-api-net-{net_num}"
-            command = (
-                f"docker exec {container} python -c "
-                '"import urllib.request; '
-                "r=urllib.request.urlopen('http://localhost:8000/health', timeout=5); "
-                'print(r.status)"'
-            )
-
-            success, output = run_ssh_command(
-                ssh_key="",
-                host="flip",
-                command=(command),
-            )
-            if success and output.strip() == "200":
-                print_status("PASS", f"FL API Net-{net_num} health endpoint is accessible (via docker exec)")
-            else:
-                print_status("FAIL", f"FL API Net-{net_num} health endpoint not accessible (via docker exec): {output}")
-                print(command)
-
-        for net_num in configured_net_numbers:
-            container = f"flip-fl-api-net-{net_num}"
-            success, output = run_ssh_command(
-                ssh_key="",
-                host="flip",
-                command=(
-                    f"docker exec {container} python -c "
-                    f"\"import urllib.request; r=urllib.request.urlopen('http://localhost:8000/docs', timeout=5); print(r.status)\""
-                ),
-            )
-            if success and output.strip() == "200":
-                print_status("PASS", f"FL API Net-{net_num} docs endpoint is accessible (via docker exec)")
-            else:
-                print_status("FAIL", f"FL API Net-{net_num} docs endpoint not accessible (via docker exec): {output}")
-
-        # Check Central Hub API is reachable inside Central Hub EC2 via SSH
-        check_endpoint_over_ssh("flip", f"http://localhost:{API_PORT}/api/health", 200)
-
-        # Check FL API client status from the flip-api container (which shares the Docker network).
-        # The FL API /check_client_status endpoint queries the SuperLink Control API.
-        # An empty list is normal if SuperNodes haven't connected yet — report as WARN, not FAIL.
-        for nets in configured_net_numbers:
-            success, message = run_ssh_command(
-                ssh_key="",
-                host="flip",
-                command=(
-                    f"docker exec flip-api python -c "
-                    f"\"import urllib.request; r=urllib.request.urlopen('http://fl-api-net-{nets}:8000/check_client_status', timeout=5); import sys; sys.stdout.write(r.read().decode())\""
-                ),
-            )
-            if not success or not message:
-                print_status("WARN", f"FL API Net {nets} check_client_status not reachable from flip-api container")
-                continue
-            start = message.find("[")
-            json_part = message[start:]
-            try:
-                client_info = json.loads(json_part)
-            except json.JSONDecodeError:
-                print_status(
-                    "FAIL",
-                    f"FL API Net {nets} clients returned invalid JSON from flip-api container:\n{message}",
-                )
-                continue
-            if client_info:
-                print_status("PASS", f"FL API Net {nets} clients are reachable from flip-api container")
-            else:
-                print_status(
-                    "WARN",
-                    f"FL API Net {nets} returned empty client list — SuperNodes may not have connected yet",
-                )
+        check_http_endpoint(f"https://{alb_subdomain}/api/health", "FLIP API Health (CloudFront → ALB)", 200)
+        # FL API and FL server health: the per-net containers are ECS tasks
+        # behind Cloud Map (fl-api-net-N.flip.local:8000) reachable only from
+        # inside the VPC, so we cannot curl them from a developer workstation.
+        # Their health is covered by check_ecs_services_running() (running
+        # count + rollout state) and check_ecs_target_group_health() (NLB
+        # ENI registration). The previous SSH+docker exec on the EC2 host
+        # no longer applies — those containers do not run on EC2 anymore.
 
         # Trust EC2 endpoint checks
         if trust_id:
@@ -1191,32 +1288,38 @@ def main(
             # Use 127.0.0.1 instead of 'localhost' — Docker port publishing (including
             # Swarm ingress for XNAT) binds to 0.0.0.0 (IPv4); 'localhost' may resolve
             # to ::1 first on this host and hang the TCP connection.
+            # Trust services use /health (always-on, exempt from internal-auth).
+            # /docs is gated off in production builds, so it returned 404 here.
+            # Grafana is part of the optional observability stack — treat its
+            # absence as WARN, not FAIL.
             trust_endpoints = [
-                ("XNAT", "http://127.0.0.1:8104/", ["200", "302"]),
-                ("Orthanc", "http://127.0.0.1:8042/", ["200", "401"]),
-                ("trust-api", "http://127.0.0.1:8020/docs", ["200"]),
-                ("imaging-api", "http://127.0.0.1:8001/docs", ["200"]),
-                ("data-access-api", "http://127.0.0.1:8010/docs", ["200"]),
-                ("Grafana", "http://127.0.0.1:3000/", ["200", "302"]),
+                ("XNAT", "http://127.0.0.1:8104/", ["200", "302"], "FAIL"),
+                ("Orthanc", "http://127.0.0.1:8042/", ["200", "401"], "FAIL"),
+                ("trust-api", "http://127.0.0.1:8020/health", ["200"], "FAIL"),
+                ("imaging-api", "http://127.0.0.1:8001/health", ["200"], "FAIL"),
+                ("data-access-api", "http://127.0.0.1:8010/health", ["200"], "FAIL"),
+                ("Grafana", "http://127.0.0.1:3000/", ["200", "302"], "WARN"),
             ]
-            for name, url, expected in trust_endpoints:
+            for name, url, expected, severity in trust_endpoints:
                 cmd = f"curl -s -o /dev/null -w '%{{http_code}}' --connect-timeout 10 --max-time 15 {url}"
                 success, output = run_ssh_command("", "flip-trust", cmd, timeout=25)
                 if not success:
-                    print_status("FAIL", f"{name}: SSM/SSH transport failed — {output} — {url}")
+                    print_status(severity, f"{name}: SSM/SSH transport failed — {output} — {url}")
                     continue
                 code = output.strip()
                 if code in expected:
                     print_status("PASS", f"{name} responding (HTTP {code}) — {url}")
                 elif code == "000":
                     print_status(
-                        "FAIL",
-                        f"{name}: connection refused / service not listening — check `docker ps` on Trust EC2 — {url}",
+                        severity,
+                        f"{name}: connection refused / service not listening "
+                        f"({severity}-level — `docker ps` on Trust EC2 if FAIL) — {url}",
                     )
                 else:
                     print_status(
-                        "FAIL",
-                        f"{name}: unexpected HTTP {code} (expected {expected}) — service responding but unhealthy — {url}",
+                        severity,
+                        f"{name}: unexpected HTTP {code} (expected {expected}) — "
+                        f"service responding but unhealthy — {url}",
                     )
 
             print_status(
@@ -1240,58 +1343,17 @@ def main(
         else:
             print_status("INFO", "LOCAL_TRUST_IP not set — skipping local Trust checks")
 
-    # Docker container checks (via SSH — Central Hub uses 'flip' alias with SSM)
+    # Central Hub EC2 is now an SSM bastion only — flip-api, fl-api, and
+    # fl-server all run as ECS Fargate tasks. We still check the bastion for
+    # disk/memory headroom (SSM agent, CloudWatch agent, occasional ad-hoc
+    # diagnostics), but the application-container checks moved to the ECS
+    # section (check_ecs_services_running, check_ecs_target_group_health).
     if not skip_docker:
-        # Test SSH connectivity first
         success, _ = run_ssh_command("", "flip", "true", timeout=10)
 
         if success:
-            print_section("Docker Container Status (Central Hub)")
+            print_section("Central Hub EC2 (SSM Bastion)")
 
-            print_status("INFO", "Checking Docker containers on Central Hub...")
-
-            # Get container status
-            success, containers = run_ssh_command(
-                "",
-                "flip",
-                "docker ps --format '{{.Names}}:{{.Status}}'",
-            )
-
-            if not success or not containers:
-                print_status("FAIL", "Could not retrieve Docker container status")
-            else:
-                # Check each expected container.
-                # Note: the UI is served from S3 + CloudFront (no container on the hub) —
-                # UI availability is covered by the HTTPS endpoint check above.
-                expected_containers = [
-                    "flip-api",
-                ]
-                # Add only configured FL server and API containers
-                for net_num in configured_net_numbers:
-                    expected_containers.append(f"fl-server-net-{net_num}")
-                    expected_containers.append(f"flip-fl-api-net-{net_num}")
-
-                for container in expected_containers:
-                    container_found = False
-                    for line in containers.split("\n"):
-                        if line.startswith(f"{container}:") and "Up" in line:
-                            status = line.split(":", 1)[1] if ":" in line else ""
-                            print_status("PASS", f"Container '{container}' is running ({status})")
-                            container_found = True
-                            break
-                    if not container_found:
-                        print_status("FAIL", f"Container '{container}' is not running")
-
-                # Check for any exited containers
-                success, exited = run_ssh_command(
-                    "",
-                    "flip",
-                    "docker ps -a --filter 'status=exited' --format '{{.Names}}' 2>/dev/null",
-                )
-                if success and exited:
-                    print_status("WARN", f"Exited containers found: {exited}")
-
-            # Check disk space
             print_status("INFO", "Checking disk space...")
             success, disk_output = run_ssh_command(
                 "",
@@ -1301,11 +1363,10 @@ def main(
             if success and disk_output:
                 disk_usage = int(disk_output.strip().rstrip("%"))
                 if disk_usage < 80:
-                    print_status("PASS", f"Disk usage is {disk_usage}%")
+                    print_status("PASS", f"Bastion disk usage is {disk_usage}%")
                 else:
-                    print_status("WARN", f"Disk usage is {disk_usage}% (consider cleanup if >80%)")
+                    print_status("WARN", f"Bastion disk usage is {disk_usage}% (consider cleanup if >80%)")
 
-            # Check memory usage
             print_status("INFO", "Checking memory usage...")
             success, mem_output = run_ssh_command(
                 "",
@@ -1316,17 +1377,17 @@ def main(
                 try:
                     mem_usage = int(mem_output.strip())
                     if mem_usage < 90:
-                        print_status("PASS", f"Memory usage is {mem_usage}%")
+                        print_status("PASS", f"Bastion memory usage is {mem_usage}%")
                     else:
-                        print_status("WARN", f"Memory usage is {mem_usage}% (high memory usage detected)")
+                        print_status("WARN", f"Bastion memory usage is {mem_usage}% (high memory usage detected)")
                 except ValueError:
-                    print_status("WARN", "Could not parse memory usage")
-
+                    print_status("WARN", "Could not parse bastion memory usage")
         else:
             print_status(
-                "FAIL",
-                "Cannot SSH to Central Hub via SSM — skipping Docker container checks. "
-                "Verify SSM agent, IAM role, and SSH config.",
+                "WARN",
+                "Cannot SSH to Central Hub bastion via SSM. Application services run on ECS "
+                "(checked separately) — bastion is only used for ad-hoc diagnostics. "
+                "Verify SSM agent, IAM role, and SSH config if you need shell access.",
             )
 
         # Trust EC2 checks (via SSM)
@@ -1548,8 +1609,11 @@ def main(
         print_section("Deep Smoke Tests")
 
         check_ecs_cluster()
+        check_ecs_services_running(configured_net_numbers)
+        check_ecs_target_group_health()
         check_vpc_endpoints()
-        check_container_errors()
+        check_ecs_log_streams(configured_net_numbers)
+        check_container_errors(configured_net_numbers)
         check_mfa_config()
         check_net_endpoints_consistency()
 
@@ -1560,7 +1624,7 @@ def main(
         check_trust_pipeline()
         check_xnat_health()
         check_reimport_status()
-        check_fl_server_clients()
+        check_fl_server_clients(configured_net_numbers)
 
     # Final summary
     print_section("Summary")

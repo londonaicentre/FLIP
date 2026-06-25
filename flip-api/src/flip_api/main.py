@@ -24,6 +24,7 @@ from flip_api.cohort_services import (
     save_cohort_query,
     submit_cohort_query,
 )
+from flip_api.config import get_settings
 from flip_api.file_services import (
     delete_file,
     download_file,
@@ -38,7 +39,6 @@ from flip_api.fl_services import (
     get_net_status,
     get_status,
     initiate_training,
-    run_jobs,
     stop_training,
 )
 from flip_api.model_services import (
@@ -81,6 +81,7 @@ from flip_api.step_functions_services import (
     retrieve_model_step_function,
 )
 from flip_api.trusts_services import (
+    admin_create_trust,
     get_trusts,
     trusts_health_check,
     update_trust_status,
@@ -99,6 +100,7 @@ from flip_api.user_services import (
 )
 from flip_api.utils.cognito_helpers import get_cors_allowed_origins
 from flip_api.utils.rate_limiter import limiter
+from flip_api.utils.security_headers import SecurityHeadersMiddleware
 
 # Module-level holder for the CORS allowlist. Populated from Cognito at app startup (see
 # `lifespan`). CORSMiddleware stores this list by reference and reads it per-request via
@@ -124,15 +126,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 API_PREFIX = "/api"
 
+# Disable Swagger / OpenAPI / ReDoc in production. Serving them lets an
+# unauthenticated attacker enumerate every route, parameter, and schema in one
+# request — a free attack-surface map. Dev/stag keep them on for debugging.
+_docs_enabled = get_settings().ENV != "production"
+
 # Initialize the FastAPI app
 app = FastAPI(
     title="FLIP CentralHub API",
     description="Main API for FLIP CentralHub, providing communication between the frontend and backend services.",
     version="0.1.0",
     lifespan=lifespan,
-    docs_url=f"{API_PREFIX}/docs",
-    openapi_url=f"{API_PREFIX}/openapi.json",
-    redoc_url=f"{API_PREFIX}/redoc",
+    docs_url=f"{API_PREFIX}/docs" if _docs_enabled else None,
+    openapi_url=f"{API_PREFIX}/openapi.json" if _docs_enabled else None,
+    redoc_url=f"{API_PREFIX}/redoc" if _docs_enabled else None,
+    swagger_ui_oauth2_redirect_url=f"{API_PREFIX}/docs/oauth2-redirect" if _docs_enabled else None,
 )
 
 # Rate limiter — keyed by trust_name path parameter (falls back to client IP)
@@ -156,6 +164,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Security headers — applies to ALL responses (API JSON, health, error pages).
+# CSP is only injected on text/html responses; the SPA primarily relies on
+# CloudFront edge CSP for HTML assets.
+app.add_middleware(SecurityHeadersMiddleware)
+
 
 ROUTERS: tuple[APIRouter, ...] = (
     # Cohort services
@@ -175,7 +188,6 @@ ROUTERS: tuple[APIRouter, ...] = (
     get_net_status.router,
     get_status.router,
     initiate_training.router,
-    run_jobs.router,
     stop_training.router,
     # Model job types endpoint (moved from FL)
     get_job_types.router,
@@ -215,6 +227,7 @@ ROUTERS: tuple[APIRouter, ...] = (
     register_user_step_function.router,
     retrieve_model_step_function.router,
     # Trust services
+    admin_create_trust.router,
     get_trusts.router,
     trusts_health_check.router,
     update_trust_status.router,
@@ -247,7 +260,7 @@ include_api_routers(app)
 
 # Root endpoint
 @app.get(API_PREFIX, response_model=dict[str, str])
-def root():
+def root() -> dict[str, str]:
     """Root endpoint to verify the API is running.
 
     Returns:
@@ -257,7 +270,7 @@ def root():
 
 
 @app.get(f"{API_PREFIX}/health", response_model=dict[str, str])
-def health_check():
+def health_check() -> dict[str, str]:
     """Health check endpoint to verify the API is running.
 
     Returns:
@@ -266,7 +279,7 @@ def health_check():
     return {"status": "ok", "message": "flip is running"}
 
 
-def main():
+def main() -> None:
     """Entry point for the application script"""
     uvicorn.run("flip_api.main:app", host="0.0.0.0", port=81, reload=True)
 

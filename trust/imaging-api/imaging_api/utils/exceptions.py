@@ -14,7 +14,7 @@
 class NotFoundError(Exception):
     """Exception raised when a resource is not found."""
 
-    def __init__(self, detail: str = "Resource not found", status_code: int = 404):
+    def __init__(self, detail: str = "Resource not found", status_code: int = 404) -> None:
         self.status_code = status_code
         self.detail = detail
         super().__init__(f"{status_code}: {detail}")
@@ -26,10 +26,23 @@ class AlreadyExistsError(Exception):
     pass
 
 
+class XnatFetchError(Exception):
+    """Exception raised when a read from XNAT returns a non-200 response.
+
+    A typed alternative to a bare ``Exception`` for upstream XNAT fetch failures,
+    so callers can tell "XNAT itself failed" apart from a local/parsing error. A
+    plain ``Exception`` subclass (no custom ``__init__``) so ``str(err)`` keeps
+    rendering the raised message verbatim; the routers' generic ``except Exception``
+    handler continues to surface it as HTTP 500.
+    """
+
+    pass
+
+
 class InternalServerError(Exception):
     """Exception raised for internal server errors."""
 
-    def __init__(self, detail: str = "Internal server error", status_code: int = 500):
+    def __init__(self, detail: str = "Internal server error", status_code: int = 500) -> None:
         self.status_code = status_code
         self.detail = detail
         super().__init__(f"{status_code}: {detail}")
@@ -44,7 +57,7 @@ class LocalStorageError(Exception):
     issue and should surface as 500, not 404.
     """
 
-    def __init__(self, detail: str = "Local storage error", status_code: int = 500):
+    def __init__(self, detail: str = "Local storage error", status_code: int = 500) -> None:
         self.status_code = status_code
         self.detail = detail
         super().__init__(f"{status_code}: {detail}")

@@ -1,20 +1,22 @@
 {
     "name": "flip-ui",
-    "version": "0.0.7",
+    "version": "0.3.0",
     "engines": {
         "node": "^20.19.0 || >=22.12.0"
     },
     "scripts": {
         "generate-window-js": "sh scripts/generate-window-js.sh > public/js/window.js",
+        "check-build-flags": "node scripts/check-build-flags.mjs",
         "predev": "npm run generate-window-js",
         "dev": "vite --host 0.0.0.0 --port 443 --mode development",
-        "prebuild": "npm run generate-window-js",
+        "prebuild": "npm run check-build-flags && npm run generate-window-js",
         "build": "vue-tsc --noEmit && vite build",
-        "prebuild:deploy": "npm run generate-window-js",
+        "prebuild:deploy": "npm run check-build-flags",
         "build:deploy": "vite build",
+        "postbuild:deploy": "sh scripts/generate-window-js.sh > dist/js/window.js",
         "serve": "vite preview",
         "test:unit": "vitest run --silent --coverage",
-        "lint": "npx eslint ./src/**/*.vue ./src/**/*.ts",
+        "lint": "npx eslint \"./src/**/*.vue\" \"./src/**/*.ts\"",
         "prepare": "husky install",
         "test:unit:update": "vitest run -u --silent --coverage",
         "test:unit:watch": "vitest watch --silent",
@@ -23,11 +25,14 @@
         "pretest:start": "npm run generate-window-js",
         "test:start": "vite --port 4173 --mode development",
         "test:ci": "start-server-and-test test:start http-get://localhost:4173 test:ui",
-        "test:ci:docker": "start-server-and-test test:start http-get://localhost:4173 test:ui:docker"
+        "test:ci:docker": "start-server-and-test test:start http-get://localhost:4173 test:ui:docker",
+        "docs:record": "start-server-and-test test:start http-get://localhost:4173 'cypress run --config-file cypress.docs.config.ts --browser chrome'",
+        "docs:gifs": "bash scripts/videos-to-gifs.sh"
     },
     "dependencies": {
         "echarts": "^5.2.2",
         "husky": "^9.1.7",
+        "jszip": "^3.10.1",
         "qrcode": "^1.5.4",
         "vue": "^3.2.16",
         "vue-router": "^4.0.11"
@@ -62,10 +67,10 @@
         "@vueuse/core": "^8.7.5",
         "autoprefixer": "^10.4.7",
         "aws-amplify": "^6.15.3",
-        "axios": "^1.15.0",
+        "axios": "^1.16.0",
         "c8": "^11.0.0",
         "codemirror-editor-vue3": "^2.1.7",
-        "cypress": "^14.5.2",
+        "cypress": "14.5.2",
         "cypress-file-upload": "^5.0.8",
         "cypress-localstorage-commands": "^2.2.0",
         "date-fns": "^2.25.0",
@@ -115,7 +120,12 @@
         "lodash-es": "^4.18.1",
         "follow-redirects": ">=1.15.12",
         "uuid": "$uuid",
-        "fast-xml-parser": ">=5.7.0"
+        "fast-xml-parser": ">=5.7.0",
+        "fast-xml-builder": ">=1.1.7",
+        "qs": ">=6.15.2",
+        "js-cookie": ">=3.0.7",
+        "@babel/plugin-transform-modules-systemjs": ">=7.29.4",
+        "tmp": ">=0.2.6 <0.3.0"
     },
     "babel": {
         "presets": [

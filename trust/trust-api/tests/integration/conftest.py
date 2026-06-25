@@ -46,9 +46,10 @@ from trust_api.services import task_handlers
 # ---------------------------------------------------------------------------
 
 
-# Resolve the path to ``trust/`` from this file (``trust/trust-api/tests/integration/conftest.py``).
-# DockerCompose's ``context`` arg is the directory that contains compose.test.yml.
-_COMPOSE_DIR = Path(__file__).resolve().parents[3]
+# Resolve the path to ``trust/deploy/`` from this file
+# (``trust/trust-api/tests/integration/conftest.py``). DockerCompose's ``context`` arg
+# is the directory that contains compose.test.yml.
+_COMPOSE_DIR = Path(__file__).resolve().parents[3] / "deploy"
 _COMPOSE_FILE = "compose.test.yml"
 _DATA_ACCESS_SERVICE = "data-access-api-test"
 _DATA_ACCESS_INTERNAL_PORT = 8000

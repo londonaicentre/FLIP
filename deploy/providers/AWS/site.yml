@@ -14,6 +14,9 @@
 - name: create EC2 Ansible inventory hosts on-the-fly
   hosts: localhost
   gather_facts: false
+  # `always` so the inventory (add_host for flip-trust) is built even when a
+  # tag filter like `--tags flkit` selects only a later play.
+  tags: always
   tasks:
     - name: ensure flip_aicentre_bucket variable is defined
       assert:
@@ -27,12 +30,18 @@
           - fl_kit_date is defined
           - fl_kit_date | length > 0
         fail_msg: "The fl_kit_date variable must be defined to proceed."
-    - name: ensure pgdata_archive variable is defined
+    - name: ensure omop_data_version variable is defined
       assert:
         that:
-          - pgdata_archive is defined
-          - pgdata_archive | length > 0
-        fail_msg: "The pgdata_archive variable must be defined to proceed (e.g. trust1_pgdata_20260106.tar.gz)."
+          - omop_data_version is defined
+          - omop_data_version | length > 0
+        fail_msg: "omop_data_version must be defined (contents of trust/omop-db/.data_version, e.g. 20260129)."
+    - name: ensure orthanc_data_version variable is defined
+      assert:
+        that:
+          - orthanc_data_version is defined
+          - orthanc_data_version | length > 0
+        fail_msg: "orthanc_data_version must be defined (contents of trust/orthanc/.data_version, e.g. 20260106)."
     - name: initialize Terraform backend for validation
       command: >
         terraform init
@@ -144,83 +153,6 @@
       command: /tmp/aws/install
       when: awscli_check.rc != 0
 
-- name: create Central Hub application directories, create data directory for FL server and change ownership
-  hosts: central_hub
-  become: true
-  tasks:
-    - name: create Central Hub application directories
-      file:
-        path: "{{ item }}"
-        state: directory
-        owner: ubuntu
-        group: ubuntu
-        mode: "0755"
-      loop:
-        - /opt/flip
-        - /opt/flip/data
-
-- name: download NVFLARE participant kit to Central Hub
-  hosts: central_hub
-  become: true
-  vars:
-    central_services_dir: "/opt/flip/services"
-    central_s3_sources:
-      - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/fl-server-net-1/"
-      - "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/flip-fl-api-net-1/"
-  tasks:
-    - name: ensure central services directory exists
-      file:
-        path: "{{ central_services_dir }}"
-        state: directory
-        owner: ubuntu
-        group: ubuntu
-        mode: "0755"
-      when: fl_backend == "nvflare"
-
-    - name: sync NVFLARE participant kit from S3
-      shell: |
-        set -euo pipefail
-        src="{{ item }}"
-        name="$(basename "${src%/}")"
-        dest="{{ central_services_dir }}/${name}"
-        mkdir -p "$dest"
-        aws s3 sync "$src" "$dest"
-      args:
-        executable: /bin/bash
-      loop: "{{ central_s3_sources }}"
-      register: central_sync
-      changed_when: "'download:' in central_sync.stdout or 'copy:' in central_sync.stdout"
-      when: fl_backend == "nvflare"
-
-- name: download Flower participant kit to Central Hub
-  hosts: central_hub
-  become: true
-  vars:
-    central_services_dir: "/opt/flip/services"
-    central_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flower-participant-kits/{{ fl_kit_date }}/net-1/"
-  tasks:
-    - name: ensure central services directory exists
-      file:
-        path: "{{ central_services_dir }}"
-        state: directory
-        owner: ubuntu
-        group: ubuntu
-        mode: "0755"
-      when: fl_backend == "flower"
-
-    - name: sync Flower net-1 certificates and keys from S3
-      shell: |
-        set -euo pipefail
-        mkdir -p "{{ central_services_dir }}/net-1"
-        aws s3 sync \
-          "{{ central_s3_source }}" \
-          "{{ central_services_dir }}/net-1/"
-      args:
-        executable: /bin/bash
-      register: cert_sync
-      changed_when: "'download:' in cert_sync.stdout or 'copy:' in cert_sync.stdout"
-      when: fl_backend == "flower"
-
 - name: create Trust EC2 application directories
   hosts: trust_ec2
   become: true
@@ -234,9 +166,23 @@
         mode: "0755"
       loop:
         - /opt/flip
-        # Data directory for Trust 1 (where XNAT images will be downloaded for the FL client to use)
-        # NOTE if this is not created here, it will be created later by Docker Compose but owned by root, and will cause permission issues
-        - /opt/flip/data/images
+        # Holds the per-trust kit file (.env.<slot>) that register-trusts scp's
+        # to the EC2; the trust compose -include's it. Without this dir the scp
+        # in register-trusts.sh fails with "No such file or directory".
+        - /opt/flip/trust
+        # Bind-mount sources for the imaging-api / fl-client images dir.
+        # Both compose projects (trust1-, trust2-) bind-mount one of these
+        # onto /app/data/images via BASE_IMAGES_DOWNLOAD_DIR_TRUST{1,2}, then
+        # imaging-api creates /app/data/images/net-1/ inside it as uid 1000
+        # (the `flip` user in the container).
+        # If we don't pre-create them here Docker creates the missing source
+        # path as root at first startup, leaving the container unable to
+        # mkdir net-1 inside it - imaging-api then 500s every download with
+        # `[Errno 13] Permission denied: '/app/data/images/net-1'`, and the
+        # FL training run fails downstream with `num_samples=0` because the
+        # whole cohort's image fetches errored out.
+        - /opt/flip/data/trust-1
+        - /opt/flip/data/trust-2
         # XNAT bind-mount directories (Docker Swarm does not auto-create them)
         - /opt/flip/xnat
         - /opt/flip/xnat/xnat-data/tomcat_logs
@@ -264,13 +210,22 @@
 - name: download NVFLARE participant kit services to Trust EC2
   hosts: trust_ec2
   become: true
+  # `flkit` so this kit-staging play can be run on its own (e.g. re-staging a
+  # kit after re-registration) via `--tags flkit`, without the host reboot /
+  # OMOP+Orthanc data restore the full playbook performs.
+  tags: flkit
   vars:
-    trust_services_dir: "/opt/flip/services"
+    # FL_KIT_DIR on the trust host — kit root containing net-1/services/<slot>/
+    # for nvflare and net-1/{certificates,keys} for flower. The trust kit file
+    # (/opt/flip/trust/.env.Trust_1) sets FL_KIT_DIR=/opt/flip/fl-kit so the
+    # prod compose mounts resolve to the same on-disk paths Ansible stages
+    # below — keep the two sides in lockstep.
+    fl_kit_dir: "/opt/flip/fl-kit"
     trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flare-participant-kits/{{ fl_kit_date }}/net-1/services/Trust_1/"
   tasks:
-    - name: ensure trust services directory exists
+    - name: ensure FL kit directory exists
       file:
-        path: "{{ trust_services_dir }}"
+        path: "{{ fl_kit_dir }}"
         state: directory
         owner: ubuntu
         group: ubuntu
@@ -278,10 +233,24 @@
       when: fl_backend == "nvflare"
 
     - name: sync NVFLARE Trust_1 participant kit from S3
+      # `aws s3 sync` skips files when source/dest size + mtime "look
+      # equivalent", so a freshly regenerated kit can leave stale
+      # rootCA.pem / client.crt / fed_client.json in place — the
+      # symptom is fl-client failing with CERTIFICATE_VERIFY_FAILED
+      # against a server cert signed by the new rootCA. Wipe the
+      # destination first to force a clean copy. Mirrors the
+      # ecs_efs_provision.tf fix on the central-hub side.
+      #
+      # The hierarchical dest (net-1/services/Trust_1) preserves the
+      # S3 bundle's own layout — the compose mount in
+      # trust/deploy/compose_trust.production.nvflare.yml is
+      # ${FL_KIT_DIR}/net-1/services/${TRUST_NAME}/{local,startup,transfer},
+      # which resolves to /opt/flip/fl-kit/net-1/services/Trust_1/...
       shell: |
         set -euo pipefail
-        dest="{{ trust_services_dir }}/Trust_1"
+        dest="{{ fl_kit_dir }}/net-1/services/Trust_1"
         mkdir -p "$dest"
+        find "$dest" -mindepth 1 -delete 2>/dev/null || true
         aws s3 sync \
           "{{ trust_s3_source }}" \
           "$dest"
@@ -294,13 +263,17 @@
 - name: download Flower participant kit to Trust EC2
   hosts: trust_ec2
   become: true
+  tags: flkit
   vars:
-    trust_services_dir: "/opt/flip/services"
+    # See the NVFLARE play above for the rationale on fl_kit_dir / the
+    # preserved net-1/ hierarchy. For flower the compose mounts are
+    # ${FL_KIT_DIR}/net-1/{certificates,keys}.
+    fl_kit_dir: "/opt/flip/fl-kit"
     trust_s3_source: "s3://{{ flip_aicentre_bucket }}/fl-flower-participant-kits/{{ fl_kit_date }}/net-1/"
   tasks:
-    - name: ensure trust services directory exists
+    - name: ensure FL kit directory exists
       file:
-        path: "{{ trust_services_dir }}"
+        path: "{{ fl_kit_dir }}"
         state: directory
         owner: ubuntu
         group: ubuntu
@@ -308,12 +281,18 @@
       when: fl_backend == "flower"
 
     - name: sync Flower net-1 certificates and keys from S3
+      # See the NVFLARE sync above — same staleness trap. Flower's
+      # mTLS chain (rootCA.pem / server.pem / client.pem) is
+      # regenerated whenever the kit date changes; without a wipe
+      # `aws s3 sync` can leave a previous rootCA in place and the
+      # client fails the TLS handshake to fl-server.
       shell: |
         set -euo pipefail
-        mkdir -p "{{ trust_services_dir }}/net-1"
+        mkdir -p "{{ fl_kit_dir }}/net-1"
+        find "{{ fl_kit_dir }}/net-1" -mindepth 1 -delete 2>/dev/null || true
         aws s3 sync \
           "{{ trust_s3_source }}/" \
-          "{{ trust_services_dir }}/net-1/"
+          "{{ fl_kit_dir }}/net-1/"
       args:
         executable: /bin/bash
       register: trust_sync
@@ -449,10 +428,23 @@
 - name: download and restore OMOP PGDATA on Trust EC2
   hosts: trust_ec2
   become: true
+  tags: [data, omop]
   vars:
-    s3_bucket: "{{ flip_aicentre_bucket }}"
-    s3_prefix: "omop"
     omop_dir: "/opt/flip/omop"
+    # trust_num selects which trust's data package to load (e.g. "1" or "2").
+    # Pass via -e trust_num=2 for Trust_2 hosts. Defaults to "1" for
+    # backwards-compat with single-trust deployments.
+    trust_num: "{{ trust_num | default('1') }}"
+    # omop_data_version is the version string from trust/omop-db/.data_version.
+    # Passed as an extra-var by the Makefile seed-trust-data target.
+    pgdata_trust_dir: "trust{{ trust_num }}"
+    pgdata_archive: "trust{{ trust_num }}_pgdata_{{ omop_data_version }}.tar"
+    # Mock data is fetched anonymously over HTTPS from the public Hugging Face
+    # dataset (no AWS CLI / credentials needed). Laid out per trust; archives are
+    # gzip-compressed tarballs named .tar (tar auto-detects gzip on extraction).
+    hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
+    hf_trust_data_revision: "{{ trust_data_hf_revision | default('main') }}"
+    hf_base_url: "https://huggingface.co/datasets/{{ hf_trust_data_repo }}/resolve/{{ hf_trust_data_revision }}"
   tasks:
     - name: install tar
       apt:
@@ -470,13 +462,11 @@
         - "{{ omop_dir }}"
         - "{{ omop_dir }}/db_data"
 
-    - name: download OMOP PGDATA archive from S3
-      command: >
-        aws s3 cp
-        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ pgdata_archive }}
-        {{ omop_dir }}/pgdata.tar.gz
-      args:
-        creates: "{{ omop_dir }}/pgdata.tar.gz"
+    - name: download OMOP PGDATA archive from Hugging Face
+      ansible.builtin.get_url:
+        url: "{{ hf_base_url }}/{{ pgdata_trust_dir }}/{{ pgdata_archive }}"
+        dest: "{{ omop_dir }}/pgdata.tar"
+        mode: "0644"
 
     - name: clear existing PGDATA directory
       shell: rm -rf {{ omop_dir }}/db_data/*
@@ -484,7 +474,7 @@
 
     - name: extract OMOP PGDATA
       command: >
-        tar -xzf {{ omop_dir }}/pgdata.tar.gz
+        tar -xf {{ omop_dir }}/pgdata.tar
         -C {{ omop_dir }}/db_data
 
     - name: set Postgres ownership and permissions
@@ -493,15 +483,26 @@
         chmod 700 {{ omop_dir }}/db_data
       changed_when: false
 
-- name: restore trust1 Orthanc storage on Trust EC2
+- name: restore Orthanc storage on Trust EC2
   hosts: trust_ec2
   become: true
+  tags: [data, orthanc]
   vars:
-    s3_bucket: "{{ flip_aicentre_bucket }}"
-    s3_prefix: "orthanc"
-    archive: "trust1_orthanc_data_20260106.tar.gz"
+    # trust_num selects which trust's data package to load (e.g. "1" or "2").
+    # Passed via -e trust_num=2 for Trust_2 hosts. Defaults to "1".
+    trust_num: "{{ trust_num | default('1') }}"
+    # orthanc_data_version is the version string from trust/orthanc/.data_version.
+    # Passed as an extra-var by the Makefile seed-trust-data target.
+    orthanc_trust_dir: "trust{{ trust_num }}"
+    archive: "trust{{ trust_num }}_orthanc_data_{{ orthanc_data_version }}.tar"
     base_dir: "/opt/flip/orthanc"
     data_dir: "/opt/flip/orthanc/orthanc-storage"
+    # Mock data is fetched anonymously over HTTPS from the public Hugging Face
+    # dataset (no AWS CLI / credentials needed). Laid out per trust; archives are
+    # gzip-compressed tarballs named .tar (tar auto-detects gzip on extraction).
+    hf_trust_data_repo: "{{ trust_data_hf_repo | default('aicentreflip/trust-data') }}"
+    hf_trust_data_revision: "{{ trust_data_hf_revision | default('main') }}"
+    hf_base_url: "https://huggingface.co/datasets/{{ hf_trust_data_repo }}/resolve/{{ hf_trust_data_revision }}"
   tasks:
     - name: install tar
       apt:
@@ -516,13 +517,11 @@
         state: directory
         mode: "0755"
 
-    - name: download Orthanc archive from S3
-      command: >
-        aws s3 cp
-        s3://{{ s3_bucket }}/{{ s3_prefix }}/{{ archive }}
-        {{ base_dir }}/orthanc-storage.tar.gz
-      args:
-        creates: "{{ base_dir }}/orthanc-storage.tar.gz"
+    - name: download Orthanc archive from Hugging Face
+      ansible.builtin.get_url:
+        url: "{{ hf_base_url }}/{{ orthanc_trust_dir }}/{{ archive }}"
+        dest: "{{ base_dir }}/orthanc-storage.tar"
+        mode: "0644"
 
     - name: clear existing Orthanc storage
       shell: rm -rf {{ data_dir }}/*
@@ -536,7 +535,7 @@
 
     - name: extract Orthanc data into orthanc-storage
       command: >
-        tar -xzf {{ base_dir }}/orthanc-storage.tar.gz -C {{ data_dir }}
+        tar -xf {{ base_dir }}/orthanc-storage.tar -C {{ data_dir }}
 
     - name: ensure Orthanc storage is writable
       file:

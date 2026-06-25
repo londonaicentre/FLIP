@@ -16,20 +16,43 @@
 
 import mime from "mime";
 
-import { getPreSignedUrl, IPreSignedUrlBody, uploadModelFile } from "@/services/model-service";
+import { getPreSignedUrl,
+    IPreSignedUploadPolicy,
+    IPreSignedUrlBody,
+    uploadModelFile } from "@/services/model-service";
+
+/**
+ * Thrown when a file fails the client-side size guard. The component layer
+ * detects this via `instanceof FileTooLargeError` to surface a user-friendly
+ * snackbar instead of the generic upload-error message.
+ */
+export class FileTooLargeError extends Error {
+    public readonly limitBytes: number;
+    public readonly actualBytes: number;
+
+    constructor(limitBytes: number, actualBytes: number) {
+        super(`File is ${actualBytes} bytes, which exceeds the ${limitBytes}-byte limit.`);
+        this.name = "FileTooLargeError";
+        this.limitBytes = limitBytes;
+        this.actualBytes = actualBytes;
+    }
+}
 
 export const uploadFile = async (
     file: File,
-    uploadUrl: string
+    policy: IPreSignedUploadPolicy
 ): Promise<void> => {
-    await uploadModelFile(uploadUrl, file);
+    if (file.size > policy.maxBytes) {
+        throw new FileTooLargeError(policy.maxBytes, file.size);
+    }
+    await uploadModelFile(policy, file);
 };
 
 export const createPreSignedUrl = async (
     file: File,
     path: string,
     modelId: string
-): Promise<string | null> => {
+): Promise<IPreSignedUploadPolicy | null> => {
 
     const contentType = mime.getType(file.name);
     const endpoint = `${path}/${modelId}`;
