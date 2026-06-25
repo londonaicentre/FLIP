@@ -14,11 +14,10 @@ import json
 from pathlib import Path
 
 import nibabel as nib
-import numpy as np
 import torch
 from models import model_paths
 from monai.data import DataLoader, Dataset, decollate_batch
-from monai.metrics import DiceMetric
+from monai.metrics import DiceMetric, HausdorffDistanceMetric, MeanIoU, SurfaceDiceMetric
 from monai.networks.utils import one_hot
 from monai.transforms import AsDiscrete
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
@@ -31,6 +30,10 @@ from transforms import get_eval_transforms, get_sliding_window_inferer
 
 from flip import FLIP
 from flip.constants import PTConstants, ResourceType
+
+# Surface tolerance in voxels for the normalized Surface Dice metric: the boundary deviation treated
+# as acceptable, one entry per foreground class (spleen). Tune per dataset/voxel spacing.
+SURFACE_DICE_TOLERANCE_VOXELS = 1.0
 
 
 class FLIP_EVALUATOR(Executor):
@@ -143,24 +146,47 @@ class FLIP_EVALUATOR(Executor):
 
         return datalist
 
-    def _get_json_results_from_numpy(self, metric_results):
-        output_results = {}
-        for model_name, dice_scores in metric_results.items():
-            output_results[model_name] = {
-                "spleen": {
-                    # Aggregate metric only — per-sample (row-level) scores are an individual-level
-                    # disclosure (membership inference, cohort-size leak) and are not returned.
-                    "mean_dice": np.mean(dice_scores[:, 1]).item(),
-                }
-            }
+    def _build_metrics(self):
+        """Build the aggregate (cohort-mean) evaluation metrics for one model.
 
+        Returns:
+            dict[str, monai.metrics.Metric]: metric name -> MONAI metric, each with
+                include_background=False (score the foreground spleen class) and reduction='mean',
+                so aggregate() yields a single cohort-level scalar. No per-sample (row-level)
+                values are produced or exported.
+        """
+        return {
+            "mean_dice": DiceMetric(include_background=False, reduction="mean"),
+            "mean_hausdorff_95": HausdorffDistanceMetric(include_background=False, percentile=95, reduction="mean"),
+            "mean_surface_dice": SurfaceDiceMetric(
+                class_thresholds=[SURFACE_DICE_TOLERANCE_VOXELS], include_background=False, reduction="mean"
+            ),
+            "mean_iou": MeanIoU(include_background=False, reduction="mean"),
+        }
+
+    def _aggregate_results(self, metrics):
+        """Aggregate each model's accumulated metrics into a cohort-level results dict.
+
+        Args:
+            metrics (dict): model name -> {metric name -> accumulated MONAI metric}.
+
+        Returns:
+            dict: model name -> {'spleen': {metric name -> float}}. Only aggregate (cohort-mean)
+                values are emitted — per-sample (row-level) scores are an individual-level
+                disclosure (membership inference, cohort-size leak) and are not returned.
+        """
+        output_results = {}
+        for model_name, metric_map in metrics.items():
+            output_results[model_name] = {
+                "spleen": {name: float(metric.aggregate().item()) for name, metric in metric_map.items()}
+            }
         return output_results
 
     def do_validation(self, fl_ctx, abort_signal):
-        metric_results = {}
-        for model_name, _ in self.models.items():
+        metrics = {}
+        for model_name in self.models:
             self.models[model_name].eval()
-            metric_results[model_name] = DiceMetric(reduction="none")  # Create DiceMetric instance
+            metrics[model_name] = self._build_metrics()
 
         num_images = 0
         self.logger.info(len(self.test_loader))
@@ -175,7 +201,7 @@ class FLIP_EVALUATOR(Executor):
                     batch["label"].to(self.device),
                 )
 
-                for model_name, model in self.models.items():
+                for model_name in self.models:
                     self.models[model_name].to(self.device)
                     # perform sliding window inference to get a prediction for the whole volume.
                     output = self.swi(inputs=images, network=self.models[model_name])
@@ -187,24 +213,26 @@ class FLIP_EVALUATOR(Executor):
                     output = torch.stack([self.post_pred(i) for i in output], 0)
                     labels_one_hot = one_hot(labels, num_classes=self.num_classes)
 
-                    # Compute Dice metric using DiceMetric
-                    metric_results[model_name](output, labels_one_hot)  # Accumulate Dice scores
+                    # Accumulate every metric for this batch (Dice, HD95, Surface Dice, IoU).
+                    for metric in metrics[model_name].values():
+                        metric(output, labels_one_hot)
                     self.models[model_name].cpu()
 
                 batch_size = images.shape[0]
                 num_images += batch_size
                 self.logger.info(f"Validator Iteration: {i}, Num Images: {num_images}")
 
-            # Compute final Dice score
-            for model_name, dice_metric in metric_results.items():
-                metric_results[model_name] = dice_metric.aggregate().cpu().numpy()
+            # Aggregate each metric to a single cohort-level scalar, then reset for the next run.
+            json_results = self._aggregate_results(metrics)
+            for metric_map in metrics.values():
+                for metric in metric_map.values():
+                    metric.reset()
 
-            dice_metric.reset()  # Reset metric for next validation phase
-
-            json_results = self._get_json_results_from_numpy(metric_results)
             message = ""
-            for model_name in self.models.keys():
-                message += f"{json_results[model_name]['spleen']['mean_dice']:.4f} ({model_name})"
+            for model_name in self.models:
+                scores = json_results[model_name]["spleen"]
+                metrics_str = ", ".join(f"{name}={value:.4f}" for name, value in scores.items())
+                message += f"[{model_name}] {metrics_str} "
             self.log_info(fl_ctx, f"Validator finished on the client side: {message}")
 
         return json_results
