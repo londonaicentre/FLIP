@@ -42,13 +42,20 @@ shell:
 	$(docker_command) run --rm --entrypoint "/bin/bash" $(service_name)
 
 checks:
-# 	Check DOCKER_FL_REGISTRY is set
-	@if [ -z "${DOCKER_FL_REGISTRY}" ]; then \
-		echo "❌ ERROR: DOCKER_FL_REGISTRY not set."; \
-		echo "   Make sure you have set DOCKER_FL_REGISTRY in .env.testing"; \
+# 	DOCKER_FL_REGISTRY may be empty (use locally-built flare-fl-base:<tag>) or a registry
+# 	prefix such as ghcr.io/londonaicentre/ (pull published images). Only a truly-unset var is
+# 	an error — it means .env.testing is absent (that file defines the var, even when empty).
+	@if [ "$(origin DOCKER_FL_REGISTRY)" = "undefined" ]; then \
+		echo "❌ ERROR: DOCKER_FL_REGISTRY not set — is .env.testing present?"; \
+		echo "   Leave it empty to use locally-built images, or set a registry prefix"; \
+		echo "   (e.g. ghcr.io/londonaicentre/) to pull published images."; \
 		exit 1; \
 	fi
-	@echo "✅ Using DOCKER_FL_REGISTRY: ${DOCKER_FL_REGISTRY}"
+	@if [ -n "${DOCKER_FL_REGISTRY}" ]; then \
+		echo "✅ Using DOCKER_FL_REGISTRY: ${DOCKER_FL_REGISTRY}"; \
+	else \
+		echo "✅ DOCKER_FL_REGISTRY empty — using locally-built images"; \
+	fi
 
 # 	Check FL_BASE_IMAGE_TAG is set
 	@if [ -z "${FL_BASE_IMAGE_TAG}" ]; then \
