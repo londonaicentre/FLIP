@@ -9,11 +9,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for sync_k8s_kit.py — focused on the FL-server egress block
-regeneration (FLIP#593 pt.3) so a re-run no longer silently strips it."""
+"""Unit tests for sync_k8s_kit.py — focused on the FL-server port-only egress
+rule (FLIP#593 pt.3) so a sync-kit re-run no longer silently strips it.
+
+The egress rule is PORT-ONLY (FL_SERVER_PORT added to ``allowedEgressPorts``),
+not a resolved-/32 CIDR pin: the FL server's internet-facing NLB has AWS-managed
+IPs that rotate on recreation, so a pinned /32 would go stale. A port-only rule
+is immune to that drift and renders deterministically across runs."""
 
 import importlib.util
-import socket
 from pathlib import Path
 
 import pytest
@@ -37,56 +41,54 @@ _FL_KIT = {
 }
 
 
-def _fake_getaddrinfo(ips):
-    return lambda host, *a, **k: [(socket.AF_INET, None, None, "", (ip, 0)) for ip in ips]
-
-
-def test_resolve_egress_cidrs_sorted_unique(monkeypatch):
-    monkeypatch.setattr(
-        socket, "getaddrinfo", _fake_getaddrinfo(["13.43.208.193", "13.43.162.56", "13.43.208.193"])
-    )
-    assert sync_k8s_kit.resolve_egress_cidrs("fl.example") == ["13.43.162.56/32", "13.43.208.193/32"]
-
-
-def test_resolve_egress_cidrs_returns_empty_on_failure(monkeypatch):
-    def _boom(*a, **k):
-        raise socket.gaierror("offline")
-
-    monkeypatch.setattr(socket, "getaddrinfo", _boom)
-    assert sync_k8s_kit.resolve_egress_cidrs("fl.unresolvable") == []
-
-
-def test_render_override_emits_egress_block(monkeypatch):
-    monkeypatch.setattr(sync_k8s_kit, "resolve_egress_cidrs", lambda host: ["13.43.162.56/32", "13.43.208.193/32"])
+def test_render_override_emits_port_only_egress_rule():
+    """The egress block is a port-only rule on FL_SERVER_PORT (no pinned CIDRs)."""
     out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
     assert "networkPolicies:" in out
-    assert "allowedEgressCIDRsWithPorts:" in out
-    assert "- 13.43.162.56/32" in out
-    assert "port: 8002" in out
+    assert "allowedEgressPorts:" in out
+    # FL-server gRPC port present as a {port, protocol} entry...
+    assert "- port: 8002" in out
+    # ...and no resolved-/32 CIDR pinning remains.
+    assert "allowedEgressCIDRsWithPorts" not in out
+    assert "/32" not in out
 
 
-def test_render_override_is_stable_across_runs(monkeypatch):
+def test_render_override_restates_default_egress_ports():
+    """Helm replaces list values wholesale, so the override must restate the
+    chart-default egress ports (DNS/HTTP/HTTPS) alongside the FL-server port —
+    otherwise the override would wipe the default egress allowlist."""
+    out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
+    for port in ("- port: 53", "- port: 80", "- port: 443", "- port: 8002"):
+        assert port in out, f"missing default/FL egress port: {port}"
+
+
+def test_render_override_is_stable_across_runs():
     """The whole point of #593 pt.3: regenerating the override is idempotent —
-    a second render with the same inputs reproduces the egress block."""
-    monkeypatch.setattr(sync_k8s_kit, "resolve_egress_cidrs", lambda host: ["13.43.162.56/32"])
+    a second render with the same inputs reproduces the egress rule byte-for-byte.
+    With a port-only rule this holds unconditionally (no DNS in the path)."""
     first = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
     second = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
     assert first == second
-    assert "allowedEgressCIDRsWithPorts:" in second
+    assert "allowedEgressPorts:" in second
+    assert "- port: 8002" in second
 
 
-def test_render_override_unresolved_leaves_todo(monkeypatch):
-    monkeypatch.setattr(sync_k8s_kit, "resolve_egress_cidrs", lambda host: [])
-    out = sync_k8s_kit.render_override(_FL_KIT, "Trust_K8s", "eu-west-2")
-    assert "allowedEgressCIDRsWithPorts:" in out
-    assert "TODO: could not resolve" in out
-
-
-def test_render_override_omits_block_without_nlb(monkeypatch):
-    monkeypatch.setattr(sync_k8s_kit, "resolve_egress_cidrs", lambda host: ["1.2.3.4/32"])
-    kit = {k: v for k, v in _FL_KIT.items() if k != "NLB_SUBDOMAIN"}
+def test_render_override_uses_kit_fl_server_port():
+    """The port is sourced from the kit (FL_SERVER_PORT), not hardcoded — e.g.
+    Flower's 9092 rather than NVFLARE's 8002."""
+    kit = {**_FL_KIT, "FL_BACKEND": "flower", "FL_SERVER_PORT": "9092"}
     out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
-    assert "allowedEgressCIDRsWithPorts" not in out
+    assert "- port: 9092" in out
+    assert "- port: 8002" not in out
+
+
+def test_render_override_omits_block_without_fl_port():
+    """No FL_SERVER_PORT in the kit ⇒ no egress override emitted (the chart
+    default egress allowlist from values.yaml applies unchanged)."""
+    kit = {k: v for k, v in _FL_KIT.items() if k != "FL_SERVER_PORT"}
+    out = sync_k8s_kit.render_override(kit, "Trust_K8s", "eu-west-2")
+    assert "networkPolicies:" not in out
+    assert "allowedEgressPorts" not in out
 
 
 if __name__ == "__main__":
