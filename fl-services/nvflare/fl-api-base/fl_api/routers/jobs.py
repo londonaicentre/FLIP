@@ -19,6 +19,7 @@ from nvflare.fuel.hci.client.fl_admin_api import TargetType
 from fl_api.core.dependencies import get_session
 from fl_api.utils.flip_session import FLIP_Session
 from fl_api.utils.schemas import JobMetadata, JobStatus, normalize_status
+from fl_api.utils.validation import validate_model_id
 
 router = APIRouter()
 
@@ -38,6 +39,10 @@ def submit_job(job_folder: str, session: FLIP_Session = Depends(get_session)) ->
     Raises:
         HTTPException: if the job submission fails due to any reason.
     """
+    # flip-api submits an uploaded model by its uuid4; reject anything else before it
+    # reaches the NVFLARE admin API or a filesystem path. (nvflare tutorials run on the
+    # simulator, not this endpoint, so there is no name-based submission path here.)
+    validate_model_id(job_folder)
     return session.submit_job(job_folder)
 
 

@@ -84,7 +84,7 @@ make submit APP=3d_spleen_segmentation_evaluation
 
 The default stack publishes no host ports; `make submit` execs into the fl-api
 container and POSTs to its loopback API. Use `make up-debug` instead if you want
-to POST from the host (`curl -X POST http://localhost:8000/submit_run/3d_spleen_segmentation_evaluation`)
+to POST from the host (`curl -X POST http://localhost:8000/submit_tutorial/3d_spleen_segmentation_evaluation`)
 or open the Swagger UI.
 
 The FLIP API will:
