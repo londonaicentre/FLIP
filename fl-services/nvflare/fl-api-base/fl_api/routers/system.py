@@ -11,7 +11,6 @@
 #
 
 # System and service status functions
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from nvflare.fuel.hci.client.fl_admin_api import TargetType
@@ -37,11 +36,11 @@ def check_server_status(session: FLIP_Session = Depends(get_session)) -> ServerI
     return session.check_server_status()
 
 
-@router.get("/check_client_status", response_model=List[ClientInfoModel])
+@router.get("/check_client_status", response_model=list[ClientInfoModel])
 def check_client_status(
-    targets: Optional[List[str]] = Query(None),
+    targets: list[str] | None = Query(None),
     session: FLIP_Session = Depends(get_session),
-) -> List[ClientInfoModel]:
+) -> list[ClientInfoModel]:
     """
     Checks the status of specified clients or all clients if no specific targets are provided.
 
@@ -70,8 +69,8 @@ def get_system_info(session: FLIP_Session = Depends(get_session)) -> SystemInfoM
     return session.get_system_info()
 
 
-@router.get("/get_connected_client_list", response_model=List[ClientInfoModel])
-def get_connected_client_list(session: FLIP_Session = Depends(get_session)) -> List[ClientInfoModel]:
+@router.get("/get_connected_client_list", response_model=list[ClientInfoModel])
+def get_connected_client_list(session: FLIP_Session = Depends(get_session)) -> list[ClientInfoModel]:
     """
     List of the connected clients.
 
@@ -98,7 +97,7 @@ def get_working_directory(target: str, session: FLIP_Session = Depends(get_sessi
 @router.post("/restart/{target_type}")
 def restart(
     target_type: TargetType,
-    client_names: Optional[List[str]] = Query(None),
+    client_names: list[str] | None = Query(None),
     session: FLIP_Session = Depends(get_session),
 ):
     """
@@ -128,7 +127,7 @@ def restart(
 @router.post("/shutdown/{target_type}", status_code=status.HTTP_200_OK)
 def shutdown(
     target_type: TargetType,
-    client_names: Optional[List[str]] = Query(None),
+    client_names: list[str] | None = Query(None),
     session: FLIP_Session = Depends(get_session),
 ) -> None:
     """

@@ -11,7 +11,6 @@
 #
 
 # Job functions: upload, monitor, delete and handle jobs
-from typing import Optional, Union
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
@@ -63,9 +62,9 @@ def download_job(job_id: str, session: FLIP_Session = Depends(get_session)) -> s
 @router.get("/list_jobs", response_model=list[JobMetadata])
 def list_jobs(
     detailed: bool = False,
-    limit: Optional[int] = None,
-    id_prefix: Union[str, None] = None,
-    name_prefix: Union[str, None] = None,
+    limit: int | None = None,
+    id_prefix: str | None = None,
+    name_prefix: str | None = None,
     reverse: bool = False,
     session: FLIP_Session = Depends(get_session),
 ) -> list[JobMetadata]:
@@ -104,7 +103,7 @@ def list_jobs(
 def show_errors(
     job_id: str,
     target_type: TargetType,
-    targets: Optional[str] = None,
+    targets: str | None = None,
     session: FLIP_Session = Depends(get_session),
 ) -> dict:
     """
@@ -128,7 +127,7 @@ def show_errors(
 def show_stats(
     job_id: str,
     target_type: TargetType,
-    targets: Optional[str] = None,
+    targets: str | None = None,
     session: FLIP_Session = Depends(get_session),
 ) -> dict:
     """

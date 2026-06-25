@@ -10,7 +10,6 @@
 # limitations under the License.
 #
 
-from typing import List, Optional, Union
 
 from nvflare.fuel.flare_api.api_spec import InternalError, SessionClosed
 from nvflare.fuel.flare_api.flare_api import Session
@@ -22,8 +21,8 @@ from fl_api.utils.schemas import ClientInfoModel, JobInfoModel, ServerInfoModel,
 class FLIP_Session(Session):
     def __init__(
         self,
-        username: Union[str, None] = None,
-        startup_path: Union[str, None] = None,
+        username: str | None = None,
+        startup_path: str | None = None,
         secure_mode: bool = False,
         debug: bool = False,
     ):
@@ -79,7 +78,7 @@ class FLIP_Session(Session):
         """
         return self.get_system_info().server_info
 
-    def check_client_status(self, target: Optional[List[str]] = None) -> List[ClientInfoModel]:
+    def check_client_status(self, target: list[str] | None = None) -> list[ClientInfoModel]:
         """
         Check status of every client or specific clients.
 
@@ -129,7 +128,7 @@ class FLIP_Session(Session):
         )
         return system_info
 
-    def get_connected_client_list(self) -> List[ClientInfoModel]:
+    def get_connected_client_list(self) -> list[ClientInfoModel]:
         """
         Get a list of the connected clients.
 
