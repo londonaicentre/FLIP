@@ -13,6 +13,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from fl_api.utils.schemas import UploadAppRequest
 from fl_api.utils.upload import upload_application, validate_config
@@ -219,3 +220,37 @@ def test_validate_config_invalid_weights():
     }
     with pytest.raises(ValueError, match="Invalid weight"):
         validate_config(bad_weights)
+
+
+def test_upload_app_rejects_non_uuid_model_id(mock_upload_correct_request):
+    """A non-UUID model_id (e.g. a traversal attempt) is rejected before any filesystem write."""
+    with pytest.raises(HTTPException) as exc:
+        upload_application("not-a-uuid", mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
+    assert exc.value.status_code == 400
+
+
+def test_upload_app_rejects_non_https_bundle_url():
+    """Non-https bundle URLs (SSRF vector, e.g. the metadata endpoint) are rejected."""
+    body = UploadAppRequest(
+        bundle_urls=[f"http://169.254.169.254/bundles/{TEST_MODEL_ID}/app/custom/trainer.py"],
+        project_id="123456789",
+        cohort_query="SELECT 1",
+        trusts=["Trust_1"],
+    )
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, body, TMP_PATH_UPLOAD_DIR)
+    assert exc.value.status_code == 400
+
+
+def test_upload_app_rejects_disallowed_bundle_host(monkeypatch):
+    """When BUNDLE_URL_ALLOWED_HOSTS is set, off-origin bundle URLs are rejected."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "objectstore.internal")
+    body = UploadAppRequest(
+        bundle_urls=[f"https://test.local/bundles/{TEST_MODEL_ID}/app/custom/trainer.py"],
+        project_id="123456789",
+        cohort_query="SELECT 1",
+        trusts=["Trust_1"],
+    )
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, body, TMP_PATH_UPLOAD_DIR)
+    assert exc.value.status_code == 400

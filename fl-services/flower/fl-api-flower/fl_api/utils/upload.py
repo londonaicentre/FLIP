@@ -8,6 +8,7 @@ from tomlkit import dumps, parse
 
 from fl_api.schemas import UploadAppRequest
 from fl_api.utils.logger import logger
+from fl_api.utils.validation import safe_join, validate_bundle_url, validate_model_id
 
 
 def _key_after_model_id(url: str, model_id: str) -> Path:
@@ -72,12 +73,16 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     """
     logger.info(f"Received request to upload app: {model_id}")
 
+    # model_id is the path component for the job dir; flip-api always sends a uuid4, so
+    # anything else is rejected before it can traverse out of the upload dir.
+    validate_model_id(model_id)
+
     # This section takes care of taking every uploaded file and copying it to the model_id path.
 
     bundle_urls = body.bundle_urls  # Retrieve the files that the user has uploaded to the platform.
 
     # We create the job app in the upload dir folder
-    job_dir = upload_dir / model_id
+    job_dir = safe_join(upload_dir, model_id)
 
     # If the job directory already exists, we remove it to avoid conflicts with previous uploads.
     if job_dir.exists():
@@ -92,9 +97,12 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
     for url in bundle_urls:
         logger.info(f"Downloading file from {url}")
 
+        # The FL API fetches each URL server-side, so reject non-https / off-origin URLs.
+        validate_bundle_url(url)
+
         # Reconstruct structure under job_dir using the URL path after model_id
         relative_path = _key_after_model_id(url, model_id)  # e.g. app/config.toml
-        dest_path = job_dir / relative_path  # e.g. job_dir/app/config.toml
+        dest_path = safe_join(job_dir, *relative_path.parts)  # contained under job_dir
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:

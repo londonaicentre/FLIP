@@ -15,6 +15,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 from tomlkit import parse
 
 from fl_api import app as app_module
@@ -128,3 +129,11 @@ def test_submit_run_execution_failures(
     response = client.post("/submit_run/numpy")
 
     assert response.status_code == 500
+
+
+@pytest.mark.parametrize("bad", ["..", "../etc", "a/b", ".hidden"])
+def test_validate_app_folder_rejects_traversal(src_root, bad):
+    """app_folder names with traversal sequences or separators are rejected (400)."""
+    with pytest.raises(HTTPException) as exc:
+        app_module._validate_app_folder(bad)
+    assert exc.value.status_code == 400
