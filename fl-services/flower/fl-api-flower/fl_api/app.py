@@ -38,7 +38,7 @@ from fl_api.schemas import (
     normalize_status,
 )
 from fl_api.utils.upload import upload_application
-from fl_api.utils.validation import safe_join, validate_app_folder_name, validate_model_id
+from fl_api.utils.validation import safe_join, validate_model_id, validate_tutorial_folder_name
 
 logger = logging.getLogger("uvicorn")
 
@@ -182,7 +182,7 @@ def _validate_job_folder(job_folder: str) -> Path:
 def _validate_tutorial_folder(tutorial_name: str) -> Path:
     # Tutorial submit: pre-baked tutorial folders (e.g. "numpy", "xray_classification") are
     # submitted by name, not a UUID, so they get a charset/traversal guard instead.
-    validate_app_folder_name(tutorial_name)
+    validate_tutorial_folder_name(tutorial_name)
     return _resolve_job_dir(tutorial_name)
 
 
