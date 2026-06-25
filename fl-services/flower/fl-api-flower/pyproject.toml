@@ -37,6 +37,10 @@ dev = [
     "types-requests>=2.32.0.20250515",
 ]
 
+[tool.uv]
+# 72h supply-chain cooldown; see CONTRIBUTING.md ("Dependency cooldown").
+exclude-newer = "3 days"
+
 [tool.coverage.report]
 exclude_lines = ["if __name__ == .__main__.:"]
 omit = ["*.venv/*", "*/tests/*", "*/__init__.py"]

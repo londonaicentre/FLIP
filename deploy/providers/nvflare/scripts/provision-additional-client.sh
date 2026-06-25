@@ -19,7 +19,7 @@
 # before running this script.
 #
 # Paths default to the monorepo layout: project YML under deploy/providers/nvflare/
-# and provisioned output under deploy/workspace/ (matching the compose mounts).
+# and provisioned output under deploy/providers/nvflare/workspace/ (matching the compose mounts).
 #
 # After running this script, remember to add the new client service to your docker compose file.
 set -e
@@ -27,7 +27,7 @@ set -e
 NET_NUMBER="${1:?Error: NET_NUMBER is required}"
 FL_PORT="${2:-8002}"
 PROJECT_YML="${3:-deploy/providers/nvflare/net-${NET_NUMBER}_project_dev.yml}"
-WORKSPACE_PARENT_DIR="${4:-deploy/workspace}"
+WORKSPACE_PARENT_DIR="${4:-deploy/providers/nvflare/workspace}"
 
 WORKSPACE="${WORKSPACE_PARENT_DIR}/net-${NET_NUMBER}"
 FL_SERVICES="${WORKSPACE_PARENT_DIR}/net-${NET_NUMBER}/services"

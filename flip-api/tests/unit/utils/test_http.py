@@ -89,6 +89,22 @@ def test_http_get_raises_on_request_error():
             http_get("http://example.com/resource")
 
 
+def test_http_get_passes_timeout_when_provided(json_response):
+    with patch.object(httpx.Client, "get", return_value=json_response) as mock_get:
+        http_get("http://example.com/resource", timeout=5.0)
+    mock_get.assert_called_once_with(
+        "http://example.com/resource",
+        headers={},
+        timeout=5.0,
+    )
+
+
+def test_http_get_omits_timeout_when_none(json_response):
+    with patch.object(httpx.Client, "get", return_value=json_response) as mock_get:
+        http_get("http://example.com/resource", timeout=None)
+    assert "timeout" not in mock_get.call_args.kwargs
+
+
 # ---------------------------------------------------------------------------
 # http_post
 # ---------------------------------------------------------------------------

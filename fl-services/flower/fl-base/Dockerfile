@@ -15,35 +15,31 @@
 
 FROM flwr/base:${FLWR_VERSION:-1.27.0-py3.12-ubuntu24.04} AS base
 
+ARG LOCAL_DEV=false
 WORKDIR /app
 
-# Copy only what we need for dependency install (keeps build cache efficient)
-COPY --chown=app:app tutorials/3d_spleen_segmentation/pyproject.toml .
-
-# Only the non-Flower dependencies are needed.
-# Remove the flwr[simulation] dependency from pyproject.toml before installing, since it's only needed for the
-# simulation service, and would pull in extra dependencies that aren't needed for the API service.
+# Install flip-utils from the IN-REPO source (build context = repo root). This
+# replaces two older mechanisms now that flip-utils lives in this monorepo:
+#   * the install of deps from one hard-coded tutorial pyproject.toml (footgun #37), and
+#   * the `fliputils_dist` external-wheel `development` target (now deprecated).
+# It is installed into flwr/base's own Python so the `flwr` CLI and the `flip`
+# package coexist. The `full` extra brings the ML deps Flower apps need
+# (torch/MONAI/etc.); flip-utils' readme points at docs/overview.rst and its
+# version at flip/__init__.py, so both are copied.
 #
 # --extra-index-url points pip at PyTorch's CUDA-12.8 wheel index. Combined with
-# the pyproject pin "torch>=2.10.0,<2.12", pip picks torch 2.11.0+cu128 (the
-# highest cu128 build, and the highest torch that runs on the host NVIDIA
-# driver 575.x — CUDA-13 wheels need driver >=580). All other deps still
-# resolve from PyPI as normal. Re-evaluate the upper bound when the trust
-# hosts upgrade their drivers and a newer cu12x or cu13x build becomes safe.
-RUN sed -i 's/.*flwr\[simulation\].*//' pyproject.toml \
-  && python -m pip install -U --no-cache-dir . \
-       --extra-index-url https://download.pytorch.org/whl/cu128
+# flip-utils' "torch>=2.11,<2.12" pin, pip picks torch 2.11.x+cu128 — the highest
+# torch that runs on the host NVIDIA driver 575.x (cu13 wheels need driver >=580).
+# --chown=app:app: flwr/base runs as the non-root `app` user, and COPY defaults
+# to root ownership — so without this the `rm -rf /tmp/flip-utils` below fails
+# with "Permission denied" (app cannot unlink root-owned files under sticky /tmp).
+COPY --chown=app:app flip-utils/pyproject.toml flip-utils/README.md /tmp/flip-utils/
+COPY --chown=app:app flip-utils/docs/ /tmp/flip-utils/docs/
+COPY --chown=app:app flip-utils/flip/ /tmp/flip-utils/flip/
+RUN python -m pip install -U --no-cache-dir "/tmp/flip-utils[full]" \
+      --extra-index-url https://download.pytorch.org/whl/cu128 \
+  && rm -rf /tmp/flip-utils
 
-# Copy register-supernode-keys.sh
-COPY --chown=app:app fl_services/register-supernode-keys.sh /scripts/register-supernode-keys.sh
-
-FROM base AS development
-
-COPY --from=fliputils_dist *.whl /wheels/
-
-# NOTE use --force-reinstall to always replace installed flip-utils from 'base' even if the version is unchanged
-# This allows us to overwrite the flip-utils package in 'base' (PyPI version) with the local dev version
-RUN python -m pip install --no-cache-dir --force-reinstall /wheels/*.whl
-
-FROM base AS production
-# base already ran `pip install .` so flip-utils comes from PyPI
+# Copy register-supernode-keys.sh (used by the secure / central-hub topology to
+# register SuperNode public keys with the SuperLink).
+COPY --chown=app:app fl-services/flower/register-supernode-keys.sh /scripts/register-supernode-keys.sh
