@@ -35,5 +35,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Run check_required_files.sh
+      - name: Regenerate per-backend required_files manifests
         run: bash fl-apps/check_required_files.sh
+      - name: Fail if committed manifests are stale
+        run: |
+          if ! git diff --exit-code -- 'fl-apps/**/required_files.json'; then
+            echo "::error::A committed fl-apps/<backend>/required_files.json is out of date. Run 'bash fl-apps/check_required_files.sh' and commit the regenerated manifest." >&2
+            exit 1
+          fi
