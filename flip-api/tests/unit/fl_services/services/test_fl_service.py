@@ -984,3 +984,283 @@ def test_keep_fl_api_session_alive_swallows_errors(mock_session, mock_get_nets, 
     fl_service.keep_fl_api_session_alive()
 
     mock_fetch.assert_called_once_with("http://net1:8000")
+
+
+# --- submit_job success path ---------------------------------------------------------------------
+
+
+@patch("flip_api.fl_services.services.fl_service.add_fl_backend_job_id")
+@patch("flip_api.fl_services.services.fl_service.http_post")
+def test_submit_job_persists_backend_id_on_success(mock_post, mock_add, fl_job_id, model_id, fake_session):
+    """A valid backend job id from the FL API is persisted against the FLJob row."""
+    mock_post.return_value = "backend-job-99"
+
+    fl_service.submit_job(fl_job_id, "endpoint", model_id, fake_session)
+
+    mock_post.assert_called_once_with(f"endpoint/submit_job/{model_id}", timeout=30)
+    mock_add.assert_called_once_with(fl_job_id, "backend-job-99", fake_session)
+
+
+# --- check_server_status / check_client_status (the raw FL-API calls) ----------------------------
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_server_status_success(mock_http_get):
+    mock_http_get.return_value = {"status": "running"}
+
+    result = fl_service.check_server_status("endpoint")
+
+    assert isinstance(result, IServerStatus)
+    assert result.status == "running"
+    mock_http_get.assert_called_once_with("endpoint/check_server_status", timeout=30)
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_server_status_returns_none_when_no_response(mock_http_get):
+    mock_http_get.return_value = None
+
+    assert fl_service.check_server_status("endpoint") is None
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_client_status_success(mock_http_get):
+    mock_http_get.return_value = [
+        {"name": "Trust_1", "status": "no_jobs"},
+        {"name": "Trust_2", "status": "no_reply"},
+    ]
+
+    result = fl_service.check_client_status("endpoint")
+
+    assert [c.name for c in result] == ["Trust_1", "Trust_2"]
+    # online is derived from the status: no_jobs -> online, no_reply -> offline.
+    assert result[0].online is True
+    assert result[1].online is False
+    mock_http_get.assert_called_once_with("endpoint/check_client_status", timeout=30)
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_check_client_status_returns_none_when_no_response(mock_http_get):
+    mock_http_get.return_value = []
+
+    assert fl_service.check_client_status("endpoint") is None
+
+
+# --- fetch_* unavailable branches ----------------------------------------------------------------
+
+
+@patch("flip_api.fl_services.services.fl_service.check_server_status")
+def test_fetch_server_status_returns_none_when_unavailable(mock_check_server):
+    mock_check_server.return_value = None
+
+    assert fl_service.fetch_server_status("endpoint") is None
+
+
+@patch("flip_api.fl_services.services.fl_service.check_client_status")
+def test_fetch_client_status_returns_none_when_unavailable(mock_check_client):
+    mock_check_client.return_value = None
+
+    assert fl_service.fetch_client_status("endpoint") is None
+
+
+# --- bundle_nvflare_application error / edge paths ------------------------------------------------
+
+
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_no_model_files(mock_s3, mocked_settings, model_id):
+    mock_s3.return_value.list_objects.return_value = []
+
+    with pytest.raises(FileNotFoundError, match="Model files missing on the S3 bucket"):
+        fl_service.bundle_nvflare_application(model_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_no_base_files(mock_s3, mocked_settings, model_id):
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    mock_client = mock_s3.return_value
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/trainer.py"],  # model files (no config.json)
+        [],  # base bucket empty
+    ]
+
+    with pytest.raises(FileNotFoundError, match="Base application files missing on the S3 bucket"):
+        fl_service.bundle_nvflare_application(model_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_no_app_folders(mock_s3, mock_required, mocked_settings, model_id):
+    """Base tree without any top-level ``app*`` folder is rejected."""
+    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    mock_client = mock_s3.return_value
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/trainer.py"],  # model files (no config.json)
+        [f"{base_bucket}/nvflare/standard/notapp/file1.py"],  # base, no app* folder
+        [],  # destination bucket empty
+    ]
+    mock_client.copy_object.return_value = None
+
+    with pytest.raises(FileNotFoundError, match="No app folders found under base application"):
+        fl_service.bundle_nvflare_application(model_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_no_config_clears_existing_dest(
+    mock_s3, mock_required, mock_verify, mocked_settings, model_id
+):
+    """No config.json falls back to job_type=standard, and stale destination files are cleared first."""
+    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+    dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    mock_client = mock_s3.return_value
+    mock_required.return_value = ["trainer.py", "validator.py"]
+    model_files = [
+        f"{model_bucket}/{model_id}/trainer.py",
+        f"{model_bucket}/{model_id}/validator.py",
+    ]  # no config.json -> job_type stays "standard"
+    base_files = [f"{base_bucket}/nvflare/standard/app/file1.py"]
+    stale_dest_files = [f"{dest_bucket}/{model_id}/stale.py"]
+    mock_client.list_objects.side_effect = [model_files, base_files, stale_dest_files]
+    mock_client.object_exists.return_value = False
+    mock_verify.return_value = None
+
+    result = fl_service.bundle_nvflare_application(model_id)
+
+    assert result == f"{dest_bucket}/{model_id}"
+    mock_client.delete_objects.assert_called_once_with(stale_dest_files)
+
+
+# --- bundle_flower_application error / edge paths -------------------------------------------------
+
+
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_no_model_files(mock_s3, mocked_settings, model_id):
+    mock_s3.return_value.list_objects.return_value = []
+
+    with pytest.raises(FileNotFoundError, match="Model files missing on the S3 bucket"):
+        fl_service.bundle_flower_application(model_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_no_base_files(mock_s3, mocked_settings, model_id):
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    mock_client = mock_s3.return_value
+    mock_client.list_objects.side_effect = [
+        [f"{model_bucket}/{model_id}/client_app.py"],  # model files (no config.json)
+        [],  # base bucket empty
+    ]
+
+    with pytest.raises(FileNotFoundError, match="Base application files missing on the S3 bucket"):
+        fl_service.bundle_flower_application(model_id)
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_no_config_clears_existing_dest(
+    mock_s3, mock_required, mocked_settings, model_id
+):
+    """No config.json falls back to job_type=standard, and stale destination files are cleared first."""
+    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+    dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    mock_client = mock_s3.return_value
+    mock_required.return_value = ["client_app.py", "models.py"]
+    model_files = [
+        f"{model_bucket}/{model_id}/client_app.py",
+        f"{model_bucket}/{model_id}/models.py",
+    ]  # no config.json -> job_type stays "standard"
+    base_files = [
+        f"{base_bucket}/flower/standard/app/server_app.py",
+        f"{base_bucket}/flower/standard/pyproject.toml",
+    ]
+    stale_dest_files = [f"{dest_bucket}/{model_id}/stale.py"]
+    mock_client.list_objects.side_effect = [model_files, base_files, stale_dest_files]
+    mock_client.object_exists.return_value = False
+
+    result = fl_service.bundle_flower_application(model_id)
+
+    assert result == f"{dest_bucket}/{model_id}"
+    mock_client.delete_objects.assert_called_once_with(stale_dest_files)
+
+
+# --- extract_current_job_data malformed response -------------------------------------------------
+
+
+@patch("flip_api.fl_services.services.fl_service.http_get")
+def test_extract_current_job_data_non_list_raises(mock_http_get):
+    # FL API returning a single object instead of a list is a contract violation -> fail loudly.
+    mock_http_get.return_value = {"job_id": "job123", "status": "RUNNING"}
+
+    with pytest.raises(ValueError, match="Unexpected response format"):
+        fl_service.extract_current_job_data("http://fl-api-endpoint", "job123")
+
+
+# --- abort_model_training guard clauses ----------------------------------------------------------
+
+
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+def test_abort_model_training_raises_when_server_not_running(
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
+    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
+    mock_fetch_server_status.return_value = None  # FL server is down
+
+    request = MagicMock()
+    request.path_params = {"target": "server", "clients": None}
+
+    with pytest.raises(ValueError, match="FL Server not running"):
+        fl_service.abort_model_training(request, model_id, fake_session)
+
+    # The abort must short-circuit before consulting the job list or issuing an abort.
+    mock_extract_current_job_data.assert_not_called()
+    mock_abort.assert_not_called()
+
+
+@patch("flip_api.fl_services.services.fl_service.extract_current_job_data")
+@patch("flip_api.fl_services.services.fl_service.get_fl_backend_job_id_by_model_id")
+@patch("flip_api.fl_services.services.fl_service.fetch_server_status")
+@patch("flip_api.fl_services.services.fl_service.abort_job")
+@patch("flip_api.fl_services.services.fl_scheduler_service.get_net_by_model_id")
+@patch("flip_api.fl_services.services.fl_scheduler_service.remove_job_from_queue")
+def test_abort_model_training_raises_on_invalid_target(
+    mock_remove,
+    mock_get_net,
+    mock_abort,
+    mock_fetch_server_status,
+    mock_get_fl_backend_job_id_by_model_id,
+    mock_extract_current_job_data,
+    model_id,
+    fake_session,
+):
+    mock_get_fl_backend_job_id_by_model_id.return_value = "job123"
+    mock_get_net.return_value = MagicMock(endpoint="http://fl-api-endpoint", name="net1")
+    mock_fetch_server_status.return_value = {"status": "started"}
+    mock_extract_current_job_data.return_value = IJobMetaData(job_id="job123", status="RUNNING")
+
+    request = MagicMock()
+    request.path_params = {"target": "bogus-target", "clients": None}
+
+    with pytest.raises(ValueError, match="Invalid target: bogus-target"):
+        fl_service.abort_model_training(request, model_id, fake_session)
+
+    mock_abort.assert_not_called()
