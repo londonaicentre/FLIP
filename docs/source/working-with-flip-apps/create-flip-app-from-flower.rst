@@ -13,10 +13,10 @@ This page walks through the code changes required to adapt a stock Flower app (f
 - ``flip.get_by_accession_number(...)`` to pull imaging resources for each accession
 - ``flip.send_metrics(...)`` to push per-round training metrics back to the FLIP UI
 
-A full, runnable reference is available in the `flip-fl-base-flower <https://github.com/londonaicentre/flip-fl-base-flower>`_ repository:
+A full, runnable reference is available in-tree (migrated from the now-archived ``flip-fl-base-flower`` repo):
 
-- ``src/standard/app/`` — a minimal training-only ``ServerApp`` / ``ClientApp`` template.
-- ``tutorials/monai/`` — a MONAI spleen-segmentation example that exercises every SDK call covered below.
+- ``fl-apps/flower/standard/app/`` — a minimal training-only ``ServerApp`` / ``ClientApp`` template.
+- ``fl-tutorials/flower/3d_spleen_segmentation/`` — a MONAI spleen-segmentation example that exercises every SDK call covered below.
 
 *****************
 Starting point
@@ -41,7 +41,7 @@ The ``pyproject.toml`` wires the two entry points together:
    serverapp = "app.server_app:app"
    clientapp = "app.client_app:app"
 
-If you are starting from scratch, copy ``src/standard/`` from ``flip-fl-base-flower`` as a template — it already contains the minimum FLIP integration described below.
+If you are starting from scratch, copy the in-tree ``fl-apps/flower/standard/`` as a template — it already contains the minimum FLIP integration described below.
 
 .. note::
 
@@ -120,7 +120,7 @@ Wrap your training entry point with four ``update_status`` calls. These drive th
 Full minimal example
 =====================
 
-Reproduced from ``flip-fl-base-flower/src/standard/app/server_app.py``:
+Reproduced from ``fl-apps/flower/standard/app/server_app.py``:
 
 .. code-block:: python
 
@@ -311,7 +311,7 @@ The ``pyproject.toml`` of a FLIP-compatible Flower app needs three things beyond
 2. A ``[tool.flwr.app.config]`` block declaring the FLIP run-config keys, even if the values are placeholders.
 3. Training hyperparameters (``num-server-rounds``, ``local-epochs``, etc.) declared in the same block so you can override them via ``flwr run . --run-config "key=value"`` locally.
 
-Abridged from ``flip-fl-base-flower/tutorials/monai/pyproject.toml``:
+Abridged from ``fl-tutorials/flower/3d_spleen_segmentation/pyproject.toml``:
 
 .. code-block:: toml
 
@@ -372,7 +372,7 @@ The MONAI tutorial also supports offline smoke-tests by pointing the FLIP helper
    DEV_IMAGES_DIR="../../data/spleen/accession-resources" \
    flwr run .
 
-See ``flip-fl-base-flower/tutorials/monai/README.md`` for the full local-run instructions.
+See ``fl-tutorials/flower/3d_spleen_segmentation/README.md`` for the full local-run instructions.
 
 ***************************
 Common pitfalls

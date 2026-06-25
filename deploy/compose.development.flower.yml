@@ -72,10 +72,17 @@ services:
   fl-server-net-1:
     container_name: fl-server-net-1
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    # Dev-only: run as root (like the NVFLARE dev fl-server) so the server can read
+    # BOTH the host-provisioned 0640 TLS keys AND the host operator's AWS SSO cache.
+    # The app user (uid 49999) can't read the cache: `aws sso login` writes the token
+    # file 0600, and group_add can't grant read on a 0600 file. Prod uses an ECS task
+    # IAM role (no mounted creds), so this root override is confined to dev compose.
+    user: "0:0"
     volumes:
-      # Mount the AWS credentials (needed to upload model results to S3).
-      # The image runs as `app` (uid 49999) with HOME=/app, so the mount
-      # lands at /app/.aws/ — the SDK's default lookup path for that user.
+      # Mount the host AWS credentials (needed to upload model results to S3). The image
+      # pins HOME=/app (kept even under the root override), so boto3 looks under /app/.aws/.
+      # Running as root, it reads the 0640 key + 0600 SSO token there regardless of perms.
+      # sso/cache is rw so boto3 can refresh the cached token in place.
       - ~/.aws/config:/app/.aws/config:ro
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
@@ -128,9 +135,9 @@ services:
       - ${FL_PROVISIONED_DIR}/net-1/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-1/keys:/keys:ro
       # Dev-overlay: edits to the register-supernode-keys.sh script apply without a rebuild.
-      # Lands in-tree at fl-services/flower/ with the Flower migration (#622); same script is
-      # baked into the image, so removal still works.
-      - ${FL_PROVISIONED_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
+      # In-tree at fl-services/flower/ (#622); also baked into the image, so removal still works.
+      # Pathed off FL_JOBS_DIR (abs /repo/jobs) since FL_PROVISIONED_DIR now lives under deploy/.
+      - ${FL_JOBS_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-1:
@@ -143,10 +150,17 @@ services:
   fl-server-net-2:
     container_name: fl-server-net-2
     image: ${DOCKER_FL_REGISTRY}${DOCKER_FL_SERVER_NAME}:${DOCKER_FL_TAG}
+    # Dev-only: run as root (like the NVFLARE dev fl-server) so the server can read
+    # BOTH the host-provisioned 0640 TLS keys AND the host operator's AWS SSO cache.
+    # The app user (uid 49999) can't read the cache: `aws sso login` writes the token
+    # file 0600, and group_add can't grant read on a 0600 file. Prod uses an ECS task
+    # IAM role (no mounted creds), so this root override is confined to dev compose.
+    user: "0:0"
     volumes:
-      # Mount the AWS credentials (needed to upload model results to S3).
-      # The image runs as `app` (uid 49999) with HOME=/app, so the mount
-      # lands at /app/.aws/ — the SDK's default lookup path for that user.
+      # Mount the host AWS credentials (needed to upload model results to S3). The image
+      # pins HOME=/app (kept even under the root override), so boto3 looks under /app/.aws/.
+      # Running as root, it reads the 0640 key + 0600 SSO token there regardless of perms.
+      # sso/cache is rw so boto3 can refresh the cached token in place.
       - ~/.aws/config:/app/.aws/config:ro
       - ~/.aws/sso/cache:/app/.aws/sso/cache:rw
       # Provisioned Flower secrets (only certificates are needed here)
@@ -193,8 +207,8 @@ services:
     volumes:
       - ${FL_PROVISIONED_DIR}/net-2/certificates:/certs:ro
       - ${FL_PROVISIONED_DIR}/net-2/keys:/keys:ro
-      # See net-1 above — symmetric dev-overlay.
-      - ${FL_PROVISIONED_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
+      # See net-1 above — symmetric dev-overlay (was missing the flower/ path segment).
+      - ${FL_JOBS_DIR}/../fl-services/flower/register-supernode-keys.sh:/scripts/register-supernode-keys.sh:ro
     entrypoint: ["/bin/bash", "/scripts/register-supernode-keys.sh"]
     depends_on:
       fl-server-net-2:
