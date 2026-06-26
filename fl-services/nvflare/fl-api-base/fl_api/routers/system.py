@@ -14,11 +14,10 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query, status
-from nvflare.fuel.hci.client.fl_admin_api import TargetType
 
 from fl_api.core.dependencies import get_session
 from fl_api.utils.flip_session import FLIP_Session
-from fl_api.utils.schemas import ClientInfoModel, ServerInfoModel, SystemInfoModel
+from fl_api.utils.schemas import ClientInfoModel, ServerInfoModel, SystemInfoModel, TargetType
 
 router = APIRouter()
 
