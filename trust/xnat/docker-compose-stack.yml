@@ -33,6 +33,16 @@ services:
 
   xnat-db:
     image: ${DOCKER_REGISTRY}xnat-db:${XNAT_TAG}
+    # Raise max_connections above the Postgres default (100). During a bulk DQR
+    # import XNAT opens many concurrent build connections, and an xnat-web restart
+    # briefly doubles the count (the old task's connections linger until reaped),
+    # which exhausted the pool and locked out even admin queries (FLIP#662).
+    command:
+      - postgres
+      - -c
+      - max_connections=300
+      - -c
+      - shared_buffers=512MB
     deploy:
       replicas: 1
       restart_policy:
