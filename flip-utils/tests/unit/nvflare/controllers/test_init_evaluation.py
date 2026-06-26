@@ -22,17 +22,21 @@ from flip.nvflare.controllers.init_evaluation import InitEvaluation
 
 class TestInitEvaluation:
     def test_init_with_valid_uuid(self):
-        """Test initialization with valid UUID"""
+        """Test initialization with valid UUID stores it as fallback"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
         controller = InitEvaluation(model_id=model_id)
-        assert controller._model_id == model_id
+        assert controller._model_id_fallback == model_id
+        assert controller._model_id is None
         assert controller._min_clients == FlipConstants.MIN_CLIENTS
 
-    def test_init_with_invalid_uuid_raises_error(self):
-        """Test initialization with invalid UUID raises ValueError"""
-        mock_flip = MagicMock()
-        with pytest.raises(ValueError, match="not a valid UUID"):
-            InitEvaluation(model_id="invalid-uuid", flip=mock_flip)
+    def test_resolve_model_id_uses_fallback_when_fl_ctx_has_no_custom_props(self):
+        """Lazy resolution returns the constructor UUID when fl_ctx has no custom_props."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        controller = InitEvaluation(model_id=model_id)
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.return_value = None
+        result = controller._resolve_model_id(fl_ctx)
+        assert result == model_id
 
     def test_init_with_min_clients(self):
         """Test initialization with custom min_clients"""
