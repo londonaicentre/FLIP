@@ -9,6 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,6 +28,23 @@ _VALID = "abcdef01-2345-6789-abcd-ef0123456789"
 def _ctx(meta):
     ctx = MagicMock(name="fl_ctx")
     ctx.get_prop.side_effect = lambda key, default=None: meta if key == FLContextKey.JOB_META else default
+    return ctx
+
+
+def _ctx_workspace(meta_path=None, engine=True, workspace=True, job_id="job-1"):
+    """fl_ctx whose JOB_META prop is absent, forcing the workspace meta.json fallback path."""
+    ctx = MagicMock(name="fl_ctx")
+    ctx.get_prop.side_effect = lambda key, default=None: None if key == FLContextKey.JOB_META else default
+    if not engine:
+        ctx.get_engine.return_value = None
+        return ctx
+    eng = MagicMock(name="engine")
+    ws = MagicMock(name="workspace") if workspace else None
+    if ws is not None and meta_path is not None:
+        ws.get_job_meta_path.return_value = meta_path
+    eng.get_workspace.return_value = ws
+    ctx.get_engine.return_value = eng
+    ctx.get_job_id.return_value = job_id
     return ctx
 
 
@@ -51,3 +69,22 @@ def test_raises_when_neither_fallback_nor_custom_props():
 
 def test_get_job_custom_props_returns_empty_dict_when_absent():
     assert get_job_custom_props(_ctx(None)) == {}
+
+
+def test_workspace_fallback_returns_empty_when_no_engine():
+    # _load_meta_from_workspace: engine is None -> None -> {} custom_props
+    assert get_job_custom_props(_ctx_workspace(engine=False)) == {}
+
+
+def test_workspace_fallback_returns_empty_when_no_workspace():
+    # _load_meta_from_workspace: engine present but workspace is None -> None -> {}
+    assert get_job_custom_props(_ctx_workspace(workspace=False)) == {}
+
+
+def test_workspace_fallback_reads_custom_props_from_meta_json(tmp_path):
+    # _load_meta_from_workspace: reads meta.json from the run dir when JOB_META isn't on the ctx
+    meta = tmp_path / "meta.json"
+    meta.write_text(json.dumps({FLIP_CUSTOM_PROPS_KEY: {FLIP_MODEL_ID_KEY: _VALID}}))
+    assert get_job_custom_props(_ctx_workspace(meta_path=str(meta))) == {FLIP_MODEL_ID_KEY: _VALID}
+    # and the full resolve goes through it too
+    assert get_flip_model_id(_ctx_workspace(meta_path=str(meta))) == _VALID

@@ -108,3 +108,9 @@ class TestFlipFedAvgRecipe:
             assert client_cfg["local_rounds"] == 1
         finally:
             sys.modules["models"].get_model = lambda: object()
+
+    def test_write_client_config_params_is_noop_when_config_absent(self, tmp_path: Path):
+        """If export produced no client config (unexpected layout), the param-write is a safe no-op."""
+        recipe = FlipFedAvgRecipe()
+        # tmp_path has no <job_name>/app/config/config_fed_client.json — must not raise.
+        recipe._write_client_config_params(tmp_path)

@@ -12,18 +12,97 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from nvflare.apis.fl_constant import FLContextKey, ReturnCode
+from nvflare.apis.shareable import Shareable
 from nvflare.app_common.abstract.aggregator import Aggregator
 from nvflare.app_common.abstract.learnable_persistor import LearnablePersistor
 from nvflare.app_common.abstract.shareable_generator import ShareableGenerator
 from nvflare.app_common.app_constant import AppConstants
 
+from flip.constants import FlipEvents
 from flip.nvflare.controllers.scatter_and_gather_ldm import ScatterAndGatherLDM
+
+_VALID_MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
 
 
 class TestScatterAndGatherLDM:
+    @pytest.mark.parametrize(
+        ("bad_kwargs", "frag"),
+        [
+            ({"aggregator_id": 123}, "aggregator_id"),
+            ({"model_locator_id": 123}, "model_locator_id"),
+            ({"persistor_id": 123}, "persistor_id"),
+            ({"shareable_generator_id": 123}, "shareable_generator_id"),
+            ({"train_task_name": 123}, "train_task_name"),
+            ({"ignore_result_error": "nope"}, "ignore_result_error"),
+        ],
+    )
+    def test_init_rejects_wrong_arg_types(self, bad_kwargs, frag):
+        """Each id/flag arg is type-checked at construction and raises TypeError on the wrong type."""
+        with pytest.raises(TypeError, match=frag):
+            ScatterAndGatherLDM(model_id=_VALID_MODEL_ID, **bad_kwargs)
+
+    def test_handle_event_send_result_forwards_resolved_model_id(self):
+        """On SEND_RESULT the controller forwards the metric with the lazily-resolved model_id."""
+        controller = ScatterAndGatherLDM(model_id=_VALID_MODEL_ID)
+        controller.log_error = MagicMock()
+        controller._current_round = 3
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.side_effect = lambda key, default=None: (
+            "metrics-shareable"
+            if key == FLContextKey.EVENT_DATA
+            else (None if key == FLContextKey.JOB_META else default)
+        )
+
+        with patch("flip.nvflare.controllers.scatter_and_gather_ldm.handle_metrics_event") as mock_metrics:
+            controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)
+
+        mock_metrics.assert_called_once()
+        args = mock_metrics.call_args[0]
+        assert args[0] == "metrics-shareable"
+        assert args[1] == 3
+        assert args[2] == _VALID_MODEL_ID
+
+    def test_handle_event_send_result_no_data_logs_error(self):
+        """SEND_RESULT with no EVENT_DATA logs an error and does not forward."""
+        controller = ScatterAndGatherLDM(model_id=_VALID_MODEL_ID)
+        controller.log_error = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.return_value = None
+
+        with patch("flip.nvflare.controllers.scatter_and_gather_ldm.handle_metrics_event") as mock_metrics:
+            controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)
+
+        mock_metrics.assert_not_called()
+        controller.log_error.assert_called_once()
+
+    def test_accept_train_result_reports_handled_execution_exception(self):
+        """An EXECUTION_EXCEPTION result with an exception header is forwarded to the hub with the
+        lazily-resolved model_id, then the controller panics."""
+        controller = ScatterAndGatherLDM(model_id=_VALID_MODEL_ID, ignore_result_error=False)
+        controller.flip = MagicMock()
+        controller.system_panic = MagicMock()
+        controller.log_error = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.return_value = None  # JOB_META absent -> fallback resolves the model_id
+
+        result = Shareable()
+        result.set_return_code(ReturnCode.EXECUTION_EXCEPTION)
+        result.set_header("exception", "boom traceback")
+
+        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=fl_ctx)
+
+        assert accepted is False
+        controller.flip.send_handled_exception.assert_called_once()
+        assert controller.flip.send_handled_exception.call_args.kwargs["model_id"] == _VALID_MODEL_ID
+        controller.system_panic.assert_called_once()
+
     def test_init_with_valid_uuid(self):
         """Test initialization with valid UUID stores it as fallback."""
         model_id = "123e4567-e89b-12d3-a456-426614174000"

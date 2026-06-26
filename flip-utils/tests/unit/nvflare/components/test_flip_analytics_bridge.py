@@ -9,7 +9,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from nvflare.apis.analytix import ANALYTIC_EVENT_TYPE, AnalyticsData, AnalyticsDataType
@@ -93,6 +93,30 @@ class TestFlipAnalyticsBridge:
         # The from_dxo path will raise on missing fields; the bridge swallows that.
         bridge.handle_event(ANALYTIC_EVENT_TYPE, ctx)
         engine.fire_event.assert_not_called()
+
+    def test_swallows_from_shareable_parse_error(self):
+        """A Shareable that from_shareable can't parse is logged and skipped, not raised."""
+        bridge = FlipAnalyticsBridge()
+        bridge.log_exception = MagicMock()  # FLComponent.log_exception needs a real fl_ctx
+        ctx, engine, _ = _ctx_with_event_data(_make_analytic_shareable("X", 1.0))
+        with patch(
+            "flip.nvflare.components.flip_analytics_bridge.from_shareable", side_effect=ValueError("bad DXO")
+        ):
+            bridge.handle_event(ANALYTIC_EVENT_TYPE, ctx)
+        bridge.log_exception.assert_called_once()
+        engine.fire_event.assert_not_called()
+
+    def test_skips_when_no_engine_on_ctx(self):
+        """If the fl_ctx has no engine, the metric can't be bridged — logged and skipped."""
+        bridge = FlipAnalyticsBridge()
+        bridge.log_error = MagicMock()  # FLComponent.log_error needs a real fl_ctx
+        ctx, engine, props = _ctx_with_event_data(_make_analytic_shareable("X", 1.0))
+        ctx.get_engine.return_value = None  # engine missing -> log_error + return
+        bridge.handle_event(ANALYTIC_EVENT_TYPE, ctx)
+        bridge.log_error.assert_called_once()
+        engine.fire_event.assert_not_called()
+        # it still reached the rewrap step (event scope set) before bailing on the missing engine
+        assert props[FLContextKey.EVENT_SCOPE] == EventScope.FEDERATION
 
 
 @pytest.mark.parametrize("invalid_event_type", ["foo", "_send_result", "another"])
