@@ -176,7 +176,7 @@ class FlipFedAvgRecipe(Recipe):
         )
 
         # Server: FLIP components (locator, JSON generator, event handler, S3 persistor).
-        job.to_server(PTModelLocator(), id="model_locator")
+        job.to_server(PTModelLocator(model={"path": "models.get_model"}), id="model_locator")
         job.to_server(ValidationJsonGenerator(), id="json_generator")
         job.to_server(ServerEventHandler(), id="flip_server_event_handler")
         job.to_server(PersistToS3AndCleanup(persistor_id=persistor_id), id="persist_and_cleanup")

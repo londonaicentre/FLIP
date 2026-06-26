@@ -24,11 +24,7 @@
     {
       "args": {
         "model": {
-          "args": {
-            "in_features": 1,
-            "out_features": 1
-          },
-          "path": "torch.nn.modules.linear.Linear"
+          "path": "models.get_model"
         }
       },
       "id": "model_locator",
