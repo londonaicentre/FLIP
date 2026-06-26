@@ -116,7 +116,10 @@ jobs:
         run: aws s3 cp s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/xnat-web-1.9.3.war build-artifacts/xnat-web-1.9.3.war
 
       - name: Download XNAT plugins
-        run: aws s3 sync s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/plugins/ plugins/
+        # Exclude ohif-viewer: FLIP never opens the viewer, and its per-session
+        # metadata-rebuild listener is the dominant load on XNAT's Reactor
+        # EventBus (FLIP#662). Keep this in sync with scripts/ensure_plugins.sh.
+        run: aws s3 sync s3://${{ env.FLIP_ARTIFACTS_BUCKET_NAME }}/xnat/plugins/ plugins/ --exclude "ohif-viewer-*"
 
       - name: Build Docker image
         env:
