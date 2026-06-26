@@ -26,7 +26,7 @@ participants:
     default_host: fl.stag.flip.aicentre.co.uk
 #    docker_comm_port: 8005
   # Single client TEMPLATE. `make -C fl-services/nvflare provision-stag` runs
-  # fl-services/nvflare/scripts/generate-project-yaml.sh to clone this block
+  # fl-services/nvflare/provision/scripts/generate-project-yaml.sh to clone this block
   # into Trust_1 .. Trust_<STAG_NUM_CLIENTS> (default 50) before provisioning.
   # We over-provision spare kit slots so onboarding a new trust just claims a
   # pre-minted slot — never a re-provision, which would rotate every existing

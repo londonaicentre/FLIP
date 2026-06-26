@@ -210,7 +210,7 @@ make -C fl-services/nvflare provision-stag
 
 ### Creating a New Network
 
-Create a provisioning project file under `fl-services/nvflare/` (e.g. `net-3_project_dev.yml`) based on the template (`net-1_project_dev.yml`) (you'll likely need to change `fed_learn_port`) and run:
+Create a provisioning project file under `fl-services/nvflare/provision/` (e.g. `net-3_project_dev.yml`) based on the template (`net-1_project_dev.yml`) (you'll likely need to change `fed_learn_port`) and run:
 
 ```bash
 make -C fl-services/nvflare provision NET_NUMBER=3
