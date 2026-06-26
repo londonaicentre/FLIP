@@ -131,7 +131,31 @@ make e2e_smoke FL_BACKEND=flower                               # use the Flower 
 make e2e_smoke MODEL_FILES_DIR=/path/app QUERY_FILE=/path/q.sql
 make e2e_smoke EXTRA_ARGS="--abort-midway"                     # exercise the FL stop-training path
 make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
+make e2e_smoke EXTRA_ARGS="--project-id <UUID>"               # reuse an approved project (see below)
 ```
+
+The `--project-id <UUID>` override (printed as `project_id=<UUID>` at the start of any run) reuses an
+existing approved project: it skips cohort submission + approval and jumps straight to model
+create → upload → train → download. The image-pull wait still runs but returns immediately when the
+studies are already pulled — so it lets you iterate on training/app code (and re-run after an upload
+or fl-api change) without re-creating the project and re-pulling DICOM (~6 min/backend) each time.
+
+**Testing a change on BOTH FL backends in one sitting (the backend switch).** The pulled DICOM lives in
+each trust's Orthanc/XNAT, which `make restart-fl` leaves untouched — so you can pull once on the first
+backend and *reuse the same project* for the second, skipping the second image pull entirely:
+
+```bash
+# 0. Rebuild the fl-api image(s) from your branch first — the running stack serves PUBLISHED images,
+#    not your code. Full: `make build-fl FL_BACKEND=<backend>`; fl-api-only fast path:
+#    DOCKER_GID=$(id -g) docker compose -f fl-services/<backend>/compose.dev.yml build <fl-api|flip-fl-api>
+make e2e_smoke FL_BACKEND=flower                                          # note the printed project_id=<UUID>
+make restart-fl FL_BACKEND=nvflare DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev  # switch backend onto rebuilt :dev images
+make e2e_smoke FL_BACKEND=nvflare EXTRA_ARGS="--project-id <UUID>"        # reuse project → skip cohort + re-pull
+```
+
+Before trusting either run, confirm the live container actually carries your code (the stack silently
+runs old images otherwise): `docker exec flip-fl-api-net-1 cat fl_api/utils/upload.py`. See
+[Running FL Tutorials Locally](#running-fl-tutorials-locally) for `make build-fl` / `:dev` image details.
 
 ### Running FL Tutorials Locally
 
