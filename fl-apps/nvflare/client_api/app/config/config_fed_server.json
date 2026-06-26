@@ -1,0 +1,86 @@
+{
+  "components": [
+    {
+      "args": {
+        "model": {
+          "path": "models.get_model"
+        }
+      },
+      "id": "persistor",
+      "path": "nvflare.app_opt.pt.file_model_persistor.PTFileModelPersistor"
+    },
+    {
+      "args": {},
+      "id": "shareable_generator",
+      "path": "nvflare.app_common.shareablegenerators.full_model_shareable_generator.FullModelShareableGenerator"
+    },
+    {
+      "args": {
+        "expected_data_kind": "WEIGHTS"
+      },
+      "id": "aggregator",
+      "path": "nvflare.app_common.aggregators.intime_accumulate_model_aggregator.InTimeAccumulateWeightedAggregator"
+    },
+    {
+      "args": {
+        "model": {
+          "args": {
+            "in_features": 1,
+            "out_features": 1
+          },
+          "path": "torch.nn.modules.linear.Linear"
+        }
+      },
+      "id": "model_locator",
+      "path": "flip.nvflare.components.pt_model_locator.PTModelLocator"
+    },
+    {
+      "args": {},
+      "id": "json_generator",
+      "path": "flip.nvflare.components.validation_json_generator.ValidationJsonGenerator"
+    },
+    {
+      "args": {
+        "model_id": null
+      },
+      "id": "flip_server_event_handler",
+      "path": "flip.nvflare.components.flip_server_event_handler.ServerEventHandler"
+    },
+    {
+      "args": {
+        "model_id": null
+      },
+      "id": "persist_and_cleanup",
+      "path": "flip.nvflare.components.persist_and_cleanup.PersistToS3AndCleanup"
+    }
+  ],
+  "format_version": 2,
+  "task_data_filters": [],
+  "task_result_filters": [],
+  "workflows": [
+    {
+      "args": {
+        "model_id": null
+      },
+      "id": "controller",
+      "path": "flip.nvflare.controllers.init_training.InitTraining"
+    },
+    {
+      "args": {
+        "model_id": null,
+        "num_rounds": 3
+      },
+      "id": "controller1",
+      "path": "flip.nvflare.controllers.scatter_and_gather.ScatterAndGather"
+    },
+    {
+      "args": {
+        "model_id": null,
+        "model_locator_id": "model_locator",
+        "validation_timeout": 12000
+      },
+      "id": "controller2",
+      "path": "flip.nvflare.controllers.cross_site_model_eval.CrossSiteModelEval"
+    }
+  ]
+}
