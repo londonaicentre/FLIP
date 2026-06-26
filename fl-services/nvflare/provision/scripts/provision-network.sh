@@ -13,21 +13,21 @@
 #
 
 # Provision an NVFLARE federated learning network
-# Usage: ./fl-services/nvflare/scripts/provision-network.sh <project_yaml_file> <net_number> [workspace_parent_dir]
+# Usage: ./fl-services/nvflare/provision/scripts/provision-network.sh <project_yaml_file> <net_number> [workspace_parent_dir]
 # Normally invoked via `make -C fl-services/nvflare provision` (cwd = fl-services/nvflare).
 
 # Fail fast and loud: abort on any command error (-e), on an unset variable (-u),
 # and on a failure anywhere in a pipeline (-o pipefail). Without this a non-zero
 # `nvflare provision` (or `yq`) could leave partial output yet let the script
-# carry on restructuring and report success. Mirrors provision-additional-client.sh.
+# carry on restructuring and report success.
 set -euo pipefail
 
 # Provisioned output lands under <WORKSPACE_PARENT_DIR>/net-<NET_NUMBER>/. Default to
-# workspace-dev (beside this script, under fl-services/nvflare/) so it matches the
-# compose mounts, README, and .gitignore.
+# provision/workspace-dev (beside this script's provision/ home under fl-services/nvflare/)
+# so it matches the compose mounts, README, and .gitignore.
 PROJECT_YAML="${1:?Error: PROJECT_YAML is required}"
 NET_NUMBER="${2:?Error: NET_NUMBER is required}"
-WORKSPACE_PARENT_DIR="${3:-workspace-dev}"
+WORKSPACE_PARENT_DIR="${3:-provision/workspace-dev}"
 
 # Other configurations
 VERBOSE="true"

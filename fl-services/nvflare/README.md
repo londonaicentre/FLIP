@@ -68,14 +68,14 @@ You can also pass `FL_PORT` if you do not want to use the default (which will be
 This runs the `nvflare provision` CLI as part of `make -C fl-services/nvflare provision`. It is executed from the
 `fl-services/nvflare/fl-api-base` uv project (which declares `nvflare`), so it resolves even though the repo-root `flip`
 project has no dependencies. It creates the services defined in the net-specific yml file, initially under
-`fl-services/nvflare/workspace-dev/net-${NET_NUMBER}/prod_XX`, with default names.
+`fl-services/nvflare/provision/workspace-dev/net-${NET_NUMBER}/prod_XX`, with default names.
 Inside of these services, you should have at least a `local` and `startup` folder. The `startup` folder contains the
 scripts to start and stop the services (`start.sh`, `stop_fl.sh` etc.), as well as configuration files
 (`fed_[service_name].json`), and signature and certificate files.
 Once these service files are created, the signature and certificate files will link them together and make them not
 re-usable.
 
-After this command is run, the make command moves every service into `fl-services/nvflare/workspace-dev/net-${NET_NUMBER}/services/`.
+After this command is run, the make command moves every service into `fl-services/nvflare/provision/workspace-dev/net-${NET_NUMBER}/services/`.
 Additionally, files that are not created by the `nvflare provision` command yet are crucial to run
 the services (e.g. Python API files for the Admin API) will be added from `fl-base` (for client and server) and
 `fl-api-base` (for API).
@@ -88,20 +88,21 @@ make up NET_NUMBER=<NET_NUMBER>
 
 ### Onboarding a new client onto an existing network
 
-To onboard a new client, the procedure would involve:
+You do **not** re-provision to add a client. The kits are signed by the network's
+shared root CA, so re-running `nvflare provision` regenerates **every** participant's
+certs (and can rotate the root CA) — forcing a fleet-wide redeploy of already-onboarded
+trusts.
 
-- Run Python `nvflare provision` on the same network-specific yml file that was used to create the FL network, but
-adding the new client on the yml file.
-- Extract the client's folder from the workspace (deleting everything else), restructure it to match every other
-client's and remove everything else that was created and left in the workspace (server, admin, other clients).
-- Replace the `rootCA.pem` from the client's `startup` folder by the server's `fl-server/startup/rootCA.pem` of the
-network the client belongs to.
+Instead, stag/prod networks are **over-provisioned** up front with spare client slots:
+`make -C fl-services/nvflare provision-stag` / `provision-prod` mint `Trust_1 .. Trust_N`
+(default 50 / 500 — see [FLIP#626](https://github.com/londonaicentre/FLIP/issues/626)).
+Onboarding a new trust then just **claims the next unclaimed `Trust_N` kit** via
+`register_trust` on the hub — no re-provision, no cert churn, no mass redeploy.
 
-This should ensure that the client stays part of the network, without re-creating the other services or altering signed
-files.
-
-There is a helper Makefile target for this process (wrapping `fl-services/nvflare/scripts/provision-additional-client.sh`):
+When the spare slots run low, bump `STAG_NUM_CLIENTS` / `PROD_NUM_CLIENTS`, re-provision
+once (out of band), and re-upload the kits to S3:
 
 ```sh
-make -C fl-services/nvflare provision-additional-client NET_NUMBER=<NET_NUMBER>
+make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000
+make -C fl-services/nvflare upload-kits-to-s3 PROD=true
 ```

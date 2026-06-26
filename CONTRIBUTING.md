@@ -223,7 +223,7 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 **FL-specific environment variables:**
 
-- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): NVFLARE at `fl-services/nvflare/workspace-dev`, Flower at `fl-services/flower/certs`.
+- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): NVFLARE at `fl-services/nvflare/provision/workspace-dev`, Flower at `fl-services/flower/provision/creds`.
 - `FL_API_PORT` — port for FL API services (default: `8000`).
 
 ### Setting up AWS access

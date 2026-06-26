@@ -28,7 +28,7 @@ set -euo pipefail
 
 FL_BACKEND="${FL_BACKEND:-nvflare}"
 NET_ENDPOINTS="${NET_ENDPOINTS:-}"
-FL_PROVISIONED_DIR="${FL_PROVISIONED_DIR:-fl-services/nvflare/workspace-dev}"
+FL_PROVISIONED_DIR="${FL_PROVISIONED_DIR:-fl-services/nvflare/provision/workspace-dev}"
 
 # Flower (and any non-NVFLARE backend) provisions certs differently — nothing to check here.
 if [ "${FL_BACKEND}" != "nvflare" ]; then

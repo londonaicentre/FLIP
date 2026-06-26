@@ -40,18 +40,20 @@ DEV_COMPOSE := docker compose -f $(REPO_ROOT)/fl-services/nvflare/compose.dev.ym
 LOCAL_DEV ?= false
 NET_NUMBER ?= 1
 
-# Network provisioning lives alongside this Makefile, so recipes use paths relative
-# to fl-services/nvflare/ (no repo-root cd): the scripts read net-*_project_*.yml and
-# write the gitignored workspace-{dev,stag,prod}/ output here, and provision-network.sh
-# invokes `uv run --project fl-api-base` (the colocated uv project that declares nvflare).
-SCRIPTS            := scripts
-DEV_WORKSPACE_DIR  ?= workspace-dev
-STAG_WORKSPACE_DIR ?= workspace-stag
-PROD_WORKSPACE_DIR ?= workspace-prod
+# Network provisioning lives under provision/ beside this Makefile, so recipes use
+# paths relative to fl-services/nvflare/ (no repo-root cd): the scripts read the
+# provision/net-*_project_*.yml definitions and write the gitignored
+# provision/workspace-{dev,stag,prod}/ output, and provision-network.sh invokes
+# `uv run --project fl-api-base` (the colocated uv project that declares nvflare).
+PROVISION          := provision
+SCRIPTS            := $(PROVISION)/scripts
+DEV_WORKSPACE_DIR  ?= $(PROVISION)/workspace-dev
+STAG_WORKSPACE_DIR ?= $(PROVISION)/workspace-stag
+PROD_WORKSPACE_DIR ?= $(PROVISION)/workspace-prod
 STAG_NUM_CLIENTS   ?= 50
 PROD_NUM_CLIENTS   ?= 500
 
-.PHONY: build provision provision-2-nets provision-additional-client provision-stag provision-prod upload-kits-to-s3 up down submit
+.PHONY: build provision provision-2-nets provision-stag provision-prod upload-kits-to-s3 up down submit
 
 # Build the NVFLARE :dev images. fl-base must build first, in its own invocation:
 # a plain `FROM flare-fl-base` in the derived Dockerfiles is invisible to Compose's
@@ -65,16 +67,11 @@ build:
 # Dev: provision net-<NET_NUMBER> startup kits into DEV_WORKSPACE_DIR (gitignored),
 # where the dev compose mounts expect them.
 provision:
-	$(SCRIPTS)/provision-network.sh net-$(NET_NUMBER)_project_dev.yml $(NET_NUMBER) $(DEV_WORKSPACE_DIR)
+	$(SCRIPTS)/provision-network.sh $(PROVISION)/net-$(NET_NUMBER)_project_dev.yml $(NET_NUMBER) $(DEV_WORKSPACE_DIR)
 
 provision-2-nets:
 	$(MAKE) provision NET_NUMBER=1
 	$(MAKE) provision NET_NUMBER=2
-
-# Onboard one extra client to an existing net (after adding its Trust_<N> entry to the
-# project YAML) without re-provisioning — and thus re-signing — the whole network.
-provision-additional-client:
-	$(SCRIPTS)/provision-additional-client.sh $(NET_NUMBER) $(FL_PORT) net-$(NET_NUMBER)_project_dev.yml $(DEV_WORKSPACE_DIR)
 
 # Stag/prod: over-provision spare client kit slots (FLIP#626). The committed
 # net-<NET_NUMBER>_project_<env>.yml holds a single client template, which
@@ -82,11 +79,11 @@ provision-additional-client:
 # the gitignored {STAG,PROD}_WORKSPACE_DIR. N defaults to 50 (stag) / 500 (prod);
 # override e.g. `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=512`.
 provision-stag:
-	$(SCRIPTS)/generate-project-yaml.sh net-$(NET_NUMBER)_project_stag.yml $(STAG_NUM_CLIENTS) $(STAG_WORKSPACE_DIR)/net-$(NET_NUMBER)_project.generated.yml
+	$(SCRIPTS)/generate-project-yaml.sh $(PROVISION)/net-$(NET_NUMBER)_project_stag.yml $(STAG_NUM_CLIENTS) $(STAG_WORKSPACE_DIR)/net-$(NET_NUMBER)_project.generated.yml
 	$(SCRIPTS)/provision-network.sh $(STAG_WORKSPACE_DIR)/net-$(NET_NUMBER)_project.generated.yml $(NET_NUMBER) $(STAG_WORKSPACE_DIR)
 
 provision-prod:
-	$(SCRIPTS)/generate-project-yaml.sh net-$(NET_NUMBER)_project_prod.yml $(PROD_NUM_CLIENTS) $(PROD_WORKSPACE_DIR)/net-$(NET_NUMBER)_project.generated.yml
+	$(SCRIPTS)/generate-project-yaml.sh $(PROVISION)/net-$(NET_NUMBER)_project_prod.yml $(PROD_NUM_CLIENTS) $(PROD_WORKSPACE_DIR)/net-$(NET_NUMBER)_project.generated.yml
 	$(SCRIPTS)/provision-network.sh $(PROD_WORKSPACE_DIR)/net-$(NET_NUMBER)_project.generated.yml $(NET_NUMBER) $(PROD_WORKSPACE_DIR)
 
 # Upload the provisioned FLARE participant kits to S3 under the FLARE_KIT_DATE prefix
