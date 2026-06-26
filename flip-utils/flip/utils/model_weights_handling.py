@@ -10,11 +10,15 @@
 # limitations under the License.
 #
 
+
+#NOTE: This is the modified file from NVFlare.
+
 from __future__ import annotations
 
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
+import torch
 from nvflare.apis.dxo import DXO, DataKind, MetaKey
 
 if TYPE_CHECKING:
@@ -33,18 +37,20 @@ def get_model_weights_diff(original_weights: OrderedDict, new_weights: OrderedDi
         DXO: DXO containing the weight updates for the server.
     """
 
-    import torch
-
-    first_key = next(iter(new_weights))
-    first_val = new_weights[first_key]
-    if isinstance(first_val, torch.Tensor):
-        new_weights_dict = {k: v.cpu().numpy() for k, v in new_weights.items()}
-    else:
-        new_weights_dict = dict(new_weights)
-
+    # Build the diff one tensor at a time. Converting the whole model to a second
+    # ``{name: ndarray}`` dict before subtracting holds an extra full copy of the
+    # model in RAM; for large models (hundreds of MB) that spike, multiplied across
+    # the clients sharing a simulator process, is enough to drive the box into swap.
+    # Converting and subtracting per-key lets each transient array be freed
+    # immediately, so the peak is the incoming weights plus the diff being built.
+    #
+    # Note: on CPU ``tensor.cpu().numpy()`` may alias the model parameter's storage,
+    # so we never mutate ``new_arr`` in place — the subtraction allocates a fresh array.
     weight_diff = {}
-    for k in new_weights_dict.keys():
-        weight_diff[k] = new_weights_dict[k] - original_weights[k]
+    for k, v in new_weights.items():
+        new_arr = v.cpu().numpy() if isinstance(v, torch.Tensor) else v
+        weight_diff[k] = new_arr - original_weights[k]
+        del new_arr
 
     outgoing_dxo = DXO(
         data_kind=DataKind.WEIGHT_DIFF,
