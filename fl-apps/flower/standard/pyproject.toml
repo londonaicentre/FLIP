@@ -28,7 +28,7 @@ license = "Apache-2.0"
 # Dependencies for your Flower App
 dependencies = [
     "flip-utils>=0.1.8",
-    "flwr[simulation]>=1.27.0",
+    "flwr[simulation]>=1.32.0",
     "monai>=1.5.2",
     "nibabel>=5.3.3",
     "numpy>=2.4.2",
