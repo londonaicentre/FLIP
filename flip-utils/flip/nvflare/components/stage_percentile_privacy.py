@@ -37,7 +37,7 @@ from flip.constants import FlipMetaKey
 
 
 class StagePercentilePrivacy(DXOFilter):
-    def __init__(self, percentile=10, gamma=0.01, data_kinds: list[str] = None, off: bool = False):
+    def __init__(self, percentile=10, gamma=0.01, data_kinds: list[str] | None = None, off: bool = False):
         """Implementation of "largest percentile to share" privacy preserving policy.
 
         Shokri and Shmatikov, Privacy-preserving deep learning, CCS '15

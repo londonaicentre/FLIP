@@ -17,10 +17,6 @@ This module contains the production and development implementations of FLIP
 for the standard, evaluation, and fed_opt job types.
 """
 
-try:
-    from typing import override
-except ImportError:
-    from typing import override
 import json
 import logging
 import os
@@ -28,6 +24,7 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from typing import override
 from urllib.parse import urlparse
 
 import boto3
