@@ -73,12 +73,17 @@ export CLIENTS
 
 mkdir -p "$(dirname "${OUT_YAML}")"
 
-# Replace the base's client participants with the generated sequence. The
-# server/admin/builders sections (and their one-off comments) pass through
-# unchanged.
+# Rebuild .participants as server -> generated clients -> everything else
+# (admin, builders, ...), so the base's server-then-clients-then-admin ordering
+# is preserved rather than leaving the clients dangling after admin. The
+# server/admin/builders entries (and their one-off comments) pass through
+# unchanged in content; only the client template is swapped for the expansion.
 yq '
-  del(.participants[] | select(.type == "client"))
-  | .participants += (strenv(CLIENTS) | from_yaml)
+  .participants = (
+    [.participants[] | select(.type == "server")]
+    + (strenv(CLIENTS) | from_yaml)
+    + [.participants[] | select(.type != "server" and .type != "client")]
+  )
 ' "${BASE_YAML}" > "${OUT_YAML}"
 
 echo "Generated ${OUT_YAML} with ${NUM_CLIENTS} client participant(s) (Trust_1 .. Trust_${NUM_CLIENTS})"
