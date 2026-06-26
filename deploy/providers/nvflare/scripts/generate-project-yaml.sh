@@ -63,6 +63,12 @@ for ((i = 1; i <= NUM_CLIENTS; i++)); do
     CLIENTS+="- name: Trust_${i}"$'\n'
     CLIENTS+="$(printf '%s\n' "${TEMPLATE}" | sed 's/^/  /')"$'\n'
 done
+# CLIENTS is read by yq below via strenv(), so it must live in the process
+# environment. The environment block counts against the OS ARG_MAX ceiling
+# (~2 MB on Linux), which bounds NUM_CLIENTS: at N=500 this is ~5K lines
+# (~100 KB), comfortably under it. Pushing into the tens of thousands could
+# exceed ARG_MAX and fail — write CLIENTS to a temp file and pipe it into yq
+# instead if you ever need counts that large.
 export CLIENTS
 
 mkdir -p "$(dirname "${OUT_YAML}")"

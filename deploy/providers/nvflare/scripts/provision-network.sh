@@ -96,6 +96,14 @@ restructure_participant() {
     local src_path="${PROD_DIR}/${participant_name}"
     local dest_path="${SERVICES_DIR}/${participant_name_dest}"
 
+    # Fail fast if `nvflare provision` did not produce this participant's kit.
+    # Without this, the restructure below would silently mkdir an empty dest and
+    # report success, masking a malformed project YAML or a partial provision.
+    if [[ ! -d "${src_path}" ]]; then
+        echo "Error: provisioned participant directory not found: ${src_path}" >&2
+        exit 1
+    fi
+
     echo " - Restructuring ${participant_name}"
 
     mkdir -p "${dest_path}"
@@ -176,9 +184,17 @@ create_resources_template() {
 
 # Restructure all participants
 SERVER_NAME="$(get_participant_name_by_type "$PROJECT_YAML" server)"
+if [[ -z "${SERVER_NAME}" ]]; then
+    echo "Error: ${PROJECT_YAML} declares no server participant" >&2
+    exit 1
+fi
 echo "Identified server participant name: ${SERVER_NAME}"
 
 ADMIN_NAME="$(get_participant_name_by_type "$PROJECT_YAML" admin)"
+if [[ -z "${ADMIN_NAME}" ]]; then
+    echo "Error: ${PROJECT_YAML} declares no admin participant" >&2
+    exit 1
+fi
 echo "Identified admin participant name: ${ADMIN_NAME}"
 
 # Restructure every client participant. The count is driven entirely by the
@@ -190,6 +206,10 @@ while IFS= read -r client_name; do
     restructure_participant "${client_name}" "${client_name}" 1
     client_count=$((client_count + 1))
 done < <(get_participant_names_by_type "$PROJECT_YAML" client)
+if [[ "${client_count}" -eq 0 ]]; then
+    echo "Error: ${PROJECT_YAML} declares no client participants to restructure" >&2
+    exit 1
+fi
 echo "Restructured ${client_count} client participant(s)"
 
 restructure_participant "${SERVER_NAME}" "fl-server-net-${NET_NUMBER}" 0
