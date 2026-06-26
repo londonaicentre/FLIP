@@ -13,7 +13,8 @@
 #
 
 # Provision an NVFLARE federated learning network
-# Usage: ./deploy/providers/nvflare/scripts/provision-network.sh <project_yaml_file> <net_number> [workspace_parent_dir]
+# Usage: ./fl-services/nvflare/scripts/provision-network.sh <project_yaml_file> <net_number> [workspace_parent_dir]
+# Normally invoked via `make -C fl-services/nvflare provision` (cwd = fl-services/nvflare).
 
 # Fail fast and loud: abort on any command error (-e), on an unset variable (-u),
 # and on a failure anywhere in a pipeline (-o pipefail). Without this a non-zero
@@ -21,11 +22,12 @@
 # carry on restructuring and report success. Mirrors provision-additional-client.sh.
 set -euo pipefail
 
-# Provisioned output lands under <WORKSPACE_PARENT_DIR>/net-<NET_NUMBER>/. Default
-# to deploy/providers/nvflare/workspace so it matches the compose mounts, README, and .gitignore.
+# Provisioned output lands under <WORKSPACE_PARENT_DIR>/net-<NET_NUMBER>/. Default to
+# workspace-dev (beside this script, under fl-services/nvflare/) so it matches the
+# compose mounts, README, and .gitignore.
 PROJECT_YAML="${1:?Error: PROJECT_YAML is required}"
 NET_NUMBER="${2:?Error: NET_NUMBER is required}"
-WORKSPACE_PARENT_DIR="${3:-deploy/providers/nvflare/workspace}"
+WORKSPACE_PARENT_DIR="${3:-workspace-dev}"
 
 # Other configurations
 VERBOSE="true"
@@ -45,15 +47,14 @@ fi
 
 # Run NVFLARE provisioning.
 #
-# Run nvflare from a uv project that actually declares it. The repo-root `flip`
-# project is an umbrella with no dependencies (and no uv workspace), so a bare
-# `uv run nvflare` from here resolves nothing — `Failed to spawn: nvflare`. nvflare
-# is declared by `fl-services/nvflare/fl-api-base` (no torch/MONAI, so lighter than
-# `flip-utils`) and by `flip-utils`; we target fl-api-base via `--project`. `--project`
-# only selects the environment, so cwd — and therefore the relative PROJECT_YAML /
-# WORKSPACE_PARENT_DIR paths below — stays at the repo root.
+# Run nvflare from a uv project that actually declares it. A bare `uv run nvflare`
+# resolves nothing here — `Failed to spawn: nvflare`. nvflare is declared by the
+# colocated `fl-api-base` uv project (no torch/MONAI, so lighter than `flip-utils`),
+# targeted via `--project fl-api-base`. `--project` only selects the environment, so
+# cwd — and therefore the relative PROJECT_YAML / WORKSPACE_PARENT_DIR paths below —
+# stays at fl-services/nvflare/ (where the Makefile invokes this).
 log "Provisioning network ${NET_NUMBER}..."
-uv run --project fl-services/nvflare/fl-api-base nvflare provision -p "${PROJECT_YAML}" -w "${WORKSPACE_PARENT_DIR}"
+uv run --project fl-api-base nvflare provision -p "${PROJECT_YAML}" -w "${WORKSPACE_PARENT_DIR}"
 
 echo "Restructuring provisioned files in workspace..."
 

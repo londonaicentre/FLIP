@@ -191,10 +191,10 @@ The [`../fl-services/nvflare/`](../fl-services/nvflare/README.md) directory cont
 Generate the certificates, keys, and configuration for the 2 FL networks:
 
 ```bash
-make -C deploy/providers/nvflare provision-2-nets
+make -C fl-services/nvflare provision-2-nets
 ```
 
-This uses the network-specific provisioning project files (`deploy/providers/nvflare/net-1_project_dev.yml` and `net-2_project_dev.yml`) and provisions the network files in `deploy/providers/nvflare/workspace/net-1` and `deploy/providers/nvflare/workspace/net-2` (gitignored) using the [deploy/providers/nvflare/scripts/provision-network.sh](../deploy/providers/nvflare/scripts/provision-network.sh) script.
+This uses the network-specific provisioning project files (`fl-services/nvflare/net-1_project_dev.yml` and `net-2_project_dev.yml`) and provisions the network files in `fl-services/nvflare/workspace-dev/net-1` and `fl-services/nvflare/workspace-dev/net-2` (gitignored) using the [fl-services/nvflare/scripts/provision-network.sh](../fl-services/nvflare/scripts/provision-network.sh) script.
 
 > ⚠️ **Warning**: Provisioned files contain cryptographic signatures. Any modification will cause errors. Always re-run provisioning if changes are needed.
 
@@ -206,15 +206,15 @@ clients won't be on the same Docker network as the FL server (as they are in dev
 Run:
 
 ```bash
-make -C deploy/providers/nvflare provision-stag
+make -C fl-services/nvflare provision-stag
 ```
 
 ### Creating a New Network
 
-Create a provisioning project file under `deploy/providers/nvflare/` (e.g. `net-3_project_dev.yml`) based on the template (`net-1_project_dev.yml`) (you'll likely need to change `fed_learn_port`) and run:
+Create a provisioning project file under `fl-services/nvflare/` (e.g. `net-3_project_dev.yml`) based on the template (`net-1_project_dev.yml`) (you'll likely need to change `fed_learn_port`) and run:
 
 ```bash
-make -C deploy/providers/nvflare provision NET_NUMBER=3
+make -C fl-services/nvflare provision NET_NUMBER=3
 ```
 
 ### Running a Network
@@ -256,7 +256,7 @@ To test a PR on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo
 
 | Command | Description |
 | --------- | ------------- |
-| `make -C deploy/providers/nvflare provision NET_NUMBER=X` | Provision FL network X |
+| `make -C fl-services/nvflare provision NET_NUMBER=X` | Provision FL network X |
 | `make build NET_NUMBER=X` | Build Docker images for network X |
 | `make up NET_NUMBER=X` | Start FL network X |
 | `make down NET_NUMBER=X` | Stop FL network X |

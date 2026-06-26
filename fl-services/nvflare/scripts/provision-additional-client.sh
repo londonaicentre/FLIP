@@ -13,21 +13,23 @@
 #
 
 # Provision a new client for an existing NVFLARE federated learning network
-# Usage: ./deploy/providers/nvflare/scripts/provision-additional-client.sh <net_number> [fl_port] [project_yml] [workspace_parent_dir]
+# Usage: ./fl-services/nvflare/scripts/provision-additional-client.sh <net_number> [fl_port] [project_yml] [workspace_parent_dir]
+# Normally invoked via `make -C fl-services/nvflare provision-additional-client` (cwd = fl-services/nvflare).
 #
 # You'll need to have added a new Trust_<N> client entry in the project YAML file
 # before running this script.
 #
-# Paths default to the monorepo layout: project YML under deploy/providers/nvflare/
-# and provisioned output under deploy/providers/nvflare/workspace/ (matching the compose mounts).
+# Paths default to the colocated layout: project YML beside this script under
+# fl-services/nvflare/ and provisioned output under fl-services/nvflare/workspace-dev/
+# (matching the compose mounts).
 #
 # After running this script, remember to add the new client service to your docker compose file.
 set -e
 
 NET_NUMBER="${1:?Error: NET_NUMBER is required}"
 FL_PORT="${2:-8002}"
-PROJECT_YML="${3:-deploy/providers/nvflare/net-${NET_NUMBER}_project_dev.yml}"
-WORKSPACE_PARENT_DIR="${4:-deploy/providers/nvflare/workspace}"
+PROJECT_YML="${3:-net-${NET_NUMBER}_project_dev.yml}"
+WORKSPACE_PARENT_DIR="${4:-workspace-dev}"
 
 WORKSPACE="${WORKSPACE_PARENT_DIR}/net-${NET_NUMBER}"
 FL_SERVICES="${WORKSPACE_PARENT_DIR}/net-${NET_NUMBER}/services"
@@ -38,8 +40,9 @@ VERBOSE="true"
 log() { echo "$*"; }
 vlog() { if [[ "${VERBOSE}" == "true" ]]; then echo "   [verbose] $*"; fi }
 
-# 1. Regenerate the net-specific project YAML
-uv run nvflare provision -p "$PROJECT_YML" -w "$WORKSPACE_PARENT_DIR"
+# 1. Regenerate the net-specific project YAML (nvflare comes from the colocated
+# fl-api-base uv project; cwd is fl-services/nvflare when invoked via the Makefile).
+uv run --project fl-api-base nvflare provision -p "$PROJECT_YML" -w "$WORKSPACE_PARENT_DIR"
 
 #3. Find the latest prod directory
 PROD_DIR=$(ls -d "$WORKSPACE"/prod_* 2>/dev/null | sort | tail -n 1)

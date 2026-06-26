@@ -49,7 +49,7 @@ compose pulls FL images by tag, so their build definitions live only in [`compos
 
 ### Project yml file
 
-The per-environment project files in [`../../deploy/providers/nvflare/`](../../deploy/providers/nvflare/)
+The per-environment project files alongside this README
 (`net-1_project_dev.yml`, `net-2_project_dev.yml`, `net-1_project_stag.yml`, `net-1_project_prod.yml`)
 define the services available within a network. Modify the relevant one if you want to:
 
@@ -59,23 +59,23 @@ define the services available within a network. Modify the relevant one if you w
 
 ### Net-specific yml file
 
-You can run `make -C deploy/providers/nvflare provision NET_NUMBER=${NET_NUMBER}` to create a network: this will create an instance of the
+You can run `make -C fl-services/nvflare provision NET_NUMBER=${NET_NUMBER}` to create a network: this will create an instance of the
 services defined in `net-${NET_NUMBER}_project_dev.yml`, substituting the naming by `net-${NET_NUMBER}`.
 You can also pass `FL_PORT` if you do not want to use the default (which will be the same for each created net).
 
 ### Provisioning command
 
-This runs the `nvflare provision` CLI as part of `make -C deploy/providers/nvflare provision`. It is executed from the
+This runs the `nvflare provision` CLI as part of `make -C fl-services/nvflare provision`. It is executed from the
 `fl-services/nvflare/fl-api-base` uv project (which declares `nvflare`), so it resolves even though the repo-root `flip`
 project has no dependencies. It creates the services defined in the net-specific yml file, initially under
-`deploy/providers/nvflare/workspace/net-${NET_NUMBER}/prod_XX`, with default names.
+`fl-services/nvflare/workspace-dev/net-${NET_NUMBER}/prod_XX`, with default names.
 Inside of these services, you should have at least a `local` and `startup` folder. The `startup` folder contains the
 scripts to start and stop the services (`start.sh`, `stop_fl.sh` etc.), as well as configuration files
 (`fed_[service_name].json`), and signature and certificate files.
 Once these service files are created, the signature and certificate files will link them together and make them not
 re-usable.
 
-After this command is run, the make command moves every service into `deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/`.
+After this command is run, the make command moves every service into `fl-services/nvflare/workspace-dev/net-${NET_NUMBER}/services/`.
 Additionally, files that are not created by the `nvflare provision` command yet are crucial to run
 the services (e.g. Python API files for the Admin API) will be added from `fl-base` (for client and server) and
 `fl-api-base` (for API).
@@ -100,8 +100,8 @@ network the client belongs to.
 This should ensure that the client stays part of the network, without re-creating the other services or altering signed
 files.
 
-There is a helper Makefile target for this process (wrapping `deploy/providers/nvflare/scripts/provision-additional-client.sh`):
+There is a helper Makefile target for this process (wrapping `fl-services/nvflare/scripts/provision-additional-client.sh`):
 
 ```sh
-make -C deploy/providers/nvflare provision-additional-client NET_NUMBER=<NET_NUMBER>
+make -C fl-services/nvflare provision-additional-client NET_NUMBER=<NET_NUMBER>
 ```

@@ -14,7 +14,7 @@
 # Generate Flower TLS certificates + SuperNode credentials for one FL network,
 # in-tree. Self-contained port of flip-fl-base-flower's `generate-tls-certificates`
 # Makefile target: runs the vendored generate_creds.py (no `flwr new` scaffold) into
-# deploy/providers/flower/certs/<net>/{certificates,keys} — the gitignored
+# fl-services/flower/certs/<net>/{certificates,keys} — the gitignored
 # FL_PROVISIONED_DIR the Flower compose mounts.
 #
 # Requires: uv (pulls `cryptography` ephemerally via --with).
@@ -24,7 +24,7 @@ set -euo pipefail
 NET="${1:?usage: generate-tls-certificates.sh <net-1|net-2>}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(git -C "$HERE" rev-parse --show-toplevel)"
-OUT="${FLOWER_CERTS_DIR:-$REPO_ROOT/deploy/providers/flower/certs}/$NET"
+OUT="${FLOWER_CERTS_DIR:-$REPO_ROOT/fl-services/flower/certs}/$NET"
 
 mkdir -p "$OUT"
 echo "🔐 Generating Flower TLS certs + SuperNode key pairs for $NET → $OUT"

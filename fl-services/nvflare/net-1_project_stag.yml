@@ -12,22 +12,22 @@
 
 api_version: 3
 name: net-1
-description: NVIDIA FLARE project yaml file for FLIP net-1 (production environment)
+description: NVIDIA FLARE project yaml file for FLIP net-1 (staging environment)
 
 participants:
   # Change the name of the server (server1) to the Fully Qualified Domain Name
   # (FQDN) of the server, for example: server1.example.com.
   # Ensure that the FQDN is correctly mapped in the /etc/hosts file.
-  - name: fl.app.flip.aicentre.co.uk
+  - name: fl.stag.flip.aicentre.co.uk
     type: server
     org: AICentre
     fed_learn_port: 8002
-    host_names: [fl.app.flip.aicentre.co.uk, fl-server-net-1]
-    default_host: fl.app.flip.aicentre.co.uk
+    host_names: [fl.stag.flip.aicentre.co.uk, fl-server-net-1]
+    default_host: fl.stag.flip.aicentre.co.uk
 #    docker_comm_port: 8005
-  # Single client TEMPLATE. `make -C deploy/providers/nvflare provision-prod` runs
-  # deploy/providers/nvflare/scripts/generate-project-yaml.sh to clone this block
-  # into Trust_1 .. Trust_<PROD_NUM_CLIENTS> (default 500) before provisioning.
+  # Single client TEMPLATE. `make -C fl-services/nvflare provision-stag` runs
+  # fl-services/nvflare/scripts/generate-project-yaml.sh to clone this block
+  # into Trust_1 .. Trust_<STAG_NUM_CLIENTS> (default 50) before provisioning.
   # We over-provision spare kit slots so onboarding a new trust just claims a
   # pre-minted slot — never a re-provision, which would rotate every existing
   # trust's certs and force a fleet-wide redeploy. See FLIP#626. Edit this block
@@ -36,7 +36,7 @@ participants:
     type: client
     org: AICentre
     connect_to:
-      host: fl.app.flip.aicentre.co.uk
+      host: fl.stag.flip.aicentre.co.uk
     # Specifying listening_host will enable the creation of one pair of
     # certificate/private key for this client, allowing the client to function
     # as a server for 3rd-party integration.
