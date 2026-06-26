@@ -98,5 +98,13 @@ class TestFlipFedAvgRecipe:
 
             meta = json.loads((job_dir / "meta.json").read_text())
             assert meta[FLIP_CUSTOM_PROPS_KEY][FLIP_MODEL_ID_KEY] == _DEV_MODEL_ID
+
+            # project_id / query / local_rounds are emitted as top-level client-config keys
+            # (placeholders) so the template is self-documenting and {project_id} resolves;
+            # fl-server's configure_client overwrites project_id/query at job-assembly.
+            client_cfg = json.loads((job_dir / "app" / "config" / "config_fed_client.json").read_text())
+            assert client_cfg["project_id"] == ""
+            assert client_cfg["query"] == "SELECT * FROM Table;"
+            assert client_cfg["local_rounds"] == 1
         finally:
             sys.modules["models"].get_model = lambda: object()

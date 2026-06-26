@@ -38,6 +38,9 @@
     }
   ],
   "format_version": 2,
+  "local_rounds": 1,
+  "project_id": "",
+  "query": "SELECT * FROM Table;",
   "task_data_filters": [],
   "task_result_filters": [
     {

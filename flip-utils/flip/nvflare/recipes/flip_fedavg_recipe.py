@@ -47,6 +47,7 @@ automatically so SimEnv/PocEnv runs work out of the box.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -248,3 +249,27 @@ class FlipFedAvgRecipe(Recipe):
         the real model_id at submit time, and forwards the job to the fl-server stack.
         """
         self.job.export_job(str(job_dir))
+        self._write_client_config_params(Path(job_dir))
+
+    def _write_client_config_params(self, job_dir: Path) -> None:
+        """Emit ``project_id`` / ``query`` / ``local_rounds`` as top-level keys on the exported
+        ``config_fed_client.json``.
+
+        These are not NVFLARE components, so they don't fall out of ``export_job`` — but the
+        client contract expects them at the config top level: the trainer's
+        ``--project_id {project_id}`` arg resolves the ``{project_id}`` reference against the
+        top-level ``project_id`` key, and ``trainer.load_query()`` reads the top-level ``query``.
+        We write the recipe's (placeholder) defaults so the exported template is self-documenting
+        and the ``{project_id}`` reference always resolves. In production the fl-server's
+        ``configure_client`` overwrites ``project_id`` / ``query`` with the real submission
+        values at job-assembly; in SimEnv/LOCAL_DEV they're ignored (data comes from the
+        ``DEV_DATAFRAME`` / ``DEV_IMAGES_DIR`` env). Mirrors the hand-written ``standard`` template.
+        """
+        client_cfg = job_dir / self.job.name / "app" / "config" / "config_fed_client.json"
+        if not client_cfg.exists():
+            return
+        config = json.loads(client_cfg.read_text())
+        config.setdefault("project_id", self.project_id)
+        config.setdefault("query", self.query)
+        config.setdefault("local_rounds", self.local_rounds)
+        client_cfg.write_text(json.dumps(config, indent=2))
