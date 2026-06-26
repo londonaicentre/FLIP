@@ -63,7 +63,19 @@ Useful targets:
 - `app_files/evaluator.py`: evaluation loop and metric computation
 - `app_files/models.py`: model definitions and checkpoint loading
 - `app_files/transforms.py`: inference/evaluation transforms
-- `app_files/config.json`: model/checkpoint mapping and evaluation output schema
+- `app_files/config.json`: model/checkpoint mapping and evaluation settings (e.g. `num_classes`)
+
+## Output metrics
+
+`evaluator.py` writes `evaluation_results.json` with **aggregate** (cohort-mean) metrics per model:
+
+- `mean_dice` — mean Dice coefficient
+- `mean_hausdorff_95` — 95th-percentile Hausdorff distance (voxels)
+- `mean_surface_dice` — normalized Surface Dice at a 1-voxel tolerance (`SURFACE_DICE_TOLERANCE_VOXELS` in `evaluator.py`)
+- `mean_iou` — mean intersection-over-union
+
+Only aggregate values are returned. Per-sample (row-level) scores are deliberately not exported: a
+per-patient list would leak the exact evaluation cohort size and be linkable to individual patients.
 
 ## Notes and troubleshooting
 
