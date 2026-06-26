@@ -103,12 +103,18 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: Path) 
         dest_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            with requests.get(url, stream=True, timeout=60) as resp:
+            with requests.get(url, stream=True, timeout=60, allow_redirects=False) as resp:
+                # A redirect would dodge validate_bundle_url (which only saw the original URL),
+                # reopening the SSRF hole; treat any 3xx as a failure.
+                if resp.is_redirect or resp.is_permanent_redirect:
+                    raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
                 resp.raise_for_status()
                 with open(dest_path, "wb") as f:
                     for chunk in resp.iter_content(chunk_size=1024 * 1024):
                         if chunk:
                             f.write(chunk)
+        except HTTPException:
+            raise  # propagate the 400 redirect rejection unchanged (not a generic download failure)
         except Exception as e:
             logger.error(f"Failed to download file from {url} with error: {e}")
             raise HTTPException(status_code=500, detail=f"Failed to download file from {url}: {e}")

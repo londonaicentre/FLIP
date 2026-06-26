@@ -34,9 +34,11 @@ def mock_requests_get(monkeypatch):
     """Mock requests.get to simulate file downloads."""
 
     def _mock_get(url_to_content: dict[str, bytes]):
-        def _get(url, stream=True, timeout=60):
+        def _get(url, stream=True, timeout=60, allow_redirects=True):
             mock_response = Mock()
             mock_response.raise_for_status = Mock()
+            mock_response.is_redirect = False
+            mock_response.is_permanent_redirect = False
             if url in url_to_content:
                 content = url_to_content[url]
                 mock_response.iter_content = Mock(return_value=[content])
@@ -356,6 +358,35 @@ def test_upload_app_rejects_disallowed_bundle_host(client, upload_dir, monkeypat
         cohort_query="*",
         trusts=["t"],
         bundle_urls=[f"https://example.com/{model_id}/app/config.toml"],
+    )
+
+    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
+
+    assert response.status_code == 400
+
+
+def test_upload_app_rejects_redirect_response(client, upload_dir, monkeypatch):
+    """A 3xx redirect on a bundle fetch is rejected: it would dodge validate_bundle_url (SSRF)."""
+    model_id = str(uuid4())
+
+    def _redirecting_get(url, stream=True, timeout=60, allow_redirects=True):
+        mock_response = Mock()
+        mock_response.is_redirect = True
+        mock_response.is_permanent_redirect = False
+        mock_response.raise_for_status = Mock()
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+        return mock_response
+
+    import fl_api.utils.upload as upload_module
+
+    monkeypatch.setattr(upload_module.requests, "get", _redirecting_get)
+
+    body = UploadAppRequest(
+        project_id="project-123",
+        cohort_query="*",
+        trusts=["trust1"],
+        bundle_urls=[f"https://example.com/{model_id}/pyproject.toml"],
     )
 
     response = client.post(f"/upload_app/{model_id}", json=body.model_dump())

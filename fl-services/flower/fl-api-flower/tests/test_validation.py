@@ -70,3 +70,25 @@ def test_validate_bundle_url_enforces_host_allow_list(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         validate_bundle_url("https://evil.example.com/key")
     assert exc.value.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "https:///bundle/app/config.toml",  # no host
+        "https://127.0.0.1/x",  # loopback IP literal
+        "https://10.0.0.5/x",  # private IP literal
+        "https://169.254.169.254/x",  # link-local IP literal (metadata endpoint over https)
+        "https://[::1]/x",  # IPv6 loopback literal
+        "https://s3.eu-west-2.amazonaws.com:8080/bucket/key",  # non-443 port
+    ],
+)
+def test_validate_bundle_url_rejects_unsafe_hosts(bad):
+    with pytest.raises(HTTPException) as exc:
+        validate_bundle_url(bad)
+    assert exc.value.status_code == 400
+
+
+def test_validate_bundle_url_accepts_explicit_443():
+    url = "https://s3.eu-west-2.amazonaws.com:443/bucket/key"
+    assert validate_bundle_url(url) == url
