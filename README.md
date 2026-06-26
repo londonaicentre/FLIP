@@ -59,7 +59,7 @@ implementations and tutorials).
 | [`fl-tutorials/`](fl-tutorials/) | End-to-end tutorial examples, nested per backend ([`fl-tutorials/nvflare/`](fl-tutorials/nvflare/): xray classification, spleen seg/eval, diffusion; [`fl-tutorials/flower/`](fl-tutorials/flower/): xray classification, spleen seg/eval, numpy) |
 
 Both backends are now provisioned in-tree (gitignored): the NVFLARE workspace at
-[`deploy/providers/nvflare/workspace`](deploy/providers/nvflare/workspace) (`make nvflare-provision`) and the Flower certs
+[`deploy/providers/nvflare/workspace`](deploy/providers/nvflare/workspace) (`make -C deploy/providers/nvflare provision`) and the Flower certs
 at [`deploy/providers/flower/certs`](deploy/providers/flower/certs) (`make -C fl-services/flower provision`) — see
 [Federated Learning Setup](#federated-learning-setup) below.
 
@@ -226,8 +226,8 @@ federated learning. Both require provisioned certificates and configuration file
 > first, or the `fl-server` containers crash-loop on `start.sh: No such file or directory`. From the repo root:
 >
 > ```bash
-> make nvflare-provision-2-nets    # dev: provisions net-1 and net-2 into deploy/providers/nvflare/workspace/
-> # or, for a single network: make nvflare-provision NET_NUMBER=<N>
+> make -C deploy/providers/nvflare provision-2-nets    # dev: provisions net-1 and net-2 into deploy/providers/nvflare/workspace/
+> # or, for a single network: make -C deploy/providers/nvflare provision NET_NUMBER=<N>
 > ```
 >
 > Then bring the stack up with `make up`. Provisioning _after_ a `make up` is awkward: Docker will already have
@@ -250,7 +250,7 @@ federated learning. Both require provisioned certificates and configuration file
 If you see errors like "fed_client.json does not exist", "missing startup folder", or `start.sh: No such file or
 directory` in the `fl-server` logs, verify that:
 
-- The workspace was provisioned with NVFLARE startup kits (`make nvflare-provision-2-nets`) **before** `make up`
+- The workspace was provisioned with NVFLARE startup kits (`make -C deploy/providers/nvflare provision-2-nets`) **before** `make up`
 - The `FL_PROVISIONED_DIR` path is correctly resolved (check Makefile output)
 - For NVFLARE: the workspace is at `deploy/providers/nvflare/workspace/`
 
@@ -264,7 +264,7 @@ standalone run / provision / submit targets are invoked directly on the backend 
 To run the FL services standalone and submit a job **without** the full FLIP stack:
 
 ```bash
-make -C fl-services/<backend> provision NET_NUMBER=1   # flower: per-net certs+keys; nvflare: use make nvflare-provision-2-nets
+make -C fl-services/<backend> provision NET_NUMBER=1   # flower: per-net certs+keys; nvflare: startup kits (provision-2-nets for both nets)
 make -C fl-services/<backend> up                       # flower also: up-secure (needs provision first)
 make -C fl-services/<backend> submit APP=<job>
 make -C fl-services/<backend> down

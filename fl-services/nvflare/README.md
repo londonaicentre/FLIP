@@ -59,13 +59,13 @@ define the services available within a network. Modify the relevant one if you w
 
 ### Net-specific yml file
 
-You can run `make nvflare-provision NET_NUMBER=${NET_NUMBER}` to create a network: this will create an instance of the
+You can run `make -C deploy/providers/nvflare provision NET_NUMBER=${NET_NUMBER}` to create a network: this will create an instance of the
 services defined in `net-${NET_NUMBER}_project_dev.yml`, substituting the naming by `net-${NET_NUMBER}`.
 You can also pass `FL_PORT` if you do not want to use the default (which will be the same for each created net).
 
 ### Provisioning command
 
-This runs the `nvflare provision` CLI as part of `make nvflare-provision`. It is executed from the
+This runs the `nvflare provision` CLI as part of `make -C deploy/providers/nvflare provision`. It is executed from the
 `fl-services/nvflare/fl-api-base` uv project (which declares `nvflare`), so it resolves even though the repo-root `flip`
 project has no dependencies. It creates the services defined in the net-specific yml file, initially under
 `deploy/providers/nvflare/workspace/net-${NET_NUMBER}/prod_XX`, with default names.
@@ -103,5 +103,5 @@ files.
 There is a helper Makefile target for this process (wrapping `deploy/providers/nvflare/scripts/provision-additional-client.sh`):
 
 ```sh
-make nvflare-provision-additional-client NET_NUMBER=<NET_NUMBER>
+make -C deploy/providers/nvflare provision-additional-client NET_NUMBER=<NET_NUMBER>
 ```

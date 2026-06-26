@@ -41,13 +41,13 @@ build:
 	@echo "🛠️  Building flare-fl-{server,api,client}:dev..."
 	$(DEV_COMPOSE) build fl-server flip-fl-api fl-client-1
 
-# Provision the gitignored startup kits (delegates to the root impl, which owns the
-# project YAMLs + provision-network.sh). Output → deploy/providers/nvflare/workspace.
+# Provision the gitignored startup kits (delegates to deploy/providers/nvflare, which
+# owns the project YAMLs + provision-network.sh). Output → deploy/providers/nvflare/workspace.
 provision:
-	@$(MAKE) -C $(REPO_ROOT) nvflare-provision NET_NUMBER=$(NET_NUMBER)
+	@$(MAKE) -C $(REPO_ROOT)/deploy/providers/nvflare provision NET_NUMBER=$(NET_NUMBER)
 
 provision-2-nets:
-	@$(MAKE) -C $(REPO_ROOT) nvflare-provision-2-nets
+	@$(MAKE) -C $(REPO_ROOT)/deploy/providers/nvflare provision-2-nets
 
 # Standalone FL services for one net (fl-server + fl-api + 2 clients), no hub/trusts.
 # Needs `make fl-provision` first; runs on the local :dev images.

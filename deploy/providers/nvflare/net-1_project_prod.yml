@@ -25,7 +25,7 @@ participants:
     host_names: [fl.app.flip.aicentre.co.uk, fl-server-net-1]
     default_host: fl.app.flip.aicentre.co.uk
 #    docker_comm_port: 8005
-  # Single client TEMPLATE. `make nvflare-provision-prod` runs
+  # Single client TEMPLATE. `make -C deploy/providers/nvflare provision-prod` runs
   # deploy/providers/nvflare/scripts/generate-project-yaml.sh to clone this block
   # into Trust_1 .. Trust_<PROD_NUM_CLIENTS> (default 500) before provisioning.
   # We over-provision spare kit slots so onboarding a new trust just claims a
