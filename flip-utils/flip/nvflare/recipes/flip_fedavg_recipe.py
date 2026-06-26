@@ -242,7 +242,7 @@ class FlipFedAvgRecipe(Recipe):
     def export(self, job_dir: str | Path, **_kwargs: Any) -> None:
         """Export the job using NVFLARE's standard FedJob layout.
 
-        Produces ``<job_dir>/<job_name>/{meta.json, app_server/, app_<client>/}`` —
+        Produces ``<job_dir>/<job_name>/{meta.json, app/config/, app/custom/}`` —
         the same structure NVFLARE's admin client uploads to the cluster. The FLIP-API
         consumes this directory, optionally rewrites ``meta.json['custom_props']`` with
         the real model_id at submit time, and forwards the job to the fl-server stack.
