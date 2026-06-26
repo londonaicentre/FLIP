@@ -25,6 +25,10 @@ on:
 
 jobs:
   build-and-push:
+    # Skip on forks: they cannot push to ghcr.io/londonaicentre, so this whole
+    # build-and-publish job would otherwise show a spurious CI failure on fork
+    # pushes. Upstream main/develop publishing is unchanged.
+    if: github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     permissions:
       contents: read

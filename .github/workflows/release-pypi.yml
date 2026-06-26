@@ -23,6 +23,10 @@ permissions:
 
 jobs:
   release:
+    # Skip on forks: they cannot publish to PyPI (OIDC trusted publishing), push
+    # tags, or create releases in the upstream repo, so this job would otherwise
+    # show a spurious CI failure on a fork's main push. Upstream is unchanged.
+    if: github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     environment: flip
     defaults:
