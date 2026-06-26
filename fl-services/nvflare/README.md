@@ -11,13 +11,35 @@
     limitations under the License.
 -->
 
-# NVFLARE Federated  Learning services
+# NVFLARE Federated Learning Services
 
 This folder contains base code to create NVIDIA FLARE federated learning networks, each containing a set of clients, a server and an API. `fl-api-base` and `fl-base` are base services used by the provisioning command to build upon. `fl-base` can be used to test applications locally, but is a single container that does not constitute a fully working FL network.
 
-This diagram provides an overview of the services:
+## Layout
 
-![FL Services Architecture](../assets/fl_services_overview.png)
+```text
+fl-services/nvflare/
+├── fl-base/          # base image for the server + clients      (flare-fl-base)
+├── fl-server/        # FLARE server image                       (flare-fl-server)
+├── fl-client/        # FLARE client image                       (flare-fl-client)
+├── fl-api-base/      # FastAPI admin-API image — see its README (flare-fl-api)
+├── provision/        # project YAMLs, scripts/, and the gitignored workspace-{dev,stag,prod}/ output
+├── compose.dev.yml   # build + standalone-run definitions for the four FL images
+├── Makefile          # this backend's build / provision / up / down / submit
+└── README.md
+```
+
+## Anatomy of a network
+
+A provisioned **network** (`net-N`) is a self-contained FLARE deployment. Each net runs:
+
+- **`fl-server`** (image `flare-fl-server`) — the single FLARE server that coordinates rounds and aggregates client updates.
+- **`fl-api`** (image `flare-fl-api`) — a FastAPI service wrapping the FLARE admin `Session`. The Central Hub drives the net **only** through this API (submit/abort jobs, poll server/client status). See [`fl-api-base/README.md`](./fl-api-base/README.md).
+- **`fl-client-1 … fl-client-N`** (image `flare-fl-client`) — one client per participating trust, each holding that trust's signed startup kit.
+
+`fl-base` and `fl-api-base` are the **base build contexts** the provisioning step layers on top of: `fl-base` backs the server and clients, `fl-api-base` backs the API. `fl-base` alone runs as a single container for local app testing, but is not a working FL network.
+
+Provisioning mints, per participant, a signed **startup kit** under `provision/workspace-dev/net-N/services/<participant>/` — a `startup/` folder (`root_CA.pem`, `signature.json`, `fed_*.json`, `*.crt`/`*.key`, `start.sh`/`sub_start.sh`/`stop_fl.sh`) and a `local/` folder. The shared root CA that signs these kits is what binds a net together — see [Step-by-step provisioning](#step-by-step-provisioning) below.
 
 ## Images: built in CI, or locally as `:dev`
 
@@ -49,7 +71,7 @@ compose pulls FL images by tag, so their build definitions live only in [`compos
 
 ### Project yml file
 
-The per-environment project files alongside this README
+The per-environment project files under [`provision/`](./provision/)
 (`net-1_project_dev.yml`, `net-2_project_dev.yml`, `net-1_project_stag.yml`, `net-1_project_prod.yml`)
 define the services available within a network. Modify the relevant one if you want to:
 
@@ -65,25 +87,27 @@ You can also pass `FL_PORT` if you do not want to use the default (which will be
 
 ### Provisioning command
 
-This runs the `nvflare provision` CLI as part of `make -C fl-services/nvflare provision`. It is executed from the
-`fl-services/nvflare/fl-api-base` uv project (which declares `nvflare`), so it resolves even though the repo-root `flip`
-project has no dependencies. It creates the services defined in the net-specific yml file, initially under
-`fl-services/nvflare/provision/workspace-dev/net-${NET_NUMBER}/prod_XX`, with default names.
-Inside of these services, you should have at least a `local` and `startup` folder. The `startup` folder contains the
-scripts to start and stop the services (`start.sh`, `stop_fl.sh` etc.), as well as configuration files
-(`fed_[service_name].json`), and signature and certificate files.
-Once these service files are created, the signature and certificate files will link them together and make them not
-re-usable.
+`make -C fl-services/nvflare provision` wraps the `nvflare provision` CLI. It runs from the
+`fl-services/nvflare/fl-api-base` uv project (which declares `nvflare`), so it resolves even though
+the repo-root `flip` project has no dependencies. End to end, the target:
 
-After this command is run, the make command moves every service into `fl-services/nvflare/provision/workspace-dev/net-${NET_NUMBER}/services/`.
-Additionally, files that are not created by the `nvflare provision` command yet are crucial to run
-the services (e.g. Python API files for the Admin API) will be added from `fl-base` (for client and server) and
-`fl-api-base` (for API).
+1. **Generates the kits.** `nvflare provision` reads the net-specific yml and writes each
+   participant's startup kit under `provision/workspace-dev/net-${NET_NUMBER}/prod_XX/`, with default
+   names. Each kit has a `local/` and a `startup/` folder; `startup/` holds the start/stop scripts
+   (`start.sh`, `sub_start.sh`, `stop_fl.sh`), per-service config (`fed_[service_name].json`), and the
+   signature + certificate files. Those certs link the participants together and make the kits
+   **non-reusable** across nets.
+2. **Moves them into place.** The make target relocates every service into
+   `provision/workspace-dev/net-${NET_NUMBER}/services/`.
+3. **Adds the runtime code.** Files the `nvflare provision` CLI doesn't emit but the services still
+   need (e.g. the Admin API's Python files) are copied in from `fl-base` (server + clients) and
+   `fl-api-base` (API).
 
-Once your network is provisioned, you can test it works by running
+Once your network is provisioned, you can test it works by bringing the net up standalone (no hub/trusts)
+on the local `:dev` images — build them first with `make build-fl` (see [Images](#images-built-in-ci-or-locally-as-dev)):
 
 ```sh
-make up NET_NUMBER=<NET_NUMBER>
+make -C fl-services/nvflare up NET_NUMBER=<NET_NUMBER>
 ```
 
 ### Onboarding a new client onto an existing network
@@ -105,4 +129,22 @@ once (out of band), and re-upload the kits to S3:
 ```sh
 make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000
 make -C fl-services/nvflare upload-kits-to-s3 PROD=true
+```
+
+## Standalone targets
+
+This backend's [`Makefile`](./Makefile) owns its own `build`/`provision`/`up`/`down`/`submit`. To run
+**one provisioned net** on its own — no Central Hub, no trusts — on the local `:dev` images:
+
+```sh
+make -C fl-services/nvflare up NET_NUMBER=<N>     # fl-server + fl-api + 2 clients
+make -C fl-services/nvflare down                  # tear it down
+```
+
+`make -C fl-services/nvflare submit` is **intentionally not wired** for NVFLARE: job submission goes
+through the provisioned FLARE admin API, not a simple HTTP POST (unlike Flower's `submit`). To run a
+job standalone, use the simulator harness instead:
+
+```sh
+make -C fl-tutorials run-tutorial TUTORIAL=<name>
 ```
