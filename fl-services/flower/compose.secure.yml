@@ -11,7 +11,7 @@
 # limitations under the License.
 #
 # Secure (TLS + SuperNode auth) standalone Flower FL dev stack — the secure
-# counterpart of compose.dev.yml. Mirrors flip-fl-base-flower/deploy/compose.secure.yml.
+# counterpart of compose.dev.yml.
 # Run after provisioning certs: `make -C fl-services/flower up-secure` (which checks
 # fl-services/flower/provision/creds/net-1 exists first). Cert/key dirs default to net-1's
 # provisioned output; override FLOWER_TLS_CERTS_DIR / FLOWER_SUPERNODE_KEYS_DIR for

@@ -30,7 +30,7 @@ sys.path.insert(0, os.path.abspath("../../flip-api/src"))
 sys.path.insert(0, os.path.abspath("../../trust/data-access-api"))
 sys.path.insert(0, os.path.abspath("../../trust/imaging-api"))
 sys.path.insert(0, os.path.abspath("../../trust/trust-api"))
-# Include flip-utils package (migrated from flip-fl-base).
+# Include flip-utils package.
 # Insert the package *parent* dir so `import flip` resolves to flip-utils/flip/__init__.py.
 sys.path.insert(0, os.path.abspath("../../flip-utils"))
 

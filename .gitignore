@@ -405,7 +405,7 @@ flip-utils/dist/
 design_handoff*
 CONTEXT.md
 
-# Federated learning runtime directories (at repo root, same pattern as flip-fl-base-flower)
+# Federated learning runtime directories (at repo root)
 jobs/
 
 trust/orthanc/orthanc-storage/
@@ -433,8 +433,8 @@ flip-utils/dist/
 .ralph/
 .claude/
 
-# fl-tutorials generated / uncommitted artifacts. Replicates the legacy flip-fl-base
-# .gitignore (data/, tutorials/testing/tmp, the spleen-seg uv.lock), scoped under the
+# fl-tutorials generated / uncommitted artifacts (data/, tutorials/testing/tmp, the
+# spleen-seg uv.lock), scoped under the
 # per-backend tutorial trees (fl-tutorials/<backend>/) so a bare `data/` doesn't over-match
 # other data/ dirs in the monorepo:
 # - generated tutorial datasets (spleen/xray images + accession CSVs)

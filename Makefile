@@ -264,7 +264,7 @@ restart: down up
 
 # Restart only FL services (APIs, servers, and clients in trusts)
 # NOTE: Uses $(UP_PULL_FLAGS) — pulls fresh FL images only when DOCKER_FL_REGISTRY is set
-#       (same logic as `up`); an empty registry keeps locally built flip-fl-base-flower images.
+#       (same logic as `up`); an empty registry keeps locally built FL images.
 # NOTE: Client keys must be re-registered before starting clients (Flower only)
 # NOTE: flip-api is recreated first so its startup seeding re-applies FL_BACKEND onto the
 #       FLNets rows — the seeded backend is canonical, so this is how a framework switch
@@ -410,9 +410,8 @@ lock:
 # Drives a fresh project end-to-end against a running `make up` stack:
 # create → approve → upload model → wait for image pull → start training.
 # Defaults pick the chest-xray tutorial that matches FL_BACKEND (flower or
-# nvflare). The NVFLARE defaults target the in-tree tutorial under
-# fl-tutorials/; the Flower one is still the legacy sibling
-# ../../flip-fl-base-flower/tutorials/... — override via MODEL_FILES_DIR= / QUERY_FILE=.
+# nvflare). The defaults target the in-tree tutorials under
+# fl-tutorials/<backend>/ — override via MODEL_FILES_DIR= / QUERY_FILE=.
 # Useful for sanity-checking PRs without manually clicking through the UI.
 # See flip-api/Makefile for overrides (MODEL_FILES_DIR, QUERY_FILE, EXTRA_ARGS).
 e2e_smoke:

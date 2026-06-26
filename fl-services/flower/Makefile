@@ -10,8 +10,8 @@
 # limitations under the License.
 #
 # Flower FL service targets — build, provision (TLS certs), and standalone run
-# (insecure `up` / secure `up-secure` + `submit`), mirroring flip-fl-base-flower's
-# Makefile. The root Makefile forwards build-fl here by FL_BACKEND; the run/provision/
+# (insecure `up` / secure `up-secure` + `submit`). The root Makefile forwards
+# build-fl here by FL_BACKEND; the run/provision/
 # submit targets are invoked here directly (make -C fl-services/flower <target>), which
 # is where Flower FL deployments are tested. The central-hub multi-net topology is the
 # separate deploy/compose.development.flower.yml (driven by the root `make up`).

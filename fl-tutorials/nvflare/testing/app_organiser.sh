@@ -31,7 +31,7 @@ fi
 
 # Copy base application files (e.g. config folder, other custom files, etc.)
 # Job-type app templates live at fl-apps/nvflare/<JOB_TYPE>/app (../../../ resolves to the
-# repo root from fl-tutorials/nvflare/testing/). Migrated from the legacy flip-fl-base src/.
+# repo root from fl-tutorials/nvflare/testing/).
 mkdir -p ./tmp
 cp -r ../../../fl-apps/nvflare/$JOB_TYPE/app ./tmp/
 

@@ -42,10 +42,8 @@ When creating issues, please use the appropriate issue template:
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London. It is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
 The FLIP repository is a mono-repo: it consolidates the Central Hub API, Trust APIs, UI, Docker deployment, **and**
-the federated learning code (base library, FL services, and tutorials) that was previously split across the legacy
-[`flip-fl-base`](https://github.com/londonaicentre/flip-fl-base) (NVFLARE) and
-[`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) (Flower) repositories, which are now
-archived. Both backends are also provisioned in-tree (gitignored) under `deploy/providers/<backend>/` (see
+the federated learning code (base library, FL services, and tutorials) for both NVFLARE and Flower. Both backends
+are also provisioned in-tree (gitignored) under `fl-services/<backend>/provision/` (see
 [`README.md#federated-learning-setup`](README.md#federated-learning-setup)).
 
 ```bash

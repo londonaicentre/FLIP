@@ -10,8 +10,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Vendored from the flwrlabs `supernode-authentication` flwr template (the
-# generate_creds.py that flip-fl-base-flower scaffolded via `flwr new`). Kept in-tree
+# Vendored from the flwrlabs `supernode-authentication` flwr template's
+# generate_creds.py. Kept in-tree
 # instead of re-scaffolding at provision time, so Flower provisioning is self-contained
 # and reproducible. SERVER_SAN_DNS covers both the standalone (superlink) and
 # central-hub (fl-server-net-1/2) topologies so one cert is valid for any dev net.

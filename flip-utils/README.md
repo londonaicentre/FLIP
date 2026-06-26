@@ -30,8 +30,7 @@ image and is imported as `from flip import ...` by user-uploaded training code. 
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples
 - **[`../fl-services/`](../fl-services/)** — Docker images for FL networks (server, clients, admin API)
 
-The rest of this README is largely inherited from the standalone `flip-fl-base` repository (now merged in) and is
-still being reconciled with the mono-repo layout — paths like `tutorials/` and `fl-services/` referred to here are
+The rest of this README is still being reconciled with the mono-repo layout — paths like `tutorials/` and `fl-services/` referred to here are
 the now-sibling top-level `fl-tutorials/` and `fl-services/` trees, and Make targets called out below run from the
 `flip-utils/` directory.
 

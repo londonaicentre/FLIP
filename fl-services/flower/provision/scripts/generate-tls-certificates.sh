@@ -12,8 +12,8 @@
 # limitations under the License.
 #
 # Generate Flower TLS certificates + SuperNode credentials for one FL network,
-# in-tree. Self-contained port of flip-fl-base-flower's `generate-tls-certificates`
-# Makefile target: runs the vendored generate_creds.py (no `flwr new` scaffold) into
+# in-tree, self-contained. Runs the vendored generate_creds.py (no `flwr new`
+# scaffold) into
 # fl-services/flower/provision/creds/<net>/{certificates,keys} — the gitignored
 # FL_PROVISIONED_DIR the Flower compose mounts.
 #

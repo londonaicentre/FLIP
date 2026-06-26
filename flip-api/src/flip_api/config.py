@@ -83,7 +83,7 @@ class Settings(BaseSettings):
 
     # Variables used during database seeding
     NET_ENDPOINTS: dict[str, str]
-    # FL kit slot pool names — pre-provisioned in flip-fl-base (workspace/net-N/services/<slot>).
+    # FL kit slot pool names — one per pre-provisioned FL kit (workspace/net-N/services/<slot>).
     # Seeded into `fl_kit_slot` so POST /admin/trusts can hand each joining trust the next
     # free slot regardless of the trust's friendly name. Defaults to [] so existing dev
     # envs aren't required to set it; in that case the pool is empty until the admin

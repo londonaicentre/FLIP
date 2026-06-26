@@ -14,7 +14,7 @@
 # Chest-X-ray multi-lesion classification (Flower)
 
 Flower port of the chest-X-ray tutorial that lives at
-`flip-fl-base/tutorials/image_classification/xray_classification`. It scores
+`fl-tutorials/nvflare/image_classification/xray_classification`. It scores
 every X-ray against the lesions named in `app/config.json` (Effusion + Edema
 by default, with "Lungs in normal arrangement" as a negative override) using
 a MONAI DenseNet121 trained with multi-label BCE.
@@ -28,7 +28,7 @@ and matches the chest-X-ray data seeded into the trust mock OMOP DB
 
 ```
 xray_classification/
-├── query.sql                  # Cohort SQL — verbatim from flip-fl-base
+├── query.sql                  # Cohort SQL — verbatim from the NVFLARE tutorial
 ├── pyproject.toml             # Dependency manifest; not consumed by FLIP (base bundle wins)
 ├── README.md
 └── app/
