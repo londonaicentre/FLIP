@@ -286,7 +286,9 @@ def cross_site_validate(
     writer.add_scalar("TEST_LOSS", _safe_mean(metrics["loss"]), global_step=0)
     for metric in ["f1-score", "precision", "recall"]:
         for name in lesions.get_lesion_list():
-            writer.add_scalar(f"TEST-{metric.upper()}", _safe_mean(metrics[metric][name]), global_step=0)
+            # Include the lesion name in the tag so each lesion writes to a distinct series
+            # (matches aggregate_and_publish; without it every lesion collapses onto one tag).
+            writer.add_scalar(f"TEST-{metric.upper()}-{name}", _safe_mean(metrics[metric][name]), global_step=0)
 
     return metrics
 
