@@ -13,6 +13,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 from fastapi import HTTPException
 
 from fl_api.utils.schemas import UploadAppRequest
@@ -111,6 +112,8 @@ def mock_requests_get_success():
         resp = MagicMock()
         resp.content = b"mock file content"
         resp.raise_for_status = MagicMock()
+        resp.is_redirect = False
+        resp.is_permanent_redirect = False
         mock_get.return_value = resp
         yield mock_get
 
@@ -247,3 +250,20 @@ def test_upload_app_rejects_disallowed_bundle_host(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         upload_application(TEST_MODEL_ID, body, TMP_PATH_UPLOAD_DIR)
     assert exc.value.status_code == 400
+
+
+def test_upload_app_rejects_redirect_response(mock_requests_get_success, mock_upload_correct_request):
+    """A 3xx redirect on a bundle fetch is rejected: it would dodge validate_bundle_url (SSRF)."""
+    mock_requests_get_success.return_value.is_redirect = True
+
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
+    assert exc.value.status_code == 400
+
+
+def test_upload_app_raises_on_http_error_response(mock_requests_get_success, mock_upload_correct_request):
+    """A non-2xx bundle response raises, so its error body is never written as the bundle file."""
+    mock_requests_get_success.return_value.raise_for_status.side_effect = requests.HTTPError("404 Not Found")
+
+    with pytest.raises(requests.HTTPError):
+        upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)

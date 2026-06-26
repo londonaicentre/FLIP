@@ -107,6 +107,10 @@ class IJobMetaData(BaseModel):
     The shared job-metadata contract (GitHub issue #490). flip-api correlates
     ``model_id`` <-> ``job_id`` in its own ``fl_job`` table, so the contract carries
     only ``job_id`` + ``status``.
+
+    ``job_id`` is the backend-assigned identifier, treated as an opaque string the hub never
+    parses: a UUID-like string for NVFLARE, a stringified integer run-id for Flower. It is
+    persisted as ``FLJob.fl_backend_job_id``.
     """
 
     model_config = ConfigDict(extra="ignore")

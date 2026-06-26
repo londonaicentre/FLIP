@@ -44,6 +44,9 @@ endif
 
 include deploy/fl_backend.mk
 
+# Host gid for group_add on FL containers reading host-provisioned 640 certs/keys (dev).
+export DOCKER_GID := $(shell id -g)
+
 COMMON_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).yml
 FL_BACKEND_COMPOSE_FILE := deploy/compose.$(__DCKR_SUFFIX).$(FL_BACKEND).yml
 
@@ -113,12 +116,12 @@ build:
 # fl-base's build-only profile keeps it out of `up`; the derived images pull it via BASE_REF.
 # Then run the stack on the freshly-built images with:
 #   make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev
-FL_DEV_COMPOSE := docker compose -f fl-services/$(FL_BACKEND)/compose.dev.yml
+# build-fl forwards to the selected backend's Makefile (fl-services/<backend>/Makefile),
+# mirroring the fl-tutorials/ forwarder. Standalone FL run/provision/submit targets are
+# deliberately NOT mirrored here — run them in the backend dir, which is where FL
+# deployments are tested: make -C fl-services/<backend> {build,provision,up,down,submit}.
 build-fl:
-	@echo "🛠️ Building flare-fl-base:dev (base image; LOCAL_DEV=$(LOCAL_DEV))..."
-	LOCAL_DEV=$(LOCAL_DEV) $(FL_DEV_COMPOSE) --profile build-only build fl-base
-	@echo "🛠️ Building flare-fl-{server,api,client}:dev..."
-	$(FL_DEV_COMPOSE) build fl-server flip-fl-api fl-client-1
+	@$(MAKE) -C fl-services/$(FL_BACKEND) build LOCAL_DEV=$(LOCAL_DEV)
 	@echo "✅ FL :dev images built. Run them with: make up DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev"
 
 # Run all services
@@ -407,11 +410,11 @@ lock:
 	@echo "All uv.lock files regenerated."
 
 # NVFLARE provisioning targets — delegate to the scripts colocated with the project
-# YML files under deploy/providers/nvflare/. Dev output goes to deploy/workspace/
+# YML files under deploy/providers/nvflare/. Dev output goes to deploy/providers/nvflare/workspace/
 # (gitignored), where the compose mounts expect it; stag/prod output goes to
 # workspace-<env>/ (gitignored) for upload to S3 via upload-flare-kits-to-s3.
 NET_NUMBER ?= 1
-FL_WORKSPACE_DIR ?= deploy/workspace
+FL_WORKSPACE_DIR ?= deploy/providers/nvflare/workspace
 NVFLARE_SCRIPTS := deploy/providers/nvflare/scripts
 NVFLARE_PROJECTS := deploy/providers/nvflare
 

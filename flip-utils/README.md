@@ -194,7 +194,7 @@ Generate the certificates, keys, and configuration for the 2 FL networks:
 make nvflare-provision-2-nets
 ```
 
-This uses the network-specific provisioning project files (`deploy/providers/nvflare/net-1_project_dev.yml` and `net-2_project_dev.yml`) and provisions the network files in `deploy/workspace/net-1` and `deploy/workspace/net-2` (gitignored) using the [deploy/providers/nvflare/scripts/provision-network.sh](../deploy/providers/nvflare/scripts/provision-network.sh) script.
+This uses the network-specific provisioning project files (`deploy/providers/nvflare/net-1_project_dev.yml` and `net-2_project_dev.yml`) and provisions the network files in `deploy/providers/nvflare/workspace/net-1` and `deploy/providers/nvflare/workspace/net-2` (gitignored) using the [deploy/providers/nvflare/scripts/provision-network.sh](../deploy/providers/nvflare/scripts/provision-network.sh) script.
 
 > ⚠️ **Warning**: Provisioned files contain cryptographic signatures. Any modification will cause errors. Always re-run provisioning if changes are needed.
 

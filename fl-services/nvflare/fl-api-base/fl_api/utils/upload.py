@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+from fastapi import HTTPException
 
 from fl_api.utils.constants import META
 from fl_api.utils.io_utils import read_config
@@ -170,7 +171,13 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         s3_file_dir, file_name = str(Path(path).parent), Path(path).name
 
         try:
-            resp = requests.get(url, timeout=60)
+            resp = requests.get(url, timeout=60, allow_redirects=False)
+            # A redirect would dodge validate_bundle_url (which only saw the original URL),
+            # reopening the SSRF hole; treat any 3xx as a failure. raise_for_status() also
+            # stops an S3 4xx/5xx error body from being written out as the bundle file.
+            if resp.is_redirect or resp.is_permanent_redirect:
+                raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
+            resp.raise_for_status()
             content = resp.content
         except Exception as e:
             logger.error(f"Failed to download from URL {url} with error: {e}")

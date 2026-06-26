@@ -14,9 +14,9 @@ FLIP/
 ├── flip-api/           # Central Hub API (Python/FastAPI)
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
-├── fl-services/        # FL Docker services, nested per backend: fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base} (Flower lands under fl-services/flower/ via #622)
-├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,fed_opt,evaluation,diffusion_model} + check_required_files.sh (cross-backend CI validator at root)
-├── fl-tutorials/       # FL tutorials per backend: fl-tutorials/nvflare/{image_*,testing} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion
+├── fl-services/        # FL Docker services + per-backend Makefile (build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower} (#622)
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,fed_opt,evaluation,diffusion_model}, fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
+├── fl-tutorials/       # FL tutorials per backend: fl-tutorials/nvflare/{image_*,testing}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion
 ├── trust/
 │   ├── trust-api/      # Trust API gateway (Python/FastAPI)
 │   ├── data-access-api/# OMOP database queries (Python/FastAPI)
@@ -25,9 +25,9 @@ FLIP/
 │   ├── orthanc/        # Mocked PACS server
 │   └── xnat/           # Mocked XNAT neuroimaging service
 ├── deploy/             # Docker Compose files (dev/prod, flower/nvflare)
-│   ├── workspace/      # Provisioned NVFLARE certificates
 │   └── providers/
-│       ├── nvflare/    # NVFLARE network provisioning: net-*_project_*.yml + scripts/ (provision-network, provision-additional-client)
+│       ├── nvflare/    # NVFLARE network provisioning: net-*_project_*.yml + scripts/ (provision-network, provision-additional-client) + workspace/ (provisioned startup kits, gitignored)
+│       ├── flower/     # Flower provisioning: scripts/generate-tls-certificates.sh + certs/ (per-net TLS certs + SuperNode keys, gitignored)
 │       ├── AWS/        # Terraform/OpenTofu IaC + Ansible for AWS deployment
 │       ├── kubernetes/ # Helm chart for Kubernetes trust deployment
 │       └── local/      # Ansible playbooks for on-premises trust deployment
@@ -38,8 +38,9 @@ FLIP/
 Service-specific details are in `flip-api/CLAUDE.md`, `trust/CLAUDE.md`, `trust/*/CLAUDE.md`, and `deploy/providers/AWS/CLAUDE.md`.
 
 The `flip-utils/`, `fl-services/`, `fl-apps/`, and `fl-tutorials/` trees were migrated into this mono-repo from
-the legacy `flip-fl-base` (NVFLARE) and `flip-fl-base-flower` (Flower) repositories. Those repositories still hold the
-provisioned workspaces / certs that `deploy/fl_backend.mk` points `FL_PROVISIONED_DIR` at by default — see
+the legacy `flip-fl-base` (NVFLARE) and `flip-fl-base-flower` (Flower) repositories, which are now archived. Both
+backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` points `FL_PROVISIONED_DIR` per-backend at
+`deploy/providers/nvflare/workspace` (nvflare) or `deploy/providers/flower/certs` (flower) — see
 [`README.md#federated-learning-setup`](README.md#federated-learning-setup).
 
 ## Tech Stack
@@ -121,17 +122,40 @@ make local_test            # Tests without Docker
 
 Prerequisites:
 - Stack up via `make up` (central hub + trusts + XNAT) with trusts registered; Orthanc PACS seeded with DICOM data so image pull has something to pull.
-- The NVFLARE tutorial files are in-tree at `fl-tutorials/` (from the merged flip-fl-base).
-- The Flower tutorial requires the sibling repo `../flip-fl-base-flower` checked out (not yet merged).
+- The tutorial files are in-tree at `fl-tutorials/<backend>/` (NVFLARE and Flower both migrated from the legacy fl-base repos).
 
-Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `fl-tutorials/nvflare/image_classification/xray_classification/`. For Flower, they point at `../../flip-fl-base-flower/tutorials/xray_classification/`. Common overrides:
+Defaults track `FL_BACKEND` (default `nvflare`): `MODEL_FILES_DIR` and `QUERY_FILE` point at `fl-tutorials/nvflare/image_classification/xray_classification/`. For Flower, they point at the in-tree `fl-tutorials/flower/xray_classification/`. Common overrides:
 
 ```bash
 make e2e_smoke FL_BACKEND=flower                               # use the Flower tutorial
 make e2e_smoke MODEL_FILES_DIR=/path/app QUERY_FILE=/path/q.sql
 make e2e_smoke EXTRA_ARGS="--abort-midway"                     # exercise the FL stop-training path
 make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
+make e2e_smoke EXTRA_ARGS="--project-id <UUID>"               # reuse an approved project (see below)
 ```
+
+The `--project-id <UUID>` override (printed as `project_id=<UUID>` at the start of any run) reuses an
+existing approved project: it skips cohort submission + approval and jumps straight to model
+create → upload → train → download. The image-pull wait still runs but returns immediately when the
+studies are already pulled — so it lets you iterate on training/app code (and re-run after an upload
+or fl-api change) without re-creating the project and re-pulling DICOM (~6 min/backend) each time.
+
+**Testing a change on BOTH FL backends in one sitting (the backend switch).** The pulled DICOM lives in
+each trust's Orthanc/XNAT, which `make restart-fl` leaves untouched — so you can pull once on the first
+backend and *reuse the same project* for the second, skipping the second image pull entirely:
+
+```bash
+# 0. Rebuild the fl-api image(s) from your branch first — the running stack serves PUBLISHED images,
+#    not your code. Full: `make build-fl FL_BACKEND=<backend>`; fl-api-only fast path:
+#    DOCKER_GID=$(id -g) docker compose -f fl-services/<backend>/compose.dev.yml build <fl-api|flip-fl-api>
+make e2e_smoke FL_BACKEND=flower                                          # note the printed project_id=<UUID>
+make restart-fl FL_BACKEND=nvflare DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev  # switch backend onto rebuilt :dev images
+make e2e_smoke FL_BACKEND=nvflare EXTRA_ARGS="--project-id <UUID>"        # reuse project → skip cohort + re-pull
+```
+
+Before trusting either run, confirm the live container actually carries your code (the stack silently
+runs old images otherwise): `docker exec flip-fl-api-net-1 cat fl_api/utils/upload.py`. See
+[Running FL Tutorials Locally](#running-fl-tutorials-locally) for `make build-fl` / `:dev` image details.
 
 ### Running FL Tutorials Locally
 
@@ -276,6 +300,7 @@ After changes, evaluate if docs need updating:
 ### Key Environment Variables
 
 - `FL_BACKEND` — `nvflare` (default) or `flower`. Two roles: (1) deploy layer — selects which fl-* images run (compose/Makefile); (2) flip-api — sets the `FLNets.fl_backend` column at seed time. The seeded value is **canonical**: flip-api reads `FL_BACKEND` only at seeding and never reconciles it at runtime. To switch frameworks, `make restart-fl FL_BACKEND=...` recreates flip-api so its startup seeding re-applies the backend onto every net.
+- `FL_PROVISIONED_DIR` — path to the in-tree provisioned FL artifacts, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`: `deploy/providers/nvflare/workspace` (nvflare startup kits) or `deploy/providers/flower/certs` (flower per-net TLS certs + SuperNode keys). Both gitignored. Read only by the dev compose overlays for the cert/workspace volume mounts; override at the CLI for a one-off (`make up FL_PROVISIONED_DIR=...`). FL Makefiles are **per-backend** — each `fl-services/<backend>/Makefile` owns that backend's `build`/`provision`/`up`/`down`/`submit` (flower also `up-secure`); the root Makefile forwards only `build-fl` by `FL_BACKEND`. Provision with `make nvflare-provision-2-nets` (nvflare) or `make -C fl-services/flower provision NET_NUMBER=<N>` (flower). To run a backend standalone + submit without the full stack: `make -C fl-services/<backend> up` (or `up-secure`) then `make -C fl-services/<backend> submit APP=<job>`.
 - `PROD` — `true` (production), `stag` (staging), unset (development)
 - `AES_KEY_BASE64` — encryption key for trust communication
 - A remote trust operator only needs their kit file (`trust/.env.<KIT>`) — no hub `.env.<env>` needed on trust hosts.
@@ -375,8 +400,8 @@ The senders construct the header inline at call sites:
 | Repository | Purpose |
 |-----------|---------|
 | [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo — central hub, trust services, UI, deployment, **and** the FL base library / services / app templates / tutorials (under `flip-utils/`, `fl-services/`, `fl-apps/`, `fl-tutorials/`) |
-| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | Legacy NVFLARE base library repo — code has been migrated into `flip-utils/` + `fl-services/` + `fl-apps/` + `fl-tutorials/`; the NVFLARE workspace is now provisioned in-tree at `deploy/workspace` (`FL_PROVISIONED_DIR=deploy/workspace`) |
-| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Legacy Flower base library repo — library code has been migrated into `flip-utils/`; still hosts the provisioned Flower certs consumed by dev compose (`FL_PROVISIONED_DIR=../flip-fl-base-flower/certs`) |
+| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | Legacy NVFLARE base library repo (archived) — code has been migrated into `flip-utils/` + `fl-services/nvflare/` + `fl-apps/nvflare/` + `fl-tutorials/nvflare/`; the NVFLARE workspace is now provisioned in-tree at `deploy/providers/nvflare/workspace` (`FL_PROVISIONED_DIR=deploy/providers/nvflare/workspace`) |
+| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Legacy Flower base library repo (archived) — code has been migrated into `flip-utils/` + `fl-services/flower/` + `fl-apps/flower/` + `fl-tutorials/flower/`; the Flower certs are now provisioned in-tree at `deploy/providers/flower/certs` (`FL_PROVISIONED_DIR=deploy/providers/flower/certs`) |
 
 ## Documentation Files
 

@@ -19,6 +19,7 @@ operator with an SSM port-forward, could reach the API directly), every request 
 that becomes a filesystem path or an outbound fetch is validated here first.
 """
 
+import ipaddress
 import os
 from pathlib import Path
 from urllib.parse import urlparse
@@ -54,13 +55,15 @@ def safe_join(base: Path, *parts: str) -> Path:
 
 
 def validate_bundle_url(url: str) -> str:
-    """Reject bundle download URLs that are not https or not on the host allow-list.
+    """Reject bundle download URLs that are unsafe to fetch server-side.
 
     The FL API fetches every ``bundle_urls`` entry server-side, so an unchecked URL is an
-    SSRF vector. Requiring https blocks the common ``http://169.254.169.254`` metadata
-    fetch and non-http schemes (flip-api presigns S3 over https in every environment); an
-    optional comma-separated ``BUNDLE_URL_ALLOWED_HOSTS`` pins fetches to the expected
-    object-store origin when configured.
+    SSRF vector. The URL must be https, carry a host, use the default https port, and not
+    name a private / loopback / link-local IP literal. Requiring https blocks the common
+    ``http://169.254.169.254`` metadata fetch and non-http schemes (flip-api presigns S3
+    over https in every environment); an optional comma-separated ``BUNDLE_URL_ALLOWED_HOSTS``
+    pins fetches to the expected object-store origin when configured. DNS names are not
+    resolved here — the redirect-disabled fetch and the optional allow-list cover the rest.
 
     Args:
         url (str): A bundle download URL from the request body.
@@ -69,7 +72,8 @@ def validate_bundle_url(url: str) -> str:
         str: The validated URL, unchanged.
 
     Raises:
-        HTTPException: 400 if the scheme is not https or the host is not allow-listed.
+        HTTPException: 400 if the URL is not https, has no host, uses a non-443 port, names a
+            private/loopback/link-local IP literal, or is not on the host allow-list.
     """
     parsed = urlparse(url)
     if parsed.scheme != "https":
@@ -77,10 +81,53 @@ def validate_bundle_url(url: str) -> str:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Bundle URL must use https: {url!r}.",
         )
-    allowed = {host.strip().lower() for host in os.getenv("BUNDLE_URL_ALLOWED_HOSTS", "").split(",") if host.strip()}
-    if allowed and (parsed.hostname or "").lower() not in allowed:
+
+    hostname = parsed.hostname
+    if not hostname:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bundle URL host not allowed: {parsed.hostname!r}.",
+            detail=f"Bundle URL has no host: {url!r}.",
+        )
+
+    # Presigned S3 URLs are always served on 443; a custom port points at an internal service.
+    # ``urlparse`` defers port parsing, so a malformed / out-of-range port raises ValueError on
+    # access here (not at ``urlparse`` above) — convert it to a clean 400 rather than a 500.
+    try:
+        port = parsed.port
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bundle URL has an invalid port: {url!r}.",
+        ) from None
+    if port not in (None, 443):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bundle URL port not allowed: {port}.",
+        )
+
+    # Block IP-literal hosts in non-public ranges. A host that is not an IP literal raises
+    # ValueError and is left to the https + optional allow-list checks (we do not resolve DNS).
+    try:
+        ip: ipaddress.IPv4Address | ipaddress.IPv6Address | None = ipaddress.ip_address(hostname)
+    except ValueError:
+        ip = None
+    if ip is not None and (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bundle URL host not allowed: {hostname!r}.",
+        )
+
+    allowed = {host.strip().lower() for host in os.getenv("BUNDLE_URL_ALLOWED_HOSTS", "").split(",") if host.strip()}
+    if allowed and hostname.lower() not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bundle URL host not allowed: {hostname!r}.",
         )
     return url

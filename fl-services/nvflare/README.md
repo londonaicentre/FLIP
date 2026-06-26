@@ -68,14 +68,14 @@ You can also pass `FL_PORT` if you do not want to use the default (which will be
 This runs the `nvflare provision` CLI as part of `make nvflare-provision`. It is executed from the
 `fl-services/nvflare/fl-api-base` uv project (which declares `nvflare`), so it resolves even though the repo-root `flip`
 project has no dependencies. It creates the services defined in the net-specific yml file, initially under
-`deploy/workspace/net-${NET_NUMBER}/prod_XX`, with default names.
+`deploy/providers/nvflare/workspace/net-${NET_NUMBER}/prod_XX`, with default names.
 Inside of these services, you should have at least a `local` and `startup` folder. The `startup` folder contains the
 scripts to start and stop the services (`start.sh`, `stop_fl.sh` etc.), as well as configuration files
 (`fed_[service_name].json`), and signature and certificate files.
 Once these service files are created, the signature and certificate files will link them together and make them not
 re-usable.
 
-After this command is run, the make command moves every service into `deploy/workspace/net-${NET_NUMBER}/services/`.
+After this command is run, the make command moves every service into `deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/`.
 Additionally, files that are not created by the `nvflare provision` command yet are crucial to run
 the services (e.g. Python API files for the Admin API) will be added from `fl-base` (for client and server) and
 `fl-api-base` (for API).

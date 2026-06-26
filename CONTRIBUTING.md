@@ -44,9 +44,9 @@ FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in coll
 The FLIP repository is a mono-repo: it consolidates the Central Hub API, Trust APIs, UI, Docker deployment, **and**
 the federated learning code (base library, FL services, and tutorials) that was previously split across the legacy
 [`flip-fl-base`](https://github.com/londonaicentre/flip-fl-base) (NVFLARE) and
-[`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) (Flower) repositories. Those repositories
-still hold the provisioned NVFLARE workspaces / Flower certs consumed by the dev compose files (see
-[`README.md#federated-learning-setup`](README.md#federated-learning-setup)), but the FL Python/Docker source is now here.
+[`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) (Flower) repositories, which are now
+archived. Both backends are also provisioned in-tree (gitignored) under `deploy/providers/<backend>/` (see
+[`README.md#federated-learning-setup`](README.md#federated-learning-setup)).
 
 ```bash
 FLIP/
@@ -235,7 +235,7 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 **FL-specific environment variables:**
 
-- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. For the NVFLARE implementation, this is typically `../flip-fl-base/workspace`. For the Flower implementation, this is typically `../flip-fl-base-flower/certs`.
+- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): NVFLARE at `deploy/providers/nvflare/workspace`, Flower at `deploy/providers/flower/certs`.
 - `FL_API_PORT` — port for FL API services (default: `8000`).
 
 ### Setting up AWS access
