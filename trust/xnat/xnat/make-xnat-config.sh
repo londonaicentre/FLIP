@@ -40,9 +40,9 @@ fi
 cat > $XNAT_HOME/config/prefs-init.ini << EOF
 [siteConfig]
 defaultJmsListenerMinConcurrency=2
-defaultJmsListenerMaxConcurrency=8
+defaultJmsListenerMaxConcurrency=4
 prearchiveOperationJmsListenerMinConcurrency=2
-prearchiveOperationJmsListenerMaxConcurrency=8
+prearchiveOperationJmsListenerMaxConcurrency=4
 EOF
 
 if [ ! -z "$XNAT_EMAIL" ]; then
