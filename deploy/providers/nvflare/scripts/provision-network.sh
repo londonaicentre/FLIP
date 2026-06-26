@@ -15,6 +15,12 @@
 # Provision an NVFLARE federated learning network
 # Usage: ./deploy/providers/nvflare/scripts/provision-network.sh <project_yaml_file> <net_number> [workspace_parent_dir]
 
+# Fail fast and loud: abort on any command error (-e), on an unset variable (-u),
+# and on a failure anywhere in a pipeline (-o pipefail). Without this a non-zero
+# `nvflare provision` (or `yq`) could leave partial output yet let the script
+# carry on restructuring and report success. Mirrors provision-additional-client.sh.
+set -euo pipefail
+
 # Provisioned output lands under <WORKSPACE_PARENT_DIR>/net-<NET_NUMBER>/. Default
 # to deploy/workspace so it matches the compose mounts, README, and .gitignore.
 PROJECT_YAML="${1:?Error: PROJECT_YAML is required}"
@@ -64,14 +70,17 @@ rm -rf "${SERVICES_DIR}"
 mkdir -p "${SERVICES_DIR}"
 
 # Function to get the first participant name of a given type from the project YAML
-# This avoids hardcoding participant (server, admin) names in the script
+# This avoids hardcoding participant (server, admin) names in the script.
+# Selects the first match inside yq instead of piping to `head -n 1`, so it stays
+# pipefail-safe: a multi-match YAML can't SIGPIPE yq into a cryptic 141. Emits an
+# empty string when no participant of the type exists, so callers guard on `-z`.
 get_participant_name_by_type() {
   local project_yaml="$1"
   local participant_type="$2"
 
   yq -r \
-    ".participants[] | select(.type == \"${participant_type}\") | .name" \
-    "$project_yaml" | head -n 1
+    "[.participants[] | select(.type == \"${participant_type}\")][0].name // \"\"" \
+    "$project_yaml"
 }
 
 # Like get_participant_name_by_type but returns every matching name (one per

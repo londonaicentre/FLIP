@@ -45,15 +45,20 @@ if [[ ! -f "${BASE_YAML}" ]]; then
     exit 1
 fi
 
-# Extract the first client participant as the template, dropping its name (we
-# assign Trust_<i> per clone). The JSON round-trip strips the template's inline
-# comments so they are not replicated N times in the generated file. Fail
-# clearly if the base declares no client.
-TEMPLATE="$(yq -o=json '[.participants[] | select(.type == "client")][0] | del(.name)' "${BASE_YAML}" | yq -P '.' -)"
-if [[ -z "${TEMPLATE}" || "${TEMPLATE}" == "null" ]]; then
-    echo "Error: ${BASE_YAML} declares no client participant to use as a template" >&2
+# The base file must declare exactly one client participant: the canonical
+# template this script clones into Trust_1 .. Trust_N. Picking the first and
+# silently dropping any extras would, e.g., quietly collapse a dev project YAML
+# (Trust_1 + Trust_2) into a single-client expansion, so fail clearly instead.
+CLIENT_COUNT="$(yq '[.participants[] | select(.type == "client")] | length' "${BASE_YAML}")"
+if [[ "${CLIENT_COUNT}" != "1" ]]; then
+    echo "Error: ${BASE_YAML} must declare exactly one client participant as the template (found ${CLIENT_COUNT})" >&2
     exit 1
 fi
+
+# Extract that client participant as the template, dropping its name (we assign
+# Trust_<i> per clone). The JSON round-trip strips the template's inline comments
+# so they are not replicated N times in the generated file.
+TEMPLATE="$(yq -o=json '[.participants[] | select(.type == "client")][0] | del(.name)' "${BASE_YAML}" | yq -P '.' -)"
 
 # Build the expanded client sequence (Trust_1 .. Trust_N) as YAML text: a
 # sequence entry per client, with the comment-free template indented two spaces
