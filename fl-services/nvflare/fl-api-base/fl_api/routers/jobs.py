@@ -12,6 +12,7 @@
 
 # Job functions: upload, monitor, delete and handle jobs
 from typing import Optional, Union
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, status
 from nvflare.fuel.hci.client.fl_admin_api import TargetType
@@ -24,12 +25,15 @@ router = APIRouter()
 
 
 @router.post("/submit_job/{job_folder}")
-def submit_job(job_folder: str, session: FLIP_Session = Depends(get_session)) -> str:
+def submit_job(job_folder: UUID, session: FLIP_Session = Depends(get_session)) -> str:
     """
     Submits an existing job to the server.
 
     Args:
-        job_folder (str): folder where the job is located.
+        job_folder (UUID): The Central Hub model_id. The uploaded job lives in the folder
+            named after it (created by /upload_app/{model_id}), so the submit "job folder"
+            and the upload "model_id" are the same UUID; flip-api is the only caller.
+            FastAPI rejects any non-UUID path segment with 422 before this handler runs.
         session (FLIP_Session): FLIP session instance.
 
     Returns:
@@ -38,7 +42,7 @@ def submit_job(job_folder: str, session: FLIP_Session = Depends(get_session)) ->
     Raises:
         HTTPException: if the job submission fails due to any reason.
     """
-    return session.submit_job(job_folder)
+    return session.submit_job(str(job_folder))
 
 
 @router.get("/download_job/{job_id}")

@@ -69,9 +69,17 @@ def test_abort_run_failure_when_run_not_terminal(client, src_root, mock_flwr_run
         }
     )
 
-    response = client.delete("/abort_run/does-not-exist")
+    response = client.delete("/abort_run/1234567890")
 
     assert response.status_code == 500
+
+
+def test_abort_run_rejects_non_numeric_run_id(client, src_root):
+    # Flower run ids are integers, so a non-numeric path segment is rejected by FastAPI
+    # (422) before it can reach the `flwr stop` command line.
+    response = client.delete("/abort_run/not-a-number")
+
+    assert response.status_code == 422
 
 
 def test_abort_run_failure_when_terminal_run_missing_status(client, src_root, mock_flwr_run):
