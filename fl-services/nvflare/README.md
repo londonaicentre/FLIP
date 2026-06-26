@@ -17,7 +17,7 @@ This folder contains base code to create NVIDIA FLARE federated learning network
 
 This diagram provides an overview of the services:
 
-![FL Services Architecture](../assets/fl-services_overview.png)
+![FL Services Architecture](../assets/fl_services_overview.png)
 
 ## Images: built in CI, or locally as `:dev`
 
