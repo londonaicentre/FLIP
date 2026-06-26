@@ -36,7 +36,7 @@ ifneq ($(strip $(OVERRIDES_FILE)),)
 	VALUES_OPTS := $(VALUES_OPTS) -f $(OVERRIDES_FILE)
 endif
 
-.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init patch-aws-creds preflight
+.PHONY: help lint template deploy undeploy up down test validate clean deploy-trust-k8s undeploy-trust-k8s dry-run update-deps sync-kit patch-kit-secrets xnat-init patch-aws-creds preflight template-egress-variants
 
 help: ## Display this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-25s\033[0m %s\n", $$1, $$2}'
@@ -67,7 +67,6 @@ deploy: preflight ## Deploy the Helm chart to the cluster
 	$(HELM) upgrade --install $(RELEASE_NAME) $(CHART_DIR) \
 		--namespace $(NAMESPACE) \
 		--timeout 20m \
-		--force-conflicts \
 		$(VALUES_OPTS)
 
 undeploy: ## Remove the Helm release from the cluster
@@ -81,8 +80,13 @@ down: undeploy ## Tear down the trust K8s release (alias for undeploy)
 
 deploy-trust-k8s: ## Deploy trust services to K8s; KIT= selects the per-trust override file and re-patches secrets
 ifdef KIT
-	@$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml
-	@$(MAKE) patch-kit-secrets KIT=$(KIT)
+	@rc=0; \
+	$(MAKE) deploy OVERRIDES_FILE=$(CHART_DIR)/k8s-trust-$(KIT).yaml || rc=$$?; \
+	if [ $$rc -ne 0 ]; then \
+		echo "⚠️  deploy returned non-zero ($$rc) — often a non-fatal post-install hook (e.g. xnat-init — see #565), but it may be a genuine Helm failure. Patching per-trust secrets first so trust-api gets the correct key and does not poll with the stale seed key (#595), then re-exiting with the deploy status."; \
+	fi; \
+	$(MAKE) patch-kit-secrets KIT=$(KIT); \
+	exit $$rc
 else
 	@$(MAKE) deploy
 endif
@@ -129,6 +133,20 @@ template-all-backends: ## Render templates for all FL backend variants
 		> /dev/null
 	@echo "✅ All backend variants rendered successfully"
 
+template-egress-variants: ## Render the egress NetworkPolicy in default / hardened-CIDR / disabled shapes (#516 CI coverage)
+	@echo "=== Default egress ==="
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) --show-only templates/network-policy.yaml > /dev/null
+	@echo "=== Hardened (CIDR-scoped) egress ==="
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) \
+		--set networkPolicies.allowedEgressCIDRs[0]=10.20.0.0/24 \
+		--set networkPolicies.allowedEgressCIDRsWithPorts[0].cidrs[0]=13.43.162.56/32 \
+		--set networkPolicies.allowedEgressCIDRsWithPorts[0].port=8002 \
+		--show-only templates/network-policy.yaml > /dev/null
+	@echo "=== NetworkPolicies disabled ==="
+	$(HELM) template $(RELEASE_NAME) $(CHART_DIR) $(VALUES_OPTS) \
+		--set networkPolicies.enabled=false --show-only templates/network-policy.yaml || true
+	@echo "✅ Egress NetworkPolicy variants render. See NETWORK-POLICY.md (#516)."
+
 clean: ## Clean up rendered output
 	@rm -f $(CHART_DIR)/*.rendered.yaml
 
@@ -170,6 +188,7 @@ patch-kit-secrets: ## Patch per-trust secrets from kit file into the cluster Sec
 		--env $(ENV) \
 		--namespace $(NAMESPACE) \
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
+		--release-name $(RELEASE_NAME) \
 		--output-dir $(CHART_DIR) \
 		--no-write-override
 	@for svc in trust-api data-access-api imaging-api imaging-import-worker; do \
@@ -186,4 +205,5 @@ sync-kit: ## Sync a registered trust KIT into the cluster (patches Secret + writ
 		--env $(ENV) \
 		--namespace $(NAMESPACE) \
 		--secret-name $(RELEASE_NAME)-flip-trust-secrets \
+		--release-name $(RELEASE_NAME) \
 		--output-dir $(CHART_DIR)

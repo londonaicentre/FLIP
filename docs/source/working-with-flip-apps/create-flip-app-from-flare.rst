@@ -8,8 +8,8 @@ Create a FLIP app from a FLARE app
    For the FLARE-specific SDK calls and app layout, see the migrated FL code under
    `flip-utils/flip/nvflare <https://github.com/londonaicentre/FLIP/tree/develop/flip-utils/flip/nvflare>`_
    the per-job-type apps under
-   `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps>`_, and the tutorials under
-   `fl-tutorials/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials>`_ in
+   `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_, and the tutorials under
+   `fl-tutorials/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare>`_ in
    the meantime.
 
    The Flower equivalent is available now — see

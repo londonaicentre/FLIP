@@ -17,7 +17,7 @@ on:
     branches:
       - develop
     paths:
-      - "fl-apps/**"
+      - "fl-apps/nvflare/**"
       - ".github/workflows/fl-apps-push-s3-stag.yml"
 
 permissions:
@@ -53,5 +53,5 @@ jobs:
           S3_FOLDER_URI: s3://${{ vars.AWS_STAG_S3_BUCKET_NAME }}/base-application/${{ env.FL_BACKEND }}
         run: |
           aws s3 rm "${S3_FOLDER_URI}/" --recursive --exclude "*" --include "commit_*.txt" --only-show-errors
-          aws s3 sync fl-apps/ "${S3_FOLDER_URI}/" --delete
+          aws s3 sync fl-apps/nvflare/ "${S3_FOLDER_URI}/" --delete
           aws s3 cp "commit_${SHORT_SHA}.txt" "${S3_FOLDER_URI}/commit_${SHORT_SHA}.txt"

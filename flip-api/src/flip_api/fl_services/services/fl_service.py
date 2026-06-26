@@ -143,7 +143,9 @@ def check_server_status(endpoint: str) -> IServerStatus | None:
     """
     url = f"{endpoint}/check_server_status"
     logger.debug(f"Checking server status at '{url}'")
-    response = http_get(url)
+    # Same generous timeout as check_client_status: the Flower FL API hits the SuperLink and can
+    # be slower than httpx's 5s default.
+    response = http_get(url, timeout=30)
     logger.debug(f"Server status response: {response}")
     if not response:
         logger.error(f"No response from FL API for server at endpoint {endpoint}")
@@ -164,7 +166,10 @@ def check_client_status(endpoint: str) -> list[IClientStatus] | None:
     """
     url = f"{endpoint}/check_client_status"
     logger.debug(f"Checking client status at '{url}'")
-    response = http_get(url)
+    # NOTE the Flower FL API queries the SuperLink (ControlServicer.ShowFederation) on each call,
+    # which can take ~9s — past httpx's 5s default — so a single check would time out and fail the
+    # whole run (run_jobs marks the model ERROR). Use the same generous timeout as Flower submit.
+    response = http_get(url, timeout=30)
     logger.debug(f"Client status response: {response}")
     if not response:
         logger.error(f"No response from FL API for clients at endpoint {endpoint}")
@@ -791,7 +796,10 @@ def extract_current_job_data(net_endpoint: str, fl_backend_job_id: str) -> IJobM
             here is intentional.
     """
     url = f"{net_endpoint}/list_jobs"
-    current_job_data = http_get(url)
+    # Same generous timeout as the other FL status checks: the Flower FL API lists runs from the
+    # SuperLink and can exceed httpx's 5s default; this is polled during a run, so a 5s timeout
+    # would risk flipping a healthy in-flight model to ERROR.
+    current_job_data = http_get(url, timeout=30)
     logger.debug(f"Current job data: {current_job_data}")
 
     # Validate the response format

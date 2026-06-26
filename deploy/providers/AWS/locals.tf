@@ -116,7 +116,18 @@ locals {
       FL_APP_DESTINATION_BUCKET      = local.fl_app_destination_uri
       NET_ENDPOINTS                  = local.net_endpoints_json
       FL_BACKEND                     = var.fl_backend
-      FL_KIT_SLOT_NAMES              = var.FL_KIT_SLOT_NAMES
+      # Raise the per-file model-upload cap from the 100 MiB Settings default
+      # to 5 GB. This is the practical ceiling for the current upload path: a
+      # browser presigned POST (services.tf) is a *single* S3 POST, and S3
+      # rejects any single PUT/POST over 5 GiB — larger files would need
+      # multipart upload, which is not implemented. 5e9 (SI 5 GB) is used
+      # rather than a binary 5 GiB so the encoded multipart/form-data body
+      # (file + _MULTIPART_OVERHEAD_BUFFER_BYTES + framing) stays safely under
+      # S3's 5 GiB hard limit. Note: the presigned-POST TTL is clamped to
+      # 1800s (MAX_PUT_PRESIGNED_URL_TTL_SECONDS), so multi-GB uploads must
+      # complete within 30 minutes or they time out at the edge.
+      MAX_MODEL_FILE_BYTES = "5000000000"
+      FL_KIT_SLOT_NAMES    = var.FL_KIT_SLOT_NAMES
     })
     fl_server = {
       LOCAL_DEV                      = "false"
@@ -131,6 +142,9 @@ locals {
       # never exposed as plain env in the task definition.
     }
     fl_api = {
+      # ENV gates the entrypoint's uvicorn --reload off in prod/stag so a failed
+      # startup is a dead container (replaced by ECS), not a zombie (FLIP#593 pt.1).
+      ENV                = "production"
       FL_ADMIN_DIRECTORY = var.FL_ADMIN_DIRECTORY
     }
   }

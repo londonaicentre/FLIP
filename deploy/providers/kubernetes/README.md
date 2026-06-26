@@ -130,9 +130,12 @@ helm upgrade --install trust-release ./deploy/providers/kubernetes/ \
 >   `helm` reports the release failed and `patch-kit-secrets` is skipped, leaving
 >   trust-api on the stale seed key (`401`). Re-run it manually:
 >   `make -C deploy/providers/kubernetes patch-kit-secrets KIT=<CODE> PROD=stag`.
-> - For FL training, `sync-kit` strips the egress NetworkPolicy block each run
->   (see [#593](https://github.com/londonaicentre/FLIP/issues/593)); re-add it
->   before relying on the fl-client → fl-server connection.
+> - For FL training, `sync-kit` regenerates the FL-server egress allowance on
+>   every run (see [#593](https://github.com/londonaicentre/FLIP/issues/593)):
+>   when the kit carries `FL_SERVER_PORT` it emits `networkPolicies.allowedEgressPorts`
+>   into the override with a port-only rule for that port (alongside the chart's
+>   default DNS/HTTP/HTTPS ports), so the fl-client → fl-server gRPC is allowed
+>   without pinning the NLB's rotating IPs. No manual re-add is needed.
 
 ### 5. Verify the trust is polling
 
@@ -302,6 +305,10 @@ networkPolicies:
     - "172.16.0.0/12"
 ```
 
+For the full audit of what egress is allowed and why, the residual risk (notably
+443-to-anywhere), and a hardening guide, see
+[NETWORK-POLICY.md](NETWORK-POLICY.md) (#516).
+
 ## Secrets Reference
 
 The following keys must be present in the Secret (either created by the chart
@@ -365,10 +372,23 @@ sync secrets from AWS Secrets Manager or HashiCorp Vault.
 ### Security Model
 
 - **NetworkPolicies**: Default-deny-ingress, allow-intra-namespace, allow-egress
-  to Central Hub and FL server only
+  to Central Hub and FL server only (audit & threat model: [NETWORK-POLICY.md](NETWORK-POLICY.md), #516)
 - **No LoadBalancer or NodePort** for application services (all ClusterIP)
 - **Secrets**: Separate from ConfigMaps; recommend External Secrets Operator
 - **FL clients**: No Central Hub credentials; connect outbound to FL server only
+- **ServiceAccounts**: each stateless service runs under its own ServiceAccount
+  with no RBAC role bindings (none of the pods call the Kubernetes API — least
+  privilege by default).
+- **Pod Security & container hardening** (#530): the chart-created namespace
+  carries Pod Security Standards labels (`enforce=baseline`, `warn`/`audit=restricted`
+  by default — tune via `podSecurity.*`), and the stateless services
+  (trust-api, imaging-api, data-access-api, fl-client, imaging-import-worker)
+  apply a container `securityContext` (`allowPrivilegeEscalation: false`, drop
+  `ALL` capabilities, `seccompProfile: RuntimeDefault`) from `.Values.securityContext`.
+  `runAsNonRoot` / `readOnlyRootFilesystem` are left opt-in (image-dependent).
+  **Remaining for full `restricted` enforcement:** the stateful images
+  (`xnat-web`, `xnat-db`, `omop-db`, `orthanc`) need `fsGroup`/chown init
+  containers before they can run non-root — tracked under #530.
 
 ## Development
 

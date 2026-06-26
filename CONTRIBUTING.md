@@ -44,9 +44,9 @@ FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in coll
 The FLIP repository is a mono-repo: it consolidates the Central Hub API, Trust APIs, UI, Docker deployment, **and**
 the federated learning code (base library, FL services, and tutorials) that was previously split across the legacy
 [`flip-fl-base`](https://github.com/londonaicentre/flip-fl-base) (NVFLARE) and
-[`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) (Flower) repositories. Those repositories
-still hold the provisioned NVFLARE workspaces / Flower certs consumed by the dev compose files (see
-[`README.md#federated-learning-setup`](README.md#federated-learning-setup)), but the FL Python/Docker source is now here.
+[`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) (Flower) repositories, which are now
+archived. Both backends are also provisioned in-tree (gitignored) under `deploy/providers/<backend>/` (see
+[`README.md#federated-learning-setup`](README.md#federated-learning-setup)).
 
 ```bash
 FLIP/
@@ -67,9 +67,9 @@ FLIP/
 │   ├── trust-api/          # Trust API
 │   └── xnat/               # Mocked XNAT service
 ├── flip-utils/         # `flip` Python package — platform logic, NVFLARE components, Flower helpers
-├── fl-services/        # Docker images for FL networks: fl-server, fl-client, fl-api-base, fl-base
-├── fl-apps/            # FL job-type implementations / app templates (standard, evaluation, diffusion_model, fed_opt)
-└── fl-tutorials/       # End-to-end tutorial examples (xray classification, spleen seg/eval, diffusion)
+├── fl-services/        # Docker images for FL networks, per backend: fl-services/nvflare/{fl-server,fl-client,fl-api-base,fl-base}
+├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,evaluation,diffusion_model,fed_opt} (+ check_required_files.sh)
+└── fl-tutorials/       # End-to-end tutorial examples per backend: fl-tutorials/nvflare/ (xray classification, spleen seg/eval, diffusion)
 ```
 
 ## Setting up the development environment
@@ -223,7 +223,7 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 **FL-specific environment variables:**
 
-- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. For the NVFLARE implementation, this is typically `../flip-fl-base/workspace`. For the Flower implementation, this is typically `../flip-fl-base-flower/certs`.
+- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): NVFLARE at `deploy/providers/nvflare/workspace`, Flower at `deploy/providers/flower/certs`.
 - `FL_API_PORT` — port for FL API services (default: `8000`).
 
 ### Setting up AWS access
@@ -389,7 +389,7 @@ cd flip-utils && uv run pytest tests/unit -s -vv
 still-in-progress reconciliation called out at the top of that README — `flip-utils/` does not yet ship a Makefile in
 this mono-repo.) See [`flip-utils/README.md`](flip-utils/README.md) (the "Unit Tests" / "Integration Testing"
 sections — subject to the in-progress reconciliation noted there) for the FL package's tests, and
-[`fl-services/README.md`](fl-services/README.md) for provisioning FL networks.
+[`fl-services/nvflare/README.md`](fl-services/nvflare/README.md) for provisioning FL networks.
 
 **Kubernetes chart testing**: The K8s Helm chart at `deploy/providers/kubernetes/` can be tested with:
 
@@ -440,9 +440,13 @@ This rule applies across all services: `flip-api/tests/`, `trust/trust-api/tests
 
 ##### flip-api: real-Postgres integration tests via Testcontainers
 
-`flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema from `SQLModel.metadata`, seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
+`flip-api/tests/integration/` boots a throwaway `postgres:16-alpine` container per pytest session via [testcontainers-python](https://github.com/testcontainers/testcontainers-python) (`tests/integration/conftest.py`). The fixture builds the schema by running the **Alembic migrations** (`alembic upgrade head`) — the same DDL dev/prod apply at boot — then seeds permissions / roles / role-permissions once, and truncates per-test tables between tests. Both the existing `session` fixture and FastAPI's `Depends(get_session)` are rewired at the throwaway DB, so a new test only needs to request `session` (raw SQL access) and/or `client` (`TestClient` against the same DB) — no per-test setup required.
 
 CI runs these via `make integration_test` from `flip-api/`. Docker is preinstalled on `ubuntu-latest`, so no `services:` block is needed in the workflow. AWS-backed integration tests (Cognito, S3, SES) are out of scope for this fixture and are skip-marked at the file level until ticket B2 lands.
+
+##### flip-api: database migrations (Alembic)
+
+flip-api's PostgreSQL schema is owned by Alembic, not `SQLModel.metadata.create_all`. **Any schema-affecting change to `db/models/*.py` must ship a migration revision** in the same PR — run `make migration MESSAGE="..."` from `flip-api/` (flip-db must be up), review the autogenerated file (native PG enums + the `ARRAY(UUID)` column), and apply it with `make migrate`. The integration suite builds its schema from these migrations, and `tests/integration/test_migrations.py` is a **drift guard**: a model change without a matching revision makes the suite fail. See [`flip-api/README.md`](flip-api/README.md#database-migrations) for the full workflow and the enum gotchas.
 
 #### Signing your work
 

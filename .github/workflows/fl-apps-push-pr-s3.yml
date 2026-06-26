@@ -16,7 +16,7 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
     paths:
-      - "fl-apps/**" # only trigger if files inside fl-apps/ changed
+      - "fl-apps/nvflare/**" # only trigger if files inside fl-apps/nvflare/ changed
       - ".github/workflows/fl-apps-push-pr-s3.yml" # or this workflow
 
 permissions:
@@ -67,5 +67,5 @@ jobs:
           S3_FOLDER_URI: s3://${{ vars.AWS_DEV_S3_BUCKET_NAME }}/base-application-dev/pull-requests/${{ env.PR_NUMBER }}/${{ env.FL_BACKEND }}
         run: |
           aws s3 rm "${S3_FOLDER_URI}/" --recursive --exclude "*" --include "commit_*.txt" --only-show-errors
-          aws s3 sync fl-apps/ "${S3_FOLDER_URI}/" --delete
+          aws s3 sync fl-apps/nvflare/ "${S3_FOLDER_URI}/" --delete
           aws s3 cp "commit_${SHORT_SHA}.txt" "${S3_FOLDER_URI}/commit_${SHORT_SHA}.txt"

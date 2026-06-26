@@ -34,8 +34,12 @@ _MULTIPART_OVERHEAD_BUFFER_BYTES = 16 * 1024
 
 # Upper bound on PUT pre-signed URL lifetime. A leaked URL is a writable
 # capability against the upload bucket, so the leak window must stay tight.
-# 600s is the security ceiling — callers may pass less.
-MAX_PUT_PRESIGNED_URL_TTL_SECONDS = 600
+# 1800s (30 min) is the security ceiling — callers may pass less. It was
+# raised from 600s to accommodate large model-file uploads (up to the 5 GB
+# MAX_MODEL_FILE_BYTES cap): a multi-GB upload can't reliably finish inside a
+# 10-minute window on a typical link, and an expired policy aborts the
+# transfer at the S3 edge. Moving this value requires a security review.
+MAX_PUT_PRESIGNED_URL_TTL_SECONDS = 1800
 
 
 def parse_s3_path(s3_path: str) -> tuple[str, str]:

@@ -177,6 +177,35 @@ If you regress this: confirm the ALB listener rule's `target_group_arn` is `aws_
 
 ---
 
+### 1.9 Verifying which FL image an ECS task pulled — GuardDuty sidecar digest trap
+
+**Symptom**: After a `force-new-deployment` of `fl-server-net-1` / `fl-api-net-1`, you check the running task's image digest against the GHCR tag to confirm the new build is live. One container's `imageDigest` does **not** match the GHCR `:stag`/`:prod` manifest, and worse, querying GHCR for that digest returns **HTTP 404** (it does not exist in GHCR at all). Looks like the task is running a stale/unknown image.
+
+**Root cause**: GuardDuty Runtime Monitoring injects a sidecar container (`aws-guardduty-agent-*`) into every Fargate task. `aws ecs describe-tasks` returns `containers` as an **array**, and the GuardDuty agent often sorts **first** — so a query like `containers[0].imageDigest` reads the *agent's* digest, not the FL app container's. The GuardDuty agent image lives in an **AWS-internal ECR**, never GHCR, which is exactly why its digest 404s when you look it up in `ghcr.io`. The FL app container is a *different* element of the same array and its digest matches GHCR fine.
+
+**Fix**: Select the container **by name**, never by index:
+
+```bash
+TASK_ARN=$(aws ecs list-tasks --cluster flip-cluster --service-name fl-server-net-1 \
+  --profile prod --region eu-west-2 --query 'taskArns[0]' --output text)
+aws ecs describe-tasks --cluster flip-cluster --tasks "$TASK_ARN" \
+  --profile prod --region eu-west-2 \
+  --query "tasks[0].containers[?name=='fl-server-net-1'].imageDigest" --output text
+# Compare against the GHCR tag (anonymous pull token):
+IMG=flare-fl-server
+TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:londonaicentre/$IMG:pull" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+curl -s -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+  -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+  -D - -o /dev/null "https://ghcr.io/v2/londonaicentre/$IMG/manifests/stag" \
+  | grep -i docker-content-digest
+```
+
+The two digests will match. To confirm the tag was rebuilt by a specific merge, fetch the config blob's `created` timestamp (follow the redirect with `curl -sL` on `/v2/.../blobs/<config-digest>`) — e.g. the #624 FL-deps rebuild produced `flare-fl-server:stag` / `flare-fl-api:stag` configs created `2026-06-24T15:54–15:55Z`, immediately after the develop merge's FL image build completed (~15:55Z). A digest that 404s in GHCR is the GuardDuty sidecar, not a stale FL image.
+
+---
+
 ## 2. Deployment (Ansible / Docker)
 
 ### 2.1 Docker volume mount parse failure (`empty section between colons`)
