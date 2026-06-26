@@ -99,6 +99,9 @@ update_trust() {
 
   if [[ "${local_version}" == "${DATA_VERSION}" ]]; then
     echo "✅ Orthanc data for Trust ${trust_num} already up to date at version ${DATA_VERSION}."
+    # Ensure permissions even for an already-extracted dir (may have been
+    # extracted by an older version of this script that didn't set them).
+    chmod -R 777 "${storage_dir}" 2>/dev/null || true
     return
   fi
 
@@ -116,16 +119,23 @@ update_trust() {
   fi
 
   echo "🗑️  Removing existing orthanc storage dir for Trust ${trust_num}..."
-  # The dir is owned by the orthanc container's uid, so removal needs sudo —
-  # but sudo prompts for a password in non-interactive runs. Only invoke it when
-  # there's actually something to delete (first-run case has no dir yet).
+  # The storage dir is chmod'd 777 by this script (see below), so regular rm
+  # suffices even when the container has left uid-999-owned files behind.
   if [[ -e "${storage_dir}" ]]; then
-    sudo rm -rf "${storage_dir}"
+    rm -rf "${storage_dir}"
   fi
   mkdir -p "${storage_dir}"
 
   echo "📁 Extracting archive for Trust ${trust_num}..."
   tar -xf "${local_archive}" -C "${storage_dir}"
+
+  # Ensure the Orthanc container user (uid 999) can write the storage dir.
+  # The compose applies cap_drop: ALL (no DAC_OVERRIDE), so Orthanc cannot
+  # write files owned by the host uid (1000) under mode 755 — the SQLite DB
+  # that Orthanc creates at startup would fail with "Unable to open the
+  # database" (code 1002). Making the tree world-writable is the simplest
+  # fix for dev-only mock data.
+  chmod -R 777 "${storage_dir}"
 
   echo "${DATA_VERSION}" > "${local_version_file}"
   echo "✅ Done. Local Orthanc data for Trust ${trust_num} is now at version ${DATA_VERSION}"

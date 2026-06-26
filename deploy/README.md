@@ -251,20 +251,21 @@ Each Dockerfile explicitly drops root privileges by running the application as a
 |---------|------|-------|
 | flip-api | `app` (UID 49999) | Set in the flip-api Dockerfile |
 | flip-ui | `node` | Set in the flip-ui Dockerfile (non-root Vite dev server) |
-| orthanc | `orthanc` | Pre-existing in the base image (`orthancteam/orthanc`) |
+| orthanc | `orthanc` (UID 999) | Set via `USER orthanc` in the orthanc Dockerfile; the user pre-exists in the `orthancteam/orthanc` base image |
 | xnat-web | `xnat` | Created in the XNAT Dockerfile (UID 1001) |
 | xnat-nginx | `nginx` | Pre-existing in the base image (`nginx`) |
 | xnat-db | `postgres` | Pre-existing in the base image (`postgres`) |
 | flip-db / omop-db | `postgres` | Pre-existing in the base image (`postgres`) |
 
-**Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 1000) no
+**Bind-mount ownership.** Because XNAT (`xnat`, UID 1001) and Orthanc (`orthanc`, UID 999) no
 longer run as root, the host-side bind-mount source directories must be owned by the matching
 UID. The Ansible playbooks `deploy/providers/AWS/site.yml` and
 `deploy/providers/local/site_local_trust.yml` provision `/opt/flip/xnat/**` as UID 1001 and
-`/opt/flip/orthanc/**` as UID 1000 — including a recursive `chown` after extracting the Orthanc
+`/opt/flip/orthanc/**` as UID 999 — including a recursive `chown` after extracting the Orthanc
 storage archive (which `tar` writes as root). If you provision a trust host outside Ansible, you
 must replicate this ownership or first-boot writes (archive ingest, SQLite index, log rotation)
-will fail with EACCES.
+will fail with EACCES. In dev, `trust/orthanc/update_orthanc_data.sh` instead `chmod`s the mock
+storage world-writable so a developer needs no `sudo` to re-seed it.
 
 ### Linux Capability Restrictions
 
@@ -273,9 +274,10 @@ service strictly requires. The per-service grants in the compose files are:
 
 | Service(s) | Granted capabilities | Reason |
 |------------|----------------------|--------|
-| flip-api, fl-api, fl-server, trust-api, imaging-api, data-access-api, orthanc-base, xnat-web, xnat-nginx, pgadmin | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
-| flip-db, omop-db, xnat-db | `CHOWN`, `SETPCAP` | PostgreSQL's startup adjusts its own capability bounding set. |
-| orthanc | `CHOWN`, `NET_RAW`, `KILL` | `NET_RAW` for DICOM networking; `KILL` for clean shutdown of worker processes. |
+| flip-api, fl-api, fl-server, trust-api, imaging-api, data-access-api, pgadmin, xnat-web, loki, alloy, grafana | `CHOWN` | In-container init/entrypoint fixes ownership on volume paths it owns. |
+| flip-db, omop-db, xnat-db | `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID` | The official postgres entrypoint runs as root and `gosu`-drops to the `postgres` user (`SETUID`/`SETGID`). On every start it re-runs `chmod 00700 $PGDATA` and a `chown` sweep over the persisted data dir, which on subsequent boots is already owned by `postgres` with mode `0700` — `chmod` on a dir owned by another uid needs `FOWNER` and traversing it needs `DAC_OVERRIDE`. Without them the container exits 1 on a persisted volume (see commit history, FLIP#485). |
+| orthanc | `CHOWN` | Runs non-root (UID 999) from PID 1, so no capabilities survive into the process anyway; the storage bind mount is made 999-writable at the provisioning layer rather than fixed up with in-container caps. `CHOWN` is kept only as the shared baseline. |
+| xnat-nginx | `CHOWN`, `NET_BIND_SERVICE` | `NET_BIND_SERVICE` lets the non-root `nginx` user bind port 80. |
 | flip-ui (development only) | `CHOWN`, `DAC_OVERRIDE`, `SETUID`, `SETGID`, `NET_BIND_SERVICE` | Vite dev server with bind-mounted source; not present in production where the UI ships as static files served by CloudFront. |
 
 Notably **not** granted anywhere: `SYS_ADMIN`, `SYS_PTRACE`, `SYS_MODULE`, `MAC_*`, `AUDIT_*`,
@@ -285,9 +287,16 @@ container.
 
 ### No New Privileges
 
-Every container enforces `security_opt: [no-new-privileges:true]` to prevent privilege escalation
+Every container declares `security_opt: [no-new-privileges:true]` to prevent privilege escalation
 via `setuid` binaries or `LD_PRELOAD` injection. This blocks scenarios where a compromised
 container process could escalate back to root even with restricted capabilities.
+
+> **XNAT swarm caveat.** The XNAT stack (`xnat-web`, `xnat-db`, `xnat-nginx`) is deployed with
+> `docker stack deploy` (see `trust/xnat/Makefile`), and swarm **ignores** the `security_opt` key —
+> so `no-new-privileges` is *not* applied to those three services from the compose file. The
+> `cap_drop`/`cap_add` hardening still takes effect (swarm honours those). To enforce
+> no-new-privileges on XNAT hosts, set it as the Docker daemon default in `/etc/docker/daemon.json`:
+> `{ "no-new-privileges": true }`. Verify with the `docker inspect` command below.
 
 ### Verification
 

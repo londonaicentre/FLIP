@@ -523,17 +523,17 @@
         state: present
         update_cache: yes
 
-    # Orthanc runs as the in-image `orthanc` user (UID 1000) after the
+    # Orthanc runs as the in-image `orthanc` user (UID 999) after the
     # Docker-hardening pass on `trust/orthanc/Dockerfile`. The base and data
     # directories — and everything extracted into them by `tar` (which runs
-    # as root) — must end up owned by UID 1000 or Orthanc cannot write its
+    # as root) — must end up owned by UID 999 or Orthanc cannot write its
     # SQLite index, ingest new DICOM, or update the storage area.
     - name: ensure orthanc base directory exists
       file:
         path: "{{ base_dir }}"
         state: directory
-        owner: "1000"
-        group: "1000"
+        owner: "999"
+        group: "999"
         mode: "0755"
 
     - name: download Orthanc archive from Hugging Face
@@ -550,18 +550,18 @@
       file:
         path: "{{ data_dir }}"
         state: directory
-        owner: "1000"
-        group: "1000"
+        owner: "999"
+        group: "999"
         mode: "0755"
 
     - name: extract Orthanc data into orthanc-storage
       command: >
         tar -xf {{ base_dir }}/orthanc-storage.tar -C {{ data_dir }}
 
-    - name: ensure Orthanc storage is owned by container UID 1000 and writable
+    - name: ensure Orthanc storage is owned by container UID 999 and writable
       file:
         path: "{{ data_dir }}"
-        owner: "1000"
-        group: "1000"
+        owner: "999"
+        group: "999"
         mode: "0755"
         recurse: true

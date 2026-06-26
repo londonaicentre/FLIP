@@ -214,12 +214,11 @@ services:
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
+    # pgadmin (dev-only; not in the production compose) starts as root and drops
+    # to the pgadmin user via sudo in its entrypoint. That is incompatible with
+    # no-new-privileges + cap_drop:ALL (sudo can't run, the setuid drop fails and
+    # the container crash-loops with exit 126). Left unhardened intentionally — it
+    # is never deployed to stag/prod.
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     networks:
