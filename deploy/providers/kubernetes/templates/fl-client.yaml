@@ -151,6 +151,10 @@ spec:
         - name: fl-client
           image: {{ include "flip-trust.flClientImage" . }}
           imagePullPolicy: {{ .Values.flClient.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- if eq .Values.flBackend "flower" }}
           command:
             - "--root-certificates"

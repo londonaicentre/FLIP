@@ -10,9 +10,11 @@
 # limitations under the License.
 #
 # NVFLARE FL service targets — build, provision, and standalone run (FL services
-# only, no central hub / trusts). The root Makefile forwards build-fl / fl-up /
-# fl-down / fl-submit / fl-provision here by FL_BACKEND; this is the NVFLARE half
-# of that per-backend split (Flower's equivalent lives in fl-services/flower/Makefile).
+# only, no central hub / trusts). The root Makefile forwards build-fl here by
+# FL_BACKEND; the provision/up/down/submit targets are invoked here directly
+# (make -C fl-services/nvflare <target>), which is where NVFLARE FL deployments
+# are tested. This is the NVFLARE half of the per-backend split (Flower's
+# equivalent lives in fl-services/flower/Makefile).
 
 REPO_ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 

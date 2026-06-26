@@ -11,7 +11,7 @@
 #
 [project]
 name = "flip"
-version = "0.2.0"
+version = "0.3.0"
 description = ""
 readme = "README.md"
 authors = [
@@ -31,10 +31,6 @@ omit = ["*.venv/*", "*/tests/*", "*/__init__.py", "*/translation/*"]
 [tool.pytest.ini_options]
 python_files = ["test_*.py", "*_test.py"]
 addopts = []
-filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
-
-[tool.pytest.ini_options_debug]
-python_files = ["test_*.py", "*_test.py"]
 filterwarnings = ["ignore::DeprecationWarning", "ignore::FutureWarning"]
 
 [tool.ruff]

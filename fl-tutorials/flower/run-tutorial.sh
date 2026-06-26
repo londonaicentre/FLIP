@@ -56,10 +56,19 @@ echo "🚀 Flower tutorial '$TUTORIAL' — starting standalone stack..."
 $COMPOSE up -d --remove-orphans
 
 echo "⏳ Waiting for fl-api health..."
+healthy=false
 for _ in $(seq 1 30); do
-  $COMPOSE exec -T fl-api python -c "import urllib.request as u; u.urlopen('http://localhost:8000/health', timeout=3)" >/dev/null 2>&1 && break
+  $COMPOSE exec -T fl-api python -c "import urllib.request as u; u.urlopen('http://localhost:8000/health', timeout=3)" >/dev/null 2>&1 && { healthy=true; break; }
   sleep 2
 done
+# Fail fast if fl-api never came up: submitting against an unhealthy control plane
+# just produces a confusing submit error (or a hang). This is an infra-precondition
+# failure, distinct from the slow-but-fine training timeout handled below.
+if [ "$healthy" != true ]; then
+  echo "❌ fl-api did not become healthy within ~60s — aborting before submit."
+  $COMPOSE logs fl-api 2>&1 | tail -20
+  exit 1
+fi
 
 echo "📤 Submitting '$TUTORIAL' to fl-api..."
 RUN_ID="$($COMPOSE exec -T fl-api python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/submit_run/$TUTORIAL', method='POST')).read().decode())")"
