@@ -297,6 +297,7 @@ class TestConfigureMeta:
         assert meta_config["deploy_map"] == {"app": ["server"] + MOCK_APP_CLIENTS}
         assert meta_config["min_clients"] == 2
         assert meta_config["mandatory_clients"] == MOCK_APP_CLIENTS
+        assert meta_config["custom_props"] == {"model_id": MOCK_APP_NAME}
 
     def test_configure_meta_with_gpus(self, mock_write_config, mock_get_settings):
         # Settings mock
@@ -319,6 +320,18 @@ class TestConfigureMeta:
         assert meta_config["deploy_map"] == {"app": ["server"] + MOCK_APP_CLIENTS}
         assert meta_config["min_clients"] == 2
         assert meta_config["mandatory_clients"] == MOCK_APP_CLIENTS
+        assert meta_config["custom_props"] == {"model_id": MOCK_APP_NAME}
+
+    def test_configure_meta_publishes_model_id_in_custom_props(self, mock_write_config, mock_get_settings):
+        # custom_props.model_id is the lazy-resolution channel for recipe-built job types
+        # (e.g. client_api) whose component configs carry no model_id. app_name is the model_id.
+        mock_get_settings.return_value.JOB_RESOURCE_SPEC_NUM_GPUS = 0
+        mock_get_settings.return_value.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = 16
+
+        configure_meta(MOCK_JOB_APP_DIR, MOCK_APP_NAME, MOCK_APP_CLIENTS)
+
+        meta_config = mock_write_config.call_args.args[0]
+        assert meta_config["custom_props"]["model_id"] == MOCK_APP_NAME
 
 
 class TestConfigureEnvironment:
