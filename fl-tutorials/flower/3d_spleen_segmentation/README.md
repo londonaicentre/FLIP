@@ -62,7 +62,7 @@ make submit APP=3d_spleen_segmentation
 
 The default stack publishes no host ports; `make submit` execs into the fl-api
 container. Use `make up-debug` if you want to POST from the host
-(`curl -X POST http://localhost:8000/submit_run/3d_spleen_segmentation`) instead.
+(`curl -X POST http://localhost:8000/submit_tutorial/3d_spleen_segmentation`) instead.
 
 The compose file (`deploy/compose.yml`) wires everything correctly:
 

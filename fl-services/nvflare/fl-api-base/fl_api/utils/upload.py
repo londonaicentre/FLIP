@@ -15,6 +15,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+from fastapi import HTTPException
 
 from fl_api.utils.constants import META
 from fl_api.utils.io_utils import read_config
@@ -28,6 +29,7 @@ from fl_api.utils.prepare_config import (
     validate_config,
 )
 from fl_api.utils.schemas import FLAggregators, TrainingRound, UploadAppRequest
+from fl_api.utils.validation import safe_join, validate_bundle_url
 
 
 def _infer_app_folder_name(model_id: str, s3_file_dir: str) -> str:
@@ -138,12 +140,13 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     """
     logger.info(f"Received request to upload app: {model_id}")
 
-    # This section takes care of taking every uploaded file and copying it to the model_id path.
+    # model_id is the Central Hub model UUID (validated as a UUID by the endpoint); it names
+    # the per-model job dir. This section copies every uploaded file into that dir.
 
     bundle_urls = body.bundle_urls  # Retrieve the files that the user has uploaded to the platform.
 
     # We create the job app in the upload dir folder
-    job_dir = Path.cwd() / upload_dir / model_id
+    job_dir = safe_join(Path.cwd() / upload_dir, model_id)
 
     # If the job directory already exists, we remove it to avoid conflicts with previous uploads.
     if job_dir.exists():
@@ -161,11 +164,20 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     for url in bundle_urls:
         logger.info(f"Downloading file from {url}")
 
+        # The FL API fetches each URL server-side, so reject non-https / off-origin URLs.
+        validate_bundle_url(url)
+
         path = urlparse(url).path
         s3_file_dir, file_name = str(Path(path).parent), Path(path).name
 
         try:
-            resp = requests.get(url, timeout=60)
+            resp = requests.get(url, timeout=60, allow_redirects=False)
+            # A redirect would dodge validate_bundle_url (which only saw the original URL),
+            # reopening the SSRF hole; treat any 3xx as a failure. raise_for_status() also
+            # stops an S3 4xx/5xx error body from being written out as the bundle file.
+            if resp.is_redirect or resp.is_permanent_redirect:
+                raise HTTPException(status_code=400, detail=f"Bundle URL returned a redirect: {url!r}.")
+            resp.raise_for_status()
             content = resp.content
         except Exception as e:
             logger.error(f"Failed to download from URL {url} with error: {e}")
@@ -174,10 +186,12 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
         app_folder_name, relative_dir = _relative_dir_for_download(model_id, s3_file_dir, file_name)
         app_folder_names.add(app_folder_name)
 
-        dest_dir = job_dir / relative_dir
+        # relative_dir + file_name derive from the (untrusted) S3 URL path; contain both
+        # under job_dir so a crafted URL can't escape the upload sandbox.
+        dest_dir = safe_join(job_dir, relative_dir)
         dest_dir.mkdir(parents=True, exist_ok=True)
 
-        dest_path = dest_dir / file_name
+        dest_path = safe_join(dest_dir, file_name)
         dest_path.write_bytes(content)
         logger.info(f"Downloaded file {dest_path}")
 
@@ -186,7 +200,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
     # Require meta.json if more than one app folder is present
     logger.debug(f"App folder names identified: {app_folder_names}")
     if len(app_folder_names) > 1:
-        meta_json_path = job_dir / META
+        meta_json_path = safe_join(job_dir, META)
         if not meta_json_path.exists():
             error_message = (
                 f"Application must contain a {META} file in the root of the application folder if you have"
@@ -204,7 +218,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
 
     for app_folder_name in sorted(app_folder_names):
         logger.info(f"Configuring application folder: {app_folder_name}")
-        app_folder_path = job_dir / app_folder_name
+        app_folder_path = safe_join(job_dir, app_folder_name)
 
         # Grab config values from the uploaded config.json
         config_path = app_folder_path / "custom" / "config.json"
