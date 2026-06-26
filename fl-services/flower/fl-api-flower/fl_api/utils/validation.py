@@ -37,8 +37,8 @@ def validate_tutorial_folder_name(name: str) -> str:
     """Reject tutorial folder names that could escape the source root.
 
     Accepts the pre-baked tutorial folder names (e.g. ``numpy``); rejects path separators,
-    parent references, hidden names and empty values. Production submit uses
-    ``validate_model_id`` instead — it only ever receives a UUID.
+    parent references, hidden names and empty values. Production submit takes a ``UUID``-typed
+    path param instead, so it needs no separate name guard.
 
     Args:
         name (str): The tutorial folder name taken from the request path.
@@ -120,10 +120,19 @@ def validate_bundle_url(url: str) -> str:
         )
 
     # Presigned S3 URLs are always served on 443; a custom port points at an internal service.
-    if parsed.port not in (None, 443):
+    # ``urlparse`` defers port parsing, so a malformed / out-of-range port raises ValueError on
+    # access here (not at ``urlparse`` above) — convert it to a clean 400 rather than a 500.
+    try:
+        port = parsed.port
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bundle URL port not allowed: {parsed.port}.",
+            detail=f"Bundle URL has an invalid port: {url!r}.",
+        ) from None
+    if port not in (None, 443):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bundle URL port not allowed: {port}.",
         )
 
     # Block IP-literal hosts in non-public ranges. A host that is not an IP literal raises

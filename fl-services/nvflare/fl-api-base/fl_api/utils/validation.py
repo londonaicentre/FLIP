@@ -90,10 +90,19 @@ def validate_bundle_url(url: str) -> str:
         )
 
     # Presigned S3 URLs are always served on 443; a custom port points at an internal service.
-    if parsed.port not in (None, 443):
+    # ``urlparse`` defers port parsing, so a malformed / out-of-range port raises ValueError on
+    # access here (not at ``urlparse`` above) — convert it to a clean 400 rather than a 500.
+    try:
+        port = parsed.port
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bundle URL port not allowed: {parsed.port}.",
+            detail=f"Bundle URL has an invalid port: {url!r}.",
+        ) from None
+    if port not in (None, 443):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bundle URL port not allowed: {port}.",
         )
 
     # Block IP-literal hosts in non-public ranges. A host that is not an IP literal raises
