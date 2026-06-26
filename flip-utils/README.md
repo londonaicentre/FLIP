@@ -259,6 +259,12 @@ appends `/<backend>/<job_type>`) — and restart flip-api. flip-api validates th
 synced `required_files.json` manifest, so a new job type needs no flip-api code change — only the
 synced template.
 
+> **Bucket gotcha:** the PR/merge sync workflows write to `AWS_DEV_S3_BUCKET_NAME` (the `flipdev`
+> bucket: `s3://flipdev/base-application-dev/pull-requests/<N>/<backend>`), which is **not** the same
+> bucket flip-api's default `FL_APP_BASE_BUCKET` reads (`FLIP_APP_BUNDLES_BUCKET_NAME`, the
+> `flipdev-app-bundles` bucket). So the repoint must use the `flipdev` PR path — pointing at
+> `flipdev-app-bundles/...pull-requests/...` 404s (empty manifest → `Unknown job_type` at run).
+
 ### Makefile Reference
 
 #### Network Management
