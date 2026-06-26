@@ -11,7 +11,7 @@
 #
 
 
-#NOTE: This is the modified file from NVFlare.
+# NOTE: This is the modified file from NVFlare.
 
 from __future__ import annotations
 
