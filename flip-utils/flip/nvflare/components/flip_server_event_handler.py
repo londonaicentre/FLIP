@@ -19,7 +19,7 @@ from flip import FLIP
 from flip.constants import FlipEvents, ModelStatus
 from flip.exceptions import ResultsUploadError
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
-from flip.utils import Utils
+from flip.nvflare.runtime import get_flip_model_id
 
 
 class ServerEventHandler(FLComponent):
@@ -29,12 +29,11 @@ class ServerEventHandler(FLComponent):
     in which nvflare handles events i.e handling ValidationJsonGenerator component events.
 
     Args:
-        model_id (string, not required)
-        validation_json_generator_id (string, not required)
-        persist_and_cleanup_id (string, not required)
-        flip (object, not required)
-    Raises:
-        ValueError: when model ID is not a valid UUID
+        model_id (str, optional): ID of the model. When empty, the model ID is resolved lazily
+            from job metadata via ``get_flip_model_id`` on first status update.
+        validation_json_generator_id (str, optional): Component ID for the validation JSON generator.
+        persist_and_cleanup_id (str, optional): Component ID for the persist-and-cleanup component.
+        flip (FLIP, optional): FLIP client instance.
     """
 
     def __init__(
@@ -46,7 +45,8 @@ class ServerEventHandler(FLComponent):
     ):
         super(ServerEventHandler, self).__init__()
 
-        self.model_id = model_id
+        self._model_id_fallback = model_id
+        self._model_id: str | None = None
         self.validation_json_generator_id = validation_json_generator_id
         self.validation_json_generator = None
         self.persist_and_cleanup_id = persist_and_cleanup_id
@@ -54,11 +54,29 @@ class ServerEventHandler(FLComponent):
         self.flip = flip
 
         self.fatal_error = False
-        self.final_status = None
+        self.final_status: ModelStatus | None = None
 
-        if Utils.is_valid_uuid(self.model_id) is False:
-            self.flip.update_status(self.model_id, ModelStatus.ERROR)
-            raise ValueError(f"The model ID: {self.model_id} is not a valid UUID")
+    def _resolve_model_id(self, fl_ctx: FLContext) -> str:
+        """Resolve model ID lazily from job metadata, falling back to the constructor arg.
+
+        Args:
+            fl_ctx (FLContext): The FL context for the current job.
+
+        Returns:
+            str: The resolved model ID.
+        """
+        if self._model_id is None:
+            self._model_id = get_flip_model_id(fl_ctx, fallback=self._model_id_fallback)
+        return self._model_id
+
+    def _update_status(self, fl_ctx: FLContext, status: ModelStatus | None) -> None:
+        """Resolve model ID lazily and update training status.
+
+        Args:
+            fl_ctx (FLContext): The FL context for the current job.
+            status (ModelStatus | None): The new model status to set.
+        """
+        self.flip.update_status(self._resolve_model_id(fl_ctx), status)
 
     def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
         self.__set_dependencies(fl_ctx)
@@ -71,15 +89,15 @@ class ServerEventHandler(FLComponent):
 
         elif event_type == FlipEvents.TRAINING_INITIATED:
             self.log_info(fl_ctx, "Training initiated event received")
-            self.flip.update_status(self.model_id, ModelStatus.INITIATED)
+            self._update_status(fl_ctx, ModelStatus.INITIATED)
 
         elif event_type == AppEventType.INITIAL_MODEL_LOADED:
             self.log_info(fl_ctx, "Initial model loaded event received")
-            self.flip.update_status(self.model_id, ModelStatus.PREPARED)
+            self._update_status(fl_ctx, ModelStatus.PREPARED)
 
         elif event_type == AppEventType.TRAINING_STARTED:
             self.log_info(fl_ctx, "Training started event received")
-            self.flip.update_status(self.model_id, ModelStatus.TRAINING_STARTED)
+            self._update_status(fl_ctx, ModelStatus.TRAINING_STARTED)
 
         elif event_type == AppEventType.TRAINING_FINISHED:
             self.log_info(fl_ctx, "Training finished event received")
@@ -116,7 +134,7 @@ class ServerEventHandler(FLComponent):
             except Exception:
                 self.final_status = ModelStatus.ERROR
 
-            self.flip.update_status(self.model_id, self.final_status)
+            self._update_status(fl_ctx, self.final_status)
 
     def __set_dependencies(self, fl_ctx: FLContext) -> None:
         if self.validation_json_generator is None:
