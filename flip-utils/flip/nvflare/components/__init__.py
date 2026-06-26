@@ -27,11 +27,13 @@ Exports:
     - PercentilePrivacy: Percentile-based privacy filter
     - StagePercentilePrivacy: Stage-aware percentile-based privacy filter
     - CleanupImages: Image cleanup executor
+    - FlipAnalyticsBridge: Bridges Client API analytics events to FlipEvents.SEND_RESULT
 """
 
 from flip.nvflare.components.cleanup import CleanupImages
 from flip.nvflare.components.custom_percentile_privacy import PercentilePrivacy
 from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
+from flip.nvflare.components.flip_analytics_bridge import FlipAnalyticsBridge
 from flip.nvflare.components.flip_client_event_handler import ClientEventHandler
 from flip.nvflare.components.flip_server_event_handler import ServerEventHandler
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
@@ -51,6 +53,7 @@ __all__ = [
     "PercentilePrivacy",
     "StagePercentilePrivacy",
     "CleanupImages",
+    "FlipAnalyticsBridge",
     "ValidationJsonGenerator",
     "EvaluationJsonGenerator",
     "PersistToS3AndCleanup",
