@@ -41,7 +41,7 @@ def edit_project_endpoint(
     project_details: IEditProject = Body(..., description="Details of the project to edit."),
     user_id: UUID = Depends(verify_token),
     db: Session = Depends(get_session),
-):
+) -> Projects | None:
     """
     Edits a project with the provided ID. This endpoint allows users with the appropriate permissions to update the
     project's name and description.

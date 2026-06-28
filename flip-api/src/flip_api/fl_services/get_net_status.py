@@ -33,7 +33,7 @@ def get_net_status(
     net_name: str,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> INetStatus:
     """
     Get the status of a net and its clients. A net consists of a central controller with a worker at each of the Trusts.
 

@@ -59,8 +59,9 @@ define the services available within a network. Modify the relevant one if you w
 
 ### Net-specific yml file
 
-You can run `make nvflare-provision NET_NUMBER=${NET_NUMBER}` to create a network: this will create an instance of the
-services defined in `net-${NET_NUMBER}_project_dev.yml`, substituting the naming by `net-${NET_NUMBER}`.
+You can run `make provision NET_NUMBER=${NET_NUMBER}` (from this directory — it delegates to the root
+`nvflare-provision` target) to create a network: this will create an instance of the services defined in
+`net-${NET_NUMBER}_project_dev.yml`, substituting the naming by `net-${NET_NUMBER}`.
 You can also pass `FL_PORT` if you do not want to use the default (which will be the same for each created net).
 
 ### Provisioning command
@@ -100,8 +101,9 @@ network the client belongs to.
 This should ensure that the client stays part of the network, without re-creating the other services or altering signed
 files.
 
-There is a helper Makefile target for this process (wrapping `deploy/providers/nvflare/scripts/provision-additional-client.sh`):
+There is a helper Makefile target at the repo root that wraps
+`deploy/providers/nvflare/scripts/provision-additional-client.sh`:
 
 ```sh
-make nvflare-provision-additional-client NET_NUMBER=<NET_NUMBER>
+make -C ../.. nvflare-provision-additional-client NET_NUMBER=<NET_NUMBER>
 ```

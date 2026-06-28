@@ -54,7 +54,7 @@ app.include_router(system.router, tags=["System"])
 
 # Startup event to initialize FL session
 @app.on_event("startup")
-def on_startup():
+def on_startup() -> None:
     """FL API startup event: initializes the FL session."""
     logger.info("Running FL startup initialization...")
     app.state.session = create_fl_session()
