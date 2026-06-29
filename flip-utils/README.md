@@ -225,7 +225,8 @@ From ``fl-services/nvflare/`` (the per-backend Makefile that owns these targets 
 ```bash
 make build                # Build the :dev FL images (flare-fl-{base,server,client,api})
 make up NET_NUMBER=1      # Start the network (server, 2 clients, API)
-make down                 # Stop the network
+make down NET_NUMBER=1    # Stop the network — must match the NET_NUMBER used for `up`
+                          # (compose embeds it in container names + mount paths)
 ```
 
 ### Running the tutorials
@@ -262,7 +263,7 @@ To test a PR on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo
 | `make nvflare-provision-2-nets` | repo root | Provision both dev FL networks |
 | `make build` | `fl-services/nvflare/` | Build the :dev FL images |
 | `make up NET_NUMBER=X` | `fl-services/nvflare/` | Start FL network X |
-| `make down` | `fl-services/nvflare/` | Stop FL network X |
+| `make down NET_NUMBER=X` | `fl-services/nvflare/` | Stop FL network X (must match the `NET_NUMBER` used at `up`) |
 
 #### Testing
 

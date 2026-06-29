@@ -41,7 +41,7 @@ def edit_project_endpoint(
     project_details: IEditProject = Body(..., description="Details of the project to edit."),
     user_id: UUID = Depends(verify_token),
     db: Session = Depends(get_session),
-) -> Projects | None:
+) -> Projects:
     """
     Edits a project with the provided ID. This endpoint allows users with the appropriate permissions to update the
     project's name and description.
@@ -103,7 +103,9 @@ def edit_project_endpoint(
 
     try:
         edit_project_service(project_id=project_id, payload=details, current_user_id=user_id, session=db)
-        return db.get(Projects, project.id)
+        updated = db.get(Projects, project.id)
+        assert updated is not None  # existence + FK guarantee it survived the update
+        return updated
 
     except Exception as e:
         error_message = f"Error editing project {project_id}: {str(e)}"
