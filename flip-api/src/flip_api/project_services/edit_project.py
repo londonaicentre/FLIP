@@ -104,8 +104,15 @@ def edit_project_endpoint(
     try:
         edit_project_service(project_id=project_id, payload=details, current_user_id=user_id, session=db)
         updated = db.get(Projects, project.id)
-        assert updated is not None  # existence + FK guarantee it survived the update
+        if updated is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project with ID {project_id} not found after update.",
+            )
         return updated
+
+    except HTTPException:
+        raise
 
     except Exception as e:
         error_message = f"Error editing project {project_id}: {str(e)}"
@@ -114,6 +121,3 @@ def edit_project_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=error_message,
         )
-
-    except HTTPException:
-        raise
