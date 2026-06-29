@@ -30,17 +30,20 @@ class TestPersistToS3AndCleanup:
         flip = MagicMock()
         component = PersistToS3AndCleanup(model_id=model_id, flip=flip)
 
-        assert component.model_id == model_id
+        assert component._model_id_fallback == model_id
+        assert component._model_id is None
         assert component.persistor_id == "persistor"
         assert component.flip == flip
         assert component.model_persistor is None
         assert component.model_inventory == {}
 
-    def test_init_with_invalid_model_id_raises_error(self):
-        """Test initialization with invalid model UUID raises ValueError"""
-        flip = MagicMock()
-        with pytest.raises(ValueError, match="is not a valid UUID"):
-            PersistToS3AndCleanup(model_id="invalid-uuid", flip=flip)
+    def test_resolves_model_id_from_fallback_arg(self):
+        """_resolve_model_id returns the constructor fallback when no job-metadata prop is set."""
+        model_id = "abcdef01-2345-6789-abcd-ef0123456789"
+        component = PersistToS3AndCleanup(model_id=model_id)
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.return_value = None
+        assert component._resolve_model_id(fl_ctx) == model_id
 
     def test_init_with_custom_persistor_id(self):
         """Test initialization with custom persistor_id"""

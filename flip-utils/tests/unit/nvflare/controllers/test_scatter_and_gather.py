@@ -11,29 +11,39 @@
 #
 
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
+from nvflare.apis.fl_constant import FLContextKey, ReturnCode
+from nvflare.apis.shareable import Shareable
 from nvflare.app_common.abstract.aggregator import Aggregator
 from nvflare.app_common.abstract.shareable_generator import ShareableGenerator
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_opt.pt.fedopt import PTFedOptModelShareableGenerator
 
+from flip.constants import FlipEvents
 from flip.nvflare.controllers.scatter_and_gather import ScatterAndGather
+
+_VALID_MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
 
 
 class TestScatterAndGather:
     def test_init_with_valid_uuid(self):
-        """Test initialization with valid UUID"""
+        """Test initialization with valid UUID stores it as fallback"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
         controller = ScatterAndGather(model_id=model_id)
-        assert controller.model_id == model_id
+        assert controller._model_id_fallback == model_id
+        assert controller._model_id is None
 
-    def test_init_with_invalid_uuid_raises_error(self):
-        """Test initialization with invalid UUID raises Exception"""
-        with pytest.raises(Exception, match="not a valid UUID"):
-            ScatterAndGather(model_id="invalid-uuid")
+    def test_resolve_model_id_uses_fallback_when_fl_ctx_has_no_custom_props(self):
+        """Lazy resolution returns the constructor UUID when fl_ctx has no custom_props."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        controller = ScatterAndGather(model_id=model_id)
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.return_value = None
+        result = controller._resolve_model_id(fl_ctx)
+        assert result == model_id
 
     def test_init_with_custom_min_clients(self):
         """Test initialization with custom min_clients"""
@@ -344,6 +354,80 @@ class TestScatterAndGather:
         assert sent_dxo.data == {"w1": -0.75}
         assert sent_dxo.meta == {"origin": "client"}
         controller.log_error.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("bad_kwargs", "frag"),
+        [
+            ({"aggregator_id": 123}, "aggregator_id"),
+            ({"persistor_id": 123}, "persistor_id"),
+            ({"shareable_generator_id": 123}, "shareable_generator_id"),
+            ({"train_task_name": 123}, "train_task_name"),
+            ({"ignore_result_error": "nope"}, "ignore_result_error"),
+        ],
+    )
+    def test_init_rejects_wrong_arg_types(self, bad_kwargs, frag):
+        """Each id/flag arg is type-checked at construction and raises TypeError on the wrong type."""
+        with pytest.raises(TypeError, match=frag):
+            ScatterAndGather(model_id=_VALID_MODEL_ID, **bad_kwargs)
+
+    def test_handle_event_send_result_forwards_resolved_model_id(self):
+        """On SEND_RESULT the controller forwards the metric with the lazily-resolved model_id."""
+        controller = ScatterAndGather(model_id=_VALID_MODEL_ID)
+        controller.log_error = MagicMock()
+        controller._current_round = 2
+
+        fl_ctx = MagicMock()
+        # EVENT_DATA present; JOB_META absent so _resolve_model_id falls back to the constructor UUID.
+        fl_ctx.get_prop.side_effect = lambda key, default=None: (
+            "metrics-shareable"
+            if key == FLContextKey.EVENT_DATA
+            else (None if key == FLContextKey.JOB_META else default)
+        )
+
+        with patch("flip.nvflare.controllers.scatter_and_gather.handle_metrics_event") as mock_metrics:
+            controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)
+
+        mock_metrics.assert_called_once()
+        args = mock_metrics.call_args[0]
+        assert args[0] == "metrics-shareable"
+        assert args[1] == 2
+        assert args[2] == _VALID_MODEL_ID
+
+    def test_handle_event_send_result_no_data_logs_error(self):
+        """SEND_RESULT with no EVENT_DATA logs an error and does not forward."""
+        controller = ScatterAndGather(model_id=_VALID_MODEL_ID)
+        controller.log_error = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.return_value = None
+
+        with patch("flip.nvflare.controllers.scatter_and_gather.handle_metrics_event") as mock_metrics:
+            controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)
+
+        mock_metrics.assert_not_called()
+        controller.log_error.assert_called_once()
+
+    def test_accept_train_result_reports_handled_execution_exception(self):
+        """An EXECUTION_EXCEPTION result with an exception header is forwarded to the hub with the
+        lazily-resolved model_id, then the controller panics."""
+        controller = ScatterAndGather(model_id=_VALID_MODEL_ID, ignore_result_error=False)
+        controller.flip = MagicMock()
+        controller.system_panic = MagicMock()
+        controller.log_error = MagicMock()
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.return_value = None  # JOB_META absent -> fallback resolves the model_id
+
+        result = Shareable()
+        result.set_return_code(ReturnCode.EXECUTION_EXCEPTION)
+        result.set_header("exception", "boom traceback")
+
+        accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=fl_ctx)
+
+        assert accepted is False
+        controller.flip.send_handled_exception.assert_called_once()
+        assert controller.flip.send_handled_exception.call_args.kwargs["model_id"] == _VALID_MODEL_ID
+        controller.system_panic.assert_called_once()
 
     def test_accept_train_result_logs_error_when_weight_diff_merge_fails(self):
         """Merge errors while applying WEIGHT_DIFF should be logged and not crash acceptance flow."""
