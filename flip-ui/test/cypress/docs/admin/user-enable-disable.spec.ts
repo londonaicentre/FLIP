@@ -27,9 +27,7 @@ describe("docs: enable / disable user", () => {
         cy.demoPause();
 
         // Disable an active user.
-        cy.getBySel("user").contains("researcher.user@flip.com").demoClick();
-        cy.demoPause();
-        cy.getBySel("more-options-btn").demoClick();
+        cy.getBySel("user").contains("Researcher User").demoClick();
         cy.demoPause();
         cy.getBySel("disable-user-btn").demoClick();
         cy.demoPause();
@@ -39,9 +37,7 @@ describe("docs: enable / disable user", () => {
         cy.demoPause(900);
 
         // Re-enable the user that's already disabled in the fixture.
-        cy.getBySel("user").contains("disabled.user@flip.com").demoClick();
-        cy.demoPause();
-        cy.getBySel("more-options-btn").demoClick();
+        cy.getBySel("user").contains("Disabled User").demoClick();
         cy.demoPause();
         cy.getBySel("enable-user-btn").demoClick();
         cy.demoPause();
