@@ -173,7 +173,7 @@ def evaluate_func(
     through ``client_app`` into the MetricRecord and is aggregated natively by the
     server, with no server or config change.
 
-    Discretization mirrors the flip-fl-base reference validator (trainer.py:79-81):
+    Discretization mirrors the reference validator (trainer.py:79-81):
       - Sliding-window logits are discretized via AsDiscrete(argmax=True, to_onehot=N)
         before scoring. Without this step the metrics receive raw logits and produce
         a degenerate score that's constant (~0.5 for binary segmentation) regardless

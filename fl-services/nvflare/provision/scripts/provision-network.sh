@@ -13,13 +13,21 @@
 #
 
 # Provision an NVFLARE federated learning network
-# Usage: ./deploy/providers/nvflare/scripts/provision-network.sh <project_yaml_file> <net_number> [workspace_parent_dir]
+# Usage: ./fl-services/nvflare/provision/scripts/provision-network.sh <project_yaml_file> <net_number> [workspace_parent_dir]
+# Normally invoked via `make -C fl-services/nvflare provision` (cwd = fl-services/nvflare).
 
-# Provisioned output lands under <WORKSPACE_PARENT_DIR>/net-<NET_NUMBER>/. Default
-# to deploy/providers/nvflare/workspace so it matches the compose mounts, README, and .gitignore.
+# Fail fast and loud: abort on any command error (-e), on an unset variable (-u),
+# and on a failure anywhere in a pipeline (-o pipefail). Without this a non-zero
+# `nvflare provision` (or `yq`) could leave partial output yet let the script
+# carry on restructuring and report success.
+set -euo pipefail
+
+# Provisioned output lands under <WORKSPACE_PARENT_DIR>/net-<NET_NUMBER>/. Default to
+# provision/workspace-dev (beside this script's provision/ home under fl-services/nvflare/)
+# so it matches the compose mounts, README, and .gitignore.
 PROJECT_YAML="${1:?Error: PROJECT_YAML is required}"
 NET_NUMBER="${2:?Error: NET_NUMBER is required}"
-WORKSPACE_PARENT_DIR="${3:-deploy/providers/nvflare/workspace}"
+WORKSPACE_PARENT_DIR="${3:-provision/workspace-dev}"
 
 # Other configurations
 VERBOSE="true"
@@ -39,15 +47,14 @@ fi
 
 # Run NVFLARE provisioning.
 #
-# Run nvflare from a uv project that actually declares it. The repo-root `flip`
-# project is an umbrella with no dependencies (and no uv workspace), so a bare
-# `uv run nvflare` from here resolves nothing — `Failed to spawn: nvflare`. nvflare
-# is declared by `fl-services/nvflare/fl-api-base` (no torch/MONAI, so lighter than
-# `flip-utils`) and by `flip-utils`; we target fl-api-base via `--project`. `--project`
-# only selects the environment, so cwd — and therefore the relative PROJECT_YAML /
-# WORKSPACE_PARENT_DIR paths below — stays at the repo root.
+# Run nvflare from a uv project that actually declares it. A bare `uv run nvflare`
+# resolves nothing here — `Failed to spawn: nvflare`. nvflare is declared by the
+# colocated `fl-api-base` uv project (no torch/MONAI, so lighter than `flip-utils`),
+# targeted via `--project fl-api-base`. `--project` only selects the environment, so
+# cwd — and therefore the relative PROJECT_YAML / WORKSPACE_PARENT_DIR paths below —
+# stays at fl-services/nvflare/ (where the Makefile invokes this).
 log "Provisioning network ${NET_NUMBER}..."
-uv run --project fl-services/nvflare/fl-api-base nvflare provision -p "${PROJECT_YAML}" -w "${WORKSPACE_PARENT_DIR}"
+uv run --project fl-api-base nvflare provision -p "${PROJECT_YAML}" -w "${WORKSPACE_PARENT_DIR}"
 
 echo "Restructuring provisioned files in workspace..."
 
@@ -64,14 +71,30 @@ rm -rf "${SERVICES_DIR}"
 mkdir -p "${SERVICES_DIR}"
 
 # Function to get the first participant name of a given type from the project YAML
-# This avoids hardcoding participant (server, admin) names in the script
+# This avoids hardcoding participant (server, admin) names in the script.
+# Selects the first match inside yq instead of piping to `head -n 1`, so it stays
+# pipefail-safe: a multi-match YAML can't SIGPIPE yq into a cryptic 141. Emits an
+# empty string when no participant of the type exists, so callers guard on `-z`.
 get_participant_name_by_type() {
   local project_yaml="$1"
   local participant_type="$2"
 
   yq -r \
+    "[.participants[] | select(.type == \"${participant_type}\")][0].name // \"\"" \
+    "$project_yaml"
+}
+
+# Like get_participant_name_by_type but returns every matching name (one per
+# line), not just the first. Used to restructure all clients regardless of how
+# many the project YAML declares — the generator may have expanded it to N (see
+# generate-project-yaml.sh).
+get_participant_names_by_type() {
+  local project_yaml="$1"
+  local participant_type="$2"
+
+  yq -r \
     ".participants[] | select(.type == \"${participant_type}\") | .name" \
-    "$project_yaml" | head -n 1
+    "$project_yaml"
 }
 
 # Function to restructure a participant's files
@@ -82,6 +105,14 @@ restructure_participant() {
 
     local src_path="${PROD_DIR}/${participant_name}"
     local dest_path="${SERVICES_DIR}/${participant_name_dest}"
+
+    # Fail fast if `nvflare provision` did not produce this participant's kit.
+    # Without this, the restructure below would silently mkdir an empty dest and
+    # report success, masking a malformed project YAML or a partial provision.
+    if [[ ! -d "${src_path}" ]]; then
+        echo "Error: provisioned participant directory not found: ${src_path}" >&2
+        exit 1
+    fi
 
     echo " - Restructuring ${participant_name}"
 
@@ -163,14 +194,34 @@ create_resources_template() {
 
 # Restructure all participants
 SERVER_NAME="$(get_participant_name_by_type "$PROJECT_YAML" server)"
+if [[ -z "${SERVER_NAME}" ]]; then
+    echo "Error: ${PROJECT_YAML} declares no server participant" >&2
+    exit 1
+fi
 echo "Identified server participant name: ${SERVER_NAME}"
 
 ADMIN_NAME="$(get_participant_name_by_type "$PROJECT_YAML" admin)"
+if [[ -z "${ADMIN_NAME}" ]]; then
+    echo "Error: ${PROJECT_YAML} declares no admin participant" >&2
+    exit 1
+fi
 echo "Identified admin participant name: ${ADMIN_NAME}"
 
-# TODO this is hardcoded to 2 clients for now -- make this dynamic later
-restructure_participant "Trust_1" "Trust_1" 1
-restructure_participant "Trust_2" "Trust_2" 1
+# Restructure every client participant. The count is driven entirely by the
+# project YAML (dev declares 2; stag/prod are expanded to N by
+# generate-project-yaml.sh), so nothing here is hardcoded to a client count.
+client_count=0
+while IFS= read -r client_name; do
+    [[ -z "${client_name}" ]] && continue
+    restructure_participant "${client_name}" "${client_name}" 1
+    client_count=$((client_count + 1))
+done < <(get_participant_names_by_type "$PROJECT_YAML" client)
+if [[ "${client_count}" -eq 0 ]]; then
+    echo "Error: ${PROJECT_YAML} declares no client participants to restructure" >&2
+    exit 1
+fi
+echo "Restructured ${client_count} client participant(s)"
+
 restructure_participant "${SERVER_NAME}" "fl-server-net-${NET_NUMBER}" 0
 restructure_participant "${ADMIN_NAME}" "flip-fl-api-net-${NET_NUMBER}" 0
 

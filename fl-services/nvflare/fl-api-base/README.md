@@ -11,250 +11,76 @@
     limitations under the License.
 -->
 
-# Federated Learning FL API
+# NVFLARE FL API
 
-This is the base FL API service. It is used to create instances of the FLIP federated learning API.
+Base FastAPI service for the NVFLARE deployment runtime. It backs the per-net FL API instances
+(one `flare-fl-api` container per network).
 
-The FL API for FLARE wraps the NVIDIA Flare `Session` object. In particular, we created a child of `Session` called `FLIP_Session` that wraps some of the `Session` function calls. There is minimal functionality difference between `Session` and `FLIP_Session`; these two classes consist of NVFLARE code, while `FL-API` itself is a Fast-API instance. The API itself interacts with the Central Hub for job monitoring, job submission and check-up of status of federated components (clients and server).
+The FL API wraps the NVIDIA FLARE admin `Session`: we subclass it as `FLIP_Session`
+([`fl_api/utils/flip_session.py`](./fl_api/utils/flip_session.py)), which wraps a handful of
+`Session` calls with minimal behavioural difference. This API is how the **Central Hub** drives a
+net — job submission, job monitoring, and status checks of the federated components (server and
+clients).
 
 ## Ports
 
-Port 8000 is normally used by the FL API.
+The API listens on `8000` inside the container. The dev compose publishes it via `FL_API_PORT`
+(see [`../compose.dev.yml`](../compose.dev.yml)); in a full deployment it is reached over the
+Docker network rather than a host port.
 
-## Overview of FL API endpoints
+## Endpoints
 
-Some of the endpoints in the API do not call `Session` and are therefore not technically dependent of an NVFLARE object. In addition, whereas the FL API wraps some of the functionalities available in `Session` instances, they do not interact with any component other than the FL API and are merely there for debugging or interact with the FL services directly from the FL-API. 
+The app is a FastAPI instance mounted at the service root (no prefix), grouped by router tag
+(`Health`, `Application`, `Jobs`, `System`). The **authoritative, always-current** list — methods,
+parameters, and request/response schemas — is the OpenAPI spec served by the running service:
 
-On the other hand, when a job is launched, the `FLIP` package functions (especially `flip.py`, which instances a class called `Flip`) communicate with the Central Hub **directly**.
+- Swagger UI: `/docs`
+- ReDoc: `/redoc`
+- OpenAPI JSON: `/openapi.json`
 
-This diagram is an overview of all endpoints available from the FL-API and the `FLIP` package itself. 
+This README only pins the **contract** the Central Hub depends on; for exact shapes read `/docs`
+or the routers under [`fl_api/routers/`](./fl_api/routers/).
 
-![image.png](../../assets/fl_api_endpoints.png)
+### What the Central Hub calls
 
-### List of endpoints
+The Hub drives a net **only** through these endpoints
+(see `flip_api/fl_services/services/fl_service.py`):
 
-1) **FL-API endpoints that do NOT call `Session`**
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/upload_app/{model_id}` | POST | Stage a ready-to-launch FLARE app — global/local rounds, bundle URLs, project/cohort, trusts, aggregator, aggregation weights — into the API's upload dir. Writes the `config_fed_{server,client}.json` but does **not** call FLARE. |
+| `/submit_job/{job_folder}` | POST | Submit a previously staged app as a FLARE job (`session.submit_job`). |
+| `/list_jobs` | GET | List FLARE jobs (the Hub filters this to find the job to abort). |
+| `/abort_job/{job_id}` | DELETE | Abort a running job. |
+| `/check_server_status` | GET | FLARE server status. |
+| `/check_client_status` | GET | Per-client status; `?targets=<name>` (repeatable) to filter, otherwise all clients. |
 
-#### health
+All of these wrap `FLIP_Session` except `upload_app` (file/config staging only). `/health/` (also
+served at `/`) reports liveness for container health checks — it is not called by the Hub.
 
-Method type: GET
+### Debug / admin endpoints
 
-Parameters: **None**
+The routers also expose FLARE admin operations for manual debugging and direct interaction with a
+net — `get_system_info`, `get_connected_client_list`, `get_working_directory`, `restart`,
+`shutdown`, `shutdown_system`, `show_errors`, `show_stats`, `reset_errors`, `delete_job`,
+`download_job`, `get_available_apps_to_upload`. These are **not** part of the Central Hub contract;
+see `/docs` for their signatures.
 
-Returns: the response body contains “status”: state of the server
-_Who calls it_: Central Hub API
-
-#### upload_app
-
-Although it does not call FLARE, this function configures a FLARE-dedicated app (with its configure_fed_server, configure_fed_client etc.) This is the method that uploads a ready-to-launch FLARE application. 
-
-Method type: POST
-
-Parameters: 
-
-- `Model ID`: UUID model ID which will be saved on the CentralHub database, which will be added to the config_fed_X.json files
-- `Body`: includes:
-    - `Global rounds`: Number of server rounds
-    - `Local rounds`: Number of rounds per site before aggregation
-    - `Bundle URLS`: URLS to the files that will be uploaded from the APP upload bucket into the application folder (app folder)
-    - `Project ID`: ID of the Central Hub project for this app
-    - `Cohort query`: SQL query linked to this project
-    - `Trusts`: list of participating trusts
-    - `Ignore_result_error`: bool
-    - `Aggregator`: type of aggregator that will be used (FLARE aggregator name)
-    - `Aggregation weights`: {trust: weight} argument that will be passed to the aggregation during construction (will be added to config)
-- `upload_dir`: path where the apps are saved
-
-_Who calls it_: Central Hub API (upload_app in fl_service)
-
-2) **FL-API endpoints that call `Session`**
-
-Calls FLARE's `session.submit_job`. Kicks the job. 
-
-Method type: POST
-
-Parameters:
-
-- `App folder` (that has been previously configured in the FL-API). This folder is inside of FL-API’s upload_dir, and will send it over to the server and client.
-
-_Who calls it_: Central Hub API (upload_app in fl_service)
-
-#### list_jobs
-
-This lists the NVFLARE jobs available on the server (including those that have failed). 
-
-Method type: GET
-
-Parameters:
-
-- `detailed`: extensive description required 
-- `limit`: maximum number of jobs to list
-- `id_prefix`: prefix for the job ID (string)
-- `name_prefix`: prefix for the job name search (string)
-- `reverse`: order reverse to submission time 
-
-Returns: a list of dictionaries (with elements related to the job such as name, job_id, status etc.).
-
-_Who calls it_: Central Hub (extract_current_job_data in fl_service), without arguments (it then filters by job_id). It’s only used to abort jobs.
-
-
-#### abort_job
-
-Method type: DELETE
-
-Parameters:
-- `job_id`
-
-_Who calls it_: Central Hub API (abort_job in fl_service)
-
-#### check_status
-
-It provides the status of the Central Hub FL server, FL clients, or both, depending on the parameters.
-
-Method type: GET
-
-Parameters:
-- `target_type`: type of target (client or server)
-- `targets`: list of specific targets
-
-_Who calls it_: Central Hub API in fl-services
-
-
-#### check_server_status
-
-It provides the status of the Central Hub FL server.
-
-Method type: GET
-
-_Who calls it_: Central Hub API in fl-services
-
-
-#### check_client_status
-
-It provides the status of the FL clients.
-
-Method type: GET
-
-Parameters:
-- `targets`: list of specific targets (e.g. client-1)
-
-_Who calls it_: Central Hub API in fl-services
-
-
-3) **FL-API endpoints that are not used in FLIP**
-
-#### show_errors
-
-Shows errors for a specific job ID and, optionally, a list of clients.
-
-Method type: POST
-
-Parameters:
-- `job_id`: Job ID to show errors for
-- `target_type`: (e.g. server, client, all)
-- `targets`: (list of targets - e.g. server, client 1 etc.)
-
-
-#### show_stats
-
-Shows statistics (status, ID etc.) for a specific job ID and, optionally, a list of clients.
-
-Method type: POST
-
-Parameters:
-- `job_id`: Job ID to show stats for
-- `target_type`: (e.g. server, client, all)
-- `targets`: (list of targets - e.g. server, client 1 etc.)
-
-
-#### reset_errors
-
-Resets errors for a specific job ID.
-
-Method type: POST
-
-Parameters:
-- `job_id`: Job ID to reset errors for
-
-
-#### delete_job
-
-Deletes a job from the system.
-
-Method type: DELETE
-
-Parameters:
-- `job_id`: Job ID to delete
-
-
-#### get_available_apps_to_upload
-
-Lists available apps in the Session’s upload_dir.
-
-Method type: GET
-
-Parameters: **None**
-
-
-#### download_job_result
-
-Downloads model results (not used, as FLIP does this via the Central Hub and AWS using the model ID).
-
-Method type: GET
-
-Parameters:
-- `job_id`: NVFLARE job ID
-
-
-#### get_connected_client_list
-
-Gets a list of connected clients.
-
-Method type: GET
-
-Parameters: **None**
-
-
-#### get_working_directory
-
-Gets the working directory on the targets (runs pwd on the clients or server).
-
-Method type: GET
-
-Parameters:
-- `target`: target where you want to run this
-
-
-#### restart
-
-Restarts the specified targets.
-
-Method type: POST
-
-Parameters:
-- `target_type`: targets that you want to restart
-- `client_names`: for target_type client, this is a list of specific clients you want to restart
-
-#### shutdown
-
-Shuts down the specified targets.
-
-Method type: POST
-
-Parameters:
-- `target_type`: targets that you want to shut down (e.g. server, client, all)
-- `client_names`: for target_type client, this is a list of specific clients you want to shut down
-
-#### shutdown_system
-
-Shuts down the system.
-
-Method type: POST
-
-Parameters: **None**
+When a job is running, the user's training code reaches the Central Hub through the `flip` package
+([`flip-utils/flip/`](../../../flip-utils/flip/)) **directly**, not through this API.
 
 ## Testing
 
-The nvflare `local` and `startup` folders are created during the provisioning of each real network (server, client(s) and API). However, Python tests require `fed_admin.json` to exist within `admin/startup`. Therefore, this file is created dynamically in [./tests/utils/test_flip_session.py](./tests/utils/test_flip_session.py) for testing purposes.
+The nvflare `local` and `startup` folders are created during the provisioning of each real network
+(server, client(s) and API). However, Python tests require `fed_admin.json` to exist within
+`admin/startup`, so this file is created dynamically in
+[`./tests/utils/test_flip_session.py`](./tests/utils/test_flip_session.py) for testing.
+`FL_ADMIN_DIRECTORY` is set to a temporary directory in
+[`./tests/conftest.py`](./tests/conftest.py) during testing to avoid conflicts with any existing
+admin directories.
 
-`FL_ADMIN_DIRECTORY` is set to a temporary directory in [./tests/conftest.py](./tests/conftest.py) during testing to avoid conflicts with any existing admin directories.
+Run lint, type-check and the test suite (with coverage) from this directory:
+
+```bash
+make local_test     # ruff --fix + mypy + pytest
+```

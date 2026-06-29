@@ -142,7 +142,7 @@ def register_trust(
     ).first()
     if slot is None:
         raise NoFreeKitSlotError(
-            "No FL kit slots available. Pre-provision more slots in flip-fl-base "
+            "No FL kit slots available. Pre-provision more FL kit slots "
             "and add them to FL_KIT_SLOT_NAMES."
         )
 

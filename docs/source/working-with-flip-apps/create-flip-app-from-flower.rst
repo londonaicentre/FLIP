@@ -13,7 +13,7 @@ This page walks through the code changes required to adapt a stock Flower app (f
 - ``flip.get_by_accession_number(...)`` to pull imaging resources for each accession
 - ``flip.send_metrics(...)`` to push per-round training metrics back to the FLIP UI
 
-A full, runnable reference is available in-tree (migrated from the now-archived ``flip-fl-base-flower`` repo):
+A full, runnable reference is available in-tree:
 
 - ``fl-apps/flower/standard/app/`` — a minimal training-only ``ServerApp`` / ``ClientApp`` template.
 - ``fl-tutorials/flower/3d_spleen_segmentation/`` — a MONAI spleen-segmentation example that exercises every SDK call covered below.

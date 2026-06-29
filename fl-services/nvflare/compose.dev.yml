@@ -13,7 +13,7 @@
 # This is a sample compose file that can be used for local development, to test that the FL base, server and client
 # images build correctly and can communicate with each other. It is not intended for production use.
 #
-# Provisioned secrets (e.g. certificates in local, startup dirs) are mounted from deploy/providers/nvflare/workspace/ (gitignored).
+# Provisioned secrets (e.g. certificates in local, startup dirs) are mounted from provision/workspace-dev/ (gitignored).
 services:
   fl-base:
     image: flare-fl-base:dev
@@ -45,10 +45,10 @@ services:
       - UPLOADED_FEDERATED_DATA_BUCKET=fake-s3-bucket
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
-      # Provisioned secrets from deploy/providers/nvflare/workspace/ (gitignored)
-      - ../../deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/local:/app/local
-      - ../../deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/startup:/app/startup
-      - ../../deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/transfer:/app/transfer
+      # Provisioned secrets from provision/workspace-dev/ (gitignored)
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/local:/app/local
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/startup:/app/startup
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/fl-server-net-${NET_NUMBER}/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
 
   flip-fl-api:
@@ -69,10 +69,10 @@ services:
       - "${FL_API_PORT}:8000"
       - "5679:5679"
     volumes:
-      # Provisioned secrets from deploy/providers/nvflare/workspace/ (gitignored)
-      - ../../deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/local:/app/admin/local
-      - ../../deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/startup:/app/admin/startup
-      - ../../deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/transfer:/app/admin/transfer
+      # Provisioned secrets from provision/workspace-dev/ (gitignored)
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/local:/app/admin/local
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/startup:/app/admin/startup
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/flip-fl-api-net-${NET_NUMBER}/transfer:/app/admin/transfer
       # Static code from fl-services/ (tracked in git)
       - ../../fl-services/nvflare/fl-api-base/fl_api:/app/fl_api
       - ../../fl-services/nvflare/fl-api-base/tests:/app/tests
@@ -103,10 +103,10 @@ services:
       # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
-      # Provisioned secrets from deploy/providers/nvflare/workspace/ (gitignored)
-      - ../../deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/Trust_1/local:/app/local
-      - ../../deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/Trust_1/startup:/app/startup
-      - ../../deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/Trust_1/transfer:/app/transfer
+      # Provisioned secrets from provision/workspace-dev/ (gitignored)
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/local:/app/local
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/startup:/app/startup
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_1/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
     shm_size: "32gb"
     gpus: all
@@ -132,10 +132,10 @@ services:
       # - MEMORY_PER_GPU_IN_GIB=16
       - LOG_LEVEL=${LOG_LEVEL}
     volumes:
-      # Provisioned secrets from deploy/providers/nvflare/workspace/ (gitignored)
-      - ../../deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/Trust_2/local:/app/local
-      - ../../deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/Trust_2/startup:/app/startup
-      - ../../deploy/providers/nvflare/workspace/net-${NET_NUMBER}/services/Trust_2/transfer:/app/transfer
+      # Provisioned secrets from provision/workspace-dev/ (gitignored)
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/local:/app/local
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/startup:/app/startup
+      - ./provision/workspace-dev/net-${NET_NUMBER}/services/Trust_2/transfer:/app/transfer
     command: ["/bin/bash", "/app/entrypoint.sh"]
     shm_size: "32gb"
     gpus: all

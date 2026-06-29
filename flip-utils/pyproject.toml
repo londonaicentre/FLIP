@@ -57,10 +57,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/londonaicentre/flip-fl-base"
-Repository = "https://github.com/londonaicentre/flip-fl-base"
-Documentation = "https://flip-fl-base.readthedocs.io/en/stable"
-Issues = "https://github.com/londonaicentre/flip-fl-base/issues"
+Homepage = "https://github.com/londonaicentre/FLIP"
+Repository = "https://github.com/londonaicentre/FLIP"
+Documentation = "https://github.com/londonaicentre/FLIP/tree/main/flip-utils"
+Issues = "https://github.com/londonaicentre/FLIP/issues"
 
 [project.optional-dependencies]
 # Full dependencies for running FL jobs (includes ML frameworks)
@@ -80,8 +80,8 @@ full = [
     "scikit-learn>=1.5.0",
     "timm>=1.0.0",
     # Pin torch>=2.11,<2.12 (was 2.9.1 via MONAI transitive) so the NVFlare
-    # supernode runs the same torch as the flower one (flip-fl-base-flower
-    # pins the same range). PyPI's torch 2.11.x ships the cu128 build by
+    # supernode runs the same torch as the flower one (which pins the same
+    # range). PyPI's torch 2.11.x ships the cu128 build by
     # default, which matches host NVIDIA driver 575.x. 2.12 ships cu130
     # which needs driver >=580.
     "torch>=2.11.0,<2.12",
@@ -115,7 +115,7 @@ constraint-dependencies = [
 
 # Pull torch from PyTorch's cu128 wheel index instead of PyPI's default cu130
 # build. cu130 needs NVIDIA driver >=580; current dev hosts run 575.x and would
-# fail at torch.cuda.is_available() (same trap that bit flip-fl-base-flower).
+# fail at torch.cuda.is_available() (a known cu130 driver-version trap).
 # Mirrors the --extra-index-url flag in the flower fl-base Dockerfile.
 [[tool.uv.index]]
 name = "pytorch-cu128"
