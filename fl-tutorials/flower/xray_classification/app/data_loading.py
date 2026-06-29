@@ -11,8 +11,8 @@
 
 """Chest-X-ray data loading and label extraction for FLIP."""
 
+from collections.abc import Sequence
 from logging import INFO
-from typing import List, Sequence
 
 import numpy as np
 import pydicom
@@ -36,7 +36,7 @@ class LesionDict(BaseModel):
         """Return True if any lesion has this name."""
         return any(item.lesion == element_value for item in self.items)
 
-    def get_lesion_list(self) -> List[str]:
+    def get_lesion_list(self) -> list[str]:
         """Return all lesion names in declaration order."""
         return [item.lesion for item in self.items]
 

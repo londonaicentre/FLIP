@@ -13,7 +13,6 @@
 import os
 import shutil
 import time
-from typing import Union
 
 from nvflare.apis.client import Client
 from nvflare.apis.controller_spec import ClientTask, Task
@@ -454,7 +453,7 @@ class ModelEval(Controller):
                 reason = f"Unable to save validation result from {client_name}. Exception: {str(v_e)}"
                 self.log_exception(fl_ctx, reason)
 
-    def _load_validation_content(self, name: str, load_dir: str, fl_ctx: FLContext) -> Union[DXO, None]:
+    def _load_validation_content(self, name: str, load_dir: str, fl_ctx: FLContext) -> DXO | None:
         # Load shareable from disk
         shareable_filename = os.path.join(load_dir, name)
         dxo: DXO = None
