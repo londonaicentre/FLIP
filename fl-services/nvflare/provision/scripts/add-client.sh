@@ -111,9 +111,15 @@ vlog "add_client YAML:"
 # NO workspace wipe: the existing state/ (root CA) must survive so the new client is
 # signed by it and every existing participant's cert is reused unchanged. NVFLARE
 # writes a fresh prod_NN snapshot (workspace.py increments past existing ones).
+#
+# --force is required from NVFLARE 2.8.0 on: `provision` now refuses to run against an
+# already-populated workspace in non-interactive mode (it would otherwise prompt Y/N to
+# continue). --force ONLY skips that confirmation — it does not wipe or regenerate the
+# workspace (nvflare/lighter/provision.py just bypasses the prompt branch), so state/ and
+# the root CA are preserved exactly as before, which is the whole point of add-client.
 log "Adding client '${NEW_CLIENT_NAME}' to net-${NET_NUMBER} via nvflare provision --add_client..."
 uv run --project fl-api-base nvflare provision \
-    -p "${PROJECT_YAML}" -w "${WORKSPACE_PARENT_DIR}" --add_client "${ADD_CLIENT_YAML}"
+    -p "${PROJECT_YAML}" -w "${WORKSPACE_PARENT_DIR}" --add_client "${ADD_CLIENT_YAML}" --force
 
 # The just-written snapshot is the highest-numbered prod_NN (workspace.py only ever
 # increments), so `sort | tail -n 1` finds it even if a stale prod_* lingers.
