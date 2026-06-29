@@ -431,7 +431,16 @@ fl-services/nvflare/provision/workspace-prod/
 # flip-utils build artifacts
 flip-utils/dist/
 .ralph/
-.claude/
+
+# Claude Code: ignore local/personal state, but track shared routines
+# (commands, hooks, project settings) so the team gets them on checkout.
+.claude/*
+!.claude/commands/
+!.claude/hooks/
+!.claude/settings.json
+# Worktrees default to .claude/worktrees/ inside the repo — keep them out of
+# version control (covered by .claude/* above, listed explicitly for clarity).
+.claude/worktrees/
 
 # fl-tutorials generated / uncommitted artifacts (data/, tutorials/testing/tmp, the
 # spleen-seg uv.lock), scoped under the
