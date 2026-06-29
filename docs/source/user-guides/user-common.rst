@@ -231,14 +231,6 @@ To view the progress of the imaging data import at each participating Trust, use
 
    Reimport cap has been reached
 
-Trust sites can be filtered using the search bar at the top of the imaging project status section.
-
-.. figure:: ../assets/flip/imaging-status-filter.gif
-   :width: 600
-   :align: center
-
-   Filter imaging status trust locations
-
 
 *******
 Models
