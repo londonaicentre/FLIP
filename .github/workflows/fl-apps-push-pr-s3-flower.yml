@@ -31,6 +31,7 @@ jobs:
   sync-pr:
     name: Sync fl-apps/flower/ to PR-scoped S3 path (branch head)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     # Skip PRs from forks to avoid missing creds (no secrets/OIDC by default).
     if: ${{ github.event.pull_request.head.repo.fork == false }}
     environment: flip
@@ -39,10 +40,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4.2.1
+        uses: aws-actions/configure-aws-credentials@v6.2.1
         with:
           role-to-assume: ${{ vars.AWS_DEV_ROLE_TO_ASSUME }}
           role-session-name: ${{ vars.AWS_ROLE_SESSION_NAME }}

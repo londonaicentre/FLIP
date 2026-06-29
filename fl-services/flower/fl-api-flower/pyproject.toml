@@ -18,7 +18,7 @@ description = "FL API for Flower deployment runtime."
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.11",
-    "flwr>=1.27.0",
+    "flwr>=1.32.0",
     "pydantic>=2.11.0",
     "pydantic-settings>=2.11.0",
     "tomlkit>=0.14.0",
@@ -55,4 +55,4 @@ line-length = 120
  
 [tool.ruff.lint]
 preview = true
-select = ['I', 'F', 'E', 'W', 'PT']
+select = ['I', 'F', 'E', 'W', 'PT', 'UP006', 'UP007', 'UP035', 'UP042', 'UP045']

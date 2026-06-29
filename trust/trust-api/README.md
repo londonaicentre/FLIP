@@ -14,7 +14,7 @@
 # trust-api
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
-[![FLIP Trust API CI](https://github.com/londonaicentre/FLIP/actions/workflows/trust_api.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/trust_api.yml)
+[![FLIP Trust API CI](https://github.com/londonaicentre/FLIP/actions/workflows/test_trust_trust_api.yml/badge.svg)](https://github.com/londonaicentre/FLIP/actions/workflows/test_trust_trust_api.yml)
 [![trust-api](https://ghcr-badge.egpl.dev/londonaicentre/trust-api/latest_tag?trim=major&label=trust-api)](https://github.com/londonaicentre/FLIP/pkgs/container/trust-api)
 [![Coverage](https://codecov.io/gh/londonaicentre/FLIP/branch/main/graph/badge.svg?flag=trust-api)](https://codecov.io/gh/londonaicentre/FLIP)
 
@@ -94,7 +94,7 @@ one replica.
 
 ## Testing
 
-Tests are split into `tests/unit/` (no real backing services) and `tests/integration/` (real OMOP database via the shared `trust/deploy/compose.test.yml` stack). See [Where does my test go?](../../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule, and [`trust/README.md`](../README.md#integration-tests-cohort-query-end-to-end) for how the cohort-query end-to-end suite is wired.
+Tests are split into `tests/` (unit-level, no real backing services — `tests/routers/`, `tests/services/`, etc.) and `tests/integration/` (real OMOP database via the shared `trust/deploy/compose.test.yml` stack). See [Where does my test go?](../../CONTRIBUTING.md#where-does-my-test-go) in `CONTRIBUTING.md` for the placement rule, and [`trust/README.md`](../README.md#integration-tests-cohort-query-end-to-end) for how the cohort-query end-to-end suite is wired.
 
 ```bash
 make local_test         # ruff + mypy + unit suite (no Docker required)

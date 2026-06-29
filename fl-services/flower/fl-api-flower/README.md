@@ -23,8 +23,10 @@ Standalone FastAPI service for Flower deployment runtime.
 - `GET /check_server_status`
 - `GET /check_client_status?targets=<name>&targets=<name>`
 - `GET /list_runs`
-- `POST /submit_run?app_folder=<app>`
-- `DELETE /abort_run?run_id=<run_id>`
+- `POST /upload_app/{model_id}`
+- `POST /submit_run/{job_folder}` — submit a previously uploaded application; `job_folder` is the Central Hub `model_id` (UUID). flip-api's production path (also exposed as the hidden `/submit_job` alias)
+- `POST /submit_tutorial/{tutorial_name}` — submit a pre-baked tutorial folder by name (e.g. `numpy`, `xray_classification`); the local tutorial harness targets this
+- `DELETE /abort_run/{run_id}`
 
 ## API docs
 
@@ -34,7 +36,8 @@ With the FL API running and its host port published (`make up-debug`; the defaul
 - OpenAPI JSON: `http://localhost:8000/openapi.json`
 - ReDoc: `http://localhost:8000/redoc`
 
-The submit endpoint starts a Flower run with:
+Both submit endpoints (`/submit_run/{job_folder}` for uploaded applications, `/submit_tutorial/{tutorial_name}`
+for pre-baked tutorials) start a Flower run with:
 
 ```bash
 uvx flwr run . local --format json

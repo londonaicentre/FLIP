@@ -12,6 +12,7 @@
 #
 
 from unittest.mock import Mock
+from uuid import uuid4
 
 import pytest
 from tomlkit import parse
@@ -33,9 +34,11 @@ def mock_requests_get(monkeypatch):
     """Mock requests.get to simulate file downloads."""
 
     def _mock_get(url_to_content: dict[str, bytes]):
-        def _get(url, stream=True, timeout=60):
+        def _get(url, stream=True, timeout=60, allow_redirects=True):
             mock_response = Mock()
             mock_response.raise_for_status = Mock()
+            mock_response.is_redirect = False
+            mock_response.is_permanent_redirect = False
             if url in url_to_content:
                 content = url_to_content[url]
                 mock_response.iter_content = Mock(return_value=[content])
@@ -56,7 +59,7 @@ def mock_requests_get(monkeypatch):
 
 def test_upload_app_basic_success(client, upload_dir, mock_requests_get):
     """Test basic app upload with pyproject.toml and config.toml."""
-    model_id = "test-model-123"
+    model_id = str(uuid4())
 
     pyproject_content = b"""
 [tool.flwr.app]
@@ -101,7 +104,7 @@ checkpoint = "model.pt"
 
 def test_upload_app_injects_flip_params_without_touching_pyproject(client, upload_dir, mock_requests_get):
     """config.toml receives the FLIP params; pyproject.toml is left untouched."""
-    model_id = "test-inject-123"
+    model_id = str(uuid4())
 
     pyproject_content = b"""
 [tool.flwr.app]
@@ -163,7 +166,7 @@ def test_upload_app_places_checkpoint_in_job_dir(client, upload_dir, mock_reques
     They are no longer routed to a separate volume: the evaluation ServerApp reads
     them from the job dir via the injected flip-job-dir run-config value.
     """
-    model_id = "test-checkpoint-123"
+    model_id = str(uuid4())
 
     pyproject_content = b"""
 [tool.flwr.app]
@@ -199,7 +202,7 @@ num_server_rounds = 3
 
 def test_upload_app_keeps_config_toml_in_app_dir(client, upload_dir, mock_requests_get):
     """config.toml stays in app/ (where submit_run reads it); it is not moved to the job root."""
-    model_id = "test-config-location-123"
+    model_id = str(uuid4())
 
     pyproject_content = b"""
 [tool.flwr.app]
@@ -244,7 +247,7 @@ path = "model_path"
 
 def test_upload_app_download_failure(client, upload_dir, mock_requests_get):
     """Test that upload fails gracefully when file download fails."""
-    model_id = "test-download-fail-123"
+    model_id = str(uuid4())
 
     # Mock only one URL, making the second fail
     mock_requests_get({
@@ -268,7 +271,7 @@ def test_upload_app_download_failure(client, upload_dir, mock_requests_get):
 
 def test_upload_app_cleans_existing_directories(client, upload_dir, mock_requests_get):
     """Test that an existing job directory is cleaned before upload."""
-    model_id = "test-clean-123"
+    model_id = str(uuid4())
 
     # Create an existing job directory with an old file
     job_dir = upload_dir / model_id
@@ -305,3 +308,87 @@ num_server_rounds = 3
 
     # New file should exist
     assert (job_dir / "pyproject.toml").exists()
+
+
+def test_upload_app_rejects_non_uuid_model_id(client, upload_dir):
+    """A non-UUID model_id is rejected by FastAPI's UUID path-param validation (422)."""
+    body = UploadAppRequest(project_id="p", cohort_query="*", trusts=["t"], bundle_urls=[])
+
+    response = client.post("/upload_app/not-a-uuid", json=body.model_dump())
+
+    assert response.status_code == 422
+
+
+def test_upload_app_rejects_path_traversal_bundle_url(client, upload_dir):
+    """A bundle URL whose path escapes the model dir is rejected by the containment check."""
+    model_id = str(uuid4())
+    body = UploadAppRequest(
+        project_id="p",
+        cohort_query="*",
+        trusts=["t"],
+        bundle_urls=[f"https://example.com/{model_id}/../../etc/passwd"],
+    )
+
+    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
+
+    assert response.status_code == 400
+
+
+def test_upload_app_rejects_non_https_bundle_url(client, upload_dir):
+    """Non-https bundle URLs (SSRF vector, e.g. the metadata endpoint) are rejected."""
+    model_id = str(uuid4())
+    body = UploadAppRequest(
+        project_id="p",
+        cohort_query="*",
+        trusts=["t"],
+        bundle_urls=[f"http://169.254.169.254/{model_id}/app/config.toml"],
+    )
+
+    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
+
+    assert response.status_code == 400
+
+
+def test_upload_app_rejects_disallowed_bundle_host(client, upload_dir, monkeypatch):
+    """When BUNDLE_URL_ALLOWED_HOSTS is set, off-origin bundle URLs are rejected."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "objectstore.internal")
+    model_id = str(uuid4())
+    body = UploadAppRequest(
+        project_id="p",
+        cohort_query="*",
+        trusts=["t"],
+        bundle_urls=[f"https://example.com/{model_id}/app/config.toml"],
+    )
+
+    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
+
+    assert response.status_code == 400
+
+
+def test_upload_app_rejects_redirect_response(client, upload_dir, monkeypatch):
+    """A 3xx redirect on a bundle fetch is rejected: it would dodge validate_bundle_url (SSRF)."""
+    model_id = str(uuid4())
+
+    def _redirecting_get(url, stream=True, timeout=60, allow_redirects=True):
+        mock_response = Mock()
+        mock_response.is_redirect = True
+        mock_response.is_permanent_redirect = False
+        mock_response.raise_for_status = Mock()
+        mock_response.__enter__ = Mock(return_value=mock_response)
+        mock_response.__exit__ = Mock(return_value=False)
+        return mock_response
+
+    import fl_api.utils.upload as upload_module
+
+    monkeypatch.setattr(upload_module.requests, "get", _redirecting_get)
+
+    body = UploadAppRequest(
+        project_id="project-123",
+        cohort_query="*",
+        trusts=["trust1"],
+        bundle_urls=[f"https://example.com/{model_id}/pyproject.toml"],
+    )
+
+    response = client.post(f"/upload_app/{model_id}", json=body.model_dump())
+
+    assert response.status_code == 400

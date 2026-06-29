@@ -18,8 +18,7 @@ This module provides:
     - Enumerations for resource types, model statuses, tasks, and events
 """
 
-from enum import Enum
-from typing import Union
+from enum import StrEnum
 
 from pydantic import HttpUrl, PositiveInt, field_validator
 from pydantic_settings import BaseSettings
@@ -90,10 +89,10 @@ class ProdSettings(_Common):
         return v
 
 
-_flip_constants_instance: Union[DevSettings, ProdSettings, None] = None
+_flip_constants_instance: DevSettings | ProdSettings | None = None
 
 
-def get_flip_constants() -> Union[DevSettings, ProdSettings]:
+def get_flip_constants() -> DevSettings | ProdSettings:
     """Get FlipConstants singleton instance.
 
     Lazy initialization ensures environment variables are only required
@@ -121,7 +120,7 @@ class _FlipConstantsProxy:
 FlipConstants = _FlipConstantsProxy()  # type: ignore[assignment]
 
 
-class ResourceType(str, Enum):
+class ResourceType(StrEnum):
     """Types of imaging resources available in XNAT."""
 
     DICOM = "DICOM"
@@ -130,7 +129,7 @@ class ResourceType(str, Enum):
     ALL = "ALL"
 
 
-class FlipTasks(str, Enum):
+class FlipTasks(StrEnum):
     """Task names used in FLIP workflows."""
 
     # Common tasks (all job types)
@@ -162,7 +161,7 @@ class FlipEvents:
     TASK_INITIATED = "_task_initiated"
 
 
-class ModelStatus(str, Enum):
+class ModelStatus(StrEnum):
     """Model training status values."""
 
     PENDING = "PENDING"
@@ -177,7 +176,7 @@ class ModelStatus(str, Enum):
     RESULTS_UPLOAD_FAILED = "RESULTS_UPLOAD_FAILED"
 
 
-class FlipMetricsLabel(str, Enum):
+class FlipMetricsLabel(StrEnum):
     """Standard metric labels for FLIP metrics reporting."""
 
     LOSS_FUNCTION = "LOSS_FUNCTION"
@@ -185,7 +184,7 @@ class FlipMetricsLabel(str, Enum):
     AVERAGE_SCORE = "AVERAGE_SCORE"
 
 
-class FlipMetaKey(str, Enum):
+class FlipMetaKey(StrEnum):
     """Metadata keys used in FLIP (diffusion model specific)."""
 
     STAGE = "stage"

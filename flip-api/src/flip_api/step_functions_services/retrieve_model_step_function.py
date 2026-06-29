@@ -31,7 +31,7 @@ def retrieve_model_step_function_endpoint(
     request: Request,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> IModelResponse:
     """
     Retrieve model by ID, checking and updating its status first
 

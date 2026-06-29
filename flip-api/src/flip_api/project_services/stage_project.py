@@ -49,7 +49,7 @@ def stage_project_endpoint(
     payload: StageProjectRequest,
     session: Session = Depends(get_session),
     current_user_id: UUID = Depends(verify_token),
-):
+) -> None:
     """
     Stages a project for approval at the specified trusts.
     The project must be in 'UNSTAGED' status and have a valid cohort query.

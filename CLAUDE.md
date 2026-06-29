@@ -129,7 +129,31 @@ make e2e_smoke FL_BACKEND=flower                               # use the Flower 
 make e2e_smoke MODEL_FILES_DIR=/path/app QUERY_FILE=/path/q.sql
 make e2e_smoke EXTRA_ARGS="--abort-midway"                     # exercise the FL stop-training path
 make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
+make e2e_smoke EXTRA_ARGS="--project-id <UUID>"               # reuse an approved project (see below)
 ```
+
+The `--project-id <UUID>` override (printed as `project_id=<UUID>` at the start of any run) reuses an
+existing approved project: it skips cohort submission + approval and jumps straight to model
+create → upload → train → download. The image-pull wait still runs but returns immediately when the
+studies are already pulled — so it lets you iterate on training/app code (and re-run after an upload
+or fl-api change) without re-creating the project and re-pulling DICOM (~6 min/backend) each time.
+
+**Testing a change on BOTH FL backends in one sitting (the backend switch).** The pulled DICOM lives in
+each trust's Orthanc/XNAT, which `make restart-fl` leaves untouched — so you can pull once on the first
+backend and *reuse the same project* for the second, skipping the second image pull entirely:
+
+```bash
+# 0. Rebuild the fl-api image(s) from your branch first — the running stack serves PUBLISHED images,
+#    not your code. Full: `make build-fl FL_BACKEND=<backend>`; fl-api-only fast path:
+#    DOCKER_GID=$(id -g) docker compose -f fl-services/<backend>/compose.dev.yml build <fl-api|flip-fl-api>
+make e2e_smoke FL_BACKEND=flower                                          # note the printed project_id=<UUID>
+make restart-fl FL_BACKEND=nvflare DOCKER_FL_REGISTRY= DOCKER_FL_TAG=dev  # switch backend onto rebuilt :dev images
+make e2e_smoke FL_BACKEND=nvflare EXTRA_ARGS="--project-id <UUID>"        # reuse project → skip cohort + re-pull
+```
+
+Before trusting either run, confirm the live container actually carries your code (the stack silently
+runs old images otherwise): `docker exec flip-fl-api-net-1 cat fl_api/utils/upload.py`. See
+[Running FL Tutorials Locally](#running-fl-tutorials-locally) for `make build-fl` / `:dev` image details.
 
 ### Running FL Tutorials Locally
 
@@ -291,7 +315,7 @@ After changes, evaluate if docs need updating:
 - Database auth — In production (`ENV=production`) flip-api authenticates to Postgres through **RDS Proxy** using a short-lived AWS IAM auth token minted per-connection by a SQLAlchemy `do_connect` hook in `flip_api/db/database.py` (passwordless engine URL, `sslmode=require`, `pool_pre_ping` + `pool_recycle`). The proxy reaches RDS with the rotating RDS-managed master secret it re-reads natively, so the app holds no static DB credential and secret rotation no longer causes an outage (FLIP#556). Dev (`ENV=development`) uses the static `POSTGRES_PASSWORD` from the environment. There is no separate toggle — the path is selected by `ENV`.
 - `ENFORCE_MFA` — `true` (the `Settings` default; do **not** set in `.env*` files for stag/prod) gates every authenticated route on TOTP enrolment via the app-layer MFA check in `verify_token`. The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator app. Production compose (`compose.production.yml`) passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so the env var can be overridden from `.env.stag`/`.env.prod` for testing, but falls back to the secure `true` default when unset. Intentionally not in `.env.development.example` or AWS Secrets Manager — the Settings default (`true`) is the canonical secure anchor. The UI mirrors this flag from `/users/me/mfa/status` and skips the enrolment redirect when it's false.
 - `MAX_MODEL_FILE_BYTES` — Hard cap on the file size of a single model-file upload, in bytes. Bound on the presigned POST policy so S3 rejects oversized payloads at the edge — the hub never sees them. Default `104857600` (100 MiB). The S3 policy condition allows a small fixed overhead above this for multipart/form-data framing (see `_MULTIPART_OVERHEAD_BUFFER_BYTES` in `flip_api/utils/s3_client.py`); the UI guard at `flip-ui/src/utils/file.ts` compares against this raw value so a file at exactly the cap is accepted on both sides.
-- `PRE_SIGNED_URL_EXPIRATION_SECONDS` — Setting default for the model-file presigned POST policy TTL, in seconds. The hub silently clamps to the 1800s (30 min) security ceiling encoded as `MAX_PUT_PRESIGNED_URL_TTL_SECONDS` in `flip_api/utils/s3_client.py` (a leaked policy is a writable capability against the upload bucket, so the leak window must stay tight). The ceiling is 1800s rather than the original 600s to give multi-GB uploads (up to the 5 GB `MAX_MODEL_FILE_BYTES` cap) enough time to complete. Setting default is `3600`; effective ceiling 1800. Over-ceiling callers leave a warning in the logs.
+- `PRE_SIGNED_URL_EXPIRATION_SECONDS` — Setting default for the model-file presigned POST policy TTL, in seconds. The hub silently clamps to the 1800s (30 min) security ceiling encoded as `MAX_PUT_PRESIGNED_URL_TTL_SECONDS` in `flip_api/utils/s3_client.py` (a leaked policy is a writable capability against the upload bucket, so the leak window must stay tight). The ceiling is 1800s rather than the original 600s to give larger uploads (up to the `MAX_MODEL_FILE_BYTES` cap) enough time to complete. Setting default is `3600`; effective ceiling 1800. Over-ceiling callers leave a warning in the logs.
 
 ## Deployment Architecture
 

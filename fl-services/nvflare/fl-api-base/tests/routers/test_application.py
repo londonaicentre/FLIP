@@ -18,6 +18,9 @@ from fastapi import status
 from fl_api.app import app
 from fl_api.core.dependencies import get_session
 
+# A valid Central Hub model_id (uuid4); the upload endpoint validates model_id as a UUID.
+MODEL_ID = "c7f72374-0752-473f-a28f-592e4d8b7a47"
+
 
 @pytest.fixture(autouse=True)
 def override_session(client):
@@ -57,7 +60,7 @@ def test_upload_app_success(client, override_session):
     """Should return 200 and response dict when upload succeeds."""
     with patch("fl_api.routers.application.upload_application", return_value={"status": "ok"}) as mock_upload:
         payload = make_upload_payload()
-        response = client.post("/upload_app/model123", json=payload)
+        response = client.post(f"/upload_app/{MODEL_ID}", json=payload)
 
         assert response.status_code == status.HTTP_200_OK
         assert response.json() == {"status": "ok"}
@@ -65,7 +68,7 @@ def test_upload_app_success(client, override_session):
         # Validate call signature
         mock_upload.assert_called_once()
         args, kwargs = mock_upload.call_args
-        assert args[0] == "model123"  # model_id
+        assert args[0] == MODEL_ID  # model_id
         # body is a Pydantic model, compare its dict representation
         assert args[1].model_dump() == payload
         assert kwargs["upload_dir"] == "/tmp/uploads"
@@ -78,7 +81,7 @@ def test_upload_app_file_not_found(client):
         side_effect=FileNotFoundError("missing file"),
     ):
         payload = make_upload_payload()
-        response = client.post("/upload_app/model123", json=payload)
+        response = client.post(f"/upload_app/{MODEL_ID}", json=payload)
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
@@ -90,7 +93,7 @@ def test_upload_app_generic_error(client):
         side_effect=RuntimeError("unexpected crash"),
     ):
         payload = make_upload_payload()
-        response = client.post("/upload_app/model123", json=payload)
+        response = client.post(f"/upload_app/{MODEL_ID}", json=payload)
 
         assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
         body = response.json()
@@ -100,7 +103,13 @@ def test_upload_app_generic_error(client):
 def test_upload_app_invalid_schema(client):
     """Should return 422 when request body doesn't match UploadAppRequest schema."""
     invalid_payload = {"project_id": "proj_001"}  # missing required fields
-    response = client.post("/upload_app/model123", json=invalid_payload)
+    response = client.post(f"/upload_app/{MODEL_ID}", json=invalid_payload)
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+def test_upload_app_rejects_non_uuid_model_id(client):
+    """A non-UUID model_id is rejected by FastAPI's UUID path-param validation (422)."""
+    response = client.post("/upload_app/not-a-uuid", json=make_upload_payload())
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
 

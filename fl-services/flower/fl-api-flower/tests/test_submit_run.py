@@ -13,37 +13,68 @@
 
 import subprocess
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from tomlkit import parse
 
 from fl_api import app as app_module
 
+_NUMPY_RUN_OK = (
+    '{"success": true,"run-id":"5489160741982607593",'
+    '"fab-id":"flwrlabs/quickstart-numpy","fab-name":"quickstart-numpy",'
+    '"fab-version":"1.0.0","fab-hash":"9fcfbb69",'
+    '"fab-filename":"flwrlabs.quickstart-numpy.1-0-0.9fcfbb69.fab"}'
+)
 
-def test_submit_run_success(client, src_root, mock_flwr_run, monkeypatch):
-    (src_root / "numpy").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation")
-    mock_flwr_run(
-        stdout=(
-            "{"
-            '"success": true,'
-            '"run-id":"5489160741982607593",'
-            '"fab-id":"flwrlabs/quickstart-numpy",'
-            '"fab-name":"quickstart-numpy",'
-            '"fab-version":"1.0.0",'
-            '"fab-hash":"9fcfbb69",'
-            '"fab-filename":"flwrlabs.quickstart-numpy.1-0-0.9fcfbb69.fab"'
-            "}"
-        )
-    )
 
-    response = client.post("/submit_run/numpy")
+# --- Production submit: /submit_run + /submit_job are UUID-strict ---
+
+
+def test_submit_run_with_uuid_success(client, src_root, mock_flwr_run):
+    model_id = str(uuid4())
+    (src_root / model_id).mkdir(parents=True, exist_ok=True)
+    mock_flwr_run(stdout=_NUMPY_RUN_OK)
+
+    response = client.post(f"/submit_run/{model_id}")
 
     assert response.status_code == 200
 
 
-def test_submit_run_merges_flip_job_dir_into_run_config(client, src_root, monkeypatch):
-    """submit_run merges flip-job-dir into a temp run-config file, leaving config.toml untouched."""
+def test_submit_job_alias_with_uuid_success(client, src_root, mock_flwr_run):
+    """The /submit_job alias (what flip-api calls) behaves identically and is UUID-strict."""
+    model_id = str(uuid4())
+    (src_root / model_id).mkdir(parents=True, exist_ok=True)
+    mock_flwr_run(stdout='{"success": true,"run-id":"123"}')
+
+    response = client.post(f"/submit_job/{model_id}")
+
+    assert response.status_code == 200
+
+
+@pytest.mark.parametrize("endpoint", ["/submit_run", "/submit_job"])
+def test_production_submit_rejects_non_uuid(client, src_root, endpoint):
+    """A non-UUID (e.g. a tutorial folder name) is rejected by FastAPI UUID validation (422)."""
+    response = client.post(f"{endpoint}/numpy")
+
+    assert response.status_code == 422
+
+
+# --- Tutorial submit: /submit_tutorial is name-based (still traversal-guarded) ---
+
+
+def test_submit_tutorial_success(client, src_root, mock_flwr_run):
+    (src_root / "numpy").mkdir(parents=True, exist_ok=True)
+    mock_flwr_run(stdout=_NUMPY_RUN_OK)
+
+    response = client.post("/submit_tutorial/numpy")
+
+    assert response.status_code == 200
+
+
+def test_submit_tutorial_merges_flip_job_dir_into_run_config(client, src_root, monkeypatch):
+    """submit merges flip-job-dir into a temp run-config file, leaving config.toml untouched."""
     app_dir = src_root / "eval_app" / "app"
     app_dir.mkdir(parents=True, exist_ok=True)
     config_toml = app_dir / "config.toml"
@@ -53,7 +84,7 @@ def test_submit_run_merges_flip_job_dir_into_run_config(client, src_root, monkey
 
     def _capture(command, *_args, **_kwargs):
         captured["command"] = command
-        # the temp --run-config file still exists here (before submit_run's finally)
+        # the temp --run-config file still exists here (before the finally block)
         run_config_arg = command[command.index("--run-config") + 1]
         captured["run_config"] = parse(Path(run_config_arg).read_text())
         return subprocess.CompletedProcess(
@@ -69,10 +100,10 @@ def test_submit_run_merges_flip_job_dir_into_run_config(client, src_root, monkey
 
     monkeypatch.setattr(app_module.subprocess, "run", _capture)
 
-    response = client.post("/submit_run/eval_app")
+    response = client.post("/submit_tutorial/eval_app")
+
     assert response.status_code == 200
 
-    # the run-config passed to flwr merges flip-job-dir with the app's config.toml
     run_config = captured["run_config"]
     assert run_config["flip-job-dir"] == str(app_dir)
     assert run_config["checkpoint"] == "model.pt"
@@ -80,21 +111,18 @@ def test_submit_run_merges_flip_job_dir_into_run_config(client, src_root, monkey
     assert config_toml.read_text() == 'checkpoint = "model.pt"\n'
 
 
-@pytest.mark.parametrize("app_folder", ["invalid", "numpy"])
-def test_submit_run_input_validation(client, src_root, monkeypatch, app_folder):
-    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation")
-
-    response = client.post(f"/submit_run/{app_folder}")
+def test_submit_tutorial_folder_not_found(client, src_root):
+    """A valid-but-nonexistent tutorial folder is rejected with 400."""
+    response = client.post("/submit_tutorial/numpy")
 
     assert response.status_code == 400
 
 
-def test_submit_run_conflict_when_submission_in_progress(client, src_root, monkeypatch):
+def test_submit_tutorial_conflict_when_submission_in_progress(client, src_root):
     (src_root / "numpy").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation")
     app_module._submission_in_progress = True
 
-    response = client.post("/submit_run/numpy")
+    response = client.post("/submit_tutorial/numpy")
 
     assert response.status_code == 409
 
@@ -107,24 +135,33 @@ def test_submit_run_conflict_when_submission_in_progress(client, src_root, monke
         (None, 0, "not-json", ""),
     ],
 )
-def test_submit_run_execution_failures(
+def test_submit_tutorial_execution_failures(
     client,
     src_root,
     mock_flwr_run,
-    monkeypatch,
     exception,
     returncode,
     stdout,
     stderr,
 ):
     (src_root / "numpy").mkdir(parents=True, exist_ok=True)
-    monkeypatch.setenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation")
 
     if exception is not None:
         mock_flwr_run(exception=exception)
     else:
         mock_flwr_run(returncode=returncode, stdout=stdout, stderr=stderr)
 
-    response = client.post("/submit_run/numpy")
+    response = client.post("/submit_tutorial/numpy")
 
     assert response.status_code == 500
+
+
+# --- Validator units ---
+
+
+@pytest.mark.parametrize("bad", ["..", "../etc", "a/b", ".hidden"])
+def test_validate_tutorial_folder_rejects_traversal(src_root, bad):
+    """Tutorial folder names with traversal sequences or separators are rejected (400)."""
+    with pytest.raises(HTTPException) as exc:
+        app_module._validate_tutorial_folder(bad)
+    assert exc.value.status_code == 400

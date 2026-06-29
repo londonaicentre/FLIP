@@ -10,6 +10,8 @@
 # limitations under the License.
 #
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from flip.nvflare.controllers.fed_evaluation import ModelEval
@@ -17,15 +19,20 @@ from flip.nvflare.controllers.fed_evaluation import ModelEval
 
 class TestModelEval:
     def test_init_with_valid_uuid(self):
-        """Test initialization with valid UUID"""
+        """Test initialization with valid UUID stores it as fallback"""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
         controller = ModelEval(model_id=model_id)
-        assert controller._model_id == model_id
+        assert controller._model_id_fallback == model_id
+        assert controller._model_id is None
 
-    def test_init_with_invalid_uuid_raises_error(self):
-        """Test initialization with invalid UUID raises ValueError"""
-        with pytest.raises(ValueError, match="not a valid UUID"):
-            ModelEval(model_id="invalid-uuid")
+    def test_resolve_model_id_uses_fallback_when_fl_ctx_has_no_custom_props(self):
+        """Lazy resolution returns the constructor UUID when fl_ctx has no custom_props."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        controller = ModelEval(model_id=model_id)
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.return_value = None
+        result = controller._resolve_model_id(fl_ctx)
+        assert result == model_id
 
     def test_init_with_custom_task_check_period(self):
         """Test initialization with custom task_check_period"""
@@ -101,7 +108,7 @@ class TestModelEval:
 
     def test_init_with_cleanup_models_false(self):
         """Test initialization with cleanup_models set to False"""
-        model_id = "123e4567-e89b-12d3a456-426614174000"
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
         controller = ModelEval(model_id=model_id, cleanup_models=False)
         assert controller._cleanup_models is False
 

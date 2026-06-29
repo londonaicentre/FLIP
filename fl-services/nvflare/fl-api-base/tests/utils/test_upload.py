@@ -13,6 +13,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
+from fastapi import HTTPException
 
 from fl_api.utils.schemas import UploadAppRequest
 from fl_api.utils.upload import upload_application, validate_config
@@ -110,6 +112,8 @@ def mock_requests_get_success():
         resp = MagicMock()
         resp.content = b"mock file content"
         resp.raise_for_status = MagicMock()
+        resp.is_redirect = False
+        resp.is_permanent_redirect = False
         mock_get.return_value = resp
         yield mock_get
 
@@ -219,3 +223,47 @@ def test_validate_config_invalid_weights():
     }
     with pytest.raises(ValueError, match="Invalid weight"):
         validate_config(bad_weights)
+
+
+def test_upload_app_rejects_non_https_bundle_url():
+    """Non-https bundle URLs (SSRF vector, e.g. the metadata endpoint) are rejected."""
+    body = UploadAppRequest(
+        bundle_urls=[f"http://169.254.169.254/bundles/{TEST_MODEL_ID}/app/custom/trainer.py"],
+        project_id="123456789",
+        cohort_query="SELECT 1",
+        trusts=["Trust_1"],
+    )
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, body, TMP_PATH_UPLOAD_DIR)
+    assert exc.value.status_code == 400
+
+
+def test_upload_app_rejects_disallowed_bundle_host(monkeypatch):
+    """When BUNDLE_URL_ALLOWED_HOSTS is set, off-origin bundle URLs are rejected."""
+    monkeypatch.setenv("BUNDLE_URL_ALLOWED_HOSTS", "objectstore.internal")
+    body = UploadAppRequest(
+        bundle_urls=[f"https://test.local/bundles/{TEST_MODEL_ID}/app/custom/trainer.py"],
+        project_id="123456789",
+        cohort_query="SELECT 1",
+        trusts=["Trust_1"],
+    )
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, body, TMP_PATH_UPLOAD_DIR)
+    assert exc.value.status_code == 400
+
+
+def test_upload_app_rejects_redirect_response(mock_requests_get_success, mock_upload_correct_request):
+    """A 3xx redirect on a bundle fetch is rejected: it would dodge validate_bundle_url (SSRF)."""
+    mock_requests_get_success.return_value.is_redirect = True
+
+    with pytest.raises(HTTPException) as exc:
+        upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)
+    assert exc.value.status_code == 400
+
+
+def test_upload_app_raises_on_http_error_response(mock_requests_get_success, mock_upload_correct_request):
+    """A non-2xx bundle response raises, so its error body is never written as the bundle file."""
+    mock_requests_get_success.return_value.raise_for_status.side_effect = requests.HTTPError("404 Not Found")
+
+    with pytest.raises(requests.HTTPError):
+        upload_application(TEST_MODEL_ID, mock_upload_correct_request, TMP_PATH_UPLOAD_DIR)

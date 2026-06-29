@@ -19,6 +19,7 @@ import tempfile
 import threading
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import grpc
 from fastapi import FastAPI, HTTPException, Query, status
@@ -38,6 +39,7 @@ from fl_api.schemas import (
     normalize_status,
 )
 from fl_api.utils.upload import upload_application
+from fl_api.utils.validation import safe_join, validate_tutorial_folder_name
 
 logger = logging.getLogger("uvicorn")
 
@@ -56,11 +58,6 @@ _submission_in_progress = False
 
 _node_mapping_lock = threading.Lock()
 _node_trust_mapping: dict[str, str] = {}  # Flower node_id → trust name
-
-
-def _get_allowed_job_folders() -> set[str]:
-    raw_value = os.getenv("ALLOWED_JOB_FOLDERS", "numpy,3d_spleen_segmentation,3d_spleen_segmentation_evaluation")
-    return {item.strip() for item in raw_value.split(",") if item.strip()}
 
 
 def _get_src_root() -> Path:
@@ -163,24 +160,24 @@ def _parse_flwr_payload(result: subprocess.CompletedProcess[str], action_name: s
         ) from err
 
 
-def _validate_app_folder(app_folder: str) -> Path:
-    # allowed_job_folders = _get_allowed_job_folders()
-    # if app_folder not in allowed_job_folders:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_400_BAD_REQUEST,
-    #         detail=(f"Invalid app folder '{app_folder}'. Allowed values: {sorted(allowed_job_folders)}"),
-    #     )
-
-    # Uploaded apps and static tutorial apps both live under the src root: the FL API
-    # downloads bundles into FLOWER_SRC_ROOT/<model_id>, alongside the tutorial folders.
-    job_dir = _get_src_root() / app_folder
+def _resolve_job_dir(folder: str) -> Path:
+    # Resolve <src_root>/<folder> with traversal containment and confirm it exists. The name
+    # itself is validated by the caller (a UUID for production submit, a charset-guarded
+    # folder name for tutorials) before we get here.
+    job_dir = safe_join(_get_src_root(), folder)
     if not job_dir.is_dir():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Job folder path does not exist: {job_dir}",
         )
-
     return job_dir
+
+
+def _validate_tutorial_folder(tutorial_name: str) -> Path:
+    # Tutorial submit: pre-baked tutorial folders (e.g. "numpy", "xray_classification") are
+    # submitted by name, not a UUID, so they get a charset/traversal guard instead.
+    validate_tutorial_folder_name(tutorial_name)
+    return _resolve_job_dir(tutorial_name)
 
 
 def _get_federation_nodes(src_root: Path) -> list[dict[str, Any]]:
@@ -320,11 +317,7 @@ def list_runs() -> list[JobMetadata]:
     return _parse_runs_payload(payload)
 
 
-@app.post("/submit_run/{app_folder}", status_code=status.HTTP_200_OK, response_model=str)
-@app.post("/submit_job/{app_folder}", include_in_schema=False)  # alias, hide from docs
-def submit_run(app_folder: str) -> str:
-    job_dir = _validate_app_folder(app_folder)
-
+def _submit_from_job_dir(job_dir: Path, label: str) -> str:
     global _submission_in_progress
 
     # config.toml holds the run-config overrides for this app. It may sit on a
@@ -362,7 +355,7 @@ def submit_run(app_folder: str) -> str:
         except HTTPException as err:
             raise HTTPException(
                 status_code=err.status_code,
-                detail=f"Failed to submit job from folder {app_folder}: {err.detail}",
+                detail=f"Failed to submit job from folder {label}: {err.detail}",
             ) from err
 
         response_payload = _parse_flwr_payload(result, "submit")
@@ -383,7 +376,7 @@ def submit_run(app_folder: str) -> str:
 
         logger.info(
             "Submitted Flower job from '%s' using command: %s",
-            app_folder,
+            label,
             " ".join(command),
         )
         return resp.run_id
@@ -392,6 +385,31 @@ def submit_run(app_folder: str) -> str:
             _submission_in_progress = False
         if run_config_path is not None:
             os.unlink(run_config_path)
+
+
+@app.post("/submit_run/{job_folder}", status_code=status.HTTP_200_OK, response_model=str)
+@app.post("/submit_job/{job_folder}", include_in_schema=False)  # alias flip-api calls with a UUID
+def submit_run(job_folder: UUID) -> str:
+    """Submit the uploaded application in ``job_folder`` to the Flower control plane.
+
+    Args:
+        job_folder (UUID): The Central Hub model_id. The uploaded application lives in
+            ``FLOWER_SRC_ROOT/<model_id>`` (created by ``/upload_app/{model_id}``), so the
+            submit "job folder" and the upload "model_id" are the same UUID — flip-api calls
+            this via the ``/submit_job`` alias. FastAPI rejects any non-UUID path segment
+            with 422 before the handler runs, so the folder name is guaranteed safe.
+
+    Returns:
+        str: The Flower run id of the submitted job.
+    """
+    return _submit_from_job_dir(_resolve_job_dir(str(job_folder)), str(job_folder))
+
+
+@app.post("/submit_tutorial/{tutorial_name}", status_code=status.HTTP_200_OK, response_model=str)
+def submit_tutorial(tutorial_name: str) -> str:
+    # Tutorial path: pre-baked tutorial folders are submitted by name (not a UUID), e.g.
+    # `numpy` / `xray_classification`. Charset/traversal-guarded, contained under the src root.
+    return _submit_from_job_dir(_validate_tutorial_folder(tutorial_name), tutorial_name)
 
 
 def _find_terminal_run(src_root: Path, run_id: str) -> JobMetadata | None:
@@ -424,40 +442,45 @@ def _find_terminal_run(src_root: Path, run_id: str) -> JobMetadata | None:
 
 @app.delete("/abort_run/{run_id}", status_code=status.HTTP_200_OK, response_model=JobMetadata)
 @app.delete("/abort_job/{run_id}", include_in_schema=False)  # alias, hide from docs
-def abort_run(run_id: str) -> JobMetadata:
+def abort_run(run_id: int) -> JobMetadata:
+    # Flower run ids are integers (flwr Context.run_id: int). Typing the path param as int
+    # makes FastAPI reject any non-numeric value with 422 before it can reach the `flwr
+    # stop` argv, closing the command-line-injection surface; downstream code keeps using
+    # the string form.
     src_root = _get_src_root()
-    command = ["uvx", "flwr", "stop", run_id, "local", "--format", "json"]
+    run_id_str = str(run_id)
+    command = ["uvx", "flwr", "stop", run_id_str, "local", "--format", "json"]
     result = _run_flwr_command(command, src_root, "stop")
 
     if result.returncode == 0:
         # A successful `flwr stop` means the run is stopped. `flwr stop --format json`
         # emits {"success": true, "run-id": ...} with no status field, so the post-abort
         # status is unconditionally STOPPED — same as fl-api-base's /abort_job.
-        return JobMetadata(job_id=run_id, status=JobStatus.STOPPED)
+        return JobMetadata(job_id=run_id_str, status=JobStatus.STOPPED)
 
     # `flwr stop` failed: the run may already be terminal. Aborting an already-terminal
     # run must be idempotent — fall back to `flwr list` and return its terminal status.
-    terminal = _find_terminal_run(src_root, run_id)
+    terminal = _find_terminal_run(src_root, run_id_str)
     if terminal is not None:
         return terminal
 
     raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        detail=f"Failed to abort job {run_id}: {result.stderr.strip()}",
+        detail=f"Failed to abort job {run_id_str}: {result.stderr.strip()}",
     )
 
 
 @app.post("/upload_app/{model_id}", status_code=status.HTTP_200_OK)
-def upload_app(model_id: str, body: UploadAppRequest) -> dict[str, str]:
+def upload_app(model_id: UUID, body: UploadAppRequest) -> dict[str, str]:
     """
     Upload an application to the server.
 
     Args:
-        model_id (str): The ID of the model to associate the application with.
+        model_id (UUID): The ID of the model to associate the application with.
         body (UploadAppRequest): The request body containing the application details.
 
     Returns:
         dict[str, str]: A dictionary containing the status of the upload.
     """
     upload_dir = _get_src_root()
-    return upload_application(model_id, body, upload_dir=upload_dir)
+    return upload_application(str(model_id), body, upload_dir=upload_dir)

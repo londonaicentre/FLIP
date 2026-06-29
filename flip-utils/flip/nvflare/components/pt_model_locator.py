@@ -12,7 +12,6 @@
 
 import json
 import os
-from typing import List, Union
 
 import torch
 import torch.cuda
@@ -37,10 +36,10 @@ class PTModelLocator(ModelLocator):
         self.model = model
         self.exclude_vars = exclude_vars
 
-    def get_model_names(self, fl_ctx: FLContext) -> List[str]:
+    def get_model_names(self, fl_ctx: FLContext) -> list[str]:
         return [PTConstants.PTServerName]
 
-    def locate_model(self, model_name: str, fl_ctx: FLContext) -> Union[DXO, None]:
+    def locate_model(self, model_name: str, fl_ctx: FLContext) -> DXO | None:
         if model_name == PTConstants.PTServerName:
             try:
                 server_run_dir = fl_ctx.get_engine().get_workspace().get_app_dir(fl_ctx.get_job_id())
@@ -90,10 +89,10 @@ class InitialPTModelLocator(ModelLocator):
         self.model = model
         self.exclude_vars = exclude_vars
 
-    def get_model_names(self, fl_ctx: FLContext) -> List[str]:
+    def get_model_names(self, fl_ctx: FLContext) -> list[str]:
         return [PTConstants.PTServerName]
 
-    def locate_model(self, model_name: str, fl_ctx: FLContext) -> Union[DXO, None]:
+    def locate_model(self, model_name: str, fl_ctx: FLContext) -> DXO | None:
         # We look for existing models
         self.log_info(fl_ctx, f"Trying to locate the model {model_name}")
         if model_name == PTConstants.PTServerName:
@@ -152,7 +151,7 @@ class EvaluationPTModelLocator(ModelLocator):
         self.models = None
         self.exclude_vars = exclude_vars
 
-    def locate_model(self, fl_ctx: FLContext) -> Union[DXO, None]:
+    def locate_model(self, fl_ctx: FLContext) -> DXO | None:
         if self.models is None:
             # Load config from workspace
             app_dir = fl_ctx.get_engine().get_workspace().get_app_dir(fl_ctx.get_job_id())
