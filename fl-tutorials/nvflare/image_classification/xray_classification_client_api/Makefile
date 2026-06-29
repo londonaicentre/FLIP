@@ -15,7 +15,13 @@ include ./.env.app
 export $(shell sed 's/=.*//' ./.env.app)
 endif
 
-.PHONY: export sim clean
+.PHONY: run export sim clean
+
+# --- Tutorial-harness entrypoint ---
+# The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app
+# and invokes `make run`. The Client API variant has no legacy testing/ harness path, so
+# `run` delegates to `sim` (the recipe/simulator path via job.py).
+run: sim
 
 # --- Export job config (no GPU needed) ---
 # Builds a complete NVFLARE job under ./fl_job/flip_fedavg/ including meta.json,

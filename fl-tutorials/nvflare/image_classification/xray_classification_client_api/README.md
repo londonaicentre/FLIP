@@ -58,10 +58,11 @@ or equivalently:
 uv run --no-sync python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 3
 ```
 
-> **Note:** `make run` (the legacy single-app harness used by `xray_classification`) is NOT
-> supported for the Client API variant. The legacy harness mounts only `./tmp/app` and has no
-> `meta.json`, so `FlipFedAvgRecipe` components cannot resolve `model_id`. Use `make export`
-> or `make sim` instead.
+> **Note:** `make run` (invoked by the tutorial harness `run-tutorial`/`run-all-tutorials`)
+> delegates to `make sim` for the Client API variant. The legacy single-app `testing/` harness
+> used by `xray_classification` is intentionally **not** used here: it mounts only `./tmp/app`
+> and has no `meta.json`, so `FlipFedAvgRecipe` components cannot resolve `model_id`. Use
+> `make export` (no GPU) or `make sim`/`make run` (GPU + data) instead.
 
 ### SimEnv (requires GPU + data)
 
