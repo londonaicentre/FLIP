@@ -32,6 +32,16 @@ Initial Login
 
    Logging into FLIP for the first time.
 
+.. _flip-login:
+
+On subsequent visits, sign in with your email address and password to reach the Projects page.
+
+.. figure:: ../assets/flip/flip-login.gif
+   :width: 600
+   :align: center
+
+   Signing in to FLIP.
+
 .. _forgot-password:
 
 ***************
@@ -55,6 +65,43 @@ Forgot Password
    You may also speak to your local FLIP system administrator and ask them to perform the reset for you, in which case you will receive an email including the confirmation code required to change your password.
 
    In this case, you will select the 'I have a code' button rather than the 'Request Code' button in the above process.
+
+.. _change-password:
+
+***************
+Change Password
+***************
+
+While signed in, you can change your password at any time from the account menu.
+
+1. Open the account menu in the top right-hand corner
+2. Click 'Change Password'
+3. Click the 'Request Code' button to have a confirmation code emailed to you
+4. Enter the confirmation code and a new password
+5. Click the 'Change Password' button
+
+.. figure:: ../assets/flip/change-password-user.gif
+   :width: 600
+   :align: center
+
+   Changing your password while signed in.
+
+.. _dark-mode:
+
+*********
+Dark Mode
+*********
+
+FLIP supports light and dark display modes. Your choice is remembered across sessions.
+
+1. Open the account menu in the top right-hand corner
+2. Click 'Dark Mode' to toggle between the light and dark themes
+
+.. figure:: ../assets/flip/dark-mode.gif
+   :width: 600
+   :align: center
+
+   Switching between light and dark mode.
 
 ********
 Projects
@@ -83,6 +130,13 @@ Edit Project
 
 1. Click the 'Edit Project' button
 2. Update the project details, such as project name, description and added users
+3. Click the 'Update Project' button
+
+.. figure:: ../assets/flip/edit-project.gif
+   :width: 600
+   :align: center
+
+   Editing a project.
 
 .. warning::
 
@@ -214,7 +268,7 @@ Following project approval, a corresponding XNAT project will be generated at ea
 
 To view the progress of the imaging data import at each participating Trust, users can refer to the Imaging Project Status section on the project page.
 
-.. figure:: ../assets/flip/imaging-status.png
+.. figure:: ../assets/flip/imaging-status.gif
    :width: 600
    :align: center
 
@@ -225,7 +279,7 @@ To view the progress of the imaging data import at each participating Trust, use
    Importing large sets of studies from PACS systems can take a very long time and individual imports may fail if the system is under too much strain. Overtime, FLIP will automatically reimport failed studies as indicated by the reimport count.
    Once the reimport cap is reached, failed studies will no longe be reimported. If there are still failures present, please contact an XNAT administrator. Manual intervention may be needed.
 
-.. figure:: ../assets/flip/study-reimport-max.png
+.. figure:: ../assets/flip/study-reimport-max.gif
    :width: 600
    :align: center
 
@@ -504,3 +558,19 @@ Hovering over the graphs at various points will display the values.
    :align: center
 
    Viewing model training metrics.
+
+.. _connection-status:
+
+*****************
+Connection Status
+*****************
+
+The Connection Status page shows the live state of the federation. Each participating Trust is shown as online, degraded or offline based on its most recent heartbeat, and can be viewed as a list or as a radial topology.
+
+The FL nets card reports the FL client-to-server connectivity for each net — that is, whether each Trust's FL client is connected. No training requests can be sent to a Trust whose FL client is offline.
+
+.. figure:: ../assets/flip/fl-status.gif
+   :width: 600
+   :align: center
+
+   Viewing the federation connection status.
