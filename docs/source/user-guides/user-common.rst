@@ -268,7 +268,7 @@ Following project approval, a corresponding XNAT project will be generated at ea
 
 To view the progress of the imaging data import at each participating Trust, users can refer to the Imaging Project Status section on the project page.
 
-.. figure:: ../assets/flip/imaging-status.png
+.. figure:: ../assets/flip/imaging-status.gif
    :width: 600
    :align: center
 
@@ -279,7 +279,7 @@ To view the progress of the imaging data import at each participating Trust, use
    Importing large sets of studies from PACS systems can take a very long time and individual imports may fail if the system is under too much strain. Overtime, FLIP will automatically reimport failed studies as indicated by the reimport count.
    Once the reimport cap is reached, failed studies will no longe be reimported. If there are still failures present, please contact an XNAT administrator. Manual intervention may be needed.
 
-.. figure:: ../assets/flip/study-reimport-max.png
+.. figure:: ../assets/flip/study-reimport-max.gif
    :width: 600
    :align: center
 
