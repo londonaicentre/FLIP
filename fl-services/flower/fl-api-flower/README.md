@@ -49,6 +49,7 @@ uvx flwr list local --format json
 ```
 
 It returns a list of dictionaries with:
+
 - all fields from all Flower run objects in the `runs` array.
 
 The abort endpoint runs:
@@ -61,6 +62,7 @@ It returns the full JSON payload from Flower.
 
 The server status endpoint checks the Flower SuperLink health service configured by
 `SUPERLINK_HEALTH_ADDRESS` and returns:
+
 - `{"status": "RUNNING"}` when gRPC health returns `SERVING`
 - `{"status": "STOPPED"}` otherwise
 
@@ -71,6 +73,7 @@ can resolve Flower node IDs to human-readable trust names.
 The client status endpoint queries the SuperLink Control API via
 `flwr federation list --federation @none/default local --format json` and uses the
 registered node mappings to return one item per trust:
+
 - `{"name": "<target>", "status": "CONNECTED"}` when the node is online
 - `{"name": "<target>", "status": "DISCONNECTED"}` otherwise
 

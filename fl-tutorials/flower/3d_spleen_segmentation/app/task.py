@@ -39,7 +39,7 @@ def train_func(
         model: The segmentation model (UNet) to train
         train_loader: DataLoader with training data
         optimizer: Adam optimizer
-        loss_fn: DiceCELoss with to_onehot_y=True, softmax=True (matches flip-fl-base reference)
+        loss_fn: DiceCELoss with to_onehot_y=True, softmax=True (matches the reference)
         device: Device to train on (cuda or cpu)
 
     Returns:
@@ -102,7 +102,7 @@ def validate_func(
         Running loss across all validation samples
     """
     model.eval()
-    # include_background=False + AsDiscrete(argmax=True) below mirror the flip-fl-base
+    # include_background=False + AsDiscrete(argmax=True) below mirror the
     # reference's validator (trainer.py:79-81). Without these, DiceMetric receives
     # raw logits and the bg dice ~= 1.0 dominates the mean, so val_dice stays pinned
     # at ~0.5 across all rounds regardless of whether the model is actually learning.

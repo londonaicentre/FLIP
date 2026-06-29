@@ -25,6 +25,10 @@ permissions:
 
 jobs:
   build-and-push:
+    # Skip on forks: they cannot assume the upstream AWS OIDC role or push to
+    # ghcr.io/londonaicentre, so this whole build-and-publish job would otherwise
+    # show a spurious CI failure on fork pushes. Upstream publishing is unchanged.
+    if: github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     permissions: # override top-level read-only default to allow GHCR push
       id-token: write # required for OIDC
@@ -57,7 +61,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4.2.1
+        uses: aws-actions/configure-aws-credentials@v6.2.1
         with:
           role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
           role-session-name: ${{ vars.AWS_ROLE_SESSION_NAME }}

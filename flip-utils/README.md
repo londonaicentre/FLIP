@@ -30,8 +30,7 @@ image and is imported as `from flip import ...` by user-uploaded training code. 
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples
 - **[`../fl-services/`](../fl-services/)** — Docker images for FL networks (server, clients, admin API)
 
-The rest of this README is largely inherited from the standalone `flip-fl-base` repository (now merged in) and is
-still being reconciled with the mono-repo layout — paths like `tutorials/` and `fl-services/` referred to here are
+The rest of this README is still being reconciled with the mono-repo layout — paths like `tutorials/` and `fl-services/` referred to here are
 the now-sibling top-level `fl-tutorials/` and `fl-services/` trees, and Make targets called out below run from the
 `flip-utils/` directory.
 
@@ -191,10 +190,10 @@ The [`../fl-services/nvflare/`](../fl-services/nvflare/README.md) directory cont
 Generate the certificates, keys, and configuration for the 2 FL networks:
 
 ```bash
-make nvflare-provision-2-nets
+make -C fl-services/nvflare provision-2-nets
 ```
 
-This uses the network-specific provisioning project files (`deploy/providers/nvflare/net-1_project_dev.yml` and `net-2_project_dev.yml`) and provisions the network files in `deploy/providers/nvflare/workspace/net-1` and `deploy/providers/nvflare/workspace/net-2` (gitignored) using the [deploy/providers/nvflare/scripts/provision-network.sh](../deploy/providers/nvflare/scripts/provision-network.sh) script.
+This uses the network-specific provisioning project files (`fl-services/nvflare/provision/net-1_project_dev.yml` and `net-2_project_dev.yml`) and provisions the network files in `fl-services/nvflare/provision/workspace-dev/net-1` and `fl-services/nvflare/provision/workspace-dev/net-2` (gitignored) using the [fl-services/nvflare/provision/scripts/provision-network.sh](../fl-services/nvflare/provision/scripts/provision-network.sh) script.
 
 > ⚠️ **Warning**: Provisioned files contain cryptographic signatures. Any modification will cause errors. Always re-run provisioning if changes are needed.
 
@@ -206,15 +205,15 @@ clients won't be on the same Docker network as the FL server (as they are in dev
 Run:
 
 ```bash
-make nvflare-provision-stag
+make -C fl-services/nvflare provision-stag
 ```
 
 ### Creating a New Network
 
-Create a provisioning project file under `deploy/providers/nvflare/` (e.g. `net-3_project_dev.yml`) based on the template (`net-1_project_dev.yml`) (you'll likely need to change `fed_learn_port`) and run:
+Create a provisioning project file under `fl-services/nvflare/provision/` (e.g. `net-3_project_dev.yml`) based on the template (`net-1_project_dev.yml`) (you'll likely need to change `fed_learn_port`) and run:
 
 ```bash
-NET_NUMBER=3 make nvflare-provision
+make -C fl-services/nvflare provision NET_NUMBER=3
 ```
 
 ### Running a Network
@@ -259,8 +258,8 @@ To test a PR on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo
 
 | Command | Run from | Description |
 | --------- | --------- | ------------- |
-| `make nvflare-provision NET_NUMBER=X` | repo root | Provision FL network X |
-| `make nvflare-provision-2-nets` | repo root | Provision both dev FL networks |
+| `make -C fl-services/nvflare provision NET_NUMBER=X` | repo root | Provision FL network X |
+| `make -C fl-services/nvflare provision-2-nets` | repo root | Provision both dev FL networks |
 | `make build` | `fl-services/nvflare/` | Build the :dev FL images |
 | `make up NET_NUMBER=X` | `fl-services/nvflare/` | Start FL network X |
 | `make down NET_NUMBER=X` | `fl-services/nvflare/` | Stop FL network X (must match the `NET_NUMBER` used at `up`) |

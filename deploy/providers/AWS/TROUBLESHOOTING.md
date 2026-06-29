@@ -317,12 +317,12 @@ requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: http://da
 
 (or the same on `imaging-api`). Trust-api → data-access-api / imaging-api calls succeed; only fl-client calls fail.
 
-**Root cause**: The running fl-client / fl-server / fl-api images predate `flip-fl-base` PR #111, which added `headers=_trust_internal_headers()` to every outbound `flip.get_dataframe` / `flip.get_by_accession_number` / `flip.add_resource` call. Without that header, the data-access-api / imaging-api router-level auth check rejects the request with 401.
+**Root cause**: The running fl-client / fl-server / fl-api images predate the change that added `headers=_trust_internal_headers()` to every outbound `flip.get_dataframe` / `flip.get_by_accession_number` / `flip.add_resource` call. Without that header, the data-access-api / imaging-api router-level auth check rejects the request with 401.
 
-**Fix**: bump `DOCKER_FL_TAG` in `.env.stag` (and `.env.production` for prod) to a `flip-fl-base` SHA that includes PR #111, then redeploy. A single tag bump rolls all three images:
+**Fix**: bump `DOCKER_FL_TAG` in `.env.stag` (and `.env.production` for prod) to an FL image build that includes the trust-internal-header change, then redeploy. A single tag bump rolls all three images:
 
 ```bash
-# Pick a flip-fl-base SHA on develop after PR #111 merged
+# Pick an FL image tag (a develop SHA) that includes the trust-internal-header change
 sed -i 's/^DOCKER_FL_TAG=.*/DOCKER_FL_TAG=<sha>/' .env.stag
 
 # fl-api + fl-server (ECS task defs read TF_VAR_flip_fl_image_tag)

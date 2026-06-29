@@ -11,7 +11,6 @@
 #
 
 from pathlib import Path
-from typing import List
 
 from nvflare.app_common.app_constant import EnvironmentKey
 
@@ -182,7 +181,7 @@ def configure_server(
     job_dir: Path,
     app_name: str,
     global_rounds: int,
-    trusts: List[str],
+    trusts: list[str],
     ignore_result_error: bool,
     aggregator: str,
     aggregation_weights: dict,
@@ -264,7 +263,7 @@ def configure_server(
     return config_file
 
 
-def configure_meta(job_dir: Path, app_name: str, trusts: List[str]) -> Path:
+def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
     """
     Creates a meta.json file, which is part of the NVFLARE application.
 
