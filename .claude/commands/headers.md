@@ -6,11 +6,17 @@ allowed-tools: Bash(git:*), Read, Edit, Grep
 CLAUDE.md requires every source file to carry the Apache 2.0 copyright header, but **nothing
 in CI or pre-commit enforces it**. This command finds source files missing the header and adds it.
 
-The canonical header (FLIP-authored files use the year **2026** and this exact owner string):
+The canonical header for FLIP-authored files uses this exact owner string. **Match the
+year convention already used by neighbouring files in the same directory**: the predominant
+existing style is the **dateless** form shown below (`Copyright (c) Guy's and St Thomas' ...`),
+so default to dateless; only include a year if the surrounding files in that directory
+consistently carry one, and in that case copy their year rather than stamping the current
+year. Do not "correct" the year on files that already have a header — leave existing headers
+untouched (see step 2).
 
 **Hash-comment languages** (`.py`, `.sh`, `.yml`, `.yaml`, `Dockerfile`, `Makefile`, `.toml`):
 ```
-# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -26,7 +32,7 @@ The canonical header (FLIP-authored files use the year **2026** and this exact o
 **C-style block-comment languages** (`.ts`, `.js`, `.vue`, `.css`):
 ```
 /*
- * Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+ * Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -41,9 +47,11 @@ The canonical header (FLIP-authored files use the year **2026** and this exact o
 
 Steps:
 
-1. **Determine the file set.** Default to files added/changed on this branch:
+1. **Determine the file set.** Default to files this branch actually added/changed. Diff
+   against the **merge-base** (not `develop` directly) so files changed on `develop` since
+   the branch was cut are excluded:
    ```
-   git diff --name-only --diff-filter=ACMR develop
+   git diff --name-only --diff-filter=ACMR "$(git merge-base HEAD origin/develop)"
    git status --porcelain
    ```
    If the user passed paths in `$ARGUMENTS`, use those instead. Restrict to source files in the languages above; skip vendored/generated files (e.g. anything carrying a `Copyright (c) 2026 Flower Labs GmbH` header — leave third-party headers untouched), lockfiles, JSON, Markdown, and `required_files.json`.

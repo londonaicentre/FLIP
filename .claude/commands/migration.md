@@ -13,7 +13,7 @@ The change description is: **$ARGUMENTS**
 
 Do the following, stopping to report if any step fails:
 
-1. **Confirm there is a model change to capture.** Run `git diff --stat develop -- flip-api/src/flip_api/db/models/` (and the unstaged working tree). If nothing under `db/models/` changed, warn the user that a migration may not be needed and ask whether to continue anyway.
+1. **Confirm there is a model change to capture.** Diff against the **merge-base** (not `develop` directly) so model changes merged into `develop` after this branch was cut don't show up as false positives: `git diff --stat "$(git merge-base HEAD origin/develop)" -- flip-api/src/flip_api/db/models/` (also check the unstaged working tree). If nothing under `db/models/` changed, warn the user that a migration may not be needed and ask whether to continue anyway.
 
 2. **Generate the revision.** Run:
    ```
