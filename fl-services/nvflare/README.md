@@ -140,9 +140,16 @@ as usual, then the trust claims it via `register_trust`.
 > `make provision*`. Those targets `rm -rf` the workspace first (including `state/`), so
 > NVFLARE mints a fresh root CA and regenerates **every** participant's certs — forcing a
 > redeploy of every already-onboarded trust. `provision-add-client` preserves `state/`
-> and avoids that. (To grow the over-provisioned pool itself, bump `STAG_NUM_CLIENTS` /
-> `PROD_NUM_CLIENTS` and re-provision out of band — accepting that one-off CA rotation —
-> then re-upload: `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000 && make -C fl-services/nvflare upload-kits-to-s3 PROD=true`.)
+> and avoids that.
+>
+> To **grow the pool** itself you have two routes. **No disruption (preferred):** loop
+> `provision-add-client*` — each add reuses the existing root CA, so no already-onboarded
+> trust is touched; only the new slots are minted. **Bulk, but disruptive:** bump
+> `STAG_NUM_CLIENTS` / `PROD_NUM_CLIENTS` and re-provision out of band — one command, but it
+> wipes `state/`, rotates the root CA, and so **forces a redeploy of every already-onboarded
+> trust** (the same fleet-wide churn called out above). Only take this route in a maintenance
+> window where redeploying the whole fleet is acceptable, then re-upload:
+> `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000 && make -C fl-services/nvflare upload-kits-to-s3 PROD=true`.
 
 ## Standalone targets
 
