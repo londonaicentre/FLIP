@@ -59,7 +59,10 @@ jobs:
               with:
                   files: ./coverage.xml
                   flags: flip
-                  fail_ci_if_error: true
+                  # Non-blocking: forks have no CODECOV_TOKEN (upstream secrets are
+                  # not shared), so a failed upload must not fail otherwise-green CI.
+                  # Matches every other test workflow in this repo.
+                  fail_ci_if_error: false
               env:
                   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
@@ -100,6 +103,9 @@ jobs:
               with:
                   files: ./coverage.xml
                   flags: api
-                  fail_ci_if_error: true
+                  # Non-blocking: forks have no CODECOV_TOKEN (upstream secrets are
+                  # not shared), so a failed upload must not fail otherwise-green CI.
+                  # Matches every other test workflow in this repo.
+                  fail_ci_if_error: false
               env:
                   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

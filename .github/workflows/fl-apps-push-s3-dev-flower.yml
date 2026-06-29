@@ -26,6 +26,10 @@ permissions:
 
 jobs:
   sync:
+    # Skip on forks: they cannot assume the upstream AWS OIDC role to sync to S3,
+    # so this job would otherwise show a spurious CI failure on fork pushes.
+    # Upstream develop/main S3 publishing is unchanged.
+    if: github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     environment: flip
     env:

@@ -279,6 +279,24 @@ make ci
 
 This runs all jobs defined in `.github/workflows/` locally.
 
+### CI checks on forks
+
+Contributors work from a [fork](#the-contribution-process), and a fork's CI runs with the fork's own `GITHUB_TOKEN`
+and **without** the upstream repository secrets. Workflows that **publish or deploy** therefore cannot run on a fork —
+they would only ever fail trying to reach `londonaicentre`-owned resources — so each is guarded with
+`if: github.repository == 'londonaicentre/FLIP'` and shows up as **skipped** (neutral, not a red failure) on fork
+pushes. These are:
+
+- **Image publishing** — `Build and Push NVFLARE/Flower FL Docker Images`, and the `orthanc`, `xnat-*`, `flip-api`,
+  and `trust-*` GHCR build-and-push workflows.
+- **S3 sync** — the `fl-apps-push-s3-*` workflows (AWS OIDC into the upstream account).
+- **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
+
+Everything that **validates** your change still runs on your fork, and a red result there is a real failure to fix:
+lint, type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
+Coverage upload to Codecov is non-blocking (`fail_ci_if_error: false`), so a missing `CODECOV_TOKEN` on your fork
+never fails an otherwise-green job.
+
 ### Running the stack (pull vs. build)
 
 In development (`PROD` unset), `make up` **pulls** the repo-built service images
