@@ -71,7 +71,9 @@ if [ "$healthy" != true ]; then
 fi
 
 echo "📤 Submitting '$TUTORIAL' to fl-api..."
-RUN_ID="$($COMPOSE exec -T fl-api python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/submit_run/$TUTORIAL', method='POST')).read().decode())")"
+# Tutorials submit by NAME via /submit_tutorial; /submit_run is UUID-only (flip-api's
+# production model_id path), so posting a tutorial name there 422s.
+RUN_ID="$($COMPOSE exec -T fl-api python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/submit_tutorial/$TUTORIAL', method='POST')).read().decode())")"
 echo "   run id: $RUN_ID"
 
 echo "⏳ Waiting up to ${WAIT_SECS}s for the run to reach a terminal status (polling fl-api /list_runs)..."

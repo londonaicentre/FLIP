@@ -76,8 +76,9 @@ up-secure: _ensure-dev-dirs
 down:
 	$(DEV_COMPOSE) -p flwr down -v --remove-orphans
 
-# Submit a job to the running stack (no published host port): exec into fl-api and POST
-# to its loopback API (the image ships Python, not curl). Usage: make submit APP=<folder>
+# Submit a tutorial folder to the running stack (no published host port): exec into fl-api
+# and POST to its loopback API (the image ships Python, not curl). Usage: make submit APP=<folder>.
+# By name → /submit_tutorial; /submit_run is UUID-only (flip-api's production model_id path).
 submit:
 	$(DEV_COMPOSE) -p flwr exec -T fl-api \
-		python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/submit_run/$(APP)', method='POST')).read().decode())"
+		python -c "import urllib.request as u; print(u.urlopen(u.Request('http://localhost:8000/submit_tutorial/$(APP)', method='POST')).read().decode())"
