@@ -99,6 +99,22 @@ class TrainingRound(IntEnum):
     MAX = 1000
 
 
+class TargetType(StrEnum):
+    """System target for admin operations (restart/shutdown), used as a FastAPI path param.
+
+    NVFLARE 2.8.0 removed the deprecated ``nvflare.fuel.hci.client.fl_admin_api`` tree, which
+    previously exported ``TargetType`` as a ``(str, Enum)``. Its successor,
+    ``nvflare.fuel.flare_api.api_spec.TargetType``, is a plain class (bare string class-attrs) that
+    FastAPI rejects as a path-param annotation. We therefore re-declare it locally as a ``StrEnum``,
+    preserving the original wire contract: the member values are exactly the ``"all"``/``"server"``/
+    ``"client"`` strings that ``flare_api.Session.restart``/``shutdown`` validate against.
+    """
+
+    ALL = "all"
+    SERVER = "server"
+    CLIENT = "client"
+
+
 class IOverridableConfig(BaseModel):
     LOCAL_ROUNDS: Optional[int] = None
     GLOBAL_ROUNDS: Optional[int] = None
