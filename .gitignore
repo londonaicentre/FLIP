@@ -438,6 +438,9 @@ flip-utils/dist/
 !.claude/commands/
 !.claude/hooks/
 !.claude/settings.json
+# Worktrees default to .claude/worktrees/ inside the repo — keep them out of
+# version control (covered by .claude/* above, listed explicitly for clarity).
+.claude/worktrees/
 
 # fl-tutorials generated / uncommitted artifacts. Replicates the legacy flip-fl-base
 # .gitignore (data/, tutorials/testing/tmp, the spleen-seg uv.lock), scoped under the
