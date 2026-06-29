@@ -218,11 +218,14 @@ make -C fl-services/nvflare provision NET_NUMBER=3
 
 ### Running a Network
 
+From ``fl-services/nvflare/`` (the per-backend Makefile that owns these targets — the
+``flip-utils/`` directory itself only ships ``unit-test``):
+
 ```bash
-make build NET_NUMBER=1   # Build Docker images
+make build                # Build the :dev FL images (flare-fl-{base,server,client,api})
 make up NET_NUMBER=1      # Start the network (server, 2 clients, API)
-make down NET_NUMBER=1    # Stop the network
-make clean NET_NUMBER=1   # Remove containers and images
+make down NET_NUMBER=1    # Stop the network — must match the NET_NUMBER used for `up`
+                          # (compose embeds it in container names + mount paths)
 ```
 
 ### Running the tutorials
@@ -253,13 +256,13 @@ To test a PR on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo
 
 #### Network Management
 
-| Command | Description |
-| --------- | ------------- |
-| `make -C fl-services/nvflare provision NET_NUMBER=X` | Provision FL network X |
-| `make build NET_NUMBER=X` | Build Docker images for network X |
-| `make up NET_NUMBER=X` | Start FL network X |
-| `make down NET_NUMBER=X` | Stop FL network X |
-| `make clean NET_NUMBER=X` | Remove containers and images |
+| Command | Run from | Description |
+| --------- | --------- | ------------- |
+| `make -C fl-services/nvflare provision NET_NUMBER=X` | repo root | Provision FL network X |
+| `make -C fl-services/nvflare provision-2-nets` | repo root | Provision both dev FL networks |
+| `make build` | `fl-services/nvflare/` | Build the :dev FL images |
+| `make up NET_NUMBER=X` | `fl-services/nvflare/` | Start FL network X |
+| `make down NET_NUMBER=X` | `fl-services/nvflare/` | Stop FL network X (must match the `NET_NUMBER` used at `up`) |
 
 #### Testing
 
