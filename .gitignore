@@ -431,7 +431,13 @@ workspace-prod/
 # flip-utils build artifacts
 flip-utils/dist/
 .ralph/
-.claude/
+
+# Claude Code: ignore local/personal state, but track shared routines
+# (commands, hooks, project settings) so the team gets them on checkout.
+.claude/*
+!.claude/commands/
+!.claude/hooks/
+!.claude/settings.json
 
 # fl-tutorials generated / uncommitted artifacts. Replicates the legacy flip-fl-base
 # .gitignore (data/, tutorials/testing/tmp, the spleen-seg uv.lock), scoped under the
