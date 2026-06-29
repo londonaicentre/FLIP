@@ -63,6 +63,27 @@ describe("docs: imaging status", () => {
             ]
         }).as("getImageStatus");
 
+        // Settle the Models card with a single model so it doesn't spin on the
+        // otherwise-unstubbed /models endpoint.
+        cy.intercept("GET", `**/projects/${projectId}/models*`, {
+            statusCode: 200,
+            body: {
+                page: 1,
+                pageSize: 5,
+                totalPages: 1,
+                totalRecords: 1,
+                data: [
+                    {
+                        id: "6292d9ec-e821-4e4a-814e-3a315a4cb95e",
+                        name: "Stroke Detection Model",
+                        description: "Detects acute stroke from CT head scans.",
+                        status: "PENDING",
+                        ownerid: "c8b36b74-0cb6-4b3a-9608-68cd4d0d8162"
+                    }
+                ]
+            }
+        }).as("getModels");
+
         cy.visit(`/project/${projectId}`);
         cy.wait("@getProject");
         cy.wait("@getImageStatus");
