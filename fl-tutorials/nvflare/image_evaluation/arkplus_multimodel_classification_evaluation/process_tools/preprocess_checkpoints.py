@@ -64,6 +64,9 @@ def preprocess(src: Path, dst: Path, config_key: str) -> None:
             f"Available: {list(PROCESSORS.keys())}"
         )
 
+    if not src.is_file():
+        raise FileNotFoundError(f"Raw checkpoint not found: {src}")
+
     proc = PROCESSORS[config_key]
     print(f"  [{config_key}] {proc['description']}")
 

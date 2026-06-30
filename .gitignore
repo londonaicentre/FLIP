@@ -447,5 +447,3 @@ fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation/uv.lock
 deploy/providers/flower/certs/
 fl-services/flower/runs/
 fl-tutorials/flower/data/
-fl-tutorials/nvflare/image_evaluation/arkplus_baseline_classification_evaluation/uv.lock
-fl-tutorials/nvflare/image_evaluation/arkplus_baseline_classification_evaluation/models/Ark6_swinLarge768_ep50.pth.tar

@@ -19,34 +19,70 @@ include ./.env.app
 export $(shell sed 's/=.*//' ./.env.app)
 endif
 
-RAW_CHECKPOINT ?=
-FINETUNED_CHECKPOINT ?=
-
-PRETRAINED_DEST := $(APP_DIR)/app_files/arkplus_pretrained_weights.pt
+PROCESSED_CHECKPOINT := $(APP_DIR)/app_files/arkplus_pretrained_weights.pt
+# Multimodel-only: a second, fine-tuned model is evaluated alongside the foundation model.
 FINETUNED_DEST := $(APP_DIR)/app_files/arkplus_finetuned_weights.pt
 DEFAULT_FINETUNED_URL := https://huggingface.co/ParhomE/ArkPlusFLIPTutorial/resolve/main/model.pt
 
-.PHONY: run shell down clean
+# Resolve a (possibly empty) path against this app folder: absolute paths are kept,
+# relative paths are taken relative to the app directory, and empty stays empty. This lets
+# .env.app (or a `make VAR=...` override) use app-relative paths such as
+# RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar, regardless of the directory make is
+# invoked from — important because `run` delegates to the testing Makefile, whose recipes run
+# from a different directory. `override` makes the resolution apply to command-line values too.
+abspath_app = $(if $(strip $(1)),$(abspath $(if $(filter /%,$(strip $(1))),$(strip $(1)),$(APP_DIR)/$(strip $(1)))))
 
-check-raw-checkpoint:
-	@MISSING=0; \
-	\
-	if [ -f "$(PRETRAINED_DEST)" ]; then \
-		echo "✅ Pretrained checkpoint found."; \
-	elif [ -n "$(RAW_CHECKPOINT)" ]; then \
+override RAW_CHECKPOINT   := $(call abspath_app,$(RAW_CHECKPOINT))
+override DEV_IMAGES_DIR   := $(call abspath_app,$(DEV_IMAGES_DIR))
+override DEV_DATAFRAME    := $(call abspath_app,$(DEV_DATAFRAME))
+override SITE1_IMAGES_DIR := $(call abspath_app,$(SITE1_IMAGES_DIR))
+override SITE1_DATAFRAME  := $(call abspath_app,$(SITE1_DATAFRAME))
+override SITE2_IMAGES_DIR := $(call abspath_app,$(SITE2_IMAGES_DIR))
+override SITE2_DATAFRAME  := $(call abspath_app,$(SITE2_DATAFRAME))
+# NOTE: FINETUNED_CHECKPOINT is intentionally NOT resolved with abspath_app — it may be a
+# URL (the default is downloaded from HuggingFace). Pass an absolute path if using a local file.
+
+.PHONY: run shell down clean download-raw-checkpoint prepare-checkpoint
+
+download-raw-checkpoint:
+	@if [ -z "$(RAW_CHECKPOINT)" ]; then \
+		echo "❌ RAW_CHECKPOINT is not set."; \
+		echo "   Set it in .env.app (an app-relative path is fine, e.g."; \
+		echo "   RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar)."; \
+		exit 1; \
+	fi
+	@echo "Downloading Ark+ foundation model checkpoint..."
+	@mkdir -p "$(dir $(RAW_CHECKPOINT))"
+	@curl -L -o "$(RAW_CHECKPOINT)" "https://www.dropbox.com/scl/fo/joycn8m93nvlrc8yjme40/ABBtPc5oaalYZ7kzmERpjhU/Ark%2B_Nature/Ark6_swinLarge768_ep50.pth.tar?rlkey=p3lphqvtgmiphw1n0u039jpjn&dl=1"
+	@echo "✅ Downloaded Ark+ foundation model checkpoint to $(RAW_CHECKPOINT)"
+
+prepare-checkpoint:
+	@# --- Foundation model (identical flow to the baseline tutorial) ---
+	@if [ -f "$(PROCESSED_CHECKPOINT)" ]; then \
+		echo "✅ Processed Ark+checkpoint found."; \
+	elif [ -z "$(RAW_CHECKPOINT)" ]; then \
+		echo "❌ RAW_CHECKPOINT is not set, and no processed checkpoint exists yet."; \
+		echo ""; \
+		echo "Point RAW_CHECKPOINT at the Ark+ foundation model checkpoint"; \
+		echo "(Ark6_swinLarge768_ep50.pth.tar). An app-relative path is fine, e.g."; \
+		echo "set RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar in .env.app."; \
+		echo ""; \
+		echo "Don't have the file? Fetch it with: make download-raw-checkpoint"; \
+		echo "Or request access: https://forms.gle/qkoDGXNiKRPTDdCe8"; \
+		exit 1; \
+	elif [ ! -f "$(RAW_CHECKPOINT)" ]; then \
+		echo "❌ Raw Ark+ checkpoint not found at: $(RAW_CHECKPOINT)"; \
+		echo ""; \
+		echo "Fetch it automatically with: make download-raw-checkpoint"; \
+		echo "Or request access to Ark6_swinLarge768_ep50.pth.tar: https://forms.gle/qkoDGXNiKRPTDdCe8"; \
+		exit 1; \
+	else \
 		echo "Processing raw checkpoint..."; \
 		uv run python "$(APP_DIR)/process_tools/preprocess_checkpoints.py" \
-			--entry "$(RAW_CHECKPOINT)" "$(PRETRAINED_DEST)" arkplus_pretrained; \
-	else \
-		echo "❌ Missing Ark+ foundation model checkpoint."; \
-		echo "Download Ark6_swinLarge768_ep50.pth.tar from:"; \
-		echo "  https://www.dropbox.com/scl/fo/joycn8m93nvlrc8yjme40/ABBtPc5oaalYZ7kzmERpjhU/Ark%2B_Nature/Ark6_swinLarge768_ep50.pth.tar?rlkey=p3lphqvtgmiphw1n0u039jpjn&dl=1"; \
-		echo "  Request access: https://forms.gle/qkoDGXNiKRPTDdCe8"; \
-		echo "Then run: make run RAW_CHECKPOINT=/path/to/Ark6_swinLarge768_ep50.pth.tar"; \
-		MISSING=1; \
-	fi; \
-	\
-	if [ -f "$(FINETUNED_DEST)" ]; then \
+			--entry "$(RAW_CHECKPOINT)" "$(PROCESSED_CHECKPOINT)" arkplus_pretrained; \
+	fi
+	@# --- Fine-tuned model (multimodel-only) ---
+	@if [ -f "$(FINETUNED_DEST)" ]; then \
 		echo "✅ Finetuned checkpoint found."; \
 	elif [ -n "$(FINETUNED_CHECKPOINT)" ]; then \
 		case "$(FINETUNED_CHECKPOINT)" in \
@@ -60,13 +96,9 @@ check-raw-checkpoint:
 	else \
 		echo "Downloading default finetuned checkpoint..."; \
 		curl -fL "$(DEFAULT_FINETUNED_URL)" -o "$(FINETUNED_DEST)"; \
-	fi; \
-	\
-	if [ $$MISSING -eq 1 ]; then \
-		exit 1; \
 	fi
 
-run: check-raw-checkpoint
+run: prepare-checkpoint
 	$(MAKE) -C $(TESTING_DIR) $@ \
 		JOB_TYPE="$(JOB_TYPE)" \
 		PATH_TO_APP="$(APP_DIR)" \
