@@ -168,3 +168,61 @@ class TestEvaluationPTModelLocator:
 
         assert result is not None
         assert result.data_kind == DataKind.COLLECTION
+
+    @patch("flip.nvflare.components.pt_model_locator.torch")
+    @patch("flip.nvflare.components.pt_model_locator.PTModelPersistenceFormatManager")
+    @patch("flip.nvflare.components.pt_model_locator.model_learnable_to_dxo")
+    @patch("os.path.isfile")
+    def test_probe_validates_unwrapped_persistence_format_weights(
+        self, mock_isfile, mock_to_dxo, mock_persistence_cls, mock_torch
+    ):
+        """The strict-load probe must validate the same (manager-normalised) weights
+        that are sent to clients — i.e. the persistence manager's ``var_dict`` — not
+        the raw checkpoint. Otherwise an NVFLARE persistence-format checkpoint
+        (``{"model": ..., "train_conf": ...}``) false-fails strict loading and logs a
+        spurious error, even though the weights are delivered correctly."""
+        config = {
+            "models": {
+                "resnet": {"checkpoint": "resnet.pth", "path": "ResNet"},
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_dir = os.path.join(tmpdir, "custom")
+            os.makedirs(custom_dir)
+            with open(os.path.join(custom_dir, "config.json"), "w") as f:
+                json.dump(config, f)
+
+            mock_isfile.return_value = True
+            mock_torch.cuda.is_available.return_value = False
+            # Raw checkpoint in NVFLARE persistence format: weights nested under "model".
+            mock_torch.load.return_value = {"model": {"layer.weight": "W"}, "train_conf": {"x": 1}}
+
+            # The persistence manager normalises that to the unwrapped weights.
+            unwrapped = {"layer.weight": "W"}
+            mock_persistence_cls.return_value.var_dict = unwrapped
+            mock_persistence_cls.return_value.to_model_learnable.return_value = MagicMock()
+            mock_to_dxo.return_value = MagicMock()
+
+            mock_net = MagicMock()
+            mock_model_paths = {"ResNet": mock_net}
+
+            locator = EvaluationPTModelLocator()
+            locator.log_error = MagicMock()
+
+            fl_ctx = MagicMock()
+            fl_ctx.get_peer_context.return_value = None
+            mock_workspace = MagicMock()
+            mock_workspace.get_app_dir.return_value = tmpdir
+            fl_ctx.get_engine.return_value.get_workspace.return_value = mock_workspace
+            fl_ctx.get_job_id.return_value = "job-123"
+
+            with patch.dict("sys.modules", {"models": MagicMock(model_paths=mock_model_paths)}):
+                locator.locate_model(fl_ctx)
+
+            # The probe must validate the UNWRAPPED weights, not the raw {"model": ...} dict.
+            mock_net.load_state_dict.assert_called_once_with(unwrapped, strict=True)
+            # And it must NOT log the spurious "could not be loaded" error.
+            assert all(
+                "could not be loaded" not in str(call) for call in locator.log_error.call_args_list
+            )
