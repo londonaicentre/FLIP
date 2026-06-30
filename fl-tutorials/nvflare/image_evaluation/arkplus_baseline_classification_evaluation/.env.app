@@ -6,3 +6,4 @@ SITE1_IMAGES_DIR=/home/parhomesmaeili/miccai-decaf2026/updated-site-data/site-1-
 SITE1_DATAFRAME=/home/parhomesmaeili/miccai-decaf2026/updated-site-data/site-1-holdoff/sample_get_dataframe_response.csv
 SITE2_IMAGES_DIR=/home/parhomesmaeili/miccai-decaf2026/updated-site-data/site-2-holdoff/accession-resources
 SITE2_DATAFRAME=/home/parhomesmaeili/miccai-decaf2026/updated-site-data/site-2-holdoff/sample_get_dataframe_response.csv
+RAW_CHECKPOINT=

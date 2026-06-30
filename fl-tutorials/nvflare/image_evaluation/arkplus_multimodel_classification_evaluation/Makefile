@@ -19,21 +19,54 @@ include ./.env.app
 export $(shell sed 's/=.*//' ./.env.app)
 endif
 
+RAW_CHECKPOINT ?=
+FINETUNED_CHECKPOINT ?=
+
+PRETRAINED_DEST := $(APP_DIR)/app_files/arkplus_pretrained_weights.pt
+FINETUNED_DEST := $(APP_DIR)/app_files/arkplus_finetuned_weights.pt
+DEFAULT_FINETUNED_URL := https://huggingface.co/ParhomE/ArkPlusFLIPTutorial/resolve/main/model.pt
+
 .PHONY: run shell down clean
 
-download-checkpoints:
-	@set -e; \
-	ckpt="$(notdir $(MODEL_CHECKPOINT_URL))"; \
-	dst="$(APP_DIR)/app_files/$$ckpt"; \
-	echo "Checking for: $$dst"; \
-	if [ ! -f "$$dst" ]; then \
-		echo "Downloading from $(MODEL_CHECKPOINT_URL) ..."; \
-		curl -fL "$(MODEL_CHECKPOINT_URL)" -o "$$dst"; \
+check-raw-checkpoint:
+	@MISSING=0; \
+	\
+	if [ -f "$(PRETRAINED_DEST)" ]; then \
+		echo "✅ Pretrained checkpoint found."; \
+	elif [ -n "$(RAW_CHECKPOINT)" ]; then \
+		echo "Processing raw checkpoint..."; \
+		uv run python "$(APP_DIR)/process_tools/preprocess_checkpoints.py" \
+			--entry "$(RAW_CHECKPOINT)" "$(PRETRAINED_DEST)" arkplus_pretrained; \
 	else \
-		echo "Checkpoint file $$ckpt already exists, skipping download."; \
+		echo "❌ Missing Ark+ foundation model checkpoint."; \
+		echo "Download Ark6_swinLarge768_ep50.pth.tar from:"; \
+		echo "  https://www.dropbox.com/scl/fo/joycn8m93nvlrc8yjme40/ABBtPc5oaalYZ7kzmERpjhU/Ark%2B_Nature/Ark6_swinLarge768_ep50.pth.tar?rlkey=p3lphqvtgmiphw1n0u039jpjn&dl=1"; \
+		echo "  Request access: https://forms.gle/qkoDGXNiKRPTDdCe8"; \
+		echo "Then run: make run RAW_CHECKPOINT=/path/to/Ark6_swinLarge768_ep50.pth.tar"; \
+		MISSING=1; \
+	fi; \
+	\
+	if [ -f "$(FINETUNED_DEST)" ]; then \
+		echo "✅ Finetuned checkpoint found."; \
+	elif [ -n "$(FINETUNED_CHECKPOINT)" ]; then \
+		case "$(FINETUNED_CHECKPOINT)" in \
+			http*) \
+				echo "Downloading finetuned checkpoint..."; \
+				curl -fL "$(FINETUNED_CHECKPOINT)" -o "$(FINETUNED_DEST)";; \
+			*) \
+				echo "Copying finetuned checkpoint from $(FINETUNED_CHECKPOINT)..."; \
+				cp "$(FINETUNED_CHECKPOINT)" "$(FINETUNED_DEST)";; \
+		esac; \
+	else \
+		echo "Downloading default finetuned checkpoint..."; \
+		curl -fL "$(DEFAULT_FINETUNED_URL)" -o "$(FINETUNED_DEST)"; \
+	fi; \
+	\
+	if [ $$MISSING -eq 1 ]; then \
+		exit 1; \
 	fi
 
-run:
+run: check-raw-checkpoint
 	$(MAKE) -C $(TESTING_DIR) $@ \
 		JOB_TYPE="$(JOB_TYPE)" \
 		PATH_TO_APP="$(APP_DIR)" \
