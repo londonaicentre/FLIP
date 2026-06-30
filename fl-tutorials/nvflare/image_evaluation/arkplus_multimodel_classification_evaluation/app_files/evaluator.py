@@ -297,10 +297,13 @@ class FLIP_EVALUATOR(Executor):
         )
 
         # --- DeLong pairwise test ---
-        n = n_models
-        delong_pvalues: dict[str, list[list[float]]] = {}
-        for _, name in sorted(self._lesion_items, key=lambda x: x[0]):
-            delong_pvalues[name] = [[1.0] * n for _ in range(n)]
+        # Per-model dict: delong_map[model_name][lesion_name][other_model_name] = p_value
+        # Diagonal (self vs self) is hardcoded as 1.0; off-diagonal derived from delong_roc_test.
+        delong_map: dict[str, dict[str, dict[str, float]]] = {}
+        for model_name in model_names:
+            delong_map[model_name] = {}
+            for _, name in sorted(self._lesion_items, key=lambda x: x[0]):
+                delong_map[model_name][name] = {m: 1.0 for m in model_names}
 
         if n_models >= 2:
             delong_rows = []
@@ -314,8 +317,8 @@ class FLIP_EVALUATOR(Executor):
                         y_score_b = all_predictions[name_b][:, idx]
                         result = delong_roc_test(y_true, y_score_a, y_score_b)
                         p = result["pvalue"]
-                        delong_pvalues[name][i][j] = p
-                        delong_pvalues[name][j][i] = p
+                        delong_map[name_a][name][name_b] = p
+                        delong_map[name_b][name][name_a] = p
                         delong_rows.append(
                             {
                                 "model_a": name_a,
@@ -348,11 +351,8 @@ class FLIP_EVALUATOR(Executor):
         }
         if n_models >= 2:
             metadata["output_files"].append("delong_results.csv")
-            for mi, model_name in enumerate(model_names):
-                metrics_dxo[model_name]["delong_p_values"] = {
-                    name: delong_pvalues[name][mi]
-                    for _, name in sorted(self._lesion_items, key=lambda x: x[0])
-                }
+            for model_name in model_names:
+                metrics_dxo[model_name]["delong_p_values"] = delong_map[model_name]
         with (output_dir / "run_metadata.json").open("w") as f:
             json.dump(metadata, f, indent=2)
 
