@@ -30,11 +30,8 @@ services:
       - ${SITE2_IMAGES_DIR}:/site-data/site-2/accession-resources
       - ${SITE2_DATAFRAME}:/site-data/site-2/sample_get_dataframe_response.csv:ro
       - ./tmp/app:/app/job
-      - ../../../flip-utils/flip:/app/.venv/lib/python3.12/site-packages/flip
+      # - ../../../flip-utils/flip:/app/.venv/lib/python3.12/site-packages/flip
     mem_limit: 50g
     shm_size: 32gb
     gpus: all
-    command: >
-      bash -lc "uv pip install --python /app/.venv/bin/python --extra-index-url https://download.pytorch.org/whl/cu128 'torchvision==0.26.0+cu128' 'timm==0.5.4' scikit-learn PyYAML &&
-                /app/.venv/bin/nvflare simulator -t 2 -n ${NUM_CLIENTS} -w runs/workspace job;
-                echo 'NVFLARE_EXIT_CODE='$?"
+    command: nvflare simulator -t 2 -n ${NUM_CLIENTS} --gpu ${SIM_GPU:-0} -w runs/workspace job
