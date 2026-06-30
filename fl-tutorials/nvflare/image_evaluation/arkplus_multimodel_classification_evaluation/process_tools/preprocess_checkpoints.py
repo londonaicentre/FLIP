@@ -1,3 +1,14 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Preprocess Ark+ checkpoints for the evaluation pipeline.
 
 Produces clean state dict files that match the raw ArkSwinTransformer
@@ -22,8 +33,8 @@ import torch
 _APP_FILES = Path(__file__).resolve().parents[1] / "app_files"
 sys.path.insert(0, str(_APP_FILES))
 
-from models import _build_arkplus_raw
-from checkpoint_utils import load_arkplus_state_dict
+from checkpoint_utils import load_arkplus_state_dict  # noqa: E402
+from models import _build_arkplus_raw  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Processor registry
@@ -59,10 +70,10 @@ PROCESSORS: dict[str, dict] = {
 def preprocess(src: Path, dst: Path, config_key: str) -> None:
     """Preprocess a checkpoint and save a clean state dict."""
     if config_key not in PROCESSORS:
-        raise KeyError(
-            f"Unknown config key {config_key!r}. "
-            f"Available: {list(PROCESSORS.keys())}"
-        )
+        raise KeyError(f"Unknown config key {config_key!r}. Available: {list(PROCESSORS.keys())}")
+
+    if not src.is_file():
+        raise FileNotFoundError(f"Raw checkpoint not found: {src}")
 
     proc = PROCESSORS[config_key]
     print(f"  [{config_key}] {proc['description']}")
@@ -73,7 +84,7 @@ def preprocess(src: Path, dst: Path, config_key: str) -> None:
     ckpt = torch.load(str(src), map_location="cpu", weights_only=False)
     state_dict = proc["extract"](ckpt)
 
-    print(f"  Processing weights ...")
+    print("  Processing weights ...")
     load_arkplus_state_dict(model, state_dict, {"load_backbone_only": False})
 
     torch.save(model.state_dict(), str(dst))
@@ -82,16 +93,16 @@ def preprocess(src: Path, dst: Path, config_key: str) -> None:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Preprocess Ark+ checkpoints for evaluation."
-    )
+    parser = argparse.ArgumentParser(description="Preprocess Ark+ checkpoints for evaluation.")
     parser.add_argument(
-        "--entry", action="append", nargs=3, required=True,
+        "--entry",
+        action="append",
+        nargs=3,
+        required=True,
         metavar=("SRC", "DST", "CONFIG_KEY"),
-        help="Triplet: source checkpoint, output path, processor key. "
-             "Repeatable.  Available keys: {}".format(
-                 ", ".join(PROCESSORS.keys())
-             ),
+        help="Triplet: source checkpoint, output path, processor key. Repeatable.  Available keys: {}".format(
+            ", ".join(PROCESSORS.keys())
+        ),
     )
     return parser.parse_args(argv)
 

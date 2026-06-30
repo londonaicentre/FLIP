@@ -1,3 +1,14 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Data utilities for the NVFLARE-style FLIP x-ray tutorial.
 
 This file intentionally keeps the original tutorial data style: a dataframe/CSV
@@ -10,18 +21,18 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Sequence
 
+import monai.transforms as mt
 import numpy as np
 import pandas as pd
 import pydicom
 import torch
-from monai.data import Dataset, DataLoader
-import monai.transforms as mt
-from monai.transforms.transform import MapTransform
 from monai.config import KeysCollection
+from monai.data import DataLoader, Dataset
+from monai.transforms.transform import MapTransform
 
 try:
     from flip import FLIP
@@ -41,6 +52,7 @@ class RepeatChannelImageNetNormalized(MapTransform):
     ``ScaleIntensityd``).  Outputs ``(3, H, W)`` with ImageNet-standard
     mean/std per channel.
     """
+
     def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False):
         super().__init__(keys, allow_missing_keys)
         self.mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
@@ -80,7 +92,7 @@ class LesionDict:
     def contains(self, element_value: str) -> bool:
         return any(item.lesion == element_value for item in self.items)
 
-    def get_lesion_list(self) -> List[str]:
+    def get_lesion_list(self) -> list[str]:
         return [item.lesion for item in sorted(self.items, key=lambda x: x.id)]
 
 
@@ -113,7 +125,7 @@ def get_labels_from_radiology_row(radiology_row, lesions: LesionDict, value_to_n
     no_str = value_to_numerical.get("0", value_to_numerical.get(0, "No"))
     columns = radiology_row.keys()
     override_negative = normal_label in columns and radiology_row[normal_label] == yes_str
-    binary = {yes_str: 1, no_str: 0, 1: 1, 0: 0, True: 1, False: 0, "1": 1, "0": 0}
+    binary = {yes_str: 1, no_str: 0, 1: 1, 0: 0, "1": 1, "0": 0}
 
     out_dict = {}
     for lesion in lesions.items:
@@ -232,8 +244,7 @@ def _label_aware_split(datalist, label_names, val_split: float, test_split: floa
         return True
 
     label_positive_indices = {
-        label: [i for i, item in enumerate(datalist) if item.get(label) == 1]
-        for label in label_names
+        label: [i for i, item in enumerate(datalist) if item.get(label) == 1] for label in label_names
     }
     labels_by_rarity = sorted(label_names, key=lambda label: len(label_positive_indices[label]))
 

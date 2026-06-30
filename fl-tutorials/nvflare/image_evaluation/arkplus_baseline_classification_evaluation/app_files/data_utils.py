@@ -1,3 +1,14 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Data utilities for the Ark+ evaluation executor.
 
 This file defines label constants, data loading, and transforms used by the
@@ -8,17 +19,18 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Sequence
 
+import monai.transforms as mt
 import numpy as np
 import pandas as pd
 import pydicom
 import torch
-import monai.transforms as mt
-from monai.transforms.transform import MapTransform
 from monai.config import KeysCollection
+from monai.transforms.transform import MapTransform
+
 
 # ---------------------------------------------------------------------------
 # Custom MONAI transform: 1→3 channel repeat + ImageNet normalization
@@ -30,6 +42,7 @@ class RepeatChannelImageNetNormalized(MapTransform):
     ``ScaleIntensityd``).  Outputs ``(3, H, W)`` with ImageNet-standard
     mean/std per channel.
     """
+
     def __init__(self, keys: KeysCollection, allow_missing_keys: bool = False):
         super().__init__(keys, allow_missing_keys)
         self.mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
@@ -43,6 +56,7 @@ class RepeatChannelImageNetNormalized(MapTransform):
                 img = img.repeat_interleave(3, dim=-3)
             d[key] = (img - self.mean.to(img.device)) / (self.std.to(img.device))
         return d
+
 
 # ---------------------------------------------------------------------------
 # Label-mapping registry
@@ -62,27 +76,27 @@ class RepeatChannelImageNetNormalized(MapTransform):
 MAPPING_REGISTRY: dict[str, dict] = {
     "nih14_5class": {
         "source_labels": {
-            "Atelectasis":        0,
-            "Cardiomegaly":       1,
-            "Effusion":           2,
-            "Infiltration":       3,
-            "Mass":               4,
-            "Nodule":             5,
-            "Pneumonia":          6,
-            "Pneumothorax":       7,
-            "Consolidation":      8,
-            "Edema":              9,
-            "Emphysema":         10,
-            "Fibrosis":          11,
+            "Atelectasis": 0,
+            "Cardiomegaly": 1,
+            "Effusion": 2,
+            "Infiltration": 3,
+            "Mass": 4,
+            "Nodule": 5,
+            "Pneumonia": 6,
+            "Pneumothorax": 7,
+            "Consolidation": 8,
+            "Edema": 9,
+            "Emphysema": 10,
+            "Fibrosis": 11,
             "Pleural_Thickening": 12,
-            "Hernia":            13,
+            "Hernia": 13,
         },
         "mapping": {
-            "Effusion":            ("direct", "Effusion"),
-            "Consolidation":       ("direct", "Consolidation"),
-            "Infiltration":        ("direct", "Infiltration"),
-            "Lung Nodule or Mass": ("max",    ["Mass", "Nodule"]),
-            "Pneumothorax":        ("direct", "Pneumothorax"),
+            "Effusion": ("direct", "Effusion"),
+            "Consolidation": ("direct", "Consolidation"),
+            "Infiltration": ("direct", "Infiltration"),
+            "Lung Nodule or Mass": ("max", ["Mass", "Nodule"]),
+            "Pneumothorax": ("direct", "Pneumothorax"),
         },
     },
 }
@@ -90,11 +104,9 @@ MAPPING_REGISTRY: dict[str, dict] = {
 
 def get_mapping(name: str) -> dict:
     if name not in MAPPING_REGISTRY:
-        raise KeyError(
-            f"Unknown label mapping {name!r}. "
-            f"Available: {list(MAPPING_REGISTRY.keys())}"
-        )
+        raise KeyError(f"Unknown label mapping {name!r}. Available: {list(MAPPING_REGISTRY.keys())}")
     return MAPPING_REGISTRY[name]
+
 
 # ---------------------------------------------------------------------------
 APP_DIR = Path(__file__).resolve().parent
@@ -129,7 +141,7 @@ class LesionDict:
     def contains(self, element_value: str) -> bool:
         return any(item.lesion == element_value for item in self.items)
 
-    def get_lesion_list(self) -> List[str]:
+    def get_lesion_list(self) -> list[str]:
         return [item.lesion for item in sorted(self.items, key=lambda x: x.id)]
 
 
@@ -150,7 +162,7 @@ def get_labels_from_radiology_row(
     no_str = value_to_numerical.get("0", value_to_numerical.get(0, "No"))
     columns = radiology_row.keys()
     override_negative = normal_label in columns and radiology_row[normal_label] == yes_str
-    binary = {yes_str: 1, no_str: 0, 1: 1, 0: 0, True: 1, False: 0, "1": 1, "0": 0}
+    binary = {yes_str: 1, no_str: 0, 1: 1, 0: 0, "1": 1, "0": 0}
 
     out = {}
     for lesion in lesions.items:
@@ -182,9 +194,7 @@ def normalize_site_name(site_name: str | None) -> str:
     return name
 
 
-def get_site_data_config(
-    config: dict | None = None, site_name: str | None = None
-) -> SiteDataConfig:
+def get_site_data_config(config: dict | None = None, site_name: str | None = None) -> SiteDataConfig:
     cfg = config or load_config()
     requested_site = normalize_site_name(site_name)
     site_data = cfg.get("SITE_DATA", {})
@@ -201,9 +211,7 @@ def get_site_data_config(
     images_dir = entry.get("images_dir") or os.environ.get("DEV_IMAGES_DIR")
     dataframe = entry.get("dataframe") or os.environ.get("DEV_DATAFRAME")
     resolved_site = requested_site or "default"
-    return SiteDataConfig(
-        site_name=resolved_site, images_dir=images_dir, dataframe=dataframe
-    )
+    return SiteDataConfig(site_name=resolved_site, images_dir=images_dir, dataframe=dataframe)
 
 
 # ---------------------------------------------------------------------------
@@ -213,18 +221,14 @@ def _read_dataframe(dataframe_path: str | None = None) -> pd.DataFrame:
     path = dataframe_path or os.environ.get("DEV_DATAFRAME")
     if path and Path(path).exists():
         return pd.read_csv(path, sep=None, engine="python")
-    raise RuntimeError(
-        f"Dataframe path is not set or does not exist: {path!r}"
-    )
+    raise RuntimeError(f"Dataframe path is not set or does not exist: {path!r}")
 
 
 def _find_accession_column(df: pd.DataFrame) -> str:
     for col in ["accession_id", "accession_number", "accession", "AccessionNumber"]:
         if col in df.columns:
             return col
-    raise KeyError(
-        f"Could not find accession column in dataframe columns: {list(df.columns)}"
-    )
+    raise KeyError(f"Could not find accession column in dataframe columns: {list(df.columns)}")
 
 
 def _dicoms_for_accession(
@@ -274,12 +278,8 @@ def build_eval_datalist(
     seen_paths = set()
     for _, row in df.iterrows():
         accession_id = str(row[accession_col])
-        labels = get_labels_from_radiology_row(
-            row, lesions, value_to_numerical, normal_label=normal_key
-        )
-        for img in _dicoms_for_accession(
-            accession_id, images_dir=site_cfg.images_dir
-        ):
+        labels = get_labels_from_radiology_row(row, lesions, value_to_numerical, normal_label=normal_key)
+        for img in _dicoms_for_accession(accession_id, images_dir=site_cfg.images_dir):
             if img in seen_paths:
                 continue
             try:

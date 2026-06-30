@@ -1,3 +1,14 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Ark+ model factory for the FLIP evaluation pipeline.
 
 Provides:
@@ -11,9 +22,8 @@ import json
 import logging
 from pathlib import Path
 
-from torch import nn
-
 import arkplus_flat_models
+from torch import nn
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +45,26 @@ def _build_arkplus_raw(arkplus_config: dict) -> nn.Module:
 
     if model_name in ("swin_large_768", "swin_large_384"):
         return arkplus_flat_models.ArkSwinTransformer(
-            num_classes_list, projector_features, use_mlp,
-            img_size=input_size, patch_size=4, window_size=12,
-            embed_dim=192, depths=(2, 2, 18, 2),
+            num_classes_list,
+            projector_features,
+            use_mlp,
+            img_size=input_size,
+            patch_size=4,
+            window_size=12,
+            embed_dim=192,
+            depths=(2, 2, 18, 2),
             num_heads=(6, 12, 24, 48),
         )
     if model_name == "swin_base":
         return arkplus_flat_models.ArkSwinTransformer(
-            num_classes_list, projector_features, use_mlp,
-            patch_size=4, window_size=7, embed_dim=128,
-            depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32),
+            num_classes_list,
+            projector_features,
+            use_mlp,
+            patch_size=4,
+            window_size=7,
+            embed_dim=128,
+            depths=(2, 2, 18, 2),
+            num_heads=(4, 8, 16, 32),
         )
     raise ValueError(f"Unknown ARKPLUS model_name: {model_name!r}")
 
@@ -64,7 +84,8 @@ def _build_model_paths() -> dict[str, nn.Module]:
         paths[path_key] = _build_arkplus_raw(ark_cfg)
         logger.info(
             "Built model_paths[%s] (NUM_CLASSES_LIST=%s)",
-            path_key, ark_cfg.get("NUM_CLASSES_LIST"),
+            path_key,
+            ark_cfg.get("NUM_CLASSES_LIST"),
         )
     return paths
 

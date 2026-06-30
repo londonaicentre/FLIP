@@ -1,3 +1,14 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Evaluation metrics for chest X-ray model evaluation.
 
 Provides AUROC computation, DeLong's test for paired AUROC comparison,
@@ -7,7 +18,6 @@ and label-mapping from pre-trained head outputs to target labels.
 from __future__ import annotations
 
 import math
-from typing import Sequence
 
 import numpy as np
 from scipy.stats import norm
@@ -69,9 +79,9 @@ def _delong_covariance(
     b_neg = y_score_b[y_true == 0]
 
     cmp_a = (a_pos[:, None] > a_neg[None, :]).astype(float)
-    eq_a  = (a_pos[:, None] == a_neg[None, :]).astype(float)
+    eq_a = (a_pos[:, None] == a_neg[None, :]).astype(float)
     cmp_b = (b_pos[:, None] > b_neg[None, :]).astype(float)
-    eq_b  = (b_pos[:, None] == b_neg[None, :]).astype(float)
+    eq_b = (b_pos[:, None] == b_neg[None, :]).astype(float)
 
     # ── V10 (positive compartment) ──────────────────────────────────
     # For each positive sample j, compute its mean ψ against all negatives:
@@ -87,15 +97,18 @@ def _delong_covariance(
     # ── V10 covariance (2×2) — sample variance (÷ n_pos-1) ────────
     # Manual cross-check (skipped if only one positive — cannot estimate variance):
     if n_pos > 1:
-        mean_a = np.mean(v10_a); dev_a = v10_a - mean_a
-        mean_b = np.mean(v10_b); dev_b = v10_b - mean_b
-        s10_var_a  = np.sum(dev_a**2)      / (n_pos - 1)   # s10[0,0]
-        s10_var_b  = np.sum(dev_b**2)      / (n_pos - 1)   # s10[1,1]
-        s10_cov_ab = np.sum(dev_a * dev_b) / (n_pos - 1)   # s10[0,1]
+        mean_a = np.mean(v10_a)
+        dev_a = v10_a - mean_a
+        mean_b = np.mean(v10_b)
+        dev_b = v10_b - mean_b
+        s10_var_a = np.sum(dev_a**2) / (n_pos - 1)  # s10[0,0]
+        s10_var_b = np.sum(dev_b**2) / (n_pos - 1)  # s10[1,1]
+        s10_cov_ab = np.sum(dev_a * dev_b) / (n_pos - 1)  # s10[0,1]
     s10 = np.cov(v10_a, v10_b, ddof=1) if n_pos > 1 else np.zeros((2, 2))
     if n_pos > 1:
-        assert np.allclose([s10_var_a, s10_var_b, s10_cov_ab],
-                           [s10[0, 0], s10[1, 1], s10[0, 1]]), "V10 covariance mismatch"
+        assert np.allclose([s10_var_a, s10_var_b, s10_cov_ab], [s10[0, 0], s10[1, 1], s10[0, 1]]), (
+            "V10 covariance mismatch"
+        )
 
     # ── V01 (negative compartment) ──────────────────────────────────
     # For each negative sample k, compute its mean ψ against all positives:
@@ -108,15 +121,18 @@ def _delong_covariance(
 
     # ── V01 covariance (2×2) — sample variance (÷ n_neg-1) ────────
     if n_neg > 1:
-        mean_a = np.mean(v01_a); dev_a = v01_a - mean_a
-        mean_b = np.mean(v01_b); dev_b = v01_b - mean_b
-        s01_var_a  = np.sum(dev_a**2)      / (n_neg - 1)   # s01[0,0]
-        s01_var_b  = np.sum(dev_b**2)      / (n_neg - 1)   # s01[1,1]
-        s01_cov_ab = np.sum(dev_a * dev_b) / (n_neg - 1)   # s01[0,1]
+        mean_a = np.mean(v01_a)
+        dev_a = v01_a - mean_a
+        mean_b = np.mean(v01_b)
+        dev_b = v01_b - mean_b
+        s01_var_a = np.sum(dev_a**2) / (n_neg - 1)  # s01[0,0]
+        s01_var_b = np.sum(dev_b**2) / (n_neg - 1)  # s01[1,1]
+        s01_cov_ab = np.sum(dev_a * dev_b) / (n_neg - 1)  # s01[0,1]
     s01 = np.cov(v01_a, v01_b, ddof=1) if n_neg > 1 else np.zeros((2, 2))
     if n_neg > 1:
-        assert np.allclose([s01_var_a, s01_var_b, s01_cov_ab],
-                           [s01[0, 0], s01[1, 1], s01[0, 1]]), "V01 covariance mismatch"
+        assert np.allclose([s01_var_a, s01_var_b, s01_cov_ab], [s01[0, 0], s01[1, 1], s01[0, 1]]), (
+            "V01 covariance mismatch"
+        )
 
     # ── ψ-based AUC ────────────────────────────────────────────────
     # v10_a[j] is already  mean_k ψ(a_pos[j], a_neg[k])  —
@@ -148,13 +164,13 @@ def delong_roc_test(
     """
     if len(np.unique(y_true)) < 2:
         return {
-            "auc_a": float("nan"), "auc_b": float("nan"),
-            "statistic": float("nan"), "pvalue": float("nan"),
+            "auc_a": float("nan"),
+            "auc_b": float("nan"),
+            "statistic": float("nan"),
+            "pvalue": float("nan"),
         }
 
-    s10, s01, auc_a, auc_b, n_pos, n_neg = _delong_covariance(
-        y_true, y_score_a, y_score_b
-    )
+    s10, s01, auc_a, auc_b, n_pos, n_neg = _delong_covariance(y_true, y_score_a, y_score_b)
 
     # DeLong variance decomposition (eq. 5)
     # Var(AUC_a - AUC_b) = L^T (s10/n_pos + s01/n_neg) L,  L = [1, -1]^T
@@ -199,15 +215,13 @@ def apply_label_mapping(
     for decaf_label in decaf_labels:
         if decaf_label not in mapping:
             raise KeyError(
-                f"Target label {decaf_label!r} has no entry in the mapping. "
-                f"Available keys: {list(mapping.keys())}"
+                f"Target label {decaf_label!r} has no entry in the mapping. Available keys: {list(mapping.keys())}"
             )
         method, source = mapping[decaf_label]
         if method == "direct":
             if not isinstance(source, str):
                 raise TypeError(
-                    f"Expected str source for 'direct' mapping of {decaf_label!r}, "
-                    f"got {type(source).__name__}"
+                    f"Expected str source for 'direct' mapping of {decaf_label!r}, got {type(source).__name__}"
                 )
             if source not in source_labels:
                 raise KeyError(
@@ -219,8 +233,7 @@ def apply_label_mapping(
         elif method == "max":
             if not isinstance(source, list):
                 raise TypeError(
-                    f"Expected list source for 'max' mapping of {decaf_label!r}, "
-                    f"got {type(source).__name__}"
+                    f"Expected list source for 'max' mapping of {decaf_label!r}, got {type(source).__name__}"
                 )
             indices = []
             for src in source:
@@ -231,12 +244,9 @@ def apply_label_mapping(
                         f"Available: {list(source_labels.keys())}"
                     )
                 indices.append(source_labels[src])
-            result[decaf_label] = np.maximum.reduce(
-                [preds[..., i] for i in indices]
-            )
+            result[decaf_label] = np.maximum.reduce([preds[..., i] for i in indices])
         else:
             raise ValueError(
-                f"Unknown mapping method {method!r} for target {decaf_label!r}. "
-                f"Expected 'direct' or 'max'."
+                f"Unknown mapping method {method!r} for target {decaf_label!r}. Expected 'direct' or 'max'."
             )
     return result

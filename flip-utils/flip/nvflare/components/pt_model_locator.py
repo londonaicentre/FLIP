@@ -192,7 +192,16 @@ class EvaluationPTModelLocator(ModelLocator):
                     map_location="cuda" if torch.cuda.is_available() else "cpu",
                 )
                 try:
-                    net.load_state_dict(self.models[name], strict=True)
+                    # Validate against the same weights that are sent to clients
+                    # below: a bare state_dict is used as-is, while an NVFLARE
+                    # persistence-format checkpoint nests them under a "model" key
+                    # (alongside "train_conf"/"meta_props"). PTModelPersistenceFormatManager
+                    # normalises both, so the probe matches what is actually delivered
+                    # instead of false-failing on persistence-format checkpoints.
+                    var_dict = PTModelPersistenceFormatManager(
+                        self.models[name], default_train_conf=None
+                    ).var_dict
+                    net.load_state_dict(var_dict, strict=True)
                 except Exception as e:
                     self.log_error(
                         fl_ctx,

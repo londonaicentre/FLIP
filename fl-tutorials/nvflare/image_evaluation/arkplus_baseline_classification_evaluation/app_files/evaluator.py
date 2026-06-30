@@ -1,3 +1,14 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """FLIP_EVALUATOR for the Ark+ DECAF chest X-ray evaluation.
 
 Evaluates a single Ark+ model (zero-shot foundation) on
@@ -13,8 +24,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import torch
+from data_utils import (
+    Lesion,
+    LesionDict,
+    build_eval_datalist,
+    get_lesion_label,
+    get_mapping,
+    get_xray_transforms,
+)
+from metrics_utils import apply_label_mapping, compute_auroc
+from models import model_paths
 from monai.data import DataLoader, Dataset
-
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
 from nvflare.apis.executor import Executor
 from nvflare.apis.fl_constant import FLContextKey, ReturnCode
@@ -22,23 +42,12 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
 
-from data_utils import (
-    build_eval_datalist,
-    get_lesion_label,
-    get_mapping,
-    get_xray_transforms,
-    Lesion,
-    LesionDict,
-)
-from metrics_utils import apply_label_mapping, compute_auroc
-from models import model_paths
-
 logger = logging.getLogger(__name__)
 
 
 class FLIP_EVALUATOR(Executor):
     """Evaluate one or more Ark+ chest X-ray models on hold-out data.
-    
+
     Each model entry in ``config.json`` may specify a different ``INPUT_SIZE``
     and AMP settings.  Every model runs on the same samples (same datalist)
     but with its own transforms and dataloader.
@@ -66,13 +75,9 @@ class FLIP_EVALUATOR(Executor):
             self.config = json.load(f)
 
         raw_lesions = self.config.get("LESIONS", {})
-        self._lesion_items = [
-            (int(k), v) for k, v in raw_lesions.items() if int(k) >= 0
-        ]
+        self._lesion_items = [(int(k), v) for k, v in raw_lesions.items() if int(k) >= 0]
 
-        self._lesion_dict = LesionDict(
-            items=[Lesion(id=idx, lesion=name) for idx, name in self._lesion_items]
-        )
+        self._lesion_dict = LesionDict(items=[Lesion(id=idx, lesion=name) for idx, name in self._lesion_items])
 
         self._batch_size = int(self.config.get("BATCH_SIZE", 1))
 
@@ -132,14 +137,12 @@ class FLIP_EVALUATOR(Executor):
                     raise ValueError(
                         f"{model_name}: head {head_id} outputs {n_head} classes (no mapping), "
                         f"but {n_target} target labels are configured."
-                )
+                    )
                 self.model_configs[model_name]["source_labels"] = None
                 self.model_configs[model_name]["mapping"] = None
 
             # Per-model transforms (dataloader built lazily in execute)
-            self._transforms[model_name] = get_xray_transforms(
-                input_size=input_size
-            )
+            self._transforms[model_name] = get_xray_transforms(input_size=input_size)
 
         # -------------------------------------------------------------------
         # 3. Data (loaded lazily per-site)
@@ -178,20 +181,14 @@ class FLIP_EVALUATOR(Executor):
         )
 
         # Store accessions and paths once (shared across all models)
-        self._accessions: list[str] = [
-            Path(item["image"]).parent.name for item in self._datalist
-        ]
-        self._dicom_paths: list[str] = [
-            str(item["image"]) for item in self._datalist
-        ]
+        self._accessions: list[str] = [Path(item["image"]).parent.name for item in self._datalist]
+        self._dicom_paths: list[str] = [str(item["image"]) for item in self._datalist]
 
         # Per-model dataloader (each model may have a different INPUT_SIZE)
         self._dataloaders = {}
         for model_name in self.models:
             ds = Dataset(self._datalist, transform=self._transforms[model_name])
-            self._dataloaders[model_name] = DataLoader(
-                ds, batch_size=self._batch_size, shuffle=False
-            )
+            self._dataloaders[model_name] = DataLoader(ds, batch_size=self._batch_size, shuffle=False)
 
         self._data_loaded = True
         logger.info(
@@ -204,16 +201,12 @@ class FLIP_EVALUATOR(Executor):
         """Load weights from a server-provided model DXO into the local model."""
         model = self.models[model_name]
 
-        weights = {
-            k: torch.as_tensor(v, device="cpu") for k, v in dxo_model.data.items()
-        }
+        weights = {k: torch.as_tensor(v, device="cpu") for k, v in dxo_model.data.items()}
         model.load_state_dict(weights, strict=True)
         model.to(self.device)
         model.eval()
 
-    def _predict_model(
-        self, model_name: str, images: torch.Tensor
-    ) -> np.ndarray:
+    def _predict_model(self, model_name: str, images: torch.Tensor) -> np.ndarray:
         """Run a single model on a batch and return sigmoid probabilities.
 
         Returns:
@@ -255,7 +248,6 @@ class FLIP_EVALUATOR(Executor):
         """
         metrics_dxo: dict[str, dict[str, float]] = {}
         model_names = list(self.models.keys())
-        n_models = len(model_names)
 
         # --- Per-model AUROC ---
         for model_name in model_names:
@@ -292,9 +284,7 @@ class FLIP_EVALUATOR(Executor):
                         "auroc": auroc,
                     }
                 )
-        pd.DataFrame(metrics_rows).to_csv(
-            output_dir / "per_model_metrics.csv", index=False
-        )
+        pd.DataFrame(metrics_rows).to_csv(output_dir / "per_model_metrics.csv", index=False)
 
         # --- Save metadata ---
         metadata = {
@@ -349,15 +339,13 @@ class FLIP_EVALUATOR(Executor):
             if not dxo_model.data_kind == DataKind.WEIGHTS:
                 self.log_exception(
                     fl_ctx,
-                    f"DXO for model {model_name} is of type "
-                    f"{dxo_model.data_kind} but expected type WEIGHTS.",
+                    f"DXO for model {model_name} is of type {dxo_model.data_kind} but expected type WEIGHTS.",
                 )
                 return make_reply(ReturnCode.BAD_TASK_DATA)
             self._load_model_weights_from_dxo(model_name, dxo_model)
             self.log_info(
                 fl_ctx,
-                f"Model {model_name} weights loaded at client "
-                f"{fl_ctx.get_identity_name()}.",
+                f"Model {model_name} weights loaded at client {fl_ctx.get_identity_name()}.",
             )
 
         if abort_signal.triggered:
@@ -367,12 +355,8 @@ class FLIP_EVALUATOR(Executor):
         # Run inference per model — each model uses its own dataloader
         # (with its own INPUT_SIZE transform) but the same underlying datalist.
         # -------------------------------------------------------------------
-        all_predictions: dict[str, list[np.ndarray]] = {
-            m: [] for m in self.models
-        }
-        all_targets: dict[str, list[np.ndarray]] = {
-            m: [] for m in self.models
-        }
+        all_predictions: dict[str, list[np.ndarray]] = {m: [] for m in self.models}
+        all_targets: dict[str, list[np.ndarray]] = {m: [] for m in self.models}
 
         for model_name in self.models:
             dataloader = self._dataloaders[model_name]
@@ -405,12 +389,8 @@ class FLIP_EVALUATOR(Executor):
 
         # Concatenate batch results
         for model_name in self.models:
-            all_predictions[model_name] = np.concatenate(
-                all_predictions[model_name], axis=0
-            )
-            all_targets[model_name] = np.concatenate(
-                all_targets[model_name], axis=0
-            )
+            all_predictions[model_name] = np.concatenate(all_predictions[model_name], axis=0)
+            all_targets[model_name] = np.concatenate(all_targets[model_name], axis=0)
 
         logger.info(
             "Inference complete: %d samples across %d models.",

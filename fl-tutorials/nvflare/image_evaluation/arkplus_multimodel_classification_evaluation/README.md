@@ -45,27 +45,37 @@ For local development, paths are also settable via `.env.app`:
 
 ## Checkpoint setup
 
-The evaluation app needs one checkpoint per model entry in `config.json["models"]`.
-Checkpoints live in `app_files/` and are expected as `.pt` files.  `make run`
-handles checkpoint preparation automatically (see below).
+The app evaluates two models, so it needs two checkpoints in `app_files/` (both
+`.pt`): the foundation model `arkplus_pretrained_weights.pt` and the fine-tuned
+model `arkplus_finetuned_weights.pt`. `make run` prepares both automatically (it
+runs `prepare-checkpoint` first).
 
 ### Foundation model (arkplus_pretrained)
 
-The zero-shot Ark+ checkpoint (`arkplus_pretrained_weights.pt`) requires
-conversion from the raw Ark6 training output format into a clean state dict.
-Obtain the raw checkpoint manually:
+The zero-shot Ark+ checkpoint is produced from the raw Ark6 training output
+(`Ark6_swinLarge768_ep50.pth.tar`) in two steps — identical to the
+[baseline tutorial](../arkplus_baseline_classification_evaluation/README.md):
 
-1. Download `Ark6_swinLarge768_ep50.pth.tar` from
-   [Dropbox](https://www.dropbox.com/scl/fo/joycn8m93nvlrc8yjme40/ABBtPc5oaalYZ7kzmERpjhU/Ark%2B_Nature/Ark6_swinLarge768_ep50.pth.tar?rlkey=p3lphqvtgmiphw1n0u039jpjn&dl=1)
-   (access via [this form](https://forms.gle/qkoDGXNiKRPTDdCe8)).
-2. Run `make run RAW_CHECKPOINT=/path/to/Ark6_swinLarge768_ep50.pth.tar` — the
-   Makefile's `check-raw-checkpoint` target runs `preprocess_checkpoints.py`
-   automatically to produce the clean `.pt` file.
+1. **Fetch the raw checkpoint** (once):
+
+   ```bash
+   make download-raw-checkpoint
+   ```
+
+   This downloads it to the path given by `RAW_CHECKPOINT` in `.env.app` (default
+   `models/Ark6_swinLarge768_ep50.pth.tar`, an app-relative path). If you already
+   have the file, point `RAW_CHECKPOINT` at it instead. Access is via
+   [this form](https://forms.gle/qkoDGXNiKRPTDdCe8).
+
+2. **Prepare it** — done automatically by `make run`, or on demand with
+   `make prepare-checkpoint`, which converts the raw checkpoint into the clean
+   `arkplus_pretrained_weights.pt` (a no-op if it already exists).
 
 ### Fine-tuned model (arkplus_finetuned)
 
-The fine-tuned checkpoint is auto-downloaded from HuggingFace on `make run` if
-not already present.  No manual steps required.
+The fine-tuned checkpoint is downloaded automatically from HuggingFace by
+`make run` if not already present — no manual steps required. To use your own,
+set `FINETUNED_CHECKPOINT` in `.env.app` to a URL or a local (absolute) path.
 
 ### Pre-processing internals
 
@@ -78,8 +88,9 @@ extraction and key-remapping logic.
 Default local development settings are in `.env.app`:
 
 - `JOB_TYPE=evaluation`
-- `DEV_IMAGES_DIR=...`
-- `DEV_DATAFRAME=...`
+- `RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar`
+- `FINETUNED_CHECKPOINT=` (empty → download the default fine-tuned model from HuggingFace)
+- `DEV_IMAGES_DIR` / `DEV_DATAFRAME` and the per-site `SITE{1,2}_*` paths
 
 Model definitions live in `app_files/models.py` and are registered in
 `config.json["models"]` via the path key (e.g. `arkplus_multihead`).
@@ -87,20 +98,17 @@ Model definitions live in `app_files/models.py` and are registered in
 ## Run the tutorial
 
 ```bash
-# Auto-downloads the fine-tuned checkpoint from HuggingFace;
-# fails if the foundation-model checkpoint is missing.
-make run
-
-# With a raw foundation-model checkpoint (pre-processes it automatically):
-make run RAW_CHECKPOINT=/path/to/Ark6_swinLarge768_ep50.pth.tar
-
-# Both checkpoints in one go:
-make run RAW_CHECKPOINT=/path/to/Ark6_swinLarge768_ep50.pth.tar \
-         FINETUNED_CHECKPOINT=/path/to/custom_finetuned.pt
+make download-raw-checkpoint   # once: fetch the raw Ark6 foundation checkpoint
+make run                       # prepares both checkpoints (if needed), then evaluates
 ```
+
+The fine-tuned checkpoint is auto-downloaded from HuggingFace on the first run. To
+override either source, set `RAW_CHECKPOINT` / `FINETUNED_CHECKPOINT` in `.env.app`
+(or pass on the CLI, e.g. `make run FINETUNED_CHECKPOINT=/path/to/custom_finetuned.pt`).
 
 Useful targets:
 
+- `make prepare-checkpoint`: prepare both checkpoints only (no run)
 - `make shell`: interactive shell in the simulator container
 - `make down`: stop the simulator service
 - `make clean`: remove generated simulator artifacts
@@ -208,6 +216,44 @@ In addition to `evaluation_results.json`, the evaluator writes CSV outputs to
 - `per_model_metrics.csv` — flat table of model, label, AUROC
 - `delong_results.csv` — all DeLong pairwise comparisons in row format
   (`model_a`, `model_b`, `label`, `auc_a`, `auc_b`, `z_statistic`, `p_value`)
+
+## Model code & `timm` compatibility
+
+`app_files/arkplus_flat_models.py` adapts the `ArkSwinTransformer` from the
+original Ark+ repository ([jlianglab/Ark](https://github.com/jlianglab/Ark)),
+which pins **`timm==0.5.4`**. The model's `forward` is kept identical to the
+upstream version (`forward_features` → projector → `omni_heads`).
+
+There is a subtle cross-version gotcha. In **timm 0.5.4**,
+`SwinTransformer.forward_features` pooled internally — it ended with
+`AdaptiveAvgPool1d(1)` and returned a per-image `(B, C)` vector — so the Ark
+`forward` never needed to pool. In **modern timm (1.x)** that global average pool
+was **moved out** of `forward_features` (into `forward_head`), and
+`forward_features` now returns the *unpooled* spatial map `(B, H, W, C)`
+(a 24×24 grid for a 768px Swin).
+
+This tutorial runs on modern timm, and the upstream `forward` bypasses
+`forward_head` (it uses its own `omni_heads`). Without an explicit pool the heads
+emitted a **per-location** grid of outputs instead of one prediction per image —
+producing mis-shaped predictions and making AUROC fail with
+`ValueError: multi_class must be in ('ovo', 'ovr')`.
+
+**Fix.** `forward` (and `generate_embeddings`) now apply an explicit
+global-average-pool over the spatial dims right after `forward_features`,
+restoring the timm 0.5.4 behaviour and matching the Swin head's default
+`global_pool='avg'`:
+
+```python
+x = self.forward_features(x)
+x = self._global_pool(x)   # mean over spatial dims; no-op if already (B, C)
+```
+
+**Verified equivalent.** Holding the backbone fixed, the explicit pool was
+compared against an exact replica of timm 0.5.4's `AdaptiveAvgPool1d(1)` pooling:
+the pooled features and all head outputs were **bit-for-bit identical**
+(`max |Δ| = 0.0`), since averaging over the flattened token sequence (`L`) equals
+averaging over the `H×W` grid (`L = H×W`). The fix is also a no-op if a future
+`timm` returns an already-pooled `(B, C)` tensor.
 
 ## Notes and troubleshooting
 

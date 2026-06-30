@@ -1,3 +1,14 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Checkpoint loading utilities for Ark+ preprocessing.
 
 These functions handle the raw checkpoint format differences (``module.``
@@ -10,17 +21,13 @@ Import this from ``preprocess_checkpoints.py``, not from the evaluator app.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
-import torch
 from torch import nn
 
 logger = logging.getLogger(__name__)
 
 
-def load_arkplus_state_dict(
-    model: nn.Module, raw_state_dict: dict, arkplus_config: dict
-) -> nn.Module:
+def load_arkplus_state_dict(model: nn.Module, raw_state_dict: dict, arkplus_config: dict) -> nn.Module:
     """Load *raw_state_dict* (from checkpoint) into *model*.
 
     Handles ``module.`` and ``ark_model.`` prefix stripping,
@@ -39,7 +46,8 @@ def load_arkplus_state_dict(
     if n_missing + n_unexpected:
         logger.info(
             "Loaded checkpoint: missing=%d unexpected=%d",
-            n_missing, n_unexpected,
+            n_missing,
+            n_unexpected,
         )
     else:
         logger.info("Loaded checkpoint successfully (exact match).")
@@ -73,10 +81,8 @@ def _remap_downsample_keys(state_dict: dict, model: nn.Module) -> dict:
         new_key = key
         for src, dst in mappings:
             if key.startswith(src):
-                candidate = dst + key[len(src):]
-                if candidate in model_state and tuple(value.shape) == tuple(
-                    model_state[candidate].shape
-                ):
+                candidate = dst + key[len(src) :]
+                if candidate in model_state and tuple(value.shape) == tuple(model_state[candidate].shape):
                     new_key = candidate
                     changed += 1
                 break
@@ -86,9 +92,7 @@ def _remap_downsample_keys(state_dict: dict, model: nn.Module) -> dict:
     return remapped
 
 
-def _filter_state_dict(
-    model: nn.Module, state_dict: dict, load_backbone_only: bool
-) -> dict:
+def _filter_state_dict(model: nn.Module, state_dict: dict, load_backbone_only: bool) -> dict:
     """Keep only compatible tensors (matching shape, skip attn_mask / heads)."""
     model_state = model.state_dict()
     compatible = {}
@@ -110,6 +114,7 @@ def _filter_state_dict(
     if skipped:
         logger.info(
             "Skipped %d incompatible tensors (sample: %s).",
-            len(skipped), skipped[:5],
+            len(skipped),
+            skipped[:5],
         )
     return compatible
