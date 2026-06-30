@@ -209,6 +209,44 @@ In addition to `evaluation_results.json`, the evaluator writes CSV outputs to
 - `delong_results.csv` — all DeLong pairwise comparisons in row format
   (`model_a`, `model_b`, `label`, `auc_a`, `auc_b`, `z_statistic`, `p_value`)
 
+## Model code & `timm` compatibility
+
+`app_files/arkplus_flat_models.py` adapts the `ArkSwinTransformer` from the
+original Ark+ repository ([jlianglab/Ark](https://github.com/jlianglab/Ark)),
+which pins **`timm==0.5.4`**. The model's `forward` is kept identical to the
+upstream version (`forward_features` → projector → `omni_heads`).
+
+There is a subtle cross-version gotcha. In **timm 0.5.4**,
+`SwinTransformer.forward_features` pooled internally — it ended with
+`AdaptiveAvgPool1d(1)` and returned a per-image `(B, C)` vector — so the Ark
+`forward` never needed to pool. In **modern timm (1.x)** that global average pool
+was **moved out** of `forward_features` (into `forward_head`), and
+`forward_features` now returns the *unpooled* spatial map `(B, H, W, C)`
+(a 24×24 grid for a 768px Swin).
+
+This tutorial runs on modern timm, and the upstream `forward` bypasses
+`forward_head` (it uses its own `omni_heads`). Without an explicit pool the heads
+emitted a **per-location** grid of outputs instead of one prediction per image —
+producing mis-shaped predictions and making AUROC fail with
+`ValueError: multi_class must be in ('ovo', 'ovr')`.
+
+**Fix.** `forward` (and `generate_embeddings`) now apply an explicit
+global-average-pool over the spatial dims right after `forward_features`,
+restoring the timm 0.5.4 behaviour and matching the Swin head's default
+`global_pool='avg'`:
+
+```python
+x = self.forward_features(x)
+x = self._global_pool(x)   # mean over spatial dims; no-op if already (B, C)
+```
+
+**Verified equivalent.** Holding the backbone fixed, the explicit pool was
+compared against an exact replica of timm 0.5.4's `AdaptiveAvgPool1d(1)` pooling:
+the pooled features and all head outputs were **bit-for-bit identical**
+(`max |Δ| = 0.0`), since averaging over the flattened token sequence (`L`) equals
+averaging over the `H×W` grid (`L = H×W`). The fix is also a no-op if a future
+`timm` returns an already-pooled `(B, C)` tensor.
+
 ## Notes and troubleshooting
 
 - DeLong p-values below machine epsilon are reported as `0.0`. The test is

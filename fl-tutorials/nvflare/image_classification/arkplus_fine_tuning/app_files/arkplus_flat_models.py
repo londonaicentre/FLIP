@@ -137,8 +137,24 @@ class ArkSwinTransformer(swin.SwinTransformer):
             self.omni_heads.append(nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity())
         self.omni_heads = nn.ModuleList(self.omni_heads)
 
+    @staticmethod
+    def _global_pool(x):
+        """Global-average-pool over spatial/sequence dims, leaving (B, C).
+
+        timm's ``forward_features`` returns the unpooled feature map
+        (``(B, H, W, C)`` for Swin) — pooling normally happens in
+        ``forward_head``, which this model bypasses in favour of its own
+        omni heads.  Without this, the heads would emit per-location
+        outputs instead of one prediction per image.  Mirrors the head's
+        default ``global_pool='avg'``.  A no-op if already ``(B, C)``.
+        """
+        if x.ndim > 2:
+            x = x.mean(dim=tuple(range(1, x.ndim - 1)))
+        return x
+
     def forward(self, x, head_n=None):
         x = self.forward_features(x)
+        x = self._global_pool(x)
         if self.projector:
             x = self.projector(x)
         if head_n is not None:
@@ -148,6 +164,7 @@ class ArkSwinTransformer(swin.SwinTransformer):
     
     def generate_embeddings(self, x, after_proj = True):
         x = self.forward_features(x)
+        x = self._global_pool(x)
         if after_proj:
             x = self.projector(x)
         return x

@@ -37,14 +37,6 @@
       }
     }
   },
-  "evaluation_output": {
-    "auroc_Effusion": 0.0,
-    "auroc_Consolidation": 0.0,
-    "auroc_Infiltration": 0.0,
-    "auroc_Lung Nodule or Mass": 0.0,
-    "auroc_Pneumothorax": 0.0
-  },
-
   "SITE_DATA": {
     "site-1": {
       "images_dir": "/site-data/site-1/accession-resources",
