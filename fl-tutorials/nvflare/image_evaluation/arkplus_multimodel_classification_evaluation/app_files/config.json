@@ -1,0 +1,67 @@
+{
+  "job_type": "evaluation",
+  "label_mapping": {
+    "arkplus_pretrained": "nih14_5class",
+    "arkplus_finetuned": null
+  },
+  "BATCH_SIZE": 1,
+  "num_classes": 5,
+  "LESIONS": {
+    "0": "Effusion",
+    "1": "Consolidation",
+    "2": "Infiltration",
+    "3": "Lung Nodule or Mass",
+    "4": "Pneumothorax",
+    "-1": "Lungs in normal arrangement"
+  },
+  "value_to_numerical": {
+    "1": "Yes",
+    "0": "No"
+  },
+
+  "primary_eval_note": "Lung Nodule or Mass uses max(pred_Mass, pred_Nodule) from NIH14.",
+
+  "models": {
+    "arkplus_pretrained": {
+      "path": "arkplus_multihead",
+      "checkpoint": "arkplus_pretrained_weights.pt",
+      "arkplus_config": {
+        "MODEL_NAME": "swin_large_384",
+        "INPUT_SIZE": 768,
+        "PROJECTOR_FEATURES": 1376,
+        "USE_MLP": false,
+        "NUM_CLASSES_LIST": [14, 14, 14, 3, 6, 1],
+        "HEAD_ID": 2,
+        "LOAD_BACKBONE_ONLY": false,
+        "USE_AMP": true,
+        "AMP_DTYPE": "float16"
+      }
+    },
+    "arkplus_finetuned": {
+      "path": "arkplus_singlehead",
+      "checkpoint": "arkplus_finetuned_weights.pt",
+      "arkplus_config": {
+        "MODEL_NAME": "swin_large_384",
+        "INPUT_SIZE": 768,
+        "PROJECTOR_FEATURES": 1376,
+        "USE_MLP": false,
+        "NUM_CLASSES_LIST": [5],
+        "HEAD_ID": 0,
+        "LOAD_BACKBONE_ONLY": false,
+        "USE_AMP": true,
+        "AMP_DTYPE": "float16"
+      }
+    }
+  },
+
+  "SITE_DATA": {
+    "site-1": {
+      "images_dir": "/site-data/site-1/accession-resources",
+      "dataframe": "/site-data/site-1/sample_get_dataframe_response.csv"
+    },
+    "site-2": {
+      "images_dir": "/site-data/site-2/accession-resources",
+      "dataframe": "/site-data/site-2/sample_get_dataframe_response.csv"
+    }
+  }
+}

@@ -17,14 +17,21 @@ services:
       - LOCAL_DEV=true
       - DEV_IMAGES_DIR=/images
       - DEV_DATAFRAME=/dataframe/sample_get_dataframe_response.csv
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - NVFLARE_SUBMIT_TASK_RESULT_TIMEOUT=500
+      - MALLOC_ARENA_MAX=2
+      - MALLOC_TRIM_THRESHOLD_=65536
     volumes:
       - ${RUNS_DIR}:/app/runs
       - ${DEV_IMAGES_DIR}:/images
       - ${DEV_DATAFRAME}:/dataframe/sample_get_dataframe_response.csv
+      - ${SITE1_IMAGES_DIR}:/site-data/site-1/accession-resources
+      - ${SITE1_DATAFRAME}:/site-data/site-1/sample_get_dataframe_response.csv:ro
+      - ${SITE2_IMAGES_DIR}:/site-data/site-2/accession-resources
+      - ${SITE2_DATAFRAME}:/site-data/site-2/sample_get_dataframe_response.csv:ro
       - ./tmp/app:/app/job
+      # - ../../../flip-utils/flip:/app/.venv/lib/python3.12/site-packages/flip
+    mem_limit: 50g
     shm_size: 32gb
     gpus: all
-    # --gpu takes an explicit comma-separated GPU device-id list (NVFLARE has no auto-detect);
-    # without it the simulator leaves the client workers on CPU. Defaults to GPU 0; override with
-    # SIM_GPU (e.g. SIM_GPU=0,1 for multi-GPU) in .env.testing.
     command: nvflare simulator -t 2 -n ${NUM_CLIENTS} --gpu ${SIM_GPU:-0} -w runs/workspace job
