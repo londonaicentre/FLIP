@@ -77,7 +77,8 @@ fi
 # Refuse if the name already names a participant in the project YAML: --add_client
 # would then create a duplicate participant. (For dev that means Trust_1/Trust_2;
 # for the stag/prod base template it means the single Trust_1 template.)
-if yq -e "[.participants[] | select(.name == \"${NEW_CLIENT_NAME}\")] | length > 0" "${PROJECT_YAML}" >/dev/null 2>&1; then
+DUP_COUNT="$(yq "[.participants[] | select(.name == \"${NEW_CLIENT_NAME}\")] | length" "${PROJECT_YAML}")"
+if [[ "${DUP_COUNT}" -gt 0 ]]; then
     echo "Error: '${NEW_CLIENT_NAME}' is already a participant in ${PROJECT_YAML}; pick a name not declared there." >&2
     exit 1
 fi
