@@ -30,16 +30,11 @@ import numpy as np
 import pandas as pd
 import pydicom
 import torch
+from flip import FLIP
+from flip.constants import FlipConstants, ResourceType
 from monai.config import KeysCollection
 from monai.data import DataLoader, Dataset
 from monai.transforms.transform import MapTransform
-
-try:
-    from flip import FLIP
-    from flip.constants import ResourceType
-except Exception:  # pragma: no cover - lets local syntax checks work without FLIP installed
-    FLIP = None
-    ResourceType = None
 
 
 def _is_local_dev() -> bool:
@@ -51,12 +46,7 @@ def _is_local_dev() -> bool:
     package. Mirrors the flip package's own ``LOCAL_DEV`` switch
     (``flip.core.factory`` → ``FLIPStandardDev`` vs ``FLIPStandardProd``).
     """
-    try:
-        from flip.constants import FlipConstants
-
-        return bool(FlipConstants.LOCAL_DEV)
-    except Exception:
-        return os.environ.get("LOCAL_DEV", "true").strip().lower() in ("1", "true", "yes")
+    return bool(FlipConstants.LOCAL_DEV)
 
 
 # ---------------------------------------------------------------------------
@@ -232,8 +222,6 @@ def _load_dataframe(site_cfg: SiteDataConfig, project_id: str = "", query: str =
     """Load the cohort dataframe: local CSV in the simulator, FLIP API on a real trust."""
     if _is_local_dev():
         return _read_dataframe(site_cfg.dataframe)
-    if FLIP is None:
-        raise RuntimeError("FLIP package unavailable for prod data access (LOCAL_DEV=false).")
     return FLIP().get_dataframe(project_id, query)
 
 
@@ -363,7 +351,7 @@ def _dicoms_for_accession(
         return []
 
     # Real FLIP client path (LOCAL_DEV=false): fetch DICOMs from the trust imaging-api.
-    if FLIP is not None and project_id:
+    if project_id:
         flip = FLIP()
         folder = flip.get_by_accession_number(project_id, accession_id, resource_type=[ResourceType.DICOM])
         return sorted(Path(folder).rglob("*.dcm"))
