@@ -112,24 +112,44 @@ make -C fl-services/nvflare up NET_NUMBER=<NET_NUMBER>
 
 ### Onboarding a new client onto an existing network
 
-You do **not** re-provision to add a client. The kits are signed by the network's
-shared root CA, so re-running `nvflare provision` regenerates **every** participant's
-certs (and can rotate the root CA) — forcing a fleet-wide redeploy of already-onboarded
-trusts.
+The **default** is over-provisioning: stag/prod networks are minted up front with spare
+client slots. `make -C fl-services/nvflare provision-stag` / `provision-prod` mint
+`Trust_1 .. Trust_N` (default 50 / 500 — see
+[FLIP#626](https://github.com/londonaicentre/FLIP/issues/626)). Onboarding a new trust
+then just **claims the next unclaimed `Trust_N` kit** via `register_trust` on the hub —
+no provisioning step at all.
 
-Instead, stag/prod networks are **over-provisioned** up front with spare client slots:
-`make -C fl-services/nvflare provision-stag` / `provision-prod` mint `Trust_1 .. Trust_N`
-(default 50 / 500 — see [FLIP#626](https://github.com/londonaicentre/FLIP/issues/626)).
-Onboarding a new trust then just **claims the next unclaimed `Trust_N` kit** via
-`register_trust` on the hub — no re-provision, no cert churn, no mass redeploy.
-
-When the spare slots run low, bump `STAG_NUM_CLIENTS` / `PROD_NUM_CLIENTS`, re-provision
-once (out of band), and re-upload the kits to S3:
+When the spare pool runs dry — or for an ad-hoc dev add — add a single client **without
+disrupting the running federation** using the official `nvflare provision --add_client`
+flag:
 
 ```sh
-make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000
-make -C fl-services/nvflare upload-kits-to-s3 PROD=true
+make -C fl-services/nvflare provision-add-client      NET_NUMBER=1 CLIENT_NAME=Trust_3    # dev
+make -C fl-services/nvflare provision-add-client-stag NET_NUMBER=1 CLIENT_NAME=Trust_51   # stag workspace
+make -C fl-services/nvflare provision-add-client-prod NET_NUMBER=1 CLIENT_NAME=Trust_501  # prod workspace
 ```
+
+This reuses the network's existing root CA (loaded from the preserved
+`workspace-<env>/net-N/state/`) to sign **only** the new client's kit, and leaves every
+already-onboarded participant's kit byte-identical — no re-provision, no CA rotation, no
+fleet-wide redeploy. The new kit lands in `workspace-<env>/net-N/services/<CLIENT_NAME>/`;
+for stag/prod, push it with `make -C fl-services/nvflare upload-kits-to-s3 PROD=stag|true`
+as usual, then the trust claims it via `register_trust`.
+
+> ⚠️ Do **not** add a client by appending it to the project YAML and re-running
+> `make provision*`. Those targets `rm -rf` the workspace first (including `state/`), so
+> NVFLARE mints a fresh root CA and regenerates **every** participant's certs — forcing a
+> redeploy of every already-onboarded trust. `provision-add-client` preserves `state/`
+> and avoids that.
+>
+> To **grow the pool** itself you have two routes. **No disruption (preferred):** loop
+> `provision-add-client*` — each add reuses the existing root CA, so no already-onboarded
+> trust is touched; only the new slots are minted. **Bulk, but disruptive:** bump
+> `STAG_NUM_CLIENTS` / `PROD_NUM_CLIENTS` and re-provision out of band — one command, but it
+> wipes `state/`, rotates the root CA, and so **forces a redeploy of every already-onboarded
+> trust** (the same fleet-wide churn called out above). Only take this route in a maintenance
+> window where redeploying the whole fleet is acceptable, then re-upload:
+> `make -C fl-services/nvflare provision-prod PROD_NUM_CLIENTS=1000 && make -C fl-services/nvflare upload-kits-to-s3 PROD=true`.
 
 ## Standalone targets
 

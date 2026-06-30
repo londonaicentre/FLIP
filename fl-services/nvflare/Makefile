@@ -53,7 +53,7 @@ PROD_WORKSPACE_DIR ?= $(PROVISION)/workspace-prod
 STAG_NUM_CLIENTS   ?= 50
 PROD_NUM_CLIENTS   ?= 500
 
-.PHONY: build provision provision-2-nets provision-stag provision-prod upload-kits-to-s3 up down submit
+.PHONY: build provision provision-2-nets provision-add-client provision-add-client-stag provision-add-client-prod provision-stag provision-prod upload-kits-to-s3 up down submit
 
 # Build the NVFLARE :dev images. fl-base must build first, in its own invocation:
 # a plain `FROM flare-fl-base` in the derived Dockerfiles is invisible to Compose's
@@ -85,6 +85,27 @@ provision-stag:
 provision-prod:
 	$(SCRIPTS)/generate-project-yaml.sh $(PROVISION)/net-$(NET_NUMBER)_project_prod.yml $(PROD_NUM_CLIENTS) $(PROD_WORKSPACE_DIR)/net-$(NET_NUMBER)_project.generated.yml
 	$(SCRIPTS)/provision-network.sh $(PROD_WORKSPACE_DIR)/net-$(NET_NUMBER)_project.generated.yml $(NET_NUMBER) $(PROD_WORKSPACE_DIR)
+
+# Add ONE client to an already-provisioned net via the official `nvflare provision
+# --add_client` flag. It signs the new kit with the network's existing root CA (read
+# from the preserved state/) and leaves every already-onboarded participant's files
+# untouched — no workspace wipe, no CA rotation, no fleet-wide redeploy (contrast the
+# `provision*` targets, which re-mint the whole net). Over-provisioning (FLIP#626)
+# stays the default; reach for this when the spare slot pool runs dry, or for ad-hoc
+# dev adds. CLIENT_NAME is the new slot, e.g. Trust_3. The -stag/-prod variants target
+# the matching base project YAML + workspace, mirroring provision / provision-{stag,prod}.
+CLIENT_NAME ?=
+provision-add-client:
+	@[ -n "$(CLIENT_NAME)" ] || { echo "❌ CLIENT_NAME required (e.g. CLIENT_NAME=Trust_3)"; exit 1; }
+	$(SCRIPTS)/add-client.sh $(NET_NUMBER) $(CLIENT_NAME) $(PROVISION)/net-$(NET_NUMBER)_project_dev.yml $(DEV_WORKSPACE_DIR)
+
+provision-add-client-stag:
+	@[ -n "$(CLIENT_NAME)" ] || { echo "❌ CLIENT_NAME required (e.g. CLIENT_NAME=Trust_51)"; exit 1; }
+	$(SCRIPTS)/add-client.sh $(NET_NUMBER) $(CLIENT_NAME) $(PROVISION)/net-$(NET_NUMBER)_project_stag.yml $(STAG_WORKSPACE_DIR)
+
+provision-add-client-prod:
+	@[ -n "$(CLIENT_NAME)" ] || { echo "❌ CLIENT_NAME required (e.g. CLIENT_NAME=Trust_501)"; exit 1; }
+	$(SCRIPTS)/add-client.sh $(NET_NUMBER) $(CLIENT_NAME) $(PROVISION)/net-$(NET_NUMBER)_project_prod.yml $(PROD_WORKSPACE_DIR)
 
 # Upload the provisioned FLARE participant kits to S3 under the FLARE_KIT_DATE prefix
 # the deploy flow pulls from (deploy/providers/AWS Makefile `provision-local-trust`,
