@@ -302,7 +302,7 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
     # ``custom_props`` is NVFLARE's officially-sanctioned channel for job-scoped metadata
     # (``JobMetaKey.CUSTOM_PROPS``; surfaced to components via ``FLContextKey.JOB_META``). We
     # publish the FLIP ``model_id`` (== ``app_name``) here so recipe-built job types whose
-    # component configs carry no ``model_id`` (e.g. ``client_api``, built before the UUID is
+    # component configs carry no ``model_id`` (e.g. ``standard_client_api``, built before the UUID is
     # known) can resolve it lazily at runtime via ``flip.nvflare.runtime.get_flip_model_id``.
     # Legacy job types still receive ``model_id`` through their component args and ignore this
     # key, so populating it unconditionally is safe and keeps both paths consistent.
