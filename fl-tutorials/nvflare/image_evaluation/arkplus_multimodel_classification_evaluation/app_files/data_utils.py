@@ -31,6 +31,30 @@ import torch
 from monai.config import KeysCollection
 from monai.transforms.transform import MapTransform
 
+try:
+    from flip import FLIP
+    from flip.constants import ResourceType
+except Exception:  # pragma: no cover - lets local syntax checks work without FLIP installed
+    FLIP = None
+    ResourceType = None
+
+
+def _is_local_dev() -> bool:
+    """Whether to read data from local files (simulator) or the FLIP API (real trust).
+
+    ``True`` in the NVFLARE simulator (``LOCAL_DEV=true``): resolve data from local
+    ``SITE_DATA``/``DEV_*`` paths. ``False`` on a real federated client: ignore
+    ``SITE_DATA`` and fetch the dataframe + DICOMs from the trust APIs via the FLIP
+    package. Mirrors the flip package's own ``LOCAL_DEV`` switch
+    (``flip.core.factory`` → ``FLIPStandardDev`` vs ``FLIPStandardProd``).
+    """
+    try:
+        from flip.constants import FlipConstants
+
+        return bool(FlipConstants.LOCAL_DEV)
+    except Exception:
+        return os.environ.get("LOCAL_DEV", "true").strip().lower() in ("1", "true", "yes")
+
 
 # ---------------------------------------------------------------------------
 # Custom MONAI transform: 1→3 channel repeat + ImageNet normalization
@@ -224,6 +248,15 @@ def _read_dataframe(dataframe_path: str | None = None) -> pd.DataFrame:
     raise RuntimeError(f"Dataframe path is not set or does not exist: {path!r}")
 
 
+def _load_dataframe(site_cfg: SiteDataConfig, project_id: str = "", query: str = "") -> pd.DataFrame:
+    """Load the cohort dataframe: local CSV in the simulator, FLIP API on a real trust."""
+    if _is_local_dev():
+        return _read_dataframe(site_cfg.dataframe)
+    if FLIP is None:
+        raise RuntimeError("FLIP package unavailable for prod data access (LOCAL_DEV=false).")
+    return FLIP().get_dataframe(project_id, query)
+
+
 def _find_accession_column(df: pd.DataFrame) -> str:
     for col in ["accession_id", "accession_number", "accession", "AccessionNumber"]:
         if col in df.columns:
@@ -233,28 +266,41 @@ def _find_accession_column(df: pd.DataFrame) -> str:
 
 def _dicoms_for_accession(
     accession_id: str,
+    project_id: str = "",
     images_dir: str | None = None,
 ) -> list[Path]:
-    root_path = images_dir or os.environ.get("DEV_IMAGES_DIR")
-    if root_path:
-        root = Path(root_path)
-        candidates = []
-        for p in [root / str(accession_id), root / f"{accession_id}"]:
-            if p.exists():
-                candidates.extend(p.rglob("*.dcm"))
-        if not candidates and root.exists():
-            candidates.extend(root.rglob(f"*{accession_id}*.dcm"))
-        if not candidates and root.exists():
-            all_dicoms = list(root.rglob("*.dcm"))
-            if len(all_dicoms) <= 500:
-                candidates = all_dicoms
-        return sorted(set(candidates))
+    if _is_local_dev():
+        # Local test-data path used by SITE_DATA / DEV_IMAGES_DIR (simulator only).
+        root_path = images_dir or os.environ.get("DEV_IMAGES_DIR")
+        if root_path:
+            root = Path(root_path)
+            candidates = []
+            for p in [root / str(accession_id), root / f"{accession_id}"]:
+                if p.exists():
+                    candidates.extend(p.rglob("*.dcm"))
+            if not candidates and root.exists():
+                candidates.extend(root.rglob(f"*{accession_id}*.dcm"))
+            if not candidates and root.exists():
+                all_dicoms = list(root.rglob("*.dcm"))
+                if len(all_dicoms) <= 500:
+                    candidates = all_dicoms
+            return sorted(set(candidates))
+        return []
+
+    # Real FLIP client path (LOCAL_DEV=false): fetch DICOMs from the trust imaging-api.
+    if FLIP is not None and project_id:
+        flip = FLIP()
+        folder = flip.get_by_accession_number(project_id, accession_id, resource_type=[ResourceType.DICOM])
+        return sorted(Path(folder).rglob("*.dcm"))
+
     return []
 
 
 def build_eval_datalist(
     config: dict | None = None,
     site_name: str | None = None,
+    project_id: str | None = None,
+    query: str | None = None,
     logger=None,
 ) -> list[dict]:
     """Load ALL samples for evaluation (no train/val/test split)."""
@@ -263,7 +309,9 @@ def build_eval_datalist(
     lesions = get_lesions(cfg)
     normal_key = cfg.get("LESIONS", {}).get("-1", "Lungs in normal arrangement")
     value_to_numerical = cfg.get("value_to_numerical", {"1": "Yes", "0": "No"})
-    df = _read_dataframe(site_cfg.dataframe)
+    project_id = project_id if project_id is not None else os.environ.get("PROJECT_ID", "")
+    query = query if query is not None else os.environ.get("QUERY", "")
+    df = _load_dataframe(site_cfg, project_id=project_id, query=query)
     accession_col = _find_accession_column(df)
 
     if logger is not None:
@@ -279,7 +327,7 @@ def build_eval_datalist(
     for _, row in df.iterrows():
         accession_id = str(row[accession_col])
         labels = get_labels_from_radiology_row(row, lesions, value_to_numerical, normal_label=normal_key)
-        for img in _dicoms_for_accession(accession_id, images_dir=site_cfg.images_dir):
+        for img in _dicoms_for_accession(accession_id, project_id=project_id, images_dir=site_cfg.images_dir):
             if img in seen_paths:
                 continue
             try:

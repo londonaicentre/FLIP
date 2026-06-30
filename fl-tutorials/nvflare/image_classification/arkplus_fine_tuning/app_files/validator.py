@@ -129,6 +129,7 @@ class FLIP_VALIDATOR(Executor):
             config=self.config,
             site_name=site_name,
             project_id=self.project_id,
+            query=self.query,
             logger=self.logger,
         )
         self.test_dataset = monai.data.Dataset(self.test_dict, transform=self._test_transforms)
