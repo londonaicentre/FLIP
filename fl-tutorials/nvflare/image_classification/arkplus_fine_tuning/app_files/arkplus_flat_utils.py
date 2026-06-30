@@ -1,19 +1,31 @@
-from sklearn.metrics import roc_auc_score
-import torch
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import numpy as np
+import torch
 import yaml
-from scipy import interpolate
 from PIL import Image
+from scipy import interpolate
+from sklearn.metrics import roc_auc_score
+
 
 def get_config(config):
-    with open(config, 'r') as stream:
+    with open(config, "r") as stream:
         return yaml.safe_load(stream)
 
 
 class MetricLogger(object):
     """Computes and stores the average and current value"""
 
-    def __init__(self, name, fmt=':f'):
+    def __init__(self, name, fmt=":f"):
         self.name = name
         self.fmt = fmt
         self.reset()
@@ -31,7 +43,7 @@ class MetricLogger(object):
         self.avg = self.sum / self.count
 
     def __str__(self):
-        fmtstr = '{name} {val' + self.fmt + '} ({avg' + self.fmt + '})'
+        fmtstr = "{name} {val" + self.fmt + "} ({avg" + self.fmt + "})"
         return fmtstr.format(**self.__dict__)
 
 
@@ -44,12 +56,12 @@ class ProgressLogger(object):
     def display(self, batch):
         entries = [self.prefix + self.batch_fmtstr.format(batch)]
         entries += [str(meter) for meter in self.meters]
-        print('\t'.join(entries))
+        print("\t".join(entries))
 
     def _get_batch_fmtstr(self, num_batches):
         num_digits = len(str(num_batches // 1))
-        fmt = '{:' + str(num_digits) + 'd}'
-        return '[' + fmt + '/' + fmt.format(num_batches) + ']'
+        fmt = "{:" + str(num_digits) + "d}"
+        return "[" + fmt + "/" + fmt.format(num_batches) + "]"
 
 
 def metric_AUROC(target, output, nb_classes=14):
@@ -69,9 +81,9 @@ def vararg_callback_bool(option, opt_str, value, parser):
     assert value is None
 
     arg = parser.rargs[0]
-    if arg.lower() in ('yes', 'true', 't', 'y', '1'):
+    if arg.lower() in ("yes", "true", "t", "y", "1"):
         value = True
-    elif arg.lower() in ('no', 'false', 'f', 'n', '0'):
+    elif arg.lower() in ("no", "false", "f", "n", "0"):
         value = False
 
     del parser.rargs[:1]
@@ -98,12 +110,13 @@ def vararg_callback_int(option, opt_str, value, parser):
             break
         value.append(int(arg))
 
-    del parser.rargs[:len(value)]
+    del parser.rargs[: len(value)]
     setattr(parser.values, option.dest, value)
 
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
+
     def __init__(self):
         self.reset()
 
@@ -120,28 +133,23 @@ class AverageMeter(object):
         self.avg = self.sum / self.count
 
 
-def torch_dice_coef_loss(y_true,y_pred, smooth=1.):
+def torch_dice_coef_loss(y_true, y_pred, smooth=1.0):
     y_true_f = torch.flatten(y_true)
     y_pred_f = torch.flatten(y_pred)
     intersection = torch.sum(y_true_f * y_pred_f)
-    return 1. - ((2. * intersection + smooth) / (torch.sum(y_true_f) + torch.sum(y_pred_f) + smooth))
-
-def torch_dice_coef_loss(y_true,y_pred, smooth=1.):
-    y_true_f = torch.flatten(y_true)
-    y_pred_f = torch.flatten(y_pred)
-    intersection = torch.sum(y_true_f * y_pred_f)
-    return 1. - ((2. * intersection + smooth) / (torch.sum(y_true_f) + torch.sum(y_pred_f) + smooth))
+    return 1.0 - ((2.0 * intersection + smooth) / (torch.sum(y_true_f) + torch.sum(y_pred_f) + smooth))
 
 
-def cosine_anneal_schedule(t,epochs,learning_rate):
-    T=epochs
-    M=1
+def cosine_anneal_schedule(t, epochs, learning_rate):
+    T = epochs
+    M = 1
     alpha_zero = learning_rate
 
     cos_inner = np.pi * (t % (T // M))  # t - 1 is used when t has 1-based indexing.
     cos_inner /= T // M
     cos_out = np.cos(cos_inner) + 1
     return float(alpha_zero / 2 * cos_out)
+
 
 def dice(im1, im2, empty_score=1.0):
     im1 = np.asarray(im1 > 0.5).astype(np.bool)
@@ -156,18 +164,17 @@ def dice(im1, im2, empty_score=1.0):
 
     intersection = np.logical_and(im1, im2)
 
-    return 2. * intersection.sum() / im_sum
+    return 2.0 * intersection.sum() / im_sum
 
 
-def mean_dice_coef(y_true,y_pred):
-    sum=0
-    for i in range (y_true.shape[0]):
-        sum += dice(y_true[i,:,:,:],y_pred[i,:,:,:])
-    return sum/y_true.shape[0]
+def mean_dice_coef(y_true, y_pred):
+    sum = 0
+    for i in range(y_true.shape[0]):
+        sum += dice(y_true[i, :, :, :], y_pred[i, :, :, :])
+    return sum / y_true.shape[0]
 
 
-def save_image(input,idx):
-
+def save_image(input, idx):
     def disparity_normalization(disp):  # disp is an array in uint8 data type
         _min = np.amin(disp)
         _max = np.amax(disp)
@@ -178,16 +185,29 @@ def save_image(input,idx):
     im = Image.fromarray(im)
     im.save("{}.jpeg".format(idx))
 
+
 def save_snapshot(samples, masks, outputs, save_snapshot_path):
     bsz = samples.shape[0]
-    
-    snap_shot = torch.cat((samples[:,0,:,:],masks[:,0,:,:],outputs[:,0,:,:],masks[:,1,:,:],outputs[:,1,:,:],masks[:,2,:,:],outputs[:,2,:,:]), dim=2)
-    l = []
+
+    snap_shot = torch.cat(
+        (
+            samples[:, 0, :, :],
+            masks[:, 0, :, :],
+            outputs[:, 0, :, :],
+            masks[:, 1, :, :],
+            outputs[:, 1, :, :],
+            masks[:, 2, :, :],
+            outputs[:, 2, :, :],
+        ),
+        dim=2,
+    )
+    frames = []
     for b in range(bsz):
-        l.append(snap_shot[b])
-    snap_shot = torch.cat(l, dim=0)
+        frames.append(snap_shot[b])
+    snap_shot = torch.cat(frames, dim=0)
     print("Saving snapshot..... Size:", snap_shot.size())
     save_image(snap_shot.cpu().numpy(), save_snapshot_path)
+
 
 # --------------------------------------------------------
 # Copy from DINO https://github.com/facebookresearch/dino
@@ -206,6 +226,7 @@ def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epoch
     assert len(schedule) == epochs * niter_per_ep
     return schedule
 
+
 # --------------------------------------------------------
 # Copy from SimMIM
 # Copyright (c) 2021 Microsoft
@@ -215,14 +236,16 @@ def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epoch
 # --------------------------------------------------------
 def load_pretrained_simmim(pretrained_weights, model):
     print(">>>>>>>>>> Fine-tuned from {pretrained_weights} ..........")
-    checkpoint = torch.load(pretrained_weights, map_location='cpu')
-    checkpoint_model = checkpoint['model']
-    
-    if any([True if 'encoder.' in k else False for k in checkpoint_model.keys()]):
-        checkpoint_model = {k.replace('encoder.', ''): v for k, v in checkpoint_model.items() if k.startswith('encoder.')}
-        print('Detect pre-trained model, remove [encoder.] prefix.')
+    checkpoint = torch.load(pretrained_weights, map_location="cpu")
+    checkpoint_model = checkpoint["model"]
+
+    if any([True if "encoder." in k else False for k in checkpoint_model.keys()]):
+        checkpoint_model = {
+            k.replace("encoder.", ""): v for k, v in checkpoint_model.items() if k.startswith("encoder.")
+        }
+        print("Detect pre-trained model, remove [encoder.] prefix.")
     else:
-        print('Detect non-pre-trained model, pass without doing anything.')
+        print("Detect non-pre-trained model, pass without doing anything.")
     print(">>>>>>>>>> Remapping pre-trained keys for SWIN ..........")
     checkpoint = remap_pretrained_keys_swin(model, checkpoint_model)
     # if args.model_name.startswith('swin'):
@@ -236,16 +259,15 @@ def load_pretrained_simmim(pretrained_weights, model):
 
     # msg = model.load_state_dict(checkpoint_model, strict=False)
     # print(msg)
-    
+
     # del checkpoint
     # torch.cuda.empty_cache()
     # print(">>>>>>>>>> loaded successfully '{}'".format(pretrained_weights))
-    
 
 
 def remap_pretrained_keys_swin(model, checkpoint_model):
     state_dict = model.state_dict()
-    
+
     # Geometric interpolation when pre-trained patch size mismatch with fine-tuned patch size
     all_keys = list(checkpoint_model.keys())
     for key in all_keys:
@@ -259,11 +281,11 @@ def remap_pretrained_keys_swin(model, checkpoint_model):
             else:
                 if L1 != L2:
                     print("{key}: Interpolate relative_position_bias_table using geo.")
-                    src_size = int(L1 ** 0.5)
-                    dst_size = int(L2 ** 0.5)
+                    src_size = int(L1**0.5)
+                    dst_size = int(L2**0.5)
 
                     def geometric_progression(a, r, n):
-                        return a * (1.0 - r ** n) / (1.0 - r)
+                        return a * (1.0 - r**n) / (1.0 - r)
 
                     left, right = 1.01, 1.5
                     while right - left > 1e-6:
@@ -299,9 +321,13 @@ def remap_pretrained_keys_swin(model, checkpoint_model):
 
                     for i in range(nH1):
                         z = relative_position_bias_table_pretrained[:, i].view(src_size, src_size).float().numpy()
-                        f_cubic = interpolate.interp2d(x, y, z, kind='cubic')
-                        all_rel_pos_bias.append(torch.Tensor(f_cubic(dx, dy)).contiguous().view(-1, 1).to(
-                            relative_position_bias_table_pretrained.device))
+                        f_cubic = interpolate.interp2d(x, y, z, kind="cubic")
+                        all_rel_pos_bias.append(
+                            torch.Tensor(f_cubic(dx, dy))
+                            .contiguous()
+                            .view(-1, 1)
+                            .to(relative_position_bias_table_pretrained.device)
+                        )
 
                     new_rel_pos_bias = torch.cat(all_rel_pos_bias, dim=-1)
                     checkpoint_model[key] = new_rel_pos_bias

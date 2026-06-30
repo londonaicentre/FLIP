@@ -26,6 +26,9 @@ from data_utils import (
     get_xray_transforms,
     normalize_site_name,
 )
+from flip import FLIP
+from flip.constants import ResourceType
+from flip.nvflare.metrics import send_metrics_value
 from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
 from models import get_model
 from nvflare.apis.dxo import DXO, DataKind, from_shareable
@@ -35,10 +38,6 @@ from nvflare.apis.fl_context import FLContext
 from nvflare.apis.shareable import Shareable, make_reply
 from nvflare.apis.signal import Signal
 from nvflare.app_common.app_constant import AppConstants
-
-from flip import FLIP
-from flip.constants import ResourceType
-from flip.nvflare.metrics import send_metrics_value
 
 
 class FLIP_VALIDATOR(Executor):
@@ -135,9 +134,7 @@ class FLIP_VALIDATOR(Executor):
         self.test_dataset = monai.data.Dataset(self.test_dict, transform=self._test_transforms)
         self.test_dataloader = monai.data.DataLoader(self.test_dataset, batch_size=self._batch_size, shuffle=False)
         self._loaded_site_name = site_name
-        self.logger.info(
-            f"DataLoader created for site={site_name}: test batches={len(self.test_dataloader)}"
-        )
+        self.logger.info(f"DataLoader created for site={site_name}: test batches={len(self.test_dataloader)}")
 
     def get_image_and_label_list(self):
         """

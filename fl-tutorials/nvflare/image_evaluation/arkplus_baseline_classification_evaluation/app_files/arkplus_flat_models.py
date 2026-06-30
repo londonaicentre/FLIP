@@ -1,11 +1,22 @@
+# Copyright (c) 2026 Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """ArkSwinTransformer model definitions for Ark+.
 
 This file only contains the model class definitions.  Weight-loading
 utilities live in ``models.py``.
 """
 
-import torch.nn as nn
 import timm.models.swin_transformer as swin
+import torch.nn as nn
 
 
 class ArkSwinTransformer(swin.SwinTransformer):
@@ -16,9 +27,7 @@ class ArkSwinTransformer(swin.SwinTransformer):
     ``forward(x, head_n=i)`` returns ``(features, head_i_output)``.
     """
 
-    def __init__(
-        self, num_classes_list, projector_features=None, use_mlp=False, *args, **kwargs
-    ):
+    def __init__(self, num_classes_list, projector_features=None, use_mlp=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         assert num_classes_list is not None
 
@@ -37,11 +46,7 @@ class ArkSwinTransformer(swin.SwinTransformer):
 
         heads = []
         for num_classes in num_classes_list:
-            heads.append(
-                nn.Linear(self.num_features, num_classes)
-                if num_classes > 0
-                else nn.Identity()
-            )
+            heads.append(nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity())
         self.omni_heads = nn.ModuleList(heads)
 
     @staticmethod
@@ -74,6 +79,3 @@ class ArkSwinTransformer(swin.SwinTransformer):
         if after_proj and self.projector:
             x = self.projector(x)
         return x
-
-
-

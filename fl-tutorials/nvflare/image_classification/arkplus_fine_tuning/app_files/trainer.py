@@ -28,6 +28,10 @@ from data_utils import (
     get_xray_transforms,
     normalize_site_name,
 )
+from flip import FLIP
+from flip.constants import PTConstants, ResourceType
+from flip.nvflare.metrics import send_metrics_value
+from flip.utils import get_model_weights_diff
 from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
 from models import get_model
 from monai.data import DataLoader, Dataset
@@ -40,11 +44,6 @@ from nvflare.apis.signal import Signal
 from nvflare.app_common.abstract.model import make_model_learnable, model_learnable_to_dxo
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_opt.pt.model_persistence_format_manager import PTModelPersistenceFormatManager
-
-from flip import FLIP
-from flip.constants import PTConstants, ResourceType
-from flip.nvflare.metrics import send_metrics_value
-from flip.utils import get_model_weights_diff
 
 
 def _log_memory_usage(logger, prefix=""):
@@ -71,7 +70,10 @@ def _log_memory_usage(logger, prefix=""):
     if torch.cuda.is_available():
         allocated = torch.cuda.memory_allocated() / 1024**3
         reserved = torch.cuda.memory_reserved() / 1024**3
-        logger.info(f"{prefix} CPU_RSS={rss_gb:.2f}GiB  CGROUP={cgroup_gb:.2f}GiB  GPU_allocated={allocated:.2f}GiB  GPU_reserved={reserved:.2f}GiB")
+        logger.info(
+            f"{prefix} CPU_RSS={rss_gb:.2f}GiB  CGROUP={cgroup_gb:.2f}GiB  "
+            f"GPU_allocated={allocated:.2f}GiB  GPU_reserved={reserved:.2f}GiB"
+        )
     else:
         logger.info(f"{prefix} CPU_RSS={rss_gb:.2f}GiB  CGROUP={cgroup_gb:.2f}GiB  GPU=N/A")
 
@@ -252,9 +254,7 @@ class FLIP_TRAINER(Executor):
             return
 
         if self._ema_mode not in {"epoch", "iteration"}:
-            self.logger.warning(
-                f"Unsupported ARKPLUS.EMA_MODE={self._ema_mode!r}; using 'epoch' instead."
-            )
+            self.logger.warning(f"Unsupported ARKPLUS.EMA_MODE={self._ema_mode!r}; using 'epoch' instead.")
             self._ema_mode = "epoch"
 
         if not 0.0 <= self._consistency_weight <= 1.0:
@@ -388,9 +388,7 @@ class FLIP_TRAINER(Executor):
         limits = {"train": n_train, "val": n_val, "test": n_test}
         assigned = set()
 
-        self.logger.info(
-            f"Using label-aware split with seed={seed}: train={n_train}, val={n_val}, test={n_test}."
-        )
+        self.logger.info(f"Using label-aware split with seed={seed}: train={n_train}, val={n_val}, test={n_test}.")
 
         def can_add(split_name):
             return len(splits[split_name]) < limits[split_name]
@@ -403,8 +401,7 @@ class FLIP_TRAINER(Executor):
             return True
 
         label_positive_indices = {
-            label: [i for i, item in enumerate(datalist) if item.get(label) == 1]
-            for label in label_names
+            label: [i for i, item in enumerate(datalist) if item.get(label) == 1] for label in label_names
         }
         labels_by_rarity = sorted(label_names, key=lambda label: len(label_positive_indices[label]))
 
@@ -552,9 +549,8 @@ class FLIP_TRAINER(Executor):
                         classification_loss = get_bce_loss(output, labels)
                         consistency_loss = self._consistency_loss(student_features, teacher_features.detach())
                         loss = (
-                            (1.0 - self._consistency_weight) * classification_loss
-                            + self._consistency_weight * consistency_loss
-                        )
+                            1.0 - self._consistency_weight
+                        ) * classification_loss + self._consistency_weight * consistency_loss
                     else:
                         output = self.model(images)
                         loss = get_bce_loss(output, labels)
