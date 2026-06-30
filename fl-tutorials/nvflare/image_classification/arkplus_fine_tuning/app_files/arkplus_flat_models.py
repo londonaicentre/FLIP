@@ -9,11 +9,17 @@ import timm.models.vision_transformer as vit
 import timm.models.swin_transformer as swin
 # import timm.models.efficientnet as effinet
  
-from timm.models.helpers import load_state_dict
+# from timm.models.helpers import load_state_dict
 
 from arkplus_flat_utils import remap_pretrained_keys_swin
 
 
+# NVFLARE's PTModelPersistenceFormatManager wraps state dicts in a nested
+# format (e.g. under "model" key) when saving during FL rounds. The
+# ArkPlusNVFlareWrapper.load_state_dict also injects an "ark_model."
+# prefix via nn.Module mechanics. This normalises those formats so the
+# pretrained weights can be loaded with strict=True into the raw
+# ArkSwinTransformer.
 def _normalise_checkpoint_state_dict(checkpoint, pretrained_key=None):
     if pretrained_key:
         if pretrained_key not in checkpoint:

@@ -27,6 +27,33 @@ def _load_config() -> dict:
         return json.load(f)
 
 
+# Model construction only — no pretrained weights are loaded here.
+# This is the construction half of arkplus_flat_models.build_omni_model,
+# used by preprocess_checkpoints.py to create a bare ArkSwinTransformer
+# for checkpoint validation and cleaning.
+def _build_arkplus_raw(arkplus_config: dict) -> nn.Module:
+    """Return a raw ArkSwinTransformer matching *arkplus_config*."""
+    model_name = str(arkplus_config.get("MODEL_NAME", "swin_large_768"))
+    input_size = int(arkplus_config.get("INPUT_SIZE", 768))
+    projector_features = arkplus_config.get("PROJECTOR_FEATURES", 1376)
+    use_mlp = bool(arkplus_config.get("USE_MLP", False))
+    num_classes_list = list(arkplus_config.get("NUM_CLASSES_LIST", [5]))
+
+    if model_name in ("swin_large_768", "swin_large_384"):
+        return arkplus_flat_models.ArkSwinTransformer(
+            num_classes_list, projector_features, use_mlp,
+            img_size=input_size, patch_size=4, window_size=12,
+            embed_dim=192, depths=(2, 2, 18, 2),
+            num_heads=(6, 12, 24, 48),
+        )
+    if model_name == "swin_base":
+        return arkplus_flat_models.ArkSwinTransformer(
+            num_classes_list, projector_features, use_mlp,
+            patch_size=4, window_size=7, embed_dim=128,
+            depths=(2, 2, 18, 2), num_heads=(4, 8, 16, 32),
+        )
+    raise ValueError(f"Unknown ARKPLUS model_name: {model_name!r}")
+
 
 class ArkPlusNVFlareWrapper(nn.Module):
     """Wrap Ark+'s multi-head output into the simple classifier shape FLIP expects.
