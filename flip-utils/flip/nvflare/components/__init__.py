@@ -20,7 +20,8 @@ Exports:
     - ServerEventHandler: Server-side event handler
     - PTModelLocator: PyTorch model locator
     - InitialPTModelLocator: PyTorch model locator for initial models with safehouse fallback
-    - EvaluationPTModelLocator: PyTorch model locator for evaluation workflows
+    - EvaluationPTModelLocator: PyTorch model locator for evaluation workflows (multi-model COLLECTION)
+    - EvaluationModelLocator: Single-model checkpoint locator for Client-API evaluation (standard interface)
     - ValidationJsonGenerator: Validation results JSON generator
     - EvaluationJsonGenerator: Evaluation results JSON generator
     - PersistToS3AndCleanup: S3 persistence and cleanup component
@@ -37,7 +38,12 @@ from flip.nvflare.components.flip_analytics_bridge import FlipAnalyticsBridge
 from flip.nvflare.components.flip_client_event_handler import ClientEventHandler
 from flip.nvflare.components.flip_server_event_handler import ServerEventHandler
 from flip.nvflare.components.persist_and_cleanup import PersistToS3AndCleanup
-from flip.nvflare.components.pt_model_locator import EvaluationPTModelLocator, InitialPTModelLocator, PTModelLocator
+from flip.nvflare.components.pt_model_locator import (
+    EvaluationModelLocator,
+    EvaluationPTModelLocator,
+    InitialPTModelLocator,
+    PTModelLocator,
+)
 from flip.nvflare.components.stage_percentile_privacy import StagePercentilePrivacy
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
 
@@ -47,6 +53,7 @@ __all__ = [
     "PTModelLocator",
     "InitialPTModelLocator",
     "EvaluationPTModelLocator",
+    "EvaluationModelLocator",
     "ValidationJsonGenerator",
     "EvaluationJsonGenerator",
     "PersistToS3AndCleanup",
