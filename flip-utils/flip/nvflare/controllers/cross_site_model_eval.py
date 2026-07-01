@@ -34,7 +34,7 @@ from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
 
 from flip import FLIP
 from flip.constants import FlipTasks
-from flip.utils import Utils
+from flip.nvflare.runtime import get_flip_model_id
 
 
 class CrossSiteModelEval(Controller):
@@ -99,9 +99,6 @@ class CrossSiteModelEval(Controller):
             raise TypeError("validation_task_name must be a string but got {}".format(type(validation_task_name)))
         if not isinstance(cleanup_models, bool):
             raise TypeError("cleanup_models must be bool but got {}".format(type(cleanup_models)))
-        if not Utils.is_valid_uuid(model_id):
-            raise ValueError(f"The model ID: {model_id} is not a valid UUID")
-
         if participating_clients:
             if not isinstance(participating_clients, list):
                 raise TypeError("participating_clients must be a list but got {}".format(type(participating_clients)))
@@ -138,10 +135,16 @@ class CrossSiteModelEval(Controller):
         self._model_locator: Any = None
         self._cleanup_timeout = cleanup_timeout
         self._fatal_error_delay = fatal_error_delay
-        self._model_id = model_id
+        self._model_id_fallback = model_id
+        self._model_id: str | None = None
 
         # Set logger level
         self.logger.setLevel(logging.INFO)
+
+    def _resolve_model_id(self, fl_ctx: FLContext) -> str:
+        if self._model_id is None:
+            self._model_id = get_flip_model_id(fl_ctx, fallback=self._model_id_fallback)
+        return self._model_id
 
     def start_controller(self, fl_ctx: FLContext):
         engine = fl_ctx.get_engine()
@@ -396,7 +399,9 @@ class CrossSiteModelEval(Controller):
                 if formatted_exception is not None:
                     self.log_error(fl_ctx, formatted_exception)
                     self.flip.send_handled_exception(
-                        formatted_exception=formatted_exception, client_name=client_name, model_id=self._model_id
+                        formatted_exception=formatted_exception,
+                        client_name=client_name,
+                        model_id=self._resolve_model_id(fl_ctx),
                     )
 
                 self.log_error(
@@ -474,7 +479,9 @@ class CrossSiteModelEval(Controller):
                 if formatted_exception is not None:
                     self.log_error(fl_ctx, formatted_exception)
                     self.flip.send_handled_exception(
-                        formatted_exception=formatted_exception, client_name=client_name, model_id=self._model_id
+                        formatted_exception=formatted_exception,
+                        client_name=client_name,
+                        model_id=self._resolve_model_id(fl_ctx),
                     )
 
                 self.log_error(fl_ctx, "Execution Exception in model validation.")

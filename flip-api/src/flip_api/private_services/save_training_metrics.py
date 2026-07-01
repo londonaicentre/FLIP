@@ -52,7 +52,7 @@ def save_training_metrics_endpoint(
         db (Session): Database session dependency.
 
     Returns:
-        Response: HTTP 204 No Content on success, or appropriate error response.
+        None: HTTP 204 No Content on success.
 
     Raises:
         HTTPException: If the trust is not associated with the model.

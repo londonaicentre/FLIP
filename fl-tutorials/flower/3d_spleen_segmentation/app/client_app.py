@@ -96,7 +96,7 @@ def train(msg: Message, context: Context) -> Message:
     model.to(device)
 
     # Initialize optimizer and loss function
-    # DiceCELoss recipe mirrors the flip-fl-base reference trainer (line 205 of
+    # DiceCELoss recipe mirrors the reference trainer (line 205 of
     # its trainer.py). The 0.2*CE component pushes argmax predictions off the
     # all-background baseline that pure DiceLoss gets stuck on with this dataset
     # (spleen is <1% of voxels); batch=True aggregates the loss across the whole
@@ -210,7 +210,7 @@ def evaluate(msg: Message, context: Context) -> Message:
     model.to(device)
 
     # Initialize loss function
-    # DiceCELoss recipe mirrors the flip-fl-base reference trainer (line 205 of
+    # DiceCELoss recipe mirrors the reference trainer (line 205 of
     # its trainer.py). The 0.2*CE component pushes argmax predictions off the
     # all-background baseline that pure DiceLoss gets stuck on with this dataset
     # (spleen is <1% of voxels); batch=True aggregates the loss across the whole

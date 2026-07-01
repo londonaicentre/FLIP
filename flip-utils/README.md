@@ -30,8 +30,7 @@ image and is imported as `from flip import ...` by user-uploaded training code. 
 - **[`../fl-tutorials/`](../fl-tutorials/)** — runnable end-to-end tutorial examples
 - **[`../fl-services/`](../fl-services/)** — Docker images for FL networks (server, clients, admin API)
 
-The rest of this README is largely inherited from the standalone `flip-fl-base` repository (now merged in) and is
-still being reconciled with the mono-repo layout — paths like `tutorials/` and `fl-services/` referred to here are
+The rest of this README is still being reconciled with the mono-repo layout — paths like `tutorials/` and `fl-services/` referred to here are
 the now-sibling top-level `fl-tutorials/` and `fl-services/` trees, and Make targets called out below run from the
 `flip-utils/` directory.
 
@@ -191,10 +190,10 @@ The [`../fl-services/nvflare/`](../fl-services/nvflare/README.md) directory cont
 Generate the certificates, keys, and configuration for the 2 FL networks:
 
 ```bash
-make nvflare-provision-2-nets
+make -C fl-services/nvflare provision-2-nets
 ```
 
-This uses the network-specific provisioning project files (`deploy/providers/nvflare/net-1_project_dev.yml` and `net-2_project_dev.yml`) and provisions the network files in `deploy/providers/nvflare/workspace/net-1` and `deploy/providers/nvflare/workspace/net-2` (gitignored) using the [deploy/providers/nvflare/scripts/provision-network.sh](../deploy/providers/nvflare/scripts/provision-network.sh) script.
+This uses the network-specific provisioning project files (`fl-services/nvflare/provision/net-1_project_dev.yml` and `net-2_project_dev.yml`) and provisions the network files in `fl-services/nvflare/provision/workspace-dev/net-1` and `fl-services/nvflare/provision/workspace-dev/net-2` (gitignored) using the [fl-services/nvflare/provision/scripts/provision-network.sh](../fl-services/nvflare/provision/scripts/provision-network.sh) script.
 
 > ⚠️ **Warning**: Provisioned files contain cryptographic signatures. Any modification will cause errors. Always re-run provisioning if changes are needed.
 
@@ -206,24 +205,27 @@ clients won't be on the same Docker network as the FL server (as they are in dev
 Run:
 
 ```bash
-make nvflare-provision-stag
+make -C fl-services/nvflare provision-stag
 ```
 
 ### Creating a New Network
 
-Create a provisioning project file under `deploy/providers/nvflare/` (e.g. `net-3_project_dev.yml`) based on the template (`net-1_project_dev.yml`) (you'll likely need to change `fed_learn_port`) and run:
+Create a provisioning project file under `fl-services/nvflare/provision/` (e.g. `net-3_project_dev.yml`) based on the template (`net-1_project_dev.yml`) (you'll likely need to change `fed_learn_port`) and run:
 
 ```bash
-NET_NUMBER=3 make nvflare-provision
+make -C fl-services/nvflare provision NET_NUMBER=3
 ```
 
 ### Running a Network
 
+From ``fl-services/nvflare/`` (the per-backend Makefile that owns these targets — the
+``flip-utils/`` directory itself only ships ``unit-test``):
+
 ```bash
-make build NET_NUMBER=1   # Build Docker images
+make build                # Build the :dev FL images (flare-fl-{base,server,client,api})
 make up NET_NUMBER=1      # Start the network (server, 2 clients, API)
-make down NET_NUMBER=1    # Stop the network
-make clean NET_NUMBER=1   # Remove containers and images
+make down NET_NUMBER=1    # Stop the network — must match the NET_NUMBER used for `up`
+                          # (compose embeds it in container names + mount paths)
 ```
 
 ### Running the tutorials
@@ -240,27 +242,42 @@ make -C fl-tutorials run-all-tutorials
 
 GitHub Actions workflows use OIDC to authenticate to AWS (no long-lived keys).
 
-| Trigger | Target |
-| --------- | -------- |
-| PR to any branch | `s3://flipdev/base-application-dev/nvflare/pull-requests/<PR_NUMBER>` |
-| Merge to `develop` | `s3://flipdev/base-application/nvflare` and `s3://flipstag/base-application/nvflare` |
-| Merge to `main` | `s3://flipprod/base-application/nvflare` |
+| Trigger | Target (where `fl-apps/<backend>/` is synced) | Workflow |
+| --------- | -------- | -------- |
+| PR opened/updated (head) | `s3://<dev-bucket>/base-application-dev/pull-requests/<PR_NUMBER>/<backend>` | `fl-apps-push-pr-s3.yml` |
+| Merge to `develop` | `s3://<dev-bucket>/base-application/<backend>` (+ stag account) | `fl-apps-push-s3-dev.yml`, `fl-apps-push-s3-stag.yml` |
+| Merge to `main` | `s3://<prod-bucket>/base-application/<backend>` | `fl-apps-push-s3-prod.yml` |
+
+Each workflow triggers only when its backend's templates change (`fl-apps/nvflare/**` for the
+files above; a `…-flower.yml` sibling covers `fl-apps/flower/**`). The PR-scoped copy is removed on
+merge by `fl-apps-cleanup-pr-s3.yml`, and after merge the develop/main sync makes the templates
+available on the canonical path automatically — so the per-PR copy is only for **pre-merge** testing.
 
 > **Warning**: Never manually sync to the production bucket.
 
-To test a PR on the FLIP platform, update `FL_APP_BASE_BUCKET` in the [flip repo environment variables](https://github.com/londonaicentre/FLIP/blob/main/.env.development) to point to your PR's S3 path.
+To exercise a PR's templates on a running FLIP stack **before merge**, point `FL_APP_BASE_BUCKET` at
+the PR's *parent* path — `s3://<dev-bucket>/base-application-dev/pull-requests/<PR_NUMBER>` (flip-api
+appends `/<backend>/<job_type>`) — and restart flip-api. flip-api validates the job type against the
+synced `required_files.json` manifest, so a new job type needs no flip-api code change — only the
+synced template.
+
+> **Bucket gotcha:** the PR/merge sync workflows write to `AWS_DEV_S3_BUCKET_NAME` (the `flipdev`
+> bucket: `s3://flipdev/base-application-dev/pull-requests/<N>/<backend>`), which is **not** the same
+> bucket flip-api's default `FL_APP_BASE_BUCKET` reads (`FLIP_APP_BUNDLES_BUCKET_NAME`, the
+> `flipdev-app-bundles` bucket). So the repoint must use the `flipdev` PR path — pointing at
+> `flipdev-app-bundles/...pull-requests/...` 404s (empty manifest → `Unknown job_type` at run).
 
 ### Makefile Reference
 
 #### Network Management
 
-| Command | Description |
-| --------- | ------------- |
-| `make nvflare-provision NET_NUMBER=X` | Provision FL network X |
-| `make build NET_NUMBER=X` | Build Docker images for network X |
-| `make up NET_NUMBER=X` | Start FL network X |
-| `make down NET_NUMBER=X` | Stop FL network X |
-| `make clean NET_NUMBER=X` | Remove containers and images |
+| Command | Run from | Description |
+| --------- | --------- | ------------- |
+| `make -C fl-services/nvflare provision NET_NUMBER=X` | repo root | Provision FL network X |
+| `make -C fl-services/nvflare provision-2-nets` | repo root | Provision both dev FL networks |
+| `make build` | `fl-services/nvflare/` | Build the :dev FL images |
+| `make up NET_NUMBER=X` | `fl-services/nvflare/` | Start FL network X |
+| `make down NET_NUMBER=X` | `fl-services/nvflare/` | Stop FL network X (must match the `NET_NUMBER` used at `up`) |
 
 #### Testing
 

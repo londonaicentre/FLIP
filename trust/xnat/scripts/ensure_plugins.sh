@@ -15,11 +15,15 @@ if [[ -z "${PLUGIN_DIR}" || -z "${S3_BUCKET}" ]]; then
   exit 1
 fi
 
+# NOTE: ohif-viewer is intentionally NOT installed. FLIP uses XNAT purely as a
+# DICOM store for FL training and never opens the OHIF viewer, but the plugin's
+# per-session metadata-rebuild event listener is the dominant load on XNAT's
+# Reactor EventBus and materially drives the back-pressure livelock that wedges
+# bulk cohort imports (FLIP#662). It is excluded from the S3 sync below.
 required_prefixes=(
   "batch-launch-"
   "container-service-"
   "dicom-query-retrieve-"
-  "ohif-viewer-"
 )
 expected_prefixes="$(printf '%s, ' "${required_prefixes[@]}")"
 expected_prefixes="${expected_prefixes%, }"
@@ -52,7 +56,11 @@ else
 
   echo "⬇️ Missing plugin families locally: ${missing_prefixes//$'\n'/ }"
   echo "📦 Syncing plugins from S3..."
-  aws s3 sync "s3://${S3_BUCKET}/xnat/plugins/" "${PLUGIN_DIR}/" --delete --exclude "*" --include "*.jar"
+  # Exclude ohif-viewer: the trailing --exclude wins over --include for matching
+  # keys, so it is neither downloaded nor (with --delete) kept locally. See the
+  # required_prefixes note above (FLIP#662).
+  aws s3 sync "s3://${S3_BUCKET}/xnat/plugins/" "${PLUGIN_DIR}/" --delete \
+    --exclude "*" --include "*.jar" --exclude "ohif-viewer-*"
 fi
 
 missing_prefixes="$(find_missing_prefixes)"

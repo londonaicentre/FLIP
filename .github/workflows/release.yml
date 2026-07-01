@@ -22,6 +22,10 @@ permissions:
 jobs:
     release:
         name: Tag and Create GitHub Release
+        # Skip on forks: they cannot push tags or create releases in the upstream
+        # repo, so this job would otherwise show a spurious CI failure on a fork's
+        # main push. Upstream main release behaviour is unchanged.
+        if: github.repository == 'londonaicentre/FLIP'
         runs-on: ubuntu-latest
         permissions: # override top-level read-only default to allow tag/release creation
             contents: write

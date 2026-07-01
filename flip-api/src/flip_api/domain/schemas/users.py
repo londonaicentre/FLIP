@@ -59,7 +59,7 @@ class UpdateUser(BaseModel):
     organisation: str | None = Field(default=None, min_length=1, max_length=255)
 
     @model_validator(mode="after")
-    def validate_has_update(self):
+    def validate_has_update(self) -> "UpdateUser":
         if self.disabled is None and self.name is None and self.organisation is None:
             raise ValueError("At least one user field must be supplied")
         return self

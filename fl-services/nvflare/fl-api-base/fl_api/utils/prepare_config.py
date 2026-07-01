@@ -11,7 +11,6 @@
 #
 
 from pathlib import Path
-from typing import List
 
 from nvflare.app_common.app_constant import EnvironmentKey
 
@@ -182,7 +181,7 @@ def configure_server(
     job_dir: Path,
     app_name: str,
     global_rounds: int,
-    trusts: List[str],
+    trusts: list[str],
     ignore_result_error: bool,
     aggregator: str,
     aggregation_weights: dict,
@@ -264,7 +263,7 @@ def configure_server(
     return config_file
 
 
-def configure_meta(job_dir: Path, app_name: str, trusts: List[str]) -> Path:
+def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
     """
     Creates a meta.json file, which is part of the NVFLARE application.
 
@@ -298,13 +297,22 @@ def configure_meta(job_dir: Path, app_name: str, trusts: List[str]) -> Path:
     else:
         resource_spec = {}
 
-    # Create the meta.json file
+    # Create the meta.json file.
+    #
+    # ``custom_props`` is NVFLARE's officially-sanctioned channel for job-scoped metadata
+    # (``JobMetaKey.CUSTOM_PROPS``; surfaced to components via ``FLContextKey.JOB_META``). We
+    # publish the FLIP ``model_id`` (== ``app_name``) here so recipe-built job types whose
+    # component configs carry no ``model_id`` (e.g. ``client_api``, built before the UUID is
+    # known) can resolve it lazily at runtime via ``flip.nvflare.runtime.get_flip_model_id``.
+    # Legacy job types still receive ``model_id`` through their component args and ignore this
+    # key, so populating it unconditionally is safe and keeps both paths consistent.
     meta_config = {
         "name": app_name,
         "resource_spec": resource_spec,
         "deploy_map": {"app": ["server"] + trusts},
         "min_clients": len(trusts),
         "mandatory_clients": trusts,
+        "custom_props": {"model_id": app_name},
     }
     logger.debug(f"Meta config to be written: {meta_config}")
 

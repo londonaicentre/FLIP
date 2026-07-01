@@ -36,7 +36,7 @@ def cohort_query_step_function_endpoint(
     cohort_query: CohortQueryInput,
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> SubmitCohortQueryOutput:
     """
     Process a cohort query by orchestrating the workflow:
     1. Validate the project exists.

@@ -14,7 +14,7 @@ FLIP/
 ├── flip-api/           # Central Hub API (Python/FastAPI)
 ├── flip-ui/            # Frontend UI (Vue 3 / TypeScript / TailwindCSS)
 ├── flip-utils/         # FLIP Python library (pip-installable flip-utils)
-├── fl-services/        # FL Docker services + per-backend Makefile (build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower} (#622)
+├── fl-services/        # FL Docker services + network provisioning, per backend (Makefile owns build/provision/up/down/submit; flower also up-secure): fl-services/nvflare/{fl-base,fl-server,fl-client,fl-api-base, provision/{net-*_project_*.yml, scripts/, workspace-{dev,stag,prod}/ gitignored}}, fl-services/flower/{fl-base,superlink,supernode,fl-api-flower, provision/{scripts/, creds/ gitignored}} (#622)
 ├── fl-apps/            # FL app templates per backend: fl-apps/nvflare/{standard,fed_opt,evaluation,diffusion_model}, fl-apps/flower/{standard,evaluation} + check_required_files.sh (cross-backend CI validator at root)
 ├── fl-tutorials/       # FL tutorials per backend: fl-tutorials/nvflare/{image_*,testing}, fl-tutorials/flower/{xray_classification,3d_spleen_segmentation*,numpy} (root Makefile forwards by FL_BACKEND); xray classification, spleen seg/eval, diffusion
 ├── trust/
@@ -24,10 +24,8 @@ FLIP/
 │   ├── omop-db/        # Mocked OMOP database (PostgreSQL)
 │   ├── orthanc/        # Mocked PACS server
 │   └── xnat/           # Mocked XNAT neuroimaging service
-├── deploy/             # Docker Compose files (dev/prod, flower/nvflare)
+├── deploy/             # Docker Compose files (dev/prod, flower/nvflare); FL network provisioning now lives under fl-services/<backend>/, not here
 │   └── providers/
-│       ├── nvflare/    # NVFLARE network provisioning: net-*_project_*.yml + scripts/ (provision-network, provision-additional-client) + workspace/ (provisioned startup kits, gitignored)
-│       ├── flower/     # Flower provisioning: scripts/generate-tls-certificates.sh + certs/ (per-net TLS certs + SuperNode keys, gitignored)
 │       ├── AWS/        # Terraform/OpenTofu IaC + Ansible for AWS deployment
 │       ├── kubernetes/ # Helm chart for Kubernetes trust deployment
 │       └── local/      # Ansible playbooks for on-premises trust deployment
@@ -37,10 +35,10 @@ FLIP/
 
 Service-specific details are in `flip-api/CLAUDE.md`, `trust/CLAUDE.md`, `trust/*/CLAUDE.md`, and `deploy/providers/AWS/CLAUDE.md`.
 
-The `flip-utils/`, `fl-services/`, `fl-apps/`, and `fl-tutorials/` trees were migrated into this mono-repo from
-the legacy `flip-fl-base` (NVFLARE) and `flip-fl-base-flower` (Flower) repositories, which are now archived. Both
+The `flip-utils/`, `fl-services/`, `fl-apps/`, and `fl-tutorials/` trees hold the FL base library, Docker services,
+app templates, and tutorials for both NVFLARE and Flower. Both
 backends are also provisioned in-tree (gitignored): `deploy/fl_backend.mk` points `FL_PROVISIONED_DIR` per-backend at
-`deploy/providers/nvflare/workspace` (nvflare) or `deploy/providers/flower/certs` (flower) — see
+`fl-services/nvflare/provision/workspace-dev` (nvflare) or `fl-services/flower/provision/creds` (flower) — see
 [`README.md#federated-learning-setup`](README.md#federated-learning-setup).
 
 ## Tech Stack
@@ -308,7 +306,7 @@ After changes, evaluate if docs need updating:
 ### Key Environment Variables
 
 - `FL_BACKEND` — `nvflare` (default) or `flower`. Two roles: (1) deploy layer — selects which fl-* images run (compose/Makefile); (2) flip-api — sets the `FLNets.fl_backend` column at seed time. The seeded value is **canonical**: flip-api reads `FL_BACKEND` only at seeding and never reconciles it at runtime. To switch frameworks, `make restart-fl FL_BACKEND=...` recreates flip-api so its startup seeding re-applies the backend onto every net.
-- `FL_PROVISIONED_DIR` — path to the in-tree provisioned FL artifacts, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`: `deploy/providers/nvflare/workspace` (nvflare startup kits) or `deploy/providers/flower/certs` (flower per-net TLS certs + SuperNode keys). Both gitignored. Read only by the dev compose overlays for the cert/workspace volume mounts; override at the CLI for a one-off (`make up FL_PROVISIONED_DIR=...`). FL Makefiles are **per-backend** — each `fl-services/<backend>/Makefile` owns that backend's `build`/`provision`/`up`/`down`/`submit` (flower also `up-secure`); the root Makefile forwards only `build-fl` by `FL_BACKEND`. Provision with `make nvflare-provision-2-nets` (nvflare) or `make -C fl-services/flower provision NET_NUMBER=<N>` (flower). To run a backend standalone + submit without the full stack: `make -C fl-services/<backend> up` (or `up-secure`) then `make -C fl-services/<backend> submit APP=<job>`.
+- `FL_PROVISIONED_DIR` — path to the in-tree provisioned FL artifacts, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`: `fl-services/nvflare/provision/workspace-dev` (nvflare startup kits) or `fl-services/flower/provision/creds` (flower per-net TLS certs + SuperNode keys). Both gitignored. Read only by the dev compose overlays for the cert/workspace volume mounts; override at the CLI for a one-off (`make up FL_PROVISIONED_DIR=...`). FL Makefiles are **per-backend** — each `fl-services/<backend>/Makefile` owns that backend's `build`/`provision`/`up`/`down`/`submit` (flower also `up-secure`); the root Makefile forwards only `build-fl` by `FL_BACKEND`. Each backend's `fl-services/<backend>/Makefile` also owns its network provisioning (NVFLARE adds `provision`/`provision-2-nets`/`provision-stag`/`provision-prod`/`upload-kits-to-s3`; the project YAMLs, `scripts/`, and gitignored `workspace-{dev,stag,prod}/` output live under `provision/`). Provision with `make -C fl-services/nvflare provision-2-nets` (nvflare) or `make -C fl-services/flower provision NET_NUMBER=<N>` (flower). To run a backend standalone + submit without the full stack: `make -C fl-services/<backend> up` (or `up-secure`) then `make -C fl-services/<backend> submit APP=<job>`.
 - `PROD` — `true` (production), `stag` (staging), unset (development)
 - `AES_KEY_BASE64` — encryption key for trust communication
 - A remote trust operator only needs their kit file (`trust/.env.<KIT>`) — no hub `.env.<env>` needed on trust hosts.
@@ -325,7 +323,7 @@ After changes, evaluate if docs need updating:
 - Database auth — In production (`ENV=production`) flip-api authenticates to Postgres through **RDS Proxy** using a short-lived AWS IAM auth token minted per-connection by a SQLAlchemy `do_connect` hook in `flip_api/db/database.py` (passwordless engine URL, `sslmode=require`, `pool_pre_ping` + `pool_recycle`). The proxy reaches RDS with the rotating RDS-managed master secret it re-reads natively, so the app holds no static DB credential and secret rotation no longer causes an outage (FLIP#556). Dev (`ENV=development`) uses the static `POSTGRES_PASSWORD` from the environment. There is no separate toggle — the path is selected by `ENV`.
 - `ENFORCE_MFA` — `true` (the `Settings` default; do **not** set in `.env*` files for stag/prod) gates every authenticated route on TOTP enrolment via the app-layer MFA check in `verify_token`. The dev override lives in `deploy/compose.development.yml` (`ENFORCE_MFA=false`) so local development doesn't force enrolment on a burner authenticator app. Production compose (`compose.production.yml`) passes `ENFORCE_MFA=${ENFORCE_MFA:-true}` so the env var can be overridden from `.env.stag`/`.env.prod` for testing, but falls back to the secure `true` default when unset. Intentionally not in `.env.development.example` or AWS Secrets Manager — the Settings default (`true`) is the canonical secure anchor. The UI mirrors this flag from `/users/me/mfa/status` and skips the enrolment redirect when it's false.
 - `MAX_MODEL_FILE_BYTES` — Hard cap on the file size of a single model-file upload, in bytes. Bound on the presigned POST policy so S3 rejects oversized payloads at the edge — the hub never sees them. Default `104857600` (100 MiB). The S3 policy condition allows a small fixed overhead above this for multipart/form-data framing (see `_MULTIPART_OVERHEAD_BUFFER_BYTES` in `flip_api/utils/s3_client.py`); the UI guard at `flip-ui/src/utils/file.ts` compares against this raw value so a file at exactly the cap is accepted on both sides.
-- `PRE_SIGNED_URL_EXPIRATION_SECONDS` — Setting default for the model-file presigned POST policy TTL, in seconds. The hub silently clamps to the 1800s (30 min) security ceiling encoded as `MAX_PUT_PRESIGNED_URL_TTL_SECONDS` in `flip_api/utils/s3_client.py` (a leaked policy is a writable capability against the upload bucket, so the leak window must stay tight). The ceiling is 1800s rather than the original 600s to give multi-GB uploads (up to the 5 GB `MAX_MODEL_FILE_BYTES` cap) enough time to complete. Setting default is `3600`; effective ceiling 1800. Over-ceiling callers leave a warning in the logs.
+- `PRE_SIGNED_URL_EXPIRATION_SECONDS` — Setting default for the model-file presigned POST policy TTL, in seconds. The hub silently clamps to the 1800s (30 min) security ceiling encoded as `MAX_PUT_PRESIGNED_URL_TTL_SECONDS` in `flip_api/utils/s3_client.py` (a leaked policy is a writable capability against the upload bucket, so the leak window must stay tight). The ceiling is 1800s rather than the original 600s to give larger uploads (up to the `MAX_MODEL_FILE_BYTES` cap) enough time to complete. Setting default is `3600`; effective ceiling 1800. Over-ceiling callers leave a warning in the logs.
 
 ## Deployment Architecture
 
@@ -391,7 +389,7 @@ The senders construct the header inline at call sites:
 
 - `trust-api/trust_api/services/task_handlers.py::_trust_internal_headers()` — used on outbound imaging-api and data-access-api calls.
 - `imaging-api/imaging_api/services_external/data_access.py` — used on the outbound `/cohort/accession-ids` call.
-- The `flip` Python package — now lives at [`flip-utils/flip/`](flip-utils/flip/) in this mono-repo (was `flip-fl-base`/`flip`), consumed by both the NVFLARE and Flower fl-client / fl-server images built from `fl-services/`. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth.
+- The `flip` Python package — lives at [`flip-utils/flip/`](flip-utils/flip/) in this mono-repo, consumed by both the NVFLARE and Flower fl-client / fl-server images built from `fl-services/`. Wraps every fl-client call to imaging-api (`flip.get_by_accession_number`, etc.) and data-access-api (`flip.get_dataframe`). The package reads `TRUST_INTERNAL_SERVICE_KEY` from `os.environ` and forwards it on every request. **User-uploaded training code (`client_app.py`, `server_app.py`, anything under `tutorials/`) does not deal with the header directly** — it calls `flip.*` and the package handles transport-level auth.
 
 ## Code Modification Rules
 
@@ -402,14 +400,6 @@ The senders construct the header inline at call sites:
 5. Commit with clear messages. All commits signed off by human author alone (`git commit -s`).
 6. Add new deps to `pyproject.toml` or `package.json`, document in service README.
 7. Use SOLID principles. Aim for high test coverage on critical paths.
-
-## Related Repositories
-
-| Repository | Purpose |
-|-----------|---------|
-| [FLIP](https://github.com/londonaicentre/FLIP) | Main mono-repo — central hub, trust services, UI, deployment, **and** the FL base library / services / app templates / tutorials (under `flip-utils/`, `fl-services/`, `fl-apps/`, `fl-tutorials/`) |
-| [flip-fl-base](https://github.com/londonaicentre/flip-fl-base) | Legacy NVFLARE base library repo (archived) — code has been migrated into `flip-utils/` + `fl-services/nvflare/` + `fl-apps/nvflare/` + `fl-tutorials/nvflare/`; the NVFLARE workspace is now provisioned in-tree at `deploy/providers/nvflare/workspace` (`FL_PROVISIONED_DIR=deploy/providers/nvflare/workspace`) |
-| [flip-fl-base-flower](https://github.com/londonaicentre/flip-fl-base-flower) | Legacy Flower base library repo (archived) — code has been migrated into `flip-utils/` + `fl-services/flower/` + `fl-apps/flower/` + `fl-tutorials/flower/`; the Flower certs are now provisioned in-tree at `deploy/providers/flower/certs` (`FL_PROVISIONED_DIR=deploy/providers/flower/certs`) |
 
 ## Documentation Files
 

@@ -45,11 +45,11 @@ locals {
   # ECS task env below pins fl-server / flip-api to the `${bucket}/results`
   # path, not the bucket root, as a workaround for a leading-slash bug in
   # the FL package's S3 upload path-construction
-  # (flip-fl-base/flip/core/standard.py:415-427: when `urlparse(bucket).path`
+  # (flip-utils/flip/core/standard.py:415-427: when `urlparse(bucket).path`
   # is empty, the concatenation `f"{prefix}/{key}"` produces `/<key>` with
   # a literal leading slash, so flip-api's `list_objects_v2(Prefix=<model_id>)`
   # never matches the keys fl-server actually uploads). Removing this
-  # workaround requires patching flip-fl-base, rebuilding fl-server, and
+  # workaround requires patching flip-utils/flip, rebuilding fl-server, and
   # redeploying — see PR description on FLIP#465 for the long-term fix path.
   flip_model_files_uploads_bucket_uri = "s3://${module.flip_model_files_uploads_bucket.bucket_id}"
   flip_fl_results_bucket_uri          = "s3://${module.flip_fl_results_bucket.bucket_id}"

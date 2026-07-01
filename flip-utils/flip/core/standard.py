@@ -17,10 +17,6 @@ This module contains the production and development implementations of FLIP
 for the standard, evaluation, and fed_opt job types.
 """
 
-try:
-    from typing import override
-except ImportError:
-    from typing_extensions import override
 import json
 import logging
 import os
@@ -28,7 +24,7 @@ import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Union
+from typing import override
 from urllib.parse import urlparse
 
 import boto3
@@ -166,7 +162,7 @@ class FLIPStandardProd(FLIPBase):
         self,
         project_id: str,
         accession_id: str,
-        resource_type: Union[ResourceType, List[ResourceType]] = ResourceType.NIFTI,
+        resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI,
     ) -> Path:
         """
         Calls the imaging-service to return a filepath that contains images downloaded from XNAT
@@ -226,7 +222,7 @@ class FLIPStandardProd(FLIPBase):
         accession_id: str,
         scan_id: str,
         resource_id: str,
-        files: List[str],
+        files: list[str],
     ) -> None:
         """
         Calls the imaging-service to upload image(s) to XNAT based on the accession number,
@@ -251,7 +247,7 @@ class FLIPStandardProd(FLIPBase):
         if not isinstance(resource_id, str):
             raise TypeError(f"expect resource_id to be string, but got {type(resource_id)}")
 
-        if not isinstance(files, List):
+        if not isinstance(files, list):
             raise TypeError(f"expect files to be List, but got {type(files)}")
 
         self.logger.info(
@@ -517,7 +513,7 @@ class FLIPStandardDev(FLIPBase):
         self,
         project_id: str,
         accession_id: str,
-        resource_type: Union[ResourceType, List[ResourceType]] = ResourceType.NIFTI,
+        resource_type: ResourceType | list[ResourceType] = ResourceType.NIFTI,
     ) -> Path:
         """
         Returns the path to the image directory for a specific accession ID.
@@ -546,7 +542,7 @@ class FLIPStandardDev(FLIPBase):
         accession_id: str,
         scan_id: str,
         resource_id: str,
-        files: List[str],
+        files: list[str],
     ) -> None:
         """Log only in dev mode - no actual upload."""
         self.logger.info("[DEV] add_resource is not supported in LOCAL_DEV mode.")
