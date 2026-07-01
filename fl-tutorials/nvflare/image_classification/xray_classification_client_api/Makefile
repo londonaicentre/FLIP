@@ -9,6 +9,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+APP_DIR := $(CURDIR)
+
+# Run job.py in the flip-utils environment with the `full` ML extra — the same package set the
+# flare-fl-base FL image installs (`uv sync --extra full`), so a local SimEnv run matches the deployed
+# image. A bare `uv run` would resolve to the repo-root venv, which has no torch/nvflare/monai.
+FLIP_UTILS := $(abspath $(APP_DIR)/../../../../flip-utils)
+UV_RUN := uv run --project $(FLIP_UTILS) --extra full
+
 # --- Load app-specific env ---
 ifneq ("$(wildcard .env.app)","")
 include ./.env.app
@@ -28,7 +36,7 @@ run: sim
 # app/config/, and app/custom/ (bundled flip/ package + staged app_files/).
 # FLIP-specific values (project_id, query) are injected via environment variables.
 export:
-	uv run --no-sync python job.py \
+	$(UV_RUN) python job.py \
 		--export \
 		--export-dir ./fl_job \
 		--n_clients 2 \
@@ -38,8 +46,12 @@ export:
 # Runs the job under the NVFLARE simulator. Requires a GPU and the reference
 # dataset (run `make -C fl-tutorials download-xray-data` first).
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
+# DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers
+# (which run from the workspace dir, not here) find the LOCAL_DEV dataset.
 sim:
-	uv run --no-sync python job.py \
+	DEV_IMAGES_DIR="$(abspath $(DEV_IMAGES_DIR))" \
+	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \
+	$(UV_RUN) python job.py \
 		--n_clients 2 \
 		--num_rounds 3
 
