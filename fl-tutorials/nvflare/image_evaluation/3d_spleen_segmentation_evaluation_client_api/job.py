@@ -9,35 +9,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FedAvg Client API job definition for X-Ray Classification with FLIP.
+"""Client-API evaluation job definition for 3D spleen segmentation with FLIP.
 
-This module defines the federated learning job using :class:`FlipFedAvgRecipe`.
-It supports two execution modes:
+This module defines the federated evaluation job using :class:`FlipEvalRecipe`. It supports two
+execution modes:
 
 *Export* (``--export --export-dir <path>``):
-    Writes the complete NVFLARE job to ``<path>/flip_fedavg/``, including
-    ``meta.json`` (carrying ``custom_props.model_id`` for lazy resolution),
-    ``app/config/`` (server + client configs), and ``app/custom/`` (the bundled
-    ``flip/`` package plus the staged user app files). This is the primary,
-    fully-local-verifiable path — no GPU or data required.
+    Writes the complete NVFLARE job to ``<path>/flip_evaluation/``, including ``meta.json`` (carrying
+    ``custom_props.model_id`` for lazy resolution), ``app/config/`` (server + client configs), and
+    ``app/custom/`` (the bundled ``flip/`` package plus the staged user app files, including the
+    ``model.pt`` checkpoint the server loads). This is the primary, fully-local-verifiable path — no
+    GPU or data required.
 
 *SimEnv* (default, no flags):
-    Runs a local simulation under the NVFLARE simulator. Requires a GPU and the
-    reference dataset (``make -C fl-tutorials download-xray-data``). FLIP-specific
-    values are injected via environment variables (``FLIP_PROJECT_ID``,
-    ``FLIP_QUERY``) rather than CLI flags because SQL queries contain spaces that
-    don't survive argparse whitespace-splitting.
+    Runs a local simulation under the NVFLARE simulator. Requires a GPU, the reference dataset
+    (``make -C fl-tutorials download-spleen-data``), and the checkpoint (``make download-checkpoints``).
+    FLIP-specific values are injected via environment variables (``FLIP_PROJECT_ID``, ``FLIP_QUERY``).
 
-Both modes go through NVFLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir``
-from ``sys.argv`` itself (it strips them before this script's own ``argparse`` runs) and
-exports-or-runs accordingly — so there is no separate ``--export`` branch here.
+Both modes go through NVFLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir`` from
+``sys.argv`` itself (it strips them before this script's own ``argparse`` runs) and exports-or-runs
+accordingly — so there is no separate ``--export`` branch here.
 
 Usage:
     # Export job config for review or Docker deployment (no GPU needed)
-    python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 3
+    python job.py --export --export-dir ./fl_job --n_clients 2
 
-    # SimEnv local simulation (requires GPU + data)
-    python job.py --n_clients 2 --num_rounds 3
+    # SimEnv local simulation (requires GPU + data + checkpoint)
+    python job.py --n_clients 2
 """
 
 from __future__ import annotations
@@ -47,13 +45,13 @@ import os
 import sys
 from pathlib import Path
 
-# app_files/ must be importable at recipe-construction time so PTFileModelPersistor
-# and PTModelLocator can reference 'models.get_model' correctly.
+# app_files/ must be importable at recipe-construction time so PTFileModelPersistor can reference
+# 'models.get_model' correctly.
 _APP_FILES_DIR = Path(__file__).parent / "app_files"
 if str(_APP_FILES_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_FILES_DIR))
 
-from flip.nvflare.recipes import FlipFedAvgRecipe  # noqa: E402
+from flip.nvflare.recipes import FlipEvalRecipe  # noqa: E402
 from nvflare import FedJob  # noqa: E402
 from nvflare.recipe import SimEnv  # noqa: E402
 
@@ -61,9 +59,9 @@ from nvflare.recipe import SimEnv  # noqa: E402
 def stage_app_files(job: FedJob) -> None:
     """Bundle every file in ``app_files/`` into the job's server + client ``custom/`` directories.
 
-    The recipe wires only the NVFLARE components; the user-supplied app files (``trainer.py``,
-    ``models.py``, ``config.json``, ``data_utils.py``, ``loss_and_metrics.py``) must be added to the job
-    explicitly so they land in every site's ``app/custom/``. ``FedJob.add_file_to_{server,clients}``
+    The recipe wires only the NVFLARE components; the user-supplied app files (``evaluator.py``,
+    ``models.py``, ``transforms.py``, ``config.json`` and the ``model.pt`` checkpoint) must be added to
+    the job explicitly so they land in every site's ``app/custom/``. ``FedJob.add_file_to_{server,clients}``
     registers them with the job's file sources, so they are bundled for **both** the SimEnv/simulator run
     (``recipe.execute``) and ``--export`` — unlike a post-export filesystem copy, which the SimEnv path
     never triggered.
@@ -78,35 +76,29 @@ def stage_app_files(job: FedJob) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="FLIP X-Ray Classification Client API FedAvg Job")
+    parser = argparse.ArgumentParser(description="FLIP 3D Spleen Segmentation Evaluation Client API Job")
     parser.add_argument("--n_clients", type=int, default=2, help="Number of clients")
-    parser.add_argument("--num_rounds", type=int, default=3, help="Number of federated rounds")
     parser.add_argument(
         "--workspace",
         type=str,
-        default="/tmp/nvflare/xray_client_api",
+        default="/tmp/nvflare/spleen_eval_client_api",
         help="SimEnv workspace root",
     )
     # NOTE: ``--export``/``--export-dir`` are handled by NVFLARE's ``Recipe.execute`` (it strips them
     # from ``sys.argv`` before this parser runs), so they are intentionally not declared here.
     args = parser.parse_args()
 
-    # ------------------------------------------------------------------
-    # FLIP-specific values are read from environment variables rather than
-    # CLI flags.  SQL queries contain spaces that don't survive argparse
-    # whitespace-splitting when forwarded via train_args.  The trainer
-    # reads the query from config_fed_client.json at runtime (via
-    # load_query()), and project_id is passed as --project_id {project_id}
-    # which the FLIP-API substitutes before job submission.
-    # ------------------------------------------------------------------
+    # FLIP-specific values are read from environment variables rather than CLI flags: SQL queries
+    # contain spaces that don't survive argparse whitespace-splitting when forwarded via task args.
+    # The evaluator reads the query from config_fed_client.json at runtime (via load_query()), and
+    # project_id is passed as --project_id {project_id} which the FLIP-API substitutes before submission.
     project_id = os.environ.get("FLIP_PROJECT_ID", "")
     query = os.environ.get("FLIP_QUERY", "SELECT * FROM Table;")
 
-    recipe = FlipFedAvgRecipe(
-        num_rounds=args.num_rounds,
+    recipe = FlipEvalRecipe(
         min_clients=args.n_clients,
-        train_script="trainer.py",
-        train_args="--project_id {project_id}",
+        eval_script="evaluator.py",
+        eval_args="--project_id {project_id}",
         project_id=project_id,
         query=query,
     )

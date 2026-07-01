@@ -1,9 +1,4 @@
 {
-  "client_api": [
-    "trainer.py",
-    "config.json",
-    "models.py"
-  ],
   "diffusion_model": [
     "trainer.py",
     "validator.py",
@@ -14,6 +9,11 @@
     "config.json",
     "evaluator.py"
   ],
+  "evaluation_client_api": [
+    "evaluator.py",
+    "config.json",
+    "models.py"
+  ],
   "fed_opt": [
     "trainer.py",
     "validator.py",
@@ -23,6 +23,11 @@
   "standard": [
     "trainer.py",
     "validator.py",
+    "config.json",
+    "models.py"
+  ],
+  "standard_client_api": [
+    "trainer.py",
     "config.json",
     "models.py"
   ]
