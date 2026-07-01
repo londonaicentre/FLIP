@@ -124,6 +124,10 @@ class FLIP_TRAINER(Executor):
             else:
                 self._normal_key = "Normal"
             self._batch_size = self.config["BATCH_SIZE"]
+            # Number of DataLoader worker processes for DICOM decode/transform. >0 overlaps
+            # data loading with GPU compute (the GPU was data-starved at workers=0). CPU-only
+            # transforms + a lazily-constructed FLIP() handle make the dataset fork-safe.
+            self._num_workers = int(self.config.get("DATALOADER_WORKERS", 4))
             self.validate_every = self.config["VALIDATE_EVERY"] if "VALIDATE_EVERY" in self.config.keys() else 1
             ark_cfg = self.config.get("ARKPLUS", {})
             self._use_teacher_student = bool(ark_cfg.get("USE_TEACHER_STUDENT", False))
@@ -230,9 +234,21 @@ class FLIP_TRAINER(Executor):
             logger=self.logger,
         )
         self.training_dataset = Dataset(self.train_dict, transform=self._train_transforms)
-        self.training_dataloader = DataLoader(self.training_dataset, batch_size=self._batch_size, shuffle=True)
+        self.training_dataloader = DataLoader(
+            self.training_dataset,
+            batch_size=self._batch_size,
+            shuffle=True,
+            num_workers=self._num_workers,
+            pin_memory=torch.cuda.is_available(),
+        )
         self.validation_dataset = Dataset(self.val_dict, transform=self._val_transforms)
-        self.validation_dataloader = DataLoader(self.validation_dataset, batch_size=self._batch_size, shuffle=False)
+        self.validation_dataloader = DataLoader(
+            self.validation_dataset,
+            batch_size=self._batch_size,
+            shuffle=False,
+            num_workers=self._num_workers,
+            pin_memory=torch.cuda.is_available(),
+        )
         self._loaded_site_name = site_name
 
         self.logger.info(
