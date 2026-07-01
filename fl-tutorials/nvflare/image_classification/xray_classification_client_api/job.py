@@ -28,6 +28,10 @@ It supports two execution modes:
     ``FLIP_QUERY``) rather than CLI flags because SQL queries contain spaces that
     don't survive argparse whitespace-splitting.
 
+Both modes go through NVFLARE's :meth:`Recipe.execute`, which consumes ``--export``/``--export-dir``
+from ``sys.argv`` itself (it strips them before this script's own ``argparse`` runs) and
+exports-or-runs accordingly — so there is no separate ``--export`` branch here.
+
 Usage:
     # Export job config for review or Docker deployment (no GPU needed)
     python job.py --export --export-dir ./fl_job --n_clients 2 --num_rounds 3
@@ -40,7 +44,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -51,26 +54,27 @@ if str(_APP_FILES_DIR) not in sys.path:
     sys.path.insert(0, str(_APP_FILES_DIR))
 
 from flip.nvflare.recipes import FlipFedAvgRecipe  # noqa: E402
+from nvflare import FedJob  # noqa: E402
 from nvflare.recipe import SimEnv  # noqa: E402
 
 
-def stage_app_files(job_root: str) -> None:
-    """Copy every file in app_files/ into <job_root>/flip_fedavg/app/custom/.
+def stage_app_files(job: FedJob) -> None:
+    """Bundle every file in ``app_files/`` into the job's server + client ``custom/`` directories.
 
-    The recipe's :meth:`export` auto-bundles the ``flip/`` package into
-    ``app/custom/flip/`` but does not include the user-supplied app files
-    (trainer.py, config.json, models.py, data_utils.py, loss_and_metrics.py).
-    This function completes the job by staging those files alongside the
-    bundled ``flip/`` package.
+    The recipe wires only the NVFLARE components; the user-supplied app files (``trainer.py``,
+    ``models.py``, ``config.json``, ``data_utils.py``, ``loss_and_metrics.py``) must be added to the job
+    explicitly so they land in every site's ``app/custom/``. ``FedJob.add_file_to_{server,clients}``
+    registers them with the job's file sources, so they are bundled for **both** the SimEnv/simulator run
+    (``recipe.execute``) and ``--export`` — unlike a post-export filesystem copy, which the SimEnv path
+    never triggered.
 
     Args:
-        job_root: The export-dir passed to :meth:`export` (e.g. ``./fl_job``).
+        job: The recipe's underlying :class:`~nvflare.job_config.api.FedJob` (``recipe.job``).
     """
-    custom_dir = Path(job_root) / "flip_fedavg" / "app" / "custom"
-    app_files_dir = Path(__file__).parent / "app_files"
-    for src in app_files_dir.iterdir():
+    for src in sorted(_APP_FILES_DIR.iterdir()):
         if src.is_file():
-            shutil.copy2(src, custom_dir / src.name)
+            job.add_file_to_server(str(src))
+            job.add_file_to_clients(str(src))
 
 
 def main() -> None:
@@ -83,13 +87,8 @@ def main() -> None:
         default="/tmp/nvflare/xray_client_api",
         help="SimEnv workspace root",
     )
-    parser.add_argument("--export", action="store_true", help="Export job config instead of running SimEnv")
-    parser.add_argument(
-        "--export-dir",
-        type=str,
-        default="./fl_job",
-        help="Directory to write the exported job (default: ./fl_job)",
-    )
+    # NOTE: ``--export``/``--export-dir`` are handled by NVFLARE's ``Recipe.execute`` (it strips them
+    # from ``sys.argv`` before this parser runs), so they are intentionally not declared here.
     args = parser.parse_args()
 
     # ------------------------------------------------------------------
@@ -112,22 +111,22 @@ def main() -> None:
         query=query,
     )
 
-    if args.export:
-        recipe.export(args.export_dir)
-        stage_app_files(args.export_dir)
-        print(f"Exported complete job to: {Path(args.export_dir).resolve() / 'flip_fedavg'}")
-    else:
-        env = SimEnv(
-            num_clients=args.n_clients,
-            num_threads=args.n_clients,
-            workspace_root=args.workspace,
-        )
-        run = recipe.execute(env)
+    # Stage the user app files into the job's custom/ dirs *before* execute() — this is what makes the
+    # exported/simulated job self-contained (the recipe only wires components). execute() then either
+    # exports (when --export is on sys.argv, exiting afterwards) or runs the SimEnv simulation.
+    stage_app_files(recipe.job)
 
-        print()
-        print(f"Job status:  {run.get_status()}")
-        print(f"Job results: {run.get_result()}")
-        print()
+    env = SimEnv(
+        num_clients=args.n_clients,
+        num_threads=args.n_clients,
+        workspace_root=args.workspace,
+    )
+    run = recipe.execute(env)
+
+    print()
+    print(f"Job status:  {run.get_status()}")
+    print(f"Job results: {run.get_result()}")
+    print()
 
 
 if __name__ == "__main__":
