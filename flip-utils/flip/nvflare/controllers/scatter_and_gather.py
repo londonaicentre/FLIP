@@ -30,9 +30,9 @@ from nvflare.security.logging import secure_format_exception
 from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
 
 from flip import FLIP
-from flip.constants import FlipEvents, ModelStatus
+from flip.constants import FlipEvents
 from flip.nvflare.metrics import handle_metrics_event
-from flip.utils import Utils
+from flip.nvflare.runtime import get_flip_model_id
 
 
 def _check_non_neg_int(data, name: str):
@@ -99,31 +99,26 @@ class ScatterAndGather(Controller):
         self.flip = FLIP()
 
         # Check arguments
-        try:
-            _check_non_neg_int(min_clients, "min_clients")
-            _check_non_neg_int(num_rounds, "num_rounds")
-            _check_non_neg_int(start_round, "start_round")
-            _check_non_neg_int(wait_time_after_min_received, "wait_time_after_min_received")
-            _check_non_neg_int(train_timeout, "train_timeout")
-            _check_non_neg_int(persist_every_n_rounds, "persist_every_n_rounds")
+        _check_non_neg_int(min_clients, "min_clients")
+        _check_non_neg_int(num_rounds, "num_rounds")
+        _check_non_neg_int(start_round, "start_round")
+        _check_non_neg_int(wait_time_after_min_received, "wait_time_after_min_received")
+        _check_non_neg_int(train_timeout, "train_timeout")
+        _check_non_neg_int(persist_every_n_rounds, "persist_every_n_rounds")
 
-            if not isinstance(aggregator_id, str):
-                raise TypeError(f"aggregator_id must be a string but got {type(aggregator_id)}")
-            if not isinstance(persistor_id, str):
-                raise TypeError(f"persistor_id must be a string but got {type(persistor_id)}")
-            if not isinstance(shareable_generator_id, str):
-                raise TypeError(f"shareable_generator_id must be a string but got {type(shareable_generator_id)}")
-            if not isinstance(train_task_name, str):
-                raise TypeError(f"train_task_name must be a string but got {type(train_task_name)}")
-            if not isinstance(ignore_result_error, bool):
-                raise TypeError(f"ignore_result_error must be a bool but got {type(ignore_result_error)}")
-            if not Utils.is_valid_uuid(model_id):
-                raise ValueError(f"The model ID: {model_id} is not a valid UUID")
-        except Exception as e:
-            self.flip.update_status(model_id, ModelStatus.ERROR)
-            raise Exception(e)
+        if not isinstance(aggregator_id, str):
+            raise TypeError(f"aggregator_id must be a string but got {type(aggregator_id)}")
+        if not isinstance(persistor_id, str):
+            raise TypeError(f"persistor_id must be a string but got {type(persistor_id)}")
+        if not isinstance(shareable_generator_id, str):
+            raise TypeError(f"shareable_generator_id must be a string but got {type(shareable_generator_id)}")
+        if not isinstance(train_task_name, str):
+            raise TypeError(f"train_task_name must be a string but got {type(train_task_name)}")
+        if not isinstance(ignore_result_error, bool):
+            raise TypeError(f"ignore_result_error must be a bool but got {type(ignore_result_error)}")
 
-        self.model_id = model_id
+        self._model_id_fallback = model_id
+        self._model_id: str | None = None
 
         self.aggregator_id = aggregator_id
         self.persistor_id = persistor_id
@@ -147,6 +142,11 @@ class ScatterAndGather(Controller):
         self._phase = AppConstants.PHASE_INIT
         self._global_weights: Learnable | None = None
         self._current_round: int | None = None
+
+    def _resolve_model_id(self, fl_ctx: FLContext) -> str:
+        if self._model_id is None:
+            self._model_id = get_flip_model_id(fl_ctx, fallback=self._model_id_fallback)
+        return self._model_id
 
     def start_controller(self, fl_ctx: FLContext) -> None:
         self.log_info(fl_ctx, "Initializing ScatterAndGather workflow.")
@@ -333,7 +333,7 @@ class ScatterAndGather(Controller):
                 self.log_error(fl_ctx, "Metrics Error: metrics result event was fired but no data found")
                 return
 
-            handle_metrics_event(event_data, self._current_round, self.model_id, flip=self.flip)
+            handle_metrics_event(event_data, self._current_round, self._resolve_model_id(fl_ctx), flip=self.flip)
 
     def _prepare_train_task_data(self, client_task: ClientTask, fl_ctx: FLContext) -> None:
         fl_ctx.set_prop(AppConstants.TRAIN_SHAREABLE, client_task.task.data, private=True, sticky=False)
@@ -377,7 +377,9 @@ class ScatterAndGather(Controller):
                     if formatted_exception is not None:
                         self.log_error(fl_ctx, formatted_exception)
                         self.flip.send_handled_exception(
-                            formatted_exception=formatted_exception, client_name=client_name, model_id=self.model_id
+                            formatted_exception=formatted_exception,
+                            client_name=client_name,
+                            model_id=self._resolve_model_id(fl_ctx),
                         )
 
                     self.system_panic(

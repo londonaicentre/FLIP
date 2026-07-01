@@ -300,8 +300,8 @@ class FLKitSlot(SQLModel, table=True):
     Operators get matching ``services/<slot_name>/`` dirs on every net's workspace —
     one global slot row covers all nets, so the assignment doesn't need a net_id column.
 
-    Lifecycle: rows are seeded from ``FL_KIT_SLOT_NAMES`` (one per pre-provisioned slot
-    in flip-fl-base). ``POST /admin/trusts`` claims the next ``assigned_to_trust_id IS
+    Lifecycle: rows are seeded from ``FL_KIT_SLOT_NAMES`` (one per pre-provisioned FL
+    kit slot). ``POST /admin/trusts`` claims the next ``assigned_to_trust_id IS
     NULL`` row in the same transaction as the trust insert.
     """
 

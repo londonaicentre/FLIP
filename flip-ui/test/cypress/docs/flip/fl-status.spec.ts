@@ -12,27 +12,90 @@
  */
 
 // Records docs/source/assets/flip/fl-status.gif.
-// Mirrors the happy path in test/cypress/integration/group-6/model_dashboard_post_training.spec.ts
-// (in-progress "PREPARED" model dashboard) — shows the per-trust FL training timeline.
+// Shows the Connection Status page (/connectionstatus): per-trust online state +
+// heartbeats (list and radial federation-topology views) and the FL nets card,
+// which is the FL client<->server connectivity detail. There is no functional
+// happy-path spec to mirror — /connectionstatus is otherwise exercised only by
+// integration/group-3/auth/session_expired.spec.ts — so the mocks are built here.
 
-describe("docs: fl status", () => {
-    it("views the federated-learning training status for a model", () => {
-        const projectId = "6fcbdd40-3675-45c9-899e-1a005e5245ba";
-        const modelId = "6292d9ec-e821-4e4a-814e-3a315a4cb95e";
-
+describe("docs: connection status", () => {
+    it("views the federation connection status", () => {
         cy.login();
-        cy.intercept("GET", "/projects/" + projectId, { fixture: "project/getProjectWithQuery" });
-        cy.intercept("POST", `/step/model/${modelId}`, { fixture: "model/getModelPostTrainingPreparedStatus" })
-            .as("getModel");
-        cy.intercept("GET", `/model/${modelId}/logs`, { fixture: "model/logsPostTraining" }).as("getLogs");
-        cy.intercept("GET", `/model/${modelId}/metrics`, []).as("getMetrics");
 
-        cy.visit(`project/${projectId}/model/${modelId}`);
-        cy.wait("@getModel");
-        cy.wait("@getLogs");
+        // The page derives online/degraded/offline from heartbeat age (<30s =
+        // online). A static timestamp would age into "Offline" by the time the
+        // GIF is recorded, so reply dynamically with a fresh heartbeat on every
+        // poll (SWRV refetches /trust every 15s) to keep both trusts "Online".
+        cy.intercept("GET", "**/trust", (req) => {
+            const now = new Date().toISOString();
+            req.reply([
+                {
+                    id: "53ca8126-5551-41a8-bd0a-587956c859d5",
+                    name: "UCLH",
+                    code: "UCLH",
+                    region: "London",
+                    last_heartbeat: now,
+                    project_count: 3
+                },
+                {
+                    id: "4c9692ac-f607-4216-9f0b-b45eb72d83d2",
+                    name: "KCH",
+                    code: "KCH",
+                    region: "London",
+                    last_heartbeat: now,
+                    project_count: 2
+                }
+            ]);
+        }).as("getTrusts");
+
+        // FL nets card: one healthy net whose two clients are both online, so the
+        // card renders "The FL nets are Healthy" with green client check marks.
+        cy.intercept("GET", "**/fl/status", {
+            statusCode: 200,
+            body: [
+                {
+                    name: "net-1",
+                    fl_backend: "nvflare",
+                    clients: [
+                        {
+                            name: "UCLH",
+                            code: "UCLH",
+                            online: true,
+                            status: "online",
+                            fl_kit_slot: "Trust_1"
+                        },
+                        {
+                            name: "KCH",
+                            code: "KCH",
+                            online: true,
+                            status: "online",
+                            fl_kit_slot: "Trust_2"
+                        }
+                    ]
+                }
+            ]
+        }).as("getFlStatus");
+
+        cy.visit("/connectionstatus");
+        cy.wait("@getTrusts");
         cy.demoPause();
 
-        cy.contains("sending the training request...").scrollIntoView().should("be.visible");
+        // List view: trust rows with their "Online" heartbeat state.
+        cy.contains("h1", "Connection").should("be.visible");
+        cy.getBySel("trust-row").first().contains("Online").should("be.visible");
+        cy.demoPause();
+
+        // Radial view: the hub<->trust federation topology.
+        cy.getBySel("view-toggle-radial").demoClick();
+        cy.demoPause(1000);
+
+        // Back to the list, then reveal the FL nets card — the FL client<->server
+        // connectivity detail the page exists to surface.
+        cy.getBySel("view-toggle-list").demoClick();
+        cy.demoPause();
+
+        cy.contains("The FL nets are").scrollIntoView();
+        cy.contains("Healthy").should("be.visible");
         cy.demoPause(1200);
     });
 });

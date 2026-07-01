@@ -17,7 +17,7 @@
 # tasks lose local state on every restart, so the cert/admin/transfer
 # directories must persist on EFS and be mounted via access points.
 #
-# Access points use posix_user uid/gid 1001 — never root. The flip-fl-base
+# Access points use posix_user uid/gid 1001 — never root. The FL service
 # Dockerfiles run as a non-root user that must match this uid.
 
 ############################

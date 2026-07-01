@@ -12,7 +12,6 @@
 
 import time
 from enum import Enum, IntEnum, StrEnum
-from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -26,8 +25,8 @@ class UploadAppRequest(BaseModel):
 
     project_id: str
     cohort_query: str
-    trusts: List[str]
-    bundle_urls: List[str]
+    trusts: list[str]
+    bundle_urls: list[str]
 
 
 class ServerInfoModel(BaseModel):
@@ -67,8 +66,8 @@ class SystemInfoModel(BaseModel):
     """Pydantic model for system information. Combines server info, client info, and job info into a single model."""
 
     server_info: ServerInfoModel
-    client_info: List[ClientInfoModel]
-    job_info: List[JobInfoModel]
+    client_info: list[ClientInfoModel]
+    job_info: list[JobInfoModel]
 
     def __str__(self) -> str:
         client_info_str = "\n".join(map(str, self.client_info))
@@ -116,11 +115,11 @@ class TargetType(StrEnum):
 
 
 class IOverridableConfig(BaseModel):
-    LOCAL_ROUNDS: Optional[int] = None
-    GLOBAL_ROUNDS: Optional[int] = None
-    IGNORE_RESULT_ERROR: Optional[bool] = None
-    AGGREGATOR: Optional[str] = None
-    AGGREGATION_WEIGHTS: Optional[Dict[str, float]] = None
+    LOCAL_ROUNDS: int | None = None
+    GLOBAL_ROUNDS: int | None = None
+    IGNORE_RESULT_ERROR: bool | None = None
+    AGGREGATOR: str | None = None
+    AGGREGATION_WEIGHTS: dict[str, float] | None = None
 
 
 class JobStatus(StrEnum):
@@ -144,7 +143,7 @@ class JobMetadata(BaseModel):
 
 
 # NVFLARE RunStatus (nvflare/apis/job_def.py) -> normalized contract status.
-_NVFLARE_STATUS_MAP: Dict[str, JobStatus] = {
+_NVFLARE_STATUS_MAP: dict[str, JobStatus] = {
     "SUBMITTED": JobStatus.PENDING,
     "APPROVED": JobStatus.PENDING,
     "DISPATCHED": JobStatus.PENDING,

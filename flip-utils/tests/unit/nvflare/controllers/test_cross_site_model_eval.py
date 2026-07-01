@@ -24,6 +24,22 @@ from flip.nvflare.controllers.cross_site_model_eval import CrossSiteModelEval
 
 
 class TestCrossSiteModelEval:
+    def test_init_stores_model_id_as_fallback(self):
+        """Construction stores model_id as fallback; _model_id cache starts as None."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        controller = CrossSiteModelEval(model_id=model_id)
+        assert controller._model_id_fallback == model_id
+        assert controller._model_id is None
+
+    def test_resolve_model_id_uses_fallback_when_fl_ctx_has_no_custom_props(self):
+        """Lazy resolution returns the constructor UUID when fl_ctx has no custom_props."""
+        model_id = "123e4567-e89b-12d3-a456-426614174000"
+        controller = CrossSiteModelEval(model_id=model_id)
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.return_value = None
+        result = controller._resolve_model_id(fl_ctx)
+        assert result == model_id
+
     def test_init_invalid_task_check_period(self):
         with pytest.raises(TypeError):
             CrossSiteModelEval(task_check_period="not-a-float", model_id="123e4567-e89b-12d3-a456-426614174000")

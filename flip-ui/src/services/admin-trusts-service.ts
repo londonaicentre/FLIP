@@ -25,7 +25,7 @@ export interface ICreatedTrust {
     trust_internal_service_key: string;
     // FL kit slot the hub claimed for this trust from the pre-provisioned pool.
     // The operator's fl-clients mount the matching workspace/net-N/services/<slot>
-    // dirs from flip-fl-base; fl_kit_slot_number picks the Flower supernode key.
+    // provisioned kit dirs; fl_kit_slot_number picks the Flower supernode key.
     fl_kit_slot: string;
     fl_kit_slot_number: number;
 }

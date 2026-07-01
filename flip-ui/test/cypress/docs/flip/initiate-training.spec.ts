@@ -47,7 +47,9 @@ describe("docs: initiate training", () => {
         cy.getBySel("initiate-training-btn").demoClick();
         cy.wait("@initiateTraining");
 
-        cy.contains("Any results generated during training will show here.").should("be.visible");
+        // Once training is initiated the data-enrichment / trust-selection
+        // controls are replaced by the in-progress training view.
+        cy.getBySel("data-enrichment-btn").should("not.exist");
         cy.demoPause(1200);
     });
 });

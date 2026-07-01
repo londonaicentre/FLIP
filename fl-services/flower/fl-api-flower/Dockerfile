@@ -33,8 +33,12 @@ RUN chmod +x /app/entrypoint.sh
 
 USER app
 
-# Sync dependencies using uv
-RUN uv sync --locked --no-dev
+# Sync dependencies using uv. We deliberately do NOT pass --locked: the repo-wide
+# relative `exclude-newer = "3 days"` cooldown (see pyproject [tool.uv]) makes the
+# resolver's cutoff a moving target, so a committed uv.lock drifts out of --locked
+# compliance within ~a day of any transitive release. Plain `uv sync` re-resolves
+# within the cooldown window instead of failing, matching nvflare/fl-api-base.
+RUN uv sync --no-dev
 
 # Add fastapi executable to path
 ENV PATH="/app/.venv/bin:$PATH"

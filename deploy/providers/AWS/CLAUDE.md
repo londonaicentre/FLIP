@@ -32,7 +32,7 @@
 ```bash
 make full-deploy PROD=stag                   # Full staging deploy
 make full-deploy PROD=true                    # Full prod deploy
-make full-deploy-stag-hybrid LOCAL_TRUST_IP=<ip>  # Hybrid with on-prem trust
+make full-deploy-hybrid PROD=<stag|true> [LOCAL_TRUST_IP=<ip>]  # Hybrid with on-prem trust
 make init/plan/apply                          # Terraform workflow
 make deploy-centralhub                        # ECS force-redeploy + CloudFront UI
 make deploy-trust                             # Deploy trust stack to EC2

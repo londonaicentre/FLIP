@@ -33,7 +33,7 @@ def retrieve_logs_for_model_endpoint(
     model_id: UUID = Path(..., title="Model ID"),
     db: Session = Depends(get_session),
     user_id: UUID = Depends(verify_token),
-):
+) -> list[ILog]:
     """
     Retrieve logs for a specific model.
 

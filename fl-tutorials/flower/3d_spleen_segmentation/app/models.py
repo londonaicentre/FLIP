@@ -14,7 +14,7 @@
 """Model definition for the MONAI training app.
 
 Kept in lock-step with the evaluation tutorial's ``models.py`` (and the
-flip-fl-base reference) so that the ``FL_global_model.pt`` produced by this
+reference) so that the ``FL_global_model.pt`` produced by this
 tutorial is a state-dict drop-in for the evaluation tutorial's ``model.pt``.
 Any config change here must mirror the eval tutorial's UNet args.
 """
