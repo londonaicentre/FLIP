@@ -277,6 +277,51 @@ class TestConfigureServer:
                 aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
             )
 
+    def test_configure_server_evaluation_client_api_recipe_config(
+        self, mock_isfile, mock_read_config, mock_write_config
+    ):
+        """The recipe-generated ``evaluation_client_api`` server config has no aggregator component and
+        workflows without ``participating_clients``/``ignore_result_error`` (CrossSiteModelEval discovers
+        clients at runtime). The generic assembly must still set model_id/global_rounds/min_clients and
+        leave those args untouched — i.e. a new recipe job type needs no prepare_config changes."""
+        mock_server_config = {
+            "format_version": 2,
+            "workflows": [
+                {"id": "controller", "path": "...InitEvaluation", "args": {"model_id": None}},
+                {
+                    "id": "controller1",
+                    "path": "...CrossSiteModelEval",
+                    "args": {"validation_timeout": 12000, "model_locator_id": "model_locator",
+                             "submit_model_task_name": "", "model_id": None},
+                },
+            ],
+            "components": [
+                {"id": "persistor", "path": "...PTFileModelPersistor", "args": {}},
+                {"id": "model_locator", "path": "...EvaluationModelLocator", "args": {}},
+                {"id": "json_generator", "path": "...EvaluationJsonGenerator", "args": {}},
+            ],
+        }
+        mock_read_config.return_value = mock_server_config
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=1,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=False,
+            aggregator="new_aggregator",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+        )
+
+        args, _ = mock_write_config.call_args
+        modified = args[0]
+        assert modified["model_id"] == MOCK_APP_NAME
+        assert modified["min_clients"] == 2
+        # No participating_clients/ignore_result_error keys are injected (not present in the recipe args),
+        # and no component is treated as an aggregator.
+        assert "participating_clients" not in modified["workflows"][1]["args"]
+        assert all("aggregation_weights" not in c.get("args", {}) for c in modified["components"])
+
 
 class TestConfigureMeta:
     def test_configure_meta_without_gpus(self, mock_write_config, mock_get_settings):
@@ -324,7 +369,7 @@ class TestConfigureMeta:
 
     def test_configure_meta_publishes_model_id_in_custom_props(self, mock_write_config, mock_get_settings):
         # custom_props.model_id is the lazy-resolution channel for recipe-built job types
-        # (e.g. client_api) whose component configs carry no model_id. app_name is the model_id.
+        # (e.g. standard_client_api) whose component configs carry no model_id. app_name is the model_id.
         mock_get_settings.return_value.JOB_RESOURCE_SPEC_NUM_GPUS = 0
         mock_get_settings.return_value.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = 16
 

@@ -1,0 +1,13 @@
+{
+  "name": "flip_evaluation",
+  "resource_spec": {},
+  "min_clients": 1,
+  "deploy_map": {
+    "app": [
+      "@ALL"
+    ]
+  },
+  "custom_props": {
+    "model_id": "00000000-0000-0000-0000-000000000001"
+  }
+}

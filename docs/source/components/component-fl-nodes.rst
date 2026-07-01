@@ -32,6 +32,9 @@ that the user can choose based on their needs.
 Currently, these job types include federated averaging (job type `standard`),
 evaluation task (job type `evaluation`), federated optimisation (job type `fed_opt`)
 and diffusion model training (job type `diffusion_model`), which covers multi-stage federated training.
+For NVFLARE, two further job types drive the client code through the modern **NVFLARE Client API**
+(a plain training/evaluation script using ``nvflare.client`` instead of a class-based ``Executor``):
+federated averaging (job type `standard_client_api`) and model evaluation (job type `evaluation_client_api`).
 More job types will be added in the future, adjusting to the community's needs.
 
 **How to choose a job type?**
@@ -50,7 +53,7 @@ Then, the Central Hub API will take care of bundling together:
 
 For more information about currently supported apps, see the per-job-type implementations under
 `fl-apps/ <https://github.com/londonaicentre/FLIP/tree/develop/fl-apps/nvflare>`_ (``standard``, ``evaluation``,
-``diffusion_model``, ``fed_opt``).
+``diffusion_model``, ``fed_opt``, ``standard_client_api``, ``evaluation_client_api``).
 
 Examples of how the same job type (standard -> federated averaging) can run different user-uploaded applications are:
 
@@ -58,6 +61,11 @@ Examples of how the same job type (standard -> federated averaging) can run diff
 - `3d_spleen_segmentation <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_segmentation/3d_spleen_segmentation>`_
 
 Both cases perform a supervised federated averaging training, but the data, architecture and training configuration are different.
+
+The NVFLARE Client API job types have their own tutorials:
+
+- `xray_classification_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_classification/xray_classification_client_api>`_ (job type `standard_client_api`)
+- `3d_spleen_segmentation_evaluation_client_api <https://github.com/londonaicentre/FLIP/tree/develop/fl-tutorials/nvflare/image_evaluation/3d_spleen_segmentation_evaluation_client_api>`_ (job type `evaluation_client_api`)
 
 These tutorials run on the local NVFLARE simulator from the repo root — e.g.
 ``make -C fl-tutorials run-tutorial TUTORIAL=xray_classification`` (requires a GPU and the
