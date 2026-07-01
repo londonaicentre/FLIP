@@ -224,6 +224,7 @@ class FLIP_TRAINER(Executor):
             config=self.config,
             site_name=site_name,
             project_id=self.project_id,
+            query=self.query,
             logger=self.logger,
         )
         self.training_dataset = Dataset(self.train_dict, transform=self._train_transforms)
