@@ -72,6 +72,10 @@ via the evaluator's `--project_id {project_id}` arg (substituted by the FLIP-API
 top-level `query` key of `config_fed_client.json` (read by `evaluator.load_query()`). The switch is keyed on
 `LOCAL_DEV` in `app_files/data_utils.py` (`_is_local_dev`).
 
+The cohort query for a real deployment is [`query.sql`](query.sql) — it selects the **hold-out** chest
+X-ray set (`procedure_source_value = 'Chest X-ray (holdout)'`) and returns the seven lesion-label columns.
+Pass it as the project's cohort query (e.g. `make e2e_smoke QUERY_FILE=.../arkplus_baseline_classification_evaluation/query.sql`).
+
 ## Checkpoint setup
 
 The evaluation app needs the foundation-model checkpoint as a clean `.pt` file at

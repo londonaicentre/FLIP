@@ -136,6 +136,10 @@ the FL job config (`config_fed_client.json` → `RUN_TRAINER`/`RUN_VALIDATOR`). 
 keyed on `LOCAL_DEV` in `app_files/data_utils.py` (`_is_local_dev`), mirroring the flip
 package's own `FLIPStandardDev`/`FLIPStandardProd` selection.
 
+The cohort query for a real deployment is [`query.sql`](query.sql) — it selects the chest X-ray
+**training** set and returns the seven lesion-label columns the model expects. Pass it as the
+project's cohort query (e.g. `make e2e_smoke QUERY_FILE=.../arkplus_fine_tuning/query.sql`).
+
 ## Checkpoint setup
 
 `get_model()` requires the backbone checkpoint at

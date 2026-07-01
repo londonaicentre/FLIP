@@ -58,6 +58,11 @@ the FL job config (`config_fed_client.json` → `RUN_EVALUATOR`). The switch is 
 `LOCAL_DEV` in `app_files/data_utils.py` (`_is_local_dev`), mirroring the flip package's own
 `FLIPStandardDev`/`FLIPStandardProd` selection.
 
+The cohort query for a real deployment is [`query.sql`](query.sql) — it selects the **hold-out** chest
+X-ray set (`procedure_source_value = 'Chest X-ray (holdout)'`) and returns the seven lesion-label columns
+both models are scored against. Pass it as the project's cohort query (e.g.
+`make e2e_smoke QUERY_FILE=.../arkplus_multimodel_classification_evaluation/query.sql`).
+
 ## Checkpoint setup
 
 The app evaluates two models, so it needs two checkpoints in `app_files/` (both
