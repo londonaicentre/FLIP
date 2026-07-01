@@ -14,20 +14,20 @@ import logging
 from pathlib import Path
 
 import monai
-import numpy as np
-import pydicom
+# import numpy as np
+# import pydicom
 import torch
 from data_utils import (
     Lesion,
     LesionDict,
     build_datalist,
-    get_labels_from_radiology_row,
+    # get_labels_from_radiology_row,
     get_lesion_label,
     get_xray_transforms,
     normalize_site_name,
 )
 from flip import FLIP
-from flip.constants import ResourceType
+# from flip.constants import ResourceType
 from flip.nvflare.metrics import send_metrics_value
 from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
 from models import get_model
@@ -61,8 +61,7 @@ class FLIP_VALIDATOR(Executor):
         self.working_dir = working_dir
         with open(str(working_dir / "config.json")) as file:
             self.config = json.load(file)
-            self._val_split = self.config["VAL_SPLIT"]
-            self._test_split = self.config["TEST_SPLIT"]
+            self._val_split = self.config["VAL_SPLIT"]                         # stale — build_datalist reads from config
             self._lesions = self.config["LESIONS"]
             if "-1" in self._lesions.keys():
                 self._normal_key = self._lesions["-1"]
@@ -124,8 +123,7 @@ class FLIP_VALIDATOR(Executor):
         if self._loaded_site_name == site_name and self.test_dataloader is not None:
             return
 
-        self.test_dict = build_datalist(
-            is_test=True,
+        _, self.test_dict = build_datalist(
             config=self.config,
             site_name=site_name,
             project_id=self.project_id,
@@ -135,77 +133,6 @@ class FLIP_VALIDATOR(Executor):
         self.test_dataloader = monai.data.DataLoader(self.test_dataset, batch_size=self._batch_size, shuffle=False)
         self._loaded_site_name = site_name
         self.logger.info(f"DataLoader created for site={site_name}: test batches={len(self.test_dataloader)}")
-
-    def get_image_and_label_list(self):
-        """
-        Returns a list of dictionaries containing a field "image" and a fields corresponding to each lesion with its
-        label value.
-
-        Args:
-            dataframe (_type_): dataframe output by FLIP, which has to contain accession_id and
-                columns for each of the lesions.
-
-        Returns:
-            _type_: list of dictionaries for data loading.
-        """
-        datalist = []
-
-        # loop over each accession id in the train set
-        for _, row in self.dataframe.iterrows():
-            accession_id = row["accession_id"]
-            # First, we load the labels;
-            pathology_dict = get_labels_from_radiology_row(
-                row, self._lesions, self._value_to_numerical, self._normal_key
-            )
-
-            try:
-                accession_folder_path = self.flip.get_by_accession_number(
-                    self.project_id,
-                    accession_id,
-                    resource_type=[
-                        ResourceType.DICOM,
-                    ],
-                )
-            except Exception as err:
-                print(f"Could not get image data folder path for {accession_id}: {err}")
-                continue
-
-            all_images = list(accession_folder_path.rglob("*.dcm"))
-            this_accession_matches = 0
-            print(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
-
-            for img in all_images:
-                try:
-                    _ = pydicom.dcmread(str(img))
-                except Exception as e:
-                    print(f"Problem loading header of base image {str(img)}.")
-                    print(f"{e=}")
-                    print(f"{type(e)=}")
-                    print(f"{e.args=}")
-                    continue
-
-                # defines keys for image and segmentation
-                item_ = {"image": str(img)}
-                item_.update(pathology_dict)
-                datalist.append(item_)
-                this_accession_matches += 1
-
-            print(f"Added {this_accession_matches} image / label pairs for {accession_id}.")
-
-        print(f"Found {len(datalist)} files in total.")
-
-        # split into the training and testing data
-        _, _, test_datalist = np.split(
-            datalist,
-            [
-                int(len(datalist) * (1 - self._val_split - self._test_split)),
-                int(len(datalist) * (1 - self._test_split)),
-            ],
-        )
-
-        print(f"Found {len(test_datalist)} files for testing.")
-
-        return test_datalist
 
     def do_validation(self, fl_ctx, weights, abort_signal):
         self.model.load_state_dict(weights)

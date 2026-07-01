@@ -31,7 +31,7 @@ import pandas as pd
 import pydicom
 import torch
 from monai.config import KeysCollection
-from monai.data import DataLoader, Dataset
+# from monai.data import DataLoader, Dataset
 from monai.transforms.transform import MapTransform
 
 try:
@@ -218,19 +218,24 @@ def _find_accession_column(df: pd.DataFrame) -> str:
     raise KeyError(f"Could not find accession column in dataframe columns: {list(df.columns)}")
 
 
-def _label_aware_split(datalist, label_names, val_split: float, test_split: float, seed: int, logger=None):
+def _label_aware_split(datalist, label_names, val_split: float, seed: int, logger=None):
+    """
+    Guarantee at least one positive sample per label in train and val splits,
+    then fill remaining capacity with unassigned items.
+
+    Processing labels in order of rarity (fewest positives first) ensures rare
+    labels reserve their slot before common labels consume all split capacity.
+    """
     datalist = list(datalist)
     rng = np.random.default_rng(seed)
     rng.shuffle(datalist)
 
     n_total = len(datalist)
-    n_train = int(n_total * (1 - val_split - test_split))
-    n_val_end = int(n_total * (1 - test_split))
-    n_val = n_val_end - n_train
-    n_test = n_total - n_val_end
+    n_train = int(n_total * (1 - val_split))
+    n_val = n_total - n_train
 
-    splits = {"train": [], "val": [], "test": []}
-    limits = {"train": n_train, "val": n_val, "test": n_test}
+    splits = {"train": [], "val": []}
+    limits = {"train": n_train, "val": n_val}
     assigned = set()
 
     def can_add(split_name):
@@ -260,8 +265,6 @@ def _label_aware_split(datalist, label_names, val_split: float, test_split: floa
         target_splits = ["train"]
         if len(positive_indices) >= 2 and n_val > 0:
             target_splits.append("val")
-        if len(positive_indices) >= 3 and n_test > 0:
-            target_splits.append("test")
 
         for split_name in target_splits:
             if any(item.get(label) == 1 for item in splits[split_name]):
@@ -273,7 +276,7 @@ def _label_aware_split(datalist, label_names, val_split: float, test_split: floa
     remaining_indices = [i for i in range(n_total) if i not in assigned]
     rng.shuffle(remaining_indices)
 
-    for split_name in ("train", "val", "test"):
+    for split_name in ("train", "val"):
         for index in remaining_indices:
             if not can_add(split_name):
                 break
@@ -281,15 +284,14 @@ def _label_aware_split(datalist, label_names, val_split: float, test_split: floa
 
     if logger is not None:
         logger.info(
-            "Using label-aware split with seed=%s: train=%s, val=%s, test=%s.",
+            "Using label-aware split with seed=%s: train=%s, val=%s",
             seed,
             len(splits["train"]),
-            len(splits["val"]),
-            len(splits["test"]),
+            len(splits["val"])
         )
         _log_split_balance(splits, label_names, logger)
 
-    return splits["train"], splits["val"], splits["test"]
+    return splits["train"], splits["val"]
 
 
 def _log_split_balance(splits, label_names, logger):
@@ -344,7 +346,6 @@ def _dicoms_for_accession(
 
 
 def build_datalist(
-    is_test: bool = False,
     config: dict | None = None,
     site_name: str | None = None,
     project_id: str | None = None,
@@ -392,37 +393,15 @@ def build_datalist(
         )
 
     val_split = float(cfg.get("VAL_SPLIT", 0.2))
-    test_split = float(cfg.get("TEST_SPLIT", 0.2))
     split_seed = int(cfg.get("SPLIT_SEED", 42))
-    train_items, val_items, test_items = _label_aware_split(
+    train_items, val_items = _label_aware_split(
         datalist=datalist,
         label_names=lesions.get_lesion_list(),
         val_split=val_split,
-        test_split=test_split,
         seed=split_seed,
         logger=logger,
     )
-
-    if is_test:
-        return test_items
     return train_items, val_items
 
 
-def get_train_val_loaders(batch_size: int | None = None):
-    cfg = load_config()
-    batch_size = int(batch_size or cfg.get("BATCH_SIZE", 2))
-    train_items, val_items = build_datalist(is_test=False)
-    train_ds = Dataset(train_items, transform=get_xray_transforms(is_validation=False))
-    val_ds = Dataset(val_items, transform=get_xray_transforms(is_validation=True))
-    return (
-        DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0),
-        DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0),
-    )
 
-
-def get_test_loader(batch_size: int | None = None):
-    cfg = load_config()
-    batch_size = int(batch_size or cfg.get("BATCH_SIZE", 2))
-    test_items = build_datalist(is_test=True)
-    test_ds = Dataset(test_items, transform=get_xray_transforms(is_validation=True))
-    return DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=0)

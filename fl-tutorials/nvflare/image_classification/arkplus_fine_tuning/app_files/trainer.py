@@ -17,19 +17,19 @@ import os.path
 from pathlib import Path
 
 import numpy as np
-import pydicom
+# import pydicom
 import torch
 from data_utils import (
     Lesion,
     LesionDict,
     build_datalist,
-    get_labels_from_radiology_row,
+    # get_labels_from_radiology_row,
     get_lesion_label,
     get_xray_transforms,
     normalize_site_name,
 )
 from flip import FLIP
-from flip.constants import PTConstants, ResourceType
+from flip.constants import PTConstants
 from flip.nvflare.metrics import send_metrics_value
 from flip.utils import get_model_weights_diff
 from loss_and_metrics import compute_precision_recall_f1, get_bce_loss
@@ -111,9 +111,8 @@ class FLIP_TRAINER(Executor):
             self._epochs = self.config["LOCAL_ROUNDS"]
             self._lr_start = self.config["LR_START"]
             self._lr_end = self.config["LR_END"]
-            self._val_split = self.config["VAL_SPLIT"]
-            self._test_split = self.config["TEST_SPLIT"]
-            self._split_seed = int(self.config.get("SPLIT_SEED", 42))
+            self._val_split = self.config["VAL_SPLIT"]                         # stale — build_datalist reads from config
+            self._split_seed = int(self.config.get("SPLIT_SEED", 42))          # stale — build_datalist reads from config
             self._lesions = self.config["LESIONS"]
             self._value_to_numerical = {int(i): j for i, j in self.config["value_to_numerical"].items()}
             if 0 not in self._value_to_numerical.keys() and 1 not in self._value_to_numerical.keys():
@@ -222,7 +221,6 @@ class FLIP_TRAINER(Executor):
             return
 
         self.train_dict, self.val_dict = build_datalist(
-            is_test=False,
             config=self.config,
             site_name=site_name,
             project_id=self.project_id,
@@ -296,147 +294,6 @@ class FLIP_TRAINER(Executor):
                     teacher_value.mul_(momentum).add_(student_value.to(teacher_value.device), alpha=1.0 - momentum)
                 else:
                     teacher_value.copy_(student_value.to(teacher_value.device))
-
-    def get_image_and_label_list(self):
-        """
-        Returns a list of dictionaries containing a field "image" and a fields corresponding to each lesion with its
-        label value.
-
-        Args:
-            dataframe (_type_): dataframe output by FLIP, which has to contain accession_id and
-                columns for each of the lesions.
-
-        Returns:
-            _type_: list of dictionaries for data loading.
-        """
-        datalist = []
-
-        # loop over each accession id in the train set
-        for _, row in self.dataframe.iterrows():
-            accession_id = row["accession_id"]
-            # First, we load the radiology note; format should be: [project] - [lesion1,lesion2,lesion3_lesion3]
-            pathology_dict = get_labels_from_radiology_row(
-                row, self._lesions, self._value_to_numerical, self._normal_key
-            )
-
-            try:
-                accession_folder_path = self.flip.get_by_accession_number(
-                    self.project_id,
-                    accession_id,
-                    resource_type=[
-                        ResourceType.DICOM,
-                    ],
-                )
-            except Exception as err:
-                self.logger.error(f"Could not get image data folder path for {accession_id}: {err}")
-                continue
-
-            all_images = list(accession_folder_path.rglob("*.dcm"))
-            this_accession_matches = 0
-            self.logger.info(f"Total base count found for accession_id {accession_id}: {len(all_images)}")
-
-            for img in all_images:
-                try:
-                    _ = pydicom.dcmread(str(img))
-                except Exception as e:
-                    self.logger.error(f"Problem loading header of base image {str(img)}.")
-                    self.logger.error(f"{e=}")
-                    self.logger.error(f"{type(e)=}")
-                    self.logger.error(f"{e.args=}")
-                    continue
-
-                # defines keys for image and segmentation
-                item_ = {"image": str(img)}
-                item_.update(pathology_dict)
-                datalist.append(item_)
-                this_accession_matches += 1
-
-            self.logger.info(f"Added {this_accession_matches} image / label pairs for {accession_id}.")
-
-        self.logger.info(f"Found {len(datalist)} files in total.")
-
-        # Split whole image/label records. This keeps each DICOM path attached to
-        # its labels while avoiding order-based class imbalance in the CSV.
-        train_datalist, val_datalist, test_datalist = self._label_aware_split(
-            datalist=datalist,
-            label_names=[lesion.lesion for lesion in self._lesions.items],
-            val_split=self._val_split,
-            test_split=self._test_split,
-            seed=self._split_seed,
-        )
-
-        self.logger.info(
-            f"Found {len(train_datalist)} files for training, {len(val_datalist)} files for validation and "
-            f"{len(test_datalist)} files for testing."
-        )
-
-        return train_datalist, val_datalist
-
-    def _label_aware_split(self, datalist, label_names, val_split, test_split, seed):
-        """Create deterministic train/val/test splits with positive labels represented when possible."""
-        datalist = list(datalist)
-        rng = np.random.default_rng(seed)
-        rng.shuffle(datalist)
-
-        n_total = len(datalist)
-        n_train = int(n_total * (1 - val_split - test_split))
-        n_val_end = int(n_total * (1 - test_split))
-        n_val = n_val_end - n_train
-        n_test = n_total - n_val_end
-
-        splits = {"train": [], "val": [], "test": []}
-        limits = {"train": n_train, "val": n_val, "test": n_test}
-        assigned = set()
-
-        self.logger.info(f"Using label-aware split with seed={seed}: train={n_train}, val={n_val}, test={n_test}.")
-
-        def can_add(split_name):
-            return len(splits[split_name]) < limits[split_name]
-
-        def add_item(index, split_name):
-            if index in assigned or not can_add(split_name):
-                return False
-            splits[split_name].append(datalist[index])
-            assigned.add(index)
-            return True
-
-        label_positive_indices = {
-            label: [i for i, item in enumerate(datalist) if item.get(label) == 1] for label in label_names
-        }
-        labels_by_rarity = sorted(label_names, key=lambda label: len(label_positive_indices[label]))
-
-        for label in labels_by_rarity:
-            positive_indices = list(label_positive_indices[label])
-            rng.shuffle(positive_indices)
-
-            if not positive_indices:
-                self.logger.warning(f"No positive samples found for label {label} before splitting.")
-                continue
-
-            target_splits = ["train"]
-            if len(positive_indices) >= 2 and n_val > 0:
-                target_splits.append("val")
-            if len(positive_indices) >= 3 and n_test > 0:
-                target_splits.append("test")
-
-            for split_name in target_splits:
-                if any(item.get(label) == 1 for item in splits[split_name]):
-                    continue
-                for index in positive_indices:
-                    if add_item(index, split_name):
-                        break
-
-        remaining_indices = [i for i in range(n_total) if i not in assigned]
-        rng.shuffle(remaining_indices)
-
-        for split_name in ("train", "val", "test"):
-            for index in remaining_indices:
-                if not can_add(split_name):
-                    break
-                add_item(index, split_name)
-
-        self._log_split_balance(splits, label_names)
-        return splits["train"], splits["val"], splits["test"]
 
     def _log_split_balance(self, splits, label_names):
         for split_name, split_rows in splits.items():
