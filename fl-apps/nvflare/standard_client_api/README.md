@@ -15,7 +15,7 @@
 
 ## Overview
 
-This is the NVFLARE **Client API** job type (`JOB_TYPE=client_api`). It performs the same
+This is the NVFLARE **Client API** job type (`JOB_TYPE=standard_client_api`). It performs the same
 **Federated Averaging** round-trip as the [`standard`](../standard/README.md) template but drives
 client training through the NVFLARE Client API
 (`InProcessClientAPIExecutor`) rather than the legacy `RUN_TRAINER`/`RUN_VALIDATOR` executor pair.
@@ -75,8 +75,8 @@ committed JSONs by running from the `flip-utils` venv:
 cd flip-utils && uv run --no-sync python - <<'PY'
 import sys, types, torch, runpy
 m = types.ModuleType("models"); m.get_model = lambda: torch.nn.Linear(1, 1); sys.modules["models"] = m
-sys.argv = ["recipe.py", "--output", "../fl-apps/nvflare/client_api"]
-runpy.run_path("../fl-apps/nvflare/client_api/recipe.py", run_name="__main__")
+sys.argv = ["recipe.py", "--output", "../fl-apps/nvflare/standard_client_api"]
+runpy.run_path("../fl-apps/nvflare/standard_client_api/recipe.py", run_name="__main__")
 PY
 ```
 

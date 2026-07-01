@@ -77,11 +77,11 @@ per-submission values when it assembles the job, *before* NVFLARE loads the conf
 
 So a site's `trainer.py` reaches its cohort via `flip.get_dataframe(project_id, query)` — `query` is read
 straight from `config_fed_client.json`, and `project_id` is passed to the trainer (in the Client API
-`client_api` template it's the `{project_id}` reference in the executor's `task_script_args`, which resolves
-against the top-level `project_id` key). In `LOCAL_DEV` / SimEnv these are ignored: data comes from the
-`DEV_DATAFRAME` / `DEV_IMAGES_DIR` env instead. `local_rounds` is the per-round local-epoch count read by
-the trainer/executor. (The `client_api` template is recipe-generated but emits the same placeholders, so it
-behaves identically here.)
+`standard_client_api` template it's the `{project_id}` reference in the executor's `task_script_args`, which
+resolves against the top-level `project_id` key). In `LOCAL_DEV` / SimEnv these are ignored: data comes from
+the `DEV_DATAFRAME` / `DEV_IMAGES_DIR` env instead. `local_rounds` is the per-round local-epoch count read by
+the trainer/executor. (The `standard_client_api` template is recipe-generated but emits the same
+placeholders, so it behaves identically here.)
 
 ## Run it
 

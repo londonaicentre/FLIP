@@ -1,0 +1,59 @@
+{
+  "format_version": 2,
+  "workflows": [
+    {
+      "id": "controller",
+      "path": "flip.nvflare.controllers.init_evaluation.InitEvaluation",
+      "args": {
+        "model_id": null
+      }
+    },
+    {
+      "id": "controller1",
+      "path": "flip.nvflare.controllers.cross_site_model_eval.CrossSiteModelEval",
+      "args": {
+        "validation_timeout": 12000,
+        "model_locator_id": "model_locator",
+        "submit_model_task_name": "",
+        "model_id": null
+      }
+    }
+  ],
+  "components": [
+    {
+      "id": "persistor",
+      "path": "nvflare.app_opt.pt.file_model_persistor.PTFileModelPersistor",
+      "args": {
+        "model": {
+          "path": "models.get_model"
+        }
+      }
+    },
+    {
+      "id": "model_locator",
+      "path": "flip.nvflare.components.pt_model_locator.EvaluationModelLocator",
+      "args": {}
+    },
+    {
+      "id": "json_generator",
+      "path": "flip.nvflare.components.evaluation_json_generator.EvaluationJsonGenerator",
+      "args": {}
+    },
+    {
+      "id": "flip_server_event_handler",
+      "path": "flip.nvflare.components.flip_server_event_handler.ServerEventHandler",
+      "args": {
+        "model_id": null
+      }
+    },
+    {
+      "id": "persist_and_cleanup",
+      "path": "flip.nvflare.components.persist_and_cleanup.PersistToS3AndCleanup",
+      "args": {
+        "model_id": null
+      }
+    }
+  ],
+  "task_data_filters": [],
+  "task_result_filters": []
+}
