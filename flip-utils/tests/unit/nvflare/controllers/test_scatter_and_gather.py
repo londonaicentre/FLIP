@@ -429,8 +429,10 @@ class TestScatterAndGather:
         assert controller.flip.send_handled_exception.call_args.kwargs["model_id"] == _VALID_MODEL_ID
         controller.system_panic.assert_called_once()
 
-    def test_accept_train_result_logs_error_when_weight_diff_merge_fails(self):
-        """Merge errors while applying WEIGHT_DIFF should be logged and not crash acceptance flow."""
+    def test_accept_train_result_partial_weight_diff_is_partial_safe(self):
+        """A partial WEIGHT_DIFF (only some keys — e.g. a frozen-backbone head-only update, FLIP#684)
+        is applied to the keys present in the diff; keys absent from the diff keep their global value.
+        No error is logged."""
         model_id = "123e4567-e89b-12d3-a456-426614174000"
         controller = ScatterAndGather(model_id=model_id)
         controller.aggregator = MagicMock(spec=Aggregator)
@@ -444,14 +446,19 @@ class TestScatterAndGather:
         fl_ctx = MagicMock()
         fl_ctx.get_peer_context.return_value = None
 
-        # Missing "w2" causes KeyError during merge.
+        # Diff carries only "w1" (the trainable var); the frozen "w2" is absent.
         result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": 0.1}).to_shareable()
         result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 3)
 
         accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=fl_ctx)
 
         assert accepted is True
-        assert any(
+        # No merge error — the missing key is tolerated, not a KeyError.
+        assert not any(
             "Error while adding client WEIGHT_DIFF to global weights at server" in call.args[1]
             for call in controller.log_error.call_args_list
         )
+        # w1 updated (1.0 + 0.1); w2 preserved from global (2.0).
+        reconstructed = from_shareable(result).data
+        assert reconstructed["w1"] == pytest.approx(1.1)
+        assert reconstructed["w2"] == 2.0

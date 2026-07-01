@@ -254,6 +254,20 @@ def test_validate_config_invalid_aggregator():
         validate_config(invalid_config)
 
 
+def test_validate_config_accepts_aggregate_only_regex():
+    config = validate_config({"AGGREGATE_ONLY_REGEX": "omni_heads"})
+    assert config.AGGREGATE_ONLY_REGEX == "omni_heads"
+
+
+def test_validate_config_rejects_invalid_aggregate_only_regex():
+    with pytest.raises(ValueError, match="not a valid regex"):
+        validate_config({"AGGREGATE_ONLY_REGEX": "([unclosed"})
+
+
+def test_validate_config_aggregate_only_regex_defaults_none():
+    assert validate_config({"LOCAL_ROUNDS": 3}).AGGREGATE_ONLY_REGEX is None
+
+
 def test_validate_config_invalid_weights():
     bad_weights = {
         "AGGREGATION_WEIGHTS": {"client1": "not-a-number"},

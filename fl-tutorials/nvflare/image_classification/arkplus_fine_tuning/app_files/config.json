@@ -1,5 +1,7 @@
 {
   "job_type": "standard",
+  "SERVER_CHECKPOINT": "pretrained_weights.pt",
+  "AGGREGATE_ONLY_REGEX": "omni_heads",
   "GLOBAL_ROUNDS": 50,
   "MIN_CLIENTS": 1,
   "WAIT_TIME_AFTER_MIN_RECEIVED": 0,

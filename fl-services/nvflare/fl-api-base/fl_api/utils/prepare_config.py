@@ -10,6 +10,7 @@
 # limitations under the License.
 #
 
+import re
 from pathlib import Path
 
 from nvflare.app_common.app_constant import EnvironmentKey
@@ -140,7 +141,36 @@ def configure_config(
     return config_json
 
 
-def configure_client(job_dir: Path, app_name: str, project_id: str, cohort_query: str) -> Path:
+def _inject_keep_only_vars_filter(config: dict, include_regex: str) -> None:
+    """Prepend a KeepOnlyVars filter to the ``train`` task_result_filters (client-side).
+
+    Shrinks the per-round client update to only the parameters matching ``include_regex`` (the
+    trainable ones), so a frozen-backbone fine-tune sends just its head instead of the full model
+    (FLIP#684). Prepended so it runs BEFORE any existing result filter (e.g. PercentilePrivacy),
+    which should see only the retained head — otherwise the percentile cutoff is skewed by the
+    ~0 diffs of the frozen backbone. Mutates ``config`` in place.
+    """
+    keep_filter = {
+        "id": "keep_only_trainable_vars",
+        "path": "flip.nvflare.components.KeepOnlyVars",
+        "args": {"include_vars": include_regex},
+    }
+    filters_blocks = config.setdefault("task_result_filters", [])
+    for block in filters_blocks:
+        if "train" in block.get("tasks", []):
+            block.setdefault("filters", []).insert(0, keep_filter)
+            return
+    # No existing train filter block — add one.
+    filters_blocks.append({"tasks": ["train"], "filters": [keep_filter]})
+
+
+def configure_client(
+    job_dir: Path,
+    app_name: str,
+    project_id: str,
+    cohort_query: str,
+    aggregate_only_regex: str | None = None,
+) -> Path:
     """
     Populates config_fed_client.json, necessary to modulate the client controllers in NVFLARE jobs, with the project_id
     and cohort_query.
@@ -150,6 +180,8 @@ def configure_client(job_dir: Path, app_name: str, project_id: str, cohort_query
         app_name (str): name of the job (corresponds to model_id)
         project_id (str): unique project_id identifier
         cohort_query (str): cohort query identifying the project (SQL query used to obtain the data)
+        aggregate_only_regex (str | None): when set, inject a KeepOnlyVars ``train`` result filter so
+            only matching (trainable) params are sent per round (frozen-backbone head-only, FLIP#684).
 
     Returns:
         Path: path to the client config file that was updated.
@@ -168,6 +200,10 @@ def configure_client(job_dir: Path, app_name: str, project_id: str, cohort_query
     # The client config must have the project_id and cohort_query to be able to run the job.
     config["project_id"] = project_id
     config["query"] = cohort_query
+
+    if aggregate_only_regex:
+        _inject_keep_only_vars_filter(config, aggregate_only_regex)
+        logger.info(f"Injected KeepOnlyVars train filter (include_vars={aggregate_only_regex!r}) for app '{app_name}'")
 
     logger.debug(f"Client config to be written: {config}")
 
@@ -293,7 +329,12 @@ def configure_meta(job_dir: Path, app_name: str, trusts: list[str]) -> Path:
     #     }
     # }
     if num_gpus > 0:
-        resource_spec = {trust: {"num_gpus": num_gpus, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib} for trust in trusts}
+        # NVFLARE's GPUResourceManager reads the requirement via num_gpu_key="num_of_gpus"
+        # (app_common/resource_managers/gpu_resource_manager.py) and RAISES if it's absent — so
+        # the key must be "num_of_gpus", not "num_gpus", or the job fails to schedule.
+        resource_spec = {
+            trust: {"num_of_gpus": num_gpus, "mem_per_gpu_in_GiB": mem_per_gpu_in_gib} for trust in trusts
+        }
     else:
         resource_spec = {}
 
@@ -400,5 +441,15 @@ def validate_config(config: dict) -> IOverridableConfig:
                 raise ValueError(f"Invalid weight: {val}")
 
         validated.AGGREGATION_WEIGHTS = weights
+
+    regex = config.get("AGGREGATE_ONLY_REGEX")
+    if regex:
+        if not isinstance(regex, str):
+            raise ValueError("AGGREGATE_ONLY_REGEX must be a string regex")
+        try:
+            re.compile(regex)
+        except re.error as exc:
+            raise ValueError(f"AGGREGATE_ONLY_REGEX is not a valid regex: {exc}") from exc
+        validated.AGGREGATE_ONLY_REGEX = regex
 
     return validated

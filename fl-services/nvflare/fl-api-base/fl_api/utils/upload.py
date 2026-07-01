@@ -295,6 +295,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
                 model_id,
                 body.project_id,
                 body.cohort_query,
+                aggregate_only_regex=config.AGGREGATE_ONLY_REGEX,
             )
 
             # Check if config_fed_server.json exists and verify its config.

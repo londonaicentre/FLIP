@@ -402,11 +402,15 @@ class ScatterAndGather(Controller):
             else:
                 if dxo.data_kind == DataKind.WEIGHT_DIFF:
                     # FedAVG receives WEIGHTS, so we need to update the WEIGHTS with the contents of WEIGHT_DIFF passed.
+                    # Partial-safe: a client may submit a diff for only a subset of vars (e.g. a
+                    # frozen-backbone fine-tune that sends only the trainable head via KeepOnlyVars,
+                    # FLIP#684). Keys absent from the diff keep their global value. This is a strict
+                    # superset of the old behaviour — a full diff still updates every key.
                     global_weights = self._global_weights["weights"]
                     diff = dxo.data
                     new_weights = {}
                     for k in global_weights:
-                        new_weights[k] = global_weights[k] + diff[k]
+                        new_weights[k] = global_weights[k] + diff[k] if k in diff else global_weights[k]
                     new_dxo = DXO(data_kind=DataKind.WEIGHTS, data=new_weights, meta=dxo.meta)
                     result = new_dxo.update_shareable(result)
                     self._log_memory_usage(fl_ctx, prefix=f"Round {self._current_round} after weight_diff_apply: ")
