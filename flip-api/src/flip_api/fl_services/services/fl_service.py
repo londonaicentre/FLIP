@@ -58,7 +58,14 @@ def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: s
         Any: The response from the server after uploading the application.
     """
     url = f"{endpoint}/upload_app/{model_id}"
-    response = http_post(url=url, data=training_details.model_dump())
+    # Stopgap timeout: staging a large evaluation checkpoint (S3 download -> shared volume on
+    # flip-fl-api) can take far longer than httpx's 5s default. Match fl-api-base's staging
+    # timeout so this blocking call doesn't abandon an in-progress upload.
+    # FIXME: this is a synchronous, blocking call on the run_jobs scheduler path — holding a
+    # request open for a multi-hundred-MB (up to 5 GB) transfer is fragile by design. The proper
+    # fix is to make upload_app async (flip-fl-api returns 202 + a staging-status endpoint that
+    # run_jobs polls, then submit_job once staged) rather than bumping the timeout. Tracked separately.
+    response = http_post(url=url, data=training_details.model_dump(), timeout=900)
     logger.info(f"upload_app response: {response}")
     # TODO There should be some response validation here, and the return type should not be Any
     return response
