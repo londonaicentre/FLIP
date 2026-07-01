@@ -15,6 +15,7 @@ import timm.models.swin_transformer as swin
 import torch
 import torch.nn as nn
 
+
 def _normalise_checkpoint_state_dict(checkpoint, pretrained_key=None):
     if pretrained_key:
         if pretrained_key not in checkpoint:
