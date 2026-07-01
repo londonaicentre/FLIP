@@ -9,9 +9,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-ROOT_DIR := $(abspath $(CURDIR)/../..)
-TESTING_DIR := $(ROOT_DIR)/testing
 APP_DIR := $(CURDIR)
+
+# Run job.py in the flip-utils environment with the `full` ML extra — the same package set the
+# flare-fl-base FL image installs (`uv sync --extra full`), so a local SimEnv run matches the deployed
+# image. A bare `uv run` would resolve to the repo-root venv, which has no torch/nvflare/monai. The
+# checkpoint-preprocessing target instead uses the tutorial-local `uv run` (this dir's pyproject.toml:
+# torch + timm, no NVFLARE), matching the legacy tutorial.
+FLIP_UTILS := $(abspath $(APP_DIR)/../../../../flip-utils)
+UV_RUN := uv run --project $(FLIP_UTILS) --extra full
 
 # --- Load app-specific env ---
 ifneq ("$(wildcard .env.app)","")
@@ -21,12 +27,11 @@ endif
 
 PROCESSED_CHECKPOINT := $(APP_DIR)/app_files/arkplus_pretrained_weights.pt
 
-# Resolve a (possibly empty) path against this app folder: absolute paths are kept,
-# relative paths are taken relative to the app directory, and empty stays empty. This lets
-# .env.app (or a `make VAR=...` override) use app-relative paths such as
-# RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar, regardless of the directory make is
-# invoked from — important because `run` delegates to the testing Makefile, whose recipes run
-# from a different directory. `override` makes the resolution apply to command-line values too.
+# Resolve a (possibly empty) path against this app folder: absolute paths are kept, relative paths are
+# taken relative to the app directory, and empty stays empty. This lets .env.app (or a `make VAR=...`
+# override) use app-relative paths such as RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar,
+# regardless of the directory make is invoked from. `override` makes the resolution apply to
+# command-line values too.
 abspath_app = $(if $(strip $(1)),$(abspath $(if $(filter /%,$(strip $(1))),$(strip $(1)),$(APP_DIR)/$(strip $(1)))))
 
 override RAW_CHECKPOINT   := $(call abspath_app,$(RAW_CHECKPOINT))
@@ -37,8 +42,9 @@ override SITE1_DATAFRAME  := $(call abspath_app,$(SITE1_DATAFRAME))
 override SITE2_IMAGES_DIR := $(call abspath_app,$(SITE2_IMAGES_DIR))
 override SITE2_DATAFRAME  := $(call abspath_app,$(SITE2_DATAFRAME))
 
-.PHONY: run shell down clean download-raw-checkpoint prepare-checkpoint
+.PHONY: run export sim download-raw-checkpoint prepare-checkpoint clean
 
+# --- Raw checkpoint download ---
 download-raw-checkpoint:
 	@if [ -z "$(RAW_CHECKPOINT)" ]; then \
 		echo "❌ RAW_CHECKPOINT is not set."; \
@@ -51,9 +57,13 @@ download-raw-checkpoint:
 	@curl -L -o "$(RAW_CHECKPOINT)" "https://www.dropbox.com/scl/fo/joycn8m93nvlrc8yjme40/ABBtPc5oaalYZ7kzmERpjhU/Ark%2B_Nature/Ark6_swinLarge768_ep50.pth.tar?rlkey=p3lphqvtgmiphw1n0u039jpjn&dl=1"
 	@echo "✅ Downloaded Ark+ foundation model checkpoint to $(RAW_CHECKPOINT)"
 
+# --- Checkpoint preprocessing ---
+# The evaluation app needs the foundation-model checkpoint as a clean `.pt` at
+# app_files/arkplus_pretrained_weights.pt. The server (EvaluationModelLocator) loads it and broadcasts
+# the weights to clients over the validate task. `prepare-checkpoint` is a no-op if it already exists.
 prepare-checkpoint:
 	@if [ -f "$(PROCESSED_CHECKPOINT)" ]; then \
-		echo "✅ Processed Ark+checkpoint found."; \
+		echo "✅ Processed Ark+ checkpoint found."; \
 	elif [ -z "$(RAW_CHECKPOINT)" ]; then \
 		echo "❌ RAW_CHECKPOINT is not set, and no processed checkpoint exists yet."; \
 		echo ""; \
@@ -76,29 +86,32 @@ prepare-checkpoint:
 			--entry "$(RAW_CHECKPOINT)" "$(PROCESSED_CHECKPOINT)" arkplus_pretrained; \
 	fi
 
-run: prepare-checkpoint
-	$(MAKE) -C $(TESTING_DIR) $@ \
-		JOB_TYPE="$(JOB_TYPE)" \
-		PATH_TO_APP="$(APP_DIR)" \
-		DEV_IMAGES_DIR="$(DEV_IMAGES_DIR)" \
-		DEV_DATAFRAME="$(DEV_DATAFRAME)" \
-		SITE1_IMAGES_DIR="$(SITE1_IMAGES_DIR)" \
-		SITE1_DATAFRAME="$(SITE1_DATAFRAME)" \
-		SITE2_IMAGES_DIR="$(SITE2_IMAGES_DIR)" \
-		SITE2_DATAFRAME="$(SITE2_DATAFRAME)"
+# --- Export job config (no GPU needed) ---
+# Builds a complete NVFLARE job under ./fl_job/flip_evaluation/ including meta.json, app/config/, and
+# app/custom/ (bundled flip/ package + staged app_files/ incl. the arkplus_pretrained_weights.pt checkpoint).
+export: prepare-checkpoint
+	$(UV_RUN) python job.py \
+		--export \
+		--export-dir ./fl_job \
+		--n_clients 2
 
-shell:
-	$(MAKE) -C $(TESTING_DIR) $@ \
-		JOB_TYPE="$(JOB_TYPE)" \
-		PATH_TO_APP="$(APP_DIR)" \
-		DEV_IMAGES_DIR="$(DEV_IMAGES_DIR)" \
-		DEV_DATAFRAME="$(DEV_DATAFRAME)" \
-		SITE1_IMAGES_DIR="$(SITE1_IMAGES_DIR)" \
-		SITE1_DATAFRAME="$(SITE1_DATAFRAME)" \
-		SITE2_IMAGES_DIR="$(SITE2_IMAGES_DIR)" \
-		SITE2_DATAFRAME="$(SITE2_DATAFRAME)"
-down:
-	$(MAKE) -C $(TESTING_DIR) $@
+# --- SimEnv local simulation (requires GPU + data + checkpoint) ---
+# Runs the job under the NVFLARE simulator. site-1/site-2 score distinct hold-out sets: the evaluator
+# reads SITE{1,2}_* by flare.get_site_name() (see app_files/data_utils.py). DEV_*/SITE{1,2}_* are already
+# resolved to absolute paths above so the simulator's client workers (which run from the workspace dir,
+# not here) find the LOCAL_DEV dataset. FLIP-specific values come from FLIP_PROJECT_ID / FLIP_QUERY.
+sim:
+	DEV_IMAGES_DIR="$(DEV_IMAGES_DIR)" DEV_DATAFRAME="$(DEV_DATAFRAME)" \
+	SITE1_IMAGES_DIR="$(SITE1_IMAGES_DIR)" SITE1_DATAFRAME="$(SITE1_DATAFRAME)" \
+	SITE2_IMAGES_DIR="$(SITE2_IMAGES_DIR)" SITE2_DATAFRAME="$(SITE2_DATAFRAME)" \
+	$(UV_RUN) python job.py \
+		--n_clients 2
+
+# --- Tutorial-harness entrypoint ---
+# The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app and invokes
+# `make run`. The Client API variant has no legacy testing/ harness path, so `run` prepares the checkpoint
+# and delegates to `sim` (the recipe/simulator path via job.py).
+run: prepare-checkpoint sim
 
 clean:
-	$(MAKE) -C $(TESTING_DIR) $@
+	rm -rf ./fl_job

@@ -11,23 +11,33 @@
     limitations under the License.
 -->
 
-# Baseline Ark+ Chest X-ray Evaluation — FLIP tutorial
+# Baseline Ark+ Chest X-ray Evaluation (NVFLARE Client API) — FLIP tutorial
 
-FLIP tutorial for federated evaluation of a single zero-shot Ark+ foundation
-model on chest X-ray classification. The hold-out data at each site is scored
-against the model and per-lesion AUROC is reported.
+FLIP tutorial for federated evaluation of a single zero-shot Ark+ foundation model on chest X-ray
+classification, using the **NVFLARE Client API**. The hold-out data at each site is scored against the
+model and per-lesion AUROC is reported.
+
+This tutorial replaces the previous executor-based implementation (`class FLIP_EVALUATOR(Executor)` +
+the bespoke `ModelEval`/`EvaluationPTModelLocator` server flow, weights arriving unwrapped from a
+`COLLECTION` DXO), which is now deprecated. Here, `evaluator.py` is a plain `nvflare.client` script
+(`flare.init/receive/send`, weights arriving as `input_model.params`), and the server reuses the shared
+`CrossSiteModelEval` validate path with a single-model `EvaluationModelLocator`; the job is a Python
+`FlipEvalRecipe` driven by `job.py` rather than a job-type template + harness.
+
+The recipe loads the uploaded checkpoint on the server and broadcasts it to every client as a single
+`FLModel`; the client's `is_evaluate()` branch scores it on the local cohort and returns aggregate
+per-lesion AUROC. The numerical pipeline (model, transforms, head inference, label mapping, AUROC) is
+identical to the previous implementation's, so the reported metrics match — only the FL transport
+differs. The `evaluation_results.json` output contract is unchanged.
 
 ## Compatible job type
 
-This tutorial is designed for `JOB_TYPE=evaluation`.
+This tutorial is designed for `JOB_TYPE=evaluation_client_api`.
 
 ## Prerequisites
 
 - Python 3.12+
-- Docker + Docker Compose
-- A GPU (the Ark+ Swin-Large model runs at 768×768)
-- `fl-tutorials/nvflare/testing/.env.testing` configured (at minimum
-  `FL_BASE_IMAGE_TAG`, `NUM_CLIENTS`)
+- A GPU (the Ark+ Swin-Large model runs at 768×768), plus the `flare-fl-base` image for a SimEnv run
 - Access to the Ark+ foundation-model checkpoint (see checkpoint setup below)
 
 ## Dataset setup
@@ -37,34 +47,37 @@ This app expects a DECAF-formatted chest X-ray dataset with:
 - A per-site CSV dataframe with `accession_id` and lesion labels
 - Images organised under `<images_dir>/<accession_id>/...` (DICOM)
 
-The dataset is configured through the `SITE_DATA` section in
-`app_files/config.json`. For local development, paths are also settable via
-`.env.app`:
+For local development, per-site paths are set in `.env.app`:
 
 - `DEV_IMAGES_DIR` / `DEV_DATAFRAME` (single-site dev default)
 - `SITE1_IMAGES_DIR` / `SITE1_DATAFRAME`, `SITE2_IMAGES_DIR` / `SITE2_DATAFRAME`
-  (per-site, for a 2-client simulation)
+  (per-site, for the 2-client simulation)
+
+### Per-site data in the simulator
+
+Unlike the previous executor-based implementation (whose testing harness Docker-mounted each site's data
+onto the `SITE_DATA` paths in `config.json`), the Client-API SimEnv runs **in-process with no Docker
+mounts**. Per-site data is
+therefore selected inside the evaluator: it calls `flare.get_site_name()` (`site-1`/`site-2`) and
+`app_files/data_utils.py` resolves the matching `SITE{N}_IMAGES_DIR` / `SITE{N}_DATAFRAME` from `.env.app`
+(falling back to the single `DEV_*` paths). So `site-1` and `site-2` score **different** hold-out sets.
 
 ### Simulator vs. real deployment
 
-`SITE_DATA` and the `/site-data/site-N/...` mounts are **simulator-only**. The NVFLARE
-simulator runs every client (`site-1`, `site-2`) inside one container, so per-site data must
-be given a distinct mount target selected by client name — this is local development only.
-
-On a real federated client the fl-client runs with `LOCAL_DEV=false`, and the data layer
-ignores `SITE_DATA` entirely: the cohort dataframe comes from
-`FLIP().get_dataframe(project_id, query)` and DICOMs from `FLIP().get_by_accession_number(...)`
-(the trust's data-access-api / imaging-api), reading downloaded images from the single shared
-`/app/data/images` mount — there are no per-site mounts. `project_id`/`query` are supplied by
-the FL job config (`config_fed_client.json` → `RUN_EVALUATOR`). The switch is keyed on
-`LOCAL_DEV` in `app_files/data_utils.py` (`_is_local_dev`), mirroring the flip package's own
-`FLIPStandardDev`/`FLIPStandardProd` selection.
+The per-site local paths are **simulator-only**. On a real federated client the fl-client runs with
+`LOCAL_DEV=false`, and the data layer ignores the local paths entirely: the cohort dataframe comes from
+`FLIP().get_dataframe(project_id, query)` and DICOMs from `FLIP().get_by_accession_number(...)` (the
+trust's data-access-api / imaging-api). `project_id`/`query` are supplied by the FL job config — `project_id`
+via the evaluator's `--project_id {project_id}` arg (substituted by the FLIP-API) and `query` via the
+top-level `query` key of `config_fed_client.json` (read by `evaluator.load_query()`). The switch is keyed on
+`LOCAL_DEV` in `app_files/data_utils.py` (`_is_local_dev`).
 
 ## Checkpoint setup
 
-The evaluation app needs the foundation-model checkpoint as a clean `.pt` file
-at `app_files/arkplus_pretrained_weights.pt`. This is produced from the raw Ark6
-training output (`Ark6_swinLarge768_ep50.pth.tar`) in two steps:
+The evaluation app needs the foundation-model checkpoint as a clean `.pt` file at
+`app_files/arkplus_pretrained_weights.pt`. The **server** loads it (`EvaluationModelLocator`) and broadcasts
+the weights to clients over the validate task — the clients never read the `.pt`. It is produced from the raw
+Ark6 training output (`Ark6_swinLarge768_ep50.pth.tar`) in two steps:
 
 1. **Fetch the raw checkpoint** (once):
 
@@ -72,68 +85,68 @@ training output (`Ark6_swinLarge768_ep50.pth.tar`) in two steps:
    make download-raw-checkpoint
    ```
 
-   This downloads `Ark6_swinLarge768_ep50.pth.tar` to the path given by
-   `RAW_CHECKPOINT` in `.env.app` (default `models/Ark6_swinLarge768_ep50.pth.tar`,
-   an app-relative path). If you already have the file, point `RAW_CHECKPOINT` at
-   it instead. Access to the raw checkpoint is via
+   This downloads `Ark6_swinLarge768_ep50.pth.tar` to the path given by `RAW_CHECKPOINT` in `.env.app`
+   (default `models/Ark6_swinLarge768_ep50.pth.tar`, an app-relative path). If you already have the file,
+   point `RAW_CHECKPOINT` at it instead. Access to the raw checkpoint is via
    [this form](https://forms.gle/qkoDGXNiKRPTDdCe8).
 
-2. **Prepare (pre-process) it** — done automatically by `make run`, or on demand:
+2. **Prepare (pre-process) it** — done automatically by `make run`/`make export`, or on demand:
 
    ```bash
    make prepare-checkpoint
    ```
 
-   `prepare-checkpoint` is a no-op if `arkplus_pretrained_weights.pt` already
-   exists; otherwise it converts the raw checkpoint into a clean state dict that
-   passes `EvaluationPTModelLocator`'s `strict=True` validation. The conversion
-   script lives at `process_tools/preprocess_checkpoints.py` — see
-   [process_tools/README.md](process_tools/README.md) for the extraction and
-   key-remapping details.
+   `prepare-checkpoint` is a no-op if `arkplus_pretrained_weights.pt` already exists; otherwise it converts
+   the raw checkpoint into a clean state dict (runs in this tutorial's local `uv` env). The conversion script
+   lives at `process_tools/preprocess_checkpoints.py` — see
+   [process_tools/README.md](process_tools/README.md) for the extraction and key-remapping details.
 
 ## App configuration
 
 Default local development settings are in `.env.app`:
 
-- `JOB_TYPE=evaluation`
+- `JOB_TYPE=evaluation_client_api`
 - `RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar`
 - `DEV_IMAGES_DIR` / `DEV_DATAFRAME` and the per-site `SITE{1,2}_*` paths
+- `FLIP_PROJECT_ID` / `FLIP_QUERY` (injected into the recipe for SimEnv; ignored under `LOCAL_DEV`)
 
-The model is defined in `app_files/arkplus_flat_models.py`, built by
-`app_files/models.py`, and registered in `config.json["models"]` via its path key
-(`arkplus_multihead`). The mapping from the model's NIH-14 head outputs to the
-target DECAF lesions lives in `app_files/data_utils.py` (`MAPPING_REGISTRY`).
+The model is defined in `app_files/arkplus_flat_models.py`, built by `app_files/models.py` (`get_model()`),
+and registered in `config.json["models"]`. The mapping from the model's NIH-14 head outputs to the target
+DECAF lesions lives in `app_files/data_utils.py` (`MAPPING_REGISTRY`).
+
+`make export`/`make run` run `job.py` in the **flip-utils** environment with the `full` ML extra (the same
+package set the `flare-fl-base` FL image installs) so a local run matches the deployed image.
 
 ## Run the tutorial
 
+`job.py` drives the recipe in two modes.
+
 ```bash
 make download-raw-checkpoint   # once: fetch the raw Ark6 checkpoint into models/
-make run                       # prepares the checkpoint (if needed), then runs eval
+
+# Export the complete NVFLARE job for review or Docker deployment (no GPU needed)
+make export                    # prepares the checkpoint, then writes ./fl_job/flip_evaluation/
+
+# SimEnv local simulation (requires GPU + data + checkpoint)
+make run                       # prepares the checkpoint (if needed), then runs the simulator via `make sim`
 ```
 
-Useful targets:
+Useful targets: `make prepare-checkpoint` (convert the raw checkpoint only), `make clean` (removes `./fl_job`).
 
-- `make prepare-checkpoint`: convert the raw checkpoint to a clean `.pt` only
-- `make shell`: interactive shell in the simulator container
-- `make down`: stop the simulator service
-- `make clean`: remove generated simulator artifacts
+## Key files
 
-## Key evaluation files
+- `app_files/evaluator.py`: the Client-API evaluation loop (receive model → score → send per-lesion AUROC).
+- `app_files/arkplus_flat_models.py`: the `ArkSwinTransformer` model definition.
+- `app_files/models.py`: model factory (`get_model()`).
+- `app_files/metrics_utils.py`: AUROC and head→lesion label mapping.
+- `app_files/data_utils.py`: data loading, DICOM parsing, label mappings, transforms, per-site resolution.
+- `app_files/config.json`: model/checkpoint mapping and evaluation settings.
+- `job.py`: builds `FlipEvalRecipe` and runs export / SimEnv.
 
-- `app_files/evaluator.py`: evaluation loop, per-model inference, per-lesion AUROC
-- `app_files/arkplus_flat_models.py`: the `ArkSwinTransformer` model definition
-- `app_files/models.py`: model factory (`model_paths` dict)
-- `app_files/metrics_utils.py`: AUROC and head→lesion label mapping
-- `app_files/data_utils.py`: data loading, DICOM parsing, label mappings, transforms
-- `app_files/config.json`: model/checkpoint mapping and evaluation settings
+## Output metrics
 
-## Evaluation output
-
-Each client returns a DXO of kind `METRICS` whose data dict is saved by the
-server into `evaluation_results.json` under the client's site name. The baseline
-evaluator returns per-lesion AUROC for the single model.
-
-### Example `evaluation_results.json`
+The evaluator returns **aggregate** (cohort-level) per-lesion AUROC only, collected by the server into
+`evaluation_results.json` keyed by site then model:
 
 ```json
 {
@@ -147,7 +160,7 @@ evaluator returns per-lesion AUROC for the single model.
         }
     },
     "site-2": {
-        ...
+        "...": "..."
     }
 }
 ```
@@ -160,21 +173,15 @@ evaluator returns per-lesion AUROC for the single model.
 |-----|------|-------------|
 | `auroc_<Lesion>` | `float` | Area under the ROC curve for this lesion. Ranges `[0, 1]`; `NaN` if only one class is present in the ground truth. |
 
-### Per-model output files
-
-In addition to `evaluation_results.json`, the evaluator writes to
-`manual_save_eval_results/` in the job workspace:
-
-- `arkplus_pretrained_predictions.csv` — per-sample predictions and ground-truth labels
-- `per_model_metrics.csv` — flat table of model, label, AUROC
-- `run_metadata.json` — sample count, model list, label order
+Per-sample (row-level) predictions are deliberately **not** produced or exported: a per-patient list would
+leak the exact evaluation cohort size and be linkable to individual patients. (The previous executor-based
+implementation wrote per-sample CSVs to the run dir; this tutorial omits them.)
 
 ## Model code & `timm` compatibility
 
-`app_files/arkplus_flat_models.py` adapts the `ArkSwinTransformer` from the
-original Ark+ repository ([jlianglab/Ark](https://github.com/jlianglab/Ark)),
-which pins **`timm==0.5.4`**. The model's `forward` is intentionally kept
-identical to the upstream version:
+`app_files/arkplus_flat_models.py` adapts the `ArkSwinTransformer` from the original Ark+ repository
+([jlianglab/Ark](https://github.com/jlianglab/Ark)), which pins **`timm==0.5.4`**. The model's `forward` is
+intentionally kept identical to the upstream version:
 
 ```python
 x = self.forward_features(x)
@@ -183,34 +190,28 @@ if self.projector:
 return x, self.omni_heads[head_n](x)
 ```
 
-There is a subtle cross-version gotcha here. In **timm 0.5.4**,
-`SwinTransformer.forward_features` pooled internally — it ended with
-`AdaptiveAvgPool1d(1)` and returned a per-image `(B, C)` vector — so the Ark
-`forward` never needed to pool. In **modern timm (1.x)**, that global average pool
-was **moved out** of `forward_features` (it now lives in `forward_head`), and
-`forward_features` returns the *unpooled* spatial feature map `(B, H, W, C)`
-(a 24×24 grid for a 768px Swin).
+There is a subtle cross-version gotcha here. In **timm 0.5.4**, `SwinTransformer.forward_features` pooled
+internally — it ended with `AdaptiveAvgPool1d(1)` and returned a per-image `(B, C)` vector — so the Ark
+`forward` never needed to pool. In **modern timm (1.x)**, that global average pool was **moved out** of
+`forward_features` (it now lives in `forward_head`), and `forward_features` returns the *unpooled* spatial
+feature map `(B, H, W, C)` (a 24×24 grid for a 768px Swin).
 
-This tutorial runs on modern timm, and the upstream `forward` bypasses
-`forward_head` (it uses its own `omni_heads`). Without an explicit pool, the
-heads therefore emitted a **per-location** grid of outputs instead of one
-prediction per image — which produced mis-shaped predictions and made AUROC fail
-with `ValueError: multi_class must be in ('ovo', 'ovr')`.
+This tutorial runs on modern timm, and the upstream `forward` bypasses `forward_head` (it uses its own
+`omni_heads`). Without an explicit pool, the heads therefore emitted a **per-location** grid of outputs
+instead of one prediction per image — which produced mis-shaped predictions and made AUROC fail with
+`ValueError: multi_class must be in ('ovo', 'ovr')`.
 
-**Fix.** `forward` (and `generate_embeddings`) now apply an explicit
-global-average-pool over the spatial dims right after `forward_features`,
-restoring the timm 0.5.4 behaviour and matching the Swin head's default
-`global_pool='avg'`:
+**Fix.** `forward` (and `generate_embeddings`) now apply an explicit global-average-pool over the spatial
+dims right after `forward_features`, restoring the timm 0.5.4 behaviour and matching the Swin head's
+default `global_pool='avg'`:
 
 ```python
 x = self.forward_features(x)
 x = self._global_pool(x)   # mean over spatial dims; no-op if already (B, C)
 ```
 
-**Verified equivalent.** Holding the backbone fixed, the explicit pool was
-compared against an exact replica of timm 0.5.4's `AdaptiveAvgPool1d(1)` pooling.
-The pooled features and all head outputs were **bit-for-bit identical**
-(`max |Δ| = 0.0`) — averaging over the flattened sequence of tokens (`L`) is the
-same operation as averaging over the `H×W` grid (`L = H×W`). The fix is also
-shape-robust: it is a no-op if a future `timm` returns an already-pooled
-`(B, C)` tensor.
+**Verified equivalent.** Holding the backbone fixed, the explicit pool was compared against an exact
+replica of timm 0.5.4's `AdaptiveAvgPool1d(1)` pooling. The pooled features and all head outputs were
+**bit-for-bit identical** (`max |Δ| = 0.0`) — averaging over the flattened sequence of tokens (`L`) is the
+same operation as averaging over the `H×W` grid (`L = H×W`). The fix is also shape-robust: it is a no-op
+if a future `timm` returns an already-pooled `(B, C)` tensor.

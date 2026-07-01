@@ -222,8 +222,24 @@ def get_site_data_config(config: dict | None = None, site_name: str | None = Non
     if entry is None:
         entry = {}
 
-    images_dir = entry.get("images_dir") or os.environ.get("DEV_IMAGES_DIR")
-    dataframe = entry.get("dataframe") or os.environ.get("DEV_DATAFRAME")
+    # Per-site data resolution for the in-process Client-API simulator (no Docker mounts). Precedence:
+    #   1. SITE{N}_IMAGES_DIR / SITE{N}_DATAFRAME env (mapped from the NVFLARE site name, "site-1" -> "SITE1")
+    #   2. the config SITE_DATA entry's path
+    #   3. the single-site DEV_* env
+    # Per-site env wins because config SITE_DATA holds the legacy container-mount targets (/site-data/...),
+    # which don't exist in the no-Docker SimEnv; the real per-site host paths live in .env.app as SITE{N}_*.
+    # (In the legacy executor tutorial this per-site wiring was done by the testing harness' Docker mounts.)
+    site_env = requested_site.replace("-", "").upper() if requested_site else ""  # "site-1" -> "SITE1"
+    images_dir = (
+        (os.environ.get(f"{site_env}_IMAGES_DIR") if site_env else None)
+        or entry.get("images_dir")
+        or os.environ.get("DEV_IMAGES_DIR")
+    )
+    dataframe = (
+        (os.environ.get(f"{site_env}_DATAFRAME") if site_env else None)
+        or entry.get("dataframe")
+        or os.environ.get("DEV_DATAFRAME")
+    )
     resolved_site = requested_site or "default"
     return SiteDataConfig(site_name=resolved_site, images_dir=images_dir, dataframe=dataframe)
 
