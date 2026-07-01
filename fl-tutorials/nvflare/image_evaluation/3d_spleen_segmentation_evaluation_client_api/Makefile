@@ -23,28 +23,41 @@ include ./.env.app
 export $(shell sed 's/=.*//' ./.env.app)
 endif
 
-.PHONY: run export sim clean
+.PHONY: run export sim download-checkpoints clean
+
+# --- Checkpoint download ---
+# The evaluation app needs the uploaded model checkpoint in app_files/ (the server loads it and
+# broadcasts the weights to clients over the validate task).
+download-checkpoints:
+	@set -e; \
+	ckpt="$(notdir $(MODEL_CHECKPOINT_URL))"; \
+	dst="$(APP_DIR)/app_files/$$ckpt"; \
+	echo "Checking for: $$dst"; \
+	if [ ! -f "$$dst" ]; then \
+		echo "Downloading from $(MODEL_CHECKPOINT_URL) ..."; \
+		curl -fL "$(MODEL_CHECKPOINT_URL)" -o "$$dst"; \
+	else \
+		echo "Checkpoint file $$ckpt already exists, skipping download."; \
+	fi
 
 # --- Tutorial-harness entrypoint ---
-# The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app
-# and invokes `make run`. The Client API variant has no legacy testing/ harness path, so
-# `run` delegates to `sim` (the recipe/simulator path via job.py).
-run: sim
+# The shared harness (fl-tutorials/nvflare/Makefile) auto-discovers any dir with a .env.app and
+# invokes `make run`. The Client API variant has no legacy testing/ harness path, so `run` delegates
+# to `sim` (the recipe/simulator path via job.py) after ensuring the checkpoint is present.
+run: download-checkpoints sim
 
 # --- Export job config (no GPU needed) ---
-# Builds a complete NVFLARE job under ./fl_job/flip_fedavg/ including meta.json,
-# app/config/, and app/custom/ (bundled flip/ package + staged app_files/).
-# FLIP-specific values (project_id, query) are injected via environment variables.
-export:
+# Builds a complete NVFLARE job under ./fl_job/flip_evaluation/ including meta.json, app/config/, and
+# app/custom/ (bundled flip/ package + staged app_files/ incl. the model.pt checkpoint).
+export: download-checkpoints
 	$(UV_RUN) python job.py \
 		--export \
 		--export-dir ./fl_job \
-		--n_clients 2 \
-		--num_rounds 3
+		--n_clients 2
 
-# --- SimEnv local simulation (requires GPU + data) ---
-# Runs the job under the NVFLARE simulator. Requires a GPU and the reference
-# dataset (run `make -C fl-tutorials download-xray-data` first).
+# --- SimEnv local simulation (requires GPU + data + checkpoint) ---
+# Runs the job under the NVFLARE simulator. Requires a GPU and the reference dataset
+# (run `make -C fl-tutorials download-spleen-data` first).
 # FLIP-specific values are read from FLIP_PROJECT_ID and FLIP_QUERY env vars.
 # DEV_IMAGES_DIR/DEV_DATAFRAME are resolved to absolute paths so the simulator's client workers
 # (which run from the workspace dir, not here) find the LOCAL_DEV dataset.
@@ -52,8 +65,7 @@ sim:
 	DEV_IMAGES_DIR="$(abspath $(DEV_IMAGES_DIR))" \
 	DEV_DATAFRAME="$(abspath $(DEV_DATAFRAME))" \
 	$(UV_RUN) python job.py \
-		--n_clients 2 \
-		--num_rounds 3
+		--n_clients 2
 
 clean:
 	rm -rf ./fl_job

@@ -9,15 +9,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Driver script: regenerate the committed client_api app/config JSONs and meta.json.
+"""Driver script: regenerate the committed standard_client_api app/config JSONs and meta.json.
 
 Run from the flip-utils venv (needs flip + nvflare + torch):
 
     cd flip-utils && uv run --no-sync python - <<'PY'
     import sys, types, torch, runpy
     m = types.ModuleType("models"); m.get_model = lambda: torch.nn.Linear(1, 1); sys.modules["models"] = m
-    sys.argv = ["recipe.py", "--output", "../fl-apps/nvflare/client_api"]
-    runpy.run_path("../fl-apps/nvflare/client_api/recipe.py", run_name="__main__")
+    sys.argv = ["recipe.py", "--output", "../fl-apps/nvflare/standard_client_api"]
+    runpy.run_path("../fl-apps/nvflare/standard_client_api/recipe.py", run_name="__main__")
     PY
 
 Do NOT hand-edit the generated JSON files — regenerate them via this script after any
@@ -35,9 +35,9 @@ from flip.nvflare.recipes import FlipFedAvgRecipe
 
 
 def main() -> None:
-    """Export FlipFedAvgRecipe configs into the client_api template directory."""
+    """Export FlipFedAvgRecipe configs into the standard_client_api template directory."""
     parser = argparse.ArgumentParser(
-        description="Regenerate the client_api app/config JSONs and meta.json from FlipFedAvgRecipe."
+        description="Regenerate the standard_client_api app/config JSONs and meta.json from FlipFedAvgRecipe."
     )
     parser.add_argument(
         "--output",

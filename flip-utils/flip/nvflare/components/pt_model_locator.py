@@ -210,3 +210,74 @@ class EvaluationPTModelLocator(ModelLocator):
 
         # Create dxo and return
         return DXO(data_kind=DataKind.COLLECTION, data=all_model_dxo)
+
+
+class EvaluationModelLocator(ModelLocator):
+    """Locate uploaded checkpoint(s) for Client-API evaluation under the *standard* ModelLocator interface.
+
+    Unlike :class:`EvaluationPTModelLocator` — which returns a single ``DataKind.COLLECTION`` DXO for the
+    bespoke ``ModelEval`` controller — this exposes the stock ``get_model_names`` + ``locate_model(model_name,
+    fl_ctx)`` contract so it drives the shared :class:`~flip.nvflare.controllers.CrossSiteModelEval` validate
+    workflow directly. Each model named in ``config.json['models']`` becomes one ``DataKind.WEIGHTS`` DXO that
+    the server broadcasts to clients as a single ``FLModel`` for the Client-API ``is_evaluate()`` path.
+
+    The checkpoints are loaded from the app's ``custom/`` directory (server-side only); clients never read
+    the ``.pt`` files — they receive the weights over the ``validate`` task.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.models: dict | None = None
+
+    def _load_models(self, fl_ctx: FLContext) -> None:
+        """Read ``config.json['models']`` and load each named checkpoint from ``custom/`` into ``self.models``."""
+        app_dir = fl_ctx.get_engine().get_workspace().get_app_dir(fl_ctx.get_job_id())
+        config_path = os.path.join(app_dir, "custom", "config.json")
+
+        with open(config_path) as file:
+            config = json.load(file)
+
+        if "models" not in config:
+            self.log_error(
+                fl_ctx,
+                "In the evaluation pipeline, a 'models' key mapping each model to its checkpoint must be "
+                "present in config.json.",
+                fire_event=True,
+            )
+            self.models = {}
+            return
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.models = {}
+        for name, model_info in config["models"].items():
+            checkpoint_path = os.path.join(app_dir, "custom", model_info["checkpoint"])
+            if not os.path.isfile(checkpoint_path):
+                self.log_error(
+                    fl_ctx,
+                    f"Model checkpoint for model {name} not found at {checkpoint_path}",
+                    fire_event=True,
+                )
+                continue
+            self.models[name] = torch.load(checkpoint_path, weights_only=True, map_location=device)
+
+    def get_model_names(self, fl_ctx: FLContext) -> list[str]:
+        if self.models is None:
+            self._load_models(fl_ctx)
+        assert self.models is not None  # _load_models always assigns a dict
+        return list(self.models.keys())
+
+    def locate_model(self, model_name: str, fl_ctx: FLContext) -> DXO | None:
+        if self.models is None:
+            self._load_models(fl_ctx)
+        assert self.models is not None  # _load_models always assigns a dict
+
+        weights = self.models.get(model_name)
+        if weights is None:
+            self.log_error(
+                fl_ctx, f"EvaluationModelLocator has no checkpoint for model: {model_name}", fire_event=False
+            )
+            return None
+
+        persistence_manager = PTModelPersistenceFormatManager(weights, default_train_conf=None)
+        ml = persistence_manager.to_model_learnable(exclude_vars=None)
+        return model_learnable_to_dxo(ml)
