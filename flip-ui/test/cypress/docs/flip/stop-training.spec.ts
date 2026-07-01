@@ -32,9 +32,6 @@ describe("docs: stop training", () => {
         cy.wait("@getModel");
         cy.demoPause();
 
-        cy.getBySel("user-btn").demoClick();
-        cy.demoPause();
-
         cy.getBySel("stop-training-btn").demoClick();
         cy.demoPause();
 

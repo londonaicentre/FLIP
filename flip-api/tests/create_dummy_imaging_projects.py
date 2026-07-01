@@ -17,7 +17,7 @@ Run from `flip-api/`:
 
 Uses the project + cohort save/submit helpers from `debug_prelaunch_task` so
 auth, error handling, and trust submission stay in one place. The xray query
-mirrors flip-fl-base's `tutorials/image_classification/xray_classification/query.sql`;
+mirrors `fl-tutorials/nvflare/image_classification/xray_classification/query.sql`;
 the spleen query mirrors `tutorials/image_segmentation/3d_spleen_segmentation/query.sql`.
 """
 

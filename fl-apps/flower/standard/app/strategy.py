@@ -13,7 +13,7 @@
 
 """Custom Federated Learning strategies."""
 
-from typing import Iterable
+from collections.abc import Iterable
 
 from flip import FLIP
 from flip.constants.flip_constants import ModelStatus

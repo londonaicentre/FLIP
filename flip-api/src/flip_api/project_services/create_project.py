@@ -40,7 +40,7 @@ def create_project_endpoint(
     payload: ProjectDetails = Body(...),
     user_id: UUID = Depends(verify_token),
     db: Session = Depends(get_session),
-):
+) -> IId:
     """
     Creates a new project with the provided details.
 

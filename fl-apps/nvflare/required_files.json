@@ -1,4 +1,9 @@
 {
+  "client_api": [
+    "trainer.py",
+    "config.json",
+    "models.py"
+  ],
   "diffusion_model": [
     "trainer.py",
     "validator.py",

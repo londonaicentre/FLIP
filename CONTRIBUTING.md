@@ -42,10 +42,8 @@ When creating issues, please use the appropriate issue template:
 FLIP is developed by the [London AI Centre](https://www.aicentre.co.uk/) in collaboration with Guy's and St Thomas' NHS Foundation Trust and King's College London. It is an open-source platform for federated training and evaluation of medical imaging AI models across healthcare institutions, while ensuring data privacy and security.
 
 The FLIP repository is a mono-repo: it consolidates the Central Hub API, Trust APIs, UI, Docker deployment, **and**
-the federated learning code (base library, FL services, and tutorials) that was previously split across the legacy
-[`flip-fl-base`](https://github.com/londonaicentre/flip-fl-base) (NVFLARE) and
-[`flip-fl-base-flower`](https://github.com/londonaicentre/flip-fl-base-flower) (Flower) repositories, which are now
-archived. Both backends are also provisioned in-tree (gitignored) under `deploy/providers/<backend>/` (see
+the federated learning code (base library, FL services, and tutorials) for both NVFLARE and Flower. Both backends
+are also provisioned in-tree (gitignored) under `fl-services/<backend>/provision/` (see
 [`README.md#federated-learning-setup`](README.md#federated-learning-setup)).
 
 ```bash
@@ -106,6 +104,18 @@ Other useful tools:
 
 - [Postman](https://www.postman.com/) — API testing
 - [Homebrew](https://brew.sh/) — package manager for macOS/Linux
+
+#### Open the multi-root workspace (not the folder)
+
+FLIP is a monorepo of independent Python sub-projects, each with its own `.venv` and `pyproject.toml`. Open it via the
+checked-in [`flip.code-workspace`](flip.code-workspace) — **File → Open Workspace from File…** — rather than opening the
+repo root as a plain folder. The multi-root workspace lets Pylance use each folder's own interpreter and Ruff its own
+config; for example, `nvflare` imports resolve only when `fl-services/nvflare/fl-api-base` is using its own `.venv`.
+Opening the repo root as a single folder applies one interpreter (flip-api) to every file, so cross-project imports such
+as `nvflare` show up as unresolved.
+
+After opening, confirm the per-folder interpreter with **Python: Select Interpreter** (it prompts for the folder first,
+then the `.venv`), and run **Developer: Reload Window** if an import is still flagged.
 
 ### Python environment management
 
@@ -223,7 +233,7 @@ Hub) communicates with flip-api. FL clients relay metrics and exceptions to the 
 
 **FL-specific environment variables:**
 
-- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): NVFLARE at `deploy/providers/nvflare/workspace`, Flower at `deploy/providers/flower/certs`.
+- `FL_PROVISIONED_DIR` — path to the NVFLARE or Flower provisioned workspace, derived per-backend by `deploy/fl_backend.mk` from `FL_BACKEND`. The Makefile automatically converts this to an absolute path (Docker requires absolute paths for volume mounts). This directory contains certificates, keys, `fed_client.json`, and other files generated during provisioning for each network. Both are now provisioned in-tree (gitignored): NVFLARE at `fl-services/nvflare/provision/workspace-dev`, Flower at `fl-services/flower/provision/creds`.
 - `FL_API_PORT` — port for FL API services (default: `8000`).
 
 ### Setting up AWS access
@@ -268,6 +278,24 @@ make ci
 ```
 
 This runs all jobs defined in `.github/workflows/` locally.
+
+### CI checks on forks
+
+Contributors work from a [fork](#the-contribution-process), and a fork's CI runs with the fork's own `GITHUB_TOKEN`
+and **without** the upstream repository secrets. Workflows that **publish or deploy** therefore cannot run on a fork —
+they would only ever fail trying to reach `londonaicentre`-owned resources — so each is guarded with
+`if: github.repository == 'londonaicentre/FLIP'` and shows up as **skipped** (neutral, not a red failure) on fork
+pushes. These are:
+
+- **Image publishing** — `Build and Push NVFLARE/Flower FL Docker Images`, and the `orthanc`, `xnat-*`, `flip-api`,
+  and `trust-*` GHCR build-and-push workflows.
+- **S3 sync** — the `fl-apps-push-s3-*` workflows (AWS OIDC into the upstream account).
+- **Releases** — `release.yml` and `release-pypi.yml` (git tags, GitHub releases, PyPI publishing).
+
+Everything that **validates** your change still runs on your fork, and a red result there is a real failure to fix:
+lint, type-checking, unit and integration tests, docs, Terraform validation, Helm tests, and secret scanning.
+Coverage upload to Codecov is non-blocking (`fail_ci_if_error: false`), so a missing `CODECOV_TOKEN` on your fork
+never fails an otherwise-green job.
 
 ### Running the stack (pull vs. build)
 

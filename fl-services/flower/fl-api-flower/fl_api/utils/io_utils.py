@@ -29,7 +29,7 @@ def read_config(config_json: Path) -> dict:
     return config
 
 
-def write_config(config: dict, config_json: Path):
+def write_config(config: dict, config_json: Path) -> None:
     """
     Writes a dictionary to a JSON configuration file.
 

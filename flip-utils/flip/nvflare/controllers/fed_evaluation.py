@@ -13,7 +13,6 @@
 import os
 import shutil
 import time
-from typing import Union
 
 from nvflare.apis.client import Client
 from nvflare.apis.controller_spec import ClientTask, Task
@@ -33,7 +32,7 @@ from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
 
 from flip import FLIP
 from flip.constants import FlipTasks, PTConstants
-from flip.utils import Utils
+from flip.nvflare.runtime import get_flip_model_id
 
 
 class ModelEval(Controller):
@@ -93,9 +92,6 @@ class ModelEval(Controller):
             raise TypeError("evaluation_task_name must be a string but got {}".format(type(evaluation_task_name)))
         if not isinstance(cleanup_models, bool):
             raise TypeError("cleanup_models must be bool but got {}".format(type(cleanup_models)))
-        if not Utils.is_valid_uuid(model_id):
-            raise ValueError(f"The model ID: {model_id} is not a valid UUID")
-
         if participating_clients:
             if not isinstance(participating_clients, list):
                 raise TypeError("participating_clients must be a list but got {}".format(type(participating_clients)))
@@ -133,7 +129,13 @@ class ModelEval(Controller):
         self._model_locator = None
         self._cleanup_timeout = cleanup_timeout
         self._fatal_error_delay = fatal_error_delay
-        self._model_id = model_id
+        self._model_id_fallback = model_id
+        self._model_id: str | None = None
+
+    def _resolve_model_id(self, fl_ctx: FLContext) -> str:
+        if self._model_id is None:
+            self._model_id = get_flip_model_id(fl_ctx, fallback=self._model_id_fallback)
+        return self._model_id
 
     def start_controller(self, fl_ctx: FLContext):
         engine = fl_ctx.get_engine()
@@ -372,7 +374,9 @@ class ModelEval(Controller):
                 if formatted_exception is not None:
                     self.log_error(fl_ctx, formatted_exception)
                     self.flip.send_handled_exception(
-                        formatted_exception=formatted_exception, client_name=client_name, model_id=self._model_id
+                        formatted_exception=formatted_exception,
+                        client_name=client_name,
+                        model_id=self._resolve_model_id(fl_ctx),
                     )
 
                 self.log_error(
@@ -426,7 +430,9 @@ class ModelEval(Controller):
                 if formatted_exception is not None:
                     self.log_error(fl_ctx, formatted_exception)
                     self.flip.send_handled_exception(
-                        formatted_exception=formatted_exception, client_name=client_name, model_id=self._model_id
+                        formatted_exception=formatted_exception,
+                        client_name=client_name,
+                        model_id=self._resolve_model_id(fl_ctx),
                     )
 
                 self.log_error(fl_ctx, "Execution Exception in model validation.")
@@ -454,7 +460,7 @@ class ModelEval(Controller):
                 reason = f"Unable to save validation result from {client_name}. Exception: {str(v_e)}"
                 self.log_exception(fl_ctx, reason)
 
-    def _load_validation_content(self, name: str, load_dir: str, fl_ctx: FLContext) -> Union[DXO, None]:
+    def _load_validation_content(self, name: str, load_dir: str, fl_ctx: FLContext) -> DXO | None:
         # Load shareable from disk
         shareable_filename = os.path.join(load_dir, name)
         dxo: DXO = None

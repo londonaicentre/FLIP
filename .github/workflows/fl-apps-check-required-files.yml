@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
       - name: Regenerate per-backend required_files manifests
         run: bash fl-apps/check_required_files.sh
       - name: Fail if committed manifests are stale

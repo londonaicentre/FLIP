@@ -31,9 +31,12 @@ jobs:
   build-and-push:
     # Only publish when the upstream test run passed. workflow_dispatch (manual)
     # has no workflow_run context, so allow it through unconditionally.
+    # The repository guard skips publishing on forks, which cannot push to
+    # ghcr.io/londonaicentre and would otherwise show a spurious CI failure.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success') &&
+      github.repository == 'londonaicentre/FLIP'
     runs-on: ubuntu-latest
     permissions: # override top-level read-only default to allow GHCR push
       contents: read

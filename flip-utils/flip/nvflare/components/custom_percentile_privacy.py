@@ -24,7 +24,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Union
 
 import numpy as np
 
@@ -36,7 +35,7 @@ from nvflare.apis.shareable import Shareable
 
 
 class PercentilePrivacy(DXOFilter):
-    def __init__(self, percentile=10, gamma=0.01, data_kinds: List[str] | None = None, off: bool = False):
+    def __init__(self, percentile=10, gamma=0.01, data_kinds: list[str] | None = None, off: bool = False):
         """Implementation of "largest percentile to share" privacy preserving policy.
 
         Shokri and Shmatikov, Privacy-preserving deep learning, CCS '15
@@ -60,7 +59,7 @@ class PercentilePrivacy(DXOFilter):
         self.gamma = gamma  # truncate absolute value of delta W
         self.off = off
 
-    def process_dxo(self, dxo: DXO, shareable: Shareable, fl_ctx: FLContext) -> Union[None, DXO]:
+    def process_dxo(self, dxo: DXO, shareable: Shareable, fl_ctx: FLContext) -> None | DXO:
         """Compute the percentile on the abs delta_W.
 
         Only share the params where absolute delta_W greater than

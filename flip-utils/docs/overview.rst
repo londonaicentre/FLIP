@@ -191,5 +191,4 @@ the built documentation for complete coverage of all public classes and function
 
 .. note::
 
-   The flip-fl-base repository has been merged into the FLIP monorepo.
    The ``flip-utils`` package lives under ``flip-utils/`` in the `FLIP repository <https://github.com/londonaicentre/FLIP>`_.

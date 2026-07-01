@@ -12,8 +12,8 @@
 #
 # Standalone Flower FL dev stack (insecure): builds the four flower-* :dev images
 # and runs a single SuperLink + 2 SuperNodes + fl-api, no central hub / trusts.
-# Adapted from flip-fl-base-flower/deploy/compose.yml; flip-utils now installs from
-# the in-repo source (fl-base build context = repo root), so the old fliputils_dist
+# flip-utils installs from the in-repo source (fl-base build context = repo
+# root), so the old fliputils_dist
 # additional-context dev target is gone. Used by fl-services/flower/Makefile
 # (build / up / submit). The central-hub multi-net Flower topology is the separate
 # deploy/compose.development.flower.yml.
