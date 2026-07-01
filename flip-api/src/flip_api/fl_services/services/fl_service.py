@@ -58,7 +58,14 @@ def upload_app(model_id: UUID, training_details: IStartTrainingBody, endpoint: s
         Any: The response from the server after uploading the application.
     """
     url = f"{endpoint}/upload_app/{model_id}"
-    response = http_post(url=url, data=training_details.model_dump())
+    # Stopgap timeout: staging a large evaluation checkpoint (S3 download -> shared volume on
+    # flip-fl-api) can take far longer than httpx's 5s default. Match fl-api-base's staging
+    # timeout so this blocking call doesn't abandon an in-progress upload.
+    # FIXME: this is a synchronous, blocking call on the run_jobs scheduler path — holding a
+    # request open for a multi-hundred-MB (up to 5 GB) transfer is fragile by design. The proper
+    # fix is to make upload_app async (flip-fl-api returns 202 + a staging-status endpoint that
+    # run_jobs polls, then submit_job once staged) rather than bumping the timeout. Tracked separately.
+    response = http_post(url=url, data=training_details.model_dump(), timeout=900)
     logger.info(f"upload_app response: {response}")
     # TODO There should be some response validation here, and the return type should not be Any
     return response
@@ -419,6 +426,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
         raise FileNotFoundError("Model files missing on the S3 bucket")
 
     # Determine job_type from config.json if present
+    input_config: dict = {}
     config_file = next((k for k in model_files if k.endswith("/config.json")), None)
     if not config_file:
         logger.info("No config.json file was found in the scanned files. Using job_type=standard.")
@@ -501,12 +509,37 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
         logger.debug(f"Copying meta.json {src_meta_path} -> {dest_meta_path}")
         s3.copy_object(src_meta_path, dest_meta_path)
 
-    # Copy model files into each app*/custom/, skipping meta.json
+    # For evaluation jobs the model checkpoint(s) are loaded SERVER-SIDE by the fl-server
+    # (flip.nvflare.components.EvaluationPTModelLocator) and are not needed on the clients.
+    # Divert them to a server-only `server_checkpoints/` prefix so they are staged for the
+    # fl-server (via the shared checkpoint volume) instead of being bundled into every
+    # app*/custom/ and shipped to every client by NVFLARE's deploy_map. Mirrors the Flower
+    # backend, which keeps the checkpoint server-side and out of the app shipped to clients.
+    server_checkpoints: set[str] = set()
+    if job_type == "evaluation":
+        server_checkpoints = {
+            m["checkpoint"]
+            for m in input_config.get("models", {}).values()
+            if isinstance(m, dict) and m.get("checkpoint")
+        }
+        if server_checkpoints:
+            logger.info(f"Evaluation job: diverting checkpoints out of the app bundle: {server_checkpoints}")
+
+    # Copy model files, skipping meta.json. Evaluation checkpoints go once to the server-only
+    # `server_checkpoints/` prefix; every other model file is mirrored into each app*/custom/.
     for src_key in model_files:
         rel = src_key.replace(f"{model_bucket_s3_path}/", "", 1)
 
         # Skip meta.json as it is already copied
         if rel == "meta.json":
+            continue
+
+        if rel in server_checkpoints:
+            # Copied once to a non-app prefix; never placed in app*/custom/, so NVFLARE's
+            # deploy_map never ships it to clients. The fl-server reads it off the shared volume.
+            dst_key = f"{dest_bucket_s3_path}/server_checkpoints/{rel}"
+            logger.debug(f"Copying server-side checkpoint {src_key} -> {dst_key}")
+            s3.copy_object(src_key, dst_key)
             continue
 
         for app in app_folders:
@@ -530,6 +563,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
         base_bucket_s3_path=base_bucket_s3_path,
         model_bucket_s3_path=model_bucket_s3_path,
         dest_bucket_s3_path=dest_bucket_s3_path,
+        server_checkpoints=server_checkpoints,
     )
 
     return dest_bucket_s3_path
@@ -688,6 +722,7 @@ def verify_bundle_paths(
     base_bucket_s3_path: str,
     model_bucket_s3_path: str,
     dest_bucket_s3_path: str,
+    server_checkpoints: set[str] | None = None,
 ) -> None:
     """
     Verifies that all expected destination keys exist after bundling.
@@ -700,6 +735,9 @@ def verify_bundle_paths(
         base_bucket_s3_path (str): Root S3 path of the base application bucket.
         model_bucket_s3_path (str): Root S3 path of the user model bucket.
         dest_bucket_s3_path (str): Root S3 path of the destination bundle bucket.
+        server_checkpoints (set[str] | None): Model-file names diverted to the server-only
+            ``server_checkpoints/`` prefix (evaluation jobs); expected there instead of in
+            each ``app*/custom/``.
 
     Raises:
         RuntimeError: If any expected destination key is missing from the bundle bucket.
@@ -720,9 +758,14 @@ def verify_bundle_paths(
     if "meta.json" in model_rel:
         expected.add(f"{dest_bucket_s3_path}/meta.json")
 
-    # Model files copied into each app/custom (skip meta.json)
+    # Model files copied into each app/custom (skip meta.json). Evaluation checkpoints are
+    # diverted once to the server-only `server_checkpoints/` prefix instead of app*/custom/.
+    server_checkpoints = server_checkpoints or set()
     for rel in model_rel:
         if rel == "meta.json":
+            continue
+        if rel in server_checkpoints:
+            expected.add(f"{dest_bucket_s3_path}/server_checkpoints/{rel}")
             continue
         for app in app_folders:
             expected.add(f"{dest_bucket_s3_path}/{app}/custom/{rel}")

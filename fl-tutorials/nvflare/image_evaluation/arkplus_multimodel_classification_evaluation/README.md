@@ -43,6 +43,21 @@ For local development, paths are also settable via `.env.app`:
 - `DEV_IMAGES_DIR=<path>`
 - `DEV_DATAFRAME=<path>`
 
+### Simulator vs. real deployment
+
+`SITE_DATA` and the `/site-data/site-N/...` mounts are **simulator-only**. The NVFLARE
+simulator runs every client (`site-1`, `site-2`) inside one container, so per-site data must
+be given a distinct mount target selected by client name — this is local development only.
+
+On a real federated client the fl-client runs with `LOCAL_DEV=false`, and the data layer
+ignores `SITE_DATA` entirely: the cohort dataframe comes from
+`FLIP().get_dataframe(project_id, query)` and DICOMs from `FLIP().get_by_accession_number(...)`
+(the trust's data-access-api / imaging-api), reading downloaded images from the single shared
+`/app/data/images` mount — there are no per-site mounts. `project_id`/`query` are supplied by
+the FL job config (`config_fed_client.json` → `RUN_EVALUATOR`). The switch is keyed on
+`LOCAL_DEV` in `app_files/data_utils.py` (`_is_local_dev`), mirroring the flip package's own
+`FLIPStandardDev`/`FLIPStandardProd` selection.
+
 ## Checkpoint setup
 
 The app evaluates two models, so it needs two checkpoints in `app_files/` (both

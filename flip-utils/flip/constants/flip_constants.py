@@ -64,6 +64,13 @@ class ProdSettings(_Common):
     INTERNAL_SERVICE_KEY_HEADER: str = "X-Internal-Service-Key"
     INTERNAL_SERVICE_KEY: str = ""
 
+    # Hub-local shared volume where the FL API stages a de-bundled evaluation
+    # checkpoint (keyed by <model_id>/<checkpoint>) for the fl-server to read from
+    # disk. Mirrors the Flower backend's /app/src shared mount: the checkpoint is
+    # never bundled into the NVFLARE app, so it is never deployed to clients. The
+    # fl-server mounts this path; clients do not.
+    SERVER_CHECKPOINT_ROOT: str = "/app/server-checkpoints"
+
     # -- Client-only: fl-client on trust side calls local APIs using these --
     DATA_ACCESS_API_URL: HttpUrl = "http://localhost:8001"  # type: ignore[assignment]
     IMAGING_API_URL: HttpUrl = "http://localhost:8002"  # type: ignore[assignment]

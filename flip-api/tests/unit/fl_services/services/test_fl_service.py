@@ -289,6 +289,63 @@ def test_bundle_nvflare_application_success(
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_diverts_eval_checkpoint(
+    mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
+):
+    """Evaluation checkpoints are copied once to a server-only ``server_checkpoints/`` prefix,
+    NOT into any ``app*/custom/`` — so NVFLARE's deploy_map never ships them to clients."""
+    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+    dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    eval_config = {
+        "job_type": "evaluation",
+        "models": {"arkplus": {"checkpoint": "weights.pt", "path": "ArkPlus"}},
+    }
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps(eval_config).encode("utf-8")))
+    }
+    mock_required.return_value = ["config.json", "evaluator.py"]
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/config.json",
+            f"{model_bucket}/{model_id}/evaluator.py",
+            f"{model_bucket}/{model_id}/weights.pt",
+        ],
+        [f"{base_bucket}/nvflare/evaluation/app/custom/flip.py"],
+        [],  # destination bucket empty
+    ]
+    mock_client.copy_object.return_value = None
+    mock_client.object_exists.return_value = False
+    mock_verify.return_value = None
+
+    fl_service.bundle_nvflare_application(model_id)
+
+    # Checkpoint diverted to the server-only prefix (copied once, not per app folder).
+    mock_client.copy_object.assert_any_call(
+        f"{model_bucket}/{model_id}/weights.pt",
+        f"{dest_bucket}/{model_id}/server_checkpoints/weights.pt",
+    )
+    # Checkpoint must NOT be copied into any app*/custom/.
+    for call in mock_client.copy_object.call_args_list:
+        args, _ = call
+        if len(args) >= 2:
+            assert not args[1].endswith("/custom/weights.pt"), "checkpoint must not be bundled into custom/"
+    # Non-checkpoint model files still land in app/custom/.
+    mock_client.copy_object.assert_any_call(
+        f"{model_bucket}/{model_id}/evaluator.py",
+        f"{dest_bucket}/{model_id}/app/custom/evaluator.py",
+    )
+    # verify_bundle_paths is told which files were diverted.
+    _, verify_kwargs = mock_verify.call_args
+    assert verify_kwargs["server_checkpoints"] == {"weights.pt"}
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
 @patch("flip_api.fl_services.services.fl_service.logger")
 def test_bundle_nvflare_application_model_files_overwrite(
     mock_logger, mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings

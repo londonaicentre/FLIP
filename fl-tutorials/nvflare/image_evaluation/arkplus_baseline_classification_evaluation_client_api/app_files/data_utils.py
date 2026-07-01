@@ -9,12 +9,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Data utilities for the NVFLARE-style FLIP x-ray tutorial.
+"""Data utilities for the Ark+ evaluation executor.
 
-This file intentionally keeps the original tutorial data style: a dataframe/CSV
-with accession ids and label columns plus DICOM resources in the FLIP test-data
-layout. It prepares MONAI datasets whose batch dictionaries contain ``image`` and
-one scalar label per lesion.
+This file defines label constants, data loading, and transforms used by the
+FLIP_EVALUATOR for the DECAF chest X-ray primary evaluation task.
 """
 
 from __future__ import annotations
@@ -33,7 +31,6 @@ import torch
 from flip import FLIP
 from flip.constants import FlipConstants, ResourceType
 from monai.config import KeysCollection
-# from monai.data import DataLoader, Dataset
 from monai.transforms.transform import MapTransform
 
 
@@ -75,10 +72,69 @@ class RepeatChannelImageNetNormalized(MapTransform):
         return d
 
 
+# ---------------------------------------------------------------------------
+# Label-mapping registry
+#
+# Each entry bundles:
+#   source_labels  — dict of source label name → column index (the fixed
+#                    output order of a pre-trained model head).
+#   mapping        — rules for extracting each target label from the
+#                    source columns:
+#                    ("direct", name)  → column of the named source label.
+#                    ("max", [names])  → element-wise max of those columns.
+#
+# Add new entries here to support different pre-trained sources or
+# different target-label sets without changing the calling code.
+# ---------------------------------------------------------------------------
+
+MAPPING_REGISTRY: dict[str, dict] = {
+    "nih14_5class": {
+        "source_labels": {
+            "Atelectasis": 0,
+            "Cardiomegaly": 1,
+            "Effusion": 2,
+            "Infiltration": 3,
+            "Mass": 4,
+            "Nodule": 5,
+            "Pneumonia": 6,
+            "Pneumothorax": 7,
+            "Consolidation": 8,
+            "Edema": 9,
+            "Emphysema": 10,
+            "Fibrosis": 11,
+            "Pleural_Thickening": 12,
+            "Hernia": 13,
+        },
+        "mapping": {
+            "Effusion": ("direct", "Effusion"),
+            "Consolidation": ("direct", "Consolidation"),
+            "Infiltration": ("direct", "Infiltration"),
+            "Lung Nodule or Mass": ("max", ["Mass", "Nodule"]),
+            "Pneumothorax": ("direct", "Pneumothorax"),
+        },
+    },
+}
+
+
+def get_mapping(name: str) -> dict:
+    if name not in MAPPING_REGISTRY:
+        raise KeyError(f"Unknown label mapping {name!r}. Available: {list(MAPPING_REGISTRY.keys())}")
+    return MAPPING_REGISTRY[name]
+
+
+# ---------------------------------------------------------------------------
 APP_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = APP_DIR / "config.json"
 
 
+def load_config() -> dict:
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+# ---------------------------------------------------------------------------
+# Lesion helpers (same pattern as the classification tutorial)
+# ---------------------------------------------------------------------------
 @dataclass
 class Lesion:
     id: int
@@ -103,11 +159,6 @@ class LesionDict:
         return [item.lesion for item in sorted(self.items, key=lambda x: x.id)]
 
 
-def load_config() -> dict:
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 def get_lesions(config: dict | None = None) -> LesionDict:
     cfg = config or load_config()
     lesions = []
@@ -118,66 +169,32 @@ def get_lesions(config: dict | None = None) -> LesionDict:
     return LesionDict(sorted(lesions, key=lambda x: x.id))
 
 
-def get_normal_key(config: dict | None = None) -> str:
-    cfg = config or load_config()
-    for key, name in cfg.get("LESIONS", {}).items():
-        if int(key) < 0:
-            return name
-    return "Lungs in normal arrangement"
-
-
-def get_labels_from_radiology_row(radiology_row, lesions: LesionDict, value_to_numerical: dict, normal_label: str):
-    # JSON gives string keys; support both str and int access.
+def get_labels_from_radiology_row(
+    radiology_row, lesions: LesionDict, value_to_numerical: dict, normal_label: str
+) -> dict[str, int]:
     yes_str = value_to_numerical.get("1", value_to_numerical.get(1, "Yes"))
     no_str = value_to_numerical.get("0", value_to_numerical.get(0, "No"))
     columns = radiology_row.keys()
     override_negative = normal_label in columns and radiology_row[normal_label] == yes_str
     binary = {yes_str: 1, no_str: 0, 1: 1, 0: 0, "1": 1, "0": 0}
 
-    out_dict = {}
+    out = {}
     for lesion in lesions.items:
         if override_negative:
-            out_dict[lesion.lesion] = 0
+            out[lesion.lesion] = 0
         elif lesion.lesion in columns:
-            out_dict[lesion.lesion] = binary.get(radiology_row[lesion.lesion], -1)
+            out[lesion.lesion] = binary.get(radiology_row[lesion.lesion], -1)
         else:
-            out_dict[lesion.lesion] = -1
-    return out_dict
+            out[lesion.lesion] = -1
+    return out
 
 
-def get_lesion_label(in_batch: dict, lesions: LesionDict) -> torch.Tensor:
-    out_tensor = [in_batch[les.lesion] for les in sorted(lesions.items, key=lambda x: x.id)]
-    return torch.stack(out_tensor, dim=1).float()
-
-
-def _ensure_image_channel_first(image):
-    array = np.asarray(image)
-    if array.ndim == 2:
-        return array[None, ...]
-    if array.ndim == 3:
-        if array.shape[-1] in (1, 3):
-            return np.moveaxis(array, -1, 0)
-        if array.shape[0] in (1, 3):
-            return array
-    return array
-
-
-def get_xray_transforms(is_validation: bool = False):
-    cfg = load_config()
-    input_size = int(cfg.get("ARKPLUS", {}).get("INPUT_SIZE", 224))
-    transforms = [
-        mt.LoadImaged(keys=["image"]),
-        mt.Lambdad(keys=["image"], func=_ensure_image_channel_first),
-        mt.Resized(keys=["image"], spatial_size=[input_size, input_size]),
-        # mt.Rotate90d(keys=["image"], k=-1),
-        mt.Flipd(keys=["image"], spatial_axis=1),
-        mt.ScaleIntensityd(keys=["image"], channel_wise=True),
-        mt.EnsureTyped(keys=["image"]),
-        RepeatChannelImageNetNormalized(keys=["image"]),
-    ]
-    if not is_validation:
-        transforms.append(mt.RandAffined(keys=["image"], rotate_range=[-0.05, 0.05], scale_range=[0.01, 0.05]))
-    return mt.Compose(transforms)
+def get_lesion_label(in_batch: dict, lesions: LesionDict) -> np.ndarray:
+    """Return a [batch, num_lesions] float label array from a MONAI batch dict."""
+    labels = []
+    for les in sorted(lesions.items, key=lambda x: x.id):
+        labels.append(in_batch[les.lesion])
+    return np.stack(labels, axis=1).astype(np.float32)
 
 
 def normalize_site_name(site_name: str | None) -> str:
@@ -205,12 +222,31 @@ def get_site_data_config(config: dict | None = None, site_name: str | None = Non
     if entry is None:
         entry = {}
 
-    images_dir = entry.get("images_dir") or os.environ.get("DEV_IMAGES_DIR")
-    dataframe = entry.get("dataframe") or os.environ.get("DEV_DATAFRAME")
+    # Per-site data resolution for the in-process Client-API simulator (no Docker mounts). Precedence:
+    #   1. SITE{N}_IMAGES_DIR / SITE{N}_DATAFRAME env (mapped from the NVFLARE site name, "site-1" -> "SITE1")
+    #   2. the config SITE_DATA entry's path
+    #   3. the single-site DEV_* env
+    # Per-site env wins because config SITE_DATA holds the legacy container-mount targets (/site-data/...),
+    # which don't exist in the no-Docker SimEnv; the real per-site host paths live in .env.app as SITE{N}_*.
+    # (In the legacy executor tutorial this per-site wiring was done by the testing harness' Docker mounts.)
+    site_env = requested_site.replace("-", "").upper() if requested_site else ""  # "site-1" -> "SITE1"
+    images_dir = (
+        (os.environ.get(f"{site_env}_IMAGES_DIR") if site_env else None)
+        or entry.get("images_dir")
+        or os.environ.get("DEV_IMAGES_DIR")
+    )
+    dataframe = (
+        (os.environ.get(f"{site_env}_DATAFRAME") if site_env else None)
+        or entry.get("dataframe")
+        or os.environ.get("DEV_DATAFRAME")
+    )
     resolved_site = requested_site or "default"
     return SiteDataConfig(site_name=resolved_site, images_dir=images_dir, dataframe=dataframe)
 
 
+# ---------------------------------------------------------------------------
+# Data loading (evaluation-only — load ALL samples, no train/val split)
+# ---------------------------------------------------------------------------
 def _read_dataframe(dataframe_path: str | None = None) -> pd.DataFrame:
     path = dataframe_path or os.environ.get("DEV_DATAFRAME")
     if path and Path(path).exists():
@@ -232,120 +268,23 @@ def _find_accession_column(df: pd.DataFrame) -> str:
     raise KeyError(f"Could not find accession column in dataframe columns: {list(df.columns)}")
 
 
-def _label_aware_split(datalist, label_names, val_split: float, seed: int, logger=None):
-    """
-    Guarantee at least one positive sample per label in train and val splits,
-    then fill remaining capacity with unassigned items.
-
-    Processing labels in order of rarity (fewest positives first) ensures rare
-    labels reserve their slot before common labels consume all split capacity.
-    """
-    datalist = list(datalist)
-    rng = np.random.default_rng(seed)
-    rng.shuffle(datalist)
-
-    n_total = len(datalist)
-    n_train = int(n_total * (1 - val_split))
-    n_val = n_total - n_train
-
-    splits = {"train": [], "val": []}
-    limits = {"train": n_train, "val": n_val}
-    assigned = set()
-
-    def can_add(split_name):
-        return len(splits[split_name]) < limits[split_name]
-
-    def add_item(index, split_name):
-        if index in assigned or not can_add(split_name):
-            return False
-        splits[split_name].append(datalist[index])
-        assigned.add(index)
-        return True
-
-    label_positive_indices = {
-        label: [i for i, item in enumerate(datalist) if item.get(label) == 1] for label in label_names
-    }
-    labels_by_rarity = sorted(label_names, key=lambda label: len(label_positive_indices[label]))
-
-    for label in labels_by_rarity:
-        positive_indices = list(label_positive_indices[label])
-        rng.shuffle(positive_indices)
-
-        if not positive_indices:
-            if logger is not None:
-                logger.warning("No positive samples found for label %s before splitting.", label)
-            continue
-
-        target_splits = ["train"]
-        if len(positive_indices) >= 2 and n_val > 0:
-            target_splits.append("val")
-
-        for split_name in target_splits:
-            if any(item.get(label) == 1 for item in splits[split_name]):
-                continue
-            for index in positive_indices:
-                if add_item(index, split_name):
-                    break
-
-    remaining_indices = [i for i in range(n_total) if i not in assigned]
-    rng.shuffle(remaining_indices)
-
-    for split_name in ("train", "val"):
-        for index in remaining_indices:
-            if not can_add(split_name):
-                break
-            add_item(index, split_name)
-
-    if logger is not None:
-        logger.info(
-            "Using label-aware split with seed=%s: train=%s, val=%s",
-            seed,
-            len(splits["train"]),
-            len(splits["val"])
-        )
-        _log_split_balance(splits, label_names, logger)
-
-    return splits["train"], splits["val"]
-
-
-def _log_split_balance(splits, label_names, logger):
-    for split_name, split_rows in splits.items():
-        logger.info("%s split label balance (%s samples):", split_name.upper(), len(split_rows))
-        for label in label_names:
-            num_positive = sum(1 for item in split_rows if item.get(label) == 1)
-            num_negative = sum(1 for item in split_rows if item.get(label) == 0)
-            num_masked = sum(1 for item in split_rows if item.get(label) == -1)
-            if num_positive == 0:
-                logger.warning("%s split has no positive samples for %s.", split_name.upper(), label)
-            logger.info(
-                "  %-20s: %4d positive, %4d negative, %4d masked/unknown",
-                label,
-                num_positive,
-                num_negative,
-                num_masked,
-            )
-
-
 def _dicoms_for_accession(
     accession_id: str,
     project_id: str = "",
     images_dir: str | None = None,
 ) -> list[Path]:
     if _is_local_dev():
-        # Local test-data path used by make test-xrays-standard and SITE_DATA (simulator only).
+        # Local test-data path used by SITE_DATA / DEV_IMAGES_DIR (simulator only).
         root_path = images_dir or os.environ.get("DEV_IMAGES_DIR")
         if root_path:
             root = Path(root_path)
             candidates = []
-            # Try accession subfolder first, then recursive match. This is flexible for mini test data.
             for p in [root / str(accession_id), root / f"{accession_id}"]:
                 if p.exists():
                     candidates.extend(p.rglob("*.dcm"))
             if not candidates and root.exists():
                 candidates.extend(root.rglob(f"*{accession_id}*.dcm"))
             if not candidates and root.exists():
-                # Fall back to all DICOMs only if there are very few. This avoids total failure on
-                # slightly different mini-data layouts.
                 all_dicoms = list(root.rglob("*.dcm"))
                 if len(all_dicoms) <= 500:
                     candidates = all_dicoms
@@ -361,17 +300,18 @@ def _dicoms_for_accession(
     return []
 
 
-def build_datalist(
+def build_eval_datalist(
     config: dict | None = None,
     site_name: str | None = None,
     project_id: str | None = None,
     query: str | None = None,
     logger=None,
-):
+) -> list[dict]:
+    """Load ALL samples for evaluation (no train/val/test split)."""
     cfg = config or load_config()
     site_cfg = get_site_data_config(cfg, site_name)
     lesions = get_lesions(cfg)
-    normal_key = get_normal_key(cfg)
+    normal_key = cfg.get("LESIONS", {}).get("-1", "Lungs in normal arrangement")
     value_to_numerical = cfg.get("value_to_numerical", {"1": "Yes", "0": "No"})
     project_id = project_id if project_id is not None else os.environ.get("PROJECT_ID", "")
     query = query if query is not None else os.environ.get("QUERY", "")
@@ -380,17 +320,17 @@ def build_datalist(
 
     if logger is not None:
         logger.info(
-            "Loading xray data for site=%s dataframe=%s images_dir=%s",
+            "Loading xray data for site=%s images_dir=%s dataframe=%s",
             site_cfg.site_name,
-            site_cfg.dataframe,
             site_cfg.images_dir,
+            site_cfg.dataframe,
         )
 
     datalist = []
     seen_paths = set()
     for _, row in df.iterrows():
         accession_id = str(row[accession_col])
-        labels = get_labels_from_radiology_row(row, lesions, value_to_numerical, normal_key)
+        labels = get_labels_from_radiology_row(row, lesions, value_to_numerical, normal_label=normal_key)
         for img in _dicoms_for_accession(accession_id, project_id=project_id, images_dir=site_cfg.images_dir):
             if img in seen_paths:
                 continue
@@ -398,28 +338,47 @@ def build_datalist(
                 _ = pydicom.dcmread(str(img), stop_before_pixels=True)
             except Exception:
                 continue
-            item = {"image": str(img)}
+            item: dict = {"image": str(img)}
             item.update(labels)
             datalist.append(item)
             seen_paths.add(img)
 
     if not datalist:
         raise RuntimeError(
-            "No DICOM image/label pairs found for "
-            f"site={site_cfg.site_name!r}. Check images_dir={site_cfg.images_dir!r}, "
-            f"dataframe={site_cfg.dataframe!r}, and accession ids."
+            f"No DICOM image/label pairs found for site={site_cfg.site_name!r}. "
+            f"Check images_dir={site_cfg.images_dir!r} "
+            f"dataframe={site_cfg.dataframe!r}"
         )
 
-    val_split = float(cfg.get("VAL_SPLIT", 0.2))
-    split_seed = int(cfg.get("SPLIT_SEED", 42))
-    train_items, val_items = _label_aware_split(
-        datalist=datalist,
-        label_names=lesions.get_lesion_list(),
-        val_split=val_split,
-        seed=split_seed,
-        logger=logger,
-    )
-    return train_items, val_items
+    if logger is not None:
+        logger.info("Loaded %d samples for evaluation.", len(datalist))
+    return datalist
 
 
+# ---------------------------------------------------------------------------
+# X-ray evaluation transforms
+# ---------------------------------------------------------------------------
+def _ensure_image_channel_first(image):
+    array = np.asarray(image)
+    if array.ndim == 2:
+        return array[None, ...]
+    if array.ndim == 3:
+        if array.shape[-1] in (1, 3):
+            return np.moveaxis(array, -1, 0)
+        if array.shape[0] in (1, 3):
+            return array
+    return array
 
+
+def get_xray_transforms(input_size: int = 768):
+    transforms = [
+        mt.LoadImaged(keys=["image"]),
+        mt.Lambdad(keys=["image"], func=_ensure_image_channel_first),
+        mt.Resized(keys=["image"], spatial_size=[input_size, input_size]),
+        # mt.Rotate90d(keys=["image"], k=-1),
+        mt.Flipd(keys=["image"], spatial_axis=1),
+        mt.ScaleIntensityd(keys=["image"], channel_wise=True),
+        mt.EnsureTyped(keys=["image"]),
+        RepeatChannelImageNetNormalized(keys=["image"]),
+    ]
+    return mt.Compose(transforms)

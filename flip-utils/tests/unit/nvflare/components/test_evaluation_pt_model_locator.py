@@ -27,6 +27,11 @@ class TestEvaluationPTModelLocator:
         locator = EvaluationPTModelLocator()
         assert locator.models is None
         assert locator.exclude_vars is None
+        assert locator.model_id == ""
+
+    def test_init_with_model_id(self):
+        locator = EvaluationPTModelLocator(model_id="model-abc")
+        assert locator.model_id == "model-abc"
 
     def test_init_with_exclude_vars(self):
         locator = EvaluationPTModelLocator(exclude_vars=["var1"])
@@ -226,3 +231,136 @@ class TestEvaluationPTModelLocator:
             assert all(
                 "could not be loaded" not in str(call) for call in locator.log_error.call_args_list
             )
+
+    @patch("flip.nvflare.components.pt_model_locator.FlipConstants")
+    @patch("flip.nvflare.components.pt_model_locator.torch")
+    @patch("flip.nvflare.components.pt_model_locator.PTModelPersistenceFormatManager")
+    @patch("flip.nvflare.components.pt_model_locator.model_learnable_to_dxo")
+    @patch("os.path.isfile")
+    def test_reads_from_shared_volume_when_not_bundled(
+        self, mock_isfile, mock_to_dxo, mock_persistence_cls, mock_torch, mock_constants
+    ):
+        """When the checkpoint is not bundled in custom/ and LOCAL_DEV is false, the locator
+        loads it from <SERVER_CHECKPOINT_ROOT>/<model_id>/<checkpoint> on the shared volume."""
+        mock_constants.LOCAL_DEV = False
+        mock_constants.SERVER_CHECKPOINT_ROOT = "/shared-checkpoints"
+
+        config = {"models": {"resnet": {"checkpoint": "resnet.pth", "path": "ResNet"}}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_dir = os.path.join(tmpdir, "custom")
+            os.makedirs(custom_dir)
+            with open(os.path.join(custom_dir, "config.json"), "w") as f:
+                json.dump(config, f)
+
+            shared_path = os.path.join("/shared-checkpoints", "model-abc", "resnet.pth")
+            # Not bundled in custom/, but present on the shared volume.
+            mock_isfile.side_effect = lambda p: p == shared_path
+
+            mock_torch.cuda.is_available.return_value = False
+            mock_torch.load.return_value = {"layer.weight": "W"}
+            mock_persistence_cls.return_value.var_dict = {"layer.weight": "W"}
+            mock_persistence_cls.return_value.to_model_learnable.return_value = MagicMock()
+            mock_to_dxo.return_value = MagicMock()
+
+            locator = EvaluationPTModelLocator(model_id="model-abc")
+            locator.log_error = MagicMock()
+
+            fl_ctx = MagicMock()
+            fl_ctx.get_peer_context.return_value = None
+            mock_workspace = MagicMock()
+            mock_workspace.get_app_dir.return_value = tmpdir
+            fl_ctx.get_engine.return_value.get_workspace.return_value = mock_workspace
+            fl_ctx.get_job_id.return_value = "job-123"
+
+            with patch.dict("sys.modules", {"models": MagicMock(model_paths={"ResNet": MagicMock()})}):
+                result = locator.locate_model(fl_ctx)
+
+            # Loaded from the shared-volume path, not the (absent) bundled custom/ path.
+            mock_torch.load.assert_called_once()
+            assert mock_torch.load.call_args[0][0] == shared_path
+            assert result.data_kind == DataKind.COLLECTION
+            assert set(result.data.keys()) == {"resnet"}
+            assert all("not found" not in str(c) for c in locator.log_error.call_args_list)
+
+    @patch("flip.nvflare.components.pt_model_locator.FlipConstants")
+    @patch("flip.nvflare.components.pt_model_locator.torch")
+    @patch("os.path.isfile")
+    def test_missing_everywhere_in_prod_logs_error_and_skips(self, mock_isfile, mock_torch, mock_constants):
+        """When the checkpoint is neither bundled nor on the shared volume (LOCAL_DEV false),
+        the locator logs an error naming both paths and skips the model (no torch.load)."""
+        mock_constants.LOCAL_DEV = False
+        mock_constants.SERVER_CHECKPOINT_ROOT = "/shared-checkpoints"
+
+        config = {"models": {"resnet": {"checkpoint": "resnet.pth", "path": "ResNet"}}}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_dir = os.path.join(tmpdir, "custom")
+            os.makedirs(custom_dir)
+            with open(os.path.join(custom_dir, "config.json"), "w") as f:
+                json.dump(config, f)
+
+            mock_isfile.return_value = False  # nowhere
+            mock_torch.cuda.is_available.return_value = False
+
+            locator = EvaluationPTModelLocator(model_id="model-abc")
+            locator.log_error = MagicMock()
+
+            fl_ctx = MagicMock()
+            fl_ctx.get_peer_context.return_value = None
+            mock_workspace = MagicMock()
+            mock_workspace.get_app_dir.return_value = tmpdir
+            fl_ctx.get_engine.return_value.get_workspace.return_value = mock_workspace
+            fl_ctx.get_job_id.return_value = "job-123"
+
+            with patch.dict("sys.modules", {"models": MagicMock(model_paths={"ResNet": MagicMock()})}):
+                result = locator.locate_model(fl_ctx)
+
+            locator.log_error.assert_called()
+            msg = str(locator.log_error.call_args_list[0])
+            assert "not found" in msg
+            assert "shared-volume path" in msg
+            mock_torch.load.assert_not_called()
+            # Model skipped -> empty collection.
+            assert result.data_kind == DataKind.COLLECTION
+            assert result.data == {}
+
+    @patch("flip.nvflare.components.pt_model_locator.torch")
+    @patch("flip.nvflare.components.pt_model_locator.PTModelPersistenceFormatManager")
+    @patch("flip.nvflare.components.pt_model_locator.model_learnable_to_dxo")
+    @patch("os.path.isfile")
+    def test_multimodel_collection_has_all_models(
+        self, mock_isfile, mock_to_dxo, mock_persistence_cls, mock_torch
+    ):
+        """Two bundled checkpoints -> one COLLECTION DXO keyed by both model names."""
+        config = {
+            "models": {
+                "pretrained": {"checkpoint": "pre.pth", "path": "A"},
+                "finetuned": {"checkpoint": "fine.pth", "path": "B"},
+            }
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_dir = os.path.join(tmpdir, "custom")
+            os.makedirs(custom_dir)
+            with open(os.path.join(custom_dir, "config.json"), "w") as f:
+                json.dump(config, f)
+
+            mock_isfile.return_value = True  # both bundled in custom/
+            mock_torch.cuda.is_available.return_value = False
+            mock_torch.load.return_value = {"layer.weight": "W"}
+            mock_persistence_cls.return_value.var_dict = {"layer.weight": "W"}
+            mock_persistence_cls.return_value.to_model_learnable.return_value = MagicMock()
+            mock_to_dxo.return_value = MagicMock()
+
+            locator = EvaluationPTModelLocator()
+
+            fl_ctx = MagicMock()
+            fl_ctx.get_peer_context.return_value = None
+            mock_workspace = MagicMock()
+            mock_workspace.get_app_dir.return_value = tmpdir
+            fl_ctx.get_engine.return_value.get_workspace.return_value = mock_workspace
+            fl_ctx.get_job_id.return_value = "job-123"
+
+            with patch.dict("sys.modules", {"models": MagicMock(model_paths={"A": MagicMock(), "B": MagicMock()})}):
+                result = locator.locate_model(fl_ctx)
+
+            assert result.data_kind == DataKind.COLLECTION
+            assert set(result.data.keys()) == {"pretrained", "finetuned"}
