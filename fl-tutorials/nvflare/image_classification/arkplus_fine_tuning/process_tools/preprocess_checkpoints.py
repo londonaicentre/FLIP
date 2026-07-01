@@ -9,17 +9,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Preprocess Ark+ checkpoints for the evaluation pipeline.
+"""Preprocess Ark+ checkpoints for fine-tuning.
 
-Produces clean state dict files that match the raw ArkSwinTransformer
-architecture exactly, so that EvaluationPTModelLocator's ``strict=True``
-validation passes on the server side.
-
-Usage::
-
-    # Example
-    python preprocess_checkpoints.py \\
-        --entry /raw/Ark6_swinLarge768_ep50.pth.tar /clean/pretrained.pt arkplus_pretrained
+Produces a backbone-only state dict (omni_heads stripped) so that the
+fine-tuning pipeline can initialise the Swin backbone from the pretrained
+foundation model while training its own classifier head from scratch.
 """
 
 from __future__ import annotations
@@ -41,7 +35,7 @@ from models import _build_arkplus_raw  # noqa: E402
 # ---------------------------------------------------------------------------
 PROCESSORS: dict[str, dict] = {
     "arkplus_pretrained": {
-        "description": "Foundation model (6 heads: 14,14,14,3,6,1)",
+        "description": "Foundation model backbone only (strips omni_heads)",
         "model_cfg": {
             "MODEL_NAME": "swin_large_384",
             "INPUT_SIZE": 768,
@@ -51,19 +45,6 @@ PROCESSORS: dict[str, dict] = {
         },
         "extract": lambda ckpt: ckpt["teacher"],
     },
-    # # Fine-tuned model processing is no longer needed — the training app
-    # # produces clean checkpoints directly.
-    # "arkplus_finetuned": {
-    #     "description": "Fine-tuned model (1 head: 5 classes)",
-    #     "model_cfg": {
-    #         "MODEL_NAME": "swin_large_384",
-    #         "INPUT_SIZE": 768,
-    #         "PROJECTOR_FEATURES": 1376,
-    #         "USE_MLP": False,
-    #         "NUM_CLASSES_LIST": [5],
-    #     },
-    #     "extract": lambda ckpt: ckpt.get("model", ckpt),
-    # },
 }
 
 
@@ -84,13 +65,20 @@ def preprocess(src: Path, dst: Path, config_key: str) -> None:
     print("  Processing weights ...")
     load_arkplus_state_dict(model, state_dict, {"load_backbone_only": False})
 
-    torch.save(model.state_dict(), str(dst))
-    n = len(torch.load(str(dst), map_location="cpu", weights_only=True))
-    print(f"  Saved {n} tensors to {dst}")
+    # Strip classification heads — fine-tuning trains its own head from
+    # scratch with the runtime's default nn.Linear init, matching whichever
+    # seed the FLIP_TRAINER uses. Including the pretrained 6-head weights
+    # would cause shape mismatches (different NUM_CLASSES_LIST) and couple
+    # head initialisation to the preprocessing seed.
+    cleaned = model.state_dict()
+    cleaned = {k: v for k, v in cleaned.items() if not k.startswith("omni_heads.")}
+
+    torch.save(cleaned, str(dst))
+    print(f"  Saved {len(cleaned)} tensors to {dst}")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Preprocess Ark+ checkpoints for evaluation.")
+    parser = argparse.ArgumentParser(description="Preprocess Ark+ checkpoints for fine-tuning.")
     parser.add_argument(
         "--entry",
         action="append",
