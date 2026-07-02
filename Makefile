@@ -143,9 +143,10 @@ up: check-aws-access generate-internal-service-key create-networks _ensure-fl-jo
 # Net IDs come from NET_ENDPOINTS (the per-env single source of truth — prod
 # has only net-1; dev has net-1 + net-2). A new net is just an NET_ENDPOINTS
 # entry plus a compose service block; this target picks it up automatically.
-# Only needed for the Flower backend (NVFLARE doesn't use FL_JOBS_DIR).
+# Both backends use jobs/<net>: Flower stores uploaded app bundles there; NVFLARE
+# stages de-bundled evaluation checkpoints there for the fl-server to load from disk.
 _ensure-fl-jobs-dir:
-	@if [ "$(FL_BACKEND)" = "flower" ]; then \
+	@if [ "$(FL_BACKEND)" = "flower" ] || [ "$(FL_BACKEND)" = "nvflare" ]; then \
 		command -v jq >/dev/null 2>&1 || { echo "❌ _ensure-fl-jobs-dir: jq not found on PATH; required to parse NET_ENDPOINTS" >&2; exit 1; }; \
 		nets=$$(printf '%s' '$(NET_ENDPOINTS)' | jq -r 'keys_unsorted | join(" ")' 2>/dev/null) || nets=""; \
 		if [ -z "$$nets" ]; then \

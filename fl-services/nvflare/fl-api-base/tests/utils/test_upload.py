@@ -173,6 +173,44 @@ def test_upload_multiple_apps_missing_meta_json(
     assert "Application must contain a meta.json file" in str(exc_info.value)
 
 
+@patch("fl_api.utils.upload.configure_environment", MagicMock())
+@patch("fl_api.utils.upload.configure_meta", MagicMock())
+@patch("fl_api.utils.upload.configure_server", MagicMock())
+@patch("fl_api.utils.upload.configure_client", MagicMock())
+@patch("fl_api.utils.upload.configure_config", MagicMock())
+@patch("fl_api.utils.upload.validate_config", MagicMock())
+@patch("fl_api.utils.upload.read_config", MagicMock())
+def test_upload_stages_server_checkpoint_off_job(mock_requests_get_success, tmp_path, monkeypatch):
+    """A bundle file under ``/server_checkpoints/`` is staged on the shared checkpoint volume
+    (``SERVER_CHECKPOINT_ROOT/<model_id>/<file>``), NOT placed in the NVFLARE job dir — so it is
+    never part of the submitted job and never deployed to clients."""
+    ckpt_root = tmp_path / "server-checkpoints"
+    job_root = tmp_path / "jobs"
+    monkeypatch.setenv("SERVER_CHECKPOINT_ROOT", str(ckpt_root))
+
+    base = f"https://test.local/bundles/{TEST_MODEL_ID}"
+    body = UploadAppRequest(
+        bundle_urls=[
+            f"{base}/app/config/config_fed_server.json",
+            f"{base}/app/config/config_fed_client.json",
+            f"{base}/app/custom/config.json",
+            f"{base}/app/custom/evaluator.py",
+            f"{base}/server_checkpoints/weights.pt",
+        ],
+        project_id="123456789",
+        cohort_query="SELECT 1",
+        trusts=["Trust_1", "Trust_2"],
+    )
+
+    response = upload_application(TEST_MODEL_ID, body, str(job_root))
+
+    assert "Application uploaded successfully" in response["message"]
+    # Checkpoint staged on the shared volume, keyed by model_id.
+    assert (ckpt_root / TEST_MODEL_ID / "weights.pt").is_file()
+    # And NOT anywhere under the NVFLARE job dir (so it is never shipped to clients).
+    assert not list((job_root / TEST_MODEL_ID).rglob("weights.pt"))
+
+
 def test_validate_config_valid():
     valid_config = {
         "LOCAL_ROUNDS": 5,
@@ -214,6 +252,20 @@ def test_validate_config_invalid_aggregator():
     }
     with pytest.raises(ValueError, match="Unknown aggregator: invalid_agg"):
         validate_config(invalid_config)
+
+
+def test_validate_config_accepts_aggregate_only_regex():
+    config = validate_config({"AGGREGATE_ONLY_REGEX": "omni_heads"})
+    assert config.AGGREGATE_ONLY_REGEX == "omni_heads"
+
+
+def test_validate_config_rejects_invalid_aggregate_only_regex():
+    with pytest.raises(ValueError, match="not a valid regex"):
+        validate_config({"AGGREGATE_ONLY_REGEX": "([unclosed"})
+
+
+def test_validate_config_aggregate_only_regex_defaults_none():
+    assert validate_config({"LOCAL_ROUNDS": 3}).AGGREGATE_ONLY_REGEX is None
 
 
 def test_validate_config_invalid_weights():
