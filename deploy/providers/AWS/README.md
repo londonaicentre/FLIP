@@ -48,7 +48,7 @@ Your AWS IAM role/user needs the following permissions for provisioning infrastr
 - **Secrets Manager**: Full access for storing database credentials and API secrets
 - **IAM**: Create and manage roles for EC2 instances and ECS task execution / task roles
 - **Application + Network Load Balancers**: Create and manage both the ALB (HTTPS API traffic) and the NLB (FL server TCP/gRPC traffic)
-- **ECS / Fargate**: `ecs:*` (cluster, task definitions, services). Task images come from **GHCR** (`ghcr.io/londonaicentre/...`) — no AWS-side image registry permissions needed (no ECR mirror). The ECR API/DKR VPC endpoints in `vpc_endpoints.tf` are kept only for the bootstrap EFS-provisioning job (`amazon/aws-cli`, pulled from ECR Public).
+- **ECS / Fargate**: `ecs:*` (cluster, task definitions, services). Task images come from **GHCR** (`ghcr.io/londonaicentre/...`) — no AWS-side image registry permissions needed (no ECR mirror). The bootstrap EFS-provisioning image (`amazon/aws-cli`) comes from Docker Hub and is also fetched through the NAT gateway, so private ECR API/DKR endpoints are not required.
 - **EFS**: `elasticfilesystem:*` for the shared workspace volumes mounted into FL Fargate tasks
 - **CloudFront + WAFv2**: Create and manage the UI distribution and the WebACL attached to it
 - **ACM**: Issue / import certificates in both `eu-west-2` (ALB origin) and `us-east-1` (CloudFront viewer)
@@ -328,7 +328,7 @@ deploy/providers/AWS/
 ├── iam_ecs.tf                  # IAM execution + task roles for ECS Fargate tasks
 ├── parameter_store.tf          # SSM Parameter Store entries consumed by ECS tasks (bucket URIs, internal URL, etc.)
 ├── service_discovery.tf        # Cloud Map private DNS namespace (flip.local) for ECS task-to-task resolution
-├── vpc_endpoints.tf            # Interface endpoints (Secrets Manager, SSM, CloudWatch Logs, ECR API + DKR) + S3 gateway endpoint
+├── vpc_endpoints.tf            # Interface endpoints (Secrets Manager, SSM, CloudWatch Logs) + S3 gateway endpoint
 ├── dhcp.tf                     # VPC DHCP option set
 ├── locals.tf                   # Shared locals
 ├── cloudfront.tf               # CloudFront distribution for flip-ui + attached WAFv2 WebACL
