@@ -9,11 +9,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Ark+ model factory for the FLIP evaluation pipeline.
+"""Ark+ model factory for the FLIP Client-API evaluation pipeline.
 
 Provides:
-- ``model_paths`` dict — used by the server-side EvaluationPTModelLocator
-- ``_build_arkplus_raw(config)`` — build an ArkSwinTransformer from a config dict
+- ``get_model()`` — build the single Ark+ model for this job. Referenced by ``FlipEvalRecipe``'s
+  ``PTFileModelPersistor(model={"path": "models.get_model"})`` (server) and by the evaluator (client).
+- ``_build_arkplus_raw(config)`` — build an ArkSwinTransformer from a config dict (also used by
+  ``process_tools/preprocess_checkpoints.py``).
+
+Unlike the legacy executor tutorial, there is no ``model_paths`` dict: the Client-API server locator
+(``EvaluationModelLocator``) loads the uploaded checkpoint directly and broadcasts the weights over the
+``validate`` task, so only a single-model getter is needed here.
 """
 
 from __future__ import annotations
@@ -70,24 +76,25 @@ def _build_arkplus_raw(arkplus_config: dict) -> nn.Module:
 
 
 # ---------------------------------------------------------------------------
-# model_paths — used by EvaluationPTModelLocator (server-side)
-# Keys must match the "path" field in config.json model entries.
+# get_model — used by the recipe's PTFileModelPersistor (server) and evaluator (client)
 # ---------------------------------------------------------------------------
-def _build_model_paths() -> dict[str, nn.Module]:
+def get_model() -> nn.Module:
+    """Build the single Ark+ model for this evaluation job.
+
+    Reads the single ``config.json`` ``models`` entry and builds its ``ArkSwinTransformer`` via
+    ``_build_arkplus_raw``. No weights are loaded here — the server loads the uploaded checkpoint and
+    broadcasts the weights to the client over the ``validate`` task.
+    """
     cfg_path = Path(__file__).resolve().parent / "config.json"
-    with open(cfg_path, "r") as f:
+    with open(cfg_path) as f:
         cfg = json.load(f)
-    paths: dict[str, nn.Module] = {}
-    for model_name, model_info in cfg.get("models", {}).items():
-        ark_cfg = model_info["arkplus_config"]
-        path_key = model_info["path"]
-        paths[path_key] = _build_arkplus_raw(ark_cfg)
-        logger.info(
-            "Built model_paths[%s] (NUM_CLASSES_LIST=%s)",
-            path_key,
-            ark_cfg.get("NUM_CLASSES_LIST"),
+
+    models_cfg = cfg.get("models", {})
+    if len(models_cfg) != 1:
+        raise ValueError(
+            f"Baseline evaluation expects exactly one model in config.json['models']; got {len(models_cfg)}."
         )
-    return paths
-
-
-model_paths: dict[str, nn.Module] = _build_model_paths()
+    ((model_name, model_info),) = models_cfg.items()
+    ark_cfg = model_info["arkplus_config"]
+    logger.info("Building model %s (NUM_CLASSES_LIST=%s)", model_name, ark_cfg.get("NUM_CLASSES_LIST"))
+    return _build_arkplus_raw(ark_cfg)

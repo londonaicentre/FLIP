@@ -509,12 +509,14 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
         logger.debug(f"Copying meta.json {src_meta_path} -> {dest_meta_path}")
         s3.copy_object(src_meta_path, dest_meta_path)
 
-    # For evaluation jobs the model checkpoint(s) are loaded SERVER-SIDE by the fl-server
-    # (flip.nvflare.components.EvaluationPTModelLocator) and are not needed on the clients.
-    # Divert them to a server-only `server_checkpoints/` prefix so they are staged for the
+    # Some jobs load a large model checkpoint SERVER-SIDE and don't need it on the clients:
+    #   - evaluation jobs: the models[*].checkpoint files, loaded by EvaluationPTModelLocator;
+    #   - training jobs: a pretrained backbone declared via top-level SERVER_CHECKPOINT (str or
+    #     list), loaded by InitialCheckpointPTModelPersistor and broadcast as the round-0 model.
+    # Divert those to a server-only `server_checkpoints/` prefix so they are staged for the
     # fl-server (via the shared checkpoint volume) instead of being bundled into every
-    # app*/custom/ and shipped to every client by NVFLARE's deploy_map. Mirrors the Flower
-    # backend, which keeps the checkpoint server-side and out of the app shipped to clients.
+    # app*/custom/ and shipped to every client by NVFLARE's deploy_map (a large bundled file
+    # collapses app-deploy). Mirrors the Flower backend, which keeps the checkpoint server-side.
     server_checkpoints: set[str] = set()
     if job_type == "evaluation":
         server_checkpoints = {
@@ -522,8 +524,14 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
             for m in input_config.get("models", {}).values()
             if isinstance(m, dict) and m.get("checkpoint")
         }
-        if server_checkpoints:
-            logger.info(f"Evaluation job: diverting checkpoints out of the app bundle: {server_checkpoints}")
+    else:
+        declared = input_config.get("SERVER_CHECKPOINT")
+        if isinstance(declared, str) and declared:
+            server_checkpoints = {declared}
+        elif isinstance(declared, list):
+            server_checkpoints = {c for c in declared if isinstance(c, str) and c}
+    if server_checkpoints:
+        logger.info(f"Diverting server-side checkpoints out of the app bundle: {server_checkpoints}")
 
     # Copy model files, skipping meta.json. Evaluation checkpoints go once to the server-only
     # `server_checkpoints/` prefix; every other model file is mirrored into each app*/custom/.

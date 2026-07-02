@@ -23,6 +23,11 @@ services:
       - FL_ADMIN_DIRECTORY=${FL_ADMIN_DIRECTORY}
       # Shared volume where the FL API stages a de-bundled eval checkpoint (mirrors Flower's /app/src).
       - SERVER_CHECKPOINT_ROOT=/app/server-checkpoints
+      # Per-job GPU request written into meta.json resource_spec by configure_meta. Default 0 =>
+      # empty resource_spec => NVFLARE hides the GPU from the training worker (CPU). Set >0 (with
+      # mem <= the client's advertised mem_per_gpu_in_GiB) so jobs train on the GPU.
+      - JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS:-0}
+      - JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB:-0}
     ports:
       - "${FL_API_PORT}:8000"
     volumes:

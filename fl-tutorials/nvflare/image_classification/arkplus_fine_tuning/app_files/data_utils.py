@@ -388,10 +388,22 @@ def build_datalist(
 
     datalist = []
     seen_paths = set()
+    skipped_accessions = 0
     for _, row in df.iterrows():
         accession_id = str(row[accession_col])
         labels = get_labels_from_radiology_row(row, lesions, value_to_numerical, normal_key)
-        for img in _dicoms_for_accession(accession_id, project_id=project_id, images_dir=site_cfg.images_dir):
+        try:
+            dicom_paths = _dicoms_for_accession(accession_id, project_id=project_id, images_dir=site_cfg.images_dir)
+        except Exception as exc:
+            # A single accession failing to fetch (e.g. a missing/broken DICOM resource in the
+            # trust imaging backend) must not abort the whole federated run — one bad study on one
+            # site would otherwise kill training for every site. Skip it and carry on; the run
+            # trains on the accessions that ARE retrievable. (See FLIP#677.)
+            skipped_accessions += 1
+            if logger is not None:
+                logger.warning("Skipping accession %s: failed to fetch DICOMs (%s)", accession_id, exc)
+            continue
+        for img in dicom_paths:
             if img in seen_paths:
                 continue
             try:
@@ -402,6 +414,13 @@ def build_datalist(
             item.update(labels)
             datalist.append(item)
             seen_paths.add(img)
+
+    if skipped_accessions and logger is not None:
+        logger.warning(
+            "Skipped %d accession(s) whose DICOMs could not be fetched; training on the remaining %d sample(s).",
+            skipped_accessions,
+            len(datalist),
+        )
 
     if not datalist:
         raise RuntimeError(

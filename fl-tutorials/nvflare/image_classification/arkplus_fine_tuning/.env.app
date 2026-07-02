@@ -1,9 +1,9 @@
 JOB_TYPE=standard
 PATH_TO_APP=../image_classification/arkplus_fine_tuning
-DEV_IMAGES_DIR=/home/parhomesmaeili/miccai-decaf2026/updated-site-data/site-1/accession-resources
-DEV_DATAFRAME=/home/parhomesmaeili/miccai-decaf2026/updated-site-data/site-1/sample_get_dataframe_response.csv
-SITE1_IMAGES_DIR=/home/parhomesmaeili/miccai-decaf2026/updated-site-data/site-1/accession-resources
-SITE1_DATAFRAME=/home/parhomesmaeili/miccai-decaf2026/updated-site-data/site-1/sample_get_dataframe_response.csv
-SITE2_IMAGES_DIR=/home/parhomesmaeili/miccai-decaf2026/updated-site-data/site-2/accession-resources
-SITE2_DATAFRAME=/home/parhomesmaeili/miccai-decaf2026/updated-site-data/site-2/sample_get_dataframe_response.csv
-RAW_CHECKPOINT=/home/parhomesmaeili/miccai-decaf2026/ckpt/pretrained_downloaded/Ark6_swinLarge768_ep50.pth.tar
+DEV_IMAGES_DIR=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site1/accession-resources
+DEV_DATAFRAME=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site1/sample_get_dataframe_response.csv
+SITE1_IMAGES_DIR=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site1/accession-resources
+SITE1_DATAFRAME=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site1/sample_get_dataframe_response.csv
+SITE2_IMAGES_DIR=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site2/accession-resources
+SITE2_DATAFRAME=/home/localat24/data/DeCaf_MICCAI_2026/balanced_synthetic_split/re_final_site2/sample_get_dataframe_response.csv
+RAW_CHECKPOINT=models/Ark6_swinLarge768_ep50.pth.tar

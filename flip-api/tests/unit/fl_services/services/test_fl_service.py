@@ -346,6 +346,61 @@ def test_bundle_nvflare_application_diverts_eval_checkpoint(
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_diverts_standard_server_checkpoint(
+    mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
+):
+    """A training (standard) job declaring top-level SERVER_CHECKPOINT diverts that file to the
+    server-only ``server_checkpoints/`` prefix (loaded server-side, broadcast round-0), NOT into
+    any ``app*/custom/`` — so the large backbone never ships to clients via deploy_map."""
+    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+    dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
+
+    std_config = {"job_type": "standard", "SERVER_CHECKPOINT": "pretrained_weights.pt"}
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps(std_config).encode("utf-8")))
+    }
+    mock_required.return_value = ["trainer.py", "validator.py", "config.json", "models.py"]
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/trainer.py",
+            f"{model_bucket}/{model_id}/validator.py",
+            f"{model_bucket}/{model_id}/config.json",
+            f"{model_bucket}/{model_id}/models.py",
+            f"{model_bucket}/{model_id}/pretrained_weights.pt",
+        ],
+        [f"{base_bucket}/nvflare/standard/app/custom/flip.py"],
+        [],  # destination empty
+    ]
+    mock_client.copy_object.return_value = None
+    mock_client.object_exists.return_value = False
+    mock_verify.return_value = None
+
+    fl_service.bundle_nvflare_application(model_id)
+
+    # Backbone diverted to the server-only prefix (once), not into app/custom/.
+    mock_client.copy_object.assert_any_call(
+        f"{model_bucket}/{model_id}/pretrained_weights.pt",
+        f"{dest_bucket}/{model_id}/server_checkpoints/pretrained_weights.pt",
+    )
+    for call in mock_client.copy_object.call_args_list:
+        args, _ = call
+        if len(args) >= 2:
+            assert not args[1].endswith("/custom/pretrained_weights.pt"), "backbone must not be bundled into custom/"
+    # Ordinary training files still land in app/custom/.
+    mock_client.copy_object.assert_any_call(
+        f"{model_bucket}/{model_id}/trainer.py",
+        f"{dest_bucket}/{model_id}/app/custom/trainer.py",
+    )
+    _, verify_kwargs = mock_verify.call_args
+    assert verify_kwargs["server_checkpoints"] == {"pretrained_weights.pt"}
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
 @patch("flip_api.fl_services.services.fl_service.logger")
 def test_bundle_nvflare_application_model_files_overwrite(
     mock_logger, mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
