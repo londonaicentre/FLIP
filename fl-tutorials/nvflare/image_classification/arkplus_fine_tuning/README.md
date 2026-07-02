@@ -93,7 +93,7 @@ weights are returned to NVFLARE; the teacher is never aggregated.
 ## Configuration
 
 Training settings live in `app_files/config.json`, e.g. `GLOBAL_ROUNDS`,
-`LOCAL_ROUNDS`, `LR_START`/`LR_END`, `VAL_SPLIT`/`TEST_SPLIT`/`SPLIT_SEED`,
+`LOCAL_ROUNDS`, `LR_START`/`LR_END`, `VAL_SPLIT`/`SPLIT_SEED`,
 `BATCH_SIZE`, plus the `LESIONS` and `ARKPLUS` blocks above.
 
 ## Dataset setup
