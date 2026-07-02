@@ -112,6 +112,43 @@ To provision only the minimal Central Hub bastion after a targeted Terraform
 change, run `make provision-bastion PROD=stag|true`; this does not touch the
 Trust EC2.
 
+### Hub-only Deployment (all trusts on-prem)
+
+Use `full-deploy-hub-only` when no trust should run in the cloud — typically because the
+FL workloads need hardware the trust EC2 doesn't have (it's a GPU-less `t3.xlarge`) and
+every trust will run on-prem hosts instead:
+
+```bash
+cd deploy/providers/AWS
+make full-deploy-hub-only PROD=stag   # or PROD=true
+make deploy-ui PROD=stag              # UI ships separately, same as full-deploy
+```
+
+This runs the same chain as `full-deploy` minus the cloud-trust steps (`deploy-trust`,
+`seed-trust-data`) and sets `DEPLOY_TRUST_EC2=false`, so Terraform provisions **no Trust
+EC2 at all** (`ssh-config` skips the `flip-trust` alias and the `trust_ec2` Ansible plays
+are no-ops). The cloud-trust targets fail fast with a pointer to the on-prem flow if run
+against a hub-only environment.
+
+> **Warning**: on an environment previously deployed with `full-deploy`, the hub-only
+> `apply` **destroys the existing Trust EC2** (its data volumes are not preserved).
+> Re-run with `DEPLOY_TRUST_EC2=true` (the default) to bring one back.
+
+Each on-prem trust then joins exactly as in the hybrid flow:
+
+1. Add the trust host's public IP to `LOCAL_TRUST_PUBLIC_IPS` in the env file, then
+   `make allow-local-trust-nlb PROD=<env>` (one NLB ingress rule per IP).
+2. Scaffold + register the kit: `make new-trust TRUST_CODE=<CODE> TRUST_NAME="..." TRUST_REGION=... PROD=<env>`
+   then `make register-trusts KIT=<CODE> PROD=<env>` (the `full-deploy-hub-only` chain
+   already registers every kit file present at deploy time).
+3. On the trust host: stage the FL kit (`make provision-local-trust KIT=<CODE>` on the
+   host, or point `FL_KIT_DIR` in the kit at a locally-provisioned workspace) and start
+   the stack: `env PROD=<env> make -C trust up-trust KIT=<CODE>`.
+
+Multiple on-prem trusts can share one host — give each kit non-colliding ports and data
+directories (see the shipped `trust/.env.*.development.example` kits for a working
+two-trust port allocation).
+
 ### flip-ui on S3 + CloudFront
 
 The UI is served from S3 behind CloudFront at the canonical user-facing subdomain (`stag.flip.aicentre.co.uk` / `app.flip.aicentre.co.uk`). CloudFront also forwards `/api/*` to the ALB, using a backend-only `api.<subdomain>` DNS name that only CloudFront uses — trusts and users never see it. CloudFront is the only supported UI-hosting path; there is no legacy EC2 UI container or ALB UI target group to fall back to.
