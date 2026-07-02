@@ -198,6 +198,49 @@ class TestConfigureClient:
         assert modified_config["query"] == MOCK_COHORT_QUERY
         assert modified_config["existing_key"] == "existing_value"
 
+    def test_configure_client_injects_keep_only_vars_filter(self, mock_isfile, mock_write_config, mock_read_config):
+        """When aggregate_only_regex is set, a KeepOnlyVars filter is prepended to the train
+        task_result_filters (before any existing filter), shrinking the per-round update (FLIP#684)."""
+        mock_read_config.return_value = {
+            "task_result_filters": [
+                {
+                    "tasks": ["train"],
+                    "filters": [{"id": "percentile_privacy", "path": "flip.nvflare.components.PercentilePrivacy"}],
+                }
+            ]
+        }
+
+        configure_client(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            project_id=MOCK_PROJECT_ID,
+            cohort_query=MOCK_COHORT_QUERY,
+            aggregate_only_regex="omni_heads",
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        train_block = next(b for b in modified_config["task_result_filters"] if "train" in b["tasks"])
+        filters = train_block["filters"]
+        # KeepOnlyVars first (runs before PercentilePrivacy), with the include regex.
+        assert filters[0]["path"] == "flip.nvflare.components.KeepOnlyVars"
+        assert filters[0]["args"]["include_vars"] == "omni_heads"
+        assert filters[1]["id"] == "percentile_privacy"
+
+    def test_configure_client_no_regex_leaves_filters_untouched(self, mock_isfile, mock_write_config, mock_read_config):
+        """No aggregate_only_regex → no KeepOnlyVars injected (unchanged for every normal job)."""
+        mock_read_config.return_value = {"task_result_filters": [{"tasks": ["train"], "filters": []}]}
+
+        configure_client(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            project_id=MOCK_PROJECT_ID,
+            cohort_query=MOCK_COHORT_QUERY,
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        train_block = next(b for b in modified_config["task_result_filters"] if "train" in b["tasks"])
+        assert all(f.get("path") != "flip.nvflare.components.KeepOnlyVars" for f in train_block["filters"])
+
     def test_configure_client_file_not_found(self, mock_isfile):
         # Setup
         mock_isfile.return_value = False
@@ -349,7 +392,9 @@ class TestConfigureMeta:
         mock_get_settings.return_value.JOB_RESOURCE_SPEC_NUM_GPUS = 2
         mock_get_settings.return_value.JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB = 16
 
-        expected_resource_spec_per_client = {"num_gpus": 2, "mem_per_gpu_in_GiB": 16}
+        # Must be "num_of_gpus" (NVFLARE GPUResourceManager's num_gpu_key) — "num_gpus" makes the
+        # manager raise and the job fail to schedule.
+        expected_resource_spec_per_client = {"num_of_gpus": 2, "mem_per_gpu_in_GiB": 16}
 
         # Execute
         configure_meta(MOCK_JOB_APP_DIR, MOCK_APP_NAME, MOCK_APP_CLIENTS)

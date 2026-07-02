@@ -146,10 +146,50 @@ class InitialPTModelLocator(ModelLocator):
 
 
 class EvaluationPTModelLocator(ModelLocator):
-    def __init__(self, exclude_vars=None) -> None:
+    def __init__(self, exclude_vars=None, model_id: str = "") -> None:
         super(EvaluationPTModelLocator, self).__init__()
         self.models = None
         self.exclude_vars = exclude_vars
+        self.model_id = model_id
+
+    def _resolve_checkpoint_path(self, fl_ctx: FLContext, app_dir: str, name: str, model_checkpoint: str):
+        """Locate a model checkpoint for server-side loading.
+
+        Resolution order:
+          1. ``<app_dir>/custom/<checkpoint>`` — a checkpoint bundled in the app. Used by
+             the local simulator (which copies the ``.pt`` into ``custom/``) and any legacy
+             bundling.
+          2. ``<SERVER_CHECKPOINT_ROOT>/<model_id>/<checkpoint>`` — the de-bundled checkpoint
+             the FL API staged on the hub-local shared volume (production). Read straight from
+             disk; the checkpoint is intentionally NOT shipped in the app bundle, so it never
+             reaches the clients. This mirrors the Flower backend's ``/app/src`` shared mount.
+
+        Returns the resolved path, or ``None`` (after logging an error) when neither exists.
+        """
+        bundled_path = os.path.join(app_dir, "custom", model_checkpoint)
+        if os.path.isfile(bundled_path):
+            return bundled_path
+
+        if not FlipConstants.LOCAL_DEV:
+            shared_path = os.path.join(FlipConstants.SERVER_CHECKPOINT_ROOT, self.model_id, model_checkpoint)
+            if os.path.isfile(shared_path):
+                self.log_info(fl_ctx, f"Loading checkpoint for model '{name}' from shared volume: {shared_path}")
+                return shared_path
+            self.log_error(
+                fl_ctx,
+                f"Checkpoint for model '{name}' not found. Tried bundled path '{bundled_path}' and "
+                f"shared-volume path '{shared_path}'.",
+                fire_event=True,
+            )
+            return None
+
+        self.log_error(
+            fl_ctx,
+            f"Checkpoint for model '{name}' not found at '{bundled_path}' "
+            f"(LOCAL_DEV; shared-volume fetch skipped).",
+            fire_event=True,
+        )
+        return None
 
     def locate_model(self, fl_ctx: FLContext) -> DXO | None:
         if self.models is None:
@@ -176,14 +216,11 @@ class EvaluationPTModelLocator(ModelLocator):
 
             for name in self.model_names:
                 model_checkpoint = models_config[name]["checkpoint"]
-                checkpoint_path = os.path.join(app_dir, "custom", model_checkpoint)
+                checkpoint_path = self._resolve_checkpoint_path(fl_ctx, app_dir, name, model_checkpoint)
+                if checkpoint_path is None:
+                    # Resolution already logged the failure (fire_event=True); skip this model.
+                    continue
 
-                if not os.path.isfile(checkpoint_path):
-                    self.log_error(
-                        fl_ctx,
-                        f"Model checkpoint for model {name} not found at {checkpoint_path}",
-                        fire_event=True,
-                    )
                 net = model_paths[models_config[name]["path"]]
                 self.models[name] = torch.load(
                     checkpoint_path,
@@ -191,7 +228,16 @@ class EvaluationPTModelLocator(ModelLocator):
                     map_location="cuda" if torch.cuda.is_available() else "cpu",
                 )
                 try:
-                    net.load_state_dict(self.models[name], strict=True)
+                    # Validate against the same weights that are sent to clients
+                    # below: a bare state_dict is used as-is, while an NVFLARE
+                    # persistence-format checkpoint nests them under a "model" key
+                    # (alongside "train_conf"/"meta_props"). PTModelPersistenceFormatManager
+                    # normalises both, so the probe matches what is actually delivered
+                    # instead of false-failing on persistence-format checkpoints.
+                    var_dict = PTModelPersistenceFormatManager(
+                        self.models[name], default_train_conf=None
+                    ).var_dict
+                    net.load_state_dict(var_dict, strict=True)
                 except Exception as e:
                     self.log_error(
                         fl_ctx,
