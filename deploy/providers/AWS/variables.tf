@@ -85,6 +85,12 @@ variable "k8s_trust_public_ips" {
   default     = []
 }
 
+variable "deploy_trust_ec2" {
+  description = "Whether to provision the cloud Trust EC2 host. Set false (make full-deploy-hub-only / DEPLOY_TRUST_EC2=false) for a hub-only deployment where every trust runs on-prem — e.g. when the workloads need a GPU that the t3 trust instance doesn't have. On-prem trusts join via register-trusts + allow-local-trust-nlb as usual."
+  type        = bool
+  default     = true
+}
+
 variable "INTERNAL_SERVICE_KEY_HASH" {
   description = "SHA-256 hash of the internal service key used for fl-server-to-hub auth"
   type        = string
