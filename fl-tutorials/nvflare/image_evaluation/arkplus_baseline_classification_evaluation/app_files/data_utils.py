@@ -294,7 +294,10 @@ def _dicoms_for_accession(
     # Real FLIP client path (LOCAL_DEV=false): fetch DICOMs from the trust imaging-api.
     if project_id:
         flip = FLIP()
-        folder = flip.get_by_accession_number(project_id, accession_id, resource_type=[ResourceType.DICOM])
+        # ResourceType.ALL: XNAT labels Secondary Capture DICOM resources "secondary", not "DICOM" —
+        # the synthetic chest radiographs are SC, so a DICOM-labelled fetch 404s on every study.
+        # ALL downloads every resource on the scan; the rglob("*.dcm") below picks out the DICOMs.
+        folder = flip.get_by_accession_number(project_id, accession_id, resource_type=[ResourceType.ALL])
         return sorted(Path(folder).rglob("*.dcm"))
 
     return []
