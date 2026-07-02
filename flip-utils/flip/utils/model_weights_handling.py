@@ -11,8 +11,6 @@
 #
 
 
-# NOTE: This is the modified file from NVFlare.
-
 from __future__ import annotations
 
 from collections import OrderedDict
