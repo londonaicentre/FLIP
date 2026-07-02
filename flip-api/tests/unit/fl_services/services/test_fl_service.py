@@ -285,21 +285,23 @@ def test_bundle_nvflare_application_success(
     )
 
 
+@pytest.mark.parametrize("job_type", ["evaluation", "evaluation_client_api"])
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
 @patch("flip_api.fl_services.services.fl_service.S3Client")
 def test_bundle_nvflare_application_diverts_eval_checkpoint(
-    mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
+    mock_s3, mock_required, mock_verify, mock_is_valid, job_type, model_id, mocked_settings
 ):
-    """Evaluation checkpoints are copied once to a server-only ``server_checkpoints/`` prefix,
-    NOT into any ``app*/custom/`` — so NVFLARE's deploy_map never ships them to clients."""
+    """Evaluation checkpoints (legacy and Client-API job types) are copied once to a server-only
+    ``server_checkpoints/`` prefix, NOT into any ``app*/custom/`` — so NVFLARE's deploy_map never
+    ships them to clients."""
     base_bucket = mocked_settings.FL_APP_BASE_BUCKET
     model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
     dest_bucket = mocked_settings.FL_APP_DESTINATION_BUCKET
 
     eval_config = {
-        "job_type": "evaluation",
+        "job_type": job_type,
         "models": {"arkplus": {"checkpoint": "weights.pt", "path": "ArkPlus"}},
     }
     mock_client = mock_s3.return_value
@@ -313,7 +315,7 @@ def test_bundle_nvflare_application_diverts_eval_checkpoint(
             f"{model_bucket}/{model_id}/evaluator.py",
             f"{model_bucket}/{model_id}/weights.pt",
         ],
-        [f"{base_bucket}/nvflare/evaluation/app/custom/flip.py"],
+        [f"{base_bucket}/nvflare/{job_type}/app/custom/flip.py"],
         [],  # destination bucket empty
     ]
     mock_client.copy_object.return_value = None

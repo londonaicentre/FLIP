@@ -518,7 +518,7 @@ def bundle_nvflare_application(model_id: UUID, job_type: str = DEFAULT_JOB_TYPE)
     # app*/custom/ and shipped to every client by NVFLARE's deploy_map (a large bundled file
     # collapses app-deploy). Mirrors the Flower backend, which keeps the checkpoint server-side.
     server_checkpoints: set[str] = set()
-    if job_type == "evaluation":
+    if job_type in ("evaluation", "evaluation_client_api"):
         server_checkpoints = {
             m["checkpoint"]
             for m in input_config.get("models", {}).values()
