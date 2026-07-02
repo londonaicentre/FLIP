@@ -719,7 +719,10 @@ resource "aws_security_group_rule" "local_trust_fl_server_nlb" {
 # Allow K8s-deployed trust FL clients to reach the FL server via the NLB.
 # Same pattern as the on-prem trust rule above.
 resource "aws_security_group_rule" "k8s_trust_fl_server_nlb" {
-  for_each          = toset(concat(var.k8s_trust_public_ips, var.K8S_TRUST_IP != "" ? [var.K8S_TRUST_IP] : []))
+  # nonsensitive(): K8S_TRUST_IP is declared sensitive, but Terraform forbids
+  # sensitive-derived for_each keys. The IP becomes a resource instance key
+  # (visible in state/plan) either way, same as k8s_trust_public_ips entries.
+  for_each          = toset(concat(var.k8s_trust_public_ips, nonsensitive(var.K8S_TRUST_IP) != "" ? [nonsensitive(var.K8S_TRUST_IP)] : []))
   type              = "ingress"
   from_port         = var.FL_SERVER_PORT
   to_port           = var.FL_SERVER_PORT
