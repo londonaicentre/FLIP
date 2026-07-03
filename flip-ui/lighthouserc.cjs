@@ -51,16 +51,24 @@ module.exports = {
             },
         },
         assert: {
-            // All `warn` for now: this job is informational until a green
-            // baseline is observed on a few runs. Once the numbers are trusted,
-            // promote accessibility + seo to `error` (they're audit-based and
-            // deterministic) to turn the #586 target into an enforced gate.
-            // Leave best-practices at `warn`: it's dinged by the known-deferred
-            // console 401s (#702) and CSP (#703). Leave performance at `warn`:
-            // it's timing-based and varies run-to-run on shared CI runners.
+            // All `warn`: this job is informational and never blocks a PR.
+            // - accessibility: audit-based and deterministic (currently 100).
+            //   Safe to promote to `error` once a green baseline is trusted, to
+            //   turn the #586 a11y target into an enforced gate.
+            // - seo: intentionally NOT promotable. FLIP is a private,
+            //   authenticated platform, so robots.txt ships `Disallow: /` — which
+            //   deliberately fails Lighthouse's high-weight `is-crawlable`
+            //   audit ("Page is blocked from indexing"), capping SEO around ~66.
+            //   That's the correct product behaviour (we don't want the app
+            //   indexed); the #586 "SEO >= 95" goal is simply the wrong metric
+            //   for a non-indexed app. The 0.6 floor here only catches a
+            //   regression BELOW the expected is-crawlable-only loss.
+            // - best-practices: dinged by the known-deferred console 401s (#702)
+            //   and CSP (#703).
+            // - performance: timing-based, varies run-to-run on shared CI runners.
             assertions: {
                 "categories:accessibility": ["warn", { minScore: 0.95 }],
-                "categories:seo": ["warn", { minScore: 0.95 }],
+                "categories:seo": ["warn", { minScore: 0.6 }],
                 "categories:best-practices": ["warn", { minScore: 0.9 }],
                 "categories:performance": ["warn", { minScore: 0.9 }],
             },
