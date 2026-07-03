@@ -1,0 +1,9 @@
+# FLIP is a private, authenticated platform — nothing here is meant to be
+# crawled or indexed by search engines. Disallow everything.
+#
+# Served at /robots.txt (Vite copies public/ to the site root). Having this
+# file also stops the SPA history-fallback returning index.html for
+# /robots.txt, which crawlers (and Lighthouse's robots-txt audit) would
+# otherwise try to parse as robots syntax and reject.
+User-agent: *
+Disallow: /
