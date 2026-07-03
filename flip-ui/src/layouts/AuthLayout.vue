@@ -26,13 +26,13 @@
                         v-if="!isDark"
                         src="/images/aicentre-logo-transparent.webp"
                         alt="AI Centre for Value Based Healthcare"
-                        class="h-20 w-auto"
+                        class="h-12 w-auto"
                     >
                     <img
                         v-else
                         src="/images/aicentre-logo-transparent-dark.webp"
                         alt="AI Centre for Value Based Healthcare"
-                        class="h-20 w-auto"
+                        class="h-12 w-auto"
                     >
                 </a>
                 <a
