@@ -120,5 +120,9 @@ jobs:
         with:
           name: lighthouse-report
           path: flip-ui/.lighthouseci
+          # lhci writes the reports into the hidden .lighthouseci dir; upload-
+          # artifact's glob skips dot-directories unless this is set, so without
+          # it the upload silently finds nothing (and, being `warn`, stays green).
+          include-hidden-files: true
           if-no-files-found: warn
           retention-days: 30
