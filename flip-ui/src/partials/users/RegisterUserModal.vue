@@ -55,12 +55,24 @@
                                         <div class="w-full px-8 py-4 space-y-4 overflow-y-auto text-sm font-normal leading-5 dark:text-gray-400">
                                             <p>The new user will be sent a temporary password.</p>
                                             <AiInput
+                                                v-if="!lockIdentity"
                                                 class="mt-2"
                                                 data-test="name-field"
                                                 type="text"
                                                 name="name"
                                                 placeholder="Name"
                                             />
+                                            <div v-else class="mt-2">
+                                                <label class="block mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">Name</label>
+                                                <input
+                                                    data-test="name-field"
+                                                    type="text"
+                                                    :value="initialName"
+                                                    readonly
+                                                    disabled
+                                                    class="block w-full text-sm text-gray-500 bg-gray-100 border-gray-300 rounded-md shadow-sm cursor-not-allowed dark:bg-gray-900 dark:text-gray-400 dark:border-gray-700"
+                                                >
+                                            </div>
                                             <AiInput
                                                 class="mt-2"
                                                 data-test="organisation-field"
@@ -69,12 +81,24 @@
                                                 placeholder="Organisation"
                                             />
                                             <AiInput
+                                                v-if="!lockIdentity"
                                                 class="mt-2"
                                                 data-test="email-field"
                                                 type="email"
                                                 name="email"
                                                 placeholder="Email Address"
                                             />
+                                            <div v-else class="mt-2">
+                                                <label class="block mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">Email</label>
+                                                <input
+                                                    data-test="email-field"
+                                                    type="email"
+                                                    :value="initialEmail"
+                                                    readonly
+                                                    disabled
+                                                    class="block w-full text-sm text-gray-500 bg-gray-100 border-gray-300 rounded-md shadow-sm cursor-not-allowed dark:bg-gray-900 dark:text-gray-400 dark:border-gray-700"
+                                                >
+                                            </div>
                                             <Listbox v-model="selectedOption">
                                                 <ListboxButton
                                                     class="relative w-full py-2 pl-3 pr-10 mt-2 text-left bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-700 rounded-md cursor-default focus:border-primary-500 focus:ring-primary-500 dark:focus:ring-primary-400 dark:focus:border-primary-400 focus:ring-1"
@@ -229,11 +253,17 @@ const errorStore = useErrorStore();
 const selectedOption = ref<IOption>();
 const isSubmitting = ref(false);
 
-const { errors, resetForm, validate, validateField } = useForm<RegisterUserForm>({ validationSchema: schema });
+const { errors, resetForm, setFieldValue, validate, validateField } = useForm<RegisterUserForm>({ validationSchema: schema });
 const name = useField("name");
 const organisation = useField("organisation");
 const email = useField("email");
 const role = useField<string>("role");
+
+// When enrolling from an access request the requester's name + email are fixed
+// (passed as initial* props); lock them read-only so the admin cannot alter the
+// identity they approved. The plain Register-User flow passes neither, so it
+// stays fully editable.
+const lockIdentity = computed(() => props.initialEmail !== "");
 
 const roleOptions = computed<IOption[]>(() =>
     props.roles.map((item) => ({
@@ -249,10 +279,12 @@ watch(selectedOption, async (current) => {
 
 // Pre-fill name + email whenever the modal opens, so a reused instance
 // re-populates on each open (e.g. enrolling different access requests in turn).
+// Use setFieldValue (the form's canonical setter) so the value also reaches the
+// AiInput's own useField binding, not just the parent's copy.
 watch(() => props.dialog, (isOpen) => {
     if (isOpen) {
-        name.value.value = props.initialName;
-        email.value.value = props.initialEmail;
+        setFieldValue("name", props.initialName);
+        setFieldValue("email", props.initialEmail);
     }
 });
 
@@ -269,9 +301,9 @@ const submitAction = async () => {
 
     if (valid) {
         const user: IRegisterUserDto = {
-            name: name.value.value as string,
+            name: lockIdentity.value ? props.initialName : (name.value.value as string),
             organisation: organisation.value.value as string,
-            email: email.value.value as string,
+            email: lockIdentity.value ? props.initialEmail : (email.value.value as string),
             roles: [role.value.value as string]
         };
 

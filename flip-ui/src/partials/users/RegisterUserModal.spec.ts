@@ -105,18 +105,20 @@ describe("Register User Modal", () => {
         expect(setupState.role.value.value).toBe(roleB.id);
     });
 
-    it("pre-fills name and email when opened with initial values", async () => {
-        // The "Enroll" action on an access request opens this modal pre-populated
-        // with the requester's name + email; the pre-fill runs when the modal opens.
+    it("shows name + email pre-filled and read-only when enrolling from a request", () => {
+        // The "Enroll" action on an access request opens this modal with the
+        // requester's name + email fixed: pre-populated and non-editable.
         const component = mount(RegisterUserModal, {
+            attachTo: document.body,
             props: {
-                dialog: false,
+                dialog: true,
                 title: "Enroll User",
                 roles: [roleA],
                 initialName: "Pending Person",
                 initialEmail: "pending@example.test"
             },
             global: {
+                renderStubDefaultSlot: true,
                 plugins: [createTestingPinia({
                     createSpy: vi.fn,
                     stubActions: false
@@ -124,12 +126,36 @@ describe("Register User Modal", () => {
             }
         });
 
-        await component.setProps({ dialog: true });
-        await nextTick();
+        const nameInput = component.find("[data-test=\"name-field\"]");
+        const emailInput = component.find("[data-test=\"email-field\"]");
+        expect((nameInput.element as HTMLInputElement).value).toBe("Pending Person");
+        expect((emailInput.element as HTMLInputElement).value).toBe("pending@example.test");
+        // Locked: rendered as disabled inputs, not the editable AiInput.
+        expect(nameInput.attributes("disabled")).toBeDefined();
+        expect(emailInput.attributes("disabled")).toBeDefined();
+        component.unmount();
+    });
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const setupState = (component.vm as any).$.setupState;
-        expect(setupState.name.value.value).toBe("Pending Person");
-        expect(setupState.email.value.value).toBe("pending@example.test");
+    it("keeps name + email editable in the plain register-user flow", () => {
+        const component = mount(RegisterUserModal, {
+            attachTo: document.body,
+            props: {
+                dialog: true,
+                title: "Register User",
+                roles: [roleA]
+            },
+            global: {
+                renderStubDefaultSlot: true,
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        // No initial identity -> the fields stay editable (not disabled).
+        expect(component.find("[data-test=\"name-field\"]").attributes("disabled")).toBeUndefined();
+        expect(component.find("[data-test=\"email-field\"]").attributes("disabled")).toBeUndefined();
+        component.unmount();
     });
 });
