@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for deploy readiness verification script."""
+"""Tests for the deploy readiness verification script."""
 
 import tempfile
 from pathlib import Path
@@ -180,7 +180,7 @@ class TestIntegration:
         # These tests run from deploy/providers/AWS
         assert check_file_exists("update_ssm_ssh_config.py", "SSH config script")
         assert check_file_exists("check_status.py", "Status checker")
-        assert check_file_exists("test_update_ssm_ssh_config.py", "Unit tests")
+        assert check_file_exists("tests/test_update_ssm_ssh_config.py", "Unit tests")
         assert check_file_exists("Makefile", "Makefile")
         assert check_file_exists("site.yml", "Ansible playbook")
 

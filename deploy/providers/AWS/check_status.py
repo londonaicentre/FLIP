@@ -197,6 +197,23 @@ def run_aws_command(args: list[str]) -> tuple[bool, str]:
         return False, str(e)
 
 
+def format_ssm_ping_status(success: bool, ping_status: str) -> str:
+    """Format an SSM ping-status query result for operator output.
+
+    Args:
+        success: Whether the AWS CLI command completed successfully.
+        ping_status: Stripped stdout from the command, or its error description.
+
+    Returns:
+        A clear status description for the deployment report.
+    """
+    if not success:
+        return f"query failed: {ping_status or 'unknown error'}"
+    if ping_status in {"", "None"}:
+        return "not registered"
+    return ping_status
+
+
 def run_ssh_command(ssh_key: str, host: str, command: str, timeout: int = 10) -> tuple[bool, str]:
     """Run a command via SSH.
 
@@ -1034,7 +1051,7 @@ def main(
         if success and ping_status == "Online":
             print_status("PASS", "Central Hub bastion is online in SSM")
         else:
-            print_status("FAIL", f"Central Hub bastion SSM status: {ping_status or 'not registered'}")
+            print_status("FAIL", f"Central Hub bastion SSM status: {format_ssm_ping_status(success, ping_status)}")
 
     # Check Trust EC2 instance status if it exists
     if trust_id:
@@ -1185,7 +1202,8 @@ def main(
                     if failure_reason == "CAA_ERROR":
                         print_status(
                             "INFO",
-                            "CAA_ERROR: Domain has CAA records that block AWS ACM. Contact domain admin to add 'amazon.com' to CAA records.",
+                            "CAA_ERROR: Domain has CAA records that block AWS ACM. "
+                            "Contact domain admin to add 'amazon.com' to CAA records.",
                         )
                 else:
                     print_status("WARN", f"Certificate status: {status}")
@@ -1208,9 +1226,10 @@ def main(
             with socket.create_connection((alb_subdomain, 443), timeout=10) as sock:
                 with context.wrap_socket(sock, server_hostname=alb_subdomain) as ssock:
                     cert = ssock.getpeercert()
+                    common_name = cert.get("subject", [[("commonName", "N/A")]])[0][0][1]
                     print_status(
                         "PASS",
-                        f"HTTPS connection successful - Certificate issued to: {cert.get('subject', [[('commonName', 'N/A')]])[0][0][1]}",
+                        f"HTTPS connection successful - Certificate issued to: {common_name}",
                     )
 
                     # Check certificate expiry

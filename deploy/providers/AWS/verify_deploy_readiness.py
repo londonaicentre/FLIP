@@ -173,8 +173,8 @@ def main() -> int:
     all_passed &= check_file_exists("check_status.py", "Status checker")
     all_passed &= check_python_syntax("check_status.py", "Status checker")
 
-    all_passed &= check_file_exists("test_update_ssm_ssh_config.py", "Unit tests")
-    all_passed &= check_python_syntax("test_update_ssm_ssh_config.py", "Unit tests")
+    all_passed &= check_file_exists("tests/test_update_ssm_ssh_config.py", "Unit tests")
+    all_passed &= check_python_syntax("tests/test_update_ssm_ssh_config.py", "Unit tests")
     print()
 
     # Check Terraform files
@@ -238,7 +238,7 @@ def main() -> int:
     if not uv_available:
         print("   ⚠️  Unit tests skipped (uv not installed)")
     else:
-        success, output = run_command(["uv", "run", "pytest", "test_update_ssm_ssh_config.py", "-q"])
+        success, output = run_command(["uv", "run", "pytest", "-c", "/dev/null", "tests", "-q"])
         if success:
             if "passed" in output:
                 print(f"   ✅ Unit tests passing: {output.strip()}")

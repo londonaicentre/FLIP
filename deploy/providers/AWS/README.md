@@ -809,7 +809,8 @@ deploy/providers/AWS/
 │       └── flip-xnat-credentials.txt        # Plain-text fallback
 ├── services.tf                              # Cognito config - loads cognito/ templates via file()
 ├── main.tf                                  # SES config - loads ses/ templates via file()
-├── test_email_templates.py                  # Test utility for all templates
+└── tests/
+    └── test_email_templates.py              # Test utility for all templates
 ```
 
 ### How Templates Are Loaded
@@ -859,14 +860,14 @@ Changes to template files are automatically picked up on next `terraform apply` 
 cd deploy/providers/AWS
 
 # Test all templates and generate HTML previews
-python3 test_email_templates.py
+python3 tests/test_email_templates.py
 
 # View in browser with local HTTP server
-python3 test_email_templates.py --serve
+python3 tests/test_email_templates.py --serve
 # Open http://localhost:8000/flip_email_invite.html
 
 # Test with custom data
-python3 test_email_templates.py \
+python3 tests/test_email_templates.py \
   --username "user@health.org" \
   --subdomain "flip-stag.example.com"
 ```
@@ -918,6 +919,6 @@ Before testing emails:
 ### Making Template Changes
 
 1. **Edit template file** in `templates/cognito/` or `templates/ses/`
-2. **Test locally**: `python3 test_email_templates.py` (verify all 5 pass)
+2. **Test locally**: `python3 tests/test_email_templates.py` (verify all 5 pass)
 3. **Review**: Check generated `email_previews/*.html` files in browser
 4. **Deploy**: Changes are picked up on next `terraform apply`

@@ -462,8 +462,8 @@ Then run `make plan PROD=stag`, `make apply PROD=stag`, and `make deploy-central
 
 **Temporary workaround** (force import for stuck projects):
 
-```bash
-# Connect with psql using the bastion recipe in §5, then check the task.
+```sql
+-- Connect with psql using the bastion recipe in §5, then check the task.
 SELECT id, task_type, status, created_at
 FROM trust_task
 WHERE task_type = 'CREATE_IMAGING'
