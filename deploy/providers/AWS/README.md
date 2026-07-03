@@ -76,7 +76,7 @@ Managed policies that cover these requirements:
 
 **Note**: The deployed EC2 instances use separate, scoped IAM roles following the principle of least privilege:
 
-- **Central Hub** (`ec2-role`): SSM + CloudWatch managed policies, plus inline policies for `secretsmanager:GetSecretValue` on the FLIP API and DB secrets, Cognito user-pool admin actions on the FLIP user pool, S3 object access on the three FLIP application buckets (see [FLIP application S3 buckets](#flip-application-s3-buckets)) and the AI Centre bucket, and `ses:SendEmail` on the verified sender identity.
+- **Central Hub bastion** (`ec2-role`): `AmazonSSMManagedInstanceCore` only. Application permissions belong to the ECS task roles; the bastion cannot read FLIP secrets or buckets and cannot call Cognito, SES, or CloudWatch Logs.
 - **Trust EC2** (`trust-ec2-role`): SSM + CloudWatch managed policies, plus a read-only S3 inline policy on the AI Centre bucket for FL participant-kit downloads. No Cognito, SES, Secrets Manager or FLIP application bucket access.
 
 ## Deployment Workflow
@@ -101,12 +101,16 @@ This command executes the following steps in order:
 5. **`plan`**: Generate and review the initial Terraform execution plan
 6. **`apply`**: Apply infrastructure changes
 7. **`update-env`**: Refresh the root environment file with Terraform outputs
-8. **`ssh-config`**: Update `~/.ssh/config` with EC2 instance IPs
-9. **`ansible-init`**: Configure EC2 instances with Docker, CloudWatch, and FL assets (Trust EC2 only — the Central Hub no longer runs application containers on its EC2 host)
+8. **`ssh-config`**: Update `~/.ssh/config` with SSM-managed EC2 instance IDs
+9. **`ansible-init`**: Patch both hosts, install `psql` on the Central Hub bastion, and provision Docker, AWS CLI, CloudWatch, and FL assets on the Trust EC2
 10. **`deploy-centralhub`**: Force-redeploy the Central Hub ECS Fargate services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) and sync the UI to S3 + invalidate CloudFront
 11. **`register-trusts`**: Register every locally-present trust kit file (`trust/.env.<CODE>.<env>`) on the running hub and fill each kit with hub-shared values
 12. **`deploy-trust`**: Deploy Trust services via Docker Compose to the Trust EC2
 13. **`status`**: Run comprehensive health checks
+
+To provision only the minimal Central Hub bastion after a targeted Terraform
+change, run `make provision-bastion PROD=stag|true`; this does not touch the
+Trust EC2.
 
 ### flip-ui on S3 + CloudFront
 
@@ -188,7 +192,7 @@ aws s3 rb s3://flipstag
 Two stag-specific watch-outs:
 
 - **`make import-persistent` failing partway through** is fine on a re-run — every import in `scripts/import-resources.sh` is idempotent (probes `terraform state list` before importing). The script will skip already-imported resources and only attempt the missing ones.
-- **The deploy-centralhub redeploy needs the docker image tag pinned in `.env.stag`** (`DOCKER_TAG`) to be a tag that exists in GHCR. Branch tags do **not** auto-build on push — trigger the `docker_build_*` workflows via `workflow_dispatch` first if you're stag-testing a feature branch (see [the build trigger note in CLAUDE.md](../../../CLAUDE.md#docker-image-builds-manual-trigger-required-for-branches)).
+- **The task definitions applied before `deploy-centralhub` need image tags from `.env.stag`** (`DOCKER_TAG`, `DOCKER_FL_TAG`) that exist in GHCR. Branch tags do **not** auto-build on push — trigger the relevant `docker_build_*` workflows via `workflow_dispatch` before applying a branch image tag (see [the build trigger note in CLAUDE.md](../../../CLAUDE.md#docker-image-builds-manual-trigger-required-for-branches)).
 
 For a **future fresh prod or dev** account that needs the same migration, the flow is the stag runbook above minus step 1 (`make import-persistent` is only needed on environments with the stag-style state gap) and with `PROD=true` on every `make` call for prod (dev uses the separate `deploy/providers/AWS/dev/` Terraform root, no `PROD=` flag).
 
@@ -343,10 +347,11 @@ deploy/providers/AWS/
 ```
 
 The Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) run on **ECS
-Fargate** today. The `aws_instance.ec2_instance` Central Hub EC2 still exists in the stack but no
-longer fronts user traffic — the ALB's `target_groups` is empty for instance targets, and both the
-ALB's `/api/*` rule and the NLB's FL-server listener forward to ECS Fargate `target_type=ip` target
-groups (`aws_lb_target_group.ecs_flip_api`, `aws_lb_target_group.ecs_fl_server_tcp`).
+Fargate**. `aws_instance.ec2_instance` is an intentional minimum-viable SSM bastion for ad-hoc
+PostgreSQL and network diagnostics: it runs no application containers, has no inbound security-group
+rules, and carries only the SSM managed IAM policy. The ALB's `/api/*` rule and the NLB's FL-server
+listener forward to ECS Fargate `target_type=ip` target groups
+(`aws_lb_target_group.ecs_flip_api`, `aws_lb_target_group.ecs_fl_server_tcp`).
 
 The Cognito and SES resources used to live at the root of the prod/stag stack. `services.tf` and `main.tf` ship `moved` blocks that re-anchor the old root addresses onto the new `module.cognito.*` / `module.ses.*` paths, so any state still on the old layout self-heals on the next plan — no manual `terraform state mv` needed. `scripts/import-resources.sh` already targets the module addresses, so a fresh import lands in the right place too.
 
@@ -408,7 +413,7 @@ This validates:
 - ✅ Secrets Manager access
 - ✅ S3 bucket accessibility
 - ✅ Cognito User Pool configuration
-- ✅ Docker services on EC2 instances
+- ✅ Docker services on the Trust EC2 and ECS services on Fargate
 - ✅ HTTP endpoint availability
 - ✅ SSH connectivity
 - ✅ CloudWatch Logs configuration
@@ -527,7 +532,7 @@ The platform supports a cloud-only setup (Central Hub + Trust on AWS) or a hybri
    - `fl-api-net-1` (Federated Learning API for Network 1) — internal-only, reachable via Cloud Map `flip.local`
    - `fl-server-net-1` (Federated Learning Server for Network 1) — fronted by the NLB for FL client TCP traffic
 
-3. **Central Hub EC2** (`aws_instance.ec2_instance`, t3.medium, **private subnet**): Vestigial bastion / Ansible bootstrap host. **No longer runs application containers** — the ALB target_groups map carries no instance targets, and no listener rule points at it. Access is via SSM Session Manager only.
+3. **Central Hub SSM bastion** (`aws_instance.ec2_instance`, t3.micro, 10 GB root volume, **private subnet**): Intentional minimal host for ad-hoc `psql` and network diagnostics. It runs no application containers, has no inbound security-group rules, and is reachable only through SSM Session Manager / SSH-over-SSM.
 
 4. **Trust EC2** (cloud model, t3.xlarge, **private subnet**): Hosts trust-related services (automatically provisioned)
    - trust-api (polls hub for tasks)
@@ -616,7 +621,7 @@ the direction of the request flow.
 
 - **VPC**: Custom VPC (`10.0.0.0/16` by default) across 2 AZs, with public + private subnets and a single shared NAT Gateway
 - **ECS Fargate cluster**: Runs the Central Hub application services (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) as awsvpc tasks in **private subnets**. Task definitions, services, and per-service security groups live in `ecs*.tf` and `iam_ecs.tf`.
-- **Central Hub EC2**: t3.medium instance in a **private subnet**. Used today as the SSM-accessible bastion / Ansible bootstrap host — application workloads run on ECS Fargate, not on this instance.
+- **Central Hub SSM bastion**: t3.micro instance with a 10 GB root volume in a **private subnet**. It carries only the SSM managed IAM policy and a PostgreSQL client for ad-hoc RDS operations; application workloads run on ECS Fargate.
 - **Trust EC2**: Separate t3.xlarge instance in a **private subnet**, running Trust services via Docker Compose
   - Deployed using custom Terraform module (`modules/trust_ec2`)
   - Automatic Docker and Docker Compose installation via user_data
@@ -631,7 +636,7 @@ the direction of the request flow.
 - **Cloud Map (Service Discovery)**: Private DNS namespace `flip.local` used for ECS task-to-task resolution (e.g. `fl-api-net-1.flip.local`).
 - **VPC endpoints**: Interface endpoints (Secrets Manager, SSM, CloudWatch Logs, ECR API + DKR) in the **private subnets** plus an S3 gateway endpoint. Allow Fargate tasks to reach AWS APIs without traversing the NAT Gateway.
 - **RDS**: PostgreSQL 17 managed database (Terraform default, see `var.postgres_version`), in the **private subnets**. Subnet group + security group ingress restricted to the Central Hub EC2 SG and the `flip-api` ECS task SG.
-- **CloudWatch**: Logging and monitoring for ECS tasks, both EC2 instances, the WAFv2 ACL, and VPC endpoints.
+- **CloudWatch**: Logging and monitoring for ECS tasks, the Trust EC2, the WAFv2 ACL, and VPC endpoints. The minimal Central Hub bastion does not run the CloudWatch agent.
 - **Secrets Manager**: Secure storage for API secrets and database credentials (`FLIP_API` secret).
 - **SSM Parameter Store**: Configuration values read by ECS tasks at startup — bucket URIs, internal service URL, internal-service-key header name.
 - **S3 Backend**: Remote state storage with environment-specific buckets, DynamoDB lock table.
@@ -644,7 +649,7 @@ the direction of the request flow.
 | NAT Gateway | **Public** | Single shared NAT for all private-subnet egress |
 | ALB | **Private** (`internal = true`) | Reached only via the CloudFront VPC origin ENI; SG accepts 443 only from `CloudFront-VPCOrigins-Service-SG` |
 | NLB | **Public** | Security group ingress allow-listed to NAT public IP + on-prem Trust IP |
-| Central Hub EC2 (`aws_instance.ec2_instance`) | **Private** | No app workloads; SSM-only |
+| Central Hub SSM bastion (`aws_instance.ec2_instance`) | **Private** | t3.micro, 10 GB; no inbound rules or app workloads; `psql` + SSM only |
 | Trust EC2 (`module.trust_ec2`) | **Private** | No inbound ports; SSM-only |
 | ECS Fargate tasks (`flip-api`, `fl-api-net-1`, `fl-server-net-1`) | **Private** | `assign_public_ip = false`, awsvpc ENIs |
 | RDS (PostgreSQL) | **Private** | DB subnet group spans both private subnets |
@@ -751,7 +756,7 @@ Host flip
 **Connecting**
 
 ```bash
-ssh flip        # Central Hub
+ssh flip        # Central Hub SSM bastion
 ssh flip-trust  # Trust EC2
 ```
 
@@ -766,7 +771,7 @@ Both aliases resolve through the SSM tunnel — no public IP or open port 22 is 
 | `[ERROR] SessionManagerPlugin is not installed` | Session manager plugin is missing or outdated | Upgrade plugin: `brew upgrade session-manager-plugin` or download latest version |
 | `InvalidInstanceID.NotFound` | SSH attempts to connect but fails | Verify instance exists: `terraform output Ec2InstanceId` and `terraform output TrustEc2InstanceId` |
 | `AccessDeniedException` | `aws ssm start-session` returns access denied | Check EC2 instance IAM role has `ssm:StartSession` and `ec2messages:*` permissions (Terraform should have created this) |
-| `Connection timeout` (hanging) | SSM tunnel hangs without error | Check NLB security group allows ingress on `FL_SERVER_PORT` from the NAT Gateway public IP (and from `local_trust_public_ip` if a hybrid trust is configured); verify instances are running: `aws ec2 describe-instances` |
+| `Connection timeout` (hanging) | SSM tunnel hangs without error | Check `aws ssm describe-instance-information` reports the instance as `Online`, verify the instance is running, and confirm its private subnet has NAT/VPC-endpoint egress. No inbound SSH rule is required. |
 | `Unable to connect to SSM endpoint` | Connection fails immediately | Verify AWS_REGION matches deployment region: `echo $AWS_REGION` should match `eu-west-2` (or your region) |
 | `Bad ProxyCommand` in ~/.ssh/config | SSH config syntax error | Re-generate config: `make ssh-config` and verify it looks like the example above |
 

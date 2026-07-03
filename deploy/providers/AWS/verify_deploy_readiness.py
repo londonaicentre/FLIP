@@ -102,6 +102,19 @@ def check_makefile_dependency(target: str, dependency: str, description: str) ->
             return False
 
 
+def check_makefile_dependency_absent(target: str, dependency: str, description: str) -> bool:
+    """Check that a Make target does not have an obsolete dependency."""
+    with open("Makefile", "r") as f:
+        content = f.read()
+        pattern = rf"^{re.escape(target)}:\s+[^#]*\b{re.escape(dependency)}\b"
+        if not re.search(pattern, content, re.MULTILINE):
+            print(f"   ✅ Make dependency absent: {description}")
+            return True
+
+        print(f"   ❌ Obsolete Make dependency present: {description}")
+        return False
+
+
 def check_command_available(command: str, min_version: str | None = None) -> bool:
     """Check if a command is available in PATH."""
     result = subprocess.run(["which", command], capture_output=True, text=True, timeout=5)
@@ -197,10 +210,10 @@ def main() -> int:
         "check-ssm-ready",
         "ssh-config depends on check-ssm-ready",
     )
-    all_passed &= check_makefile_dependency(
+    all_passed &= check_makefile_dependency_absent(
         "deploy-centralhub",
         "ssh-config",
-        "deploy-centralhub depends on ssh-config",
+        "deploy-centralhub does not depend on the SSM bastion",
     )
     all_passed &= check_makefile_dependency(
         "deploy-trust",
