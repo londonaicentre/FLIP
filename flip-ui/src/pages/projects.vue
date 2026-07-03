@@ -25,7 +25,8 @@
                 <header class="flex flex-col gap-4 px-8 pt-8 pb-4 sm:flex-row sm:items-end sm:justify-between">
                     <div>
                         <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-400">
-                            Workspace · {{ approvedTrustCount }} {{ approvedTrustCount === 1 ? "trust" : "trusts" }} active
+                            Workspace · {{ approvedTrustCount }}
+                            {{ approvedTrustCount === 1 ? "trust" : "trusts" }} active
                         </p>
                         <h1 class="text-3xl font-semibold font-heading mt-1 text-gray-900 dark:text-gray-100">
                             <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Projects</span>

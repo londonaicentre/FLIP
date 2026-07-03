@@ -186,8 +186,8 @@ import { extractErrorDetail } from "@/utils/api-errors";
 import { Snackbar } from "@/utils/snackbar";
 
 interface IRegisterUserModalProps {
-    dialog: boolean,
-    title: string,
+    dialog?: boolean,
+    title?: string,
     roles: IRole[]
 }
 

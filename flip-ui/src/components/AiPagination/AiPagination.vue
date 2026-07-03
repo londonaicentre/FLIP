@@ -86,8 +86,8 @@ import AiButton from "@/components/AiButton/AiButton.vue";
  * Props
  */
 interface IPaginationProps {
-    totalPages: number;
-    currentPage: number;
+    totalPages?: number;
+    currentPage?: number;
     slim?: boolean;
 }
 

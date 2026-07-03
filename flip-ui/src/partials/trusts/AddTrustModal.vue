@@ -118,7 +118,7 @@ import { extractErrorDetail } from "@/utils/api-errors";
 import { Snackbar } from "@/utils/snackbar";
 
 interface IAddTrustModalProps {
-    dialog: boolean;
+    dialog?: boolean;
 }
 
 withDefaults(defineProps<IAddTrustModalProps>(), { dialog: false });
@@ -131,7 +131,9 @@ const emit = defineEmits<{
 const errorStore = useErrorStore();
 const isSubmitting = ref(false);
 
-const { resetForm, validate } = useForm<{ name: string; code: string; region: string }>({ validationSchema: addTrustSchema });
+const { resetForm, validate } = useForm<{ name: string; code: string; region: string }>(
+    { validationSchema: addTrustSchema }
+);
 const name = useField<string>("name");
 const code = useField<string>("code");
 const region = useField<string>("region");

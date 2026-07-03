@@ -131,7 +131,7 @@ import { computed } from "vue";
 import { routeChange } from "@/router";
 
 interface IAiUserDropdownProps {
-    emailAddress: string;
+    emailAddress?: string;
     displayName?: string;
     isDark: boolean;
     role?: string;
@@ -140,7 +140,8 @@ interface IAiUserDropdownProps {
 const props = withDefaults(
     defineProps<IAiUserDropdownProps>(), {
         emailAddress: "",
-        displayName: ""
+        displayName: "",
+        role: ""
     }
 );
 

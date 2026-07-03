@@ -105,7 +105,7 @@ import AiButton from "../AiButton/AiButton.vue";
 
 interface IAiChipSelectProperties {
     errorMessage?: string,
-    defaultText: string,
+    defaultText?: string,
     options: IOption[],
     selectedOptions: readonly DeepReadonly<FieldEntry>[],
 }

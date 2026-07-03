@@ -158,7 +158,10 @@
             >
                 <template #confirmation>
                     <div class="my-4 space-y-2">
-                        <strong>Any active training jobs performed on the models within the project will be stopped. This can not be undone.</strong>
+                        <strong>
+                            Any active training jobs performed on the models within the project will be
+                            stopped. This can not be undone.
+                        </strong>
                         <p>Your username will be recorded against this action.</p>
                         <p>
                             To delete this project, enter

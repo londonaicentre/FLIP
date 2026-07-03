@@ -120,7 +120,7 @@ import { useAuthStore } from "@/store/auth";
 import { emailValidation } from "@/utils/forms/validation";
 
 export interface IProjectUsersProps {
-    users: IProjectUser[];
+    users?: IProjectUser[];
     readonly?: boolean;
 }
 

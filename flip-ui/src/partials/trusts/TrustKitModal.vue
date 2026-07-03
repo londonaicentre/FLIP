@@ -71,7 +71,8 @@
                                 <div data-test="all-credentials-section">
                                     <div class="flex items-center justify-between mb-1">
                                         <span class="text-xs font-bold uppercase tracking-widest text-gray-500">
-                                            Kit credentials — paste into <code>trust/.env.&lt;CODE&gt;.&lt;env&gt;</code>
+                                            Kit credentials — paste into
+                                            <code>trust/.env.&lt;CODE&gt;.&lt;env&gt;</code>
                                         </span>
                                         <button
                                             type="button"
@@ -134,8 +135,8 @@ import { ICreatedTrust } from "@/services/admin-trusts-service";
 import { Snackbar } from "@/utils/snackbar";
 
 interface ITrustKitModalProps {
-    dialog: boolean;
-    trust: ICreatedTrust | null;
+    dialog?: boolean;
+    trust?: ICreatedTrust | null;
 }
 
 const props = withDefaults(defineProps<ITrustKitModalProps>(), {
