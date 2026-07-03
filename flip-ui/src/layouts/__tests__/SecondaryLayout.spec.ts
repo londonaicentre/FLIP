@@ -15,45 +15,61 @@
 
 import { createTestingPinia } from "@pinia/testing";
 import { mount } from "@vue/test-utils";
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import AiMainNavigation from "../AiMainNavigation.vue";
+import SecondaryLayout from "../SecondaryLayout.vue";
+
+// SecondaryLayout picks its logo from useDark(); expose a ref we can flip per test.
+// vitest hoists vi.mock/vi.hoisted above the imports above, so the mock is active
+// before SecondaryLayout (and its `@vueuse/core` import) is evaluated.
+const darkState = vi.hoisted(() => ({ ref: null as null | { value: boolean } }));
+
+vi.mock("@vueuse/core", async (importOriginal) => {
+    const actual = await importOriginal<typeof import("@vueuse/core")>();
+    const { ref } = await import("vue");
+    darkState.ref = ref(false);
+
+    return {
+        ...actual,
+        useDark: () => darkState.ref
+    };
+});
 
 const LIGHT_LOGO = "/images/aicentre-logo-transparent.webp";
 const DARK_LOGO = "/images/aicentre-logo-transparent-dark.webp";
 
-function mountNav(isDark: boolean) {
-    return mount(AiMainNavigation, {
+function mountLayout() {
+    return mount(SecondaryLayout, {
         global: {
-            // Render router-link slots so the logo inside the home link is asserted on.
-            stubs: { "router-link": { template: "<a><slot /></a>" } },
-            directives: { tippy: () => {} },
+            stubs: { "router-view": true },
             plugins: [createTestingPinia({
                 createSpy: vi.fn,
                 stubActions: false
             })]
-        },
-        props: {
-            currentPage: "/project",
-            isDark
         }
     });
 }
 
-describe("Ai MainNavigation", () => {
-    test("Renders Component", () => {
-        expect(mountNav(false).exists()).toBe(true);
+describe("SecondaryLayout", () => {
+    beforeEach(() => {
+        darkState.ref!.value = false;
+    });
+
+    test("Renders component", () => {
+        expect(mountLayout().find(".bg-body").exists()).toBe(true);
     });
 
     test("shows the light AI Centre logo in light mode", () => {
-        const comp = mountNav(false);
+        darkState.ref!.value = false;
+        const comp = mountLayout();
 
         expect(comp.find(`img[src="${LIGHT_LOGO}"]`).exists()).toBe(true);
         expect(comp.find(`img[src="${DARK_LOGO}"]`).exists()).toBe(false);
     });
 
     test("shows the dark AI Centre logo in dark mode", () => {
-        const comp = mountNav(true);
+        darkState.ref!.value = true;
+        const comp = mountLayout();
 
         expect(comp.find(`img[src="${DARK_LOGO}"]`).exists()).toBe(true);
         expect(comp.find(`img[src="${LIGHT_LOGO}"]`).exists()).toBe(false);
