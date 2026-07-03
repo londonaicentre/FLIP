@@ -24,8 +24,8 @@
 
         <!-- Logo (left) — London AI Centre + FLIP marks -->
         <router-link to="/" class="flex items-center gap-3 flex-shrink-0 mr-4 xl:mr-9">
-            <img src="/images/aicentre-logo-transparent.png" alt="London AI Centre" class="h-12 w-auto">
-            <img src="/images/flip-logo-icon.png" alt="FLIP" class="h-8 w-auto">
+            <img src="/images/aicentre-logo-transparent.webp" alt="London AI Centre" class="h-12 w-auto">
+            <img src="/images/flip-logo-icon.webp" alt="FLIP" class="h-8 w-auto">
         </router-link>
 
         <!-- Vertical divider (desktop) -->
@@ -109,8 +109,8 @@
                             <div class="pt-3 pb-2 divide-y dark:divide-gray-700">
                                 <div class="flex items-start justify-between px-4">
                                     <div class="flex items-center gap-3">
-                                        <img src="/images/aicentre-logo-transparent.png" alt="London AI Centre" class="h-[50px] w-auto">
-                                        <img src="/images/flip-logo-icon.png" alt="FLIP" class="h-[42px] w-auto">
+                                        <img src="/images/aicentre-logo-transparent.webp" alt="London AI Centre" class="h-[50px] w-auto">
+                                        <img src="/images/flip-logo-icon.webp" alt="FLIP" class="h-[42px] w-auto">
                                     </div>
                                     <div class="-mr-2">
                                         <PopoverButton

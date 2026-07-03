@@ -350,7 +350,7 @@
                                 stroke-width="3"
                             />
                             <image
-                                href="/images/flip-logo-icon.png"
+                                href="/images/flip-logo-icon.webp"
                                 :x="radial.cx - 28"
                                 :y="radial.cy - 28"
                                 width="56"

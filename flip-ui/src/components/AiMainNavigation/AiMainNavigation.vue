@@ -49,7 +49,7 @@
 <script setup lang="ts">
 import { directive as vTippy } from "vue-tippy";
 
-import NhsLogo from "/images/nhs-logo.png";
+import NhsLogo from "/images/nhs-logo.webp";
 import logo from "@/assets/logo.svg?component";
 import logoDark from "@/assets/logo_dark.svg?component";
 import useNavigation from "@/composables/navigation";

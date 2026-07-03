@@ -23,7 +23,7 @@
                     aria-label="AI Centre for Value Based Healthcare"
                 >
                     <img
-                        src="/images/aicentre-logo-transparent.png"
+                        src="/images/aicentre-logo-transparent.webp"
                         alt="AI Centre for Value Based Healthcare"
                         class="h-20 w-auto"
                     >
@@ -35,7 +35,7 @@
                     aria-label="FLIP documentation"
                 >
                     <img
-                        src="/images/flip-logo.png"
+                        src="/images/flip-logo.webp"
                         alt="FLIP"
                         class="h-12 w-auto"
                     >
