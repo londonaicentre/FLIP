@@ -189,30 +189,6 @@ class ScatterAndGather(Controller):
         fl_ctx.set_prop(AppConstants.GLOBAL_MODEL, self._global_weights, private=True, sticky=False)
         self.fire_event(AppEventType.INITIAL_MODEL_LOADED, fl_ctx)
 
-    def _log_memory_usage(self, fl_ctx: FLContext, prefix=""):
-        rss_gb = 0.0
-        cgroup_gb = 0.0
-        try:
-            with open("/proc/self/status") as f:
-                for line in f:
-                    if line.startswith("VmRSS:"):
-                        rss_kb = int(line.split()[1])
-                        rss_gb = rss_kb / 1024**2
-                        break
-        except Exception:
-            pass
-        try:
-            with open("/sys/fs/cgroup/memory.current") as f:
-                cgroup_gb = int(f.read().strip()) / 1024**3
-        except Exception:
-            try:
-                with open("/sys/fs/cgroup/memory/memory.usage_in_bytes") as f:
-                    cgroup_gb = int(f.read().strip()) / 1024**3
-            except Exception:
-                pass
-
-        self.log_info(fl_ctx=fl_ctx, msg=f"{prefix} CPU_RSS={rss_gb:.2f}GiB  CGROUP={cgroup_gb:.2f}GiB  GPU=N/A")
-
     def control_flow(self, abort_signal: Signal, fl_ctx: FLContext) -> None:
         try:
             self.log_info(fl_ctx, "Beginning ScatterAndGather training phase.")
@@ -232,11 +208,9 @@ class ScatterAndGather(Controller):
                 fl_ctx.set_prop(AppConstants.GLOBAL_MODEL, self._global_weights, private=True, sticky=False)
                 fl_ctx.set_prop(AppConstants.CURRENT_ROUND, self._current_round, private=True, sticky=False)
                 self.fire_event(AppEventType.ROUND_STARTED, fl_ctx)
-                self._log_memory_usage(fl_ctx, prefix=f"Round {self._current_round} after round_started: ")
 
                 # Create train_task
                 data_shareable: Shareable = self.shareable_gen.learnable_to_shareable(self._global_weights, fl_ctx)
-                self._log_memory_usage(fl_ctx, prefix=f"Round {self._current_round} after learnable_to_shareable: ")
                 data_shareable.set_header(AppConstants.CURRENT_ROUND, self._current_round)
                 data_shareable.set_header(AppConstants.NUM_ROUNDS, self._num_rounds)
                 data_shareable.add_cookie(AppConstants.CONTRIBUTION_ROUND, self._current_round)
@@ -249,7 +223,6 @@ class ScatterAndGather(Controller):
                     before_task_sent_cb=self._prepare_train_task_data,
                     result_received_cb=self._process_train_result,
                 )
-                self._log_memory_usage(fl_ctx, prefix=f"Round {self._current_round} before broadcast_and_wait: ")
 
                 self.broadcast_and_wait(
                     task=train_task,
@@ -258,20 +231,15 @@ class ScatterAndGather(Controller):
                     fl_ctx=fl_ctx,
                     abort_signal=abort_signal,
                 )
-                self._log_memory_usage(fl_ctx, prefix=f"Round {self._current_round} after broadcast_and_wait: ")
 
                 if self._check_abort_signal(fl_ctx, abort_signal):
                     return
 
                 self.log_info(fl_ctx, "Start aggregation.")
-                self._log_memory_usage(fl_ctx, prefix=f"Round {self._current_round} before aggregation: ")
-
                 self.fire_event(AppEventType.BEFORE_AGGREGATION, fl_ctx)
                 aggr_result = self.aggregator.aggregate(fl_ctx)
                 fl_ctx.set_prop(AppConstants.AGGREGATION_RESULT, aggr_result, private=True, sticky=False)
                 self.fire_event(AppEventType.AFTER_AGGREGATION, fl_ctx)
-                self._log_memory_usage(fl_ctx, prefix=f"Round {self._current_round} after aggregation: ")
-
                 self.log_info(fl_ctx, "End aggregation.")
 
                 if self._check_abort_signal(fl_ctx, abort_signal):
@@ -282,7 +250,6 @@ class ScatterAndGather(Controller):
                 fl_ctx.set_prop(AppConstants.GLOBAL_MODEL, self._global_weights, private=True, sticky=False)
                 fl_ctx.sync_sticky()
                 self.fire_event(AppEventType.AFTER_SHAREABLE_TO_LEARNABLE, fl_ctx)
-                self._log_memory_usage(fl_ctx, prefix=f"Round {self._current_round} after shareable_to_learnable: ")
 
                 if self._check_abort_signal(fl_ctx, abort_signal):
                     return
@@ -294,12 +261,10 @@ class ScatterAndGather(Controller):
                     self.fire_event(AppEventType.BEFORE_LEARNABLE_PERSIST, fl_ctx)
                     self.persistor.save(self._global_weights, fl_ctx)
                     self.fire_event(AppEventType.AFTER_LEARNABLE_PERSIST, fl_ctx)
-                    self._log_memory_usage(fl_ctx, prefix=f"Round {self._current_round} after persist: ")
                     self.log_info(fl_ctx, "End persist model on server.")
 
                 self.fire_event(AppEventType.ROUND_DONE, fl_ctx)
                 self.log_info(fl_ctx, f"Round {self._current_round} finished.")
-                self._log_memory_usage(fl_ctx, prefix=f"Round {self._current_round} at round_end: ")
                 self._current_round += 1
 
             self._phase = AppConstants.PHASE_FINISHED
@@ -409,7 +374,6 @@ class ScatterAndGather(Controller):
                         new_weights[k] = global_weights[k] + diff[k]
                     new_dxo = DXO(data_kind=DataKind.WEIGHTS, data=new_weights, meta=dxo.meta)
                     result = new_dxo.update_shareable(result)
-                    self._log_memory_usage(fl_ctx, prefix=f"Round {self._current_round} after weight_diff_apply: ")
                 else:
                     self.log_error(
                         fl_ctx, f"The returned weights are not of type WEIGHT_DIFF. Received data kind: {dxo.data_kind}"
@@ -423,7 +387,6 @@ class ScatterAndGather(Controller):
         self.fire_event(AppEventType.BEFORE_CONTRIBUTION_ACCEPT, fl_ctx)
 
         accepted = self.aggregator.accept(result, fl_ctx)
-        self._log_memory_usage(fl_ctx, prefix=f"Round {self._current_round} after aggregator_accept: ")
         accepted_msg = "ACCEPTED" if accepted else "REJECTED"
         self.log_info(fl_ctx, f"Contribution from {client_name} {accepted_msg} by the aggregator.")
 
