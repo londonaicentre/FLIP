@@ -280,13 +280,16 @@ watch(selectedOption, async (current) => {
 // Pre-fill name + email whenever the modal opens, so a reused instance
 // re-populates on each open (e.g. enrolling different access requests in turn).
 // Use setFieldValue (the form's canonical setter) so the value also reaches the
-// AiInput's own useField binding, not just the parent's copy.
+// AiInput's own useField binding, not just the parent's copy. `immediate` also
+// covers an instance mounted with dialog already open — otherwise vee-validate
+// would still see empty name/email and block submit in the locked-identity flow,
+// where the visible (disabled) inputs are not bound to the form.
 watch(() => props.dialog, (isOpen) => {
     if (isOpen) {
         setFieldValue("name", props.initialName);
         setFieldValue("email", props.initialEmail);
     }
-});
+}, { immediate: true });
 
 const close = () => {
     emit("closeModal", false);

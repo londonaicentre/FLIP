@@ -72,15 +72,19 @@ def _notify_admins_of_access_request(request: IAccessRequest, access_request: Ac
             },
         )
         access_request.email_notified = True
+        access_request.updated_at = datetime.utcnow()
         db.add(access_request)
         db.commit()
         logger.info("Access request notification email dispatched to admin")
-    except Exception as e:
+    except Exception:
         # Swallow: the request is already persisted. Covers SES ``ClientError``
         # (unverified sender, sandbox, throttling) and any credential/config
-        # error. Operators recover un-notified requests from the DB.
+        # error. Operators recover un-notified requests from the DB. Log the row
+        # id (not the email — untrusted PII) so the failure correlates to the
+        # persisted request; ``exception`` attaches the traceback (expected in
+        # prod when SES is sandboxed/throttled — see #592).
         db.rollback()
-        logger.error(f"Access request recorded but admin notification email could not be sent: {e}")
+        logger.exception(f"Access request {access_request.id} recorded but admin notification email not sent")
 
 
 # [#114] ✅  [#699] persist-then-notify so a broken email backend can't lose the request

@@ -83,8 +83,10 @@ def test_request_access_persists_and_emails(valid_access_request, mock_session, 
         assert "Full Name" in call_args["Content"]["Template"]["TemplateData"]
         assert "reason for access" in call_args["Content"]["Template"]["TemplateData"]
 
-        # Flagged as notified once the email succeeds.
+        # Flagged as notified once the email succeeds, and the row's modified
+        # timestamp is bumped to reflect that write.
         assert persisted.email_notified is True
+        assert persisted.updated_at >= persisted.created_at
 
 
 def test_request_access_persists_even_when_ses_fails(valid_access_request, mock_session, mocked_settings):
@@ -107,7 +109,7 @@ def test_request_access_persists_even_when_ses_fails(valid_access_request, mock_
         assert isinstance(persisted, AccessRequest)
         # ...but not flagged notified, and the failure was logged (not raised).
         assert persisted.email_notified is False
-        mock_logger.error.assert_called()
+        mock_logger.exception.assert_called()
         mock_session.rollback.assert_called()
 
 
@@ -122,7 +124,7 @@ def test_request_access_swallows_unexpected_notification_error(valid_access_requ
         # Persisted despite the notification path blowing up entirely.
         persisted = mock_session.add.call_args_list[0].args[0]
         assert isinstance(persisted, AccessRequest)
-        mock_logger.error.assert_called()
+        mock_logger.exception.assert_called()
 
 
 def test_request_access_persist_failure_raises_500(valid_access_request, mock_session, mocked_settings):
