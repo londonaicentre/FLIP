@@ -14,8 +14,8 @@
 <template>
     <div class="flex h-full w-[384px] rounded-lg relative p-2 select-none">
         <div class="login-branding-container w-full h-full relative">
-            <img src="@/assets/login/branding-top-right.png" class="absolute top-2 right-2 h-[97.61px] w-[156px]">
-            <img src="@/assets/login/branding-bottom-left.png" class="absolute bottom-2 left-2 h-[74.88px] w-[99px]">
+            <img src="@/assets/login/branding-top-right.webp" alt="" class="absolute top-2 right-2 h-[97.61px] w-[156px]">
+            <img src="@/assets/login/branding-bottom-left.webp" alt="" class="absolute bottom-2 left-2 h-[74.88px] w-[99px]">
         </div>
     </div>
 </template>
