@@ -59,7 +59,7 @@
 
                     <div
                         role="tablist"
-                        class="inline-flex bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-1"
+                        class="inline-flex bg-white dark:bg-dark-canvas border border-gray-200 dark:border-dark-border rounded-lg p-1"
                     >
                         <button
                             v-for="opt in accessOptions"
@@ -68,7 +68,7 @@
                             role="tab"
                             class="px-3 py-1.5 rounded-md text-sm font-semibold transition-colors"
                             :class="ownerFilter === opt.value
-                                ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+                                ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
                                 : 'bg-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
                             :data-test="`access-filter-${opt.id}`"
                             @click="ownerFilter = opt.value"
@@ -79,7 +79,7 @@
 
                     <select
                         v-model="sortKey"
-                        class="rounded-md border-gray-200 dark:border-gray-700 dark:bg-gray-900 text-sm py-2 pl-3 pr-8"
+                        class="rounded-md border-gray-200 dark:border-dark-border dark:bg-dark-canvas text-sm py-2 pl-3 pr-8"
                         data-test="project-sort"
                     >
                         <option value="created">
@@ -100,13 +100,13 @@
                     <div
                         role="group"
                         aria-label="View"
-                        class="inline-flex bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-1"
+                        class="inline-flex bg-white dark:bg-dark-canvas border border-gray-200 dark:border-dark-border rounded-lg p-1"
                     >
                         <button
                             type="button"
                             class="p-1.5 rounded-md transition-colors"
                             :class="viewMode === 'list'
-                                ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+                                ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
                                 : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
                             :aria-pressed="viewMode === 'list'"
                             data-test="view-mode-list"
@@ -119,7 +119,7 @@
                             type="button"
                             class="p-1.5 rounded-md transition-colors"
                             :class="viewMode === 'grid'
-                                ? 'bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100'
+                                ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
                                 : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
                             :aria-pressed="viewMode === 'grid'"
                             data-test="view-mode-grid"
@@ -146,8 +146,8 @@
                             v-for="(project, idx) in sortedProjects"
                             :key="project.id"
                             :to="`/project/${project.id}`"
-                            class="flex items-stretch bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-                            :class="idx > 0 ? 'border-t border-gray-100 dark:border-gray-800' : ''"
+                            class="flex items-stretch bg-white dark:bg-dark-canvas hover:bg-gray-50 dark:hover:bg-dark-surface transition-colors"
+                            :class="idx > 0 ? 'border-t border-gray-100 dark:border-dark-border' : ''"
                             :data-test="`project-list-item-${idx}`"
                         >
                             <!-- Fat status spine (8px) — replaces the avatar -->
@@ -174,7 +174,7 @@
                                     <span
                                         v-for="trust in trustsToShow(project)"
                                         :key="trust.id"
-                                        class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                                        class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-dark-surface text-gray-700 dark:text-gray-300"
                                         :class="showsTrustDot(project, trust) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
                                         :title="trust.name"
                                         data-test="trust-chip"
@@ -231,7 +231,7 @@
                         v-for="(project, idx) in sortedProjects"
                         :key="project.id"
                         :to="`/project/${project.id}`"
-                        class="relative flex flex-col gap-3 p-5 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 rounded-lg shadow-sm hover:shadow-md hover:border-gray-200 dark:hover:border-gray-700 transition-all overflow-hidden"
+                        class="relative flex flex-col gap-3 p-5 bg-white dark:bg-dark-canvas border border-gray-100 dark:border-dark-border rounded-lg shadow-sm hover:shadow-md hover:border-gray-200 dark:hover:border-dark-border transition-all overflow-hidden"
                         :data-test="`project-card-${idx}`"
                     >
                         <!-- Top status stripe (3px) -->
@@ -259,7 +259,7 @@
                             <span
                                 v-for="trust in trustsToShow(project)"
                                 :key="trust.id"
-                                class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300"
+                                class="inline-flex items-center py-0.5 rounded text-[11px] font-medium font-mono bg-gray-100 dark:bg-dark-surface text-gray-700 dark:text-gray-300"
                                 :class="showsTrustDot(project, trust) ? 'gap-1.5 pl-1.5 pr-2' : 'px-2'"
                                 :title="trust.name"
                                 data-test="trust-chip"
@@ -288,7 +288,7 @@
                         </div>
 
                         <div
-                            class="flex items-center gap-2 px-3 py-2 rounded-md bg-gray-50 dark:bg-gray-800 text-xs"
+                            class="flex items-center gap-2 px-3 py-2 rounded-md bg-gray-50 dark:bg-dark-surface text-xs"
                             data-test="project-cohort"
                         >
                             <icon-ph-users-three-duotone class="w-4 h-4 text-gray-500 dark:text-gray-400 shrink-0" />
@@ -303,7 +303,7 @@
                             </span>
                         </div>
 
-                        <div class="flex justify-between items-center pt-2 mt-auto border-t border-gray-100 dark:border-gray-800 text-xs text-gray-500 dark:text-gray-400">
+                        <div class="flex justify-between items-center pt-2 mt-auto border-t border-gray-100 dark:border-dark-border text-xs text-gray-500 dark:text-gray-400">
                             <span class="truncate max-w-[60%]">{{ ownerLabel(project) }}</span>
                             <span>{{ userCountLabel(project) }}</span>
                         </div>
@@ -505,7 +505,7 @@ const statusLabel = (s: ProjectStatus): string => STATUS_LABEL[s];
 const PILL_CLASS: Record<ProjectStatus, string> = {
     APPROVED: "bg-emerald-100 text-emerald-900 dark:bg-emerald-900/40 dark:text-emerald-100",
     STAGED: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
-    UNSTAGED: "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+    UNSTAGED: "bg-gray-200 text-gray-700 dark:bg-dark-raised dark:text-gray-300"
 };
 const pillClass = (s: ProjectStatus): string => PILL_CLASS[s];
 

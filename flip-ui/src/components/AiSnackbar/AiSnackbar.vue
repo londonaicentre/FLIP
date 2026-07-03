@@ -31,7 +31,7 @@
                     class="flex w-full max-w-md p-2 mx-auto"
                     data-test="snackbar"
                 >
-                    <div class="flex items-center w-full max-w-md bg-white dark:bg-gray-900 dark:ring-white/20 rounded-lg shadow-lg dark:shadow-white/10 pointer-events-auto ring-1 ring-black ring-opacity-5">
+                    <div class="flex items-center w-full max-w-md bg-white dark:bg-dark-canvas dark:ring-white/20 rounded-lg shadow-lg dark:shadow-white/10 pointer-events-auto ring-1 ring-black ring-opacity-5">
                         <div class="flex-1 w-0 p-4">
                             <div class="flex items-start">
                                 <div class="flex-shrink-0">
@@ -50,7 +50,7 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="flex flex-col py-2 space-y-2 border-l border-gray-200 dark:border-gray-700">
+                        <div class="flex flex-col py-2 space-y-2 border-l border-gray-200 dark:border-dark-border">
                             <button
                                 v-if="notification.actionText && !!notification.action"
                                 class="flex items-center justify-center w-full px-4 py-1 text-sm font-bold rounded-none transition text-primary-500 dark:text-primary-300 hover:text-primary-400 dark:hover:text-primary-400 focus:outline-none"
@@ -62,7 +62,7 @@
                             >
                                 {{ notification.actionText }}
                             </button>
-                            <hr v-if="notification.actionText && notification.action" class="dark:border-gray-700">
+                            <hr v-if="notification.actionText && notification.action" class="dark:border-dark-border">
                             <button
                                 class="flex items-center justify-center w-full px-4 py-1 text-sm font-bold text-gray-500 transition rounded-none hover:text-gray-600 focus:outline-none dark:text-gray-400 dark:hover:text-gray-500"
                                 data-test="snackbar-dismiss-button"

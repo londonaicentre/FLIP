@@ -58,10 +58,10 @@ module.exports = {
                 // gray-500) and links onto primary-300/200, so those need no new
                 // tokens. See the palette reference for usage rules.
                 dark: {
-                    canvas: "#13101A", // app background / page
-                    surface: "#16121D", // cards, panels, sidebar
+                    canvas: "#0B1018", // app background / page (deep cool charcoal)
+                    surface: "#0E0B13", // cards, panels, sidebar
                     raised: "#201A29", // modals, popovers, sticky header, hover
-                    inset: "#0E0B13", // input wells, code blocks, table headers
+                    inset: "#070509", // input wells, code blocks, table headers (darker than surface so wells read)
                     border: "#2A2336", // default dividers + card borders
                     "border-strong": "#3A3147", // input borders / separators with presence
                 },

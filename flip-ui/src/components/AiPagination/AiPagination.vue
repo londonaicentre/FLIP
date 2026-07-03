@@ -13,7 +13,7 @@
 
 <template>
     <div class="min-w-max">
-        <section class="flex justify-between py-2 text-gray-700 border-t border-gray-200 dark:border-gray-700 bg-body dark:bg-gray-900">
+        <section class="flex justify-between py-2 text-gray-700 border-t border-gray-200 dark:border-dark-border bg-body dark:bg-dark-canvas">
             <div class="flex items-center justify-center w-full">
                 <div class="pr-4">
                     <AiButton text :disabled="!hasPrev()" data-test="page-btn-prev" @click="() => goToPage(prevPage)">

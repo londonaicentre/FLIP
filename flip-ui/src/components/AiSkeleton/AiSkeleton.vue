@@ -13,7 +13,7 @@
 
 
 <template>
-    <div class="w-full my-1 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
+    <div class="w-full my-1 bg-gray-200 dark:bg-dark-raised rounded animate-pulse" />
 </template>
 
 <script lang="ts">

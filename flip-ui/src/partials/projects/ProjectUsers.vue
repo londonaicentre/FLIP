@@ -79,7 +79,7 @@
             v-for="(row, i) in displayUsers"
             :key="row.id"
             data-test="added-user-project-list"
-            class="flex flex-row items-center w-full px-4 py-2 border border-gray-300 rounded-md dark:border-gray-600"
+            class="flex flex-row items-center w-full px-4 py-2 border border-gray-300 rounded-md dark:border-dark-border-strong"
         >
             <div class="text-sm font-bold truncate grow" :data-test="`added-user-${i}`">
                 {{ row.email }}
@@ -98,7 +98,7 @@
         </div>
         <div
             v-if="!displayUsers.length"
-            class="flex flex-row items-center justify-center w-full p-6 text-sm text-gray-600 border-2 border-gray-300 border-dashed rounded-md dark:text-gray-400 dark:border-gray-600"
+            class="flex flex-row items-center justify-center w-full p-6 text-sm text-gray-600 border-2 border-gray-300 border-dashed rounded-md dark:text-gray-400 dark:border-dark-border-strong"
         >
             No Project Users
         </div>
