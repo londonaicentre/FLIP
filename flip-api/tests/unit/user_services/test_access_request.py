@@ -198,6 +198,36 @@ def test_list_access_requests_returns_paginated(mock_request, mock_session):
     assert result.data[0].status == AccessRequestStatus.PENDING
 
 
+def test_list_access_requests_reraises_http_exception(mock_request, mock_session):
+    """An HTTPException raised while handling the list (e.g. bad paging params) propagates unchanged.
+
+    Guards the ``except HTTPException: raise`` re-raise: without it the generic
+    ``except Exception`` below would swallow a deliberate 4xx into an opaque 500.
+    """
+    with (
+        patch("flip_api.user_services.access_request.has_permissions", return_value=True),
+        patch(
+            "flip_api.user_services.access_request.get_paging_details",
+            side_effect=HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="bad paging"),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            list_access_requests(mock_request, None, mock_session, uuid4())
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+
+
+def test_list_access_requests_wraps_unexpected_error_as_500(mock_request, mock_session):
+    """A non-HTTP error during listing is logged and surfaced as a 500."""
+    mock_session.exec.side_effect = Exception("db down")
+    with (
+        patch("flip_api.user_services.access_request.has_permissions", return_value=True),
+        patch("flip_api.user_services.access_request.logger"),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            list_access_requests(mock_request, None, mock_session, uuid4())
+        assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
 def test_update_access_request_status_requires_permission(mock_session):
     """Updating status is gated on CAN_MANAGE_USERS."""
     with patch("flip_api.user_services.access_request.has_permissions", return_value=False):
@@ -234,3 +264,23 @@ def test_update_access_request_status_sets_status_and_handler(mock_session):
     assert access_request.status == AccessRequestStatus.ENROLLED
     assert access_request.handled_by_user_id == admin_id
     mock_session.commit.assert_called()
+
+
+def test_update_access_request_status_wraps_unexpected_error_as_500(mock_session):
+    """A non-HTTP error during the update is rolled back, logged and surfaced as a 500."""
+    access_request = AccessRequest(email="a@b.com", full_name="A B", reason_for_access="please")
+    mock_session.get.return_value = access_request
+    mock_session.commit.side_effect = Exception("db down")
+    with (
+        patch("flip_api.user_services.access_request.has_permissions", return_value=True),
+        patch("flip_api.user_services.access_request.logger"),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            update_access_request_status(
+                access_request.id,
+                IUpdateAccessRequestStatus(status=AccessRequestStatus.ENROLLED),
+                mock_session,
+                uuid4(),
+            )
+        assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+        mock_session.rollback.assert_called()

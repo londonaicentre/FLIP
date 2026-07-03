@@ -95,7 +95,12 @@ const stubs = {
         template: "<button v-bind=\"$attrs\" @click=\"$emit('click', $event)\"><slot /></button>"
     },
     AiSkeleton: { template: "<div data-test='skeleton' />" },
-    AiPagination: { template: "<div />" },
+    AiPagination: {
+        name: "AiPagination",
+        props: ["totalPages", "currentPage"],
+        emits: ["page-update"],
+        template: "<div data-test='pagination' />"
+    },
     AiConfirmModal: {
         name: "AiConfirmModal",
         props: ["dialog", "continueAction", "confirmationText"],
@@ -241,5 +246,92 @@ describe("Access Requests page", () => {
         await flushPromises();
 
         expect(mockRouteChangeViewProjects).toHaveBeenCalled();
+    });
+
+    it("shows an empty message when there are no requests", () => {
+        const wrapper = mountPage({ requests: [] });
+
+        expect(wrapper.find("[data-test='access-requests-empty']").exists()).toBe(true);
+        expect(wrapper.findAll("[data-test='access-request-row']")).toHaveLength(0);
+    });
+
+    it("surfaces an error when marking a request ENROLLED fails", async () => {
+        // The Cognito user was already created by the register flow, so a
+        // failed status update must be surfaced (not silently swallowed) and
+        // flag the global error state — but it is not fatal.
+        mockUpdateAccessRequestStatus.mockRejectedValue(new Error("500 Server Error"));
+        const wrapper = mountPage();
+
+        await wrapper.find("[data-test='enroll-btn']").trigger("click");
+        await wrapper.findComponent({ name: "RegisterUserModal" }).vm.$emit("on-success");
+        await flushPromises();
+
+        expect(mockUpdateAccessRequestStatus).toHaveBeenCalledWith("ar-1", "ENROLLED");
+        expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Couldn't update request" }));
+    });
+
+    it("surfaces an error when dismissing a request fails", async () => {
+        mockUpdateAccessRequestStatus.mockRejectedValue(new Error("500 Server Error"));
+        const wrapper = mountPage();
+
+        await wrapper.find("[data-test='dismiss-btn']").trigger("click");
+        await wrapper.findComponent({ name: "AiConfirmModal" }).props("continueAction")();
+        await flushPromises();
+
+        expect(mockUpdateAccessRequestStatus).toHaveBeenCalledWith("ar-1", "DISMISSED");
+        expect(mockSnackbarError).toHaveBeenCalledWith(expect.objectContaining({ title: "Couldn't dismiss request" }));
+    });
+
+    it("ignores an on-success emit when no request is selected", async () => {
+        const wrapper = mountPage();
+
+        // No prior Enroll click -> selectedRequest is undefined -> no-op.
+        await wrapper.findComponent({ name: "RegisterUserModal" }).vm.$emit("on-success");
+        await flushPromises();
+
+        expect(mockUpdateAccessRequestStatus).not.toHaveBeenCalled();
+    });
+
+    it("ignores a dismiss confirm when no request is selected", async () => {
+        const wrapper = mountPage();
+
+        // No prior Dismiss click -> selectedRequest is undefined -> no-op.
+        await wrapper.findComponent({ name: "AiConfirmModal" }).props("continueAction")();
+        await flushPromises();
+
+        expect(mockUpdateAccessRequestStatus).not.toHaveBeenCalled();
+    });
+
+    it("resets to the first page when the status filter changes", async () => {
+        const wrapper = mountPage();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const setupState = (wrapper.vm as any).$.setupState;
+
+        wrapper.findComponent({ name: "AiPagination" }).vm.$emit("page-update", 3);
+        await flushPromises();
+        expect(setupState.pageNumber).toBe(3);
+
+        await wrapper.find("[data-test='status-filter']").setValue("ENROLLED");
+        expect(setupState.pageNumber).toBe(1);
+    });
+
+    it("closes the enroll modal on its close-modal event", async () => {
+        const wrapper = mountPage();
+
+        await wrapper.find("[data-test='enroll-btn']").trigger("click");
+        expect(wrapper.findComponent({ name: "RegisterUserModal" }).props("dialog")).toBe(true);
+
+        await wrapper.findComponent({ name: "RegisterUserModal" }).vm.$emit("close-modal");
+        expect(wrapper.findComponent({ name: "RegisterUserModal" }).props("dialog")).toBe(false);
+    });
+
+    it("closes the dismiss modal on its close-modal event", async () => {
+        const wrapper = mountPage();
+
+        await wrapper.find("[data-test='dismiss-btn']").trigger("click");
+        expect(wrapper.findComponent({ name: "AiConfirmModal" }).props("dialog")).toBe(true);
+
+        await wrapper.findComponent({ name: "AiConfirmModal" }).vm.$emit("close-modal");
+        expect(wrapper.findComponent({ name: "AiConfirmModal" }).props("dialog")).toBe(false);
     });
 });
