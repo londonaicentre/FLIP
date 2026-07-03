@@ -48,14 +48,8 @@
                 <img src="@/assets/login/bottom-left.svg?url" alt="">
             </div>
             <div
-                class="flex flex-row gap-4 w-full md:min-w-[760px] md:max-w-[800px] min-h-[417px] relative m-4"
+                class="flex flex-row w-full md:max-w-md min-h-[417px] relative m-4"
             >
-                <div
-                    class="flex-shrink-0 hidden max-w-sm md:flex items-center bg-white dark:bg-dark-surface justify-center grow p-2 border border-gray-200 dark:border-dark-border rounded-lg"
-                >
-                    <LoginBranding />
-                </div>
-
                 <div class="flex flex-grow bg-white dark:bg-dark-surface py-4 px-8 border border-gray-200 dark:border-dark-border rounded-lg">
                     <div class="flex flex-col flex-grow">
                         <div class="flex pb-1">
@@ -102,7 +96,6 @@ import { computed } from "vue";
 import { useRoute } from "vue-router";
 
 import AiErrorAlert from "@/components/AiAlert/AiErrorAlert.vue";
-import LoginBranding from "@/partials/auth/LoginBranding.vue";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 
