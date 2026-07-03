@@ -285,6 +285,47 @@ def test_bundle_nvflare_application_success(
     )
 
 
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_nvflare_application_lists_base_files_with_delimiter_safe_prefix(
+    mock_s3, mock_required, mock_verify, mock_is_valid, model_id, mocked_settings
+):
+    """The base-app listing must end with "/" so S3's plain string-prefix matching can't also
+    sweep in a sibling job type whose name starts with this one's (e.g. job_type="standard" must
+    not also match "standard_client_api/..."). Without the trailing slash, the wrongly-swept-in
+    sibling's files fail to relativize (they don't start with "<prefix>/") and get copied to a
+    garbled destination path that a downstream local-staging step can then confuse for the real
+    app, silently loading the wrong (and incompatible) NVFLARE executor."""
+    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_required.return_value = ["trainer.py", "validator.py", "models.py", "config.json"]
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/validator.py",
+            f"{model_bucket}/{model_id}/trainer.py",
+            f"{model_bucket}/{model_id}/models.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
+        [f"{base_bucket}/nvflare/standard/app/file1.py"],
+        [],  # Destination bucket
+    ]
+    mock_client.copy_object.return_value = None
+    mock_client.object_exists.return_value = False
+    mock_verify.return_value = None
+
+    fl_service.bundle_nvflare_application(model_id)
+
+    base_files_call_args = mock_client.list_objects.call_args_list[1].args
+    assert base_files_call_args[0] == f"{base_bucket}/nvflare/standard/"
+
+
 @pytest.mark.parametrize("job_type", ["evaluation", "evaluation_client_api"])
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
 @patch("flip_api.fl_services.services.fl_service.verify_bundle_paths")
@@ -604,6 +645,40 @@ def test_bundle_flower_application_success(mock_s3, mock_required, mock_is_valid
         f"{model_bucket}/{model_id}/client_app.py",
         f"{dest_bucket}/{model_id}/app/client_app.py",
     )
+
+
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
+@patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.get_required_files")
+@patch("flip_api.fl_services.services.fl_service.S3Client")
+def test_bundle_flower_application_lists_base_files_with_delimiter_safe_prefix(
+    mock_s3, mock_required, mock_is_valid, model_id, mocked_settings
+):
+    """Same delimiter-safety requirement as the nvflare bundler: job_type="standard" must not
+    also match a sibling job type like "standard_client_api" via plain S3 string-prefix matching."""
+    base_bucket = mocked_settings.FL_APP_BASE_BUCKET
+    model_bucket = mocked_settings.SCANNED_MODEL_FILES_BUCKET
+
+    mock_client = mock_s3.return_value
+    mock_client.get_object.return_value = {
+        "Body": MagicMock(read=MagicMock(return_value=json.dumps({"job_type": "standard"}).encode("utf-8")))
+    }
+    mock_required.return_value = ["client_app.py", "models.py"]
+    mock_client.list_objects.side_effect = [
+        [
+            f"{model_bucket}/{model_id}/client_app.py",
+            f"{model_bucket}/{model_id}/models.py",
+            f"{model_bucket}/{model_id}/config.json",
+        ],
+        [f"{base_bucket}/flower/standard/app/server_app.py"],
+        [],
+    ]
+    mock_client.copy_object.return_value = None
+    mock_client.object_exists.return_value = False
+
+    fl_service.bundle_flower_application(model_id)
+
+    base_files_call_args = mock_client.list_objects.call_args_list[1].args
+    assert base_files_call_args[0] == f"{base_bucket}/flower/standard/"
 
 
 @patch("flip_api.fl_services.services.fl_service.JobRequiredFiles.is_valid_job_type", return_value=True)
