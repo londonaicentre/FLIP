@@ -188,7 +188,11 @@ import { Snackbar } from "@/utils/snackbar";
 interface IRegisterUserModalProps {
     dialog: boolean,
     title: string,
-    roles: IRole[]
+    roles: IRole[],
+    // Optional pre-fill (e.g. "Enroll" from an access request passes the
+    // requester's name + email); organisation + role are still admin-chosen.
+    initialName?: string,
+    initialEmail?: string
 }
 
 interface RegisterUserForm {
@@ -201,7 +205,9 @@ interface RegisterUserForm {
 const props = withDefaults(
     defineProps<IRegisterUserModalProps>(), {
         title: "Register User",
-        dialog: false
+        dialog: false,
+        initialName: "",
+        initialEmail: ""
     }
 );
 
@@ -239,6 +245,15 @@ const roleOptions = computed<IOption[]>(() =>
 watch(selectedOption, async (current) => {
     role.value.value = current?.id ?? "";
     await validateField("role");
+});
+
+// Pre-fill name + email whenever the modal opens, so a reused instance
+// re-populates on each open (e.g. enrolling different access requests in turn).
+watch(() => props.dialog, (isOpen) => {
+    if (isOpen) {
+        name.value.value = props.initialName;
+        email.value.value = props.initialEmail;
+    }
 });
 
 const close = () => {

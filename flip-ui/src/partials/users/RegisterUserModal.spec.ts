@@ -104,4 +104,32 @@ describe("Register User Modal", () => {
         // Single-select semantic: latest pick replaces the previous one.
         expect(setupState.role.value.value).toBe(roleB.id);
     });
+
+    it("pre-fills name and email when opened with initial values", async () => {
+        // The "Enroll" action on an access request opens this modal pre-populated
+        // with the requester's name + email; the pre-fill runs when the modal opens.
+        const component = mount(RegisterUserModal, {
+            props: {
+                dialog: false,
+                title: "Enroll User",
+                roles: [roleA],
+                initialName: "Pending Person",
+                initialEmail: "pending@example.test"
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        await component.setProps({ dialog: true });
+        await nextTick();
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const setupState = (component.vm as any).$.setupState;
+        expect(setupState.name.value.value).toBe("Pending Person");
+        expect(setupState.email.value.value).toBe("pending@example.test");
+    });
 });
