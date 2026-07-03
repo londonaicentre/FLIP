@@ -114,6 +114,11 @@ def mock_requests_get_success():
         resp.raise_for_status = MagicMock()
         resp.is_redirect = False
         resp.is_permanent_redirect = False
+        # _stage_server_checkpoint streams via `with requests.get(...) as resp:`, so the
+        # response is bound from __enter__(); point it back at the same configured mock so the
+        # streaming path sees is_redirect=False too (the plain path uses the return_value directly).
+        resp.__enter__.return_value = resp
+        resp.iter_content.return_value = [resp.content]
         mock_get.return_value = resp
         yield mock_get
 
