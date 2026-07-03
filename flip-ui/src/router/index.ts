@@ -21,7 +21,12 @@ import { createRouter, createWebHistory } from "vue-router";
 const routes = setupLayouts(generatedRoutes);
 
 // import { routes } from "@/router/routes";
+import { doneRouteProgress, startRouteProgress } from "@/router/progress";
 import { authCheck } from "@/utils/auth";
+
+// Guards a one-time reload when a lazy route chunk fails to load (see onError).
+const CHUNK_RELOAD_KEY = "flip:chunk-reload";
+
 const router = createRouter({
     history: createWebHistory(),
     routes,
@@ -35,8 +40,35 @@ const router = createRouter({
 });
 
 router.beforeEach((to, from, next) => {
+    startRouteProgress();
     /** Ensure the user is logged in */
     authCheck(to, from, next);
+});
+
+router.afterEach((_to, _from, failure) => {
+    doneRouteProgress();
+    // A clean navigation means the current chunks resolve, so re-arm the
+    // stale-chunk reload guard for any future deploy.
+    if (!failure) {
+        sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+    }
+});
+
+// When a lazy route chunk fails to load — almost always because a new deploy
+// has replaced the hashed chunk files this still-open tab references — recover
+// by doing a single full reload to fetch the fresh index.html (and its current
+// chunk manifest). The sessionStorage flag stops this looping if the failure
+// is something other than a stale deploy.
+router.onError((error, to) => {
+    doneRouteProgress();
+    const message = error instanceof Error ? error.message : String(error);
+    const isChunkLoadError = /failed to fetch dynamically imported module/i.test(message)
+        || /error loading dynamically imported module/i.test(message)
+        || /importing a module script failed/i.test(message);
+    if (isChunkLoadError && !sessionStorage.getItem(CHUNK_RELOAD_KEY)) {
+        sessionStorage.setItem(CHUNK_RELOAD_KEY, "1");
+        window.location.assign(to.fullPath);
+    }
 });
 
 
