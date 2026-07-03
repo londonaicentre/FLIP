@@ -164,6 +164,50 @@ def _inject_keep_only_vars_filter(config: dict, include_regex: str) -> None:
     filters_blocks.append({"tasks": ["train"], "filters": [keep_filter]})
 
 
+def _inject_reconstruct_full_model_filter(config: dict) -> None:
+    """Prepend a ReconstructFullModel filter to the ``train`` task_data_filters (client-side).
+
+    The client-side half of the head-only broadcast: it rebuilds the full global model from the
+    trimmed (head-only) broadcast the server sends after round 0 (see ``_inject_trim_broadcast_filter``
+    / TrimBroadcastVars), so the client trainer keeps receiving a full state dict and needs no change.
+    Prepended so it runs before any other incoming task_data_filter. Injected alongside the
+    KeepOnlyVars result filter — the two are the matched client-side ends of the frozen-backbone
+    round-trip. Mutates ``config`` in place.
+    """
+    reconstruct_filter = {
+        "id": "reconstruct_full_model",
+        "path": "flip.nvflare.components.ReconstructFullModel",
+        "args": {},
+    }
+    filters_blocks = config.setdefault("task_data_filters", [])
+    for block in filters_blocks:
+        if "train" in block.get("tasks", []):
+            block.setdefault("filters", []).insert(0, reconstruct_filter)
+            return
+    filters_blocks.append({"tasks": ["train"], "filters": [reconstruct_filter]})
+
+
+def _inject_trim_broadcast_filter(config: dict, include_regex: str) -> None:
+    """Append a TrimBroadcastVars filter to the ``train`` task_data_filters (server-side).
+
+    The server-side half of the head-only broadcast: after round 0 it trims the outgoing global-model
+    broadcast down to only the trainable params matching ``include_regex``, so the frozen backbone
+    (~759 MiB) ships once at round 0 instead of every round. Clients rebuild the full model via
+    ReconstructFullModel. Mutates ``config`` in place.
+    """
+    trim_filter = {
+        "id": "trim_broadcast_to_trainable",
+        "path": "flip.nvflare.components.TrimBroadcastVars",
+        "args": {"include_vars": include_regex},
+    }
+    filters_blocks = config.setdefault("task_data_filters", [])
+    for block in filters_blocks:
+        if "train" in block.get("tasks", []):
+            block.setdefault("filters", []).append(trim_filter)
+            return
+    filters_blocks.append({"tasks": ["train"], "filters": [trim_filter]})
+
+
 def configure_client(
     job_dir: Path,
     app_name: str,
@@ -203,7 +247,11 @@ def configure_client(
 
     if aggregate_only_regex:
         _inject_keep_only_vars_filter(config, aggregate_only_regex)
-        logger.info(f"Injected KeepOnlyVars train filter (include_vars={aggregate_only_regex!r}) for app '{app_name}'")
+        _inject_reconstruct_full_model_filter(config)
+        logger.info(
+            f"Injected KeepOnlyVars result filter + ReconstructFullModel data filter "
+            f"(include_vars={aggregate_only_regex!r}) for app '{app_name}'"
+        )
 
     logger.debug(f"Client config to be written: {config}")
 
@@ -221,6 +269,7 @@ def configure_server(
     ignore_result_error: bool,
     aggregator: str,
     aggregation_weights: dict,
+    aggregate_only_regex: str | None = None,
 ) -> Path:
     """
     Configures the server config file. Making sure the app name, global rounds, and other variables are set correctly.
@@ -233,6 +282,9 @@ def configure_server(
         ignore_result_error (bool): whether to ignore result errors
         aggregator (str): name of the aggregator to be used
         aggregation_weights (dict): aggregation weights to be used in the job (per trust)
+        aggregate_only_regex (str | None): when set, inject a TrimBroadcastVars ``train`` data filter so
+            only the trainable params (matching the regex) are broadcast per round after round 0
+            (frozen-backbone head-only downstream — the server-side mirror of the client KeepOnlyVars).
 
     Returns:
         Path: path to the server config file that was updated.
@@ -292,6 +344,12 @@ def configure_server(
         ):
             component["name"] = aggregator  # override the aggregator if specified in the config, otherwise use default
             component["args"]["aggregation_weights"] = aggregation_weights  # override the aggregation weights
+
+    if aggregate_only_regex:
+        _inject_trim_broadcast_filter(config, aggregate_only_regex)
+        logger.info(
+            f"Injected TrimBroadcastVars data filter (include_vars={aggregate_only_regex!r}) for app '{app_name}'"
+        )
 
     write_config(config, config_file)
 

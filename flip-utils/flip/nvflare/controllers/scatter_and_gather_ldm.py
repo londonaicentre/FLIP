@@ -28,6 +28,7 @@ from nvflare.app_common.abstract.model_locator import ModelLocator
 from nvflare.app_common.abstract.shareable_generator import ShareableGenerator
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.app_event_type import AppEventType
+from nvflare.fuel.utils.memory_utils import cleanup_memory
 from nvflare.security.logging import secure_format_exception
 from nvflare.widgets.info_collector import GroupInfoCollector, InfoCollector
 
@@ -64,6 +65,7 @@ class ScatterAndGatherLDM(Controller):
         fatal_error_delay: int = 5,
         task_check_period: float = 0.5,
         persist_every_n_rounds: int = 1,
+        memory_gc_rounds: int = 1,
     ):
         """The controller for FederatedAveraging Workflow.
 
@@ -94,6 +96,9 @@ class ScatterAndGatherLDM(Controller):
             task_check_period (float, optional): interval for checking status of tasks. Defaults to 0.5.
             persist_every_n_rounds (int, optional): persist the global model every n rounds. Defaults to 0.
                 If n is 0 then no persist.
+            memory_gc_rounds (int, optional): run NVFLARE's allocator-aware memory cleanup
+                (``gc.collect`` + glibc ``malloc_trim`` / jemalloc auto-decay) every n rounds; 0
+                disables. Defaults to 1. Bounds server RSS growth from per-round transient allocations.
 
         Raises:
             TypeError: when any of input arguments does not have correct type
@@ -113,6 +118,7 @@ class ScatterAndGatherLDM(Controller):
         _check_non_neg_int(wait_time_after_min_received, "wait_time_after_min_received")
         _check_non_neg_int(train_timeout, "train_timeout")
         _check_non_neg_int(persist_every_n_rounds, "persist_every_n_rounds")
+        _check_non_neg_int(memory_gc_rounds, "memory_gc_rounds")
 
         if not isinstance(aggregator_id, str):
             raise TypeError(f"aggregator_id must be a string but got {type(aggregator_id)}")
@@ -150,6 +156,7 @@ class ScatterAndGatherLDM(Controller):
         self.ignore_result_error = ignore_result_error
         self._fatal_error_delay = fatal_error_delay
         self._persist_every_n_rounds = persist_every_n_rounds
+        self._memory_gc_rounds = memory_gc_rounds
 
         # workflow phases: init, train, validate
         self._phase = AppConstants.PHASE_INIT
@@ -344,12 +351,28 @@ class ScatterAndGatherLDM(Controller):
                 self.log_info(fl_ctx, f"Round {self._current_round} for {self.train_task_name} finished.")
                 self._current_round += 1
 
+                # Return this round's transient allocations to the OS so server RSS does not climb
+                # across rounds and OOM a large-model job. Reuses NVFLARE's allocator-aware cleanup
+                # (stock ScatterAndGather does the same via memory_gc_rounds).
+                self._maybe_cleanup_memory()
+
             self._phase = AppConstants.PHASE_FINISHED
             self.log_info(fl_ctx, f"Finished ScatterAndGatherLDM Training {self.train_task_name}")
         except BaseException as e:
             error_msg = f"Exception in ScatterAndGather control_flow: {secure_format_exception(e)}"
             self.log_exception(fl_ctx, error_msg)
             self.system_panic(error_msg, fl_ctx)
+
+    def _maybe_cleanup_memory(self) -> None:
+        """Reclaim freed heap memory every ``memory_gc_rounds`` rounds (mirrors stock NVFLARE SAG).
+
+        Delegates to NVFLARE's allocator-aware ``cleanup_memory`` (``gc.collect`` + glibc
+        ``malloc_trim``, or jemalloc auto-decay). ``memory_gc_rounds == 0`` disables it.
+        """
+        if self._current_round is None:
+            return
+        if self._memory_gc_rounds > 0 and self._current_round % self._memory_gc_rounds == 0:
+            cleanup_memory()
 
     def stop_controller(self, fl_ctx: FLContext) -> None:
         self._phase = AppConstants.PHASE_FINISHED

@@ -316,6 +316,7 @@ def upload_application(model_id: str, body: UploadAppRequest, upload_dir: str) -
                 ignore_result_error,
                 aggregator,
                 aggregation_weights,
+                aggregate_only_regex=config.AGGREGATE_ONLY_REGEX,
             )
 
             # Configure the environment.json file if it exists.

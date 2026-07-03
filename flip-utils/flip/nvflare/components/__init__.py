@@ -24,6 +24,8 @@ Exports:
     - EvaluationModelLocator: Single-model checkpoint locator for Client-API evaluation (standard interface)
     - InitialCheckpointPTModelPersistor: Seeds the initial global model from a server-side backbone checkpoint
     - KeepOnlyVars: Include-only DXO filter (keep matching weights) — head-only per-round updates
+    - TrimBroadcastVars: Server-side filter — broadcast only the trainable vars after round 0
+    - ReconstructFullModel: Client-side filter — rebuild the full model from a trimmed broadcast
     - ValidationJsonGenerator: Validation results JSON generator
     - EvaluationJsonGenerator: Evaluation results JSON generator
     - PersistToS3AndCleanup: S3 persistence and cleanup component
@@ -33,6 +35,7 @@ Exports:
     - FlipAnalyticsBridge: Bridges Client API analytics events to FlipEvents.SEND_RESULT
 """
 
+from flip.nvflare.components.broadcast_trim_filter import TrimBroadcastVars
 from flip.nvflare.components.cleanup import CleanupImages
 from flip.nvflare.components.custom_percentile_privacy import PercentilePrivacy
 from flip.nvflare.components.evaluation_json_generator import EvaluationJsonGenerator
@@ -48,6 +51,7 @@ from flip.nvflare.components.pt_model_locator import (
     PTModelLocator,
 )
 from flip.nvflare.components.pt_model_persistor import InitialCheckpointPTModelPersistor
+from flip.nvflare.components.reconstruct_model_filter import ReconstructFullModel
 from flip.nvflare.components.stage_percentile_privacy import StagePercentilePrivacy
 from flip.nvflare.components.validation_json_generator import ValidationJsonGenerator
 
@@ -60,6 +64,8 @@ __all__ = [
     "EvaluationModelLocator",
     "InitialCheckpointPTModelPersistor",
     "KeepOnlyVars",
+    "TrimBroadcastVars",
+    "ReconstructFullModel",
     "ValidationJsonGenerator",
     "EvaluationJsonGenerator",
     "PersistToS3AndCleanup",

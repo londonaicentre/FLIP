@@ -241,6 +241,46 @@ class TestConfigureClient:
         train_block = next(b for b in modified_config["task_result_filters"] if "train" in b["tasks"])
         assert all(f.get("path") != "flip.nvflare.components.KeepOnlyVars" for f in train_block["filters"])
 
+    def test_configure_client_injects_reconstruct_full_model_filter(
+        self, mock_isfile, mock_write_config, mock_read_config
+    ):
+        """With aggregate_only_regex set, a ReconstructFullModel filter is prepended to the train
+        task_data_filters — the client half of the head-only broadcast (it rebuilds the full model
+        from the trimmed broadcast the server sends after round 0)."""
+        mock_read_config.return_value = {"task_result_filters": [{"tasks": ["train"], "filters": []}]}
+
+        configure_client(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            project_id=MOCK_PROJECT_ID,
+            cohort_query=MOCK_COHORT_QUERY,
+            aggregate_only_regex="omni_heads",
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
+        assert train_block["filters"][0]["path"] == "flip.nvflare.components.ReconstructFullModel"
+
+    def test_configure_client_no_regex_leaves_data_filters_untouched(
+        self, mock_isfile, mock_write_config, mock_read_config
+    ):
+        """No aggregate_only_regex → no ReconstructFullModel injected (normal full-model broadcast)."""
+        mock_read_config.return_value = {"task_result_filters": [{"tasks": ["train"], "filters": []}]}
+
+        configure_client(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            project_id=MOCK_PROJECT_ID,
+            cohort_query=MOCK_COHORT_QUERY,
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        assert all(
+            f.get("path") != "flip.nvflare.components.ReconstructFullModel"
+            for b in modified_config.get("task_data_filters", [])
+            for f in b.get("filters", [])
+        )
+
     def test_configure_client_file_not_found(self, mock_isfile):
         # Setup
         mock_isfile.return_value = False
@@ -300,6 +340,58 @@ class TestConfigureServer:
         assert modified_config["workflows"][1]["args"]["ignore_result_error"] is True
         assert modified_config["components"][2]["name"] == "new_aggregator"
         assert modified_config["components"][2]["args"]["aggregation_weights"] == MOCK_AGGREGATION_WEIGHTS
+
+    def _minimal_server_config(self):
+        return {
+            "workflows": [{"args": {"participating_clients": []}}],
+            "components": [{"id": "aggregator", "name": "agg", "args": {"aggregation_weights": {}}}],
+        }
+
+    def test_configure_server_injects_trim_broadcast_filter(self, mock_isfile, mock_read_config, mock_write_config):
+        """With aggregate_only_regex set, a TrimBroadcastVars filter is appended to the train
+        task_data_filters — the server half of the head-only broadcast (after round 0 it broadcasts
+        only the trainable params instead of the full ~759 MiB model)."""
+        mock_read_config.return_value = self._minimal_server_config()
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=3,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+            aggregate_only_regex="omni_heads",
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        train_block = next(b for b in modified_config["task_data_filters"] if "train" in b["tasks"])
+        trim_filter = train_block["filters"][-1]
+        assert trim_filter["path"] == "flip.nvflare.components.TrimBroadcastVars"
+        assert trim_filter["args"]["include_vars"] == "omni_heads"
+
+    def test_configure_server_no_regex_leaves_data_filters_untouched(
+        self, mock_isfile, mock_read_config, mock_write_config
+    ):
+        """No aggregate_only_regex → no TrimBroadcastVars injected (normal full-model broadcast)."""
+        mock_read_config.return_value = self._minimal_server_config()
+
+        configure_server(
+            job_dir=MOCK_JOB_APP_DIR,
+            app_name=MOCK_APP_NAME,
+            global_rounds=3,
+            trusts=MOCK_APP_CLIENTS,
+            ignore_result_error=True,
+            aggregator="agg",
+            aggregation_weights=MOCK_AGGREGATION_WEIGHTS,
+        )
+
+        modified_config = mock_write_config.call_args[0][0]
+        assert all(
+            f.get("path") != "flip.nvflare.components.TrimBroadcastVars"
+            for b in modified_config.get("task_data_filters", [])
+            for f in b.get("filters", [])
+        )
 
     def test_configure_server_file_not_found(self, mock_isfile):
         # Setup
