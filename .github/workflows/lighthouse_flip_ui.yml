@@ -1,0 +1,124 @@
+# Copyright (c) Guy's and St Thomas' NHS Foundation Trust & King's College London
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#     http://www.apache.org/licenses/LICENSE-2.0
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# Re-runs the Lighthouse audit behind #586 in a clean, repeatable environment
+# (headless Chrome on the runner, no browser extensions) — the "clean re-run"
+# the issue's acceptance criteria asks for. Scoped to the pre-auth /auth/login
+# route, which needs only the built UI (no API / trust / FL stack); config +
+# rationale live in flip-ui/lighthouserc.cjs.
+#
+# Informational by design: the lhci assertions are all `warn`, so this job
+# never blocks a PR — it publishes a Lighthouse report artifact and surfaces
+# score regressions as warnings. Promote it to a required check (and flip the
+# a11y/seo assertions to `error` in lighthouserc.cjs) once a green baseline is
+# trusted.
+name: Lighthouse - FLIP UI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "flip-ui/**"
+      - ".github/workflows/lighthouse_flip_ui.yml"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "flip-ui/**"
+      - ".github/workflows/lighthouse_flip_ui.yml"
+  # Manual trigger so the audit can be re-run on demand against any branch.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per ref; a new push cancels the in-flight run for the same branch/PR.
+concurrency:
+  group: lighthouse-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ./flip-ui
+
+    env:
+      # Never build the auth-bypassing bundle (checked by prebuild:deploy).
+      VITE_LOCAL: "false"
+      # Dummy Cognito/API config so generate-window-js emits a populated
+      # public/js/window.js and the SPA boots to render the login form. These
+      # match the stub values the Cypress job uses; the login page never calls
+      # the API, and Amplify's pre-auth session probe just fails closed (which
+      # is itself one of the findings, #702) — none of it blocks the audit.
+      CENTRAL_HUB_API_URL: "http://localhost:8080"
+      AWS_COGNITO_USER_POOL_ID: "eu-west-2_DUMMY1234"
+      AWS_COGNITO_APP_CLIENT_ID: "dummyclientid1234567890ab"
+      AWS_REGION: "eu-west-2"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set Node.js version
+        uses: actions/setup-node@v5
+        with:
+          # Node 24 LTS bundles npm >=11.10 so .npmrc min-release-age (the
+          # supply-chain cooldown) is enforced on `npm ci`, matching the other
+          # flip-ui jobs.
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: flip-ui/package-lock.json
+
+      - name: Install dependencies
+        # Cypress desktop binary isn't needed here; skip its flaky CDN download.
+        env:
+          CYPRESS_INSTALL_BINARY: "0"
+        run: npm ci
+
+      - name: Stub flip-ui/.env.development
+        # Vite's loadEnv reads this file for import.meta.env at build time;
+        # the job-level env block covers generate-window-js's shell reads.
+        # Mirrors the Cypress job's stub, minus the E2E test seams — we want a
+        # production-representative bundle, not the auth-bypassing E2E build.
+        run: |
+          cat > .env.development <<'EOF'
+          VITE_LOCAL=false
+          CENTRAL_HUB_API_URL=http://localhost:8080
+          AWS_COGNITO_USER_POOL_ID=eu-west-2_DUMMY1234
+          AWS_COGNITO_APP_CLIENT_ID=dummyclientid1234567890ab
+          AWS_REGION=eu-west-2
+          EOF
+
+      - name: Build production bundle
+        # build:deploy = `vite build` (skips vue-tsc, which has pre-existing
+        # root type errors unrelated to this audit). Perf / unused-JS metrics
+        # are only meaningful on the built, code-split, minified bundle — never
+        # on the dev server.
+        run: npm run build:deploy
+
+      - name: Run Lighthouse CI
+        # Pinned, well-aged @lhci/cli run via npx so it stays out of the app's
+        # package-lock (CI-only tool). autorun reads flip-ui/lighthouserc.cjs:
+        # it starts `vite preview`, audits /auth/login, asserts (warn-only),
+        # and writes reports to ./.lighthouseci.
+        run: npx --yes @lhci/cli@0.14.0 autorun
+
+      - name: Upload Lighthouse reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: lighthouse-report
+          path: flip-ui/.lighthouseci
+          if-no-files-found: warn
+          retention-days: 30
