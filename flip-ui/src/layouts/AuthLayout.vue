@@ -13,7 +13,7 @@
 
 <template>
     <AiErrorAlert v-if="errorStore.hasError" class="absolute z-10" />
-    <div class="bg-body dark:bg-gray-900">
+    <div class="bg-body dark:bg-dark-canvas">
         <div class="flex items-center justify-center h-screen">
             <div class="absolute top-6 left-8 z-10 flex items-center gap-4">
                 <a
@@ -42,21 +42,21 @@
                 </a>
             </div>
             <div class="absolute top-0 right-0">
-                <img src="@/assets/login/top-right.svg?url">
+                <img src="@/assets/login/top-right.svg?url" alt="">
             </div>
             <div class="absolute bottom-0 left-0">
-                <img src="@/assets/login/bottom-left.svg?url">
+                <img src="@/assets/login/bottom-left.svg?url" alt="">
             </div>
             <div
                 class="flex flex-row gap-4 w-full md:min-w-[760px] md:max-w-[800px] min-h-[417px] relative m-4"
             >
                 <div
-                    class="flex-shrink-0 hidden max-w-sm md:flex items-center bg-white dark:bg-gray-800 justify-center grow p-2 border border-gray-200 dark:border-gray-700 rounded-lg"
+                    class="flex-shrink-0 hidden max-w-sm md:flex items-center bg-white dark:bg-dark-surface justify-center grow p-2 border border-gray-200 dark:border-dark-border rounded-lg"
                 >
                     <LoginBranding />
                 </div>
 
-                <div class="flex flex-grow bg-white dark:bg-gray-800 py-4 px-8 border border-gray-200 dark:border-gray-700 rounded-lg">
+                <div class="flex flex-grow bg-white dark:bg-dark-surface py-4 px-8 border border-gray-200 dark:border-dark-border rounded-lg">
                     <div class="flex flex-col flex-grow">
                         <div class="flex pb-1">
                             <button
@@ -71,13 +71,15 @@
                             </button>
                             <div class="flex-grow" />
                         </div>
-                        <router-view />
+                        <main class="flex flex-col flex-grow">
+                            <router-view />
+                        </main>
                     </div>
                 </div>
             </div>
             <footer
                 data-test="auth-footer-links"
-                class="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-6 text-xs font-heading text-gray-500 z-10"
+                class="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-row items-center justify-center gap-6 text-xs font-heading text-gray-500 dark:text-gray-400 z-10"
             >
                 <a
                     v-for="link in footerLinks"
@@ -85,7 +87,7 @@
                     :href="link.href"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="hover:text-gray-700 hover:underline"
+                    class="hover:text-gray-700 dark:hover:text-gray-200 hover:underline"
                 >
                     {{ link.label }}
                 </a>

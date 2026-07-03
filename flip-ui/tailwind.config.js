@@ -50,7 +50,29 @@ module.exports = {
                     900: "#33691E",
                 },
                 deeporange: { 900: "#BF360C" },
-                green: colors.emerald
+                green: colors.emerald,
+                // FLIP dark-mode palette (warm plum-charcoal). Single source of
+                // truth for dark surfaces/borders — reference via `dark:bg-dark-*`
+                // and `dark:border-dark-*`. Dark-mode text maps onto the standard
+                // gray ramp (fg-1 gray-100, fg-2 gray-300, fg-3 gray-400, disabled
+                // gray-500) and links onto primary-300/200, so those need no new
+                // tokens. See the palette reference for usage rules.
+                dark: {
+                    canvas: "#13101A", // app background / page
+                    surface: "#16121D", // cards, panels, sidebar
+                    raised: "#201A29", // modals, popovers, sticky header, hover
+                    inset: "#0E0B13", // input wells, code blocks, table headers
+                    border: "#2A2336", // default dividers + card borders
+                    "border-strong": "#3A3147", // input borders / separators with presence
+                },
+                // Status colours, lightened to read on dark surfaces. Render as
+                // the solid colour for text + dot over a low-opacity tint.
+                status: {
+                    approved: "#4ADE80", // success / APPROVED
+                    staged: "#F4BE1D", // warn / STAGED (brand gold)
+                    unstaged: "#F87171", // danger / UNSTAGED
+                    info: "#A9C5DC", // info / data
+                }
             },
             screens: {
                 "3xl": "1920px",
