@@ -23,7 +23,14 @@
                     aria-label="AI Centre for Value Based Healthcare"
                 >
                     <img
+                        v-if="!isDark"
                         src="/images/aicentre-logo-transparent.webp"
+                        alt="AI Centre for Value Based Healthcare"
+                        class="h-20 w-auto"
+                    >
+                    <img
+                        v-else
+                        src="/images/aicentre-logo-transparent-dark.webp"
                         alt="AI Centre for Value Based Healthcare"
                         class="h-20 w-auto"
                     >
@@ -91,6 +98,7 @@
 </template>
 
 <script setup lang="ts">
+import { useDark } from "@vueuse/core";
 import { signOut as amplifySignOut } from "aws-amplify/auth";
 import { computed } from "vue";
 import { useRoute } from "vue-router";
@@ -99,6 +107,7 @@ import AiErrorAlert from "@/components/AiAlert/AiErrorAlert.vue";
 import { useAuthStore } from "@/store/auth";
 import { useErrorStore } from "@/store/error";
 
+const isDark = useDark();
 const errorStore = useErrorStore();
 const authStore = useAuthStore();
 const route = useRoute();
