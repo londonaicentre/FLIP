@@ -17,8 +17,18 @@
     >
         <div class="h-[80px] flex items-center justify-center">
             <router-link to="/">
-                <logo v-if="!isDark" class="h-[50px] w-auto mx-auto" />
-                <logoDark v-else class="h-[50px] w-auto mx-auto" />
+                <img
+                    v-if="!isDark"
+                    src="/images/aicentre-logo-transparent.webp"
+                    alt="AI Centre for Value Based Healthcare"
+                    class="h-[50px] w-auto mx-auto"
+                >
+                <img
+                    v-else
+                    src="/images/aicentre-logo-transparent-dark.webp"
+                    alt="AI Centre for Value Based Healthcare"
+                    class="h-[50px] w-auto mx-auto"
+                >
             </router-link>
         </div>
         <div class="flex flex-col flex-grow mt-4">
@@ -50,8 +60,6 @@
 import { directive as vTippy } from "vue-tippy";
 
 import NhsLogo from "/images/nhs-logo.webp";
-import logo from "@/assets/logo.svg?component";
-import logoDark from "@/assets/logo_dark.svg?component";
 import useNavigation from "@/composables/navigation";
 
 export interface IMainNavigationProps {

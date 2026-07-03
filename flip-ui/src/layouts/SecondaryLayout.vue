@@ -24,8 +24,18 @@
             class="p-6 bg-white flex dark:bg-dark-surface w-full md:min-w-[760px] md:max-w-[800px] max-w-[75vh] min-h-[75vh] max-h-[95vh] shadow-xl rounded-md relative overflow-hidden m-4"
         >
             <div class="flex flex-col gap-2 w-full relative">
-                <logo v-if="!isDark" class="h-[70px] absolute top-0 right-0 p-0" />
-                <logoDark v-else class="h-[70px] absolute top-0 right-0 p-0" />
+                <img
+                    v-if="!isDark"
+                    src="/images/aicentre-logo-transparent.webp"
+                    alt="AI Centre for Value Based Healthcare"
+                    class="h-[70px] w-auto absolute top-0 right-0 p-0"
+                >
+                <img
+                    v-else
+                    src="/images/aicentre-logo-transparent-dark.webp"
+                    alt="AI Centre for Value Based Healthcare"
+                    class="h-[70px] w-auto absolute top-0 right-0 p-0"
+                >
                 <router-view />
             </div>
         </div>
@@ -35,8 +45,6 @@
 <script setup lang="ts">
 import { useDark } from "@vueuse/core";
 
-import logo from "@/assets/logo.svg?component";
-import logoDark from "@/assets/logo_dark.svg?component";
 import AiErrorAlert from "@/components/AiAlert/AiErrorAlert.vue";
 import { useErrorStore } from "@/store/error";
 
