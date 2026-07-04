@@ -162,3 +162,24 @@ class TestCrossSiteModelEval:
         controller.control_flow(abort_signal, _fl_ctx())
 
         controller.broadcast_and_wait.assert_not_called()
+
+    def test_init_invalid_cleanup_timeout_type_raises(self):
+        with pytest.raises(TypeError, match="cleanup_timeout must be int"):
+            CrossSiteModelEval(model_id=_MODEL_ID, cleanup_timeout="not-an-int")
+
+    def test_init_negative_cleanup_timeout_raises(self):
+        with pytest.raises(ValueError, match="cleanup_timeout must be greater"):
+            CrossSiteModelEval(model_id=_MODEL_ID, cleanup_timeout=-1)
+
+    def test_control_flow_cleanup_exception_triggers_system_panic(self):
+        controller = _make()
+        controller._participating_clients = ["c1"]
+        self._wire_for_control_flow(controller)
+        controller.broadcast_and_wait = MagicMock(side_effect=RuntimeError("cleanup boom"))
+        controller.system_panic = MagicMock()
+        abort_signal = MagicMock()
+        abort_signal.triggered = False
+
+        controller.control_flow(abort_signal, _fl_ctx())
+
+        controller.system_panic.assert_called_once()
