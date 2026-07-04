@@ -106,6 +106,10 @@ export TF_VAR_MIN_CLIENTS=${MIN_CLIENTS}
 # env file for GPU jobs (e.g. Ark+ eval: NUM_GPUS=1, MEM_PER_GPU_IN_GIB=7).
 export TF_VAR_JOB_RESOURCE_SPEC_NUM_GPUS=${JOB_RESOURCE_SPEC_NUM_GPUS}
 export TF_VAR_JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB=${JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB}
+# Pre-merge fl-apps repoint (empty = canonical base-application prefix). Set
+# FL_APP_BASE_BUCKET_OVERRIDE in the env file to a throwaway S3 root when
+# deploying a branch whose fl-apps templates are not yet merged to main.
+export TF_VAR_FL_APP_BASE_BUCKET_OVERRIDE=${FL_APP_BASE_BUCKET_OVERRIDE}
 # Uncomment to enable ECS Exec on Fargate tasks for debugging:
 # export TF_VAR_ecs_exec_enabled=true
 

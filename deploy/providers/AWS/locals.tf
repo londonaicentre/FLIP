@@ -67,10 +67,13 @@ locals {
   # segment (.../base-application/{nvflare,flower}/...) in code from each net's seeded
   # (canonical) backend. A framework switch is applied via `make restart-fl`, which
   # recreates flip-api so seeding re-applies the backend onto every net.
+  # FL_APP_BASE_BUCKET_OVERRIDE (variables.tf) repoints it at a throwaway prefix
+  # for pre-merge branch deploys — the canonical prefix is owned by the
+  # merge-to-main fl-apps sync workflow and must not carry unmerged templates.
   uploaded_federated_data_uri = "${local.flip_fl_results_bucket_uri}/results"
   uploaded_model_files_uri    = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
   scanned_model_files_uri     = "${local.flip_model_files_uploads_bucket_uri}/uploaded"
-  fl_app_base_uri             = "${local.flip_app_bundles_bucket_uri}/base-application"
+  fl_app_base_uri             = var.FL_APP_BASE_BUCKET_OVERRIDE != "" ? var.FL_APP_BASE_BUCKET_OVERRIDE : "${local.flip_app_bundles_bucket_uri}/base-application"
   fl_app_destination_uri      = "${local.flip_app_bundles_bucket_uri}/app_destinations"
 
   # NET_ENDPOINTS tells flip-api how to reach each FL network's fl-api. On
