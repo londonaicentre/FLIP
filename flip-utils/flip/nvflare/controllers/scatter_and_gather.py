@@ -46,12 +46,19 @@ class ScatterAndGather(NVFlareScatterAndGather):
         ``PersistToS3AndCleanup``) can persist results on an aborted run.
     """
 
-    def __init__(self, model_id: str = "", **kwargs) -> None:
+    def __init__(self, *args, model_id: str = "", **kwargs) -> None:
+        # ``*args`` is load-bearing, not dead: NVFLARE's FedJob/recipe serialisation
+        # (``get_component_init_parameters``) only walks a thin subclass's base class to capture
+        # stock's __init__ args (persistor_id, aggregator_id, num_rounds, …) when the subclass
+        # declares BOTH ``*args`` and ``**kwargs``. With ``**kwargs`` alone, only ``model_id`` is
+        # serialised, so a recipe's ScatterAndGather loses its persistor and broadcasts an empty
+        # round-0 model. Do not remove ``*args`` (guarded by TestFedJobSerialisation).
+        #
         # FLIP has never snapshotted components each round; keep that off by default so a large-model
         # job does not re-serialise the full global model every round (see the class docstring). Left
         # in kwargs so an explicit config value still wins.
         kwargs.setdefault("snapshot_every_n_rounds", 0)
-        super().__init__(**kwargs)
+        super().__init__(*args, **kwargs)
         self._model_id_fallback = model_id
         self._model_id: str | None = None
         self.flip = FLIP()
@@ -119,6 +126,12 @@ class ScatterAndGather(NVFlareScatterAndGather):
             event_data = fl_ctx.get_prop(FLContextKey.EVENT_DATA, None)
             if event_data is None:
                 self.log_error(fl_ctx, "Metrics Error: metrics result event was fired but no data found")
+                return
+            if self._current_round is None:
+                # SEND_RESULT is broadcast to every controller. In a multi-phase job (e.g. the
+                # diffusion AE/DM split) a controller whose control_flow has not started yet still
+                # has _current_round is None (as stock initialises it); it must not relay another
+                # controller's metric with a None round. The active controller relays it.
                 return
             handle_metrics_event(event_data, self._current_round, self._resolve_model_id(fl_ctx), flip=self.flip)
 

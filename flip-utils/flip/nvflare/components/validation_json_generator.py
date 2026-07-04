@@ -10,74 +10,34 @@
 # limitations under the License.
 #
 
-import json
-import os.path
-
-from nvflare.apis.dxo import DataKind, from_shareable
-from nvflare.apis.event_type import EventType
-from nvflare.apis.fl_component import FLComponent
 from nvflare.apis.fl_context import FLContext
-from nvflare.app_common.app_constant import AppConstants
-from nvflare.app_common.app_event_type import AppEventType
+from nvflare.app_common.widgets.validation_json_generator import (
+    ValidationJsonGenerator as NVFlareValidationJsonGenerator,
+)
 
-from flip.constants import PTConstants
 
+class ValidationJsonGenerator(NVFlareValidationJsonGenerator):
+    """Stock NVFLARE ``ValidationJsonGenerator``, dispatched manually by FLIP's ServerEventHandler.
 
-class ValidationJsonGenerator(FLComponent):
-    def __init__(self, results_dir=AppConstants.CROSS_VAL_DIR, json_file_name=PTConstants.CrossValResultsJsonFilename):
-        """Handles VALIDATION_RESULT_RECEIVED event and generates a results.json containing accuracy of each
-        validated model.
+    Subclasses ``nvflare.app_common.widgets.validation_json_generator.ValidationJsonGenerator`` so
+    the results accumulation (METRICS *and* COLLECTION / T2 leaf handling), numpy-float JSON
+    encoding and path-safe output track upstream instead of a drifting vendored copy (the fork had
+    only the METRICS branch and a plain ``json.dump``). The default ``results_dir`` /
+    ``json_file_name`` are identical to stock, so the constructor is inherited unchanged.
 
-        Args:
-            results_dir (str, optional): Name of the results directory. Defaults to cross_site_val
-            json_file_name (str, optional): Name of the json file. Defaults to cross_val_results.json
-        """
-        super(ValidationJsonGenerator, self).__init__()
+    The only FLIP-specific behaviour is dispatch. NVFLARE would auto-handle events through
+    ``handle_event``; FLIP instead routes them through ``ServerEventHandler``, which calls
+    ``handle_evaluation_events``. Because this component is still registered (so its
+    ``handle_event`` is auto-fired for every event), ``handle_event`` is suppressed here — otherwise
+    each validation result would be recorded twice — and the real work is delegated to stock's
+    implementation from ``handle_evaluation_events``.
+    """
 
-        self._results_dir = results_dir
-        self._val_results = {}
-        self._json_file_name = json_file_name
+    def handle_event(self, event_type: str, fl_ctx: FLContext) -> None:
+        # No-op: FLIP drives these events manually via handle_evaluation_events (ServerEventHandler),
+        # so the auto-dispatched path must not also process them.
+        pass
 
     def handle_evaluation_events(self, event_type: str, fl_ctx: FLContext) -> None:
-        if event_type == EventType.START_RUN:
-            self._val_results.clear()
-        elif event_type == AppEventType.VALIDATION_RESULT_RECEIVED:
-            model_owner = fl_ctx.get_prop(AppConstants.MODEL_OWNER, None)
-            data_client = fl_ctx.get_prop(AppConstants.DATA_CLIENT, None)
-            val_results = fl_ctx.get_prop(AppConstants.VALIDATION_RESULT, None)
-
-            if not model_owner:
-                self.log_error(
-                    fl_ctx, "model_owner unknown. Validation result will not be saved to json", fire_event=False
-                )
-            if not data_client:
-                self.log_error(
-                    fl_ctx, "data_client unknown. Validation result will not be saved to json", fire_event=False
-                )
-
-            if val_results:
-                try:
-                    dxo = from_shareable(val_results)
-                    dxo.validate()
-
-                    if dxo.data_kind == DataKind.METRICS:
-                        if data_client not in self._val_results:
-                            self._val_results[data_client] = {}
-                        self._val_results[data_client][model_owner] = dxo.data
-                    else:
-                        self.log_error(
-                            fl_ctx, f"Expected dxo of kind METRICS but got {dxo.data_kind} instead.", fire_event=False
-                        )
-                except Exception:
-                    self.log_exception(fl_ctx, "Exception in handling validation result.", fire_event=False)
-            else:
-                self.log_error(fl_ctx, "Validation result not found.", fire_event=False)
-        elif event_type == EventType.END_RUN:
-            run_dir = fl_ctx.get_engine().get_workspace().get_run_dir(fl_ctx.get_job_id())
-            cross_val_res_dir = os.path.join(run_dir, self._results_dir)
-            if not os.path.exists(cross_val_res_dir):
-                os.makedirs(cross_val_res_dir)
-
-            res_file_path = os.path.join(cross_val_res_dir, self._json_file_name)
-            with open(res_file_path, "w") as f:
-                json.dump(self._val_results, f)
+        """FLIP integration point — ServerEventHandler dispatches events here, not via handle_event."""
+        super().handle_event(event_type, fl_ctx)

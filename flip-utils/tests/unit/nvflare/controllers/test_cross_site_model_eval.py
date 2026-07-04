@@ -12,275 +12,174 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from nvflare.apis.dxo import DXO, DataKind
 from nvflare.apis.fl_constant import ReturnCode
-from nvflare.apis.shareable import Shareable
-from nvflare.app_common.app_constant import AppConstants
+from nvflare.app_common.workflows.cross_site_model_eval import CrossSiteModelEval as NVFlareCrossSiteModelEval
 
+from flip.constants import FlipTasks
 from flip.nvflare.controllers.cross_site_model_eval import CrossSiteModelEval
+
+_MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
+
+
+def _make(**kwargs) -> CrossSiteModelEval:
+    kwargs.setdefault("model_id", _MODEL_ID)
+    controller = CrossSiteModelEval(**kwargs)
+    controller.flip = MagicMock()
+    for method in ("log_info", "log_debug", "log_error", "log_exception", "fire_event"):
+        setattr(controller, method, MagicMock())
+    return controller
+
+
+def _fl_ctx() -> MagicMock:
+    """MagicMock FLContext with the two lookups nvflare's log/event helpers validate."""
+    fl_ctx = MagicMock()
+    fl_ctx.get_peer_context.return_value = None
+    fl_ctx.get_prop.return_value = None
+    return fl_ctx
 
 
 class TestCrossSiteModelEval:
-    def test_init_stores_model_id_as_fallback(self):
-        """Construction stores model_id as fallback; _model_id cache starts as None."""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = CrossSiteModelEval(model_id=model_id)
-        assert controller._model_id_fallback == model_id
+    """FLIP's CrossSiteModelEval subclasses stock and adds only: FLIP model-id resolution,
+    a POST_VALIDATION cleanup broadcast on normal completion, and reporting client execution
+    exceptions to the hub. Everything else (T2 multi-DXO handling, path-safety, saving/loading)
+    is inherited from stock rather than vendored.
+    """
+
+    def test_subclasses_stock_cross_site_model_eval(self):
+        """De-fork guard: must subclass stock so it inherits get_leaf_dxos + resolve_path_under_root."""
+        assert issubclass(CrossSiteModelEval, NVFlareCrossSiteModelEval)
+        assert isinstance(_make(), NVFlareCrossSiteModelEval)
+
+    def test_init_stores_flip_model_id_and_cleanup_timeout(self):
+        controller = _make(cleanup_timeout=42)
+        assert controller._model_id_fallback == _MODEL_ID
         assert controller._model_id is None
+        assert controller._cleanup_timeout == 42
+        assert controller.flip is not None
 
-    def test_resolve_model_id_uses_fallback_when_fl_ctx_has_no_custom_props(self):
-        """Lazy resolution returns the constructor UUID when fl_ctx has no custom_props."""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = CrossSiteModelEval(model_id=model_id)
-        fl_ctx = MagicMock()
-        fl_ctx.get_prop.return_value = None
-        result = controller._resolve_model_id(fl_ctx)
-        assert result == model_id
-
-    def test_init_invalid_task_check_period(self):
+    def test_init_invalid_task_check_period_raises(self):
+        """Stock's type validation is inherited."""
         with pytest.raises(TypeError):
-            CrossSiteModelEval(task_check_period="not-a-float", model_id="123e4567-e89b-12d3-a456-426614174000")
+            CrossSiteModelEval(task_check_period="not-a-float", model_id=_MODEL_ID)
 
-    def test_start_controller_no_engine(self):
-        controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000")
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        fl_ctx.get_engine.return_value = None
+    def test_resolve_model_id_uses_fallback_when_fl_ctx_has_no_props(self):
+        controller = _make()
+        fl_ctx = _fl_ctx()
+        assert controller._resolve_model_id(fl_ctx) == _MODEL_ID
 
-        controller.system_panic = MagicMock()
-        controller.start_controller(fl_ctx)
+    def test_accept_local_model_reports_execution_exception_to_hub(self):
+        controller = _make()
+        result = MagicMock()
+        result.get_return_code.return_value = ReturnCode.EXECUTION_EXCEPTION
+        result.get_header.return_value = "boom-traceback"
+        fl_ctx = _fl_ctx()
 
-        controller.system_panic.assert_called_once()
+        controller._accept_local_model(client_name="c1", result=result, fl_ctx=fl_ctx)
 
-    @patch("os.path.exists", return_value=True)
-    @patch("shutil.rmtree")
-    @patch("os.makedirs")
-    def test_start_controller_creates_dirs_and_sets_props(self, mock_makedirs, mock_rmtree, mock_exists):
-        controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000")
+        controller.flip.send_handled_exception.assert_called_once()
+        kwargs = controller.flip.send_handled_exception.call_args.kwargs
+        assert kwargs["formatted_exception"] == "boom-traceback"
+        assert kwargs["client_name"] == "c1"
+        assert kwargs["model_id"] == _MODEL_ID
 
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        client1 = MagicMock()
-        client1.name = "c1"
-        engine.get_clients.return_value = [client1]
-        workspace = MagicMock()
-        workspace.get_run_dir.return_value = "/run"
-        engine.get_workspace.return_value = workspace
-        fl_ctx.get_engine.return_value = engine
-        fl_ctx.get_job_id.return_value = "job1"
+    def test_accept_val_result_reports_execution_exception_to_hub(self):
+        controller = _make()
+        result = MagicMock()
+        result.get_cookie.return_value = "SRV_best"
+        result.get_return_code.return_value = ReturnCode.EXECUTION_EXCEPTION
+        result.get_header.return_value = "val-boom"
+        fl_ctx = _fl_ctx()
 
-        controller.fire_event = MagicMock()
+        controller._accept_val_result(client_name="c1", result=result, fl_ctx=fl_ctx)
 
-        controller.start_controller(fl_ctx)
+        controller.flip.send_handled_exception.assert_called_once()
+        assert controller.flip.send_handled_exception.call_args.kwargs["formatted_exception"] == "val-boom"
 
-        # participating client set and event fired
-        assert "c1" in controller._participating_clients
-        controller.fire_event.assert_called()
-        mock_rmtree.assert_called()
-        mock_makedirs.assert_called()
+    def test_accept_local_model_ok_delegates_to_stock_save_and_sends_validation(self, tmp_path):
+        """OK path delegates to stock, which is T2-aware (get_leaf_dxos) and path-safe."""
+        controller = _make()
+        controller._cross_val_models_dir = str(tmp_path)
+        controller._send_validation_task = MagicMock()
 
-    @patch("os.path.exists", return_value=True)
-    @patch("shutil.rmtree")
-    @patch("os.makedirs")
-    def test_start_controller_bad_model_locator(self, mock_makedirs, mock_rmtree, mock_exists):
-        controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000", model_locator_id="mloc")
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        fl_ctx.get_engine.return_value = engine
-        engine.get_clients.return_value = []
-        # provide a non ModelLocator
-        engine.get_workspace.return_value = MagicMock()
-        engine.get_component.return_value = "not_a_locator"
+        # METRICS dict (FOBS-serialisable without the numpy decomposer that only registers under
+        # full nvflare init); the real WEIGHTS path is covered by the tutorial integration sweep.
+        dxo = DXO(data_kind=DataKind.METRICS, data={"accuracy": 0.5})
+        result = dxo.to_shareable()  # carries ReturnCode.OK
+        fl_ctx = _fl_ctx()
 
-        controller.system_panic = MagicMock()
-        controller.fire_event = MagicMock()
-        controller.start_controller(fl_ctx)
+        controller._accept_local_model(client_name="c1", result=result, fl_ctx=fl_ctx)
 
-        controller.system_panic.assert_called_once()
-        mock_rmtree.assert_called()
-        mock_makedirs.assert_called()
+        # stock saved the single leaf DXO under the client name and triggered its validation
+        assert "c1" in controller._client_models
+        controller._send_validation_task.assert_called_once_with("c1", fl_ctx)
+        controller.flip.send_handled_exception.assert_not_called()
 
-    def test_control_flow_no_clients_timeout(self):
-        controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000")
-        controller._participating_clients = []
-        controller._wait_for_clients_timeout = 0
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        engine = MagicMock()
-        engine.get_clients.return_value = []
-        fl_ctx.get_engine.return_value = engine
-
-        abort_signal = MagicMock()
-        abort_signal.triggered = False
-
-        # Should return quickly due to zero timeout
-        controller.control_flow(abort_signal, fl_ctx)
-
-    def test_control_flow_broadcast_submit_model_called(self):
-        controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000")
-        controller._participating_clients = ["c1", "c2"]
-        controller._submit_model_task_name = "submit"
-
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        fl_ctx.get_engine.return_value = MagicMock()
-
+    def _wire_for_control_flow(self, controller, *, standing_tasks=0):
+        controller._submit_model_task_name = ""  # skip submit-model broadcast
+        controller._model_locator = None  # skip server-model validation
+        controller.get_num_standing_tasks = MagicMock(return_value=standing_tasks)
         controller.broadcast = MagicMock()
         controller.broadcast_and_wait = MagicMock()
 
+    def test_control_flow_normal_completion_broadcasts_post_validation_cleanup(self):
+        controller = _make()
+        controller._participating_clients = ["c1", "c2"]
+        self._wire_for_control_flow(controller)
         abort_signal = MagicMock()
         abort_signal.triggered = False
 
-        controller.control_flow(abort_signal, fl_ctx)
+        controller.control_flow(abort_signal, _fl_ctx())
 
-        controller.broadcast.assert_called_once()
+        controller.broadcast_and_wait.assert_called_once()
+        cleanup_task = controller.broadcast_and_wait.call_args.kwargs["task"]
+        assert cleanup_task.name == FlipTasks.POST_VALIDATION.value
 
-    def test_accept_local_model_handles_error_return_code(self):
-        controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000")
-        controller.flip = MagicMock()
-        controller.log_error = MagicMock()
-        controller.fire_event = MagicMock()
+    def test_control_flow_abort_skips_post_validation_cleanup(self):
+        controller = _make()
+        controller._participating_clients = ["c1"]
+        self._wire_for_control_flow(controller)
+        abort_signal = MagicMock()
+        abort_signal.triggered = True  # stock returns early; cleanup must NOT run post-abort
 
-        share = Shareable()
-        share.set_header = MagicMock()
-        share.get_return_code = MagicMock(return_value=ReturnCode.EXECUTION_EXCEPTION)
-        share.get_header = MagicMock(return_value="boom")
+        controller.control_flow(abort_signal, _fl_ctx())
 
-        # should call send_handled_exception
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        controller._accept_local_model(client_name="c1", result=share, fl_ctx=fl_ctx)
+        controller.broadcast_and_wait.assert_not_called()
 
-        controller.flip.send_handled_exception.assert_called()
+    def test_control_flow_no_participating_clients_skips_cleanup(self):
+        controller = _make()
+        controller._participating_clients = []
+        controller._wait_for_clients_timeout = 0
+        controller._engine = MagicMock()
+        controller._engine.get_clients.return_value = []
+        self._wire_for_control_flow(controller)
+        abort_signal = MagicMock()
+        abort_signal.triggered = False
 
-    def test_accept_local_model_ok_calls_save_and_send(self):
-        controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000")
-        controller._cross_val_models_dir = "/models"
-        controller._send_validation_task = MagicMock()
+        controller.control_flow(abort_signal, _fl_ctx())
 
-        # patch from_shareable to return a DXO-like object
-        with patch("flip.nvflare.controllers.cross_site_model_eval.from_shareable", return_value=MagicMock()):
-            with patch.object(controller, "_save_validation_content", return_value="/models/c1"):
-                share = Shareable()
-                share.get_return_code = MagicMock(return_value=ReturnCode.OK)
-                fl_ctx = MagicMock()
-                fl_ctx.get_peer_context.return_value = None
-                controller.fire_event = MagicMock()
-                controller._accept_local_model(client_name="c1", result=share, fl_ctx=fl_ctx)
+        controller.broadcast_and_wait.assert_not_called()
 
-                assert controller._client_models.get("c1") == "/models/c1"
-                controller._send_validation_task.assert_called()
+    def test_init_invalid_cleanup_timeout_type_raises(self):
+        with pytest.raises(TypeError, match="cleanup_timeout must be int"):
+            CrossSiteModelEval(model_id=_MODEL_ID, cleanup_timeout="not-an-int")
 
-    def test_before_send_validate_task_cb_model_not_found(self):
-        controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000")
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        client_task = MagicMock()
-        client_task.task.props = {AppConstants.MODEL_OWNER: "m1"}
+    def test_init_negative_cleanup_timeout_raises(self):
+        with pytest.raises(ValueError, match="cleanup_timeout must be greater"):
+            CrossSiteModelEval(model_id=_MODEL_ID, cleanup_timeout=-1)
 
-        # make loader raise ValueError
-        with patch.object(controller, "_load_validation_content", side_effect=ValueError("nope")):
-            controller.system_panic = MagicMock()
-            controller.fire_event = MagicMock()
-            controller.log_error = MagicMock()
-            controller._before_send_validate_task_cb(client_task, fl_ctx)
-            controller.system_panic.assert_called()
-
-    def test_locate_server_models_invalid_dxo(self):
-        controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000")
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        controller._model_locator = MagicMock()
-        controller._model_locator.get_model_names.return_value = ["m1"]
-        controller._model_locator.locate_model.return_value = "not_a_dxo"
-
+    def test_control_flow_cleanup_exception_triggers_system_panic(self):
+        controller = _make()
+        controller._participating_clients = ["c1"]
+        self._wire_for_control_flow(controller)
+        controller.broadcast_and_wait = MagicMock(side_effect=RuntimeError("cleanup boom"))
         controller.system_panic = MagicMock()
-        controller.log_info = MagicMock()
-        controller.fire_event = MagicMock()
-        res = controller._locate_server_models(fl_ctx)
-        assert res is False
-        controller.system_panic.assert_called()
+        abort_signal = MagicMock()
+        abort_signal.triggered = False
 
-    def test_locate_server_models_success(self):
-        controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000")
-        fl_ctx = MagicMock()
-        fl_ctx.get_peer_context.return_value = None
-        controller._model_locator = MagicMock()
-        controller._model_locator.get_model_names.return_value = ["m1"]
-        controller._model_locator.locate_model.return_value = MagicMock()
+        controller.control_flow(abort_signal, _fl_ctx())
 
-        with patch("flip.nvflare.controllers.cross_site_model_eval.DXO", MagicMock):
-            with patch.object(controller, "_save_validation_content", return_value="/models/SRV_m1"):
-                controller.log_info = MagicMock()
-                controller.fire_event = MagicMock()
-                res = controller._locate_server_models(fl_ctx)
-
-        assert res is True
-        assert "SRV_m1" in controller._server_models
-
-
-@pytest.mark.parametrize(
-    ("name", "data_kind", "data", "meta"),
-    [
-        (
-            "metrics_sample",
-            DataKind.METRICS,
-            {"val_acc": 0.007118524517863989},
-            {},
-        )
-    ],
-)
-def test_save_and_load_validation_content(tmp_path, name, data_kind, data, meta, monkeypatch):
-    """Test saving and loading validation content with DXO."""
-    from pathlib import Path
-
-    # Arrange: controller instance with a valid UUID (required by __init__)
-    controller = CrossSiteModelEval(model_id="123e4567-e89b-12d3-a456-426614174000")
-
-    # ---- 🧩 Mock out logging to avoid FLContext internals ----
-    monkeypatch.setattr(controller, "log_debug", lambda *a, **kw: None)
-    monkeypatch.setattr(controller, "log_info", lambda *a, **kw: None)
-    monkeypatch.setattr(controller, "log_error", lambda *a, **kw: None)
-    monkeypatch.setattr(controller, "log_exception", lambda *a, **kw: None)
-    monkeypatch.setattr(controller, "system_panic", lambda *a, **kw: None)
-    # -----------------------------------------------------------
-
-    fl_ctx = MagicMock()
-
-    # Create a DXO to persist
-    dxo = DXO(data_kind=data_kind, data=data, meta=meta)
-
-    # Ensure directory exists
-    save_dir = tmp_path / "cross_val_models"
-    save_dir.mkdir(parents=True, exist_ok=True)
-
-    # Act: save the DXO, then load it back
-    saved_path = controller._save_validation_content(
-        name=name,
-        save_dir=str(save_dir),
-        dxo=dxo,
-        fl_ctx=fl_ctx,
-    )
-
-    # Assert: a file with this base path should exist (DXO manages its own extension(s))
-    assert Path(saved_path).exists() or any(
-        Path(str(saved_path) + ext).exists() for ext in (".npy", ".npz", ".json")
-    ), f"Expected saved DXO file(s) for base path {saved_path}"
-
-    loaded = controller._load_validation_content(
-        name=name,
-        load_dir=str(save_dir),
-        fl_ctx=fl_ctx,
-    )
-
-    # Validate round-trip content
-    assert isinstance(loaded, DXO)
-    assert loaded.data_kind == data_kind
-    assert loaded.data == data
-    assert loaded.meta == meta
+        controller.system_panic.assert_called_once()
