@@ -96,17 +96,19 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
   family                   = "fl-api-net-1"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "512"
-  memory                   = "1024"
-  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
-  task_role_arn            = aws_iam_role.ecs_fl_api_task.arn
+  # 4 GiB: the fl-api de-bundle stages large eval checkpoints (e.g. the ~759 MiB
+  # Ark+ weights) via a buffered download, so 1 GiB OOM-killed the task (FLIP#695).
+  cpu                = "1024"
+  memory             = "4096"
+  execution_role_arn = aws_iam_role.ecs_task_execution.arn
+  task_role_arn      = aws_iam_role.ecs_fl_api_task.arn
 
   container_definitions = jsonencode([
     {
       name              = "fl-api-net-1"
       image             = local.fl_api_image
-      cpu               = 512
-      memoryReservation = 1024
+      cpu               = 1024
+      memoryReservation = 4096
 
       portMappings = [
         {
@@ -204,17 +206,20 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
   family                   = "fl-server-net-1"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "1024"
-  memory                   = "2048"
-  execution_role_arn       = aws_iam_role.ecs_task_execution.arn
-  task_role_arn            = aws_iam_role.ecs_fl_server_task.arn
+  # 8 GiB: the fl-server's EvaluationModelLocator torch-loads the staged eval
+  # checkpoint(s) into memory (the ~759 MiB Ark+ weights; multimodel loads two),
+  # which OOM'd the 2 GiB task (FLIP#695).
+  cpu                = "2048"
+  memory             = "8192"
+  execution_role_arn = aws_iam_role.ecs_task_execution.arn
+  task_role_arn      = aws_iam_role.ecs_fl_server_task.arn
 
   container_definitions = jsonencode([
     {
       name              = "fl-server-net-1"
       image             = local.fl_server_image
-      cpu               = 1024
-      memoryReservation = 2048
+      cpu               = 2048
+      memoryReservation = 8192
 
       portMappings = [
         {
