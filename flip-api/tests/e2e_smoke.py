@@ -384,8 +384,18 @@ def wait_for_image_pull(
     project_id: str,
     threshold: float,
     timeout_s: int,
+    required_trust_names: set[str] | None = None,
 ) -> None:
-    _log(f"⏳ Waiting for image pull (≥{int(threshold * 100)}% per trust, timeout {timeout_s}s)")
+    """Block until every required trust's image pull reaches the threshold.
+
+    With ``required_trust_names`` (the ``--trusts`` selection, matched against the
+    status entries' ``trustName``), only those trusts must reach the bar — so a
+    job targeting a subset of an existing multi-trust project isn't blocked by a
+    non-selected (possibly offline) trust's pull entries. None keeps the legacy
+    behaviour (every trust in the project must reach the threshold).
+    """
+    scope = f" across {sorted(required_trust_names)}" if required_trust_names else " per trust"
+    _log(f"⏳ Waiting for image pull (≥{int(threshold * 100)}%{scope}, timeout {timeout_s}s)")
     deadline = time.monotonic() + timeout_s
     last_summary = ""
     poll_interval = 10
@@ -401,6 +411,8 @@ def wait_for_image_pull(
         if resp.status_code >= 300:
             raise SmokeFailure(f"image-status failed: HTTP {resp.status_code} {resp.text}")
         statuses = resp.json()
+        if required_trust_names is not None:
+            statuses = [s for s in statuses if s.get("trustName") in required_trust_names]
         if not statuses:
             time.sleep(poll_interval)
             continue
@@ -874,7 +886,12 @@ def main(argv: list[str] | None = None) -> int:
         # in which case skipping the wait here would have wait_for_training_started
         # sit blocked on the (still pulling) FL clients until it times out.
         wait_for_image_pull(
-            client, headers, project_id, args.image_pull_threshold, args.image_pull_timeout
+            client,
+            headers,
+            project_id,
+            args.image_pull_threshold,
+            args.image_pull_timeout,
+            required_trust_names={t["name"] for t in trusts} if args.trusts else None,
         )
         if args.data_enrichment_cmd:
             run_data_enrichment(args.data_enrichment_cwd, args.data_enrichment_cmd, project_id)
