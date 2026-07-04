@@ -10,133 +10,123 @@
 # limitations under the License.
 #
 
+import os
 from unittest.mock import MagicMock
 
 import pytest
+from nvflare.apis.fl_constant import ReturnCode
 
+from flip.constants import FlipTasks, PTConstants
+from flip.nvflare.controllers.cross_site_model_eval import CrossSiteModelEval as FlipCrossSiteModelEval
 from flip.nvflare.controllers.fed_evaluation import ModelEval
+
+_MODEL_ID = "123e4567-e89b-12d3-a456-426614174000"
+
+
+def _make(**kwargs) -> ModelEval:
+    kwargs.setdefault("model_id", _MODEL_ID)
+    controller = ModelEval(**kwargs)
+    controller.flip = MagicMock()
+    for method in ("log_info", "log_debug", "log_error", "log_exception", "fire_event"):
+        setattr(controller, method, MagicMock())
+    return controller
+
+
+def _fl_ctx() -> MagicMock:
+    fl_ctx = MagicMock()
+    fl_ctx.get_peer_context.return_value = None
+    fl_ctx.get_prop.return_value = None
+    return fl_ctx
 
 
 class TestModelEval:
-    def test_init_with_valid_uuid(self):
-        """Test initialization with valid UUID stores it as fallback"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id)
-        assert controller._model_id_fallback == model_id
+    """ModelEval evaluates a collection of server models against every client. It shares FLIP's
+    eval base (model-id resolution + hub exception reporting) with CrossSiteModelEval by
+    subclassing it, and overrides only the collection-evaluation orchestration.
+    """
+
+    def test_subclasses_flip_cross_site_model_eval(self):
+        """De-fork guard: shares one FLIP eval base; this also *defines* _validation_task_name
+        and the other attrs the fork referenced but never assigned."""
+        assert issubclass(ModelEval, FlipCrossSiteModelEval)
+        assert isinstance(_make(), FlipCrossSiteModelEval)
+
+    def test_init_stores_flip_model_id_and_eval_task_name(self):
+        controller = _make(evaluation_task_name="validate", cleanup_timeout=300)
+        assert controller._model_id_fallback == _MODEL_ID
         assert controller._model_id is None
-
-    def test_resolve_model_id_uses_fallback_when_fl_ctx_has_no_custom_props(self):
-        """Lazy resolution returns the constructor UUID when fl_ctx has no custom_props."""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id)
-        fl_ctx = MagicMock()
-        fl_ctx.get_prop.return_value = None
-        result = controller._resolve_model_id(fl_ctx)
-        assert result == model_id
-
-    def test_init_with_custom_task_check_period(self):
-        """Test initialization with custom task_check_period"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id, task_check_period=1.0)
-        assert controller._task_check_period == 1.0
-
-    def test_init_with_custom_submit_model_timeout(self):
-        """Test initialization with custom submit_model_timeout"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id, submit_model_timeout=1200)
-        assert controller._submit_model_timeout == 1200
-
-    def test_init_with_negative_submit_model_timeout_raises_error(self):
-        """Test initialization with negative submit_model_timeout raises ValueError"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        with pytest.raises(ValueError, match="submit_model_timeout must be greater"):
-            ModelEval(model_id=model_id, submit_model_timeout=-1)
-
-    def test_init_with_custom_validation_timeout(self):
-        """Test initialization with custom validation_timeout"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id, validation_timeout=7200)
-        assert controller._validation_timeout == 7200
-
-    def test_init_with_negative_validation_timeout_raises_error(self):
-        """Test initialization with negative validation_timeout raises ValueError"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        with pytest.raises(ValueError, match="model_validate_timeout must be greater"):
-            ModelEval(model_id=model_id, validation_timeout=-1)
-
-    def test_init_with_custom_wait_for_clients_timeout(self):
-        """Test initialization with custom wait_for_clients_timeout"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id, wait_for_clients_timeout=600)
-        assert controller._wait_for_clients_timeout == 600
-
-    def test_init_with_negative_wait_for_clients_timeout_raises_error(self):
-        """Test initialization with negative wait_for_clients_timeout raises ValueError"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        with pytest.raises(ValueError, match="wait_for_clients_timeout must be greater"):
-            ModelEval(model_id=model_id, wait_for_clients_timeout=-1)
-
-    def test_init_with_custom_cleanup_timeout(self):
-        """Test initialization with custom cleanup_timeout"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id, cleanup_timeout=300)
+        assert controller._evaluation_task_name == "validate"
         assert controller._cleanup_timeout == 300
+        # dead-residue fix: the attr the fork referenced but never defined now exists
+        assert controller._validation_task_name == "validate"
 
-    def test_init_with_negative_cleanup_timeout_raises_error(self):
-        """Test initialization with negative cleanup_timeout raises ValueError"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        with pytest.raises(ValueError, match="cleanup_timeout must be greater"):
-            ModelEval(model_id=model_id, cleanup_timeout=-1)
+    def test_init_defaults_eval_task_name_and_results_dir(self):
+        controller = _make()
+        assert controller._evaluation_task_name == PTConstants.EvalTaskName
+        assert controller._eval_results_dir == PTConstants.EvalDir
+        assert controller._eval_results == {}
 
-    def test_init_with_custom_fatal_error_delay(self):
-        """Test initialization with custom fatal_error_delay"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id, fatal_error_delay=10)
-        assert controller._fatal_error_delay == 10
+    def test_resolve_model_id_uses_fallback_when_fl_ctx_has_no_props(self):
+        controller = _make()
+        assert controller._resolve_model_id(_fl_ctx()) == _MODEL_ID
 
-    def test_init_with_negative_fatal_error_delay(self):
-        """Test initialization with negative fatal_error_delay is allowed (no validation)"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id, fatal_error_delay=-1)
-        assert controller._fatal_error_delay == -1
+    @pytest.mark.parametrize(
+        ("kwargs", "match"),
+        [
+            ({"submit_model_timeout": -1}, "submit_model_timeout must be greater"),
+            ({"validation_timeout": -1}, "model_validate_timeout must be greater"),
+            ({"wait_for_clients_timeout": -1}, "wait_for_clients_timeout must be greater"),
+            ({"cleanup_timeout": -1}, "cleanup_timeout must be greater"),
+        ],
+    )
+    def test_init_negative_timeouts_raise(self, kwargs, match):
+        """Timeout validation is inherited from the stock/FLIP base."""
+        with pytest.raises(ValueError, match=match):
+            ModelEval(model_id=_MODEL_ID, **kwargs)
 
-    def test_init_with_cleanup_models_true(self):
-        """Test initialization with cleanup_models set to True"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id, cleanup_models=True)
-        assert controller._cleanup_models is True
-
-    def test_init_with_cleanup_models_false(self):
-        """Test initialization with cleanup_models set to False"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id, cleanup_models=False)
-        assert controller._cleanup_models is False
-
-    def test_init_with_custom_task_names(self):
-        """Test initialization with custom task names"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(
-            model_id=model_id, submit_model_task_name="custom_submit", evaluation_task_name="custom_eval"
-        )
+    def test_init_custom_task_names_and_clients(self):
+        controller = _make(submit_model_task_name="custom_submit", evaluation_task_name="custom_eval",
+                           participating_clients=["a", "b"])
         assert controller._submit_model_task_name == "custom_submit"
         assert controller._evaluation_task_name == "custom_eval"
+        assert controller._participating_clients == ["a", "b"]
 
-    def test_init_with_custom_component_ids(self):
-        """Test initialization with custom component IDs"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id, model_locator_id="my_locator", formatter_id="my_formatter")
-        assert controller._model_locator_id == "my_locator"
-        assert controller._formatter_id == "my_formatter"
+    def test_accept_val_result_ok_records_result_path(self):
+        controller = _make()
+        controller._eval_results_dir = "/eval"
+        result = MagicMock()
+        result.get_return_code.return_value = ReturnCode.OK
 
-    def test_init_with_participating_clients_list(self):
-        """Test initialization with list of participating clients"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        clients = ["client1", "client2", "client3"]
-        controller = ModelEval(model_id=model_id, participating_clients=clients)
-        assert controller._participating_clients == clients
+        controller._accept_val_result("c1", result, _fl_ctx())
 
-    def test_init_with_none_participating_clients(self):
-        """Test initialization with None participating_clients (default)"""
-        model_id = "123e4567-e89b-12d3-a456-426614174000"
-        controller = ModelEval(model_id=model_id, participating_clients=None)
-        assert controller._participating_clients is None
+        assert controller._eval_results["c1"] == os.path.join("/eval", "c1")
+        controller.flip.send_handled_exception.assert_not_called()
+
+    def test_accept_val_result_execution_exception_reports_and_empties(self):
+        controller = _make()
+        result = MagicMock()
+        result.get_return_code.return_value = ReturnCode.EXECUTION_EXCEPTION
+        result.get_header.return_value = "boom-traceback"
+
+        controller._accept_val_result("c1", result, _fl_ctx())
+
+        controller.flip.send_handled_exception.assert_called_once()
+        assert controller.flip.send_handled_exception.call_args.kwargs["formatted_exception"] == "boom-traceback"
+        assert controller._eval_results["c1"] == {}
+
+    def test_control_flow_broadcasts_eval_task_then_post_task_cleanup(self):
+        controller = _make(evaluation_task_name="validate")
+        controller._participating_clients = ["c1", "c2"]
+        controller._model_locator = None  # skip server-model loading
+        controller.get_num_standing_tasks = MagicMock(return_value=0)
+        controller.broadcast = MagicMock()
+        controller.broadcast_and_wait = MagicMock()
+        abort_signal = MagicMock()
+        abort_signal.triggered = False
+
+        controller.control_flow(abort_signal, _fl_ctx())
+
+        controller.broadcast.assert_called_once()
+        assert controller.broadcast.call_args.kwargs["task"].name == "validate"
+        controller.broadcast_and_wait.assert_called_once()
+        assert controller.broadcast_and_wait.call_args.kwargs["task"].name == FlipTasks.POST_TASK.value
