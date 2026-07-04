@@ -35,10 +35,11 @@ Ark+ build tags are:
 | Image | Kit variable | Old value | **New value (confirm with FLIP team)** |
 |-------|--------------|-----------|-----------------------------------------|
 | `fl-client` (`flare-fl-client`) | `DOCKER_FL_TAG` | `stag` | `a3bf6c5bde4fac955d75858e25fc82a353345bec` |
-| `imaging-api` + other hub-built trust images | `DOCKER_TAG` | `stag` | `arkplus-platform-on-505` |
+| `imaging-api`, `trust-api`, `data-access-api`, `orthanc` **and XNAT** (`xnat-web`/`xnat-db`/`xnat-nginx` follow `DOCKER_TAG` unless the kit pins `XNAT_TAG`) | `DOCKER_TAG` | `stag` | `arkplus-platform-on-505` |
 
-Everything else — `trust-api`, `data-access-api`, `orthanc`, `omop-db`, XNAT, Grafana/Loki/Alloy — is
-**unchanged** and stays on its current tag.
+`omop-db` (pinned `latest`) and Grafana/Loki/Alloy (version-pinned) are **unchanged**. The XNAT
+images at the new tag are functionally identical to the current ones (they include the
+bulk-import-livelock fix) — XNAT re-pulling alongside is expected and harmless.
 
 ---
 
