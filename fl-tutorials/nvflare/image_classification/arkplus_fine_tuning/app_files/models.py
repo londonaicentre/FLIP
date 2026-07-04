@@ -126,6 +126,18 @@ def get_model() -> nn.Module:
 
     This zero-argument function is required by the FLIP/NVFLARE standard job
     config: ``models.get_model``.
+
+    The ~759 MiB backbone (``pretrained_weights.pt``) is NOT a hard requirement here.
+    It is loaded into the initial global model **server-side** by
+    ``flip.nvflare.components.InitialCheckpointPTModelPersistor`` (from the app's ``custom/``
+    in the simulator, or the hub shared volume in a real deployment) and delivered to every
+    client as the round-0 global model. So:
+
+    - if ``pretrained_weights.pt`` is present next to this file, load it (convenient for a
+      standalone/simulator run where the backbone is already staged locally);
+    - otherwise build a **bare** architecture — the real weights arrive at round 0.
+
+    Clients therefore never need the checkpoint file; the server (persistor) supplies it.
     """
     cfg = _load_config()
     ark_cfg = cfg.get("ARKPLUS", {})
@@ -133,14 +145,7 @@ def get_model() -> nn.Module:
     head_id = int(ark_cfg.get("HEAD_ID", 0))
 
     PRETRAINED_PATH = APP_DIR / "pretrained_weights.pt"
-    if not PRETRAINED_PATH.is_file():
-        raise FileNotFoundError(
-            f"Pretrained weights not found at {PRETRAINED_PATH}. "
-            "This file must exist — it supplies the backbone initialization. "
-            "Run: cp tutorials/image_evaluation/xray_evaluation/app_files/"
-            "arkplus_pretrained_weights.pt tutorials/image_classification/"
-            "xray_classification/app_files/pretrained_weights"
-        )
+    pretrained_weights = str(PRETRAINED_PATH) if PRETRAINED_PATH.is_file() else None
 
     try:
         args = SimpleNamespace(
@@ -148,7 +153,7 @@ def get_model() -> nn.Module:
             input_size=int(ark_cfg.get("INPUT_SIZE", 224)),
             projector_features=ark_cfg.get("PROJECTOR_FEATURES", 1376),
             use_mlp=bool(ark_cfg.get("USE_MLP", False)),
-            pretrained_weights=str(PRETRAINED_PATH),
+            pretrained_weights=pretrained_weights,
             pretrained_key=None,
             load_backbone_only=bool(ark_cfg.get("LOAD_BACKBONE_ONLY", False)),
         )

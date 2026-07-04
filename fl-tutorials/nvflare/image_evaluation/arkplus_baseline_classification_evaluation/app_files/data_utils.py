@@ -28,8 +28,22 @@ import numpy as np
 import pandas as pd
 import pydicom
 import torch
+from flip import FLIP
+from flip.constants import FlipConstants, ResourceType
 from monai.config import KeysCollection
 from monai.transforms.transform import MapTransform
+
+
+def _is_local_dev() -> bool:
+    """Whether to read data from local files (simulator) or the FLIP API (real trust).
+
+    ``True`` in the NVFLARE simulator (``LOCAL_DEV=true``): resolve data from local
+    ``SITE_DATA``/``DEV_*`` paths. ``False`` on a real federated client: ignore
+    ``SITE_DATA`` and fetch the dataframe + DICOMs from the trust APIs via the FLIP
+    package. Mirrors the flip package's own ``LOCAL_DEV`` switch
+    (``flip.core.factory`` → ``FLIPStandardDev`` vs ``FLIPStandardProd``).
+    """
+    return bool(FlipConstants.LOCAL_DEV)
 
 
 # ---------------------------------------------------------------------------
@@ -208,8 +222,24 @@ def get_site_data_config(config: dict | None = None, site_name: str | None = Non
     if entry is None:
         entry = {}
 
-    images_dir = entry.get("images_dir") or os.environ.get("DEV_IMAGES_DIR")
-    dataframe = entry.get("dataframe") or os.environ.get("DEV_DATAFRAME")
+    # Per-site data resolution for the in-process Client-API simulator (no Docker mounts). Precedence:
+    #   1. SITE{N}_IMAGES_DIR / SITE{N}_DATAFRAME env (mapped from the NVFLARE site name, "site-1" -> "SITE1")
+    #   2. the config SITE_DATA entry's path
+    #   3. the single-site DEV_* env
+    # Per-site env wins because config SITE_DATA holds the legacy container-mount targets (/site-data/...),
+    # which don't exist in the no-Docker SimEnv; the real per-site host paths live in .env.app as SITE{N}_*.
+    # (In the legacy executor tutorial this per-site wiring was done by the testing harness' Docker mounts.)
+    site_env = requested_site.replace("-", "").upper() if requested_site else ""  # "site-1" -> "SITE1"
+    images_dir = (
+        (os.environ.get(f"{site_env}_IMAGES_DIR") if site_env else None)
+        or entry.get("images_dir")
+        or os.environ.get("DEV_IMAGES_DIR")
+    )
+    dataframe = (
+        (os.environ.get(f"{site_env}_DATAFRAME") if site_env else None)
+        or entry.get("dataframe")
+        or os.environ.get("DEV_DATAFRAME")
+    )
     resolved_site = requested_site or "default"
     return SiteDataConfig(site_name=resolved_site, images_dir=images_dir, dataframe=dataframe)
 
@@ -224,6 +254,13 @@ def _read_dataframe(dataframe_path: str | None = None) -> pd.DataFrame:
     raise RuntimeError(f"Dataframe path is not set or does not exist: {path!r}")
 
 
+def _load_dataframe(site_cfg: SiteDataConfig, project_id: str = "", query: str = "") -> pd.DataFrame:
+    """Load the cohort dataframe: local CSV in the simulator, FLIP API on a real trust."""
+    if _is_local_dev():
+        return _read_dataframe(site_cfg.dataframe)
+    return FLIP().get_dataframe(project_id, query)
+
+
 def _find_accession_column(df: pd.DataFrame) -> str:
     for col in ["accession_id", "accession_number", "accession", "AccessionNumber"]:
         if col in df.columns:
@@ -233,28 +270,44 @@ def _find_accession_column(df: pd.DataFrame) -> str:
 
 def _dicoms_for_accession(
     accession_id: str,
+    project_id: str = "",
     images_dir: str | None = None,
 ) -> list[Path]:
-    root_path = images_dir or os.environ.get("DEV_IMAGES_DIR")
-    if root_path:
-        root = Path(root_path)
-        candidates = []
-        for p in [root / str(accession_id), root / f"{accession_id}"]:
-            if p.exists():
-                candidates.extend(p.rglob("*.dcm"))
-        if not candidates and root.exists():
-            candidates.extend(root.rglob(f"*{accession_id}*.dcm"))
-        if not candidates and root.exists():
-            all_dicoms = list(root.rglob("*.dcm"))
-            if len(all_dicoms) <= 500:
-                candidates = all_dicoms
-        return sorted(set(candidates))
+    if _is_local_dev():
+        # Local test-data path used by SITE_DATA / DEV_IMAGES_DIR (simulator only).
+        root_path = images_dir or os.environ.get("DEV_IMAGES_DIR")
+        if root_path:
+            root = Path(root_path)
+            candidates = []
+            for p in [root / str(accession_id), root / f"{accession_id}"]:
+                if p.exists():
+                    candidates.extend(p.rglob("*.dcm"))
+            if not candidates and root.exists():
+                candidates.extend(root.rglob(f"*{accession_id}*.dcm"))
+            if not candidates and root.exists():
+                all_dicoms = list(root.rglob("*.dcm"))
+                if len(all_dicoms) <= 500:
+                    candidates = all_dicoms
+            return sorted(set(candidates))
+        return []
+
+    # Real FLIP client path (LOCAL_DEV=false): fetch DICOMs from the trust imaging-api.
+    if project_id:
+        flip = FLIP()
+        # ResourceType.ALL: XNAT labels Secondary Capture DICOM resources "secondary", not "DICOM" —
+        # the synthetic chest radiographs are SC, so a DICOM-labelled fetch 404s on every study.
+        # ALL downloads every resource on the scan; the rglob("*.dcm") below picks out the DICOMs.
+        folder = flip.get_by_accession_number(project_id, accession_id, resource_type=[ResourceType.ALL])
+        return sorted(Path(folder).rglob("*.dcm"))
+
     return []
 
 
 def build_eval_datalist(
     config: dict | None = None,
     site_name: str | None = None,
+    project_id: str | None = None,
+    query: str | None = None,
     logger=None,
 ) -> list[dict]:
     """Load ALL samples for evaluation (no train/val/test split)."""
@@ -263,7 +316,9 @@ def build_eval_datalist(
     lesions = get_lesions(cfg)
     normal_key = cfg.get("LESIONS", {}).get("-1", "Lungs in normal arrangement")
     value_to_numerical = cfg.get("value_to_numerical", {"1": "Yes", "0": "No"})
-    df = _read_dataframe(site_cfg.dataframe)
+    project_id = project_id if project_id is not None else os.environ.get("PROJECT_ID", "")
+    query = query if query is not None else os.environ.get("QUERY", "")
+    df = _load_dataframe(site_cfg, project_id=project_id, query=query)
     accession_col = _find_accession_column(df)
 
     if logger is not None:
@@ -276,10 +331,22 @@ def build_eval_datalist(
 
     datalist = []
     seen_paths = set()
+    skipped_accessions = 0
     for _, row in df.iterrows():
         accession_id = str(row[accession_col])
         labels = get_labels_from_radiology_row(row, lesions, value_to_numerical, normal_label=normal_key)
-        for img in _dicoms_for_accession(accession_id, images_dir=site_cfg.images_dir):
+        try:
+            dicom_paths = _dicoms_for_accession(accession_id, project_id=project_id, images_dir=site_cfg.images_dir)
+        except Exception as exc:
+            # A single accession failing to fetch (e.g. a study whose DICOM resource never made it
+            # into the trust imaging backend during the image pull) must not abort the whole
+            # cross-site evaluation — mirror the trainer's skip-and-carry-on (FLIP#677). The run
+            # evaluates on the accessions that ARE retrievable.
+            skipped_accessions += 1
+            if logger is not None:
+                logger.warning("Skipping accession %s: failed to fetch DICOMs (%s)", accession_id, exc)
+            continue
+        for img in dicom_paths:
             if img in seen_paths:
                 continue
             try:
@@ -290,6 +357,13 @@ def build_eval_datalist(
             item.update(labels)
             datalist.append(item)
             seen_paths.add(img)
+
+    if skipped_accessions and logger is not None:
+        logger.warning(
+            "Skipped %d accession(s) whose DICOMs could not be fetched; evaluating the remaining %d sample(s).",
+            skipped_accessions,
+            len(datalist),
+        )
 
     if not datalist:
         raise RuntimeError(

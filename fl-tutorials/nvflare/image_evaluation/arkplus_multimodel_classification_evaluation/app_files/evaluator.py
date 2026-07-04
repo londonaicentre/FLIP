@@ -177,6 +177,8 @@ class FLIP_EVALUATOR(Executor):
         self._datalist = build_eval_datalist(
             config=self.config,
             site_name=site_name,
+            project_id=self._project_id,
+            query=self._query,
             logger=logger,
         )
 

@@ -93,7 +93,7 @@ weights are returned to NVFLARE; the teacher is never aggregated.
 ## Configuration
 
 Training settings live in `app_files/config.json`, e.g. `GLOBAL_ROUNDS`,
-`LOCAL_ROUNDS`, `LR_START`/`LR_END`, `VAL_SPLIT`/`TEST_SPLIT`/`SPLIT_SEED`,
+`LOCAL_ROUNDS`, `LR_START`/`LR_END`, `VAL_SPLIT`/`SPLIT_SEED`,
 `BATCH_SIZE`, plus the `LESIONS` and `ARKPLUS` blocks above.
 
 ## Dataset setup
@@ -120,6 +120,25 @@ If `SITE_DATA` is missing or the site name is unknown, the loader falls back to
 into the simulator container by the testing harness. Each DICOM is loaded, resized
 to `ARKPLUS.INPUT_SIZE`, intensity-scaled, then repeated 1→3 channels and
 ImageNet-normalised before inference (`app_files/data_utils.py`).
+
+### Simulator vs. real deployment
+
+`SITE_DATA` and the `/site-data/site-N/...` mounts are **simulator-only**. The NVFLARE
+simulator runs every client (`site-1`, `site-2`) inside one container, so per-site data must
+be given a distinct mount target selected by client name — this is local development only.
+
+On a real federated client the fl-client runs with `LOCAL_DEV=false`, and the data layer
+ignores `SITE_DATA` entirely: the cohort dataframe comes from
+`FLIP().get_dataframe(project_id, query)` and DICOMs from `FLIP().get_by_accession_number(...)`
+(the trust's data-access-api / imaging-api), reading downloaded images from the single shared
+`/app/data/images` mount — there are no per-site mounts. `project_id`/`query` are supplied by
+the FL job config (`config_fed_client.json` → `RUN_TRAINER`/`RUN_VALIDATOR`). The switch is
+keyed on `LOCAL_DEV` in `app_files/data_utils.py` (`_is_local_dev`), mirroring the flip
+package's own `FLIPStandardDev`/`FLIPStandardProd` selection.
+
+The cohort query for a real deployment is [`query.sql`](query.sql) — it selects the chest X-ray
+**training** set and returns the seven lesion-label columns the model expects. Pass it as the
+project's cohort query (e.g. `make e2e_smoke QUERY_FILE=.../arkplus_fine_tuning/query.sql`).
 
 ## Checkpoint setup
 

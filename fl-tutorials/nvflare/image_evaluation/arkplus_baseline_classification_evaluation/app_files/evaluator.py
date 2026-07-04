@@ -9,20 +9,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""FLIP_EVALUATOR for the Ark+ DECAF chest X-ray evaluation.
+"""Client-API evaluator for the Ark+ baseline chest X-ray evaluation tutorial.
 
-Evaluates a single Ark+ model (zero-shot foundation) on
-hold-out data and reports per-lesion AUROC.
+This is the NVFLARE Client-API counterpart of the legacy ``FLIP_EVALUATOR(Executor)``. The server
+(``CrossSiteModelEval`` + ``EvaluationModelLocator``, wired by ``FlipEvalRecipe``) loads the single
+uploaded Ark+ checkpoint and broadcasts it to every client as one ``FLModel``; this script implements the
+canonical ``is_evaluate()`` loop — receive the global model, score it on the local cohort, and send back
+**aggregate-only** per-lesion AUROC. There is no ``Executor``/``Shareable`` plumbing and no multi-model
+``COLLECTION`` unwrapping; the weights arrive as ``input_model.params``.
+
+Only cohort-level per-lesion AUROC is returned (``{model_name: {auroc_<lesion>: ...}}``). Per-sample
+(row-level) predictions are deliberately never produced or exported: a per-patient list would leak the
+exact evaluation cohort size and be linkable to individual patients.
+
+The numerical pipeline (model, transforms, head inference, label mapping, AUROC) is identical to the
+legacy tutorial's, so the reported metrics match — only the FL transport differs.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
+import nvflare.client as flare
 import torch
 from data_utils import (
     Lesion,
@@ -33,387 +45,211 @@ from data_utils import (
     get_xray_transforms,
 )
 from metrics_utils import apply_label_mapping, compute_auroc
-from models import model_paths
+from models import get_model
 from monai.data import DataLoader, Dataset
-from nvflare.apis.dxo import DXO, DataKind, from_shareable
-from nvflare.apis.executor import Executor
-from nvflare.apis.fl_constant import FLContextKey, ReturnCode
-from nvflare.apis.fl_context import FLContext
-from nvflare.apis.shareable import Shareable, make_reply
-from nvflare.apis.signal import Signal
 
 logger = logging.getLogger(__name__)
 
 
-class FLIP_EVALUATOR(Executor):
-    """Evaluate one or more Ark+ chest X-ray models on hold-out data.
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--project_id", type=str, default="")
+    return parser.parse_args()
 
-    Each model entry in ``config.json`` may specify a different ``INPUT_SIZE``
-    and AMP settings.  Every model runs on the same samples (same datalist)
-    but with its own transforms and dataloader.
+
+def load_query() -> str:
+    """Read the cohort query from the client app config (top-level ``query`` key).
+
+    NVFlare's TaskScriptRunner whitespace-splits ``task_script_args``, so the SQL query (which can contain
+    spaces) is plumbed via ``config/config_fed_client.json`` rather than as a CLI flag. In dev/simulator
+    mode this is ignored — data comes from the local SITE/DEV paths.
     """
+    client_cfg = Path(__file__).parent.parent / "config" / "config_fed_client.json"
+    if client_cfg.exists():
+        try:
+            return json.loads(client_cfg.read_text()).get("query", "")
+        except Exception:
+            return ""
+    return ""
 
-    def __init__(
-        self,
-        evaluate_task_name="evaluation",
-        project_id="",
-        query="",
-    ):
-        super().__init__()
 
-        self._evaluate_task_name = evaluate_task_name
-        self._project_id = project_id
-        self._query = query
+def load_config() -> dict:
+    """Load the user-supplied config.json that sits next to this script."""
+    config_path = Path(__file__).parent.resolve() / "config.json"
+    with open(config_path) as f:
+        return json.load(f)
 
-        # -------------------------------------------------------------------
-        # 1. Config
-        # -------------------------------------------------------------------
-        self.config = {}
-        working_dir = Path(__file__).parent.resolve()
-        config_path = working_dir / "config.json"
-        with open(str(config_path)) as f:
-            self.config = json.load(f)
 
-        raw_lesions = self.config.get("LESIONS", {})
-        self._lesion_items = [(int(k), v) for k, v in raw_lesions.items() if int(k) >= 0]
+def _autocast(enabled: bool = False):
+    """AMP autocast context — mirrors the legacy evaluator so inference results are identical."""
+    if hasattr(torch, "amp"):
+        return torch.amp.autocast(device_type="cuda", enabled=enabled)
+    return torch.cuda.amp.autocast(enabled=enabled)
 
-        self._lesion_dict = LesionDict(items=[Lesion(id=idx, lesion=name) for idx, name in self._lesion_items])
 
-        self._batch_size = int(self.config.get("BATCH_SIZE", 1))
+def resolve_model_config(config: dict) -> tuple[str, dict, list[tuple[int, str]], LesionDict]:
+    """Resolve the single model's evaluation config and the target lesion order from ``config.json``.
 
-        # -------------------------------------------------------------------
-        # 2. Models — one per config["models"] entry
-        # -------------------------------------------------------------------
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.models: dict[str, torch.nn.Module] = {}
-        self.model_configs: dict[str, dict] = {}
-        self._transforms: dict[str, torch.nn.Module] = {}
+    Returns ``(model_name, model_cfg, lesion_items, lesion_dict)`` where ``model_cfg`` carries ``head_id``,
+    ``input_size``, ``amp``, ``source_labels`` and ``mapping`` — built exactly as the legacy evaluator did
+    (including the head-size-vs-label-mapping validation), so downstream inference is identical.
+    """
+    raw_lesions = config.get("LESIONS", {})
+    lesion_items = [(int(k), v) for k, v in raw_lesions.items() if int(k) >= 0]
+    lesion_dict = LesionDict(items=[Lesion(id=idx, lesion=name) for idx, name in lesion_items])
 
-        for model_name, model_values in self.config.get("models", {}).items():
-            ark_cfg = model_values.get("arkplus_config", {})
+    models_cfg = config.get("models", {})
+    if len(models_cfg) != 1:
+        raise ValueError(f"Baseline evaluation expects exactly one model; got {len(models_cfg)}.")
+    ((model_name, model_values),) = models_cfg.items()
+    ark_cfg = model_values.get("arkplus_config", {})
 
-            logger.info(
-                "Building model %s with NUM_CLASSES_LIST=%s HEAD_ID=%s",
-                model_name,
-                ark_cfg.get("NUM_CLASSES_LIST"),
-                ark_cfg.get("HEAD_ID"),
+    head_id = int(ark_cfg.get("HEAD_ID", 0))
+    num_classes_list = list(ark_cfg.get("NUM_CLASSES_LIST", [5]))
+    input_size = int(ark_cfg.get("INPUT_SIZE", 768))
+    amp = bool(ark_cfg.get("USE_AMP", False)) and torch.cuda.is_available()
+
+    model_cfg: dict = {"head_id": head_id, "input_size": input_size, "amp": amp}
+
+    map_name = config["label_mapping"][model_name]
+    if map_name is not None:
+        entry = get_mapping(map_name)
+        n_head = num_classes_list[head_id]
+        n_source = len(entry["source_labels"])
+        if n_head != n_source:
+            raise ValueError(
+                f"{model_name}: head {head_id} outputs {n_head} classes, "
+                f"but mapping {map_name!r} expects {n_source} source labels."
             )
-
-            model = model_paths[model_values["path"]]
-            model.to(self.device)
-            model.eval()
-            self.models[model_name] = model
-
-            # Per-model configuration
-            head_id = int(ark_cfg.get("HEAD_ID", 0))
-            num_classes_list = list(ark_cfg.get("NUM_CLASSES_LIST", [5]))
-            input_size = int(ark_cfg.get("INPUT_SIZE", 768))
-            amp = bool(ark_cfg.get("USE_AMP", False)) and torch.cuda.is_available()
-            self.model_configs[model_name] = {
-                "head_id": head_id,
-                "num_classes_list": num_classes_list,
-                "load_backbone_only": bool(ark_cfg.get("LOAD_BACKBONE_ONLY", False)),
-                "input_size": input_size,
-                "amp": amp,
-            }
-
-            # Resolve label mapping for this model (KeyError if missing from config)
-            map_name = self.config["label_mapping"][model_name]
-            if map_name is not None:
-                entry = get_mapping(map_name)
-                n_head = num_classes_list[head_id]
-                n_source = len(entry["source_labels"])
-                if n_head != n_source:
-                    raise ValueError(
-                        f"{model_name}: head {head_id} outputs {n_head} classes, "
-                        f"but mapping {map_name!r} expects {n_source} source labels."
-                    )
-                self.model_configs[model_name]["source_labels"] = entry["source_labels"]
-                self.model_configs[model_name]["mapping"] = entry["mapping"]
-            else:
-                n_head = num_classes_list[head_id]
-                n_target = len(sorted(self._lesion_items, key=lambda x: x[0]))
-                if n_head != n_target:
-                    raise ValueError(
-                        f"{model_name}: head {head_id} outputs {n_head} classes (no mapping), "
-                        f"but {n_target} target labels are configured."
-                    )
-                self.model_configs[model_name]["source_labels"] = None
-                self.model_configs[model_name]["mapping"] = None
-
-            # Per-model transforms (dataloader built lazily in execute)
-            self._transforms[model_name] = get_xray_transforms(input_size=input_size)
-
-        # -------------------------------------------------------------------
-        # 3. Data (loaded lazily per-site)
-        # -------------------------------------------------------------------
-        self._datalist = []
-        self._dataloaders: dict[str, DataLoader] = {}
-        self._data_loaded = False
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-    def _autocast(self, enabled: bool = False):
-        if hasattr(torch, "amp"):
-            return torch.amp.autocast(device_type="cuda", enabled=enabled)
-        return torch.cuda.amp.autocast(enabled=enabled)
-
-    def _site_name_from_context(self, fl_ctx: FLContext) -> str:
-        from data_utils import normalize_site_name
-
-        site_name = fl_ctx.get_prop(FLContextKey.CLIENT_NAME, "")
-        if not site_name:
-            try:
-                site_name = fl_ctx.get_identity_name()
-            except Exception:
-                site_name = ""
-        return normalize_site_name(site_name) or "default"
-
-    def _ensure_data_loaded(self, site_name: str = "default"):
-        if self._data_loaded:
-            return
-
-        self._datalist = build_eval_datalist(
-            config=self.config,
-            site_name=site_name,
-            logger=logger,
-        )
-
-        # Store accessions and paths once (shared across all models)
-        self._accessions: list[str] = [Path(item["image"]).parent.name for item in self._datalist]
-        self._dicom_paths: list[str] = [str(item["image"]) for item in self._datalist]
-
-        # Per-model dataloader (each model may have a different INPUT_SIZE)
-        self._dataloaders = {}
-        for model_name in self.models:
-            ds = Dataset(self._datalist, transform=self._transforms[model_name])
-            self._dataloaders[model_name] = DataLoader(ds, batch_size=self._batch_size, shuffle=False)
-
-        self._data_loaded = True
-        logger.info(
-            "Evaluation data loaded: %d samples, %d models.",
-            len(self._datalist),
-            len(self._dataloaders),
-        )
-
-    def _load_model_weights_from_dxo(self, model_name: str, dxo_model: DXO):
-        """Load weights from a server-provided model DXO into the local model."""
-        model = self.models[model_name]
-
-        weights = {k: torch.as_tensor(v, device="cpu") for k, v in dxo_model.data.items()}
-        model.load_state_dict(weights, strict=True)
-        model.to(self.device)
-        model.eval()
-
-    def _predict_model(self, model_name: str, images: torch.Tensor) -> np.ndarray:
-        """Run a single model on a batch and return sigmoid probabilities.
-
-        Returns:
-            [batch_size, num_target_labels] float32 array of sigmoid outputs
-            aligned to the configured target label order.
-        """
-        model = self.models[model_name]
-        cfg = self.model_configs[model_name]
-        head_id = cfg["head_id"]
-
-        with torch.no_grad():
-            with self._autocast(enabled=cfg["amp"]):
-                _features, logits = model(images, head_n=head_id)
-                probs = torch.sigmoid(logits).cpu().numpy()
-
-        # Map model output to target labels (no mapping = output is already aligned)
-        if cfg["mapping"] is None:
-            return probs
-        mapped = apply_label_mapping(
-            probs,
-            source_labels=cfg["source_labels"],
-            mapping=cfg["mapping"],
-            decaf_labels=[name for _, name in sorted(self._lesion_items, key=lambda x: x[0])],
-        )
-        return np.column_stack([mapped[name] for _, name in sorted(self._lesion_items, key=lambda x: x[0])])
-
-    def _compute_metrics(
-        self,
-        all_targets: dict[str, np.ndarray],
-        all_predictions: dict[str, np.ndarray],
-        accessions: list[str],
-        paths: list[str],
-        output_dir: Path,
-    ) -> dict:
-        """Compute per-model AUROC and DeLong pairwise tests, save CSVs.
-
-        Returns a DXO-compatible metrics dict:
-            {model_name: {auroc_<lesion>: ..., ...}}
-        """
-        metrics_dxo: dict[str, dict[str, float]] = {}
-        model_names = list(self.models.keys())
-
-        # --- Per-model AUROC ---
-        for model_name in model_names:
-            preds = all_predictions[model_name]
-            targets = all_targets[model_name]
-            model_metrics: dict[str, float] = {}
-            for idx, name in sorted(self._lesion_items, key=lambda x: x[0]):
-                y_true = targets[:, idx]
-                y_score = preds[:, idx]
-                auroc = compute_auroc(y_true, y_score)
-                model_metrics[f"auroc_{name}"] = auroc
-            metrics_dxo[model_name] = model_metrics
-
-        # --- Save per-model predictions CSV ---
-        for model_name in model_names:
-            preds = all_predictions[model_name]
-            targets = all_targets[model_name]
-            rows = {"accession_id": accessions, "dicom_path": paths}
-            for idx, name in sorted(self._lesion_items, key=lambda x: x[0]):
-                rows[f"target_{name}"] = targets[:, idx].astype(int)
-                rows[f"pred_{name}"] = preds[:, idx]
-            pdf = pd.DataFrame(rows)
-            pdf.to_csv(output_dir / f"{model_name}_predictions.csv", index=False)
-
-        # --- Save per-model metrics CSV ---
-        metrics_rows = []
-        for model_name in model_names:
-            for _, name in sorted(self._lesion_items, key=lambda x: x[0]):
-                auroc = metrics_dxo[model_name][f"auroc_{name}"]
-                metrics_rows.append(
-                    {
-                        "model": model_name,
-                        "label": name,
-                        "auroc": auroc,
-                    }
-                )
-        pd.DataFrame(metrics_rows).to_csv(output_dir / "per_model_metrics.csv", index=False)
-
-        # --- Save metadata ---
-        metadata = {
-            "primary_eval_note": self.config.get("primary_eval_note", ""),
-            "num_samples": len(accessions),
-            "models": list(model_names),
-            "decaf_labels": [name for _, name in sorted(self._lesion_items, key=lambda x: x[0])],
-            "output_files": [
-                "per_model_metrics.csv",
-                *(f"{m}_predictions.csv" for m in model_names),
-            ],
-        }
-        with (output_dir / "run_metadata.json").open("w") as f:
-            json.dump(metadata, f, indent=2)
-
-        return metrics_dxo
-
-    # ------------------------------------------------------------------
-    # NVFLARE entry point
-    # ------------------------------------------------------------------
-    def execute(
-        self,
-        task_name: str,
-        shareable: Shareable,
-        fl_ctx: FLContext,
-        abort_signal: Signal,
-    ) -> Shareable:
-        logger.info(
-            "Received task: %s (identity=%s)",
-            task_name,
-            fl_ctx.get_identity_name(),
-        )
-
-        if task_name != self._evaluate_task_name:
-            return make_reply(ReturnCode.TASK_UNKNOWN)
-
-        site_name = self._site_name_from_context(fl_ctx)
-        self._ensure_data_loaded(site_name=site_name)
-
-        # -------------------------------------------------------------------
-        # Parse the incoming shareable — the DXO is a COLLECTION of
-        # per-model weight DXOs sent by EvaluationPTModelLocator.
-        # -------------------------------------------------------------------
-        dxo = from_shareable(shareable)
-
-        for model_name in self.models:
-            self.log_info(
-                fl_ctx,
-                f"Loading model {model_name} at client {fl_ctx.get_identity_name()}...",
+        model_cfg["source_labels"] = entry["source_labels"]
+        model_cfg["mapping"] = entry["mapping"]
+    else:
+        n_head = num_classes_list[head_id]
+        n_target = len(lesion_items)
+        if n_head != n_target:
+            raise ValueError(
+                f"{model_name}: head {head_id} outputs {n_head} classes (no mapping), "
+                f"but {n_target} target labels are configured."
             )
-            dxo_model = dxo.data.get(model_name)
-            if not dxo_model.data_kind == DataKind.WEIGHTS:
-                self.log_exception(
-                    fl_ctx,
-                    f"DXO for model {model_name} is of type {dxo_model.data_kind} but expected type WEIGHTS.",
-                )
-                return make_reply(ReturnCode.BAD_TASK_DATA)
-            self._load_model_weights_from_dxo(model_name, dxo_model)
-            self.log_info(
-                fl_ctx,
-                f"Model {model_name} weights loaded at client {fl_ctx.get_identity_name()}.",
-            )
+        model_cfg["source_labels"] = None
+        model_cfg["mapping"] = None
 
-        if abort_signal.triggered:
-            return make_reply(ReturnCode.TASK_ABORTED)
+    return model_name, model_cfg, lesion_items, lesion_dict
 
-        # -------------------------------------------------------------------
-        # Run inference per model — each model uses its own dataloader
-        # (with its own INPUT_SIZE transform) but the same underlying datalist.
-        # -------------------------------------------------------------------
-        all_predictions: dict[str, list[np.ndarray]] = {m: [] for m in self.models}
-        all_targets: dict[str, list[np.ndarray]] = {m: [] for m in self.models}
 
-        for model_name in self.models:
-            dataloader = self._dataloaders[model_name]
-            logger.info(
-                "Running inference for model %s (%d batches, INPUT_SIZE=%d, AMP=%s)",
-                model_name,
-                len(dataloader),
-                self.model_configs[model_name].get("input_size", 768),
-                self.model_configs[model_name]["amp"],
-            )
+def predict(
+    model: torch.nn.Module,
+    images: torch.Tensor,
+    model_cfg: dict,
+    lesion_items: list[tuple[int, str]],
+) -> np.ndarray:
+    """Run the model on a batch and return sigmoid probabilities aligned to the target lesion order.
 
-            for batch_idx, batch in enumerate(dataloader):
-                if abort_signal.triggered:
-                    return make_reply(ReturnCode.TASK_ABORTED)
+    Mirrors the legacy ``_predict_model`` exactly (same head, AMP autocast, and label mapping).
+    """
+    head_id = model_cfg["head_id"]
+    with torch.no_grad():
+        with _autocast(enabled=model_cfg["amp"]):
+            _features, logits = model(images, head_n=head_id)
+            probs = torch.sigmoid(logits).cpu().numpy()
 
-                images = batch["image"].to(self.device).float()
-                labels = get_lesion_label(batch, self._lesion_dict)
+    if model_cfg["mapping"] is None:
+        return probs
+    decaf_labels = [name for _, name in sorted(lesion_items, key=lambda x: x[0])]
+    mapped = apply_label_mapping(
+        probs,
+        source_labels=model_cfg["source_labels"],
+        mapping=model_cfg["mapping"],
+        decaf_labels=decaf_labels,
+    )
+    return np.column_stack([mapped[name] for name in decaf_labels])
 
-                decaf_probs = self._predict_model(model_name, images)
-                all_predictions[model_name].append(decaf_probs)
-                all_targets[model_name].append(labels)
 
-                if (batch_idx + 1) % 10 == 0:
-                    logger.info(
-                        "Model %s batch %d / %d",
-                        model_name,
-                        batch_idx + 1,
-                        len(dataloader),
-                    )
+def evaluate(
+    model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    model_cfg: dict,
+    lesion_items: list[tuple[int, str]],
+    lesion_dict: LesionDict,
+) -> dict:
+    """Score the model over the local cohort and return aggregate per-lesion AUROC only.
 
-        # Concatenate batch results
-        for model_name in self.models:
-            all_predictions[model_name] = np.concatenate(all_predictions[model_name], axis=0)
-            all_targets[model_name] = np.concatenate(all_targets[model_name], axis=0)
+    Predictions and targets are both column-ordered by sorted lesion id (contiguous 0..N-1), matching the
+    legacy evaluator's indexing, so ``auroc_<lesion>`` values are identical. No per-sample data is kept.
+    """
+    model.eval()
+    all_predictions: list[np.ndarray] = []
+    all_targets: list[np.ndarray] = []
 
-        logger.info(
-            "Inference complete: %d samples across %d models.",
-            len(self._dicom_paths),
-            len(self.models),
-        )
+    for batch_idx, batch in enumerate(loader):
+        images = batch["image"].to(device).float()
+        labels = get_lesion_label(batch, lesion_dict)
+        all_predictions.append(predict(model, images, model_cfg, lesion_items))
+        all_targets.append(labels)
+        if (batch_idx + 1) % 10 == 0:
+            logger.info("Evaluated %d / %d batches", batch_idx + 1, len(loader))
 
-        # -------------------------------------------------------------------
-        # Compute metrics and save outputs
-        # -------------------------------------------------------------------
-        engine = fl_ctx.get_engine()
-        workspace = engine.get_workspace()
-        run_dir = Path(workspace.get_run_dir(fl_ctx.get_job_id()))
-        output_dir = run_dir / "manual_save_eval_results"
-        output_dir.mkdir(parents=True, exist_ok=True)
+    preds = np.concatenate(all_predictions, axis=0)
+    targets = np.concatenate(all_targets, axis=0)
 
-        metrics_dxo = self._compute_metrics(
-            all_targets=all_targets,
-            all_predictions=all_predictions,
-            accessions=self._accessions,
-            paths=self._dicom_paths,
-            output_dir=output_dir,
-        )
+    metrics: dict[str, float] = {}
+    for idx, name in sorted(lesion_items, key=lambda x: x[0]):
+        metrics[f"auroc_{name}"] = float(compute_auroc(targets[:, idx], preds[:, idx]))
+    logger.info("Evaluation finished: " + ", ".join(f"{k}={v:.4f}" for k, v in metrics.items()))
+    return metrics
 
-        dxo = DXO(data_kind=DataKind.METRICS, data=metrics_dxo)
-        return dxo.to_shareable()
+
+def load_global_weights(model: torch.nn.Module, input_model: flare.FLModel) -> None:
+    """Load the server-broadcast weights (sent over the validate task) onto the local model."""
+    torch_weights = {k: torch.as_tensor(v) for k, v in input_model.params.items()}
+    model.load_state_dict(torch_weights, strict=True)
+
+
+def main() -> None:
+    args = parse_args()
+    config = load_config()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    model_name, model_cfg, lesion_items, lesion_dict = resolve_model_config(config)
+    model = get_model().to(device)
+
+    # flare.init() must precede any other flare.* call (e.g. get_site_name()), which is why data loading
+    # happens after init here — unlike the spleen reference, this evaluator needs the site name to select
+    # the per-site cohort.
+    flare.init()
+
+    # Per-site cohort in the simulator (site-1/site-2 score distinct hold-out sets); ignored in production,
+    # where flip.get_dataframe / get_by_accession_number fetch from the trust APIs.
+    site_name = flare.get_site_name()
+    datalist = build_eval_datalist(
+        config=config,
+        site_name=site_name,
+        project_id=args.project_id,
+        query=load_query(),
+        logger=logger,
+    )
+    batch_size = int(config.get("BATCH_SIZE", 1))
+    loader = DataLoader(
+        Dataset(datalist, transform=get_xray_transforms(input_size=model_cfg["input_size"])),
+        batch_size=batch_size,
+        shuffle=False,
+    )
+
+    while flare.is_running():
+        input_model = flare.receive()
+        if input_model is None:
+            break
+
+        if flare.is_evaluate():
+            load_global_weights(model, input_model)
+            metrics = evaluate(model, loader, device, model_cfg, lesion_items, lesion_dict)
+            # Nest under the model name to preserve the legacy output contract:
+            # evaluation_results.json = {site: {model_name: {auroc_<lesion>: ...}}}.
+            flare.send(flare.FLModel(metrics={model_name: metrics}))
+        else:
+            logger.warning("Received a non-evaluation task; ignoring.")
+
+
+if __name__ == "__main__":
+    main()

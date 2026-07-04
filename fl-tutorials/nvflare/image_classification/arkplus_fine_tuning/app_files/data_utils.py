@@ -30,16 +30,24 @@ import numpy as np
 import pandas as pd
 import pydicom
 import torch
+from flip import FLIP
+from flip.constants import FlipConstants, ResourceType
 from monai.config import KeysCollection
-from monai.data import DataLoader, Dataset
+
+# from monai.data import DataLoader, Dataset
 from monai.transforms.transform import MapTransform
 
-try:
-    from flip import FLIP
-    from flip.constants import ResourceType
-except Exception:  # pragma: no cover - lets local syntax checks work without FLIP installed
-    FLIP = None
-    ResourceType = None
+
+def _is_local_dev() -> bool:
+    """Whether to read data from local files (simulator) or the FLIP API (real trust).
+
+    ``True`` in the NVFLARE simulator (``LOCAL_DEV=true``): resolve data from local
+    ``SITE_DATA``/``DEV_*`` paths. ``False`` on a real federated client: ignore
+    ``SITE_DATA`` and fetch the dataframe + DICOMs from the trust APIs via the FLIP
+    package. Mirrors the flip package's own ``LOCAL_DEV`` switch
+    (``flip.core.factory`` → ``FLIPStandardDev`` vs ``FLIPStandardProd``).
+    """
+    return bool(FlipConstants.LOCAL_DEV)
 
 
 # ---------------------------------------------------------------------------
@@ -211,6 +219,13 @@ def _read_dataframe(dataframe_path: str | None = None) -> pd.DataFrame:
     raise RuntimeError(f"Dataframe path is not set or does not exist: {path!r}")
 
 
+def _load_dataframe(site_cfg: SiteDataConfig, project_id: str = "", query: str = "") -> pd.DataFrame:
+    """Load the cohort dataframe: local CSV in the simulator, FLIP API on a real trust."""
+    if _is_local_dev():
+        return _read_dataframe(site_cfg.dataframe)
+    return FLIP().get_dataframe(project_id, query)
+
+
 def _find_accession_column(df: pd.DataFrame) -> str:
     for col in ["accession_id", "accession_number", "accession", "AccessionNumber"]:
         if col in df.columns:
@@ -218,19 +233,24 @@ def _find_accession_column(df: pd.DataFrame) -> str:
     raise KeyError(f"Could not find accession column in dataframe columns: {list(df.columns)}")
 
 
-def _label_aware_split(datalist, label_names, val_split: float, test_split: float, seed: int, logger=None):
+def _label_aware_split(datalist, label_names, val_split: float, seed: int, logger=None):
+    """
+    Guarantee at least one positive sample per label in train and val splits,
+    then fill remaining capacity with unassigned items.
+
+    Processing labels in order of rarity (fewest positives first) ensures rare
+    labels reserve their slot before common labels consume all split capacity.
+    """
     datalist = list(datalist)
     rng = np.random.default_rng(seed)
     rng.shuffle(datalist)
 
     n_total = len(datalist)
-    n_train = int(n_total * (1 - val_split - test_split))
-    n_val_end = int(n_total * (1 - test_split))
-    n_val = n_val_end - n_train
-    n_test = n_total - n_val_end
+    n_train = int(n_total * (1 - val_split))
+    n_val = n_total - n_train
 
-    splits = {"train": [], "val": [], "test": []}
-    limits = {"train": n_train, "val": n_val, "test": n_test}
+    splits = {"train": [], "val": []}
+    limits = {"train": n_train, "val": n_val}
     assigned = set()
 
     def can_add(split_name):
@@ -260,8 +280,6 @@ def _label_aware_split(datalist, label_names, val_split: float, test_split: floa
         target_splits = ["train"]
         if len(positive_indices) >= 2 and n_val > 0:
             target_splits.append("val")
-        if len(positive_indices) >= 3 and n_test > 0:
-            target_splits.append("test")
 
         for split_name in target_splits:
             if any(item.get(label) == 1 for item in splits[split_name]):
@@ -273,7 +291,7 @@ def _label_aware_split(datalist, label_names, val_split: float, test_split: floa
     remaining_indices = [i for i in range(n_total) if i not in assigned]
     rng.shuffle(remaining_indices)
 
-    for split_name in ("train", "val", "test"):
+    for split_name in ("train", "val"):
         for index in remaining_indices:
             if not can_add(split_name):
                 break
@@ -281,15 +299,14 @@ def _label_aware_split(datalist, label_names, val_split: float, test_split: floa
 
     if logger is not None:
         logger.info(
-            "Using label-aware split with seed=%s: train=%s, val=%s, test=%s.",
+            "Using label-aware split with seed=%s: train=%s, val=%s",
             seed,
             len(splits["train"]),
-            len(splits["val"]),
-            len(splits["test"]),
+            len(splits["val"])
         )
         _log_split_balance(splits, label_names, logger)
 
-    return splits["train"], splits["val"], splits["test"]
+    return splits["train"], splits["val"]
 
 
 def _log_split_balance(splits, label_names, logger):
@@ -315,39 +332,44 @@ def _dicoms_for_accession(
     project_id: str = "",
     images_dir: str | None = None,
 ) -> list[Path]:
-    # Local test-data path used by make test-xrays-standard and SITE_DATA.
-    root_path = images_dir or os.environ.get("DEV_IMAGES_DIR")
-    if root_path:
-        root = Path(root_path)
-        candidates = []
-        # Try accession subfolder first, then recursive match. This is flexible for mini test data.
-        for p in [root / str(accession_id), root / f"{accession_id}"]:
-            if p.exists():
-                candidates.extend(p.rglob("*.dcm"))
-        if not candidates and root.exists():
-            candidates.extend(root.rglob(f"*{accession_id}*.dcm"))
-        if not candidates and root.exists():
-            # Fall back to all DICOMs only if there are very few. This avoids total failure on
-            # slightly different mini-data layouts.
-            all_dicoms = list(root.rglob("*.dcm"))
-            if len(all_dicoms) <= 500:
-                candidates = all_dicoms
-        return sorted(set(candidates))
+    if _is_local_dev():
+        # Local test-data path used by make test-xrays-standard and SITE_DATA (simulator only).
+        root_path = images_dir or os.environ.get("DEV_IMAGES_DIR")
+        if root_path:
+            root = Path(root_path)
+            candidates = []
+            # Try accession subfolder first, then recursive match. This is flexible for mini test data.
+            for p in [root / str(accession_id), root / f"{accession_id}"]:
+                if p.exists():
+                    candidates.extend(p.rglob("*.dcm"))
+            if not candidates and root.exists():
+                candidates.extend(root.rglob(f"*{accession_id}*.dcm"))
+            if not candidates and root.exists():
+                # Fall back to all DICOMs only if there are very few. This avoids total failure on
+                # slightly different mini-data layouts.
+                all_dicoms = list(root.rglob("*.dcm"))
+                if len(all_dicoms) <= 500:
+                    candidates = all_dicoms
+            return sorted(set(candidates))
+        return []
 
-    # Real FLIP client path.
-    if FLIP is not None and project_id:
+    # Real FLIP client path (LOCAL_DEV=false): fetch DICOMs from the trust imaging-api.
+    if project_id:
         flip = FLIP()
-        folder = flip.get_by_accession_number(project_id, accession_id, resource_type=[ResourceType.DICOM])
+        # ResourceType.ALL: XNAT labels Secondary Capture DICOM resources "secondary", not "DICOM" —
+        # the synthetic chest radiographs are SC, so a DICOM-labelled fetch 404s on every study.
+        # ALL downloads every resource on the scan; the rglob("*.dcm") below picks out the DICOMs.
+        folder = flip.get_by_accession_number(project_id, accession_id, resource_type=[ResourceType.ALL])
         return sorted(Path(folder).rglob("*.dcm"))
 
     return []
 
 
 def build_datalist(
-    is_test: bool = False,
     config: dict | None = None,
     site_name: str | None = None,
     project_id: str | None = None,
+    query: str | None = None,
     logger=None,
 ):
     cfg = config or load_config()
@@ -355,9 +377,10 @@ def build_datalist(
     lesions = get_lesions(cfg)
     normal_key = get_normal_key(cfg)
     value_to_numerical = cfg.get("value_to_numerical", {"1": "Yes", "0": "No"})
-    df = _read_dataframe(site_cfg.dataframe)
-    accession_col = _find_accession_column(df)
     project_id = project_id if project_id is not None else os.environ.get("PROJECT_ID", "")
+    query = query if query is not None else os.environ.get("QUERY", "")
+    df = _load_dataframe(site_cfg, project_id=project_id, query=query)
+    accession_col = _find_accession_column(df)
 
     if logger is not None:
         logger.info(
@@ -369,10 +392,22 @@ def build_datalist(
 
     datalist = []
     seen_paths = set()
+    skipped_accessions = 0
     for _, row in df.iterrows():
         accession_id = str(row[accession_col])
         labels = get_labels_from_radiology_row(row, lesions, value_to_numerical, normal_key)
-        for img in _dicoms_for_accession(accession_id, project_id=project_id, images_dir=site_cfg.images_dir):
+        try:
+            dicom_paths = _dicoms_for_accession(accession_id, project_id=project_id, images_dir=site_cfg.images_dir)
+        except Exception as exc:
+            # A single accession failing to fetch (e.g. a missing/broken DICOM resource in the
+            # trust imaging backend) must not abort the whole federated run — one bad study on one
+            # site would otherwise kill training for every site. Skip it and carry on; the run
+            # trains on the accessions that ARE retrievable. (See FLIP#677.)
+            skipped_accessions += 1
+            if logger is not None:
+                logger.warning("Skipping accession %s: failed to fetch DICOMs (%s)", accession_id, exc)
+            continue
+        for img in dicom_paths:
             if img in seen_paths:
                 continue
             try:
@@ -384,6 +419,13 @@ def build_datalist(
             datalist.append(item)
             seen_paths.add(img)
 
+    if skipped_accessions and logger is not None:
+        logger.warning(
+            "Skipped %d accession(s) whose DICOMs could not be fetched; training on the remaining %d sample(s).",
+            skipped_accessions,
+            len(datalist),
+        )
+
     if not datalist:
         raise RuntimeError(
             "No DICOM image/label pairs found for "
@@ -392,37 +434,12 @@ def build_datalist(
         )
 
     val_split = float(cfg.get("VAL_SPLIT", 0.2))
-    test_split = float(cfg.get("TEST_SPLIT", 0.2))
     split_seed = int(cfg.get("SPLIT_SEED", 42))
-    train_items, val_items, test_items = _label_aware_split(
+    train_items, val_items = _label_aware_split(
         datalist=datalist,
         label_names=lesions.get_lesion_list(),
         val_split=val_split,
-        test_split=test_split,
         seed=split_seed,
         logger=logger,
     )
-
-    if is_test:
-        return test_items
     return train_items, val_items
-
-
-def get_train_val_loaders(batch_size: int | None = None):
-    cfg = load_config()
-    batch_size = int(batch_size or cfg.get("BATCH_SIZE", 2))
-    train_items, val_items = build_datalist(is_test=False)
-    train_ds = Dataset(train_items, transform=get_xray_transforms(is_validation=False))
-    val_ds = Dataset(val_items, transform=get_xray_transforms(is_validation=True))
-    return (
-        DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=0),
-        DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0),
-    )
-
-
-def get_test_loader(batch_size: int | None = None):
-    cfg = load_config()
-    batch_size = int(batch_size or cfg.get("BATCH_SIZE", 2))
-    test_items = build_datalist(is_test=True)
-    test_ds = Dataset(test_items, transform=get_xray_transforms(is_validation=True))
-    return DataLoader(test_ds, batch_size=batch_size, shuffle=False, num_workers=0)

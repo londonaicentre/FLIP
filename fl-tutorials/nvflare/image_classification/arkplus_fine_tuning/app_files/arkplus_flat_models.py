@@ -15,17 +15,7 @@ import timm.models.swin_transformer as swin
 import torch
 import torch.nn as nn
 
-# import timm.models.efficientnet as effinet
-# from timm.models.helpers import load_state_dict
-from torch.hub import load_state_dict_from_url
 
-
-# NVFLARE's PTModelPersistenceFormatManager wraps state dicts in a nested
-# format (e.g. under "model" key) when saving during FL rounds. The
-# ArkPlusNVFlareWrapper.load_state_dict also injects an "ark_model."
-# prefix via nn.Module mechanics. This normalises those formats so the
-# pretrained weights can be loaded with strict=True into the raw
-# ArkSwinTransformer.
 def _normalise_checkpoint_state_dict(checkpoint, pretrained_key=None):
     if pretrained_key:
         if pretrained_key not in checkpoint:
@@ -46,82 +36,79 @@ def _normalise_checkpoint_state_dict(checkpoint, pretrained_key=None):
     return state_dict
 
 
-def _remap_scale_up_downsample_keys_for_timm(state_dict, model):
-    """Map Ark+ scale_up checkpoint downsample keys to installed timm Swin keys.
+# def _remap_scale_up_downsample_keys_for_timm(state_dict, model):
+#     """Map Ark+ scale_up checkpoint downsample keys to installed timm Swin keys.
+#
+#     The Ark+ checkpoint stores downsample modules on layers.0/1/2, while the
+#     timm SwinTransformer available in this environment stores the same tensors
+#     on layers.1/2/3. Shapes verify the one-stage shift.
+#     """
+#     model_state = model.state_dict()
+#     remapped = {}
+#     used_sources = set()
+#     for key, value in state_dict.items():
+#         new_key = key
+#         for src, dst in (
+#             ("layers.0.downsample.", "layers.1.downsample."),
+#             ("layers.1.downsample.", "layers.2.downsample."),
+#             ("layers.2.downsample.", "layers.3.downsample."),
+#         ):
+#             if key.startswith(src):
+#                 candidate = dst + key[len(src) :]
+#                 if candidate in model_state and tuple(value.shape) == tuple(model_state[candidate].shape):
+#                     new_key = candidate
+#                     used_sources.add(key)
+#                 break
+#         remapped[new_key] = value
+#
+#     if used_sources:
+#         print(f"Remapped {len(used_sources)} Ark+ scale_up downsample tensors for installed timm Swin layout.")
+#     return remapped
 
-    The Ark+ checkpoint stores downsample modules on layers.0/1/2, while the
-    timm SwinTransformer available in this environment stores the same tensors
-    on layers.1/2/3. Shapes verify the one-stage shift.
-    """
-    model_state = model.state_dict()
-    remapped = {}
-    used_sources = set()
-    for key, value in state_dict.items():
-        new_key = key
-        for src, dst in (
-            ("layers.0.downsample.", "layers.1.downsample."),
-            ("layers.1.downsample.", "layers.2.downsample."),
-            ("layers.2.downsample.", "layers.3.downsample."),
-        ):
-            if key.startswith(src):
-                candidate = dst + key[len(src) :]
-                if candidate in model_state and tuple(value.shape) == tuple(model_state[candidate].shape):
-                    new_key = candidate
-                    used_sources.add(key)
-                break
-        remapped[new_key] = value
 
-    if used_sources:
-        print(f"Remapped {len(used_sources)} Ark+ scale_up downsample tensors for installed timm Swin layout.")
-    return remapped
-
-
-def _filter_state_dict_for_model(model, state_dict, load_backbone_only=False):
-    state_dict = _remap_scale_up_downsample_keys_for_timm(state_dict, model)
-
-    if load_backbone_only:
-        state_dict = {k: v for k, v in state_dict.items() if not k.startswith("omni_heads.")}
-
-    model_state = model.state_dict()
-    compatible = {}
-    skipped = []
-    for key, value in state_dict.items():
-        if "attn_mask" in key:
-            skipped.append(key)
-            continue
-        if key not in model_state:
-            skipped.append(key)
-            continue
-        if tuple(value.shape) != tuple(model_state[key].shape):
-            skipped.append(key)
-            continue
-        compatible[key] = value
-
-    print(f"Loading {len(compatible)} compatible pretrained tensors; skipped {len(skipped)} tensors.")
-    if skipped:
-        print(f"Skipped pretrained keys sample: {skipped[:20]}")
-    return compatible
+# def _filter_state_dict_for_model(model, state_dict, load_backbone_only=False):
+#     state_dict = _remap_scale_up_downsample_keys_for_timm(state_dict, model)
+#
+#     if load_backbone_only:
+#         state_dict = {k: v for k, v in state_dict.items() if not k.startswith("omni_heads.")}
+#
+#     model_state = model.state_dict()
+#     compatible = {}
+#     skipped = []
+#     for key, value in state_dict.items():
+#         if "attn_mask" in key:
+#             skipped.append(key)
+#             continue
+#         if key not in model_state:
+#             skipped.append(key)
+#             continue
+#         if tuple(value.shape) != tuple(model_state[key].shape):
+#             skipped.append(key)
+#             continue
+#         compatible[key] = value
+#
+#     print(f"Loading {len(compatible)} compatible pretrained tensors; skipped {len(skipped)} tensors.")
+#     if skipped:
+#         print(f"Skipped pretrained keys sample: {skipped[:20]}")
+#     return compatible
 
 
 def _load_pretrained_weights(model, pretrained_weights, pretrained_key=None, load_backbone_only=False):
     if not pretrained_weights:
         return model
 
-    if str(pretrained_weights).startswith("https"):
-        checkpoint = load_state_dict_from_url(url=pretrained_weights, map_location="cpu")
-    else:
-        checkpoint_path = Path(pretrained_weights)
-        if not checkpoint_path.exists():
-            raise FileNotFoundError(f"Pretrained checkpoint not found: {checkpoint_path}")
-        checkpoint = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
+    checkpoint_path = Path(pretrained_weights)
+    if not checkpoint_path.exists():
+        raise FileNotFoundError(f"Pretrained checkpoint not found: {checkpoint_path}")
+    checkpoint = torch.load(str(checkpoint_path), map_location="cpu", weights_only=True)
 
-    state_dict = _normalise_checkpoint_state_dict(checkpoint, pretrained_key=pretrained_key)
-    state_dict = _filter_state_dict_for_model(
-        model,
-        state_dict,
-        load_backbone_only=load_backbone_only,
-    )
-    msg = model.load_state_dict(state_dict, strict=False)
+    # state_dict = _normalise_checkpoint_state_dict(checkpoint, pretrained_key=pretrained_key)
+    # state_dict = _filter_state_dict_for_model(
+    #     model,
+    #     state_dict,
+    #     load_backbone_only=load_backbone_only,
+    # )
+    msg = model.load_state_dict(checkpoint, strict=False)
     print(f"Loaded pretrained checkpoint with msg: {msg}")
     return model
 
@@ -180,63 +167,6 @@ class ArkSwinTransformer(swin.SwinTransformer):
         if after_proj:
             x = self.projector(x)
         return x
-
-
-def build_omni_model_from_checkpoint(args, num_classes_list, key):
-    if args.model_name == "swin_base":  # swin_base_patch4_window7_224
-        model = ArkSwinTransformer(
-            num_classes_list,
-            args.projector_features,
-            args.use_mlp,
-            patch_size=4,
-            window_size=7,
-            embed_dim=128,
-            depths=(2, 2, 18, 2),
-            num_heads=(4, 8, 16, 32),
-        )
-    elif args.model_name == "swin_large":  # swin_large_patch4_window7_224
-        model = ArkSwinTransformer(
-            num_classes_list,
-            args.projector_features,
-            args.use_mlp,
-            patch_size=4,
-            window_size=7,
-            embed_dim=192,
-            depths=(2, 2, 18, 2),
-            num_heads=(6, 12, 24, 48),
-        )
-    elif args.model_name == "swin_large_384":  # swin_large_patch4_window12_384
-        model = ArkSwinTransformer(
-            num_classes_list,
-            args.projector_features,
-            args.use_mlp,
-            img_size=getattr(args, "input_size", 384),
-            patch_size=4,
-            window_size=12,
-            embed_dim=192,
-            depths=(2, 2, 18, 2),
-            num_heads=(6, 12, 24, 48),
-        )
-    elif args.model_name == "swin_large_768":  # swin_large_patch4_window12_384
-        model = ArkSwinTransformer(
-            num_classes_list,
-            args.projector_features,
-            args.use_mlp,
-            img_size=768,
-            patch_size=4,
-            window_size=12,
-            embed_dim=192,
-            depths=(2, 2, 18, 2),
-            num_heads=(6, 12, 24, 48),
-        )
-    model = _load_pretrained_weights(
-        model,
-        getattr(args, "pretrained_weights", None),
-        pretrained_key=key,
-        load_backbone_only=bool(getattr(args, "load_backbone_only", False)),
-    )
-
-    return model
 
 
 def build_omni_model(args, num_classes_list):
@@ -306,7 +236,3 @@ def build_omni_model(args, num_classes_list):
     )
 
     return model
-
-
-def save_checkpoint(state, filename="model"):
-    torch.save(state, filename + ".pth.tar")
