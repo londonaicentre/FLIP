@@ -64,6 +64,14 @@ Everything else — `trust-api`, `data-access-api`, `orthanc`, `omop-db`, XNAT, 
 Throughout, `<HANDLE>` is the same handle you already pass to `make up-onprem-trust KIT=…` today
 (your `Trust_2` kit) — you do **not** need a new kit.
 
+**0. Check the kit file is readable by the user running `make`.** If it was extracted or written by
+root, make silently loads an EMPTY kit and fails later with a misleading
+`OMOP DB data dir is empty or missing: ./omop-db/volumes/Trust_/db_data` (note the missing slot
+number). Fix ownership (keep the 0600 mode — the file holds your trust's secrets):
+```bash
+test -r trust/.env.<HANDLE> || sudo chown "$(whoami):" trust/.env.<HANDLE>
+```
+
 **1. Edit the two tag lines in the kit file you already use.** Change *only* these two lines; leave
 every other line (AES key, API keys, `FL_KIT_DIR`, slot, ports, passwords) exactly as-is:
 ```ini
