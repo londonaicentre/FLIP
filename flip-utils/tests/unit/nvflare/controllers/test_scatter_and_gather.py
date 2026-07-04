@@ -88,7 +88,9 @@ class TestAcceptTrainResult:
         controller = self._controller()
         controller._global_weights = {"weights": {"w1": 1.0, "w2": 2.0}}
 
-        result = DXO(data_kind=DataKind.WEIGHT_DIFF, data={"w1": 0.25, "w2": -0.5}, meta={"origin": "client"}).to_shareable()
+        result = DXO(
+            data_kind=DataKind.WEIGHT_DIFF, data={"w1": 0.25, "w2": -0.5}, meta={"origin": "client"}
+        ).to_shareable()
         result.add_cookie(AppConstants.CONTRIBUTION_ROUND, 2)
 
         accepted = controller._accept_train_result(client_name="site-1", result=result, fl_ctx=_ctx())
@@ -182,7 +184,9 @@ class TestHandleEvent:
 
         fl_ctx = MagicMock()
         fl_ctx.get_prop.side_effect = lambda key, default=None: (
-            "metrics-shareable" if key == FLContextKey.EVENT_DATA else (None if key == FLContextKey.JOB_META else default)
+            "metrics-shareable"
+            if key == FLContextKey.EVENT_DATA
+            else (None if key == FLContextKey.JOB_META else default)
         )
 
         with patch("flip.nvflare.controllers.scatter_and_gather.handle_metrics_event") as mock_metrics:
@@ -206,6 +210,46 @@ class TestHandleEvent:
 
         mock_metrics.assert_not_called()
         controller.log_error.assert_called_once()
+
+    def test_send_result_skips_relay_when_round_not_started(self):
+        # A multi-phase job (e.g. the diffusion AE/DM split) wires several ScatterAndGather
+        # controllers. SEND_RESULT is broadcast to every controller, but a controller whose
+        # control_flow has not run yet has _current_round is None (inherited from stock). It must
+        # not relay another controller's metric — previously it passed None into handle_metrics_event,
+        # raising "global_round must be type int but got NoneType".
+        controller = ScatterAndGather(model_id=_VALID_MODEL_ID)
+        controller.log_error = MagicMock()
+        controller._current_round = None  # this instance has not started its training loop
+
+        fl_ctx = MagicMock()
+        fl_ctx.get_prop.side_effect = lambda key, default=None: (
+            "metrics-shareable"
+            if key == FLContextKey.EVENT_DATA
+            else (None if key == FLContextKey.JOB_META else default)
+        )
+
+        with patch("flip.nvflare.controllers.scatter_and_gather.handle_metrics_event") as mock_metrics:
+            controller.handle_event(FlipEvents.SEND_RESULT, fl_ctx)  # must not raise
+
+        mock_metrics.assert_not_called()
+
+
+class TestFedJobSerialisation:
+    """FedJob/recipe serialisation must capture stock's __init__ args, not just model_id.
+
+    NVFLARE's ``get_component_init_parameters`` walks a component's base classes to inherit their
+    __init__ params ONLY when the subclass __init__ declares BOTH ``*args`` and ``**kwargs``. A
+    ``**kwargs``-only subclass silently drops the stock args (persistor_id, aggregator_id, …), so a
+    recipe's ScatterAndGather ends up with no persistor -> an empty round-0 global model -> the
+    Client-API trainer's ``load_state_dict({})`` crashes. This guards that regression.
+    """
+
+    def test_init_exposes_stock_args_for_recipe_serialisation(self):
+        from nvflare.fuel.utils.class_utils import get_component_init_parameters
+
+        params = set(get_component_init_parameters(ScatterAndGather(model_id=_VALID_MODEL_ID)))
+        for arg in ("persistor_id", "aggregator_id", "shareable_generator_id", "num_rounds", "min_clients"):
+            assert arg in params, f"'{arg}' dropped by FedJob serialisation (thin-subclass **kwargs trap)"
 
 
 class TestCheckAbortSignal:
