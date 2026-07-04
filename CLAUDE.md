@@ -130,6 +130,8 @@ make e2e_smoke MODEL_FILES_DIR=/path/app QUERY_FILE=/path/q.sql
 make e2e_smoke EXTRA_ARGS="--abort-midway"                     # exercise the FL stop-training path
 make e2e_smoke EXTRA_ARGS="--image-pull-threshold 0.5 --image-pull-timeout 1200"
 make e2e_smoke EXTRA_ARGS="--project-id <UUID>"               # reuse an approved project (see below)
+make e2e_smoke EXTRA_ARGS="--trusts GSTT"                     # subset of trusts (codes/names, comma-separated);
+                                                              # a registered-but-offline trust no longer blocks the run
 ```
 
 The `--project-id <UUID>` override (printed as `project_id=<UUID>` at the start of any run) reuses an
