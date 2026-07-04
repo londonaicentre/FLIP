@@ -34,7 +34,7 @@ Ark+ build tags are:
 
 | Image | Kit variable | Old value | **New value (confirm with FLIP team)** |
 |-------|--------------|-----------|-----------------------------------------|
-| `fl-client` (`flare-fl-client`) | `DOCKER_FL_TAG` | `stag` | `75d2ae41100f9f2de4282e71983617d40f1222b7` |
+| `fl-client` (`flare-fl-client`) | `DOCKER_FL_TAG` | `stag` | `a3bf6c5bde4fac955d75858e25fc82a353345bec` |
 | `imaging-api` + other hub-built trust images | `DOCKER_TAG` | `stag` | `arkplus-platform-on-505` |
 
 Everything else — `trust-api`, `data-access-api`, `orthanc`, `omop-db`, XNAT, Grafana/Loki/Alloy — is
@@ -68,7 +68,7 @@ Throughout, `<HANDLE>` is the same handle you already pass to `make up-onprem-tr
 every other line (AES key, API keys, `FL_KIT_DIR`, slot, ports, passwords) exactly as-is:
 ```ini
 DOCKER_TAG=arkplus-platform-on-505
-DOCKER_FL_TAG=75d2ae41100f9f2de4282e71983617d40f1222b7
+DOCKER_FL_TAG=a3bf6c5bde4fac955d75858e25fc82a353345bec
 ```
 
 **2. Pull the new images and recreate the changed containers.** Run in a **real terminal** (the XNAT
