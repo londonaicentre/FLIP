@@ -135,6 +135,13 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
           sourceVolume  = "efs-fl-api-net-1-startup"
           containerPath = "/app/admin/startup"
         },
+        # Writer side of the shared checkpoint-staging volume (SERVER_CHECKPOINT_ROOT).
+        # fl-api de-bundles large eval checkpoints here; fl-server-net-1 mounts the
+        # SAME EFS access point at the same path and reads them back (FLIP#695).
+        {
+          sourceVolume  = "efs-fl-api-net-1-checkpoints"
+          containerPath = "/app/server-checkpoints"
+        },
       ]
 
       logConfiguration = {
@@ -187,6 +194,24 @@ resource "aws_ecs_task_definition" "fl_api_net_1" {
 
       authorization_config {
         access_point_id = aws_efs_access_point.flip_fl["fl_api_startup"].id
+        iam             = "ENABLED"
+      }
+    }
+  }
+
+  # Shared checkpoint-staging volume — same access point the fl-server mounts, so
+  # a checkpoint fl-api writes to /app/server-checkpoints/<model_id>/ is visible
+  # to the fl-server's EvaluationModelLocator (FLIP#695).
+  volume {
+    name = "efs-fl-api-net-1-checkpoints"
+
+    efs_volume_configuration {
+      file_system_id     = aws_efs_file_system.flip_fl[0].id
+      root_directory     = "/"
+      transit_encryption = "ENABLED"
+
+      authorization_config {
+        access_point_id = aws_efs_access_point.flip_fl["fl_checkpoints"].id
         iam             = "ENABLED"
       }
     }
@@ -264,6 +289,13 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
           sourceVolume  = "efs-fl-server-net-1-transfer"
           containerPath = "/app/transfer"
         },
+        # Reader side of the shared checkpoint-staging volume (SERVER_CHECKPOINT_ROOT).
+        # Same EFS access point as fl-api-net-1's writer mount — the fl-server's
+        # EvaluationModelLocator loads the staged checkpoint from here (FLIP#695).
+        {
+          sourceVolume  = "efs-fl-server-net-1-checkpoints"
+          containerPath = "/app/server-checkpoints"
+        },
       ]
 
       logConfiguration = {
@@ -317,6 +349,24 @@ resource "aws_ecs_task_definition" "fl_server_net_1" {
 
       authorization_config {
         access_point_id = aws_efs_access_point.flip_fl["fl_server_transfer"].id
+        iam             = "ENABLED"
+      }
+    }
+  }
+
+  # Shared checkpoint-staging volume — the SAME access point fl-api-net-1 writes
+  # to. transit-encrypted NFS; both tasks are pinned to uid/gid 1001 by the
+  # access point so the reader sees the writer's files (FLIP#695).
+  volume {
+    name = "efs-fl-server-net-1-checkpoints"
+
+    efs_volume_configuration {
+      file_system_id     = aws_efs_file_system.flip_fl[0].id
+      root_directory     = "/"
+      transit_encryption = "ENABLED"
+
+      authorization_config {
+        access_point_id = aws_efs_access_point.flip_fl["fl_checkpoints"].id
         iam             = "ENABLED"
       }
     }

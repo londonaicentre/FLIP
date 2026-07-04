@@ -178,6 +178,24 @@ variable "MIN_CLIENTS" {
   default     = 1
 }
 
+# Per-job GPU resource spec requested by the fl-api when it builds an NVFLARE
+# job's meta (mirrors JOB_RESOURCE_SPEC_* in compose.production.nvflare.yml).
+# This drives client-side GPU allocation — the hub's Fargate tasks are CPU-only;
+# the GPUs are provided by the fl-clients (trust hosts). Default 0 = no GPU
+# requirement (a CPU-only tutorial). Set to 1 in the env file (TF_VAR_...) for
+# GPU jobs such as the Ark+ evaluation.
+variable "JOB_RESOURCE_SPEC_NUM_GPUS" {
+  description = "Number of GPUs requested per FL client in a training/eval job's NVFLARE resource_spec"
+  type        = number
+  default     = 0
+}
+
+variable "JOB_RESOURCE_SPEC_MEM_PER_GPU_IN_GIB" {
+  description = "Memory (GiB) requested per GPU in a training/eval job's NVFLARE resource_spec"
+  type        = number
+  default     = 0
+}
+
 variable "enable_efs" {
   description = "Enable EFS file system for FL task persistent storage"
   type        = bool
