@@ -148,6 +148,10 @@ class IProject(BaseModel):  # Base for IProject to avoid repetition
 class IReturnedProject(IProject):  # Extends IProject
     owner_email: EmailStr = Field(..., alias="ownerEmail")
     users: list[CognitoUser]
+    # Surfaced read-only so the edit form can display the project's
+    # DICOM->NIfTI setting. Fixed at creation and immutable afterwards (the
+    # edit endpoint ignores it), so the UI renders the toggle disabled.
+    dicom_to_nifti: bool = Field(default=True)
     model_config = ConfigDict(populate_by_name=True)
 
 
