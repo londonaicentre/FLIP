@@ -185,10 +185,12 @@ def authenticate() -> dict[str, str]:
 
 
 def create_project_with_query(
-    client: requests.Session, headers: dict[str, str], project_name: str, query: str
+    client: requests.Session, headers: dict[str, str], project_name: str, query: str, dicom_to_nifti: bool = True
 ) -> tuple[str, str]:
-    _log(f"🏗️  Creating project: {project_name}")
-    project_payload = ProjectDetails(name=project_name, description="E2E smoke run", users=[]).model_dump()
+    _log(f"🏗️  Creating project: {project_name} (dicom_to_nifti={dicom_to_nifti})")
+    project_payload = ProjectDetails(
+        name=project_name, description="E2E smoke run", users=[], dicom_to_nifti=dicom_to_nifti
+    ).model_dump()
     project_id = _ensure_ok(
         _post(client, "/projects/", project_payload, headers), "create project"
     ).json()["id"]
@@ -735,6 +737,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--model-name", default=DEFAULT_MODEL_NAME)
     parser.add_argument(
+        "--no-dicom-to-nifti",
+        action="store_true",
+        help="Create the project with dicom_to_nifti=false (apps that read DICOMs directly, e.g. the "
+        "Ark+ tutorials with ResourceType.ALL, skip the XNAT dcm2niix conversion). Set at project "
+        "creation and immutable afterwards; ignored with --project-id.",
+    )
+    parser.add_argument(
         "--trusts",
         default=None,
         help="Comma-separated trust codes or names (case-insensitive) to run against, e.g. "
@@ -848,7 +857,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.trusts:
                 _log(f"  🎯 --trusts selection: {[t.get('code') or t['name'] for t in trusts]}")
         else:
-            project_id, _query_id = create_project_with_query(client, headers, project_name, query)
+            project_id, _query_id = create_project_with_query(
+                client, headers, project_name, query, dicom_to_nifti=not args.no_dicom_to_nifti
+            )
             trusts = stage_and_approve(client, headers, project_id, args.trusts)
         # Create the model and upload files before waiting for image pull. This
         # surfaces model-creation / upload errors immediately instead of after
