@@ -80,6 +80,20 @@ DOCKER_TAG=arkplus-platform-on-505
 DOCKER_FL_TAG=a3bf6c5bde4fac955d75858e25fc82a353345bec
 ```
 
+**1b. Replace your FL participant-kit slice with the one the FLIP team sends you**
+(`flkit-Trust_2-<date>.tar.gz`). The new `fl-client` runs NVFLARE 2.8, which **rejects the old
+kit's config format** — without this step it crash-loops with
+`missing 'target' in server config for project 'net-1'; the startup kit may have been provisioned
+with an older HA-based template`. Your certificates/keys are unchanged (byte-identical in the new
+slice) — only the config files are updated. With `FL_KIT_DIR` as set in your kit file:
+
+```bash
+FL_KIT_DIR=$(sudo grep '^FL_KIT_DIR=' trust/.env.<HANDLE> | cut -d= -f2)
+mv "$FL_KIT_DIR/net-1/services/Trust_2" "$FL_KIT_DIR/net-1/services/Trust_2.bak-$(date +%F)"
+tar -C "$FL_KIT_DIR" -xzf ~/flkit-Trust_2-<date>.tar.gz
+ls "$FL_KIT_DIR/net-1/services/Trust_2/startup/fed_client.json"   # must exist
+```
+
 **2. Pull the new images and recreate the changed containers.** Run in a **real terminal** (the XNAT
 step needs `sudo`):
 ```bash
