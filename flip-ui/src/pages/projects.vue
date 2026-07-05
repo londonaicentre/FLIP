@@ -24,7 +24,7 @@
                 <!-- Page header (design ref: ProjectsStatusSpine + ProjectsB header section) -->
                 <header class="flex flex-col gap-4 px-8 pt-8 pb-4 sm:flex-row sm:items-end sm:justify-between">
                     <div>
-                        <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-400">
+                        <p class="text-xs font-mono uppercase tracking-widest text-gray-500 dark:text-gray-300">
                             Workspace · {{ approvedTrustCount }}
                             {{ approvedTrustCount === 1 ? "trust" : "trusts" }} active
                         </p>
@@ -32,7 +32,7 @@
                             <span class="text-primary-600 underline decoration-4 decoration-primary-500/60 underline-offset-8 dark:text-white">Projects</span>
                             <span class="ml-3 text-gray-400 dark:text-gray-300 font-medium">{{ data.data.length }}</span>
                         </h1>
-                        <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                        <p class="mt-2 text-sm text-gray-500 dark:text-gray-300">
                             Approved &amp; staged projects you can access.
                         </p>
                     </div>
@@ -70,7 +70,7 @@
                             class="px-3 py-1.5 rounded-md text-sm font-semibold transition-colors"
                             :class="ownerFilter === opt.value
                                 ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
-                                : 'bg-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                                : 'bg-transparent text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                             :data-test="`access-filter-${opt.id}`"
                             @click="ownerFilter = opt.value"
                         >
@@ -108,7 +108,7 @@
                             class="p-1.5 rounded-md transition-colors"
                             :class="viewMode === 'list'
                                 ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
-                                : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                                : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                             :aria-pressed="viewMode === 'list'"
                             data-test="view-mode-list"
                             title="List view"
@@ -121,7 +121,7 @@
                             class="p-1.5 rounded-md transition-colors"
                             :class="viewMode === 'grid'
                                 ? 'bg-gray-100 dark:bg-dark-surface text-gray-900 dark:text-gray-100'
-                                : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                                : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                             :aria-pressed="viewMode === 'grid'"
                             data-test="view-mode-grid"
                             title="Grid view"
@@ -135,7 +135,7 @@
                 <!-- Empty state -->
                 <div v-if="!sortedProjects.length" class="flex flex-col items-center justify-center px-8 py-16">
                     <icon-ph-archive-duotone class="w-16 h-16 text-primary-500 dark:text-primary-400" />
-                    <p class="mt-3 text-gray-500 dark:text-gray-400">
+                    <p class="mt-3 text-gray-500 dark:text-gray-300">
                         There are no projects to show
                     </p>
                 </div>
@@ -164,11 +164,11 @@
                                     <div class="font-heading font-semibold text-base text-gray-900 dark:text-gray-100 truncate" data-test="project-name">
                                         {{ project.name }}
                                     </div>
-                                    <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">
+                                    <div class="text-xs text-gray-500 dark:text-gray-300 mt-0.5 truncate">
                                         {{ ownerLabel(project) }} · {{ relativeUpdated(project) }}
                                     </div>
                                 </div>
-                                <div class="text-sm text-gray-600 dark:text-gray-400 leading-snug line-clamp-2">
+                                <div class="text-sm text-gray-600 dark:text-gray-300 leading-snug line-clamp-2">
                                     {{ project.description || "—" }}
                                 </div>
                                 <div class="hidden lg:flex flex-row items-center gap-1.5">
@@ -191,7 +191,7 @@
                                     </span>
                                     <span
                                         v-if="remainingTrustCount(project) > 0"
-                                        class="text-xs text-gray-500 dark:text-gray-400"
+                                        class="text-xs text-gray-500 dark:text-gray-300"
                                     >
                                         +{{ remainingTrustCount(project) }}
                                     </span>
@@ -210,10 +210,10 @@
                                     >
                                         {{ statusLabel(project.status) }}
                                     </span>
-                                    <span v-if="nextActionFor(project)" class="text-[11px] text-gray-500 dark:text-gray-400">
+                                    <span v-if="nextActionFor(project)" class="text-[11px] text-gray-500 dark:text-gray-300">
                                         {{ nextActionFor(project) }}
                                     </span>
-                                    <span v-if="cohortSize(project)" class="text-[11px] text-gray-500 dark:text-gray-400 font-mono">
+                                    <span v-if="cohortSize(project)" class="text-[11px] text-gray-500 dark:text-gray-300 font-mono">
                                         {{ cohortSize(project)?.toLocaleString() }} patients
                                     </span>
                                 </div>
@@ -251,7 +251,7 @@
                             <h3 class="font-heading font-semibold text-lg leading-tight text-gray-900 dark:text-gray-100">
                                 {{ project.name }}
                             </h3>
-                            <p class="mt-1.5 text-sm text-gray-500 dark:text-gray-400 leading-snug line-clamp-2">
+                            <p class="mt-1.5 text-sm text-gray-500 dark:text-gray-300 leading-snug line-clamp-2">
                                 {{ project.description || "No description provided" }}
                             </p>
                         </div>
@@ -276,7 +276,7 @@
                             </span>
                             <span
                                 v-if="remainingTrustCount(project) > 0"
-                                class="text-xs text-gray-500 dark:text-gray-400"
+                                class="text-xs text-gray-500 dark:text-gray-300"
                             >
                                 +{{ remainingTrustCount(project) }}
                             </span>
@@ -292,19 +292,19 @@
                             class="flex items-center gap-2 px-3 py-2 rounded-md bg-gray-50 dark:bg-dark-surface text-xs"
                             data-test="project-cohort"
                         >
-                            <icon-ph-users-three-duotone class="w-4 h-4 text-gray-500 dark:text-gray-400 shrink-0" />
+                            <icon-ph-users-three-duotone class="w-4 h-4 text-gray-500 dark:text-gray-300 shrink-0" />
                             <template v-if="cohortSize(project)">
                                 <span class="font-mono font-semibold text-gray-800 dark:text-gray-200">
                                     {{ cohortSize(project)?.toLocaleString() }}
                                 </span>
-                                <span class="text-gray-500 dark:text-gray-400">patients in cohort</span>
+                                <span class="text-gray-500 dark:text-gray-300">patients in cohort</span>
                             </template>
                             <span v-else class="text-gray-400 dark:text-gray-300 italic">
                                 No cohort yet
                             </span>
                         </div>
 
-                        <div class="flex justify-between items-center pt-2 mt-auto border-t border-gray-100 dark:border-dark-border text-xs text-gray-500 dark:text-gray-400">
+                        <div class="flex justify-between items-center pt-2 mt-auto border-t border-gray-100 dark:border-dark-border text-xs text-gray-500 dark:text-gray-300">
                             <span class="truncate max-w-[60%]">{{ ownerLabel(project) }}</span>
                             <span>{{ userCountLabel(project) }}</span>
                         </div>

@@ -50,7 +50,7 @@
                                         <DialogTitle class="text-xl font-bold font-heading text-primary-100 dark:text-gray-300">
                                             Create Project
                                         </DialogTitle>
-                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-400">
+                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-300">
                                             <button
                                                 type="button"
                                                 class="cursor-pointer hover:text-primary-100 transition focus:outline-none focus:ring-1 rounded focus:ring-primary-400"
@@ -90,15 +90,15 @@
                                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                                                     Convert DICOMs to NIfTI
                                                 </label>
-                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                                <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
                                                     Automatically convert DICOM scans to NIfTI format when images are
                                                     imported from PACS into XNAT.
                                                 </p>
-                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                                                <p class="text-xs text-gray-500 dark:text-gray-300 mb-1">
                                                     When enabled, NIfTI files can be requested using the ResourceType
                                                     parameter.
                                                 </p>
-                                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                                                <p class="text-xs text-gray-500 dark:text-gray-300 mb-2">
                                                     Disable this if you will be working with DICOM files directly.
                                                 </p>
                                                 <AiSwitch

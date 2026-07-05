@@ -13,10 +13,10 @@
 
 import { describe, expect, it } from "vitest";
 
-// Source-level contrast guard (#716): `dark:text-gray-500` reads at ~3.7:1 on
-// the dark surfaces — below the 4.5:1 WCAG AA floor for small text. Muted
-// dark-mode text belongs on gray-400 (the dark fg-3 token in
-// tailwind.config.js); gray-500 is reserved for genuinely disabled controls.
+// Source-level contrast guard (#716): the dark-mode ink floor is gray-300.
+// gray-500 reads at ~3.7:1 on the dark surfaces (below the 4.5:1 WCAG AA
+// floor for small text) and gray-400 was judged too dim in review, so muted
+// dark-mode text sits on gray-300 and hover states lighten to gray-200.
 const sources = import.meta.glob("../**/*.vue", {
     query: "?raw",
     import: "default",
@@ -24,9 +24,9 @@ const sources = import.meta.glob("../**/*.vue", {
 }) as Record<string, string>;
 
 describe("dark-mode contrast guard", () => {
-    it("keeps dark-mode text off text-gray-500 (any variant chain)", () => {
+    it("keeps dark-mode text at gray-300 or lighter (any variant chain)", () => {
         const offenders = Object.entries(sources)
-            .filter(([, code]) => /dark:(?:[a-z-]+:)*text-gray-500/.test(code))
+            .filter(([, code]) => /dark:(?:[a-z-]+:)*text-gray-[45]00/.test(code))
             .map(([file]) => file);
 
         expect(offenders).toEqual([]);

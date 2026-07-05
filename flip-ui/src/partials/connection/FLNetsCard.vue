@@ -49,7 +49,6 @@
                         :key="net.name"
                         class="relative p-2"
                     >
-                        <div v-if="offlineClients(net.clients)" class="absolute inset-0.5 dark:inset-2 bg-gradient-to-bl from-red-500 dark:from-red-500 dark:to-red-500 to-red-800 blur-md opacity-25 dark:opacity-80" />
                         <div
                             class="relative w-full overflow-hidden border border-gray-300 rounded-lg shadow bg-gray-50 dark:bg-dark-surface dark:border-dark-border"
                         >
@@ -96,7 +95,7 @@
                                                             class="flex-wrap pr-4 line-clamp-3"
                                                         >
                                                             <p
-                                                                class="text-sm font-bold text-primary-600 dark:text-gray-400 shrink line-clamp-1"
+                                                                class="text-sm font-bold text-primary-600 dark:text-gray-300 shrink line-clamp-1"
                                                                 data-test="project-name"
                                                             >
                                                                 {{ client.name }}<span
@@ -187,10 +186,6 @@ const hideDetails = () => {
 
     }, 500);
 };
-const offlineClients = (clients: IFLStatusClients[]) => {
-    return clients.some(c => !c.online);
-};
-
 const sortedClients = (clients: IFLStatusClients[]): IFLStatusClients[] =>
     [...(clients ?? [])].sort((a, b) => a.name.localeCompare(b.name));
 

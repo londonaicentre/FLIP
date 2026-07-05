@@ -92,7 +92,7 @@
                                 >
                                     {{ file.name }}
                                 </p>
-                                <div class="text-xs font-mono text-gray-500 dark:text-gray-400 shrink-0">
+                                <div class="text-xs font-mono text-gray-500 dark:text-gray-300 shrink-0">
                                     {{ formatBytes(file.size) }}
                                 </div>
                             </div>

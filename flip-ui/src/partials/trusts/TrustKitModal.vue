@@ -44,7 +44,7 @@
                             >
                                 {{ trust?.name ?? "Trust" }} kit — save these now
                             </DialogTitle>
-                            <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-400">
+                            <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-300">
                                 <div
                                     class="border-l-4 border-red-500 bg-red-50 dark:bg-red-900/20 p-3"
                                     data-test="kit-warning"
@@ -87,7 +87,7 @@
                                         class="font-mono text-xs bg-gray-50 dark:bg-dark-canvas p-3 rounded whitespace-pre-wrap break-all"
                                         data-test="all-credentials-block"
                                     >{{ allCredentialsBlock }}</pre>
-                                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-300">
                                         <code>FL_KIT_SLOT</code> is the FL identity clients register under;
                                         <code>EXPECTED_TRUST_ID</code> is an optional startup self-check.
                                     </p>

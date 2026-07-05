@@ -44,7 +44,7 @@
                             >
                                 Add Trust
                             </DialogTitle>
-                            <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-400">
+                            <div class="px-8 py-4 space-y-4 text-sm font-normal leading-5 dark:text-gray-300">
                                 <p>
                                     Registers a trust with the Central Hub. An API key and an internal service key
                                     will be generated and shown <strong>once</strong> on the next screen.

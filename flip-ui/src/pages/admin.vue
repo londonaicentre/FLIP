@@ -57,13 +57,13 @@ redirect: /admin/users # Can be set to any page within the "admin" section
                                         :to="item.href"
                                         :class="[item.current
                                                      ? 'bg-white dark:bg-dark-canvas text-primary-600 dark:text-primary-100 hover:bg-white border-gray-300 dark:hover:bg-dark-canvas dark:border-dark-border'
-                                                     : 'border-transparent text-gray-700 hover:text-gray-900 hover:bg-white dark:hover:bg-dark-canvas dark:text-gray-400 dark:hover:text-gray-300',
+                                                     : 'border-transparent text-gray-700 hover:text-gray-900 hover:bg-white dark:hover:bg-dark-canvas dark:text-gray-300 dark:hover:text-gray-200',
                                                  'transition group rounded-md px-3 py-2 flex items-center text-sm font-medium user-select-none border']"
                                         :aria-current="item.current ? 'page' : undefined"
                                     >
                                         <component
                                             :is="item.icon"
-                                            :class="[item.current ? 'text-primary-500 dark:text-primary-100' : 'text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-300', 'transition flex-shrink-0 -ml-1 mr-3 h-6 w-6']"
+                                            :class="[item.current ? 'text-primary-500 dark:text-primary-100' : 'text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-200', 'transition flex-shrink-0 -ml-1 mr-3 h-6 w-6']"
                                             aria-hidden="true"
                                         />
                                         <div class="flex flex-row items-center w-full">
@@ -71,7 +71,7 @@ redirect: /admin/users # Can be set to any page within the "admin" section
                                                 {{ item.name }}
                                             </div>
                                             <icon-mdi-chevron-right
-                                                :class="[item.current ? 'text-primary-500 dark:text-primary-100' : 'text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-300', 'transition']"
+                                                :class="[item.current ? 'text-primary-500 dark:text-primary-100' : 'text-gray-400 group-hover:text-gray-500 dark:group-hover:text-gray-200', 'transition']"
                                             />
                                         </div>
                                     </router-link>

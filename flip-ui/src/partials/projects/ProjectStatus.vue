@@ -21,7 +21,7 @@
                     </h2>
                     <p
                         v-if="canLoad"
-                        class="mt-1 text-[13px] leading-snug text-gray-500 dark:text-gray-400"
+                        class="mt-1 text-[13px] leading-snug text-gray-500 dark:text-gray-300"
                     >
                         When this project was approved, an XNAT project was created at each trust.
                         Live import counts below.
@@ -41,51 +41,51 @@
                 <div v-else class="space-y-4">
                     <div class="grid grid-cols-5 overflow-hidden border-t border-b border-gray-200 divide-x divide-gray-200 dark:border-dark-border dark:divide-dark-border">
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-400 break-words">
+                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Trusts onboarded
                             </p>
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100" data-test="overview-project-creation">
                                 {{ overview.projectCreationCompleted }}/{{ overview.projectCreationTotal }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-400">
+                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
                                 imaging projects created
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-400 break-words">
+                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Studies retrieved
                             </p>
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100" data-test="overview-image-retrieval">
                                 {{ formatCount(overview.studyRetrievalTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-400">
+                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
                                 {{ overviewRetrievalPercent }}% of expected {{ expectedCohortLabel }}
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-400 break-words">
+                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Processing
                             </p>
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100">
                                 {{ formatCount(overview.processingTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-400">
+                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
                                 in flight at trusts
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-400 break-words">
+                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Queued
                             </p>
                             <p class="mt-1.5 text-xl font-semibold leading-none font-heading text-gray-900 dark:text-gray-100">
                                 {{ formatCount(overview.queuedTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-400">
+                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
                                 waiting on import workers
                             </p>
                         </div>
                         <div class="min-w-0 p-2.5">
-                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-400 break-words">
+                            <p class="font-mono text-[10px] uppercase tracking-wide leading-tight text-gray-500 dark:text-gray-300 break-words">
                                 Failed
                             </p>
                             <p
@@ -96,7 +96,7 @@
                             >
                                 {{ formatCount(overview.failedTotal) }}
                             </p>
-                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-400">
+                            <p class="mt-1.5 text-[11px] leading-tight text-gray-500 dark:text-gray-300">
                                 {{ overview.failedTotal > 0 ? "requires attention" : "no errors" }}
                             </p>
                         </div>
@@ -130,7 +130,7 @@
                                                     class="w-4 h-4 text-yellow-500"
                                                 />
                                                 <span
-                                                    class="font-mono text-xs text-gray-500 dark:text-gray-400"
+                                                    class="font-mono text-xs text-gray-500 dark:text-gray-300"
                                                     :data-test="`project-reimport-status-${project.trustId}`"
                                                 >
                                                     {{ project.reimportCount }} / {{ maxReimportCount }}
@@ -156,7 +156,7 @@
                                                         ? "—"
                                                         : Math.round(rowRatio(project) * 100) + "%" }}
                                                 </span>
-                                                <span class="font-mono text-[11px] text-gray-500 dark:text-gray-400">
+                                                <span class="font-mono text-[11px] text-gray-500 dark:text-gray-300">
                                                     {{ rowTotal(project) === 0
                                                         ? "no imports yet"
                                                         : `${project.importStatus?.successful ?? 0} / ${rowTotal(project)}` }}
@@ -186,7 +186,7 @@
                                                     />
                                                 </template>
                                             </div>
-                                            <div class="flex justify-between font-mono text-[9px] uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                            <div class="flex justify-between font-mono text-[9px] uppercase tracking-wide text-gray-500 dark:text-gray-300">
                                                 <span class="inline-flex items-center gap-1">
                                                     <span class="inline-block w-1.5 h-1.5 rounded-sm bg-emerald-500" />
                                                     <span

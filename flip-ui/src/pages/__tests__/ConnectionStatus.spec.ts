@@ -254,6 +254,16 @@ describe("ConnectionStatus", () => {
         expect(wrapper.find("[data-test='trust-heartbeat']").text()).not.toContain("ago");
     });
 
+    it("gives non-offline trust rows the same dark surface as the table header", async () => {
+        // Zebra (first fixture entry) is online — no red tint applies.
+        mockSwrvData.value = [fixture[0]];
+        const wrapper = mountPage();
+        await wrapper.vm.$nextTick();
+        const row = wrapper.find("[data-test='trust-row']");
+        expect(row.classes().some(c => c.startsWith("bg-red"))).toBe(false);
+        expect(row.classes()).toContain("dark:bg-dark-surface");
+    });
+
     it("toggles to the radial topology view when its tab is clicked", async () => {
         mockSwrvData.value = fixture;
         const wrapper = mountPage();

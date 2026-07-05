@@ -25,7 +25,7 @@
                                 Name
                             </dt>
                             <dd
-                                class="mt-1 text-sm text-gray-700 dark:text-gray-400 break-words sm:mt-0 sm:col-span-2 line-clamp-2"
+                                class="mt-1 text-sm text-gray-700 dark:text-gray-300 break-words sm:mt-0 sm:col-span-2 line-clamp-2"
                                 data-test="project-name-text"
                             >
                                 {{ model.modelName }}
@@ -36,7 +36,7 @@
                                 Description
                             </dt>
                             <dd
-                                class="mt-1 text-sm text-gray-700 dark:text-gray-400 break-words sm:mt-0 sm:col-span-2 line-clamp-4"
+                                class="mt-1 text-sm text-gray-700 dark:text-gray-300 break-words sm:mt-0 sm:col-span-2 line-clamp-4"
                                 data-test="project-description-text"
                             >
                                 {{ model.modelDescription }}

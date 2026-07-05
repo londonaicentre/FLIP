@@ -16,7 +16,7 @@
         <label
             :for="uuid"
             class="flex w-full gap-1 text-sm font-bold"
-            :class="{ 'text-red-500 dark:text-red-400': !!errorMessage, 'text-gray-700 dark:text-gray-400': !errorMessage }"
+            :class="{ 'text-red-500 dark:text-red-400': !!errorMessage, 'text-gray-700 dark:text-gray-300': !errorMessage }"
         >
             {{ label }}
             <span v-if="required" class="text-red-600">

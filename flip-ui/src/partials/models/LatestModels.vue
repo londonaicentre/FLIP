@@ -59,7 +59,7 @@
                                 <p class="font-semibold leading-tight text-primary-600 dark:text-primary-200 truncate">
                                     {{ model.name }}
                                 </p>
-                                <p class="leading-tight text-gray-500 dark:text-gray-400 truncate">
+                                <p class="leading-tight text-gray-500 dark:text-gray-300 truncate">
                                     {{ model.description }}
                                     <template v-if="!model.description">
                                         <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>

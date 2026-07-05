@@ -59,7 +59,7 @@
                                             {{ title }}
                                         </DialogTitle>
                                         <div class="mt-2">
-                                            <span class="font-normal leading-5 text-gray-700 dark:text-gray-400">
+                                            <span class="font-normal leading-5 text-gray-700 dark:text-gray-300">
                                                 <slot name="confirmation">{{ confirmationText }}</slot>
                                             </span>
                                         </div>
@@ -99,7 +99,7 @@
                             <div class="absolute top-0 right-0 block pt-4 pr-4">
                                 <button
                                     type="button"
-                                    class="p-1 text-gray-400 bg-white rounded-md dark:bg-dark-raised hover:text-gray-500 dark:hover:text-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
+                                    class="p-1 text-gray-400 bg-white rounded-md dark:bg-dark-raised hover:text-gray-500 dark:hover:text-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500"
                                     tabindex="0"
                                     :disabled="submitting"
                                     @click="close"

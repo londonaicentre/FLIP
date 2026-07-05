@@ -33,7 +33,7 @@
                 hidden
                 @change.capture="emitChoosenFiles"
             >
-            <p class="m-0 text-sm text-center text-black dark:text-gray-400">
+            <p class="m-0 text-sm text-center text-black dark:text-gray-300">
                 Drag &amp; drop or
                 <a
                     class="font-semibold underline cursor-pointer hover:text-primary-500 dark:hover:text-primary-200"

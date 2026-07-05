@@ -45,7 +45,7 @@
                                         <DialogTitle class="text-xl font-bold font-heading text-primary-100">
                                             Edit model details
                                         </DialogTitle>
-                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-400">
+                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-300">
                                             <button
                                                 type="button"
                                                 class="!text-primary-300 cursor-pointer hover:text-primary-100 transition focus:outline-none focus:ring-1 rounded focus:ring-primary-400"

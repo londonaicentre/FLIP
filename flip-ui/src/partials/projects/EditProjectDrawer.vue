@@ -49,7 +49,7 @@
                                         <DialogTitle class="text-xl font-bold font-heading text-primary-100 dark:text-gray-300">
                                             Edit project details
                                         </DialogTitle>
-                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-400">
+                                        <div class="flex items-start ml-3 h-7 text-primary-300 dark:text-gray-300">
                                             <button
                                                 type="button"
                                                 class="transition rounded cursor-pointer hover:text-primary-100 focus:outline-none focus:ring-1 focus:ring-primary-400"

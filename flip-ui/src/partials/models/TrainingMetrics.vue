@@ -37,7 +37,7 @@
                 class="inline-flex items-center px-3 py-1.5 rounded-full text-[13px] font-semibold whitespace-nowrap transition-all"
                 :class="activeChartLabel === chart.yLabel
                     ? 'bg-primary-500 text-white shadow-sm'
-                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
                 @click="activeChartLabel = chart.yLabel"
             >
                 {{ chart.yLabel }}

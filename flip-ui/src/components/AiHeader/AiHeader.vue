@@ -45,7 +45,7 @@
                 class="relative inline-flex items-center px-4 text-sm font-semibold transition-colors"
                 :class="item.current
                     ? 'text-gray-900 dark:text-gray-100'
-                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'"
+                    : 'text-gray-500 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-200'"
             >
                 {{ item.name }}
                 <span
@@ -130,8 +130,8 @@
                                         :to="item.href"
                                         :class="[
                                             item.current
-                                                ? 'bg-gray-100 font-semibold dark:bg-dark-surface dark:text-gray-300 dark:hover:text-gray-300'
-                                                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 dark:hover:bg-dark-surface font-medium'
+                                                ? 'bg-gray-100 font-semibold dark:bg-dark-surface dark:text-gray-300 dark:hover:text-gray-200'
+                                                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-300 dark:hover:text-gray-200 dark:hover:bg-dark-surface font-medium'
                                         ]"
                                         class="block px-3 py-2 text-base rounded-md"
                                         @click="close"

@@ -137,7 +137,7 @@ const clickButton = () => {
 <style lang="css" scoped>
 .btn-base {
     @apply inline-flex items-center px-3 py-2 border border-gray-300 dark:border-dark-border-strong shadow-sm text-sm;
-    @apply ring-offset-2 dark:ring-offset-dark-canvas bg-white dark:bg-dark-canvas hover:bg-gray-100 dark:hover:bg-dark-surface transition duration-300 rounded text-gray-700 dark:text-gray-400;
+    @apply ring-offset-2 dark:ring-offset-dark-canvas bg-white dark:bg-dark-canvas hover:bg-gray-100 dark:hover:bg-dark-surface transition duration-300 rounded text-gray-700 dark:text-gray-300;
     @apply focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 focus:bg-gray-50 dark:focus:ring-primary-400 dark:focus:bg-dark-canvas focus:outline-none;
     @apply truncate whitespace-nowrap font-bold leading-5 overflow-ellipsis;
 }

@@ -104,7 +104,7 @@
                                 </td>
                                 <td>
                                     <div class="flex w-full h-full min-w-[200px] max-w-[300px] md:max-w-none">
-                                        <p class="text-gray-500 break-words line-clamp-2 dark:text-gray-400">
+                                        <p class="text-gray-500 break-words line-clamp-2 dark:text-gray-300">
                                             {{ row.description }}
                                             <template v-if="!row.description">
                                                 <span class="italic text-gray-400 dark:text-gray-300">No description provided...</span>

@@ -38,7 +38,7 @@
                     :key="item.name"
                     :to="item.href"
                     :class="[{ 'bg-primary-500 dark:bg-primary-600 text-white dark:text-primary-200': item.current },
-                             { 'text-gray-700 dark:text-gray-400': !item.current }]"
+                             { 'text-gray-700 dark:text-gray-300': !item.current }]"
                     class="relative flex items-center py-2 pl-4 text-sm font-semibold transition group rounded-r-md hover:text-white hover:bg-primary-500 dark:hover:bg-primary-600 dark:hover:text-primary-200"
                 >
                     <span v-tippy="{ content: item.name }" class="absolute block w-full h-full xl:hidden left-2" />

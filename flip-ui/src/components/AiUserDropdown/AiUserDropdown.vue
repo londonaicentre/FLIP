@@ -25,7 +25,7 @@
                                 class="flex items-center justify-center overflow-hidden bg-gray-100 dark:bg-dark-surface rounded-full w-7 h-7"
                             >
                                 <icon-ph-user-square-duotone
-                                    class="flex-shrink-0 w-6 h-6 text-gray-500 dark:text-gray-400 rounded-full"
+                                    class="flex-shrink-0 w-6 h-6 text-gray-500 dark:text-gray-300 rounded-full"
                                 />
                             </div>
                             <span class="flex-col flex-1 hidden min-w-0 md:flex">
@@ -59,7 +59,7 @@
                         Signed in as:
                     </p>
                     <p
-                        class="text-sm font-semibold text-gray-700 dark:text-gray-400 truncate"
+                        class="text-sm font-semibold text-gray-700 dark:text-gray-300 truncate"
                     >
                         {{ displayName }}{{ role ? ` (${role})` : '' }}
                     </p>
@@ -68,14 +68,14 @@
                     <MenuItem v-slot="{ active }">
                         <button
                             :class="[
-                                active ? 'bg-gray-100 dark:bg-dark-surface' : 'text-gray-600 dark:text-gray-400',
+                                active ? 'bg-gray-100 dark:bg-dark-surface' : 'text-gray-600 dark:text-gray-300',
                                 'group flex rounded-md items-center w-full px-3 py-2 text-sm transition font-semibold',
                             ]"
                             data-test="sign-out-btn"
                             @click="emit('toggleDarkMode')"
                         >
                             <icon-ph-sun-duotone v-if="isDark" class="dark:group-hover:text-yellow-200 h-5 w-5 mr-3 text-gray-500 transition group-hover:text-gray-600" />
-                            <icon-ph-moon-stars-duotone v-else class="h-5 w-5 mr-3 text-gray-500 transition group-hover:text-gray-600 dark:group-hover:text-gray-400" />
+                            <icon-ph-moon-stars-duotone v-else class="h-5 w-5 mr-3 text-gray-500 transition group-hover:text-gray-600 dark:group-hover:text-gray-200" />
                             {{ isDark ? 'Light Mode' : "Dark Mode" }}
                         </button>
                     </MenuItem>
@@ -84,14 +84,14 @@
                     <MenuItem v-slot="{ active }">
                         <button
                             :class="[
-                                active ? 'bg-gray-100 dark:bg-dark-surface' : 'text-gray-600 dark:text-gray-400',
+                                active ? 'bg-gray-100 dark:bg-dark-surface' : 'text-gray-600 dark:text-gray-300',
                                 'group flex rounded-md items-center w-full px-3 py-2 text-sm transition font-semibold',
                             ]"
                             data-test="change-password-btn"
                             @click="changePassword"
                         >
                             <icon-ph-lock-duotone
-                                class="w-5 h-5 mr-3 text-gray-500 transition group-hover:text-gray-600 dark:group-hover:text-gray-400"
+                                class="w-5 h-5 mr-3 text-gray-500 transition group-hover:text-gray-600 dark:group-hover:text-gray-200"
                                 aria-hidden="true"
                             />
                             Change Password
@@ -102,14 +102,14 @@
                     <MenuItem v-slot="{ active }">
                         <button
                             :class="[
-                                active ? 'bg-gray-100 dark:bg-dark-surface' : 'text-gray-600 dark:text-gray-400',
+                                active ? 'bg-gray-100 dark:bg-dark-surface' : 'text-gray-600 dark:text-gray-300',
                                 'group flex rounded-md items-center w-full px-3 py-2 text-sm transition font-semibold',
                             ]"
                             data-test="sign-out-btn"
                             @click="signOut"
                         >
                             <icon-mdi-logout
-                                class="w-5 h-5 mr-3 text-gray-500 transition group-hover:text-gray-600 dark:group-hover:text-gray-400"
+                                class="w-5 h-5 mr-3 text-gray-500 transition group-hover:text-gray-600 dark:group-hover:text-gray-200"
                                 aria-hidden="true"
                             />
                             Sign Out

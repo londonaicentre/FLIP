@@ -33,7 +33,7 @@
                     <router-link
                         v-tippy="{ content: page.name, placement: 'bottom-start' }"
                         :to="page.path"
-                        class="ml-2 text-sm font-medium text-gray-500 truncate hover:text-gray-700 dark:hover:text-gray-400"
+                        class="ml-2 text-sm font-medium text-gray-500 truncate hover:text-gray-700 dark:hover:text-gray-200"
                         data-test="parent-page-text"
                     >
                         {{ page.name }}
@@ -45,7 +45,7 @@
                 <div
                     v-if="current.name"
                     v-tippy="{ content: current.name, placement: 'bottom-start' }"
-                    class="ml-2 text-sm font-bold text-gray-700 dark:text-gray-400 truncate"
+                    class="ml-2 text-sm font-bold text-gray-700 dark:text-gray-300 truncate"
                     data-test="current-page-text"
                 >
                     {{ current.name }}
