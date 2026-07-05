@@ -169,8 +169,8 @@ class TestPersistToS3AndCleanup:
 
         flip.upload_results_to_s3.assert_called_once()
 
-        # Should move global model, trainer.py, and validator.py if they exist
-        assert mock_move.call_count == 3
+        # Should move global model, best model, trainer.py, and validator.py if they exist
+        assert mock_move.call_count == 4
         mock_rmtree.assert_called_once()
 
     @patch("os.path.isdir")
