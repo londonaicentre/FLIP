@@ -98,12 +98,18 @@
                             </div>
                             <div class="flex gap-2 shrink-0">
                                 <Transition name="fade">
-                                    <AiButton v-if="!isViewer && file.status === FileUploadStatus.COMPLETED" small :loading="downloadingFile === file.name" @click="() => downloadFile(file.name)">
+                                    <AiButton
+                                        v-if="!isViewer && file.status === FileUploadStatus.COMPLETED"
+                                        small
+                                        :loading="downloadingFile === file.name"
+                                        :aria-label="`Download ${file.name}`"
+                                        @click="() => downloadFile(file.name)"
+                                    >
                                         <icon-ph-download-duotone />
                                     </AiButton>
                                 </Transition>
                                 <Transition name="fade">
-                                    <AiButton v-if="canUpload && file.status === FileUploadStatus.COMPLETED || file.status === FileUploadStatus.ERROR" small @click="() => confirmDeleteFile(file.name)">
+                                    <AiButton v-if="canUpload && file.status === FileUploadStatus.COMPLETED || file.status === FileUploadStatus.ERROR" small :aria-label="`Delete ${file.name}`" @click="() => confirmDeleteFile(file.name)">
                                         <icon-ph-trash-duotone class="text-red-500 dark:text-red-400" />
                                     </AiButton>
                                 </Transition>

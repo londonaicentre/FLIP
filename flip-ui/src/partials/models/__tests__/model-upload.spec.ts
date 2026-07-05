@@ -255,6 +255,24 @@ describe("ModelUpload", () => {
     });
 
     describe("props.files handling", () => {
+        test("gives the icon-only file action buttons accessible names", async () => {
+            const wrapper = mountModelUpload({
+                files: [{
+                    id: "1",
+                    name: "model.py",
+                    size: 1024,
+                    status: FileUploadStatus.COMPLETED
+                }],
+                loading: false
+            });
+            await flushPromises();
+
+            // Screen readers announce icon-only buttons as just "button"
+            // without an accessible name (Lighthouse button-name).
+            expect(wrapper.find("button[aria-label='Download model.py']").exists()).toBe(true);
+            expect(wrapper.find("button[aria-label='Delete model.py']").exists()).toBe(true);
+        });
+
         test("mirrors props.files into the visible list on mount", async () => {
             const files: FileInfo[] = [
                 {

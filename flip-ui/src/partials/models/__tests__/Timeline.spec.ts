@@ -73,4 +73,20 @@ describe("Timeline", () => {
         expect(comp.text()).toContain("Hub");
         expect(comp.text()).toContain("Trust A");
     });
+
+    test("renders timestamps with AA-contrast text tokens in both modes", () => {
+        const comp = mount(Timeline, {
+            props: { complete: true },
+            global: { stubs: { AiLoader: true } }
+        });
+
+        const stamps = comp.findAll("[data-test='log-timestamp']");
+        expect(stamps).toHaveLength(mockLogs.logs.length);
+        for (const stamp of stamps) {
+            // gray-400 on white / gray-500 on dark-canvas sit under 3:1
+            // (Lighthouse color-contrast); small text needs >= 4.5:1.
+            expect(stamp.classes()).toContain("text-gray-500");
+            expect(stamp.classes()).toContain("dark:text-gray-400");
+        }
+    });
 });
