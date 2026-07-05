@@ -154,6 +154,10 @@
 </template>
 
 <script setup lang="ts">
+// Theme for the lazily-highlighted JSON in the details modal — scoped to this
+// chunk now that highlight.js is no longer a global plugin (#716).
+import "@/assets/styles/highlightjs.css";
+
 import useSWRV from "swrv";
 import { computed, ref } from "vue";
 
@@ -163,6 +167,7 @@ import AiCard from "@/components/AiCard/AiCard.vue";
 import AiCommand from "@/components/AiCommand/AiCommand.vue";
 import AiLoader from "@/components/AiLoader/AiLoader.vue";
 import { getFLStatus, getNetDetailedStatus, IFLStatusClients } from "@/services/fl-service";
+import { vHighlightjs } from "@/utils/highlightJson";
 
 const showDetails = ref(false);
 const details = ref<string | undefined>(undefined);

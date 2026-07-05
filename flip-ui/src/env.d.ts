@@ -39,4 +39,3 @@ declare module "*.vue" {
 
 declare module "notiwind";
 declare module "~icons/*";
-declare module "vue3-highlightjs";

@@ -56,6 +56,9 @@
 <script lang="ts" setup>
 import "codemirror/mode/sql/sql.js";
 
+// Imported here rather than registered app-wide in main.ts so CodeMirror
+// ships with this component's chunk instead of the entry bundle (#716).
+import Codemirror from "codemirror-editor-vue3";
 import { useField } from "vee-validate";
 import { computed, TextareaHTMLAttributes } from "vue";
 

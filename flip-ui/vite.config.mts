@@ -137,6 +137,13 @@ export default defineConfig(({ mode, command }) => {
             setupFiles: ["./test/setup.ts"],
             include: ["src/**/*.spec.ts", "scripts/**/*.spec.ts"],
             coverage: { reporter: ["text", "json", "cobertura"] },
+            server: {
+                deps: {
+                    // codemirror-editor-vue3 imports raw .css from node_modules;
+                    // inline it so Vite transforms those instead of Node choking.
+                    inline: ["codemirror-editor-vue3"]
+                }
+            },
             deps: {
                 optimizer: {
                     web: {
