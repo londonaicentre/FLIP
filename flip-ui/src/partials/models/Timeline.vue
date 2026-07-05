@@ -22,8 +22,8 @@
             leave-from-class="transform opacity-100"
             leave-to-class="transform opacity-0 -transform-x-100"
         >
-            <div v-if="true" class="flex flex-col w-64 h-full 2xl:w-96">
-                <div v-if="logs" class="w-64 overflow-y-auto text-sm bg-white dark:bg-dark-canvas 2xl:w-96">
+            <div v-if="true" class="flex flex-col w-full h-full">
+                <div v-if="logs" class="w-full overflow-y-auto text-sm bg-white dark:bg-dark-canvas">
                     <div>
                         <nav class="">
                             <div class="flow-root">
@@ -80,7 +80,7 @@
                         </nav>
                     </div>
                 </div>
-                <div v-if="!logs && isValidating" class="h-full w-96">
+                <div v-if="!logs && isValidating" class="h-full w-full">
                     <AiLoader />
                 </div>
             </div>

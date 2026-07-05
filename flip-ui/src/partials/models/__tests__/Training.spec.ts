@@ -183,6 +183,22 @@ describe("Training missing-files alert slot", () => {
     });
 });
 
+describe("Training Live activity card layout", () => {
+    it("is wide enough for the timeline and never scrolls horizontally", () => {
+        const wrapper = mountTraining({ status: "TRAINING_STARTED" });
+
+        const timeline = wrapper.find("[data-test=training-timeline]");
+        expect(timeline.exists()).toBe(true);
+        // Timeline sits in the card's scroll wrapper; the card is the wrapper's parent.
+        const scrollWrap = timeline.element.parentElement;
+        const card = scrollWrap?.parentElement;
+
+        expect(scrollWrap?.className).toContain("overflow-x-hidden");
+        expect(card?.className).toContain("w-96");
+        expect(card?.className).not.toContain("w-80");
+    });
+});
+
 describe("Training Live activity status dot", () => {
     const dotSelector = "[data-test=live-activity-dot]";
 
