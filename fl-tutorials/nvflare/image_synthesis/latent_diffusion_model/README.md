@@ -12,6 +12,15 @@ on the client directory.
 
 These files are compatible with `JOB_TYPE=diffusion_model` in the base application.
 
+## Best Model Selection
+
+Configuration in `app_files/config.json`:
+
+- `BEST_MODEL_METRIC_VAE` — validation metric for VAE best-model selection (default: `"Validation loss (L1)"`)
+- `BEST_MODEL_METRIC_VAE_MINIMIZE` — optimization direction (default: true = lower loss is better)
+- `BEST_MODEL_METRIC_DM` — validation metric for diffusion model best-model selection (default: `"Validation loss DM"`)
+- `BEST_MODEL_METRIC_DM_MINIMIZE` — optimization direction (default: true = lower loss is better)
+
 ## Base-image dependency (torchvision)
 
 Unlike the other tutorials, this one needs `torchvision` at runtime: the validator's perceptual

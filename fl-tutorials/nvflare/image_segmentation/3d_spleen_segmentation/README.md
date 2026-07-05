@@ -81,6 +81,8 @@ Training hyperparameters are in `app_files/config.json`:
 - `GLOBAL_ROUNDS`
 - `LEARNING_RATE`
 - `VAL_SPLIT`
+- `BEST_MODEL_METRIC` — validation metric for best-model selection (e.g., `"VAL_DICE"`)
+- `BEST_MODEL_METRIC_MINIMIZE` — optimization direction (false = higher is better, true = lower is better)
 
 ## Run the tutorial
 

@@ -31,6 +31,13 @@ We have a validation round within the `trainer.py`, which runs every few local r
 
 For metrics, we obtain the loss value, as well as precision, recall and F1-Score.
 
+## Best Model Selection
+
+Training configuration in `app_files/config.json`:
+
+- `BEST_MODEL_METRIC` — validation metric for best-model selection (default: `"VAL-F1-SCORE"`)
+- `BEST_MODEL_METRIC_MINIMIZE` — optimization direction (default: false = higher F1-score is better)
+
 ## How to run?
 
 The quickest path uses the published reference dataset on Hugging Face. From the repo root:

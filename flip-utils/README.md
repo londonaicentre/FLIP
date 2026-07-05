@@ -108,7 +108,7 @@ User-provided files go in the job's `custom/` directory and are dynamically impo
 | `trainer.py` | Training logic — must export `FLIP_TRAINER` class |
 | `validator.py` | Validation logic — must export `FLIP_VALIDATOR` class |
 | `models.py` | Model definitions — must export `get_model()` function |
-| `config.json` | Hyperparameters — must include `LOCAL_ROUNDS` and `LEARNING_RATE` |
+| `config.json` | Hyperparameters — must include `LOCAL_ROUNDS` and `LEARNING_RATE`; optional: `BEST_MODEL_METRIC` and `BEST_MODEL_METRIC_MINIMIZE` for best-model selection |
 | `transforms.py` | Data transforms (optional) |
 
 ### Job Types
@@ -123,6 +123,26 @@ Set via the `JOB_TYPE` environment variable:
 | `fed_opt` | Custom federated optimization |
 
 The corresponding configs live in `fl-apps/nvflare/<job_type>/app/config/`.
+
+### Best Model Selection (Optional)
+
+By default, the final aggregated model is saved after training. To also save the **best model** based on a validation metric:
+
+Add to your `config.json`:
+
+```json
+{
+  "BEST_MODEL_METRIC": "VAL_DICE",
+  "BEST_MODEL_METRIC_MINIMIZE": false
+}
+```
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `BEST_MODEL_METRIC` | str | None | Validation metric label to track (e.g., `"VAL_DICE"`, `"VAL_LOSS"`, `"VAL-F1-SCORE"`). If unset, no best model is saved. |
+| `BEST_MODEL_METRIC_MINIMIZE` | bool | false | Set to `true` if lower metric values are better (e.g., for loss metrics). Set to `false` if higher values are better (e.g., Dice, F1, Accuracy). |
+
+Both final and best models are saved to the output and available for download. If best-model selection is not specified, only the final model is available.
 
 ### Development Mode
 
