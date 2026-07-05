@@ -37,7 +37,7 @@
                     :name="name"
                     :type="type"
                     :value="inputValue"
-                    :autocomplete="type"
+                    :autocomplete="autocomplete"
                     :placeholder="placeholder"
                     :required="required"
                     :data-test="dataTest"
@@ -99,6 +99,14 @@ export default defineComponent({
         type: {
             type: String,
             default: "text"
+        },
+        // Valid autocomplete token (e.g. "username", "current-password").
+        // Omitted from the DOM when unset — deriving it from `type` fabricates
+        // invalid tokens that break the accessibility tree.
+        autocomplete: {
+            type: String,
+            required: false,
+            default: undefined
         },
         value: {
             type: String,

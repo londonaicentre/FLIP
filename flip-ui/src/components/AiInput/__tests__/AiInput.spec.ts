@@ -39,4 +39,41 @@ describe("Ai Input", () => {
         expect(comp.exists()).toBe(true);
         expect(comp.find("input").attributes("name")).toBe("something");
     });
+
+    it("omits autocomplete unless explicitly provided", () => {
+        const comp = mount(AiInput, {
+            props: {
+                name: "password",
+                type: "password"
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        // Deriving autocomplete from the input type fabricates invalid tokens
+        // ("password", "text") that break the accessibility tree.
+        expect(comp.find("input").attributes("autocomplete")).toBeUndefined();
+    });
+
+    it("forwards an explicit autocomplete token", () => {
+        const comp = mount(AiInput, {
+            props: {
+                name: "password",
+                type: "password",
+                autocomplete: "current-password"
+            },
+            global: {
+                plugins: [createTestingPinia({
+                    createSpy: vi.fn,
+                    stubActions: false
+                })]
+            }
+        });
+
+        expect(comp.find("input").attributes("autocomplete")).toBe("current-password");
+    });
 });

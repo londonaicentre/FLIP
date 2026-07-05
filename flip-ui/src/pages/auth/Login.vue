@@ -31,6 +31,7 @@
                 type="email"
                 data-test="username"
                 label="Email"
+                autocomplete="username"
                 :pre-icon="AccountOutline"
             />
             <AiInput
@@ -38,6 +39,7 @@
                 type="password"
                 data-test="password"
                 label="Password"
+                autocomplete="current-password"
                 :pre-icon="LockOutline"
             >
                 <template #labelRight>

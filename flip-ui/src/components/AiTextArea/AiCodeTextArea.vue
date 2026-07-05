@@ -35,7 +35,7 @@
                     :value="inputValue"
                     :border="true"
                     :data-test="dataTest"
-                    autocomplete="none"
+                    autocomplete="off"
                     :height="height"
                     v-bind="inputProps"
                     class="cursor-text text-gray-400 dark:text-gray-300 overflow-hidden rounded dark:!ring-primary-400 ring-primary-500 ring-2 ring-offset-2 dark:ring-offset-dark-canvas"

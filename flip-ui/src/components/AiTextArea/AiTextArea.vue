@@ -41,7 +41,6 @@
                     :name="name"
                     :type="type"
                     :value="inputValue"
-                    :autocomplete="type"
                     :required="required"
                     :data-test="dataTest"
                     :placeholder="placeholder"

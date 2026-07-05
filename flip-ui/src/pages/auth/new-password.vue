@@ -39,6 +39,7 @@ meta:
                 type="password"
                 data-test="new-password"
                 label="Enter a new password"
+                autocomplete="new-password"
                 :pre-icon="LockOutline"
             />
             <AiInput
@@ -46,6 +47,7 @@ meta:
                 type="password"
                 data-test="confirm-new-password"
                 label="Confirm new password"
+                autocomplete="new-password"
                 :pre-icon="LockOutline"
             />
             <div class="flex-grow" />
