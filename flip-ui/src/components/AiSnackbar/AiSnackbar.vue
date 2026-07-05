@@ -64,7 +64,7 @@
                             </button>
                             <hr v-if="notification.actionText && notification.action" class="dark:border-dark-border">
                             <button
-                                class="flex items-center justify-center w-full px-4 py-1 text-sm font-bold text-gray-500 transition rounded-none hover:text-gray-600 focus:outline-none dark:text-gray-400 dark:hover:text-gray-500"
+                                class="flex items-center justify-center w-full px-4 py-1 text-sm font-bold text-gray-500 transition rounded-none hover:text-gray-600 focus:outline-none dark:text-gray-400 dark:hover:text-gray-300"
                                 data-test="snackbar-dismiss-button"
                                 @click="() => {
                                     remove(notification.id)

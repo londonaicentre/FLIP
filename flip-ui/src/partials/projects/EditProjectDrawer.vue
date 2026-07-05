@@ -62,7 +62,7 @@
                                         </div>
                                     </div>
                                     <div class="mt-1">
-                                        <p class="text-sm text-primary-200 dark:text-gray-500">
+                                        <p class="text-sm text-primary-200 dark:text-gray-400">
                                             Edit your projects details below.
                                         </p>
                                     </div>
