@@ -502,6 +502,9 @@ const saveUser = async () => {
         selectedUser.value.dirty = false;
         selectedUser.value.profileDirty = false;
         selectedUser.value.rolesDirty = false;
+        // Revalidate the SWRV list so the left rail (and the re-selected
+        // user) reflect the edit without a manual page reload.
+        await refreshUsers();
         Snackbar.success({
             text: "The user has been updated.",
             title: "User updated"
